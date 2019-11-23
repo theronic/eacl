@@ -1,0 +1,25 @@
+;; shadow-cljs configuration
+{:source-paths ["src"]
+ :deps         true
+
+ ;; set an nrepl port for connection to a REPL.
+ :nrepl        {:port 8778}
+
+ :host         {:port 9701}
+
+ :builds       {:app {:target     :browser
+                      :output-dir "public/js/compiled"
+                      :asset-path "/js/compiled"
+
+                      :modules    {:main
+                                   {:entries [eacl.core]}}
+                      :devtools
+                      ;; before live-reloading any code call this function
+                                  {:before-load eacl.core/stop
+                                   ;; after live-reloading finishes call this function
+                                   :after-load  eacl.core/start
+                                   ;; serve the public directory over http at port 8700
+                                   :http-root   "public"
+                                   :http-port   8701
+                                   :preloads    [devtools.preload]}}}}
+

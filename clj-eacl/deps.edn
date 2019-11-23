@@ -1,0 +1,23 @@
+{:paths ["src"] ;"ui_src" "ui" "electron_src"]
+ :deps  {org.clojure/clojure         {:mvn/version "1.10.1"}
+         org.clojure/clojurescript   {:mvn/version "1.10.520"}
+         org.clojure/core.async      {:mvn/version "0.4.500"}
+         ring/ring-jetty-adapter     {:mvn/version "1.7.1"}
+         binaryage/devtools          {:mvn/version "0.9.10"} ;; dev dep only?
+         ;reagent                     {:mvn/version "0.9.0-rc2"}
+         thheller/shadow-cljs        {:mvn/version "2.8.64"}
+         rum                         {:mvn/version "0.11.3"}
+         cljs-http                   {:mvn/version "0.1.46"}
+         http-kit                    {:mvn/version "2.3.0"}
+         datascript                  {:mvn/version "0.18.4"}
+         com.taoensso/carmine        {:mvn/version "2.20.0-beta2"}
+         ;;[org.roman01la/citrus "3.0.0" :exclusions [rum]]
+         datascript-transit          {:mvn/version "0.3.0"}
+         ;figwheel                    {:mvn/version "0.5.15"}
+         cljs-bean                   {:mvn/version "1.5.0"}
+         ;posh                        {:mvn/version "0.5.5"} ;; until datascript has a reactive query thing
+         com.taoensso/timbre         {:mvn/version "4.10.0"}
+         com.andrewmcveigh/cljs-time {:mvn/version "0.5.2"}
+         ;ring/ring-core              {:mvn/version "1.6.3"}
+         expound                     {:mvn/version "0.7.2"}
+         metosin/reitit              {:mvn/version "0.3.9"}}}
