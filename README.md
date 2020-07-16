@@ -2,10 +2,6 @@
 
 Enterprise Access Control (EACL) is a novel Datalog-based access control system with a declarative API that exploits the mutually-exclusive nature of binary allow vs. deny rules to efficiently maintain sparse bitfield indices to answer ACL queries.
 
-## State of the Project: (Early Alpha)
-
-The core of the engine is ~400 lines and currently has a slow implementation backed by Datahike. It is actively used for access control in the [Bridge](https://www.tradebridge.app/) eCommerce implementation.
-
 ## Why EACL?
 
  - Data becomes a liability over time.
@@ -91,6 +87,10 @@ Rules nest. If John belongs to the Managers group and you grant Managers the sam
 EACL would like to support all the main web programming frameworks, but right now is built for Clojure + Datahike.
 
 If I can find some funding, I am happy to keep working on it and spend some time speeding it up.  
+
+## State of the Project: (Early Alpha)
+
+The core of the engine is ~400 lines and currently has a slow implementation backed by Datahike. It is actively used for access control in the [Bridge](https://www.tradebridge.app/) eCommerce implementation.
 
 ## Order of Execution
 
