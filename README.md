@@ -1,17 +1,31 @@
 # **EACL**: Enterprise Access Control
 
-Enterprise Access Control (EACL) is a novel Datalog-based access control system with a declarative API that exploits the mutually-exclusive nature of binary allow vs. deny rules to efficiently maintain sparse bitfield indices to answer ACL queries.
+Enterprise Access Control (EACL) is a novel Datalog-based access control system with a declarative API that exploits the mutually-exclusive binary nature of allow vs. deny rules to efficiently maintain sparse bitfield matrices to answer ACL queries.
 
 ## Why EACL?
 
  - Data becomes a liability over time.
- - *Authentication* is a solved problem; **authorization** is not.
- - Access control is always an afterthought and it's painful to add after the fact.
- - Big businesses frequently get audited during mergers &amp; acquisitions. I.e. compliance.
- - There is typically no central dashboard for auditing data privacy.
+ - Authentication is a solved problem; authorization is not.
+ - Access control is always an afterthought and it's painful to add later.
+ - Big businesses frequently get audited during mergers &amp; acquisitions, i.e. compliance.
+ - There is typically no central dashboard for auditing data privacy across divisions.
  - You need to understand the shape of data to solve the problem.
- - Checking access at row or entity-level easily suffers from N+1 problem. 
- 
+ - Checking access at row or entity-level can easily suffer from N+1 problem. 
+
+## Design Goals
+
+ - Easy to add to existing projects
+ - Drop-in replacement for role-based middleware (understand sessions)
+ - Flexible rules
+ - Composable rules, "Can I do `this` + `that`?"
+ - Support for Roles
+ - Heritable roles
+ - Fast enough for enterprise (10M+ entities, ~30k employees)
+ - Built-in audit logs, e.g. "Who had access to the AWS root keys on 5 March 2020? Who accessed them?"
+ - Incremental matrix maintenance for fast updates 
+ - Support common relational DB rule mappings.
+ - Hostable as an Authorization Service (w/aggressive client-side caching)
+
 ## The Shape of a Rule
 
 All rules have the same shape, with each parameter being optional:
@@ -33,20 +47,20 @@ EACL features a declarative API with only a few functions that all take a `rule`
 
 Additionally, the API supports enumeration for "filling in the blanks":
 
- - `(who-can? db rule)`
- - `(what-can-i? db rule)`
+ - `(who-can? db rule)` expects `:eacl/who` and returns matching rules for this principle.
  - `(when-can? db rule)` returns a time series of valid timespans for this rule.
- - `(how-can? db rule)` returns a sequence of "how" operations that match this rule.
+ - `(what-can? db rule)` expects `:eacl/who` and returns sequence of `:eacl/what` rules.
+ - `(how-can? db rule)` returns a sequence of matching `:eacl/how` for this rule.
    
-That lets you ask questions like "Who can read or edit this resource at these locations in order to ... at these times?"
+These enumerators let you ask questions like "Who can read or edit this resource at these locations next week?"
 
 # Example
 
-Fire Chief John needs access to the server room at the Houston branch to conduct his annual fire safety check to ensure that the sprinklers have a functioning water supply. To limit liability, his access should be short-lived and constrained to areas of interest (DC1 and DC2). Here is how you model the ACL check for John's keycard in Clojure:
+Fire Dept. Chief John (a consultant) needs access to the server room on Friday to conduct an annual fire safety inspection at the Houston branch. To limit liability, his access should be short-lived and constrained to areas of interest (DC1 and DC2). Here is how you model the ACL check for John's keycard in Clojure:
 
     {:eacl/who   [:eacl/email "john@example.com"]
      :eacl/what  :server-room-door
-     :eacl/where [:eacl/ident :branch/houston]
+     :eacl/where #{[:eacl/ident :branch/houston.dc1] [:eacl/ident :branch/houston.dc2]}
      :eacl/how   #{:open :close}
      :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
      :eacl/why   :audits/2020-Fire-Safety-Audit]})
@@ -56,7 +70,7 @@ Now, we can check if any rules satisfy this demand by calling `eacl/can?` with t
     (eacl/can? db
       {:eacl/who   [:eacl/email "john@example.com"]
        :eacl/what  :server-room-door
-       :eacl/where [:eacl/ident :branch/houston]
+       :eacl/where [:eacl/ident :branch/houston.dc1]
        :eacl/how   #{:open :close}
        :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
        :eacl/why   :audits/2020-Fire-Safety-Audit]})
@@ -67,12 +81,12 @@ EACL says no, so the pod bay doors won't open. Let's grant John access to the do
     (eacl/grant! conn
       {:eacl/who   [:eacl/email "john@example.com"]
        :eacl/what  :server-room-door
-       :eacl/where [:eacl/ident :branch/houston]
+       :eacl/where #{[:eacl/ident :branch/houston.dc1] [:eacl/ident :branch/houston.dc2]}
        :eacl/how   #{:open :close}
        :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
        :eacl/why   :audits/2020-Fire-Safety-Audit]})
         
-Now, the same call to `eacl/can?` returns false. And to revoke the rule, we just call `(eacl/deny! conn ...)` with the same argument.
+Now, the same call to `eacl/can?` returns `true`. And to revoke the rule, we just call `(eacl/deny! conn ...)` with the same argument.
 
 What's nice about this access control design is:
 
