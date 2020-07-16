@@ -48,28 +48,29 @@ Fire Chief John needs access to the server room at the Houston branch to conduct
      :eacl/what  :server-room-door
      :eacl/where [:eacl/ident :branch/houston]
      :eacl/how   #{:open :close}
-     :eacl/when  #inst "2020-07-15"  ;; we don't support time ranges yes.
+     :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
      :eacl/why   :audits/2020-Fire-Safety-Audit]})
 
 Now, we can check if any rules satisfy this demand by calling `eacl/can?` with the current DB and the rule above:
 
-    (eacl/can? db {:eacl/who   [:eacl/email "john@example.com"]
-                   :eacl/what  :server-room-door
-                   :eacl/where [:eacl/ident :branch/houston]
-                   :eacl/how   #{:open :close}
-                   :eacl/when  #inst "2020-07-15"  ;; we don't support time ranges yes.
-                   :eacl/why   :audits/2020-Fire-Safety-Audit]})
+    (eacl/can? db
+      {:eacl/who   [:eacl/email "john@example.com"]
+       :eacl/what  :server-room-door
+       :eacl/where [:eacl/ident :branch/houston]
+       :eacl/how   #{:open :close}
+       :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
+       :eacl/why   :audits/2020-Fire-Safety-Audit]})
     => false
     
 EACL says no, so the pod bay doors won't open. Let's grant John access to the doors by calling `eacl/grant!`
 
     (eacl/grant! conn
-       {:eacl/who   [:eacl/email "john@example.com"]
-        :eacl/what  :server-room-door
-        :eacl/where [:eacl/ident :branch/houston]
-        :eacl/how   #{:open :close}
-        :eacl/when  #inst "2020-07-15"  ;; todo: support timespans
-        :eacl/why   :audits/2020-Fire-Safety-Audit]})
+      {:eacl/who   [:eacl/email "john@example.com"]
+       :eacl/what  :server-room-door
+       :eacl/where [:eacl/ident :branch/houston]
+       :eacl/how   #{:open :close}
+       :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
+       :eacl/why   :audits/2020-Fire-Safety-Audit]})
         
 Now, the same call to `eacl/can?` returns false. And to revoke the rule, we just call `(eacl/deny! conn ...)` with the same argument.
 
