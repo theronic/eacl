@@ -12,12 +12,12 @@
                       :asset-path "/js/compiled"
 
                       :modules    {:main
-                                   {:entries [eacl.core]}}
+                                   {:entries [eacl.ui.core]}}
                       :devtools
                       ;; before live-reloading any code call this function
-                                  {:before-load eacl.core/stop
+                                  {:before-load eacl.ui.core/stop
                                    ;; after live-reloading finishes call this function
-                                   :after-load  eacl.core/start
+                                   :after-load  eacl.ui.core/start
                                    ;; serve the public directory over http at port 8700
                                    :http-root   "public"
                                    :http-port   8701

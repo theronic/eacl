@@ -12,19 +12,33 @@
         :else
         (format "%.0fµs" (/ nanos 1.0E3))))
 
-
 (defmacro profile [k & body]
-  (if profile?
-    `(let [k# ~k
-           nano-now# (System/nanoTime)]
-       (let [res#         (do ~@body)
-             nano-after#  (System/nanoTime)
-             nano-elapsed# (- nano-after# nano-now#)]
-         (log/debug k# "Elapsed" (format-nanoseconds nano-elapsed#))
-         res#))
-    `(do ~@body)))
+  `(let [k# ~k]
+     (.time js/console k#)
+     (let [res# (do ~@body)]
+       (.timeEnd js/console k#)
+       res#)))
 
 (defmacro spy [& body]
   `(let [res# (do ~@body)]
-     (log/debug res#)
+     (prn res#)
      res#))
+
+
+;; these are Clojure-based spy and profile. Todo conditional.
+;
+;(defmacro profile [k & body]
+;  (if profile?
+;    `(let [k# ~k
+;           nano-now# (System/nanoTime)]
+;       (let [res#         (do ~@body)
+;             nano-after#  (System/nanoTime)
+;             nano-elapsed# (- nano-after# nano-now#)]
+;         (log/debug k# "Elapsed" (format-nanoseconds nano-elapsed#))
+;         res#))
+;    `(do ~@body)))
+;
+;(defmacro spy [& body]
+;  `(let [res# (do ~@body)]
+;     (log/debug res#)
+;     res#))

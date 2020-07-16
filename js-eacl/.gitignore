@@ -1,6 +1,11 @@
 .idea/
-.shadow-cljs/
 .cpcache/
+.shadow-cljs/
+node_modules/
+resources/public/js/cljs-runtime/
+target/
+public/js/bootstrap/
+public/js/compiled/
 
 # Logs
 logs
@@ -67,9 +72,3 @@ node_modules/
 
 # dotenv environment variables file
 .env
-
-# JS Artifacts
-public/js/compiled/
-
-js-eacl-example/
-js-eacl/examples/
