@@ -1,26 +1,23 @@
 # **EACL**: Enterprise Access Control
 
-Enterprise Access Control (EACL) is a novel Datalog-based access control system with a declarative API that exploits the mutually-exclusive binary nature of allow vs. deny rules to efficiently maintain sparse bitfield matrices to answer ACL queries.
+Enterprise Access Control (EACL) is a novel Datalog-based access control system with a declarative API that exploits the mutually-exclusive binary nature of allow vs. deny rules to (soon) efficiently maintain sparse bitfield matrices to answer ACL queries.
 
 ## Why EACL?
 
  - Data becomes a liability over time.
  - Authentication is a solved problem; authorization is not.
  - Access control is always an afterthought and it's painful to add later.
- - Big businesses frequently get audited during mergers &amp; acquisitions, i.e. compliance.
- - There is typically no central dashboard for auditing data privacy across divisions.
- - You need to understand the shape of data to solve the problem.
- - Checking access at row or entity-level can easily suffer from N+1 problem. 
+ - Big businesses frequently get audited during mergers &amp; acquisitions, i.e. compliance = $$$.
+ - There is typically no central dashboard for controlling and auditing data access across divisions.
+ - An effective access control system cannot be divorced from the data it is guarding, so must live alongside it to monitor the shape of data (schema).
+ - Checking access at row or entity-level can easily suffer from N+1 problems.
 
 ## Design Goals
 
- - Easy to add to existing projects
- - Drop-in replacement for role-based middleware (understand sessions)
- - Flexible rules
- - Composable rules, "Can I do `this` + `that`?"
- - Support for Roles
+ - Convenient to add to existing web projects as a drop-in replacement for role-based middleware
+ - Flexible & composable rules
  - Heritable roles
- - Fast enough for enterprise (10M+ entities, ~30k employees)
+ - Fast enough for medium to large enterprises (10M+ entities, ~10-30k employees)
  - Built-in audit logs, e.g. "Who had access to the AWS root keys on 5 March 2020? Who accessed them?"
  - Incremental matrix maintenance for fast updates 
  - Support common relational DB rule mappings.
@@ -28,7 +25,7 @@ Enterprise Access Control (EACL) is a novel Datalog-based access control system 
 
 ## The Shape of a Rule
 
-All rules have the same shape, with each parameter being optional:
+All rules have the same shape. All parameters are optional:
 
  - `:eacl/who` means the principal agent, e.g. user(s), role(s), sensor(s) or key card(s).
  - `:eacl/what` means resource(s), e.g. "Invoices" or "Invoice Nr. 567".
@@ -56,10 +53,10 @@ These enumerators let you ask questions like "Who can read or edit this resource
 
 # Example
 
-Fire Dept. Chief John (a consultant) needs access to the server room on Friday to conduct an annual fire safety inspection at the Houston branch. To limit liability, his access should be short-lived and constrained to areas of interest (DC1 and DC2). Here is how you model the ACL check for John's keycard in Clojure:
+Fire Dept. Chief John is a consultant who needs access to the server room on Friday to conduct an annual fire safety inspection at our data centers in Houston. To limit liability, his access should be short-lived and constrained to the areas of interest (DC1 and DC2). Here is how you can model the ACL check for John's keycard using EACL in Clojure:
 
-    {:eacl/who   [:eacl/email "john@example.com"]
-     :eacl/what  :server-room-door
+    {:eacl/who   [:user/email "john@example.com"]
+     :eacl/what  [:door/ident :door/entrance]
      :eacl/where #{[:eacl/ident :branch/houston.dc1] [:eacl/ident :branch/houston.dc2]}
      :eacl/how   #{:open :close}
      :eacl/when  #inst "2020-07-15"  ;; (time ranges not supported yet)
@@ -68,7 +65,7 @@ Fire Dept. Chief John (a consultant) needs access to the server room on Friday t
 Now, we can check if any rules satisfy this demand by calling `eacl/can?` with the current DB and the rule above:
 
     (eacl/can? db
-      {:eacl/who   [:eacl/email "john@example.com"]
+      {:eacl/who   [:user/email "john@example.com"]
        :eacl/what  :server-room-door
        :eacl/where [:eacl/ident :branch/houston.dc1]
        :eacl/how   #{:open :close}
@@ -79,7 +76,7 @@ Now, we can check if any rules satisfy this demand by calling `eacl/can?` with t
 EACL says no, so the pod bay doors won't open. Let's grant John access to the doors by calling `eacl/grant!`
 
     (eacl/grant! conn
-      {:eacl/who   [:eacl/email "john@example.com"]
+      {:eacl/who   [:user/email "john@example.com"]
        :eacl/what  :server-room-door
        :eacl/where #{[:eacl/ident :branch/houston.dc1] [:eacl/ident :branch/houston.dc2]}
        :eacl/how   #{:open :close}
@@ -103,9 +100,22 @@ EACL would like to support all the main web programming frameworks, but right no
 
 If I can find some funding, I am happy to keep working on it and spend some time speeding it up.  
 
-## State of the Project: (Early Alpha)
+## State of the Project: Early Alpha
 
-The core of the engine is ~400 lines and currently has a slow implementation backed by Datahike. It is actively used for access control in the [Bridge](https://www.tradebridge.app/) eCommerce implementation.
+The whole EACL is ~400 lines of Clojure incl. schema. The current implementation is slow and backed by Datahike, but used in production for eCommerce access control in [Bridge](https://www.tradebridge.app/).
+
+# How does it work?
+
+Schema lives in `clj-eacl/src/data/schema.cljc`.
+
+The core API functions are in `clj-eacl/src/core.clj`. Look under `tx-rule` and `can?`. Most of the query construction code is about handling optionality in the rule parameters. 
+
+EACL relies heavily on recursive Datalog rules to support parent-child relationships and constructs rules at runtime.
+
+# Plan
+
+ - [ ] Hardcode set disjunction queries against sparse bitfields for speed.
+ - [ ] Think about supporting dynamic tag queries in rule parameters sort of like CSS classes, e.g. something like `(eacl/can? db {:eacl/what $(doors.main)})`
 
 ## Order of Execution
 
