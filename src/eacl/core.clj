@@ -72,7 +72,7 @@
     :db/index       true}])
 
 (def rules
-  '[;; Reverse reachability for following relationships backwards
+  '[;; Reachability rules for following relationships
     [(reachable ?r ?s)
      [?rel :eacl/subject ?s]
      [?rel :eacl/resource ?r]]
@@ -105,18 +105,16 @@
 (defn can?
   "Returns true if subject has permission on resource."
   [db subject permission resource]
-  (boolean
-    (d/q '[:find ?subject .
-           :in $ % ?s ?perm ?r
-           :where
-           [?subject :db/ident ?s]
-           [?resource :db/ident ?r]
-           (has-permission ?subject ?resource ?perm)]
-         db
-         rules
-         subject
-         permission
-         resource)))
+  (->> (d/q '[:find ?subject .
+              :in $ % ?subject ?perm ?resource
+              :where
+              (has-permission ?subject ?resource ?perm)]
+            db
+            rules
+            subject
+            permission
+            resource)
+       (boolean)))
 
 (defn can! [db subject permission resource]
   (if (can? db subject permission resource)
@@ -125,7 +123,7 @@
     (throw (Exception. "Unauthorized"))))
 
 (defn lookup-subjects
-  "Find all subjects that have the given permission on the specified resource."
+  "Enumerates subjects that have a given permission on a specified resource."
   [db resource permission]
   (->> (d/q '[:find [?subject ...]
               :in $ % ?resource ?perm
@@ -225,12 +223,12 @@
                   (Relationship "team-2" :team/company "company-2")])
 
     (let [db (d/db conn)]
-      "User 1 can :product/view own product"
+      ":test/user can view their product"
       (can? db :test/user :product/view :test/product) := true
-      "But not User 2"
+      "...but :test/user2 can't."
       (can? db :test/user2 :product/view :test/product) := false
 
-      "Sanity test relations don't affect wrong resources"
+      "Sanity check that relations don't affect wrong resources"
       (can? db :test/user :product/view :test/company) := false
 
       "User 2 can view Product 2"
@@ -238,22 +236,24 @@
 
       "User 2 can delete Product 2 because they have product.owner relation"
       (can? db :test/user2 :product/delete :test/product2) := true
-      "But not User 1"
+      "...but not :test/user"
       (can? db :test/user :product/delete :test/product2) := false
 
+      "We can enumerate subjects that can access a resource."
+      ; Bug: currently returns the subject itself which needs a fix.
       (map :db/ident (lookup-subjects db :test/product :product/view)) := [:test/user :test/team :test/product]
+      ":test/user2 is only subject who can delete :test/product2"
       (map :db/ident (lookup-subjects db :test/product2 :product/delete)) := [:test/user2]
 
+      "We can enumerate resources with lookup-resources"
       (map :db/ident (lookup-resources db :test/user :product/view)) := [:test/product]
       (map :db/ident (lookup-resources db :test/user2 :product/view)) := [:test/product2])
 
     "Make user-1 a :product/owner of product-2"
-    @(d/transact conn [{:eacl/subject  :test/user
-                        :eacl/relation :product/owner
-                        :eacl/resource :test/product2}])
+    @(d/transact conn [(Relationship :test/user :product/owner :test/product2)])
 
     (let [db (d/db conn)]
-      "Now :test/user can :product/delete product 2"
+      "Now :test/user can also :product/delete product 2"
       (can? db :test/user :product/delete :test/product2) := true
 
       (map :db/ident (lookup-resources db :test/user :product/view)) := [:test/product :test/product2]
