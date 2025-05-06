@@ -1,10 +1,16 @@
 # **EACL**: Enterprise Access Control
 
+## How to Run Tests
+
+```shell
+clj -X:test
+```
+
 Project Status: Alpha.
 
 EACL is a Datomic-based authorization system based on [SpiceDB](https://authzed.com/spicedb).
 
-- There are Subjects & Resources. 
+- There are Subjects & Resources.
 - Resources have Relations, e.g. `:product/owner`, which confers a set of permissions on a Subject, e.g. 
   `:product/view`, `:product/delete`.
 - Subjects & Resources are connected via Relationships.
@@ -12,7 +18,7 @@ EACL is a Datomic-based authorization system based on [SpiceDB](https://authzed.
 
 If a Resource is reachable by a Subject via a Relation, the permissions from that Relation are conferred on the subject.
 
-The most annoying part of the design right now is that you have to specify all relevant resources on a relation, because we don't have resource types like SpiceDB, or a collective grouping like 'products'.
+The primary deficiency of the current design is that you have to specify all relevant resources on a Relation, because we don't have resource types like SpiceDB, or a collective grouping like 'products'. This is being added.
 
 # API
 

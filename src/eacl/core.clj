@@ -1,7 +1,7 @@
 (ns eacl.core
   "EACL: Enterprise Access Control based on SpiceDB.
   Poor man's ACL in Datomic suitable for tens of thousands of entities.
-  Not cached. Graph traversal is costly."
+  Not cached. Graph traversal can be costly."
   (:require
     [datomic.api :as d]
     [hyperfiddle.rcf :refer (tests tap %)]
@@ -41,26 +41,44 @@
          (d/delete-database datomic-uri#)))))
 
 (def v2-eacl-schema
-  [{:db/ident       :eacl/resource
-    :db/doc         "Resource(s)"
+  [{:db/ident       :resource/type
+    :db/doc         "EACL Relation: Type(s) (keyword), e.g. :server or :vpc."
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/many
+    :db/index       true}
+
+   {:db/ident       :eacl/resource
+    :db/doc         "EACL: Resource(s)"
     :db/valueType   :db.type/ref
     :db/cardinality :db.cardinality/many
+    :db/index       true}
+
+   {:db/ident       :eacl/resource-type
+    :db/doc         "EACL: Resource Types"
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/many ; one or many?
     :db/index       true}
 
    {:db/ident       :eacl/subject
-    :db/doc         "Subject(s)"
+    :db/doc         "EACL: Subject(s)"
     :db/valueType   :db.type/ref
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
-   {:db/ident       :eacl.relation/name
-    :db/doc         "Relation Name (keyword. Should this be string?)"
+   {:db/ident       :eacl.relation/name ; why not eacl/relation-name?
+    :db/doc         "EACL: Relation Name (keyword)" ; string may be better.
     :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
     :db/index       true}
+   
+   {:db/ident       :eacl/subject-type
+    :db/doc         "EACL Relation: Subject Type(s) (keyword), e.g. :user."
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/many
+    :db/index       true}
 
    {:db/ident       :eacl/relation
-    :db/doc         "Relation (keyword)"
+    :db/doc         "EACL Permission: Relation(s) (keyword)" ; why not?
     :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/many
     :db/index       true}
@@ -72,6 +90,37 @@
     :db/index       true}])
 
 (def rules
+  '[;; Reachability rules for following relationships
+    [(reachable ?r ?s)
+     [?rel :eacl/subject ?s]
+     [?rel :eacl/resource ?r]]
+    [(reachable ?r ?s)
+     [?rel :eacl/subject ?mid]
+     [?rel :eacl/resource ?r]
+     (reachable ?mid ?s)]
+
+    ;; Direct permission check
+    [(has-permission ?subject ?resource ?perm)
+     [?p :eacl/resource ?resource]
+     [?p :eacl/permission ?perm]
+     [?p :eacl/relation ?rel-type]
+     [?rel :eacl/subject ?subject]                          ; subject directly has relation
+     [?rel :eacl/relation ?rel-type]
+     [?rel :eacl/resource ?resource]                        ; to the resource
+     [(not= ?subject ?resource)]]                           ; exclude self-reference
+
+    ;; Indirect permission inheritance
+    [(has-permission ?subject ?resource ?perm)
+     [?p :eacl/resource ?resource]
+     [?p :eacl/permission ?perm]
+     [?p :eacl/relation ?rel-type]
+     [?rel :eacl/subject ?resource]
+     [?rel :eacl/relation ?rel-type]
+     [?rel :eacl/resource ?target]
+     (reachable ?target ?subject)
+     [(not= ?subject ?resource)]]])
+
+(def rules2
   '[;; Reachability rules for following relationships
     [(reachable ?r ?s)
      [?rel :eacl/subject ?s]
@@ -148,22 +197,32 @@
             permission)
        (map #(d/entity db %))))
 
+; why not use Records for this?
 (defn Relation
-  "Relation applies to a Resource and confers a set of permissions.
+  "A Relation applies to a Resource (todo: Resource Type), and confers a set of permissions
+   to all subjects 'related' to via have Relationships with this this Relation.
   This is equivalent to Spice schema
 
   ```
-  definition product {
-    relation owner: user ; we don't have types in this design.
+  definition product { ; product is resource type
+    relation owner: user ; we don't constrain type of user (maybe we should?).
     permission view = owner
   }
-  ```"
-  [relation resource permission]
+  ```
+   
+  (Relation :product :owner [:view])
+   
+  permissions can be singular or coll.
+  "
+  [relation resource permissions] ; todo: resource should be resource-type & resource-type first argument.
   {:eacl/resource   resource
    :eacl/relation   relation
-   :eacl/permission permission})
+   :eacl/permission permissions})
 
-(defn Relationship [subject relation resource]
+(defn Relationship
+  "A Relationship relates a subject and a resource via a Relation (above).
+   Subjects inherit permissions for the resource defined by a Relation"
+  [subject relation resource]
   {:eacl/subject  subject
    :eacl/relation relation
    :eacl/resource resource})
@@ -173,27 +232,33 @@
     @(d/transact conn
                  [; Company
                   {:db/id    "company-1"
-                   :db/ident :test/company}
+                   :db/ident :test/company
+                   :resource/type :company}
 
                   {:db/id    "company-2"
-                   :db/ident :test/company2}
+                   :db/ident :test/company2
+                   :resource/type :company}
 
                   ; Team
                   {:db/id    "team-1"
-                   :db/ident :test/team}
+                   :db/ident :test/team
+                   :resource/type :team}
 
                   {:db/id    "team-2"
-                   :db/ident :test/team2}
+                   :db/ident :test/team2
+                   :resource/type :team}
 
                   ;{:db/id "products"
                   ; :db/ident :type/products}
 
                   ;; Products
                   {:db/id    "product-1"
-                   :db/ident :test/product}
+                   :db/ident :test/product
+                   :resource/type :product}
 
                   {:db/id    "product-2"
-                   :db/ident :test/product2}
+                   :db/ident :test/product2
+                   :resource/type :product}
 
                   ; the annoying part of current design is that you need to specify all resources for a relation.
                   ; I'm looking into a resource type or collective resource e.g. 'products'.
@@ -202,10 +267,12 @@
 
                   ;; Users:
                   {:db/id    "user-1"
-                   :db/ident :test/user}
+                   :db/ident :test/user
+                   :resource/type :user}
 
                   {:db/id    "user-2"
-                   :db/ident :test/user2}
+                   :db/ident :test/user2
+                   :resource/type :user}
 
                   ;; Relationships:
                   (Relationship "product-1" :product/company "company-1")

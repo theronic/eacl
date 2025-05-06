@@ -7,4 +7,9 @@
 
          ;; Benchmarking
          criterium/criterium       {:mvn/version "0.4.6"}}
- :paths ["src" "test" "resources"]}
+ :paths ["src" "resources"]
+ :aliases {:test  {:extra-paths ["test"]
+                   :extra-deps  {io.github.cognitect-labs/test-runner
+                                 {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                   :main-opts   ["-m" "cognitect.test-runner"]
+                   :exec-fn     cognitect.test-runner.api/test}}}
