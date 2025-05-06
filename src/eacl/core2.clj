@@ -4,8 +4,7 @@
   Not cached. Graph traversal can be costly."
   (:require
     [datomic.api :as d]
-    [clojure.string :as string]
-    [criterium.core :as crit]))
+    [clojure.string :as string]))
 
 ; EACL is based on SpiceDB.
 ; You have Subjects & Resources.
@@ -38,55 +37,125 @@
          (d/delete-database datomic-uri#)))))
 
 (def v2-eacl-schema
-  [{:db/ident       :resource/type
-    :db/doc         "Resource Type(s) (keyword), e.g. :server or :vpc."
+  [
+
+   ;{:db/ident       :resource/type
+   ; :db/doc         "Resource Type(s) (keyword), e.g. :server or :vpc."
+   ; :db/valueType   :db.type/keyword
+   ; :db/cardinality :db.cardinality/one ; only one resource type for now.
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl/resource
+   ; :db/doc         "EACL: Ref to Resource(s)"
+   ; :db/valueType   :db.type/ref
+   ; :db/cardinality :db.cardinality/many
+   ; :db/index       true}
+
+   {:db/ident       :resource/type
+    :db/doc         "Resource Type"
     :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one ; only one resource type for now.
+    :db/cardinality :db.cardinality/one                     ; only one.
     :db/index       true}
 
-   {:db/ident       :eacl/resource
-    :db/doc         "EACL: Ref to Resource(s)"
-    :db/valueType   :db.type/ref
+   ;; Relations
+   ;; Resource Type -> Relation Name -> Permission(s)
+   ;; :resource/type is shared by Resources & Relations.
+
+   {:db/ident       :eacl.relation/resource-type
+    :db/doc         "EACL Relation: Resource Type"
+    :db/valueType   :db.type/keyword                        ; this is unified with :resource/type.
+    :db/cardinality :db.cardinality/one                     ; only one.
+    :db/index       true}
+
+   {:db/ident       :eacl.relation/relation-name
+    :db/doc         "EACL Relation Name (keyword)"          ; string may be better to match Spice.
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one                     ; can't be unique unless it is namespaced. use tuple for that.
+    :db/index       true}
+
+   {:db/ident       :eacl.relation/permission
+    :db/doc         "EACL Permission(s) conferred via this Relation."
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
-   {:db/ident       :eacl/resource-type
-    :db/doc         "EACL: Resource Types"
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/many ; one or many?
-    :db/index       true}
+   ; Relation: Resource Type + Relation Name uniqueness constraint:
+   {:db/ident       :eacl.relation/resource-type+name
+    :db/doc         "Tuple to enforce uniqueness of Resource Type + Relation Name, e.g. product/owner relation."
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relation/resource-type :eacl.relation/relation-name] ;:eacl.relation/relation-name]
+    :db/cardinality :db.cardinality/one
+    :db/unique      :db.unique/identity}
 
-   {:db/ident       :eacl/subject
-    :db/doc         "EACL: Subject(s)"
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/many
-    :db/index       true}
+   ;; Permissions
 
-   {:db/ident       :eacl.relation/name ; why not eacl/relation-name?
-    :db/doc         "EACL: Relation Name (keyword)" ; string may be better.
+   {:db/ident       :eacl.permission/resource-type
+    :db/doc         "EACL Permission: Resource Type"
     :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ; todo: make resource type + relation name unique. Tuple?
-   
-   {:db/ident       :eacl/subject-type
-    :db/doc         "EACL Relation: Subject Type(s) (keyword), e.g. :user."
+   {:db/ident       :eacl.permission/permission-name
+    :db/doc         "EACL Permission: Permission Name"
     :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/many
+    :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl/relation
-    :db/doc         "EACL Permission: Relation(s) (keyword)" ; why not?
+   {:db/ident       :eacl.permission/relation-name
+    :db/doc         "EACL Permission: Permission Name"
     :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/many
+    :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl/permission
-    :db/doc         "Permission(s) conferred via this Relation."
+   ;; Relationships (Subject -> Relation -> Resource)
+
+   {:db/ident       :eacl.relationship/subject
+    :db/doc         "EACL: Ref to Subject(s)"
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/many                    ; single or many?
+    :db/index       true}
+
+   {:db/ident       :eacl.relationship/relation-name
+    :db/doc         "EACL Relationship: Relation Keyword"
     :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/many
+    :db/cardinality :db.cardinality/many                    ; one or many? probably one. currently many.
+    :db/index       true}
+
+   {:db/ident       :eacl.relationship/resource
+    :db/doc         "EACL Relationship: Ref to Resource(s)"
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/many                    ; one or many? probably one.
     :db/index       true}])
+
+;{:db/ident       :eacl/relation-name ; why not eacl/relation-name?
+; :db/doc         "EACL: Relation Name (keyword)" ; string may be better.
+; :db/valueType   :db.type/keyword
+; :db/cardinality :db.cardinality/one
+; ; can't be unique unless it is namespaced. use tuple.
+; :db/index       true}
+
+; todo: make resource type + relation name unique. Tuple?
+
+; not currently impl.:
+;{:db/ident       :eacl/subject-type
+; :db/doc         "EACL Relation: Subject Type(s) (keyword), e.g. :user."
+; :db/valueType   :db.type/keyword
+; :db/cardinality :db.cardinality/many
+; :db/index       true}
+
+;{:db/ident       :eacl/relation
+; :db/doc         "EACL Permission: Relation(s) (keyword)" ; why not?
+; :db/valueType   :db.type/keyword
+; :db/cardinality :db.cardinality/many
+; :db/index       true}
+
+;{:db/ident       :eacl/permission
+; :db/doc         "Permission(s) conferred via this Relation."
+; :db/valueType   :db.type/keyword
+; :db/cardinality :db.cardinality/many
+; :db/index       true}])
+
+; these are merely helper constructors for the relevant Spice schema in Datomic.
 
 ; why not use Records for this?
 (defn Relation
@@ -108,47 +177,67 @@
 
   permissions can be single or multi-arity.
   "
-  [resource-type relation-ident permissions]
-  {:resource/type   resource-type
-   :eacl/relation   relation-ident
-   :eacl/permission permissions})
+  [resource-type relation-name permissions]
+  {:eacl.relation/resource-type resource-type
+   :eacl.relation/relation-name relation-name
+   ; this permission here is going away.
+   :eacl.relation/permission    permissions})
+
+(defn Permission
+  ; not supported yet, but soon.
+  ; we only support sum types at this time, i.e. admin + OR.
+  ; logic operations require additional processing.
+  [resource-type permission-name relation-name]
+  {:eacl.permission/resource-type   resource-type
+   :eacl.permission/permission-name permission-name
+   :eacl.permission/relation-name   relation-name})
 
 (defn Relationship
   "A Relationship relates a subject and a resource via a Relation (see above).
    Subjects inherit permissions for a resource via a Relation."
-  [subject relation-ident resource]
-  {:eacl/subject  subject
-   :eacl/relation relation-ident
-   :eacl/resource resource})
+  [subject relation-name resource]
+  {:eacl.relationship/subject       subject
+   :eacl.relationship/relation-name relation-name
+   :eacl.relationship/resource      resource})
 
 (def rules
   '[;; Reachability rules for following relationships
-    [(reachable ?r ?s)
-     [?rel :eacl/subject ?s]
-     [?rel :eacl/resource ?r]]
-    [(reachable ?r ?s)
-     [?rel :eacl/subject ?mid]
-     [?rel :eacl/resource ?r]
-     (reachable ?mid ?s)]
+    [(reachable ?resource ?subject)                         ; read as "Is `?resource` reachable from `?subject`?"
+     [?relationship :eacl.relationship/subject ?subject]
+     [?relationship :eacl.relationship/resource ?resource]]
+    [(reachable ?resource ?subject)
+     [?relationship :eacl.relationship/subject ?mid]
+     [?relationship :eacl.relationship/resource ?resource]
+     (reachable ?mid ?subject)]
 
     ;; Direct permission check
-    [(has-permission ?subject ?resource ?perm)
-     [?p :eacl/resource ?resource]
-     [?p :eacl/permission ?perm]
-     [?p :eacl/relation ?rel-type]
-     [?rel :eacl/subject ?subject]                          ; subject directly has relation
-     [?rel :eacl/relation ?rel-type]
-     [?rel :eacl/resource ?resource]                        ; to the resource
-     [(not= ?subject ?resource)]]                           ; exclude self-reference
+    [(has-permission ?subject ?resource ?permission)
+     [?resource :resource/type ?resource-type]
+
+     [?relationship :eacl.relationship/resource ?resource]
+
+     [?relation :eacl.relation/resource-type ?resource-type]
+
+     [?relationship :eacl.relationship/relation-name ?relation-name]
+     [?relationship :eacl.relationship/subject ?subject]
+
+     [?relation :eacl.relation/relation-name ?relation-name]
+     [?relation :eacl.relation/permission ?permission]
+
+     [(not= ?subject ?resource)]]                           ; exclude self-references.
 
     ;; Indirect permission inheritance
-    [(has-permission ?subject ?resource ?perm)
-     [?p :eacl/resource ?resource]
-     [?p :eacl/permission ?perm]
-     [?p :eacl/relation ?rel-type]
-     [?rel :eacl/subject ?resource]
-     [?rel :eacl/relation ?rel-type]
-     [?rel :eacl/resource ?target]
+    [(has-permission ?subject ?resource ?permission)
+     ; non-optimal order.
+     [?resource :resource/type ?resource-type]
+
+     [?relation :eacl.relation/resource-type ?resource-type]
+     [?relation :eacl.relation/permission ?permission]
+     [?relation :eacl.relation/relation-name ?relation-name]
+
+     [?relationship :eacl.relationship/subject ?resource]   ; note the subject/resource indirection here.
+     [?relationship :eacl.relationship/relation-name ?relation-name]
+     [?relationship :eacl.relationship/resource ?target]    ; ?target is resource below.
      (reachable ?target ?subject)
      [(not= ?subject ?resource)]]])
 

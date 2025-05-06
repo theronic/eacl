@@ -7,7 +7,7 @@
 (deftest eacl2-tests
   (testing "fixtures"
     (with-fresh-conn conn eacl/v2-eacl-schema
-      @(d/transact conn fixtures/base-fixtures)
+      (is @(d/transact conn fixtures/base-fixtures))
 
       (let [db (d/db conn)]
         ":test/user can view their product"
@@ -28,8 +28,8 @@
 
         (testing "We can enumerate subjects that can access a resource."
           ; Bug: currently returns the subject itself which needs a fix.
-          (is (= [:test/user :test/team :test/product]
-                 (mapv :db/ident (eacl/lookup-subjects db :test/product :product/view))))
+          (is (= #{:test/user :test/team :test/product}
+                 (set (mapv :db/ident (eacl/lookup-subjects db :test/product :product/view)))))
 
           (testing ":test/user2 is only subject who can delete :test/product2"
             (is (= [:test/user2] (mapv :db/ident (eacl/lookup-subjects db :test/product2 :product/delete))))))
@@ -52,15 +52,15 @@
           (let [db   (d/db conn)
                 rels (d/q '[:find [(pull ?rel [* {:eacl/subject [*]}]) ...]
                             :where
-                            [?rel :eacl/subject :test/user2]
-                            [?rel :eacl/relation :product/owner]]
+                            [?rel :eacl.relationship/subject :test/user2]
+                            [?rel :eacl.relationship/relation-name :product/owner]]
                           db)]
             (is @(d/transact conn (for [rel rels] [:db.fn/retractEntity (:db/id rel)]))))
 
           (testing "Now only :test/user can access both products."
             (let [db' (d/db conn)]
-              (is (= [:test/user :test/team2 :test/product2]
-                     (mapv :db/ident (eacl/lookup-subjects db' :test/product2 :product/view))))
+              (is (= #{:test/user :test/team2 :test/product2}
+                     (set (mapv :db/ident (eacl/lookup-subjects db' :test/product2 :product/view)))))
               (testing ":test/user2 cannot access any products" ; is this correct?
                 (is (= [] (mapv :db/ident (eacl/lookup-resources db' :test/user2 :product/view)))))
 
