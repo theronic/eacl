@@ -76,23 +76,23 @@
 
   (expand-permission-tree [this {:as opts :keys [consistency]} permission resource]))
 
-;; Spice affordances from previous impl.
-;(defrecord Relationship [subject relation resource])
-;(defrecord RelationshipUpdate [operation relationship])
-;
-;(defrecord SpiceObject [type id relation]) ; where relation means subject_relation, which is distinct from Relationship.relation
-;
-;(defn spice-object
-;  "Multi-arity helper for SubjectReference.
-;  Need a better name for this. Only used internally here."
-;  ([type id] (->SpiceObject type id nil))
-;  ([type id relation] (->SpiceObject type id relation)))
-;
-;(def ->user (partial spice-object :user))
-;(def ->team (partial spice-object :team))
-;(def ->server (partial spice-object :server))
-;(def ->platform (partial spice-object :platform))
-;(def ->account (partial spice-object :account))
-;(def ->vpc (partial spice-object :vpc))
-;(def ->backup (partial spice-object :backup))
-;(def ->host (partial spice-object :host))
+; Spice affordances from previous impl.
+(defrecord Relationship [subject relation resource])
+(defrecord RelationshipUpdate [operation relationship])
+
+(defrecord SpiceObject [type id relation]) ; where relation means subject_relation, which is distinct from Relationship.relation
+
+(defn spice-object
+  "Multi-arity helper for SubjectReference.
+  Need a better name for this. Only used internally here."
+  ([type id] (->SpiceObject type id nil))
+  ([type id relation] (->SpiceObject type id relation)))
+
+(def ->user (partial spice-object :user))
+(def ->team (partial spice-object :team))
+(def ->server (partial spice-object :server))
+(def ->platform (partial spice-object :platform))
+(def ->account (partial spice-object :account))
+(def ->vpc (partial spice-object :vpc))
+(def ->backup (partial spice-object :backup))
+(def ->host (partial spice-object :host))

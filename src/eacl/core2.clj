@@ -73,11 +73,17 @@
     :db/cardinality :db.cardinality/one                     ; can't be unique unless it is namespaced. use tuple for that.
     :db/index       true}
 
-   {:db/ident       :eacl.relation/permission
-    :db/doc         "EACL Permission(s) conferred via this Relation."
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/many
+   {:db/ident       :eacl.relation/subject-type
+    :db/doc         "EACL Relation: Subject Type"
+    :db/valueType   :db.type/keyword                        ; this is unified with :resource/type.
+    :db/cardinality :db.cardinality/one                     ; this could be many to support OR clause, e.g. relation owner: user | account.
     :db/index       true}
+
+   ;{:db/ident       :eacl.relation/permission
+   ; :db/doc         "EACL Permission(s) conferred via this Relation."
+   ; :db/valueType   :db.type/keyword
+   ; :db/cardinality :db.cardinality/many
+   ; :db/index       true}
 
    ; Relation: Resource Type + Relation Name uniqueness constraint:
    {:db/ident       :eacl.relation/resource-type+name
@@ -177,24 +183,36 @@
 
   permissions can be single or multi-arity.
   "
-  [resource-type relation-name permissions]
-  {:eacl.relation/resource-type resource-type
-   :eacl.relation/relation-name relation-name
-   ; this permission here is going away.
-   :eacl.relation/permission    permissions})
+  ([resource-type relation-name subject-type]
+   {:eacl.relation/resource-type resource-type
+    :eacl.relation/relation-name relation-name
+    :eacl.relation/subject-type  subject-type})
+  ([resource-type+relation-name subject-type]
+   (Relation
+     (keyword (namespace resource-type+relation-name))
+     (keyword (name resource-type+relation-name))
+     subject-type)))
 
 (defn Permission
   ; not supported yet, but soon.
   ; we only support sum types at this time, i.e. admin + OR.
   ; logic operations require additional processing.
-  [resource-type permission-name relation-name]
-  {:eacl.permission/resource-type   resource-type
-   :eacl.permission/permission-name permission-name
-   :eacl.permission/relation-name   relation-name})
+  ([resource-type relation-name permission-name]
+   {:pre [(keyword? resource-type)
+          (keyword? permission-name)
+          (keyword? relation-name)]}
+   {:eacl.permission/resource-type   resource-type
+    :eacl.permission/permission-name permission-name
+    :eacl.permission/relation-name   relation-name})
+  ([resource-type+relation-name permission-name]
+   (let [[resource-type relation-name] ((juxt namespace name) resource-type+relation-name)]
+     (Permission (keyword resource-type)
+                 (keyword relation-name)
+                 permission-name))))
 
 (defn Relationship
-  "A Relationship relates a subject and a resource via a Relation (see above).
-   Subjects inherit permissions for a resource via a Relation."
+  "A Relationship between a subject and a resource via Relation (see above),
+  and confers all matching Permissions to the Subject."
   [subject relation-name resource]
   {:eacl.relationship/subject       subject
    :eacl.relationship/relation-name relation-name
@@ -211,7 +229,7 @@
      (reachable ?mid ?subject)]
 
     ;; Direct permission check
-    [(has-permission ?subject ?resource ?permission)
+    [(has-permission ?subject ?permission-name ?resource)
      [?resource :resource/type ?resource-type]
 
      [?relationship :eacl.relationship/resource ?resource]
@@ -222,22 +240,29 @@
      [?relationship :eacl.relationship/subject ?subject]
 
      [?relation :eacl.relation/relation-name ?relation-name]
-     [?relation :eacl.relation/permission ?permission]
+
+     [?permission :eacl.permission/resource-type ?resource-type]
+     [?permission :eacl.permission/relation-name ?relation-name]
+     [?permission :eacl.permission/permission-name ?permission-name]
 
      [(not= ?subject ?resource)]]                           ; exclude self-references.
 
     ;; Indirect permission inheritance
-    [(has-permission ?subject ?resource ?permission)
+    [(has-permission ?subject ?permission-name ?resource)
      ; non-optimal order.
      [?resource :resource/type ?resource-type]
 
+     [?permission :eacl.permission/resource-type ?resource-type]
+     [?permission :eacl.permission/relation-name ?relation-name]
+     [?permission :eacl.permission/permission-name ?permission-name]
+
      [?relation :eacl.relation/resource-type ?resource-type]
-     [?relation :eacl.relation/permission ?permission]
      [?relation :eacl.relation/relation-name ?relation-name]
 
      [?relationship :eacl.relationship/subject ?resource]   ; note the subject/resource indirection here.
      [?relationship :eacl.relationship/relation-name ?relation-name]
      [?relationship :eacl.relationship/resource ?target]    ; ?target is resource below.
+
      (reachable ?target ?subject)
      [(not= ?subject ?resource)]]])
 
@@ -247,7 +272,7 @@
   (->> (d/q '[:find ?subject .
               :in $ % ?subject ?perm ?resource
               :where
-              (has-permission ?subject ?resource ?perm)]
+              (has-permission ?subject ?perm ?resource)]
             db
             rules
             subject
@@ -267,7 +292,7 @@
   (->> (d/q '[:find [?subject ...]
               :in $ % ?resource ?perm
               :where
-              (has-permission ?subject ?resource ?perm)]
+              (has-permission ?subject ?perm ?resource)]
             db
             rules
             resource
@@ -280,7 +305,7 @@
   (->> (d/q '[:find [?resource ...]
               :in $ % ?subject ?perm
               :where
-              (has-permission ?subject ?resource ?perm)]
+              (has-permission ?subject ?perm ?resource)]
             db
             rules
             subject

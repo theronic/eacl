@@ -1,0 +1,279 @@
+(ns eacl.spice-test
+  (:require [clojure.string :as string]
+            [clojure.test :as t :refer (deftest testing is use-fixtures)]
+            [eacl.protocols :as authz :refer (spice-object ->Relationship ->user ->team ->server ->platform ->vpc ->account)]
+            [eacl.core2 :as eacl]
+            [eacl.spicedb.impl :as spice]
+            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
+
+(deftest spicedb-tests
+
+  (eacl/with-fresh-conn conn eacl/v2-eacl-schema
+
+    ;(testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject relation"
+    ;  (is (= #permissions.protocols.SpiceObject{:type :user, :id "my-user", :relation nil}
+    ;         (spice-object :user "my-user")))
+    ;  (is (= #permissions.protocols.SpiceObject{:type :team, :id "dev-team", :relation :member}
+    ;         (spice-object :team "dev-team" :member))))
+
+    (testing "->user means (partial spice-object :user). Creates a SpiceObject record with {:keys [type id relation]}"
+      (def my-user (->user "ben"))
+      (def joe's-user (->user "joe"))
+      (def super-user (->user "andre"))
+      (def new-joiner (->user "new-joiner"))
+
+      (testing "We treat subject & resource types as keywords in Clojure-land."
+        (is (= :user (:type my-user)))
+        (is (= "ben" (:id my-user)))))
+
+    (testing "To define a SubjectReference with a :relation (subject_relation), pass another arg to spice-object"
+      (let [team-member (->team "my-team" :member)]
+        (is (= :team (:type team-member)))
+        (is (= "my-team" (:id team-member)))
+        (is (= :member (:relation team-member)))))
+
+    (testing "The platform definition is an abstraction to support super administrators"
+      (def ca-platform (->platform "cloudafrica")))
+
+    (testing "Define some server fixtures (we coerce numeric IDs to strings, but not back yet)"
+      (def my-server (->server 123))
+      (def my-other-server (->server 456))
+      (def joe's-server (->server "not-my-server")))
+
+    (testing "Two account fixtures"
+      (def my-account (->account "operativa"))
+      (def acme-account (->account "acme")))
+
+    (testing "Make a Spice client and hold onto channel for disposal later."
+      (let [client (spice/make-client conn)]
+        ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
+        ;"ensure channel is a managed gRPC channel"
+        ;(is (= io.grpc.internal.ManagedChannelOrphanWrapper (class channel)))
+
+        ; def *client REPL testing convenience and fewer parens.
+        (def *client client)))
+
+    (testing "Clean up prior relationships if non-nil schema (for REPL testing)"
+      ; conditional due to Spice segfault when using in-memory datastore under certain conditions.
+      (let [?schema-string (try (authz/read-schema *client) (catch Exception ex nil))]
+        (prn "schema:" ?schema-string)
+        (when ?schema-string
+          (testing "Clean up any previous :team resource-type relationships."
+            (try
+              (->> (authz/read-relationships *client {:resource/type :team
+                                                      :consistency   fully-consistent})
+                   (authz/delete-relationships! *client))
+              (catch Exception _ex)))
+
+          (testing "Try to clear out any prior :platform relationships. This would be destructive if connected to prod."
+            (try
+              (->> (authz/read-relationships *client {:resource/type :platform
+                                                      :consistency   fully-consistent})
+                   (authz/delete-relationships! *client))
+              (catch Exception _)))
+
+          (testing "Try to clear out any prior :vpc relationships. This would be destructive if connected to prod."
+            (try
+              (->> (authz/read-relationships *client {:resource/type :vpc
+                                                      :consistency   fully-consistent})
+                   (authz/delete-relationships! *client))
+              (catch Exception _)))
+
+          (testing "Clean up any previous :account resource-type relationships."
+            (try
+              (->> (authz/read-relationships *client {:resource/type :account
+                                                      :consistency   fully-consistent})
+                   (authz/delete-relationships! *client))
+              (catch Exception _)))
+
+          (testing "Clean up any previous :server resource-type relationships."
+            (try
+              (->> (authz/read-relationships *client {:resource/type :server
+                                                      :consistency   fully-consistent})
+                   (authz/delete-relationships! *client))
+              (catch Exception _))))))
+
+    #_(testing "Migrate schema via IG – will throw if new schema would orphan any relationships"
+        (let [{:spicedb/keys [migrate]} (ig/init (igc/integrant-definition) [:spicedb/migrate])]
+          ;(testing ":spicedb/migrate returns a WriteSchemaResponse, which is result of authz/write-schema!"
+          ;  (is (= com.authzed.api.v1.SchemaServiceOuterClass$WriteSchemaResponse (class migrate))))
+          (testing "Ensure we can read a valid Spice schema after :spicedb/migrate"
+            (let [spice-schema-string (try (authz/read-schema *client) (catch Exception ex ""))]
+              (is (false? (string/blank? spice-schema-string)))
+              (testing "Spice schema string contains at least one Spice `definition`"
+                (is (re-find #"definition" spice-schema-string)))))))
+
+    (testing "After deletion, read-relationships should an return empty seq for :server resources."
+      (is (= [] (authz/read-relationships *client {:resource/type :server}))))
+
+    (testing "Given an empty permission system, ensure no one can reboot my-server"
+      ; We specify consistency/fully-consistent because permissions are cached and can? defaults to minimize-latency.
+      (is (false? (authz/can? *client my-user :reboot my-server fully-consistent)))
+      (is (false? (authz/can? *client joe's-user :reboot my-server fully-consistent)))
+      (is (false? (authz/can? *client new-joiner :reboot my-server fully-consistent)))
+      (is (false? (authz/can? *client super-user :reboot my-server fully-consistent))))
+
+    (testing "Write relationships so my-user is the :owner of my-account and my-server is in my-account. Note the order of subjects vs. resources in ->Relationship."
+      (let [{:as response, token :zed/token}
+            (authz/create-relationships! *client
+                                         [(->Relationship my-user :owner my-account)
+                                          (->Relationship my-account :account my-server)])]
+        (testing "All Spice operations returns a ZedToken that can be passed to subsequent read operations to guarantee consistent cache."
+          (is (string? token))
+          (is (true? (authz/can? *client my-user :reboot my-server (consistency/fresh token)))))))
+
+    (testing "assign joe as the owner of acme-account and joe's server to acme-account"
+      (is (authz/create-relationships! *client
+                                       [(->Relationship joe's-user :owner acme-account)
+                                        (->Relationship acme-account :account joe's-server)])))
+
+    (testing "Now, my-user can :reboot my-server but joe's-user cannot :reboot my-server"
+      (is (true? (authz/can? *client my-user :reboot my-server fully-consistent)))
+      (is (false? (authz/can? *client joe's-user :reboot my-server fully-consistent))))
+
+    (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
+      ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
+      (is (= [(update my-server :id str)] (authz/what-can? *client
+                                                           {:consistency   fully-consistent
+                                                            :subject/type  :user
+                                                            :subject/id    (:id my-user)
+                                                            :permission    :reboot
+                                                            :resource/type :server})))
+      (is (= [(update joe's-server :id str)] (authz/what-can? *client
+                                                              {:consistency   fully-consistent
+                                                               :subject/type  :user
+                                                               :subject/id    (:id joe's-user)
+                                                               :permission    :reboot
+                                                               :resource/type :server}))))
+
+    (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
+      ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
+      (is (= [my-user] (authz/who-can? *client {:consistency   fully-consistent
+                                                :subject/type  :user
+                                                :permission    :reboot
+                                                :resource/type :server
+                                                :resource/id   (:id my-server)})))
+      (is (= [joe's-user] (authz/who-can? *client {:consistency   fully-consistent
+                                                   :subject/type  :user
+                                                   :permission    :reboot
+                                                   :resource/type :server
+                                                   :resource/id   (:id joe's-server)}))))
+
+    (testing "joe's-user can :reboot their server, but I cannot:"
+      (is (true? (authz/can? *client joe's-user :reboot joe's-server fully-consistent)))
+      (is (false? (authz/can? *client my-user :reboot joe's-server fully-consistent))))
+
+    (testing "Permissions do not extend to my-other-server despite falling under same account, because I don't own it yet."
+      (is (false? (authz/can? *client my-user :reboot my-other-server fully-consistent))))
+
+    (testing "Make super-user a :super_admin of the platform so they can do everything."
+      (is (false? (authz/can? *client super-user :reboot my-server fully-consistent)))
+      (is (authz/create-relationship! *client (->Relationship super-user :super_admin ca-platform))))
+
+    (testing "Super administrators for a given platform, can only control account resources that have a corresponding :platform relation."
+      (is (false? (authz/can? *client super-user :reboot my-server fully-consistent)))
+      (is (false? (authz/can? *client super-user :reboot my-other-server fully-consistent)))
+      (is (false? (authz/can? *client super-user :reboot joe's-server fully-consistent))))
+
+    (testing "Now we assign both accounts to the ca-platform"
+      ; The order of subject/resource seems counter-intuitive, but consider that :platform
+      ; is a relation under my-account (the resource), so the platform is the subject.
+      (is (authz/create-relationships! *client
+                                       [(->Relationship ca-platform :platform my-account)
+                                        (->Relationship ca-platform :platform acme-account)])))
+
+    (testing "ensure my-other-server also falls under my-account"
+      (is (authz/create-relationship! *client my-account :account my-other-server)))
+
+    (testing "Super administrators can :reboot all servers because both accounts now fall belong to ca-platform:"
+      (is (true? (authz/can? *client super-user :reboot my-server fully-consistent)))
+      (is (true? (authz/can? *client super-user :reboot my-other-server fully-consistent)))
+      (is (true? (authz/can? *client super-user :reboot joe's-server fully-consistent)))
+
+      (testing "...but joe's-user cannot :reboot my-server"
+        (is (false? (authz/can? *client joe's-user :reboot my-server fully-consistent)))))
+
+    (testing "We can enumerate the platform administrators with read-relationships:"
+      (is (= [(->Relationship super-user :super_admin ca-platform)]
+             (authz/read-relationships *client {:resource/type :platform}))))
+
+    (testing "We can enumerate account owners:"
+      (is (= [(->Relationship joe's-user :owner acme-account)
+              (->Relationship my-user :owner my-account)]
+             (authz/read-relationships *client {:resource/type :account
+                                                :subject/type  :user}))))
+
+    (testing "read-relationships supports various filters:"
+      (testing "query platform->account"
+        (is (= [(->Relationship ca-platform :platform acme-account)
+                (->Relationship ca-platform :platform my-account)]
+               (authz/read-relationships *client {:subject/type      :platform
+                                                  :resource/type     :account
+                                                  :resource/relation :platform}))))
+
+      (testing "read-relationships throws if resource-type is not specified:"
+        (is (thrown? AssertionError
+                     (authz/read-relationships *client {:resource/type    nil ;; throws if resource-type is nil (must not be nil).
+                                                        :subject/type     :platform
+                                                        :subject/relation :super-admin}))))
+
+      (is (= [(->Relationship ca-platform :platform acme-account)
+              (->Relationship ca-platform :platform my-account)]
+             (authz/read-relationships *client {:resource/type :account
+                                                :subject/type  :platform})))
+
+      (is (= [(->Relationship ca-platform :platform acme-account)
+              (->Relationship ca-platform :platform my-account)]
+             (authz/read-relationships *client {:resource/type :account
+                                                :subject/type  :platform}))))
+
+    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
+      (is (authz/create-relationships! *client
+                                       [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
+                                        (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
+                                        (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
+      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
+             (authz/read-relationships *client {:resource/type     :vpc
+                                                :resource/id       "my-vpc"
+                                                :resource/relation :account
+                                                :subject/type      :account
+                                                :subject/id        "test-account"}))))
+
+    (testing "We can expand permissions hierarchy for (->server 123)."
+      ; Note: numeric IDs are not coerced back from strings yet.
+      ; This tree is a bit hard to understand, but this is how it comes back from Spice.
+      (is (= [[[[{:object   (->account "operativa")
+                  :relation :owner
+                  :subjects [{:object   (->user "ben")
+                              :relation nil}]}
+                 [{:object   (->platform "cloudafrica")
+                   :relation :super_admin
+                   :subjects [{:object   (->user "andre")
+                               :relation nil}]}]]]
+
+               ; no shared_admin subjects:
+               []                                             ; don't know what this empty vector is about.
+               {:object   (update (->server 123) :id str)
+                :relation :shared_admin
+                :subjects []}]
+
+              ; no shared_member subjects:
+              {:object   (update (->server 123) :id str)
+               :relation :shared_member
+               :subjects []}] (authz/expand-permission-tree *client {} :reboot (->server 123)))))
+
+    (testing "Expand permissions hierarchy for joe's-server shows team member"
+      ; Note: numeric IDs are not coerced back from strings yet.
+      (is (= [[[[{:object   (->account "acme")
+                  :subjects [{:object joe's-user :relation nil}],
+                  :relation :owner}
+                 [{:object   (->platform "cloudafrica"),
+                   :subjects [{:object (->user "andre"), :relation nil}],
+                   :relation :super_admin}]]]
+               []
+               {:object   (->server "not-my-server"),
+                :subjects [],
+                :relation :shared_admin}]
+              {:object   (->server "not-my-server"),
+               :subjects [],
+               :relation :shared_member}] (authz/expand-permission-tree *client {} :reboot joe's-server))))))
