@@ -70,12 +70,8 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
             [?relationship :eacl.relationship/relation-name ?relation-name]
             [?relationship :eacl.relationship/subject ?subject]
             [?subject :resource/type ?subject-type]
-            (or
-              [(get-some $ ?subject :entity/id :db/ident) ?subject-id]
-              [(identity ?subject) ?subject-id])
-            (or
-              [(get-some $ ?resource :entity/id :db/ident) ?resource-id]
-              [(identity ?resource) ?resource-id])]})
+            [?subject :entity/id ?subject-id]
+            [?resource :entity/id ?resource-id]]})
 
 (comment
   (build-relationship-query {:resource/type :server}))
@@ -118,9 +114,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   "Note that in relationship filters, `relation` here corresponds to :resource/relation.
   Note that we don't validate resource & subject types."
   [{:as _relationship :keys [subject relation resource]}]
-  {:eacl.relationship/subject       (:id subject)
+  {:eacl.relationship/subject       [:entity/id (:id subject)]
    :eacl.relationship/relation-name relation
-   :eacl.relationship/resource      (:id resource)})
+   :eacl.relationship/resource      [:entity/id (:id resource)]})
 
 (defn tx-update-relationship
   "Note that delete costs N queries."
@@ -151,7 +147,10 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
                      (map #(tx-update-relationship db %))
                      (remove nil?))]                        ; :delete operation can be nil.
     (log/debug 'tx-data tx-data)
-    @(d/transact conn tx-data)))
+    (let [{:keys [db-after]} @(d/transact conn tx-data)
+          basis (d/basis-t db-after)]
+      ; we return the latest DB basis as :zed/token to simulate consistency semantics.
+      {:zed/token (str basis)})))
 
 ; Steps:
 ; - handle spice-object type & ID.
@@ -159,7 +158,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 (defn spiceomic-can?
   "Note we do not currently check subject & resource types."
   [db subject permission resource]
-  (eacl/can? db (:id subject) permission (:id resource)))
+  (eacl/can? db [:entity/id (:id subject)] permission [:entity/id (:id resource)]))
 
 ;(defn
 ;  ->RelationshipFilter
@@ -189,6 +188,14 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (comment
   (build-relationship-query))
+
+(defn spiceomic-lookup-resources [db filters]
+  ; todo coercion
+  (eacl/lookup-resources db filters))
+
+(defn spiceomic-lookup-subjects [db filters]
+  ; todo coercion
+  (eacl/lookup-subjects db filters))
 
 (defrecord Spiceomic [conn]
   IAuthorization
@@ -224,14 +231,30 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
                                     (for [rel relationships]
                                       (->RelationshipUpdate :create rel))))
 
+  (create-relationship! [this relationship]
+    (spiceomic-write-relationships! conn [(->RelationshipUpdate :create relationship)]))
+
+  (create-relationship! [this subject relation resource]
+    (spiceomic-write-relationships! conn [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
+
   (delete-relationships! [this relationships]
     ; note: delete costs N to look up matching rel with ID.
     (spiceomic-write-relationships! conn
                                     (for [rel relationships]
-                                      (->RelationshipUpdate :delete rel)))))
+                                      (->RelationshipUpdate :delete rel))))
+
+  (lookup-resources [this filters]
+    (spiceomic-lookup-resources (d/db conn) filters))
+
+  (lookup-subjects [this filters]
+    (spiceomic-lookup-subjects (d/db conn) filters)))
 
 (defn make-client [conn]
   (->Spiceomic conn))
 
 (comment
-  ())
+  (require '[eacl.fixtures :as fixtures])
+  (eacl/with-mem-conn [conn eacl/v3-eacl-schema]
+    @(d/transact conn fixtures/base-fixtures)
+    (let [client (make-client conn)]
+      (lookup-resources client {}))))

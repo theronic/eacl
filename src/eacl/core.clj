@@ -4,7 +4,8 @@
   Not cached. Graph traversal can be costly. Has arrow syntax support."
   (:require
    [datomic.api :as d]
-   [clojure.string :as string]))
+   [clojure.string :as string]
+   [eacl.protocols :as proto :refer [spice-object]]))
 
 (defmacro with-fresh-conn
   ; todo: switch to newer with-mem-conn.
@@ -59,9 +60,8 @@
    {:db/ident       :entity/id ; maybe this should be :id or :object/id or :spice/id?
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
     :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true
-    :db/unique      :db.unique/identity}
+    :db/unique      :db.unique/identity
+    :db/cardinality :db.cardinality/one}
 
    ;; Relations
    {:db/ident       :eacl.relation/resource-type
@@ -274,31 +274,38 @@
    :eacl.relationship/subject       subject})
 
 (defn can?
-  "Returns true if subject has permission on resource. Copied from core2."
-  [db subject permission resource]
-  (->> (d/q '[:find ?subject .                              ; Using . to find a single value, expecting one or none
-              :in $ % ?subject ?perm ?resource
-              :where
-              (has-permission ?subject ?perm ?resource)] ; do we still needs this?
-            db
-            rules
-            subject
-            permission
-            resource)
-       (boolean)))
+  "Returns true if subject has permission on resource. Copied from core2.
+  Note: we are not checking subject & resource types, but we probably should."
+  [db subject-id permission resource-id]
+  (if-not (and (:db/id (d/entity db subject-id))
+               (:db/id (d/entity db resource-id)))
+    false
+    (->> (d/q '[:find ?subject .                            ; Using . to find a single value, expecting one or none
+                :in $ % ?subject ?perm ?resource
+                :where
+                (has-permission ?subject ?perm ?resource)]  ; do we still needs this?
+              db
+              rules
+              subject-id
+              permission
+              resource-id)
+         (boolean))))
 
-(defn can! [db subject permission resource]
-  (if (can? db subject permission resource)
+(defn can! [db subject-id permission resource-id]
+  (if (can? db subject-id permission resource-id)
     true
     ; todo nicer error message
     (throw (Exception. "Unauthorized"))))
 
+(defn entity->spice-object [ent]
+  (spice-object (:resource/type ent) (:entity/id ent)))
+
 (defn lookup-subjects
   "Enumerates subjects that have a given permission on a specified resource."
-  [db {:as            filters
-       resource-ident :resource/id
-       :keys          [permission]}]
-  (let [resource-id (:db/id (d/entity db resource-ident))]
+  [db {:as         filters
+       resource-id :resource/id
+       :keys       [permission]}]
+  (let [resource-eid (:db/id (d/entity db [:entity/id resource-id]))]
     (->> (d/q '[:find [?subject ...]
                 :in $ % ?resource ?perm
                 :where
@@ -306,21 +313,23 @@
                 [(not= ?subject ?resource)]]
               db
               rules
-              resource-id
+              resource-eid
               permission)
-         (map #(d/entity db %)))))
+         (map #(d/entity db %))
+         (map entity->spice-object))))
 
 (defn lookup-resources
   "Find all resources that subject can access with the given permission."
-  [db {:as _filters
-       subject-ident :subject/id
-       :keys [permission]}]
+  [db {:as        _filters
+       subject-id :subject/id
+       :keys      [permission]}]
   (->> (d/q '[:find [?resource ...]
               :in $ % ?subject ?perm
               :where
               (has-permission ?subject ?perm ?resource)]
             db
             rules
-            subject-ident
+            [:entity/id subject-id]
             permission)
-       (map #(d/entity db %))))
+       (map #(d/entity db %))
+       (map entity->spice-object)))

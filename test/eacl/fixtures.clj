@@ -28,10 +28,14 @@
 
    ;; Servers:
    (Relation :server/account :account)
+
    (Permission :server/account :view)
+
    (Permission :server :account :admin :view)
    (Permission :server :account :admin :delete)
-   (Permission :server :account :admin :view)
+   (Permission :server :account :admin :reboot)
+   ;(Permission :server :account :admin :reboot)
+
    (Permission :server/account :edit)
    ; Server Shared Admin:
    (Permission :server/shared_admin :view)
@@ -43,7 +47,9 @@
 
    ; these can go away
    (Relation :server/owner :user)
+
    (Permission :server/owner :view)
+   ;(Permission :server/owner :reboot)
    (Permission :server/owner :edit)
    (Permission :server/owner :delete)
 
@@ -59,6 +65,9 @@
     :db/ident      :test/user1
     :resource/type :user}
 
+   (Relationship "user-1" :member "team-1")                 ; User 1 is on Team 1
+   (Relationship "user-1" :owner "account-1")
+
    ; Super User can do all the things:
    {:db/id         "super-user"
     :entity/id     "super-user"
@@ -66,9 +75,6 @@
     :resource/type :user}
 
    (Relationship "super-user" :super_admin "platform")
-
-   (Relationship "user-1" :member "team-1")                 ; User 1 is on Team 1
-   (Relationship "user-1" :owner "account-1")
 
    {:db/id         "user-2"
     :entity/id     "user-2"

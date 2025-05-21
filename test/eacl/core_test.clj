@@ -22,12 +22,15 @@
                      (is @(d/transact conn fixtures/base-fixtures))
 
                      (let [db (d/db conn)]
-                       ":test/user can view their server"
+                       ":test/user can :view and :reboot their server"
                        (is (can? db :test/user1 :view :test/server1))
+                       (is (can? db :test/user1 :reboot :test/server1))
+
                        "...but :test/user2 can't."
                        (is (not (can? db :test/user2 :view :test/server1)))
+                       (is (not (can? db :test/user2 :reboot :test/server1)))
 
-                       ":test/user is admin of :test/vpc because they own account"
+                       ":test/user1 is admin of :test/vpc because they own account"
                        (is (can? db :test/user1 :admin :test/vpc))
 
                        "and so is super-user because he is super_admin of platform"
@@ -46,7 +49,7 @@
                        (is (can? db :user/super-user :view :test/server1))
                        (is (can? db :user/super-user :view :test/server2))
 
-                       "User 2 can delete server 2 because they have server.owner relation"
+                       "User 2 can delete server2 because they have server.owner relation"
                        (is (can? db :test/user2 :delete :test/server2))
                        "...but not :test/user1"
                        (is (not (can? db :test/user1 :delete :test/server2)))

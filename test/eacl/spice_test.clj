@@ -3,17 +3,18 @@
             [clojure.test :as t :refer (deftest testing is use-fixtures)]
             [eacl.protocols :as authz :refer (spice-object ->Relationship ->user ->team ->server ->platform ->vpc ->account)]
             [eacl.core :as eacl]
-            [datomic.api :as d] ; ideally don't want this
+            [datomic.api :as d]                             ; ideally don't want this
             [eacl.fixtures :as fixtures]
             [eacl.spicedb.impl :as spice]
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
+;(eacl/with-mem-conn [conn eacl/v3-eacl-schema]
+;  (d/entity (d/db conn) [:entity/id "123"]))
+
 (deftest spicedb-tests
 
   (eacl/with-mem-conn [conn eacl/v3-eacl-schema]
-
-    @(d/transact conn fixtures/base-fixtures) ; temp until write-relationships
 
     ;(testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject relation"
     ;  (is (= #permissions.protocols.SpiceObject{:type :user, :id "my-user", :relation nil}
@@ -41,8 +42,8 @@
       (def ca-platform (->platform "cloudafrica")))
 
     (testing "Define some server fixtures (we coerce numeric IDs to strings, but not back yet)"
-      (def my-server (->server 123))
-      (def my-other-server (->server 456))
+      (def my-server (->server "123"))
+      (def my-other-server (->server "456"))
       (def joe's-server (->server "not-my-server")))
 
     (testing "Two account fixtures"
@@ -58,9 +59,11 @@
         ; def *client REPL testing convenience and fewer parens.
         (def *client client)))
 
-    (is (= [] (authz/read-relationships *client {:resource/type :vpc})))
-    (is (= [] (authz/read-relationships *client {:resource/type :account})))
-    (is (= [] (authz/read-relationships *client {:resource/type :server})))
+    @(d/transact conn fixtures/base-fixtures)               ; temp until write-relationships
+
+    ;(is (= [] (authz/read-relationships *client {:resource/type :vpc})))
+    ;(is (= [] (authz/read-relationships *client {:resource/type :account})))
+    ;(is (= [] (authz/read-relationships *client {:resource/type :server})))
 
     ;(is (= [] (d/q '{:find  [(pull ?relationship [* {:eacl.relationship/resource [*]
     ;                                                 :eacl.relationship/subject [*]}])] ; ?resource-type ?resource ?relation-name ?subject],
@@ -77,7 +80,7 @@
       ; conditional due to Spice segfault when using in-memory datastore under certain conditions.
       (let [?schema-string (try (authz/read-schema *client) (catch Exception ex nil))]
         (log/debug "schema:" ?schema-string)
-        (when ?schema-string
+        (when true ;?schema-string
           (testing "Clean up any previous :team resource-type relationships."
             (try
               (->> (authz/read-relationships *client {:resource/type :team
@@ -107,11 +110,14 @@
               (catch Exception _)))
 
           (testing "Clean up any previous :server resource-type relationships."
-            (try
-              (->> (authz/read-relationships *client {:resource/type :server
-                                                      :consistency   fully-consistent})
-                   (authz/delete-relationships! *client))
-              (catch Exception _))))))
+            (is (->> (authz/read-relationships *client {:resource/type :server
+                                                        :consistency   fully-consistent})
+                     (authz/delete-relationships! *client)))))))
+    ;(try
+    ;  (->> (authz/read-relationships *client {:resource/type :server
+    ;                                          :consistency   fully-consistent})
+    ;       (authz/delete-relationships! *client))
+    ;  (catch Exception _))))))
 
     #_(testing "Migrate schema via IG – will throw if new schema would orphan any relationships"
         (let [{:spicedb/keys [migrate]} (ig/init (igc/integrant-definition) [:spicedb/migrate])]
@@ -133,6 +139,14 @@
       (is (false? (authz/can? *client new-joiner :reboot my-server fully-consistent)))
       (is (false? (authz/can? *client super-user :reboot my-server fully-consistent))))
 
+    (testing "transact the entities with :resource/type & :entity/id we are about to use so [:entity/id 'ben'] resolves"
+      (is @(d/transact conn (for [ent [ca-platform
+                                       my-account acme-account
+                                       super-user my-user joe's-user
+                                       my-server my-other-server joe's-server]]
+                              {:resource/type (:type ent)
+                               :entity/id (:id ent)}))))
+
     (testing "Write relationships so my-user is the :owner of my-account and my-server is in my-account. Note the order of subjects vs. resources in ->Relationship."
       (let [{:as response, token :zed/token}
             (authz/create-relationships! *client
@@ -153,13 +167,13 @@
 
     (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
-      (is (= [(update my-server :id str)] (authz/what-can? *client
+      (is (= [(update my-server :id str)] (authz/lookup-resources *client
                                                            {:consistency   fully-consistent
                                                             :subject/type  :user
                                                             :subject/id    (:id my-user)
                                                             :permission    :reboot
                                                             :resource/type :server})))
-      (is (= [(update joe's-server :id str)] (authz/what-can? *client
+      (is (= [(update joe's-server :id str)] (authz/lookup-resources *client
                                                               {:consistency   fully-consistent
                                                                :subject/type  :user
                                                                :subject/id    (:id joe's-user)
@@ -168,16 +182,16 @@
 
     (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
-      (is (= [my-user] (authz/who-can? *client {:consistency   fully-consistent
-                                                :subject/type  :user
-                                                :permission    :reboot
-                                                :resource/type :server
-                                                :resource/id   (:id my-server)})))
-      (is (= [joe's-user] (authz/who-can? *client {:consistency   fully-consistent
-                                                   :subject/type  :user
-                                                   :permission    :reboot
-                                                   :resource/type :server
-                                                   :resource/id   (:id joe's-server)}))))
+      (is (= [my-user] (authz/lookup-subjects *client {:consistency   fully-consistent
+                                                       :subject/type  :user
+                                                       :permission    :reboot
+                                                       :resource/type :server
+                                                       :resource/id   (:id my-server)})))
+      (is (= [joe's-user] (authz/lookup-subjects *client {:consistency   fully-consistent
+                                                          :subject/type  :user
+                                                          :permission    :reboot
+                                                          :resource/type :server
+                                                          :resource/id   (:id joe's-server)}))))
 
     (testing "joe's-user can :reboot their server, but I cannot:"
       (is (true? (authz/can? *client joe's-user :reboot joe's-server fully-consistent)))

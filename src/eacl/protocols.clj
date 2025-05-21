@@ -59,15 +59,15 @@
     [this {:as relationship :keys [subject relation resource]}])
 
   ;; Subject & Resource & Enumeration
-  (what-can? [this {:as query :keys [consistency]}])
-  ; what-can? accepts:
+  (lookup-resources [this {:as query :keys [consistency]}])
+  ; lookup-resources (formerly 'what-can?') accepts:
   ; - :subject/type – keyword, required.
   ; - :subject/id – required.
   ; - :permission - keyword, required.
   ; - :resource/type – keyword, required.
 
-  (who-can? [this {:as query :keys [consistency]}])
-  ; who-can? accepts:
+  (lookup-subjects [this {:as query :keys [consistency]}])
+  ; lookup-subjects (formerely 'who-can?') accepts:
   ; - :subject/type (keyword, required)
   ; - :subject/relation (optional keyword, e.g. :member)
   ; - :permission (keyword)
