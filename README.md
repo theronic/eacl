@@ -18,8 +18,6 @@ EACL is a Datomic-based authorization system based on [SpiceDB](https://authzed.
 
 If a Resource is reachable by a Subject via a Relation, the permissions from that Relation are conferred on the subject.
 
-The primary deficiency of the current design is that you have to specify all relevant resources on a Relation, because we don't have resource types like SpiceDB, or a collective grouping like 'products'. This is being added.
-
 # API
 
 ```clojure

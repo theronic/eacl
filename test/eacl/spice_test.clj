@@ -2,13 +2,18 @@
   (:require [clojure.string :as string]
             [clojure.test :as t :refer (deftest testing is use-fixtures)]
             [eacl.protocols :as authz :refer (spice-object ->Relationship ->user ->team ->server ->platform ->vpc ->account)]
-            [eacl.core2 :as eacl]
+            [eacl.core3 :as eacl]
+            [datomic.api :as d] ; ideally don't want this
+            [eacl.fixtures3 :as fixtures]
             [eacl.spicedb.impl :as spice]
+            [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
 (deftest spicedb-tests
 
-  (eacl/with-fresh-conn conn eacl/v2-eacl-schema
+  (eacl/with-mem-conn [conn eacl/v3-eacl-schema]
+
+    @(d/transact conn fixtures/base-fixtures) ; temp until write-relationships
 
     ;(testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject relation"
     ;  (is (= #permissions.protocols.SpiceObject{:type :user, :id "my-user", :relation nil}
@@ -53,10 +58,25 @@
         ; def *client REPL testing convenience and fewer parens.
         (def *client client)))
 
+    (is (= [] (authz/read-relationships *client {:resource/type :vpc})))
+    (is (= [] (authz/read-relationships *client {:resource/type :account})))
+    (is (= [] (authz/read-relationships *client {:resource/type :server})))
+
+    ;(is (= [] (d/q '{:find  [(pull ?relationship [* {:eacl.relationship/resource [*]
+    ;                                                 :eacl.relationship/subject [*]}])] ; ?resource-type ?resource ?relation-name ?subject],
+    ;                 ;:keys  [:resource/type :resource/id :resource/relation :subject/id],
+    ;                 :in    [$ ?subject-type],
+    ;                 :where [[?relationship :eacl.relationship/resource ?resource]
+    ;                         ;[?resource :resource/type :server] ;?resource-type]
+    ;                         [?relationship :eacl.relationship/relation-name ?relation-name]
+    ;                         [?relationship :eacl.relationship/subject ?subject]
+    ;                         [?subject :resource/type ?subject-type]]}
+    ;               (d/db conn) :server)))
+
     (testing "Clean up prior relationships if non-nil schema (for REPL testing)"
       ; conditional due to Spice segfault when using in-memory datastore under certain conditions.
       (let [?schema-string (try (authz/read-schema *client) (catch Exception ex nil))]
-        (prn "schema:" ?schema-string)
+        (log/debug "schema:" ?schema-string)
         (when ?schema-string
           (testing "Clean up any previous :team resource-type relationships."
             (try
@@ -252,7 +272,7 @@
                                :relation nil}]}]]]
 
                ; no shared_admin subjects:
-               []                                             ; don't know what this empty vector is about.
+               []                                           ; don't know what this empty vector is about.
                {:object   (update (->server 123) :id str)
                 :relation :shared_admin
                 :subjects []}]

@@ -1,42 +1,143 @@
 (ns eacl.spicedb.impl
   "Mostly Spice-compatible layer for EACL."
-  (:require [eacl.protocols :as proto :refer [IAuthorization]]
+  (:require [eacl.protocols :as proto :refer [IAuthorization spice-object
+                                              ->Relationship map->Relationship
+                                              ->RelationshipUpdate]]
             [datomic.api :as d]
+            [clojure.tools.logging :as log]
             [eacl.core2 :as eacl]))
 
 ; operation: :create, :touch, :delete unspecified
 
-(defn find-relationship
+(defn relationship-filters->args
+  "Order matters. Maps to :in value."
+  [filters]
+  (->> (map filters
+            [:resource/type
+             :resource/id
+             :resource/relation
+             :subject/type
+             :subject/id
+             :subject/relation])
+       (remove nil?)
+       (vec)))
+
+(comment
+  (relationship-filters->args
+    {:resource/type :server
+     :subject/id 123}))
+
+(defn build-relationship-query
+  "One of these filters are required:
+  - :resource/type,
+  - :resource/id,
+  - :resource/id-prefix, or
+  - :resource/relation.
+
+Not supported yet:
+- subject_relation not supported yet.
+- resource_prefix.
+
+subject-type treatment reuses :resource/type. Maybe this should be entity type."
+  [{:as               _relationship-filters
+    resource-type     :resource/type
+    resource-id       :resource/id
+    _resource-prefix  :resource/id-prefix                   ; not supported yet.
+    resource-relation :resource/relation
+    subject-type      :subject/type
+    subject-id        :subject/id
+    _subject-relation :subject/relation}]                   ; not supported yet.
+  {:pre [(or resource-type resource-id _resource-prefix resource-relation)
+         (not _resource-prefix)]} ; not supported.
+  {:find '[?resource-type ?resource-id
+           ?relation-name
+           ?subject-type ?subject-id]
+   ; big todo: string ID support, via UUIDs?
+   :keys [:resource/type :resource/id
+          :resource/relation
+          :subject/type :subject/id]
+   :in   (cond-> ['$] ; this would be a nice macro.
+           resource-type (conj '?resource-type)
+           resource-id (conj '?resource-id)
+           ;resource-prefix (conj '?resource-prefix) ; todo.
+           resource-relation (conj '?resource-relation)
+           subject-type (conj '?subject-type)
+           subject-id (conj '?subject-id))
+   ;subject-relation (conj '?subject-relation) ; todo.
+   ; Clause ; order is perf. sensitive.
+   :where '[[?relationship :eacl.relationship/resource ?resource]
+            [?resource :resource/type ?resource-type]
+            [?relationship :eacl.relationship/relation-name ?relation-name]
+            [?relationship :eacl.relationship/subject ?subject]
+            [?subject :resource/type ?subject-type]
+            (or
+              [(get-some $ ?subject :entity/id :db/ident) ?subject-id]
+              [(identity ?subject) ?subject-id])
+            (or
+              [(get-some $ ?resource :entity/id :db/ident) ?resource-id]
+              [(identity ?resource) ?resource-id])]})
+
+(comment
+  (build-relationship-query {:resource/type :server}))
+
+(defn rel-map->Relationship
+  [{:as               _rel-map
+    resource-type     :resource/type
+    resource-id       :resource/id
+    resource-relation :resource/relation
+    subject-type      :subject/type
+    subject-id        :subject/id}]
+  (map->Relationship
+    {:subject  (spice-object subject-type subject-id)
+     :relation resource-relation
+     :resource (spice-object resource-type resource-id)}))
+
+(defn spiceomic-read-relationships
+  [db filters]
+  (let [qry  (build-relationship-query filters)
+        args (relationship-filters->args filters)]
+    (->> (apply d/q qry db args)
+         (map rel-map->Relationship))))
+
+(defn find-one-relationship
   [db {:as relationship :keys [subject relation resource]}]
-  ;; hmm subject & resource are spice-object. how to find?
-  (d/q '[:find ?rel .
-         :in $ ?subject ?relation ?resource
-         :where
-         [?rel :eacl.relationship/subject ?subject]
-         [?rel :eacl.relationship/relation-name ?relation]
-         [?rel :eacl.relationship/resource ?resource]]))
+  (log/debug 'find-one-relationship relationship)
+  (let [filters {:resource/type     (:type resource)
+                 :resource/id       (:id resource)
+                 :resource/relation relation
+                 :subject/type      (:type subject)
+                 :subject/id        (:id subject)}
+        _ (log/debug 'filters filters)
+        qry     (-> (build-relationship-query filters)
+                    (assoc :find '[?relationship .])
+                    (dissoc :keys))
+        args    (relationship-filters->args filters)]
+    (apply d/q qry db args)))
 
 (defn tx-relationship
+  "Note that in relationship filters, `relation` here corresponds to :resource/relation.
+  Note that we don't validate resource & subject types."
   [{:as _relationship :keys [subject relation resource]}]
-  {:eacl.relationship/subject       subject
-   :eacl.relationship/relation-name relation            ; is this name?
-   :eacl.relationship/resource      resource})
+  {:eacl.relationship/subject       (:id subject)
+   :eacl.relationship/relation-name relation
+   :eacl.relationship/resource      (:id resource)})
 
 (defn tx-update-relationship
+  "Note that delete costs N queries."
   [db {:as update :keys [operation relationship]}]
   (case operation
     :touch ; ensure update existing. we don't have uniqueness on this yet.
-    (let [rel-id (find-relationship db relationship)]
+    (let [rel-id (find-one-relationship db relationship)]
       (cond-> (tx-relationship relationship)
         rel-id (assoc :db/id rel-id)))
 
     :create
-    (if-let [rel-id (find-relationship db relationship)]
+    (if-let [rel-id (find-one-relationship db relationship)]
       (throw (Exception. ":create relationship conflicts with existing: " rel-id))
       (tx-relationship relationship))
 
     :delete
-    (if-let [rel-id (find-relationship db relationship)]
+    (if-let [rel-id (find-one-relationship db relationship)]
       [:db.fn/retractEntity rel-id]
       nil)
 
@@ -45,22 +146,49 @@
 
 (defn spiceomic-write-relationships!
   [conn updates]
-  (->> updates
-       (map tx-update-relationship (d/db conn))
-       (d/transact conn)
-       (deref)))
+  (let [db      (d/db conn)                                 ; just to look up matching relationship. could be done in bulk.
+        tx-data (->> updates
+                     (map #(tx-update-relationship db %))
+                     (remove nil?))]                        ; :delete operation can be nil.
+    (log/debug 'tx-data tx-data)
+    @(d/transact conn tx-data)))
 
 ; Steps:
 ; - handle spice-object type & ID.
 
 (defn spiceomic-can?
+  "Note we do not currently check subject & resource types."
   [db subject permission resource]
-  ; our impl. doesn't support spice-object yet, because we don't check subject/resource types,
-  ; but we should.
-  (eacl/can? db
-             (:id subject)
-             permission
-             (:id resource)))
+  (eacl/can? db (:id subject) permission (:id resource)))
+
+;(defn
+;  ->RelationshipFilter
+;  "All fields are optional, but at least one field is required.
+;  Performance is sensitive to indexing."
+;  [{:as            filters
+;    :resource/keys [type id id-prefix relation]             ; destructured for call signature.
+;    :subject/keys  [type id relation]}]                     ; where relation means subject_relation.
+;  (assert (or (:resource/type filters)
+;              (:resource/id filters)
+;              (:resource/id-prefix filters)
+;              (:resource/relation filters))
+;          "One of the filters :resource/type, :resource/id, :resource/id-prefix or :resource/relation are required.")
+;  (let [subject-filter (let [{:subject/keys [type id relation]} filters]
+;                         (if (or type id relation)          ; only construct SubjectFilter if any subject filters are present.
+;                           (->SubjectFilter filters)))
+;        {:resource/keys [type id id-prefix relation]} filters]
+;    ;; pass through for :subject/* filters.
+;    (->> (cond-> (PermissionService$RelationshipFilter/newBuilder)
+;           type (.setResourceType (name type))              ;; optional. not named optional for legacy SpiceDB reasons.
+;           id (.setOptionalResourceId (str id))
+;           id-prefix (.setOptionalResourceIdPrefix id-prefix)
+;           relation (.setOptionalRelation (name relation))
+;           subject-filter (.setOptionalSubjectFilter subject-filter))
+;         (.build))))
+
+
+(comment
+  (build-relationship-query))
 
 (defrecord Spiceomic [conn]
   IAuthorization
@@ -86,10 +214,21 @@
     (throw (Exception. "not impl.")))
 
   (read-relationships [this filters]
-    [])
+    (spiceomic-read-relationships (d/db conn) filters))
 
   (write-relationships! [this updates]
-    (spiceomic-write-relationships! conn updates)))
+    (spiceomic-write-relationships! conn updates))
+
+  (create-relationships! [this relationships]
+    (spiceomic-write-relationships! conn
+                                    (for [rel relationships]
+                                      (->RelationshipUpdate :create rel))))
+
+  (delete-relationships! [this relationships]
+    ; note: delete costs N to look up matching rel with ID.
+    (spiceomic-write-relationships! conn
+                                    (for [rel relationships]
+                                      (->RelationshipUpdate :delete rel)))))
 
 (defn make-client [conn]
   (->Spiceomic conn))
