@@ -1,10 +1,30 @@
 # **EACL**: Enterprise Access Control
 
-## How to Run Tests
+## How to Run All Tests
 
 ```shell
 clj -X:test
 ```
+## Run Test for One Namespace
+
+```bash
+clj -M:test -n eacl.core3-test
+```
+
+## Run Tests for Multiple Namespaces
+
+```bash
+clj -X:test :nses '["my-namespace1" "my-namespace2"]'
+```
+
+Note difference between `-M` & `-X` switches.
+
+## Run a single test (under deftest)
+
+```bash
+clojure -M:test -v my.namespace/test-name
+```
+
 
 Project Status: Alpha.
 

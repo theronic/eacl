@@ -1,120 +1,119 @@
 (ns eacl.core-test
   (:require [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
-            [hyperfiddle.rcf :as rcf :refer [tests]]
-            [eacl.core :as eacl :refer [with-fresh-conn Relation Relationship can? lookup-subjects lookup-resources]]))
+            [eacl.fixtures :as fixtures]
+            [eacl.core :as eacl :refer [with-fresh-conn Relation Relationship Permission can?]]))
 
-;(deftest eacl-tests)
-;
-(comment
-  (rcf/enable!))
+(deftest eacl3-tests
 
-(tests
-  (with-fresh-conn conn eacl/v2-eacl-schema
-                   @(d/transact conn
-                                [; Company
-                                 {:db/id    "company-1"
-                                  :db/ident :test/company}
+  (testing "Permission helper"
+    (is (= #:eacl.permission{:resource-type   :server
+                             :permission-name :admin
+                             :relation-name   :owner}
+           (Permission :server :owner :admin)))
+    (testing "permission admin Permission can infer resource type from namespaced relation keyword"
+      (is (= #:eacl.permission{:resource-type   :server
+                               :permission-name :admin
+                               :relation-name   :owner}
+             (Permission :server/owner :admin)))))
 
-                                 {:db/id    "company-2"
-                                  :db/ident :test/company2}
+  (testing "fixtures"
+    (with-fresh-conn conn eacl/v3-eacl-schema
+                     (is @(d/transact conn fixtures/base-fixtures))
 
-                                 ; Team
-                                 {:db/id    "team-1"
-                                  :db/ident :test/team}
+                     (let [db (d/db conn)]
+                       ":test/user can view their server"
+                       (is (can? db :test/user1 :view :test/server1))
+                       "...but :test/user2 can't."
+                       (is (not (can? db :test/user2 :view :test/server1)))
 
-                                 {:db/id    "team-2"
-                                  :db/ident :test/team2}
+                       ":test/user is admin of :test/vpc because they own account"
+                       (is (can? db :test/user1 :admin :test/vpc))
 
-                                 ;{:db/id "products"
-                                 ; :db/ident :type/products}
+                       "and so is super-user because he is super_admin of platform"
+                       (is (can? db :user/super-user :admin :test/vpc))
 
-                                 ;; Products
-                                 {:db/id    "product-1"
-                                  :db/ident :test/product}
+                       "but :test/user2 is not"
+                       (is (not (can? db :test/user2 :admin :test/vpc)))
 
-                                 {:db/id    "product-2"
-                                  :db/ident :test/product2}
+                       "Sanity check that relations don't affect wrong resources"
+                       (is (not (can? db :test/user2 :view :test/account1)))
 
-                                 ; the annoying part of current design is that you need to specify all resources for a relation.
-                                 ; I'm looking into a resource type or collective resource e.g. 'products'.
-                                 (Relation :product/company ["product-1" "product-2"] [:product/view :product/edit])
-                                 (Relation :product/owner ["product-1" "product-2"] [:product/view :product/edit :product/delete])
+                       "User 2 can view server 2"
+                       (is (can? db :test/user2 :view :test/server2))
 
-                                 ;; Users:
-                                 {:db/id    "user-1"
-                                  :db/ident :test/user}
+                       "Super User can view all servers"
+                       (is (can? db :user/super-user :view :test/server1))
+                       (is (can? db :user/super-user :view :test/server2))
 
-                                 {:db/id    "user-2"
-                                  :db/ident :test/user2}
+                       "User 2 can delete server 2 because they have server.owner relation"
+                       (is (can? db :test/user2 :delete :test/server2))
+                       "...but not :test/user1"
+                       (is (not (can? db :test/user1 :delete :test/server2)))
 
-                                 ;; Relationships:
-                                 (Relationship "product-1" :product/company "company-1")
-                                 (Relationship "product-2" :product/company "company-2")
+                       (testing "We can enumerate subjects that can access a resource."
+                         ; Bug: currently returns the subject itself which needs a fix.
+                         (is (= #{:test/user1
+                                  :test/team
+                                  :test/vpc
+                                  :user/super-user}
+                                (set (mapv :db/ident (eacl/lookup-subjects db {:resource/id :test/server1
+                                                                               :permission  :view})))))
 
-                                 ;; Team Membership:
-                                 (Relationship "user-1" :team/member "team-1") ; User 1 is on Team 1
-                                 ;(Relationship "user-2" :team/member "team-2")
+                         (testing ":test/user2 is only subject who can delete :test/server2"
+                           (is (= #{:test/user2
+                                    :user/super-user} (set (mapv :db/ident (eacl/lookup-subjects db {:resource/id :test/server2
+                                                                                                     :permission  :delete})))))))
 
-                                 ; User 2 is the direct :product/owner of Product 2
-                                 (Relationship "user-2" :product/owner "product-2")
+                       (testing "We can enumerate resources with lookup-resources"
+                         (is (= #{:test/account1 :test/server1} (set (map :db/ident (eacl/lookup-resources db {:subject/id :test/user1
+                                                                                                               :permission :view})))))
+                         (is (= #{:test/account2 :test/server2} (set (map :db/ident (eacl/lookup-resources db {:subject/id :test/user2
+                                                                                                               :permission :view}))))))
 
-                                 ; Team 1 has control of Company 1
-                                 (Relationship "team-1" :team/company "company-1")
-                                 (Relationship "team-2" :team/company "company-2")])
+                       (testing "Make user-1 a shared_admin of server-2"
+                         (is @(d/transact conn [(Relationship :test/user1 :shared_admin :test/server2)]))) ; this shouldn't be working. no schema for it.
 
-                   (let [db (d/db conn)]
-                     ":test/user can view their product"
-                     (can? db :test/user :product/view :test/product) := true
-                     "...but :test/user2 can't."
-                     (can? db :test/user2 :product/view :test/product) := false
+                       (let [db (d/db conn)]
+                         "Now :test/user1 can also :server/delete server 2"
+                         (is (can? db :test/user1 :delete :test/server2))
 
-                     "Sanity check that relations don't affect wrong resources"
-                     (can? db :test/user :product/view :test/company) := false
+                         ; todo: lookup-resources needs resource type filter.
+                         (is (= #{:test/account1
+                                  :test/server1
+                                  :test/server2} (set (map :db/ident (eacl/lookup-resources db {:subject/id :test/user1
+                                                                                                               :permission :view})))))
+                         (is (= #{:user/super-user
+                                  :test/user1
+                                  :test/user2} (set (map :db/ident (eacl/lookup-subjects db {:resource/id :test/server2
+                                                                                             :permission  :delete}))))))
 
-                     "User 2 can view Product 2"
-                     (can? db :test/user2 :product/view :test/product2) := true
+                       (testing "Now let's delete all :server/owner Relationships for :test/user2"
+                         (let [db   (d/db conn)
+                               rels (d/q '[:find [(pull ?rel [* {:eacl/subject [*]}]) ...]
+                                           :where
+                                           [?rel :eacl.relationship/subject :test/user2]
+                                           [?rel :eacl.relationship/relation-name :owner]]
+                                         db)]
+                           (is @(d/transact conn (for [rel rels] [:db.fn/retractEntity (:db/id rel)]))))
 
-                     "User 2 can delete Product 2 because they have product.owner relation"
-                     (can? db :test/user2 :product/delete :test/product2) := true
-                     "...but not :test/user"
-                     (can? db :test/user :product/delete :test/product2) := false
+                         (testing "Now only :test/user1 can access both servers."
+                           (let [db' (d/db conn)]
+                             (is (= #{:test/team2
+                                      :test/user1
+                                      :test/vpc2
+                                      :user/super-user}
+                                    (set (mapv :db/ident (eacl/lookup-subjects db' {:resource/id :test/server2
+                                                                                    :permission  :view})))))
+                             (testing ":test/user2 cannot access any servers" ; is this correct?
+                               (is (= [] (mapv :db/ident (eacl/lookup-resources db' {:subject/id :test/user2
+                                                                                     :permission :view})))))
 
-                     "We can enumerate subjects that can access a resource."
-                     ; Bug: currently returns the subject itself which needs a fix.
-                     (map :db/ident (lookup-subjects db :test/product :product/view)) := [:test/user :test/team :test/product]
-                     ":test/user2 is only subject who can delete :test/product2"
-                     (map :db/ident (lookup-subjects db :test/product2 :product/delete)) := [:test/user2]
+                             (is (not (can? db' :test/user2 :server/delete :test/server2)))
 
-                     "We can enumerate resources with lookup-resources"
-                     (map :db/ident (lookup-resources db :test/user :product/view)) := [:test/product]
-                     (map :db/ident (lookup-resources db :test/user2 :product/view)) := [:test/product2])
-
-                   "Make user-1 a :product/owner of product-2"
-                   @(d/transact conn [(Relationship :test/user :product/owner :test/product2)])
-
-                   (let [db (d/db conn)]
-                     "Now :test/user can also :product/delete product 2"
-                     (can? db :test/user :product/delete :test/product2) := true
-
-                     (map :db/ident (lookup-resources db :test/user :product/view)) := [:test/product :test/product2]
-                     (map :db/ident (lookup-subjects db :test/product2 :product/delete)) := [:test/user :test/user2])
-
-                   "Now let's delete all :product/owner Relationships for :test/user2"
-                   (let [rels (d/q '[:find [(pull ?rel [* {:eacl/subject [*]}]) ...]
-                                     :where
-                                     [?rel :eacl/subject :test/user2]
-                                     [?rel :eacl/relation :product/owner]]
-                                   (d/db conn))]
-
-                     @(d/transact conn (for [rel rels] [:db.fn/retractEntity (:db/id rel)])))
-
-                   "Now only :test/user can access both products."
-                   (let [db (d/db conn)]
-                     (map :db/ident (lookup-subjects db :test/product2 :product/view)) := [:test/user :test/team2 :test/product2]
-                     (map :db/ident (lookup-resources db :test/user2 :product/view)) := []
-
-                     (can? db :test/user2 :product/delete :test/product2) := false
-
-                     ":test/user permissions unchanged"
-                     (map :db/ident (lookup-resources db :test/user :product/view)) := [:test/product :test/product2])))
+                             (testing ":test/user1 permissions remain unchanged"
+                               (is (= #{:test/account1
+                                        :test/server1
+                                        :test/server2}
+                                      (set (map :db/ident (eacl/lookup-resources db' {:subject/id :test/user1
+                                                                                      :permission :view})))))))))))))

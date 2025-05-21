@@ -5,7 +5,7 @@
                                               ->RelationshipUpdate]]
             [datomic.api :as d]
             [clojure.tools.logging :as log]
-            [eacl.core2 :as eacl]))
+            [eacl.core :as eacl]))
 
 ; operation: :create, :touch, :delete unspecified
 

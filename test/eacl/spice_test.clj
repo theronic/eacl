@@ -2,9 +2,9 @@
   (:require [clojure.string :as string]
             [clojure.test :as t :refer (deftest testing is use-fixtures)]
             [eacl.protocols :as authz :refer (spice-object ->Relationship ->user ->team ->server ->platform ->vpc ->account)]
-            [eacl.core3 :as eacl]
+            [eacl.core :as eacl]
             [datomic.api :as d] ; ideally don't want this
-            [eacl.fixtures3 :as fixtures]
+            [eacl.fixtures :as fixtures]
             [eacl.spicedb.impl :as spice]
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))

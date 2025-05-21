@@ -1,105 +1,149 @@
 (ns eacl.fixtures
   (:require [datomic.api :as d]
-            [eacl.core2 :as eacl :refer (Relation Relationship Permission)]))
+            [eacl.core :as eacl :refer (Relation Relationship Permission)]))
 
 (def base-fixtures
-  [
-   ; Schema
-   (Relation :vpc/account :account)
+  [; Schema
+   (Relation :platform/super_admin :user)                   ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
+   (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
+
+   (Relation :vpc/account :account)                         ; vpc, relation account: account.
    ;permission admin = account->admin + shared_admin
-   (Permission :vpc :account :admin)
    (Permission :vpc :shared_admin :admin)
+   (Permission :vpc :account :admin :admin)                 ; vpc/admin = account->admin (arrow syntax)
 
+   ; VPCs:
    (Relation :vpc/owner :user)
-   (Permission :vpc/owner :admin) ; just admin?
+   (Permission :vpc/owner :admin)                           ; just admin?
 
-   (Relation :account/vpc :account)
-   (Permission :account/vpc :admin)
+   ; Accounts:
+   (Relation :account :owner :user)                         ; Account has an owner (a user)
+   (Permission :account :owner :admin)                      ; Owner of account gets admin on account
+   (Permission :account :owner :view)
+   (Permission :account :platform :platform_admin :admin)   ; hack for platform->super_admin
+   (Permission :account :platform :platform_admin :view)    ; spurious.
 
-   (Relation :product/company :company)
+   ; Teams:
+   (Relation :team/account :account)
+
+   ;; Servers:
+   (Relation :server/account :account)
+   (Permission :server/account :view)
+   (Permission :server :account :admin :view)
+   (Permission :server :account :admin :delete)
+   (Permission :server :account :admin :view)
+   (Permission :server/account :edit)
+   ; Server Shared Admin:
+   (Permission :server/shared_admin :view)
+   (Permission :server/shared_admin :admin)
+   (Permission :server/shared_admin :delete)
+
+   ;(Relation :server/company :company)
    ; can we combine these into one with multi-cardinality?
-   (Permission :product/company :view)
-   (Permission :product/company :edit)
 
-   (Relation :product/owner :user)
-   (Permission :product/owner :view)
-   (Permission :product/owner :edit)
-   (Permission :product/owner :delete)
+   ; these can go away
+   (Relation :server/owner :user)
+   (Permission :server/owner :view)
+   (Permission :server/owner :edit)
+   (Permission :server/owner :delete)
+
+   ; Global Platform for Super Admins:
+   {:db/id         "platform"
+    :entity/id     "platform"
+    :db/ident      :test/platform
+    :resource/type :platform}
 
    ; Users:
    {:db/id         "user-1"
-    :db/ident      :test/user
+    :entity/id     "user-1"
+    :db/ident      :test/user1
     :resource/type :user}
 
+   ; Super User can do all the things:
+   {:db/id         "super-user"
+    :entity/id     "super-user"
+    :db/ident      :user/super-user
+    :resource/type :user}
+
+   (Relationship "super-user" :super_admin "platform")
+
+   (Relationship "user-1" :member "team-1")                 ; User 1 is on Team 1
+   (Relationship "user-1" :owner "account-1")
+
    {:db/id         "user-2"
+    :entity/id     "user-2"
     :db/ident      :test/user2
     :resource/type :user}
 
+   (Relationship "user-2" :owner "account-2")
+
    ; Accounts
    {:db/id         "account-1"
-    :db/ident      :test/account
+    :entity/id     "account-1"
+    :db/ident      :test/account1
     :resource/type :account}
 
+   (Relationship "platform" :platform "account-1")
+
    {:db/id         "account-2"
+    :entity/id     "account-2"
     :db/ident      :test/account2
     :resource/type :account}
 
+   (Relationship "platform" :platform "account-2")
+
    ; VPC
    {:db/id         "vpc-1"
+    :entity/id     "vpc-1"
     :db/ident      :test/vpc
     :resource/type :vpc}
 
-   ; Company
-   {:db/id         "company-1"
-    :db/ident      :test/company
-    :resource/type :company}
+   (Relationship "account-1" :account "vpc-1")
 
-   {:db/id         "company-2"
-    :db/ident      :test/company2
-    :resource/type :company}
+   {:db/id         "vpc-2"
+    :entity/id     "vpc-2"
+    :db/ident      :test/vpc2
+    :resource/type :vpc}
+
+   (Relationship "account-2" :account "vpc-2")
 
    ; Team
    {:db/id         "team-1"
+    :entity/id     "team-1"
     :db/ident      :test/team
     :resource/type :team}
 
+   ; Teams belongs to accounts
+   (Relationship "account-1" :account "team-1")
+
    {:db/id         "team-2"
+    :entity/id     "team-2"
     :db/ident      :test/team2
     :resource/type :team}
 
-   ;{:db/id "products"
-   ; :db/ident :type/products}
+   (Relationship "account-2" :account "team-2")
 
-   ;; Products
-   {:db/id         "product-1"
-    :db/ident      :test/product
-    :resource/type :product}
+   ;{:db/id "servers"
+   ; :db/ident :type/servers}
 
-   {:db/id         "product-2"
-    :db/ident      :test/product2
-    :resource/type :product}
+   ;; Servers:
+   {:db/id         "server-1"
+    :entity/id     "server-1"
+    :db/ident      :test/server1
+    :resource/type :server}
 
-   ; Schema:
-   ; the annoying part of current design is that you need to specify all resources for a relation.
-   ; I'm looking into a resource type or collective resource e.g. 'products'.
-   ; consider: can we handle these inputs as namespaced, i.e. resource type :product + :owner (relation) are unique?
-   ; Todo: constrain relation subject types.
-   ; OK, we need to decouple permissions from relations.
-   ;
-   (Relationship "user-1" :owner "account-1")
-   (Relationship "account-1" :account "vpc-1")
+   (Relationship "account-1" :account "server-1") ; hmm let's check schema plz.
 
-   ;; Relationships:
-   (Relationship "product-1" :company "company-1")
-   (Relationship "product-2" :company "company-2")
+   {:db/id         "server-2"
+    :entity/id     "server-2"
+    :db/ident      :test/server2
+    :resource/type :server}
 
-   ;; Team Membership:
-   (Relationship "user-1" :member "team-1")            ; User 1 is on Team 1
-   ;(Relationship "user-2" :team/member "team-2")
+   (Relationship "account-2" :account "server-2")])
 
-   ; User 2 is the direct :product/owner of Product 2
-   (Relationship "user-2" :owner "product-2")
+;; Team Membership:
 
-   ; Team 1 has control of Company 1
-   (Relationship "team-1" :company "company-1")
-   (Relationship "team-2" :company "company-2")])
+;(Relationship "user-2" :team/member "team-2")
+
+
+
