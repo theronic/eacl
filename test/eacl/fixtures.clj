@@ -123,9 +123,6 @@
 
    (Relationship "account-2" :account "team-2")
 
-   ;{:db/id "servers"
-   ; :db/ident :type/servers}
-
    ;; Servers:
    {:db/id         "server-1"
     :entity/id     "server-1"

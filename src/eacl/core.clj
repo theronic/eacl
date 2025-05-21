@@ -190,19 +190,21 @@
 
     ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
     ;; Example: User U gets :admin on VPC_X if VPC_X --:account--> ACC_Y and User U has :admin on ACC_Y.
+    ;; MODIFIED based on user feedback: Rule now expects intermediate --via-relation-name--> this-resource
+    ;; Example: User U gets :view on SERVER_X if ACC_Y --:account--> SERVER_X and User U has :admin on ACC_Y.
     [(has-permission ?subject ?perm-name-on-this-resource ?this-resource)
      [?this-resource :resource/type ?this-resource-type]
 
      ;; 1. Find an arrow permission definition for this-resource-type and perm-name-on-this-resource
      [?arrow-perm-def :eacl.permission/resource-type ?this-resource-type]
      [?arrow-perm-def :eacl.permission/permission-name ?perm-name-on-this-resource]
-     [?arrow-perm-def :eacl.permission/arrow-source-relation-name ?via-relation-name]  ; e.g., :account (from vpc to account)
-     [?arrow-perm-def :eacl.permission/arrow-target-permission-name ?perm-on-related] ; e.g., :admin (on the account)
+     [?arrow-perm-def :eacl.permission/arrow-source-relation-name ?via-relation-name]  ; e.g., :account (the relation name specified in Permission)
+     [?arrow-perm-def :eacl.permission/arrow-target-permission-name ?perm-on-related] ; e.g., :admin (on the intermediate/account)
 
-     ;; 2. Find intermediate resource: ?this-resource --via-relation-name--> ?intermediate-resource
-     [?rel-linking-resources :eacl.relationship/subject ?this-resource] ; e.g., vpc is subject of tuple
+     ;; 2. Find intermediate resource: ?intermediate-resource --via-relation-name--> ?this-resource
+     [?rel-linking-resources :eacl.relationship/subject ?intermediate-resource] ; e.g., account is subject of tuple
      [?rel-linking-resources :eacl.relationship/relation-name ?via-relation-name] ; relation is :account
-     [?rel-linking-resources :eacl.relationship/resource ?intermediate-resource] ; e.g., account is resource of tuple
+     [?rel-linking-resources :eacl.relationship/resource ?this-resource]      ; e.g., server/vpc is resource of tuple
 
      ;; 3. Subject must have the target permission on the intermediate resource (recursive call)
      (has-permission ?subject ?perm-on-related ?intermediate-resource)

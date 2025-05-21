@@ -53,10 +53,7 @@
 
                        (testing "We can enumerate subjects that can access a resource."
                          ; Bug: currently returns the subject itself which needs a fix.
-                         (is (= #{:test/user1
-                                  :test/team
-                                  :test/vpc
-                                  :user/super-user}
+                         (is (= #{:user/super-user :test/account1 :test/user1}
                                 (set (mapv :db/ident (eacl/lookup-subjects db {:resource/id :test/server1
                                                                                :permission  :view})))))
 
@@ -99,10 +96,7 @@
 
                          (testing "Now only :test/user1 can access both servers."
                            (let [db' (d/db conn)]
-                             (is (= #{:test/team2
-                                      :test/user1
-                                      :test/vpc2
-                                      :user/super-user}
+                             (is (= #{:test/account2 :user/super-user :test/user1}
                                     (set (mapv :db/ident (eacl/lookup-subjects db' {:resource/id :test/server2
                                                                                     :permission  :view})))))
                              (testing ":test/user2 cannot access any servers" ; is this correct?
