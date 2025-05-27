@@ -75,25 +75,25 @@ E.g.
 @(d/transact conn your-relationships)
 
 ; Now you can do `can?` permission checks:
-(eacl/can? (d/db conn) (->user "user1") :view (->server "server1"))
+(eacl/can? client (->user "user1") :view (->server "server1"))
 => true | false
 
-(eacl/can! (d/db conn) (->user "user1" :view (->server "server1"))
-=> true or throws if `can? `returns false for same arguments.
+(eacl/can! client (->user "user1" :view (->server "server1"))
+=> true or throws if `can?` returns false.
 
 ; You can enumerate resources: 
-(eacl/lookup-resources (d/db conn) {:resource/type :server
-                                    :permission    :view
-                                    :subject/id    "user1"})
+(eacl/lookup-resources client {:resource/type :server
+                               :permission    :view
+                               :subject/id    "user1"})
 => [{:type :server :id "server1"},
     {:type :server :id "server2"}
     ...]
 ; ^ collection of :server resources (spice-object) that subject user1 can :view.
 
 ; You can enumerate subjects:
-(eacl/lookup-subjects (d/db conn) {:resource/type :server
-                                   :permission    :view
-                                   :resource/id   "server1"})
+(eacl/lookup-subjects client {:resource/type :server
+                              :permission    :view
+                              :resource/id   "server1"})
 => [{:type :user, :id "user1"},
     {:type :account, :id   "account1"} 
     ...]
