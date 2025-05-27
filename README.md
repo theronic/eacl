@@ -15,7 +15,7 @@ To make entities in Datomic compatible with EACL, you need the following two att
 
 ## Usage
 
-Refer to the `IAuthorization` protocol in [eacl/protocols.clj](src/eacl/core.clj).
+Refer to the `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj).
 
 The primary API call is `can?`:
 
