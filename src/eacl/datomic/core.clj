@@ -1,11 +1,12 @@
-(ns eacl.spicedb.impl
-  "Mostly Spice-compatible layer for EACL."
-  (:require [eacl.protocols :as proto :refer [IAuthorization spice-object
-                                              ->Relationship map->Relationship
-                                              ->RelationshipUpdate]]
+(ns eacl.datomic.core
+  "Reifies eacl.core/IAuthorization for Datomic-backed EACL in eacl.datomic.impl."
+  (:require [eacl.core :as eacl :refer [IAuthorization spice-object
+                                        ->Relationship map->Relationship
+                                        ->RelationshipUpdate]]
+            [eacl.datomic.impl :as spiceomic]
             [datomic.api :as d]
-            [clojure.tools.logging :as log]
-            [eacl.core :as eacl]))
+            [eacl.datomic.schema :as schema]
+            [clojure.tools.logging :as log]))
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -25,7 +26,7 @@
 (comment
   (relationship-filters->args
     {:resource/type :server
-     :subject/id 123}))
+     :subject/id    123}))
 
 (defn build-relationship-query
   "One of these filters are required:
@@ -48,21 +49,21 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     subject-id        :subject/id
     _subject-relation :subject/relation}]                   ; not supported yet.
   {:pre [(or resource-type resource-id _resource-prefix resource-relation)
-         (not _resource-prefix)]} ; not supported.
-  {:find '[?resource-type ?resource-id
-           ?relation-name
-           ?subject-type ?subject-id]
+         (not _resource-prefix)]}                           ; not supported.
+  {:find  '[?resource-type ?resource-id
+            ?relation-name
+            ?subject-type ?subject-id]
    ; big todo: string ID support, via UUIDs?
-   :keys [:resource/type :resource/id
-          :resource/relation
-          :subject/type :subject/id]
-   :in   (cond-> ['$] ; this would be a nice macro.
-           resource-type (conj '?resource-type)
-           resource-id (conj '?resource-id)
-           ;resource-prefix (conj '?resource-prefix) ; todo.
-           resource-relation (conj '?resource-relation)
-           subject-type (conj '?subject-type)
-           subject-id (conj '?subject-id))
+   :keys  [:resource/type :resource/id
+           :resource/relation
+           :subject/type :subject/id]
+   :in    (cond-> ['$]                                      ; this would be a nice macro.
+            resource-type (conj '?resource-type)
+            resource-id (conj '?resource-id)
+            ;resource-prefix (conj '?resource-prefix) ; todo.
+            resource-relation (conj '?resource-relation)
+            subject-type (conj '?subject-type)
+            subject-id (conj '?subject-id))
    ;subject-relation (conj '?subject-relation) ; todo.
    ; Clause ; order is perf. sensitive.
    :where '[[?relationship :eacl.relationship/resource ?resource]
@@ -103,7 +104,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
                  :resource/relation relation
                  :subject/type      (:type subject)
                  :subject/id        (:id subject)}
-        _ (log/debug 'filters filters)
+        _       (log/debug 'filters filters)
         qry     (-> (build-relationship-query filters)
                     (assoc :find '[?relationship .])
                     (dissoc :keys))
@@ -111,8 +112,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     (apply d/q qry db args)))
 
 (defn tx-relationship
-  "Note that in relationship filters, `relation` here corresponds to :resource/relation.
-  Note that we don't validate resource & subject types."
+  "Translate a Relationship to a Datomic entity map.
+  Note: `relation` in relationship filters corresponds to `:resource/relation` here.
+  We don't validate resource & subject types here."
   [{:as _relationship :keys [subject relation resource]}]
   {:eacl.relationship/subject       [:entity/id (:id subject)]
    :eacl.relationship/relation-name relation
@@ -122,7 +124,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   "Note that delete costs N queries."
   [db {:as update :keys [operation relationship]}]
   (case operation
-    :touch ; ensure update existing. we don't have uniqueness on this yet.
+    :touch                                                  ; ensure update existing. we don't have uniqueness on this yet.
     (let [rel-id (find-one-relationship db relationship)]
       (cond-> (tx-relationship relationship)
         rel-id (assoc :db/id rel-id)))
@@ -156,9 +158,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 ; - handle spice-object type & ID.
 
 (defn spiceomic-can?
-  "Note we do not currently check subject & resource types."
+  "Subject & Resource types must match in rules, but we don't check them here."
   [db subject permission resource]
-  (eacl/can? db [:entity/id (:id subject)] permission [:entity/id (:id resource)]))
+  (spiceomic/can? db [:entity/id (:id subject)] permission [:entity/id (:id resource)]))
 
 ;(defn
 ;  ->RelationshipFilter
@@ -191,11 +193,11 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (defn spiceomic-lookup-resources [db filters]
   ; todo coercion
-  (eacl/lookup-resources db filters))
+  (spiceomic/lookup-resources db filters))
 
 (defn spiceomic-lookup-subjects [db filters]
   ; todo coercion
-  (eacl/lookup-subjects db filters))
+  (spiceomic/lookup-subjects db filters))
 
 (defrecord Spiceomic [conn]
   IAuthorization
@@ -254,7 +256,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (comment
   (require '[eacl.fixtures :as fixtures])
-  (eacl/with-mem-conn [conn eacl/v3-eacl-schema]
-    @(d/transact conn fixtures/base-fixtures)
-    (let [client (make-client conn)]
-      (lookup-resources client {}))))
+  (spiceomic/with-mem-conn [conn schema/v3-schema]
+                           @(d/transact conn fixtures/base-fixtures)
+                           (let [client (make-client conn)]
+                             (lookup-resources client {}))))

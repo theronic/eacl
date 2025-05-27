@@ -1,8 +1,9 @@
 (ns eacl.benchmark
   (:require [criterium.core :as crit]
-            [eacl.core :as eacl :refer [Relation Relationship Permission]]
+            [eacl.datomic.impl :as eacl :refer [Relation Relationship Permission]]
+            [eacl.datomic.schema :as schema]
             [datomic.api :as d]
-            [eacl.fixtures :as fixtures]
+            [eacl.datomic.fixtures :as fixtures]
             [clojure.test :as t :refer [deftest testing is]]))
 
 ;(defn rand-subject [])
@@ -18,7 +19,7 @@
   (d/create-database datomic-uri)
   (def conn (d/connect datomic-uri))
 
-  (tx! conn (concat eacl/v3-eacl-schema))
+  (tx! conn (concat schema/v3-schema))
   (tx! conn fixtures/base-fixtures)
   (tx! conn [{:db/ident       :entity/id
               :db/valueType   :db.type/uuid

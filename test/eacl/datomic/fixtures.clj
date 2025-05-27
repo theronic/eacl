@@ -1,10 +1,13 @@
-(ns eacl.fixtures
+(ns eacl.datomic.fixtures
   (:require [datomic.api :as d]
-            [eacl.core :as eacl :refer (Relation Relationship Permission)]))
+            [eacl.datomic.impl :as eacl :refer (Relation Relationship Permission)]))
 
 (def base-fixtures
   [; Schema
    (Relation :platform/super_admin :user)                   ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
+   ; definition platform {
+   ;   relation super_admin: user;
+   ; }
    (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
 
    (Relation :vpc/account :account)                         ; vpc, relation account: account.
@@ -116,8 +119,8 @@
    ; Team
    {:db/id         "team-1"
     :entity/id     "team-1"
-    :db/ident      :test/team
-    :resource/type :team}
+    :resource/type :team
+    :db/ident      :test/team}
 
    ; Teams belongs to accounts
    (Relationship "account-1" :account "team-1")
