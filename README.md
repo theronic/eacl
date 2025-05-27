@@ -4,10 +4,6 @@ EACL is a [SpiceDB-compatible](https://authzed.com/spicedb) authorization system
 
 EACL aims to resolve the impedance mismatch between Datomic entities and SpiceDB Relationships to simplify synchronising relationships from Datomic to SpiceDB, while enabling later adoption of SpiceDB once you need the high-performance consistency semantics supported by Spice.
 
-To make entities in Datomic compatible with EACL, you need the following two attributes defined:
-- `:resource/type` (keyword), e.g. `:server` or `:account`
-- `:entity/id` (string), e.g. `"unique-account-1"`
-
 ## Licence & Funding
 
 - The open-source work to make EACL Spice-compatible was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/). We are a Clojure shop, and sometimes we hire Clojure & Datomic experts.
@@ -15,7 +11,7 @@ To make entities in Datomic compatible with EACL, you need the following two att
 
 ## Usage
 
-Refer to the `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj).
+The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface to the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1). We have an implementation for the gRPC API that is not open-sourced yet, but will be open-sourced.
 
 The primary API call is `can?`:
 
@@ -23,9 +19,26 @@ The primary API call is `can?`:
 (can? db subject permission resource) => true | false
 ```
 
+To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
+- `:resource/type` (keyword), e.g. `:server` or `:account`
+- `:entity/id` (unique string), e.g. `"unique-account-1"`
+
+You can construct a Spice Object using `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`. It returns a SpiceObject.
+
+It is convenient to define partial helpers for your known object types, e.g.
+
+```clojure
+(def ->user (partial spice-object :user))
+(def ->server (partial spice-object :server))
+(def ->product (partial spice-object :product))
+; etc.
+```
+
+Then you can construct Spice-compatible records for passing subjects & resources to `can?`:
+
 E.g.
 ```clojure
-(can? db (spice-object :user "user1") :edit_product (spice-object :product "product1")) => true | false
+(can? db (->user "user1") :edit_product (->product "product1")) => true | false
 ```
 
 (Todo better docs for `write-relationships`.)
@@ -47,40 +60,40 @@ E.g.
 ; Transact your Spice-compatible EACL Schema (details below):
 @(d/transact conn your-eacl-schema)
 
-; Make an EACL client that supports IAuthorization protocol:
-(def client (spiceomic/make-client conn)) ; make EACL client
+; Make an EACL Datomic client that satisfies IAuthorization protocol:
+(def client (spiceomic/make-client conn))
 
 ; Ensure your resources have `:resource/type` & `:entity/id`:
 @(d/transact conn
-             [{:resource/type :user
-               :entity/id     "user1"}
+   [{:resource/type :user
+     :entity/id     "user1"}
+  
+    {:resource/type :server
+     :entity/id     "server1"}])
 
-              {:resource/type :server
-               :entity/id     "server1"}])
+; Transact EACL Relationships (schema is detailed below):
+@(d/transact conn your-relationships)
 
-; Convenience Helpers to construct spice-object:
-(def ->user (partial spice-object :user))
-(def ->server (partial spice-object :server))
-
-@(d/transact conn your-relationships) ; schema details below
-
+; Now you can do `can?` permission checks:
 (eacl/can? (d/db conn) (->user "user1") :view (->server "server1"))
 => true | false
 
 (eacl/can! (d/db conn) (->user "user1" :view (->server "server1"))
-=> throws if `can? `returns false for same arguments.
+=> true or throws if `can? `returns false for same arguments.
 
+; You can enumerate resources: 
 (eacl/lookup-resources (d/db conn) {:resource/type :server
-                                   :permission    :view
-                                   :subject/id    "user1"})
+                                    :permission    :view
+                                    :subject/id    "user1"})
 => [{:type :server :id "server1"},
     {:type :server :id "server2"}
     ...]
 ; ^ collection of :server resources (spice-object) that subject user1 can :view.
 
+; You can enumerate subjects:
 (eacl/lookup-subjects (d/db conn) {:resource/type :server
-                                  :permission    :view
-                                  :resource/id   "server1"})
+                                   :permission    :view
+                                   :resource/id   "server1"})
 => [{:type :user, :id "user1"},
     {:type :account, :id   "account1"} 
     ...]
@@ -91,9 +104,9 @@ E.g.
 
 EACL schema lives in Datomic. The following functions correspond to SpiceDB schema and return Datomic entity maps:
 
-- `(Relation :resource-type :relation-name :subject-type)`
-- `(Permission :resource_type :relation_name :permission)`
-- `(Relationship user1 :relation-name server1)` confers `:permission` to subject `user1` on server1.
+- `(Relation resource-type relation-name subject-type)`
+- `(Permission resource-type relation-name permission)`
+- `(Relationship user1 relation-name server1)` confers `permission` to subject `user1` on server1.
 
 Additionally, we support SpiceDB arrow syntax with a 4-arity call to Permission:
 - `(Permission :resource-type :relation_name :relation_permission :admin)`
