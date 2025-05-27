@@ -67,24 +67,24 @@ E.g.
 (eacl/can? (d/db conn) (->user "user1") :view (->server "server1"))
 => true | false
 
-(eacl/can! (d/db conn) (->user "user1" :view (->server "server1")
-                               => throws if `can? `returns false for same arguments.
+(eacl/can! (d/db conn) (->user "user1" :view (->server "server1"))
+=> throws if `can? `returns false for same arguments.
 
-                               (eacl/lookup-resources (d/db conn) {:resource/type :server
-                                                                   :permission    :view
-                                                                   :subject/id    "user1"})
-                               => [{:type :server :id "server1"},
-                                   {:type :server :id "server2"}]
-                               ; ^ collection of :server resources (spice-object) that user1 can :view.
+(eacl/lookup-resources (d/db conn) {:resource/type :server
+                                   :permission    :view
+                                   :subject/id    "user1"})
+=> [{:type :server :id "server1"},
+    {:type :server :id "server2"}
+    ...]
+; ^ collection of :server resources (spice-object) that subject user1 can :view.
 
-                               (eacl/lookup-subjects (d/db conn) {:resource/type :server
-                                                                  :permission    :view
-                                                                  :resource/id   "server1"})
-                               => [{:type :user
-                                    :id   "user1"},
-                                   {:type :account
-                                    :id   "account1"}]
-                               ; collection of subjects that can :view the server resource "server1".
+(eacl/lookup-subjects (d/db conn) {:resource/type :server
+                                  :permission    :view
+                                  :resource/id   "server1"})
+=> [{:type :user, :id "user1"},
+    {:type :account, :id   "account1"} 
+    ...]
+; collection of subjects that can :view the :server resource "server1".
 ```
 
 ## Schema
