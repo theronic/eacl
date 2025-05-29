@@ -253,10 +253,3 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (defn make-client [conn]
   (->Spiceomic conn))
-
-(comment
-  (require '[eacl.fixtures :as fixtures])
-  (spiceomic/with-mem-conn [conn schema/v3-schema]
-                           @(d/transact conn fixtures/base-fixtures)
-                           (let [client (make-client conn)]
-                             (lookup-resources client {}))))

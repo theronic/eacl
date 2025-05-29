@@ -1,10 +1,11 @@
 (ns eacl.datomic.impl-test
   (:require [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :as fixtures]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
-            [eacl.datomic.impl :as spiceomic :refer [with-fresh-conn Relation Relationship Permission can?]]))
+            [eacl.datomic.impl :as spiceomic :refer [Relation Relationship Permission can?]]))
 
 (deftest eacl3-tests
 
@@ -20,11 +21,12 @@
              (Permission :server/owner :admin)))))
 
   (testing "fixtures"
-    (with-fresh-conn conn schema/v3-schema
+    (with-mem-conn [conn schema/v4-schema]
       (is @(d/transact conn fixtures/base-fixtures))
 
       (let [db (d/db conn)]
         ":test/user can :view and :reboot their server"
+
         (is (can? db :test/user1 :view :test/server1))
         (is (can? db :test/user1 :reboot :test/server1))
 
@@ -62,23 +64,23 @@
                    (spice-object :account "account-1")
                    (spice-object :user "super-user")}
                  (set (spiceomic/lookup-subjects db {:resource/id "server-1"
-                                                     :permission       :view}))))
+                                                     :permission  :view}))))
 
           (testing ":test/user2 is only subject who can delete :test/server2"
             (is (= #{(spice-object :user "user-2")
                      (spice-object :user "super-user")}
                    (set (spiceomic/lookup-subjects db {:resource/id "server-2"
-                                                       :permission       :delete}))))))
+                                                       :permission  :delete}))))))
 
         (testing "We can enumerate resources with lookup-resources"
           (is (= #{(spice-object :account "account-1")
                    (spice-object :server "server-1")}
                  (set (spiceomic/lookup-resources db {:subject/id "user-1"
-                                                      :permission      :view}))))
+                                                      :permission :view}))))
           (is (= #{(spice-object :account "account-2")
                    (spice-object :server "server-2")}
                  (set (spiceomic/lookup-resources db {:subject/id "user-2"
-                                                      :permission      :view})))))
+                                                      :permission :view})))))
 
         (testing "Make user-1 a shared_admin of server-2"
           (is @(d/transact conn [(Relationship :test/user1 :shared_admin :test/server2)]))) ; this shouldn't be working. no schema for it.
@@ -92,12 +94,12 @@
                    (spice-object :server "server-1")
                    (spice-object :server "server-2")}
                  (set (spiceomic/lookup-resources db {:subject/id "user-1"
-                                                      :permission      :view}))))
+                                                      :permission :view}))))
           (is (= #{(spice-object :user "super-user")
                    (spice-object :user "user-1")
                    (spice-object :user "user-2")}
                  (set (spiceomic/lookup-subjects db {:resource/id "server-2"
-                                                     :permission       :delete})))))
+                                                     :permission  :delete})))))
 
         (testing "Now let's delete all :server/owner Relationships for :test/user2"
           (let [db-for-delete (d/db conn)
@@ -109,22 +111,29 @@
             (is @(d/transact conn (for [rel rels] [:db.fn/retractEntity (:db/id rel)])))))
 
         (testing "Now only :test/user1 can access both servers."
-            (let [db' (d/db conn)]
-              (is (= #{(spice-object :account "account-2")
-                       (spice-object :user "user-1")
-                       (spice-object :user "super-user")}
-                     (set (spiceomic/lookup-subjects db' {:resource/id "server-2"
-                                                          :permission       :view}))))
-              (testing ":test/user2 cannot access any servers" ; is this correct?
-                (is (= #{} ; Expect empty set of spice objects
-                       (set (spiceomic/lookup-resources db' {:subject/id "user-2"
-                                                             :permission      :view})))))
+          (let [db' (d/db conn)]
+            (is (= #{(spice-object :account "account-2")
+                     (spice-object :user "user-1")
+                     (spice-object :user "super-user")}
+                   (set (spiceomic/lookup-subjects db' {:resource/id "server-2"
+                                                        :permission  :view}))))
+            (testing ":test/user2 cannot access any servers" ; is this correct?
+              (is (= #{}                                    ; Expect empty set of spice objects
+                     (set (spiceomic/lookup-resources db' {:subject/id "user-2"
+                                                           :permission :view})))))
 
-              (is (not (can? db' :test/user2 :server/delete :test/server2)))
+            (is (not (can? db' :test/user2 :server/delete :test/server2)))
 
-              (testing ":test/user1 permissions remain unchanged"
-                (is (= #{(spice-object :account "account-1")
-                         (spice-object :server "server-1")
-                         (spice-object :server "server-2")}
-                       (set (spiceomic/lookup-resources db' {:subject/id "user-1"
-                                                             :permission      :view})))))))))))
+            (testing ":test/user1 permissions remain unchanged"
+              (is (= #{(spice-object :account "account-1")
+                       (spice-object :server "server-1")
+                       (spice-object :server "server-2")}
+                     (set (spiceomic/lookup-resources db' {:subject/id "user-1"
+                                                           :permission :view})))))))))))
+
+(comment
+  (require '[eacl.fixtures :as fixtures])
+  (spiceomic/with-mem-conn [conn schema/v4-schema]
+    @(d/transact conn fixtures/base-fixtures)
+    (let [client (make-client conn)]
+      (lookup-resources client {}))))
