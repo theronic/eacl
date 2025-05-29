@@ -1,4 +1,4 @@
-(ns eacl.benchmark
+(ns eacl.benchmark-test
   (:require [criterium.core :as crit]
             [eacl.datomic.impl :as eacl :refer [Relation Relationship Permission]]
             [eacl.datomic.schema :as schema]
@@ -19,33 +19,21 @@
   (d/create-database datomic-uri)
   (def conn (d/connect datomic-uri))
 
-  (tx! conn (concat schema/v3-schema))
-  (tx! conn fixtures/base-fixtures)
-  (tx! conn [{:db/ident       :entity/id
-              :db/valueType   :db.type/uuid
-              :db/unique      :db.unique/identity
-              :db/cardinality :db.cardinality/one}
+  (testing "Transact EACL Datomic Schema"
+    (tx! conn (concat schema/v4-schema)))
 
-             {:db/ident       :company/name
-              :db/valueType   :db.type/string
-              :db/cardinality :db.cardinality/one}
+  (testing "Transact a realistic EACL Permission Schema"
+    (tx! conn fixtures/base-fixtures))
 
-             {:db/ident       :product/title
-              :db/valueType   :db.type/string
-              :db/cardinality :db.cardinality/one}
-
-             {:db/ident       :user/username
-              :db/valueType   :db.type/string
-              :db/cardinality :db.cardinality/one}])
-
+  ; generate 100 companies
   (let [cids (repeatedly 100 d/squuid)]
-
-    ; insert 100 companies
-    (tx! conn (for [cid cids] {:company/name (str "company-" cid)
-                               :entity/id    cid}))
+    (tx! conn (for [cid cids]
+                {:company/name (str "company-" cid)
+                 :resource/type :company
+                 :entity/id    (str cid)}))
 
     ; Relation so :company/owner can view & edit company
-    (tx! conn [(eacl/Relation :company :company/owner [:company/view, :company/edit])])
+    (tx! conn [(Relationship :company :company/owner [:company/view, :company/edit])])
 
     (doseq [cid cids]                                       ; for each company,
       ; make users:

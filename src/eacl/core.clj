@@ -88,13 +88,3 @@
   Need a better name for this. Only used internally here."
   ([type id] (->SpiceObject type id nil))
   ([type id relation] (->SpiceObject type id relation)))
-
-; These are helpers specific to CA (todo move out):
-(def ->user (partial spice-object :user))
-(def ->team (partial spice-object :team))
-(def ->server (partial spice-object :server))
-(def ->platform (partial spice-object :platform))
-(def ->account (partial spice-object :account))
-(def ->vpc (partial spice-object :vpc))
-(def ->backup (partial spice-object :backup))
-(def ->host (partial spice-object :host))
