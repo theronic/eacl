@@ -28,7 +28,7 @@
 
 (defn datomic->id [id] (identity id))
 
-(defn build-fast-rules [resource-type-attr]
+(defn build-rules [resource-type-attr]
   [;; Reachability rules to traverse relationships:
    '[(reachable ?resource ?subject)
      [?relationship :eacl.relationship/resource ?resource]
@@ -127,7 +127,7 @@
      ;; Ensure this-resource is not the same as intermediate for simple arrows like A -> B
      [(not= ?this-resource ?intermediate-resource)]]])
 
-(def rules (build-fast-rules :resource/type))
+(def rules (build-rules :resource/type))
 ;(def rules (build-rules :resource/type))
 
 (defn Relation
