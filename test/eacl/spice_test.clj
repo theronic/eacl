@@ -9,7 +9,8 @@
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.impl]                             ; this can go away once with-mem-conn moves
             [clojure.tools.logging :as log]
-            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
+            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]])
+  (:import (eacl.core IAuthorization)))
 
 (deftest spicedb-tests
 
@@ -51,6 +52,8 @@
 
     (testing "Make a Spice client and hold onto channel for disposal later."
       (let [client (spiceomic/make-client conn)]
+        (is client)
+        ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
         ;"ensure channel is a managed gRPC channel"
         ;(is (= io.grpc.internal.ManagedChannelOrphanWrapper (class channel)))
@@ -163,34 +166,30 @@
     (testing "Now, my-user can :reboot my-server but joe's-user cannot :reboot my-server"
       (is (true? (eacl/can? *client my-user :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client joe's-user :reboot my-server fully-consistent))))
-    
+
     (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
       (is (= [(update my-server :id str)] (eacl/lookup-resources *client
-                                                                 {:consistency   fully-consistent
-                                                                  :subject/type  :user
-                                                                  :subject/id    (:id my-user)
+                                                                 {:resource/type :server
                                                                   :permission    :reboot
-                                                                  :resource/type :server})))
+                                                                  :subject       my-user
+                                                                  :consistency   fully-consistent})))
       (is (= [(update joe's-server :id str)] (eacl/lookup-resources *client
-                                                                    {:consistency   fully-consistent
-                                                                     :subject/type  :user
-                                                                     :subject/id    (:id joe's-user)
+                                                                    {:resource/type :server
                                                                      :permission    :reboot
-                                                                     :resource/type :server}))))
+                                                                     :subject       joe's-user
+                                                                     :consistency   fully-consistent}))))
 
     (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
       (is (= [my-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                      :subject/type  :user
+                                                      :resource my-server
                                                       :permission    :reboot
-                                                      :resource/type :server
-                                                      :resource/id   (:id my-server)})))
+                                                      :subject/type  :user})))
       (is (= [joe's-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                         :subject/type  :user
+                                                         :resource joe's-server
                                                          :permission    :reboot
-                                                         :resource/type :server
-                                                         :resource/id   (:id joe's-server)}))))
+                                                         :subject/type  :user}))))
 
     (testing "joe's-user can :reboot their server, but I cannot:"
       (is (true? (eacl/can? *client joe's-user :reboot joe's-server fully-consistent)))

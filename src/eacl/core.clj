@@ -62,18 +62,18 @@
   ;; Subject & Resource & Enumeration
   (lookup-resources [this {:as query :keys [consistency]}])
   ; lookup-resources (formerly 'what-can?') accepts:
-  ; - :subject/type – keyword, required.
-  ; - :subject/id – required.
-  ; - :permission - keyword, required.
   ; - :resource/type – keyword, required.
+  ; - :permission - keyword, required.
+  ; - :subject has {:keys [type id]}. Required.
+  ; - limit - optional number.
+  ; - offset - optional number.
 
   (lookup-subjects [this {:as query :keys [consistency]}])
-  ; lookup-subjects (formerely 'who-can?') accepts:
-  ; - :subject/type (keyword, required)
-  ; - :subject/relation (optional keyword, e.g. :member)
-  ; - :permission (keyword)
-  ; - :resource/type (keyword, required)
-  ; - :resource/id (required)
+  ; lookup-subjects (formerly 'who-can?') accepts:
+  ; - :resource has {:keys [type id]}. Required.
+  ; - :permission (keyword) required.
+  ; - :subject/type (keyword) required.
+  ; - :subject/relation (keyword) optional, e.g. :member.
 
   (expand-permission-tree [this {:as opts :keys [consistency]} permission resource]))
 

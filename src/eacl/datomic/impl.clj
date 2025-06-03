@@ -30,14 +30,14 @@
            (d/release ~sym)
            (d/delete-database datomic-uri#))))))
 
-(with-mem-conn [conn [{:db/ident :server/account
-                       :db/valueType :db.type/ref
-                       :db/cardinality :db.cardinality/one}
-
-                      {:db/ident :thing
-                       :db/valueType :db.type/keyword
-                       :db/cardinality :db.cardinality/one}]]
-  (d/transact conn [[:db/add 123 :server/account]]))
+;(with-mem-conn [conn [{:db/ident       :server/account
+;                       :db/valueType   :db.type/ref
+;                       :db/cardinality :db.cardinality/one}
+;
+;                      {:db/ident       :thing
+;                       :db/valueType   :db.type/keyword
+;                       :db/cardinality :db.cardinality/one}]]
+;  (d/transact conn [[:db/add 123 :server/account]]))
 
 (defn id->identifier
   "This is to support custom unique entity IDs."
@@ -109,7 +109,7 @@
        [?structural-rel :eacl.relationship/relation-name ?relation-name-in-perm-def]
        [?structural-rel :eacl.relationship/resource ?target]
 
-       (reachable ?target ?subject)                        ; User must be able to reach the target of the structural relationship
+       (reachable ?target ?subject)                         ; User must be able to reach the target of the structural relationship
        [(not= ?subject ?resource)]])
 
    ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
@@ -120,10 +120,10 @@
      [?this-resource :resource/type ?this-resource-type]
 
      ;; 1. Find an arrow permission definition for this-resource-type and perm-name-on-this-resource
-     [?arrow-perm-def :eacl.permission/resource-type ?this-resource-type]
-     [?arrow-perm-def :eacl.permission/permission-name ?perm-name-on-this-resource]
-     [?arrow-perm-def :eacl.permission/arrow-source-relation-name ?via-relation-name] ; e.g., :account (the relation name specified in Permission)
-     [?arrow-perm-def :eacl.permission/arrow-target-permission-name ?perm-on-related] ; e.g., :admin (on the intermediate/account)
+     [?arrow-perm-def :eacl.arrow-permission/resource-type ?this-resource-type]
+     [?arrow-perm-def :eacl.arrow-permission/permission-name ?perm-name-on-this-resource]
+     [?arrow-perm-def :eacl.arrow-permission/source-relation-name ?via-relation-name] ; e.g., :account (the relation name specified in Permission)
+     [?arrow-perm-def :eacl.arrow-permission/target-permission-name ?perm-on-related] ; e.g., :admin (on the intermediate/account)
 
      ;; 2. Find intermediate resource: ?intermediate-resource --via-relation-name--> ?this-resource
      [?rel-linking-resources :eacl.relationship/subject ?intermediate-resource] ; e.g., account is subject of tuple
@@ -151,16 +151,16 @@
 
    ;; Direct permission check (copied and adapted from core2)
    '[(has-permission ?subject ?permission-name ?resource)
-     [?resource :resource/type ?resource-type] ; would this be faster lower down?
+     [?resource :resource/type ?resource-type]              ; would this be faster lower down?
      ;; annoyingly...
      ;[?relationship :eacl.relationship/relation-name ?relation-name-in-tuple]    ; via this relation in the tuple
 
      [(tuple ?resource ?relation-name-in-tuple ?subject) ?resource+rel-name+subject]
      [?relationship :eacl.relationship/resource+relation-name+subject ?resource+rel-name+subject]
 
-     [?relationship :eacl.relationship/resource ?resource] ; subject has some relationship TO the resource
+     [?relationship :eacl.relationship/resource ?resource]  ; subject has some relationship TO the resource
      [?relationship :eacl.relationship/relation-name ?relation-name-in-tuple]
-     [?relationship :eacl.relationship/subject ?subject]         ; subject of the relationship tuple
+     [?relationship :eacl.relationship/subject ?subject]    ; subject of the relationship tuple
 
      ;; Permission definition: ?relation-name-in-perm-def grants ?permission-name on ?resource-type
      [(tuple ?resource-type ?relation-name-in-perm-def ?permission-name) ?res-type+relation+permission]
@@ -200,7 +200,7 @@
        [?structural-rel :eacl.relationship/relation-name ?relation-name-in-perm-def]
        [?structural-rel :eacl.relationship/resource ?target]
 
-       (reachable ?target ?subject)                        ; User must be able to reach the target of the structural relationship
+       (reachable ?target ?subject)                         ; User must be able to reach the target of the structural relationship
        [(not= ?subject ?resource)]])
 
    ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
@@ -216,13 +216,13 @@
              ?perm-on-related
              ?perm-name-on-this-resource) ?res-type+relation+related-perm+permission]
      [?arrow-perm-def
-      :eacl.permission/resource-type+arrow-source-relation-name+arrow-target-permission-name+permission-name
+      :eacl.arrow-permission/resource-type+source-relation-name+target-permission-name+permission-name
       ?res-type+relation+related-perm+permission]
 
-     [?arrow-perm-def :eacl.permission/resource-type ?this-resource-type]
-     [?arrow-perm-def :eacl.permission/permission-name ?perm-name-on-this-resource]
-     [?arrow-perm-def :eacl.permission/arrow-source-relation-name ?via-relation-name] ; e.g., :account (the relation name specified in Permission)
-     [?arrow-perm-def :eacl.permission/arrow-target-permission-name ?perm-on-related] ; e.g., :admin (on the intermediate/account)
+     [?arrow-perm-def :eacl.arrow-permission/resource-type ?this-resource-type]
+     [?arrow-perm-def :eacl.arrow-permission/permission-name ?perm-name-on-this-resource]
+     [?arrow-perm-def :eacl.arrow-permission/source-relation-name ?via-relation-name] ; e.g., :account (the relation name specified in Permission)
+     [?arrow-perm-def :eacl.arrow-permission/target-permission-name ?perm-on-related] ; e.g., :admin (on the intermediate/account)
 
      ;; 2. Find intermediate resource: ?intermediate-resource --via-relation-name--> ?this-resource
      [(tuple ?this-resource ?via-relation-name ?intermediate-resource) ?resource+relation+mid-resource]
@@ -288,10 +288,10 @@
     grant-permission]
    {:pre [(keyword? resource-type) (keyword? grant-permission)
           (keyword? arrow-source-relation) (keyword? arrow-target-permission)]}
-   {:eacl.permission/resource-type                resource-type
-    :eacl.permission/permission-name              grant-permission
-    :eacl.permission/arrow-source-relation-name   arrow-source-relation
-    :eacl.permission/arrow-target-permission-name arrow-target-permission}))
+   {:eacl.arrow-permission/resource-type                resource-type
+    :eacl.arrow-permission/permission-name              grant-permission
+    :eacl.arrow-permission/source-relation-name   arrow-source-relation
+    :eacl.arrow-permission/target-permission-name arrow-target-permission}))
 
 (defn Relationship
   "A Relationship between a subject and a resource via Relation. Copied from core2."
@@ -336,39 +336,64 @@
 (defn lookup-subjects
   "Enumerates subjects that have a given permission on a specified resource."
   [db {:as         filters
-       resource-id :resource/id
-       :keys       [permission]}]
-  {:pre [resource-id]}
-  (let [{:as          _resource-ent
+       resource :resource
+       permission :permission
+       subject-type :subject/type
+       subject-relation :subject/relation}] ; optional. not supported!
+  {:pre [(:type resource) (:id resource)]}
+  (let [{resource-type :type
+         resource-id :id} resource
+
+        {:as          resource-ent
          resource-eid :db/id} (d/entity db [object-id-attr resource-id])]
     (assert resource-eid (str "lookup-subjects requires a valid resource with unique attr " (pr-str object-id-attr) "."))
+    (assert (= resource-type (:resource/type resource-ent)) (str "Resource type does not match " resource-type "."))
     (->> (d/q '[:find [?subject ...]
-                :in $ % ?resource-eid ?perm
+                :in $ % ?resource-eid ?permission ?subject-type
                 :where
-                (has-permission ?subject ?perm ?resource-eid)
-                [(not= ?subject ?resource-eid)]]
+                (has-permission ?subject ?permission ?resource-eid)
+                [?subject :resource/type ?subject-type]
+                [(not= ?subject ?resource-eid)]] ; can we avoid this exclusionary clause?
               db
               rules
               resource-eid
-              permission)
+              permission
+              subject-type)
          (map #(d/entity db %))
          (map entity->spice-object))))
 
 (defn lookup-resources
-  "Find all resources that subject can access with the given permission."
-  [db {:as        _filters
-       subject-id :subject/id
-       :keys      [permission]}]
-  (let [{:as         _subject-ent
+  "Enumerate resources of a given type that a subject can access with the given permission."
+  [db {:as           _filters
+       resource-type :resource/type
+       subject :subject
+       permission    :permission
+       offset        :offset
+       limit         :limit}]
+  {:pre [(keyword? resource-type)
+         (:type subject) (:id subject)
+         (keyword? permission)]}
+  (let [{subject-type :type
+         subject-id :id} subject
+
+        {:as         subject-ent
          subject-eid :db/id} (d/entity db [object-id-attr subject-id])]
-    (assert subject-eid (str "lookup-resources requires a valid subject with unique attr " (pr-str object-id-attr) "."))
-    (->> (d/q '[:find [?resource ...]
-                :in $ % ?subject-eid ?perm
-                :where
-                (has-permission ?subject-eid ?perm ?resource)]
-              db
-              rules
-              subject-eid
-              permission)
-         (map #(d/entity db %))
-         (map entity->spice-object))))
+    (assert subject-eid (str "lookup-resources requires a valid subject with unique ID under attr " (pr-str object-id-attr) "."))
+    (assert (= subject-type (:resource/type subject-ent)) (str "Subject Type does not match " subject-type "."))
+    (let [resource-eids  (d/q '[:find [?resource ...]
+                                :in $ % ?resource-type ?subject-type ?subject-eid ?permission
+                                :where
+                                (has-permission ?subject-eid ?permission ?resource)
+                                [?resource :resource/type ?resource-type]] ; consider moving ?resource-type into has-permission.
+                              db
+                              rules
+                              resource-type
+                              subject-type
+                              subject-eid
+                              permission)
+          paginated-eids (cond->> resource-eids
+                                  offset (drop offset)      ; optional.
+                                  limit (take limit))]      ; optional.
+      (->> paginated-eids
+           (map #(d/entity db %))
+           (map entity->spice-object)))))
