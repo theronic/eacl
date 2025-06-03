@@ -143,10 +143,3 @@
                      (set (spiceomic/lookup-resources db' {:resource/type :account
                                                            :permission    :view
                                                            :subject (->user "user-1")})))))))))))
-
-(comment
-  (require '[eacl.fixtures :as fixtures])
-  (spiceomic/with-mem-conn [conn schema/v4-schema]
-    @(d/transact conn fixtures/base-fixtures)
-    (let [client (make-client conn)]
-      (lookup-resources client {}))))
