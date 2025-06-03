@@ -95,7 +95,7 @@
    ;; MODIFIED based on user feedback: Rule now expects intermediate --via-relation-name--> this-resource
    ;; Example: User U gets :view on SERVER_X if ACC_Y --:account--> SERVER_X and User U has :admin on ACC_Y.
    '[(has-permission ?subject ?perm-name-on-this-resource ?this-resource)
-     [?this-resource :resource/type ?this-resource-type] ; this is super slow. need multiple rules.
+     [?this-resource :resource/type ?this-resource-type]    ; this is super slow. need multiple rules.
 
      ;; 1. Find an arrow permission definition for this-resource-type and perm-name-on-this-resource
      [(tuple ?this-resource-type
@@ -175,8 +175,8 @@
     grant-permission]
    {:pre [(keyword? resource-type) (keyword? grant-permission)
           (keyword? arrow-source-relation) (keyword? arrow-target-permission)]}
-   {:eacl.arrow-permission/resource-type                resource-type
-    :eacl.arrow-permission/permission-name              grant-permission
+   {:eacl.arrow-permission/resource-type          resource-type
+    :eacl.arrow-permission/permission-name        grant-permission
     :eacl.arrow-permission/source-relation-name   arrow-source-relation
     :eacl.arrow-permission/target-permission-name arrow-target-permission}))
 
@@ -222,38 +222,44 @@
 
 (defn lookup-subjects
   "Enumerates subjects that have a given permission on a specified resource."
-  [db {:as         filters
-       resource :resource
-       permission :permission
-       subject-type :subject/type
-       subject-relation :subject/relation}] ; optional. not supported!
+  [db {:as              filters
+       resource         :resource
+       permission       :permission
+       subject-type     :subject/type
+       subject-relation :subject/relation                   ; optional, but not supportet yet.
+       limit            :limit
+       offset           :offset}]
   {:pre [(:type resource) (:id resource)]}
   (let [{resource-type :type
-         resource-id :id} resource
+         resource-id   :id} resource
 
         {:as          resource-ent
          resource-eid :db/id} (d/entity db [object-id-attr resource-id])]
     (assert resource-eid (str "lookup-subjects requires a valid resource with unique attr " (pr-str object-id-attr) "."))
     (assert (= resource-type (:resource/type resource-ent)) (str "Resource type does not match " resource-type "."))
-    (->> (d/q '[:find [?subject ...]
-                :in $ % ?resource-eid ?permission ?subject-type
-                :where
-                (has-permission ?subject ?permission ?resource-eid)
-                [?subject :resource/type ?subject-type]
-                [(not= ?subject ?resource-eid)]] ; can we avoid this exclusionary clause?
-              db
-              rules
-              resource-eid
-              permission
-              subject-type)
-         (map #(d/entity db %))
-         (map entity->spice-object))))
+    (let [subject-eids   (->> (d/q '[:find [?subject ...]
+                                     :in $ % ?resource-eid ?permission ?subject-type
+                                     :where
+                                     (has-permission ?subject ?permission ?resource-eid)
+                                     [?subject :resource/type ?subject-type]
+                                     [(not= ?subject ?resource-eid)]] ; can we avoid this exclusionary clause?
+                                   db
+                                   rules
+                                   resource-eid
+                                   permission
+                                   subject-type))
+          paginated-eids (cond->> subject-eids
+                                  offset (drop offset)
+                                  limit (take limit))]
+      (->> paginated-eids
+           (map #(d/entity db %))
+           (map entity->spice-object)))))
 
 (defn lookup-resources
   "Enumerate resources of a given type that a subject can access with the given permission."
   [db {:as           _filters
        resource-type :resource/type
-       subject :subject
+       subject       :subject
        permission    :permission
        offset        :offset
        limit         :limit}]
@@ -261,7 +267,7 @@
          (:type subject) (:id subject)
          (keyword? permission)]}
   (let [{subject-type :type
-         subject-id :id} subject
+         subject-id   :id} subject
 
         {:as         subject-ent
          subject-eid :db/id} (d/entity db [object-id-attr subject-id])]
