@@ -63,32 +63,32 @@
           (is (= #{(spice-object :user "user-1")
                    ;(spice-object :account "account-1")
                    (spice-object :user "super-user")}
-                 (set (spiceomic/lookup-subjects db {:resource (->server "server-1")
-                                                     :permission  :view
+                 (set (spiceomic/lookup-subjects db {:resource     (->server "server-1")
+                                                     :permission   :view
                                                      :subject/type :user}))))
 
           (testing ":test/user2 is only subject who can delete :test/server2"
             (is (= #{(spice-object :user "user-2")
                      (spice-object :user "super-user")}
-                   (set (spiceomic/lookup-subjects db {:resource   (->server "server-2")
-                                                       :permission :delete
+                   (set (spiceomic/lookup-subjects db {:resource     (->server "server-2")
+                                                       :permission   :delete
                                                        :subject/type :user}))))))
 
         (testing "We can enumerate resources with lookup-resources"
           (is (= #{(spice-object :server "server-1")}
                  (set (spiceomic/lookup-resources db {:resource/type :server
                                                       :permission    :view
-                                                      :subject (->user "user-1")}))))
+                                                      :subject       (->user "user-1")}))))
 
           (is (= #{(spice-object :account "account-1")}
                  (set (spiceomic/lookup-resources db {:resource/type :account
                                                       :permission    :view
-                                                      :subject (->user "user-1")}))))
+                                                      :subject       (->user "user-1")}))))
 
           (is (= #{(spice-object :server "server-2")}
                  (set (spiceomic/lookup-resources db {:resource/type :server
                                                       :permission    :view
-                                                      :subject (->user "user-2")})))))
+                                                      :subject       (->user "user-2")})))))
 
         (testing "Make user-1 a shared_admin of server-2"
           (is @(d/transact conn [(Relationship :test/user1 :shared_admin :test/server2)]))) ; this shouldn't be working. no schema for it.
@@ -101,7 +101,7 @@
                    (spice-object :server "server-2")}
                  (set (spiceomic/lookup-resources db {:resource/type :server
                                                       :permission    :view
-                                                      :subject (->user "user-1")}))))
+                                                      :subject       (->user "user-1")}))))
           (is (= #{(spice-object :user "super-user")
                    (spice-object :user "user-1")
                    (spice-object :user "user-2")}
@@ -124,14 +124,14 @@
                      ;(spice-object :account "account-2")
                      (spice-object :user "user-1")
                      (spice-object :user "super-user")}
-                   (set (spiceomic/lookup-subjects db' {:resource (->server "server-2")
-                                                        :permission  :view
+                   (set (spiceomic/lookup-subjects db' {:resource     (->server "server-2")
+                                                        :permission   :view
                                                         :subject/type :user}))))
             (testing ":test/user2 cannot access any servers" ; is this correct?
               (is (= #{}                                    ; Expect empty set of spice objects
                      (set (spiceomic/lookup-resources db' {:resource/type :server
                                                            :permission    :view
-                                                           :subject (->user "user-2")})))))
+                                                           :subject       (->user "user-2")})))))
 
             (is (not (can? db' :test/user2 :server/delete :test/server2)))
 
@@ -140,9 +140,9 @@
                        (spice-object :server "server-2")}
                      (set (spiceomic/lookup-resources db' {:resource/type :server
                                                            :permission    :view
-                                                           :subject (->user "user-1")}))))
+                                                           :subject       (->user "user-1")}))))
 
               (is (= #{(spice-object :account "account-1")}
                      (set (spiceomic/lookup-resources db' {:resource/type :account
                                                            :permission    :view
-                                                           :subject (->user "user-1")})))))))))))
+                                                           :subject       (->user "user-1")})))))))))))
