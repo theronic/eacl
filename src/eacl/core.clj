@@ -62,18 +62,18 @@
   ;; Subject & Resource & Enumeration
   (lookup-resources [this {:as query :keys [consistency]}])
   ; lookup-resources (formerly 'what-can?') accepts:
-  ; - :subject/type – keyword, required.
-  ; - :subject/id – required.
-  ; - :permission - keyword, required.
   ; - :resource/type – keyword, required.
+  ; - :permission - keyword, required.
+  ; - :subject has {:keys [type id]}. Required.
+  ; - limit - optional number.
+  ; - offset - optional number.
 
   (lookup-subjects [this {:as query :keys [consistency]}])
-  ; lookup-subjects (formerely 'who-can?') accepts:
-  ; - :subject/type (keyword, required)
-  ; - :subject/relation (optional keyword, e.g. :member)
-  ; - :permission (keyword)
-  ; - :resource/type (keyword, required)
-  ; - :resource/id (required)
+  ; lookup-subjects (formerly 'who-can?') accepts:
+  ; - :resource has {:keys [type id]}. Required.
+  ; - :permission (keyword) required.
+  ; - :subject/type (keyword) required.
+  ; - :subject/relation (keyword) optional, e.g. :member.
 
   (expand-permission-tree [this {:as opts :keys [consistency]} permission resource]))
 
@@ -88,13 +88,3 @@
   Need a better name for this. Only used internally here."
   ([type id] (->SpiceObject type id nil))
   ([type id relation] (->SpiceObject type id relation)))
-
-; These are helpers specific to CA (todo move out):
-(def ->user (partial spice-object :user))
-(def ->team (partial spice-object :team))
-(def ->server (partial spice-object :server))
-(def ->platform (partial spice-object :platform))
-(def ->account (partial spice-object :account))
-(def ->vpc (partial spice-object :vpc))
-(def ->backup (partial spice-object :backup))
-(def ->host (partial spice-object :host))

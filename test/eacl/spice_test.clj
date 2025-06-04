@@ -1,20 +1,22 @@
 (ns eacl.spice-test
   (:require [clojure.string :as string]
-            [clojure.test :as t :refer (deftest testing is use-fixtures)]
-            [eacl.core :as eacl :refer (spice-object ->Relationship ->user ->team ->server ->platform ->vpc ->account)]
+            [clojure.test :as t :refer [deftest testing is use-fixtures]]
+            [eacl.core :as eacl :refer [spice-object ->Relationship]]
             [eacl.datomic.schema :as schema]
             [datomic.api :as d]                             ; ideally don't want this
-            [eacl.datomic.fixtures :as fixtures]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
+            [eacl.datomic.fixtures :as fixtures :refer [->user ->team ->server ->platform ->vpc ->account]]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.impl]                             ; this can go away once with-mem-conn moves
             [clojure.tools.logging :as log]
-            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
+            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]])
+  (:import (eacl.core IAuthorization)))
 
 (deftest spicedb-tests
 
-  (eacl.datomic.impl/with-mem-conn [conn schema/v3-schema]
+  (with-mem-conn [conn schema/v4-schema]
 
-    (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject relation"
+    (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
       (is (= #eacl.core.SpiceObject{:type :user, :id "my-user", :relation nil}
              (spice-object :user "my-user")))
       (is (= #eacl.core.SpiceObject{:type :team, :id "dev-team", :relation :member}
@@ -50,6 +52,8 @@
 
     (testing "Make a Spice client and hold onto channel for disposal later."
       (let [client (spiceomic/make-client conn)]
+        (is client)
+        ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
         ;"ensure channel is a managed gRPC channel"
         ;(is (= io.grpc.internal.ManagedChannelOrphanWrapper (class channel)))
@@ -166,30 +170,26 @@
     (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
       (is (= [(update my-server :id str)] (eacl/lookup-resources *client
-                                                                 {:consistency   fully-consistent
-                                                                  :subject/type  :user
-                                                                  :subject/id    (:id my-user)
+                                                                 {:resource/type :server
                                                                   :permission    :reboot
-                                                                  :resource/type :server})))
+                                                                  :subject       my-user
+                                                                  :consistency   fully-consistent})))
       (is (= [(update joe's-server :id str)] (eacl/lookup-resources *client
-                                                                    {:consistency   fully-consistent
-                                                                     :subject/type  :user
-                                                                     :subject/id    (:id joe's-user)
+                                                                    {:resource/type :server
                                                                      :permission    :reboot
-                                                                     :resource/type :server}))))
+                                                                     :subject       joe's-user
+                                                                     :consistency   fully-consistent}))))
 
     (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
       (is (= [my-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                      :subject/type  :user
+                                                      :resource my-server
                                                       :permission    :reboot
-                                                      :resource/type :server
-                                                      :resource/id   (:id my-server)})))
+                                                      :subject/type  :user})))
       (is (= [joe's-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                         :subject/type  :user
+                                                         :resource joe's-server
                                                          :permission    :reboot
-                                                         :resource/type :server
-                                                         :resource/id   (:id joe's-server)}))))
+                                                         :subject/type  :user}))))
 
     (testing "joe's-user can :reboot their server, but I cannot:"
       (is (true? (eacl/can? *client joe's-user :reboot joe's-server fully-consistent)))
@@ -281,8 +281,6 @@
                                                :subject/id        "test-account"}))))
 
     (testing "We can expand permissions hierarchy for (->server 123)."
-      ; Note: numeric IDs are not coerced back from strings yet.
-      ; This tree is a bit hard to understand, but this is how it comes back from Spice.
       (is (= [[[[{:object   (->account "operativa")
                   :relation :owner
                   :subjects [{:object   (->user "ben")

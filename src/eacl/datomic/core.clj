@@ -249,14 +249,15 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     (spiceomic-lookup-resources (d/db conn) filters))
 
   (lookup-subjects [this filters]
-    (spiceomic-lookup-subjects (d/db conn) filters)))
+    (spiceomic-lookup-subjects (d/db conn) filters))
+
+  (expand-permission-tree [this {:as opts :keys [consistency]} permission resource]
+    (throw (Exception. "not impl."))))
 
 (defn make-client [conn]
   (->Spiceomic conn))
 
 (comment
-  (require '[eacl.fixtures :as fixtures])
-  (spiceomic/with-mem-conn [conn schema/v3-schema]
-                           @(d/transact conn fixtures/base-fixtures)
-                           (let [client (make-client conn)]
-                             (lookup-resources client {}))))
+  (require '[eacl.datomic.datomic-helpers :refer [with-mem-conn]])
+  (with-mem-conn [conn []]
+                 (make-client conn)))
