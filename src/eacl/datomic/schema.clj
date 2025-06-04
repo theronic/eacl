@@ -141,4 +141,37 @@
                      :eacl.relationship/relation-name
                      :eacl.relationship/subject]
     :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}])
+    :db/unique      :db.unique/identity}
+
+   ;; NEW PERFORMANCE OPTIMIZATION INDICES
+   
+   ;; Critical for subject-based lookups
+   {:db/ident       :eacl.relationship/subject+relation-name
+    :db/doc         "Index for efficient subject-based lookups"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relationship/subject
+                     :eacl.relationship/relation-name]
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident       :eacl.relationship/relation-name+resource
+    :db/doc         "Index for relation-based traversal"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relationship/relation-name
+                     :eacl.relationship/resource]
+    :db/cardinality :db.cardinality/one}
+
+   ;; Index for permission lookups by type
+   {:db/ident       :eacl.permission/resource-type+permission-name
+    :db/doc         "Index for finding all relations that grant a permission"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one}
+
+   ;; For arrow permission traversal
+   {:db/ident       :eacl.arrow-permission/resource-type+permission-name
+    :db/doc         "Index for arrow permission lookups"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.arrow-permission/resource-type
+                     :eacl.arrow-permission/permission-name]
+    :db/cardinality :db.cardinality/one}])

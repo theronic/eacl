@@ -192,7 +192,7 @@
 
   (let [num-accounts  100
         num-users     10
-        num-servers   50
+        num-servers   1000
         account-uuids (repeatedly num-accounts d/squuid)
         account-txes  (time (->> account-uuids
                                  (mapv (partial make-account-txes {:num-users   num-users
@@ -218,7 +218,7 @@
                                        (for [server-id servers]
                                          [server-id (vec (server->user-ids db server-id))])))]
       ;(prn 'server->users server->users)
-      (when false ; do
+      (when true ; false ; do
         (log/debug "Starting benchmark...")
         (crit/quick-bench
           (let [random-server      (rand-nth servers)
