@@ -3,7 +3,9 @@
   (:require
     [datomic.api :as d]
     [eacl.core :as proto :refer [spice-object]]
-    [eacl.datomic.rules :as rules]))
+    [eacl.datomic.rules :as rules]
+    [eacl.datomic.rules-optimized :as rules-opt]
+    [eacl.datomic.impl-optimized :as impl-opt]))
 
 (defn id->identifier
   "This is to support custom unique entity IDs."
@@ -92,106 +94,9 @@
    :eacl.relationship/relation-name relation-name
    :eacl.relationship/subject       subject})
 
-(defn can?
-  "Returns true if subject has permission on resource. Copied from core2.
-  Note: we are not checking subject & resource types, but we probably should."
-  [db subject-id permission resource-id]
-  {:pre [subject-id
-         (keyword? permission)
-         resource-id]}
-  (let [{:as _subject-ent, subject-eid :db/id} (d/entity db subject-id)
-        {:as _resource-ent, resource-eid :db/id} (d/entity db resource-id)]
-    (if-not (and subject-eid resource-eid)
-      false
-      (->> (d/q '[:find ?subject .                          ; Using . to find a single value, expecting one or none
-                  :in $ % ?subject ?perm ?resource
-                  :where
-                  (has-permission ?subject ?perm ?resource)] ; do we still needs this?
-                db
-                rules/check-permission-rules
-                subject-eid
-                permission
-                resource-eid)
-           (boolean)))))
-
-(defn can! [db subject-id permission resource-id]
-  (if (can? db subject-id permission resource-id)
-    true
-    ; todo nicer error message
-    (throw (Exception. "Unauthorized"))))
-
-(defn entity->spice-object [ent]
-  ; note: we do not coerce here yet.
-  (spice-object (get ent resource-type-attr) (get ent object-id-attr)))
-
-(defn lookup-subjects
-  "Enumerates subjects that have a given permission on a specified resource."
-  [db {:as              filters
-       resource         :resource
-       permission       :permission
-       subject-type     :subject/type
-       subject-relation :subject/relation                   ; optional, but not supportet yet.
-       limit            :limit
-       offset           :offset}]
-  {:pre [(:type resource) (:id resource)]}
-  (let [{resource-type :type
-         resource-id   :id} resource
-
-        {:as          resource-ent
-         resource-eid :db/id} (d/entity db [object-id-attr resource-id])]
-    (assert resource-eid (str "lookup-subjects requires a valid resource with unique attr " (pr-str object-id-attr) "."))
-    (assert (= resource-type (:resource/type resource-ent)) (str "Resource type does not match " resource-type "."))
-    (let [subject-eids   (->> (d/q '[:find [?subject ...]
-                                     :in $ % ?subject-type ?permission ?resource-eid
-                                     :where
-                                     (has-permission ?subject-type ?subject ?permission ?resource-eid)
-                                     ;(has-permission ?subject ?permission ?resource-eid)
-                                     ;[?subject :resource/type ?subject-type] ; could this be super slow?
-                                     [(not= ?subject ?resource-eid)]] ; can we avoid this exclusionary clause?
-                                   db
-                                   rules/rules-lookup-subjects
-                                   subject-type
-                                   permission
-                                   resource-eid))
-          paginated-eids (cond->> subject-eids
-                                  offset (drop offset)
-                                  limit (take limit))]
-      (->> paginated-eids
-           (map #(d/entity db %))
-           (map entity->spice-object)))))
-
-(defn lookup-resources
-  "Enumerate resources of a given type that a subject can access with the given permission."
-  [db {:as           _filters
-       resource-type :resource/type
-       subject       :subject
-       permission    :permission
-       offset        :offset
-       limit         :limit}]
-  {:pre [(keyword? resource-type)
-         (:type subject) (:id subject)
-         (keyword? permission)]}
-  (let [{subject-type :type
-         subject-id   :id} subject
-
-        {:as         subject-ent
-         subject-eid :db/id} (d/entity db [object-id-attr subject-id])]
-    (assert subject-eid (str "lookup-resources requires a valid subject with unique ID under attr " (pr-str object-id-attr) "."))
-    (assert (= subject-type (:resource/type subject-ent)) (str "Subject Type does not match " subject-type "."))
-    (let [resource-eids  (d/q '[:find [?resource ...]
-                                :in $ % ?subject-type ?subject-eid ?permission ?resource-type
-                                :where
-                                (has-permission ?subject-eid ?permission ?resource-type ?resource)
-                                [?resource :resource/type ?resource-type]] ; consider moving ?resource-type into has-permission.
-                              db
-                              rules/rules-lookup-resources ; slow-lookup-rules
-                              subject-type ; not used
-                              subject-eid
-                              permission
-                              resource-type)
-          paginated-eids (cond->> resource-eids
-                                  offset (drop offset)      ; optional.
-                                  limit (take limit))]      ; optional.
-      (->> paginated-eids
-           (map #(d/entity db %))
-           (map entity->spice-object)))))
+;; Use optimized implementation
+(def can? impl-opt/can?)
+(def can! impl-opt/can!)
+(def entity->spice-object impl-opt/entity->spice-object)
+(def lookup-subjects impl-opt/lookup-subjects)
+(def lookup-resources impl-opt/lookup-resources)
