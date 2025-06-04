@@ -139,7 +139,7 @@
 (defn lookup-resources-staged
   "Staged approach to resource lookup for better performance"
   [db {:keys [resource/type subject permission limit offset]
-       :or {limit 100 offset 0}}]
+       :or {limit 1000 offset 0}}]
   {:pre [(keyword? type)
          (:type subject) (:id subject)
          (keyword? permission)]}

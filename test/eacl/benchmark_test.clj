@@ -147,7 +147,8 @@
       (prn 'test-user test-user)
       (time (eacl/lookup-resources client {:resource/type :server
                                            :permission    :view
-                                           :subject       (->user test-user)})))
+                                           :subject       (->user test-user)
+                                           :limit 100000000000})))
 
     (defn rand-server [db]
       (d/q '[:find (rand ?server-uuid) .
