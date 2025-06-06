@@ -8,7 +8,8 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
             [eacl.datomic.rules :as original-rules]
-            [eacl.datomic.rules-optimized :as optimized-rules]))
+            [eacl.datomic.rules-optimized :as optimized-rules]
+            [clojure.tools.logging :as log]))
 
 (defn measure-time
   "Measure execution time of a function in milliseconds"
@@ -56,16 +57,16 @@
 (defn run-performance-comparison
   "Run performance comparison between original and optimized rules"
   [db test-name query-fn original-rules optimized-rules]
-  (println (str "\n" test-name ":"))
+  (log/debug (str "\n" test-name ":"))
 
   ;; Test with original rules
   (let [{:keys [time-ms result]} (measure-time #(query-fn db original-rules))]
-    (println (format "  Original: %.2f ms (found %d results)"
+    (log/debug (format "  Original: %.2f ms (found %d results)"
                      time-ms (count result))))
 
   ;; Test with optimized rules
   (let [{:keys [time-ms result]} (measure-time #(query-fn db optimized-rules))]
-    (println (format "  Optimized: %.2f ms (found %d results)"
+    (log/debug (format "  Optimized: %.2f ms (found %d results)"
                      time-ms (count result)))))
 
 (deftest performance-comparison-test
@@ -75,7 +76,7 @@
       @(d/transact conn fixtures/base-fixtures)
 
       ;; Generate larger test dataset
-      (println "\nGenerating test data...")
+      (log/debug "\nGenerating test data...")
       (generate-test-data conn 100 20 500 "perf1")
 
       (let [db (d/db conn)]
@@ -86,7 +87,7 @@
           (fn [db rules]
             (let [subject  (d/entity db [:entity/id "perf1-user-0"])
                   resource (d/entity db [:entity/id "perf1-server-0"])]
-              (prn 'subject subject 'resource resource)
+              (log/debug 'subject subject 'resource resource)
               (d/q '[:find ?subject
                      :in $ % ?subject ?perm ?resource
                      :where
@@ -134,11 +135,11 @@
           optimized-rules/rules-lookup-resources)
 
         ;; Test with larger dataset
-        (println "\n\nGenerating larger test dataset...")
+        (log/debug "\n\nGenerating larger test dataset...")
         (generate-test-data conn 500 100 2000 "perf2")
         (let [db-large (d/db conn)]
 
-          (println "\nLarger dataset tests:")
+          (log/debug "\nLarger dataset tests:")
 
           ;; Test lookup-resources with larger dataset
           (run-performance-comparison
@@ -165,7 +166,7 @@
       (generate-test-data conn 100 20 100000 "staged")
 
       (let [db (d/db conn)]
-        (println "\n\nStaged lookup-resources test:")
+        (log/debug "\n\nStaged lookup-resources test:")
 
         ;; Test original implementation
         (let [{:keys [time-ms result]}
@@ -174,7 +175,7 @@
                                             :permission    :view
                                             :subject       (->user "staged-user-5")
                                             :limit         5000000}))]
-          (println (format "  Full implementation: %.2f ms (found %d results)"
+          (log/debug (format "  Full implementation: %.2f ms (found %d results)"
                            time-ms (count result)))))))
 
   (testing "Staged lookup-resources with limit & offset implementation"
@@ -183,7 +184,7 @@
       (generate-test-data conn 100 20 100000 "staged")
 
       (let [db (d/db conn)]
-        (println "\n\nStaged lookup-resources test with limit & offset:")
+        (log/debug "\n\nStaged lookup-resources test with limit & offset:")
 
         ;; Test original implementation
         (let [{:keys [time-ms result]}
@@ -193,7 +194,7 @@
                                             :resource/type :server
                                             :permission    :view
                                             :subject       (->user "staged-user-5")}))]
-          (println (format "  Full implementation: %.2f ms (found %d results)"
+          (log/debug (format "  Full implementation: %.2f ms (found %d results)"
                            time-ms (count result)))))))
 
   (testing "Staged lookup-resources with small limit, large offset"
@@ -202,7 +203,7 @@
       (generate-test-data conn 100 20 100000 "staged")
 
       (let [db (d/db conn)]
-        (println "\n\nStaged lookup-resources test with small limit, large offset:")
+        (log/debug "\n\nStaged lookup-resources test with small limit, large offset:")
 
         ;; Test original implementation
         (let [{:keys [time-ms result]}
@@ -212,7 +213,7 @@
                                             :resource/type :server
                                             :permission    :view
                                             :subject       (->user "staged-user-5")}))]
-          (println (format "  Full implementation: %.2f ms (found %d results)"
-                           time-ms (count result))))))))
+          (log/debug (format "  Full implementation: %.2f ms (found %d results)"
+                             time-ms (count result))))))))
 
 ;; Run with: clj -M:test -n eacl.datomic.performance-test 
