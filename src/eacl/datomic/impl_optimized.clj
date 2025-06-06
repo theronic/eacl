@@ -107,20 +107,26 @@
     ;; For each arrow path, find accessible resources
     (apply concat
       (for [[via-rel target-perm] arrow-paths]
-        ;; This is simplified - in production we'd need to check permissions properly
+        ;; Use rules to check if subject has target permission on intermediates
         (d/q '[:find [?resource ...]
-               :in $ ?subject ?rtype ?via-rel
+               :in $ % ?subject ?rtype ?via-rel ?target-perm
                :where
-               ;; Find intermediate resources subject has relationships with
-               [?rel1 :eacl.relationship/subject ?subject]
-               [?rel1 :eacl.relationship/resource ?intermediate]
+               ;; Find resources of target type that have the via-relation
+               [?link :eacl.relationship/relation-name ?via-rel]
+               [?link :eacl.relationship/resource ?resource]
+               [?link :eacl.relationship/subject ?intermediate]
                
-               ;; Find target resources linked from intermediate via arrow relation
-               [?rel2 :eacl.relationship/subject ?intermediate]
-               [?rel2 :eacl.relationship/relation-name ?via-rel]
-               [?rel2 :eacl.relationship/resource ?resource]
-               [?resource :resource/type ?rtype]]
-             db subject-eid resource-type via-rel)))))
+               ;; Filter by resource type
+               [?resource :resource/type ?rtype]
+               
+               ;; Check if subject has target permission on intermediate
+               (has-permission ?subject ?target-perm ?intermediate)]
+             db
+             rules/check-permission-rules
+             subject-eid
+             resource-type
+             via-rel
+             target-perm)))))
 
 (defn find-indirect-resources
   "Find resources through indirect paths - fallback for complex cases"
@@ -146,19 +152,25 @@
   (let [{subject-id :id} subject
         subject-eid (:db/id (d/entity db [object-id-attr subject-id]))
         
+        ;; Debug: Check if subject exists
+        _ (when-not subject-eid
+            (println "WARNING: Subject not found:" subject-id))
+        
         ;; Stage 1: Find direct relationships
-        stage1-direct (find-direct-resources db subject-eid type permission)
+        stage1-direct (if subject-eid
+                       (find-direct-resources db subject-eid type permission)
+                       [])
         
         ;; Stage 2: Find via arrow permissions (if needed)
-        stage2-arrow (when (< (count stage1-direct) limit)
+        stage2-arrow (when (and subject-eid 
+                               (< (count stage1-direct) limit))
                       (find-arrow-resources db subject-eid type permission))
         
         ;; Stage 3: Multi-hop paths (only if really needed)
-        stage3-indirect (when (and (< (+ (count stage1-direct) 
+        stage3-indirect (when (and subject-eid
+                                  (< (+ (count stage1-direct) 
                                         (count (or stage2-arrow []))) 
-                                     limit)
-                                  ;; Only use expensive fallback for small result sets
-                                  (< limit 50))
+                                     limit))
                          (find-indirect-resources db subject-eid type permission))
         
         ;; Combine and deduplicate

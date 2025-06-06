@@ -5,7 +5,7 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->server]]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
-            [eacl.datomic.impl :as spiceomic :refer [Relation Relationship Permission can?]]))
+            [eacl.datomic.impl :as spiceomic :refer [Relation Relationship Permission can? lookup-subjects lookup-resources]]))
 
 (deftest eacl3-tests
 
@@ -25,6 +25,13 @@
       (is @(d/transact conn fixtures/base-fixtures))
 
       (let [db (d/db conn)]
+        "super-user can view all servers"
+        (is (= #{(spice-object :server "server-1")
+                 (spice-object :server "server-2")}
+               (set (lookup-resources db {:subject (->user "super-user")
+                                          :permission :view
+                                          :resource/type :server}))))
+
         ":test/user can :view and :reboot their server"
 
         (is (can? db :test/user1 :view :test/server1))
@@ -63,32 +70,32 @@
           (is (= #{(spice-object :user "user-1")
                    ;(spice-object :account "account-1")
                    (spice-object :user "super-user")}
-                 (set (spiceomic/lookup-subjects db {:resource     (->server "server-1")
-                                                     :permission   :view
-                                                     :subject/type :user}))))
+                 (set (lookup-subjects db {:resource     (->server "server-1")
+                                           :permission   :view
+                                           :subject/type :user}))))
 
           (testing ":test/user2 is only subject who can delete :test/server2"
             (is (= #{(spice-object :user "user-2")
                      (spice-object :user "super-user")}
-                   (set (spiceomic/lookup-subjects db {:resource     (->server "server-2")
-                                                       :permission   :delete
-                                                       :subject/type :user}))))))
+                   (set (lookup-subjects db {:resource     (->server "server-2")
+                                             :permission   :delete
+                                             :subject/type :user}))))))
 
         (testing "We can enumerate resources with lookup-resources"
           (is (= #{(spice-object :server "server-1")}
-                 (set (spiceomic/lookup-resources db {:resource/type :server
-                                                      :permission    :view
-                                                      :subject       (->user "user-1")}))))
+                 (set (lookup-resources db {:resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "user-1")}))))
 
           (is (= #{(spice-object :account "account-1")}
-                 (set (spiceomic/lookup-resources db {:resource/type :account
-                                                      :permission    :view
-                                                      :subject       (->user "user-1")}))))
+                 (set (lookup-resources db {:resource/type :account
+                                            :permission    :view
+                                            :subject       (->user "user-1")}))))
 
           (is (= #{(spice-object :server "server-2")}
-                 (set (spiceomic/lookup-resources db {:resource/type :server
-                                                      :permission    :view
-                                                      :subject       (->user "user-2")})))))
+                 (set (lookup-resources db {:resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "user-2")})))))
 
         (testing "Make user-1 a shared_admin of server-2"
           (is @(d/transact conn [(Relationship :test/user1 :shared_admin :test/server2)]))) ; this shouldn't be working. no schema for it.
