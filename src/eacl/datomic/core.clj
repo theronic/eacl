@@ -3,10 +3,12 @@
   (:require [eacl.core :as eacl :refer [IAuthorization spice-object
                                         ->Relationship map->Relationship
                                         ->RelationshipUpdate]]
-            [eacl.datomic.impl :as spiceomic]
+            [eacl.datomic.impl :as impl]
             [datomic.api :as d]
             [eacl.datomic.schema :as schema]
             [clojure.tools.logging :as log]))
+
+;(ns-unalias *ns* 'impl)
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -160,7 +162,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 (defn spiceomic-can?
   "Subject & Resource types must match in rules, but we don't check them here."
   [db subject permission resource]
-  (spiceomic/can? db [:entity/id (:id subject)] permission [:entity/id (:id resource)]))
+  (let [result (impl/can? db [:entity/id (:id subject)] permission [:entity/id (:id resource)])]
+    ;; Ensure we return a boolean
+    (boolean result)))
 
 ;(defn
 ;  ->RelationshipFilter
@@ -193,11 +197,11 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (defn spiceomic-lookup-resources [db filters]
   ; todo coercion
-  (spiceomic/lookup-resources db filters))
+  (impl/lookup-resources db filters))
 
 (defn spiceomic-lookup-subjects [db filters]
   ; todo coercion
-  (spiceomic/lookup-subjects db filters))
+  (impl/lookup-subjects db filters))
 
 (defrecord Spiceomic [conn]
   IAuthorization

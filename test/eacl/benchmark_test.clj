@@ -2,7 +2,8 @@
   (:require [criterium.core :as crit]
             [eacl.core :as eacl]
             [eacl.datomic.core :as spiceomic]
-            [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
+            [eacl.datomic.impl-base :as base :refer [Relation Relationship Permission]]
+            ;[eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
             [eacl.datomic.schema :as schema]
             [datomic.api :as d]
             [eacl.datomic.fixtures :as fixtures :refer [->account ->user ->server]]
@@ -98,7 +99,8 @@
 
 (deftest eacl-benchmarks
   ; todo switch to with-mem-conn.
-  (def datomic-uri "datomic:dev://localhost:4597/eacl-benchmark")
+  ;(def datomic-uri "datomic:dev://localhost:4597/eacl-benchmark")
+  (def datomic-uri "datomic:mem://mem-eacl-benchmark")
   (d/delete-database datomic-uri)
   (d/create-database datomic-uri)
   (def conn (d/connect datomic-uri))
@@ -145,10 +147,10 @@
 
     (let [test-user (rand-user (d/db conn))]
       (prn 'test-user test-user)
-      (time (eacl/lookup-resources client {:resource/type :server
-                                           :permission    :view
-                                           :subject       (->user test-user)
-                                           :limit 100000000000})))
+      (count (time (eacl/lookup-resources client {:resource/type :server
+                                                  :permission    :view
+                                                  :subject       (->user test-user)
+                                                  :limit         100000000000}))))
 
     (defn rand-server [db]
       (d/q '[:find (rand ?server-uuid) .
@@ -205,7 +207,7 @@
     (tx! conn account-txes)
 
     (let [!counter         (atom 0)
-          !mistakes (atom 0)
+          !mistakes        (atom 0)
           client           (spiceomic/make-client conn)
           db               (d/db conn)
           {:as setup :keys [accounts users servers]} (time (setup-benchmark db))
@@ -219,7 +221,7 @@
                                        (for [server-id servers]
                                          [server-id (vec (server->user-ids db server-id))])))]
       ;(prn 'server->users server->users)
-      (when true ; false ; do
+      (when true                                            ; false ; do
         (log/debug "Starting benchmark...")
         (crit/quick-bench
           (let [random-server      (rand-nth servers)
@@ -230,8 +232,8 @@
                                      (rand-nth expected-user-list)
                                      (rand-nth users))
                 expected           (contains? expected-userset random-user)
-                _ (swap! !counter inc)
-                actual (eacl/can? client (->user random-user) :view (->server random-server))]
+                _                  (swap! !counter inc)
+                actual             (eacl/can? client (->user random-user) :view (->server random-server))]
             ;(log/debug expected random-user random-server)
             (when (not= expected actual)
               (swap! !mistakes inc))

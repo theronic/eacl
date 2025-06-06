@@ -8,7 +8,7 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
             [eacl.datomic.rules :as original-rules]
-            [eacl.datomic.rules-optimized :as optimized-rules]
+            [eacl.datomic.rules.optimized :as rules]
             [clojure.tools.logging :as log]))
 
 (defn measure-time
@@ -97,7 +97,7 @@
                    :view
                    (:db/id resource))))
           original-rules/check-permission-rules
-          optimized-rules/check-permission-rules)
+          rules/check-permission-rules)
 
         ;; Test lookup-subjects performance
         (run-performance-comparison
@@ -114,7 +114,7 @@
                    :view
                    (:db/id resource))))
           original-rules/rules-lookup-subjects
-          optimized-rules/rules-lookup-subjects)
+          rules/rules-lookup-subjects)
 
         ;; Test lookup-resources performance (highest priority)
         (run-performance-comparison
@@ -132,7 +132,7 @@
                    :view
                    :server)))
           original-rules/rules-lookup-resources
-          optimized-rules/rules-lookup-resources)
+          rules/rules-lookup-resources)
 
         ;; Test with larger dataset
         (log/debug "\n\nGenerating larger test dataset...")
@@ -157,7 +157,7 @@
                      :view
                      :server)))
             original-rules/rules-lookup-resources
-            optimized-rules/rules-lookup-resources))))))
+            rules/rules-lookup-resources))))))
 
 (deftest staged-lookup-resources-test
   (testing "Staged lookup-resources implementation"

@@ -1,7 +1,7 @@
-(ns eacl.datomic.rules-optimized
+(ns eacl.datomic.rules.optimized
   "Optimized Datalog rules for EACL performance improvements")
 
-(def check-permission-rules-optimized
+(def check-permission-rules
   "Optimized rules for can? - reordered clauses and better tuple usage"
   '[;; Optimized reachability using tuples
     [(reachable ?resource ?subject)
@@ -76,7 +76,7 @@
      [(not= ?subject ?intermediate-resource)]
      [(not= ?this-resource ?intermediate-resource)]]])
 
-(def rules-lookup-subjects-optimized
+(def rules-lookup-subjects
   "Optimized rules for lookup-subjects"
   '[;; Reachability rules remain the same
     [(reachable ?resource ?subject)
@@ -146,7 +146,7 @@
      [(not= ?subject ?intermediate-resource)]
      [(not= ?this-resource ?intermediate-resource)]]])
 
-(def rules-lookup-resources-optimized
+(def rules-lookup-resources
   "Optimized rules for lookup-resources - subject-centric approach"
   '[;; Helper rule: find relationships from subject
     [(subject-has-relationships ?subject ?relation ?resource)
@@ -207,8 +207,3 @@
 
      ;; Check if subject has target permission on intermediate (recursive)
      (has-permission ?subject ?target-perm ?intermediate-type ?intermediate)]])
-
-;; Export the optimized rules
-(def check-permission-rules check-permission-rules-optimized)
-(def rules-lookup-subjects rules-lookup-subjects-optimized)
-(def rules-lookup-resources rules-lookup-resources-optimized) 

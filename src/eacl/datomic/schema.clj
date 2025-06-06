@@ -131,7 +131,8 @@
     :db/tupleAttrs  [:eacl.relationship/resource
                      ;:eacl.relationship/relation-name
                      :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one}
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
    ;:db/unique      :db.unique/identity}
 
    {:db/ident       :eacl.relationship/resource+relation-name+subject
@@ -151,14 +152,16 @@
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.relationship/subject
                      :eacl.relationship/relation-name]
-    :db/cardinality :db.cardinality/one}
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
 
    {:db/ident       :eacl.relationship/relation-name+resource
     :db/doc         "Index for relation-based traversal"
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.relationship/relation-name
                      :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one}
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
 
    ;; Index for permission lookups by type
    {:db/ident       :eacl.permission/resource-type+permission-name
@@ -166,7 +169,8 @@
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.permission/resource-type
                      :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one}
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
 
    ;; For arrow permission traversal
    {:db/ident       :eacl.arrow-permission/resource-type+permission-name
@@ -174,4 +178,5 @@
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.arrow-permission/resource-type
                      :eacl.arrow-permission/permission-name]
-    :db/cardinality :db.cardinality/one}])
+    :db/cardinality :db.cardinality/one
+    :db/index       true}])

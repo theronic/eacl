@@ -7,7 +7,6 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :as fixtures :refer [->user ->team ->server ->platform ->vpc ->account]]
             [eacl.datomic.core :as spiceomic]
-            [eacl.datomic.impl]                             ; this can go away once with-mem-conn moves
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]])
   (:import (eacl.core IAuthorization)))

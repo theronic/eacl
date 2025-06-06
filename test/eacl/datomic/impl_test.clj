@@ -165,23 +165,23 @@
 
           (let [db' (d/db conn)]
             (testing "limit: 10, offset 0 should include all 3 servers"
-              (is (= #{(spice-object :server "server-1")
-                       (spice-object :server "server-2")
-                       (spice-object :server "server-3")}
-                     (set (lookup-resources db' {:limit         10
-                                                 :offset        0
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+              (is (= [(spice-object :server "server-1")
+                      (spice-object :server "server-2")
+                      (spice-object :server "server-3")]
+                     (lookup-resources db' {:limit         10
+                                            :offset        0
+                                            :resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "super-user")}))))
 
             (testing "limit: 10, offset: 1 should exclude server-1"
-              (is (= #{(spice-object :server "server-2")
-                       (spice-object :server "server-3")}
-                     (set (lookup-resources db' {:limit         10
-                                                 :offset        1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+              (is (= [(spice-object :server "server-2")
+                      (spice-object :server "server-3")]
+                     (lookup-resources db' {:limit         10
+                                            :offset        1
+                                            :resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "super-user")}))))
 
             ; Note that return order of Spice resources is not defined, because we do not sort during lookup.
             ; We assume order will be: [server-1, server-3, server-2].
@@ -193,41 +193,41 @@
                                                  :permission    :view
                                                  :subject       (->user "super-user")})))))
 
-            (testing "limit 1, offset 1 should return 2nd result, server-3"
-              (is (= #{(spice-object :server "server-3")}
-                     (set (lookup-resources db' {:offset        1
-                                                 :limit         1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+            (testing "limit 1, offset 1 should return 2nd result, server-2"
+              (is (= [(spice-object :server "server-2")]
+                     (lookup-resources db' {:offset        1
+                                            :limit         1
+                                            :resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "super-user")}))))
 
-            (testing "offset: 2, limit: 10, should return last result only, server-2"
-              (is (= #{(spice-object :server "server-2")}
-                     (set (lookup-resources db' {:offset        2
-                                                 :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+            (testing "offset: 2, limit: 10, should return last result only, server-3"
+              (is (= [(spice-object :server "server-3")]
+                     (lookup-resources db' {:offset        2
+                                            :limit         10
+                                            :resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "super-user")}))))
 
             (testing "offset: 3, limit: 10 should be empty"
-              (is (= #{} (set (lookup-resources db' {:limit         10
-                                                     :offset        3
-                                                     :resource/type :server
-                                                     :permission    :view
-                                                     :subject       (->user "super-user")})))))
+              (is (= [] (lookup-resources db' {:limit         10
+                                               :offset        3
+                                               :resource/type :server
+                                               :permission    :view
+                                               :subject       (->user "super-user")}))))
 
-            (testing "offset: 2, limit: 10 should return last result, server-2"
-              (is (= #{(spice-object :server "server-2")}
-                     (set (lookup-resources db' {:offset        2
-                                                 :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+            (testing "offset: 2, limit: 10 should return last result, server-3"
+              (is (= [(spice-object :server "server-3")]
+                     (lookup-resources db' {:offset        2
+                                            :limit         10
+                                            :resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "super-user")}))))
 
-            (testing "offset: 2, limit 1, should return last result only, server-2"
-              (is (= #{(spice-object :server "server-2")}
-                     (set (lookup-resources db' {:limit         1
-                                                 :offset        2
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))))))))
+            (testing "offset: 2, limit 1, should return last result only, server-3"
+              (is (= [(spice-object :server "server-3")]
+                     (lookup-resources db' {:limit         1
+                                            :offset        2
+                                            :resource/type :server
+                                            :permission    :view
+                                            :subject       (->user "super-user")}))))))))))
