@@ -152,25 +152,24 @@
   (let [{subject-id :id} subject
         subject-eid (:db/id (d/entity db [object-id-attr subject-id]))
         
-        ;; Debug: Check if subject exists
-        _ (when-not subject-eid
-            (println "WARNING: Subject not found:" subject-id))
+        ;; We need enough results to satisfy offset + limit
+        target-count (+ offset limit)
         
         ;; Stage 1: Find direct relationships
         stage1-direct (if subject-eid
                        (find-direct-resources db subject-eid type permission)
                        [])
         
-        ;; Stage 2: Find via arrow permissions (if needed)
+        ;; Stage 2: Find via arrow permissions (if we need more results)
         stage2-arrow (when (and subject-eid 
-                               (< (count stage1-direct) limit))
+                               (< (count stage1-direct) target-count))
                       (find-arrow-resources db subject-eid type permission))
         
-        ;; Stage 3: Multi-hop paths (only if really needed)
+        ;; Stage 3: Multi-hop paths (only if we still need more results)
         stage3-indirect (when (and subject-eid
                                   (< (+ (count stage1-direct) 
                                         (count (or stage2-arrow []))) 
-                                     limit))
+                                     target-count))
                          (find-indirect-resources db subject-eid type permission))
         
         ;; Combine and deduplicate

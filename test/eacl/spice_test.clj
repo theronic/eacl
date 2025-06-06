@@ -168,6 +168,13 @@
       (is (false? (eacl/can? *client joe's-user :reboot my-server fully-consistent))))
 
     (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
+
+      ; specifying missing subject does not throw an exception, or should it?
+      (is (eacl/lookup-resources *client {:subject       (->user "user:petrus") ;eacl/fully-consistent
+                                          :permission    :reboot
+                                          :resource/type :server
+                                          :consistency   :fully-consistent}))
+
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
       (is (= [(update my-server :id str)] (eacl/lookup-resources *client
                                                                  {:resource/type :server
