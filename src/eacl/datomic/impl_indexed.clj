@@ -34,29 +34,6 @@
          ;; Skip the cursor itself if present
          (drop (if cursor-eid 1 0)))))
 
-;(defn- find-resources-pointing-to
-;  "Finds entity eids of `source-resource-type` that have a `relation` pointing to `target-eid`."
-;  [db target-eid relation source-resource-type]
-;  (log/debug "find-resources-pointing-to" {:target-eid target-eid, :relation relation, :source-resource-type source-resource-type})
-;  ;; Need to handle both directions of relationships
-;  ;; First, try to find resources that point TO the target
-;  (let [forward-datoms  (d/datoms db :avet :eacl.relationship/resource+relation-name+subject [target-eid relation])
-;        forward-results (->> forward-datoms
-;                             (map (fn [datom]
-;                                    (let [subject-eid (last (:v datom))]
-;                                      (d/entity db subject-eid))))
-;                             (filter #(= source-resource-type (:resource/type %)))
-;                             (map :db/id))
-;        ;; Also check if target points to resources (reverse relationship)
-;        reverse-datoms  (d/datoms db :avet :eacl.relationship/subject+relation-name+resource [target-eid relation])
-;        reverse-results (->> reverse-datoms
-;                             (map (fn [datom]
-;                                    (let [resource-eid (last (:v datom))]
-;                                      (d/entity db resource-eid))))
-;                             (filter #(= source-resource-type (:resource/type %)))
-;                             (map :db/id))]
-;    (distinct (concat forward-results reverse-results))))
-
 (defn get-permission-paths
   [db resource-type permission]
   (let [direct-relations (d/q '[:find [?relation-name ...]
@@ -118,14 +95,6 @@
                                     source-resource-type (:source-resource-type step)
                                     start-tuple [eid relation source-resource-type nil]
                                     datoms (d/index-range db :eacl.relationship/subject+relation-name+resource-type+resource start-tuple nil)
-                                    ;rels (d/q '[:find [?resource ...]
-                                    ;            :in $ ?subject-eid ?relation ?resource-type
-                                    ;            :where
-                                    ;            [?rel :eacl.relationship/subject ?subject-eid]
-                                    ;            [?rel :eacl.relationship/relation-name ?relation]
-                                    ;            [?rel :eacl.relationship/resource ?resource]
-                                    ;            [?resource :resource/type ?resource-type]]
-                                    ;          db eid (:relation step) (:source-resource-type step))
                                     matches (->> datoms
                                                  (take-while (fn [{:as datom, v :v}]
                                                                (let [[datom-subject datom-relation datom-rtype datom-resource] v]
@@ -145,46 +114,6 @@
           next-eids))
       initial-eids
       reverse-steps)))
-
-;(defn lazy-arrow-permission-resources
-;  "Lazily fetches resource EIDs via arrow permissions."
-;  [db subject-eid steps direct-relation resource-type cursor-eid]
-;  (log/debug "lazy-arrow-permission-resources" {:subject-eid subject-eid, :steps steps, :direct-relation direct-relation, :cursor-eid cursor-eid})
-;  (let [;; For arrow permissions like server.account->admin, we need to:
-;        ;; 1. Find entities where subject has the direct-relation permission
-;        ;; 2. For each of those entities, follow the arrow relation chain back to the target resource type
-;
-;        ;; Start by finding entities where subject has the terminal permission
-;        initial-step  (last steps)
-;        initial-type  (:target-resource-type initial-step)
-;        initial-eids  (lazy-direct-permission-resources db subject-eid direct-relation initial-type cursor-eid)
-;        _             (log/debug "initial eids for type" initial-type ":" (count (into [] initial-eids)))
-;
-;        ;; Now traverse backwards through the steps
-;        reverse-steps (reverse steps)]
-;    (reduce
-;      (fn [current-eids step]
-;        (log/debug "arrow step:" {:step step, :current-eids (count (into [] current-eids))})
-;        ;; For each current entity, find entities that it points to with the given relation
-;        (let [next-eids (mapcat
-;                          (fn [eid]
-;                            ;; We need to find resources of source-resource-type that have relation pointing TO eid
-;                            ;; Use index on resource attribute directly
-;                            (let [rel-datoms (d/datoms db :vaet eid :eacl.relationship/resource)
-;                                  resources  (->> rel-datoms
-;                                                 (map :e) ; Get relationship entity ids
-;                                                 (map #(d/entity db %))
-;                                                 (filter #(= (:relation step) (:eacl.relationship/relation-name %)))
-;                                                 (map :eacl.relationship/subject)
-;                                                 (filter #(= (:source-resource-type step) (:resource/type %)))
-;                                                 (map :db/id))]
-;                              (log/debug "For eid" eid "found" (count resources) "entities that point to it via" (:relation step))
-;                              resources))
-;                          current-eids)]
-;          (log/debug "next eids:" (count (into [] next-eids)))
-;          next-eids))
-;      initial-eids
-;      reverse-steps)))
 
 (defn lookup-resources
   "Lazily finds resources where subject has permission."

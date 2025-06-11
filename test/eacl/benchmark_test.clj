@@ -2,7 +2,7 @@
   (:require [criterium.core :as crit]
             [eacl.core :as eacl]
             [eacl.datomic.core :as spiceomic]
-           ; [eacl.datomic.impl-base :as base :refer [Relation Relationship Permission]]
+    ; [eacl.datomic.impl-base :as base :refer [Relation Relationship Permission]]
             [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
             [eacl.datomic.schema :as schema]
             [datomic.api :as d]
@@ -50,12 +50,13 @@
 
 (defn make-account-txes [{:keys [num-users num-servers]} account-uuid]
   (let [account-tempid (d/tempid :db.part/user)
-        account-tx     {:db/id         account-tempid
-                        :resource/type :account
-                        :entity/id     (str account-uuid)}
+        account-txes   [{:db/id         account-tempid
+                         :resource/type :account
+                         :entity/id     (str account-uuid)}
+                        (Relationship (->platform [:entity/id "platform"]) :platform (->account account-tempid))]
         user-txes      (make-account-user-txes account-tempid num-users)
         server-txes    (make-account-server-txes account-tempid num-servers)]
-    (concat [account-tx] (flatten user-txes) (flatten server-txes))))
+    (concat account-txes (flatten user-txes) (flatten server-txes))))
 
 (defn server->user-ids [db server-id]
   (d/q '[:find [?user-id ...]
@@ -125,7 +126,7 @@
     (d/create-database datomic-uri)
     (def conn (d/connect datomic-uri))
     (.release conn)
-    #_ [])
+    #_[])
 
   (comment
 
@@ -184,15 +185,91 @@
                                                        :permission    :view
                                                        :resource/type :server
                                                        :cursor        nil
-                                                       :limit         100000000000}))))
+                                                       :limit         1000}))))
 
     (let [test-user (rand-user (d/db conn))]
-      (prn 'test-user test-user)
-      (time (count (:data (eacl/lookup-resources client {:subject       (->user test-user)
-                                                         :permission    :view
-                                                         :resource/type :server
-                                                         :cursor        nil
-                                                         :limit         100000000000})))))
+      (let [{:as       page1
+             p1-data   :data
+             p1-cursor :cursor}
+            (eacl/lookup-resources client {:subject       (->user test-user)
+                                           :permission    :view
+                                           :resource/type :server
+                                           :cursor        nil
+                                           :limit         600})
+            page1-count (count p1-data)
+
+            {:as       page2
+             p2-data   :data
+             p2-cursor :cursor}
+            (eacl/lookup-resources client {:subject       (->user test-user)
+                                           :permission    :view
+                                           :resource/type :server
+                                           :cursor        p1-cursor
+                                           :limit         400})
+            page2-count (count p2-data)
+
+            {:as       page3
+             p3-data   :data
+             p3-cursor :cursor}
+            (eacl/lookup-resources client {:subject       (->user test-user)
+                                           :permission    :view
+                                           :resource/type :server
+                                           :cursor        p2-cursor
+                                           :limit         100})
+            page3-count (count p3-data)
+
+            total-count (+ page1-count page2-count page3-count)
+            all-pages-data (concat p1-data p2-data p3-data)
+            unique-count (count (distinct all-pages-data))]
+        (assert (> total-count 700))
+        {:total/count total-count
+         :count [page1-count page2-count page3-count]
+         :cursors [p1-cursor p2-cursor p3-cursor]
+         :data (concat p1-data p2-data p3-data)
+         :unique-count unique-count}))
+
+    (let [test-user (rand-user (d/db conn))]
+      ; fetch two pages of data (we are not checking correctness here)
+      (let [{:as    page1
+             data   :data
+             p1-cursor :cursor}
+            (eacl/lookup-resources client {:subject       (->user test-user)
+                                           :permission    :view
+                                           :resource/type :server
+                                           :cursor        nil
+                                           :limit         600})
+            c1 (count data)
+
+            {:as page2
+             data :data
+             p2-cursor :cursor}
+            (eacl/lookup-resources client {:subject       (->user test-user)
+                                           :permission    :view
+                                           :resource/type :server
+                                           :cursor        p1-cursor
+                                           :limit         400})
+            c2 (count data)]
+        [p1-cursor p2-cursor]))
+
+    (crit/quick-bench
+      (let [test-user (rand-user (d/db conn))]
+        ; fetch two pages of data (we are not checking correctness here)
+        (let [{:as page1 :keys [data cursor]}
+              (eacl/lookup-resources client {:subject       (->user test-user)
+                                             :permission    :view
+                                             :resource/type :server
+                                             :cursor        nil
+                                             :limit         600})
+              c1 (count data)
+
+              {:as page2 :keys [data cursor]}
+              (eacl/lookup-resources client {:subject       (->user test-user)
+                                             :permission    :view
+                                             :resource/type :server
+                                             :cursor        cursor
+                                             :limit         400})
+              c2 (count data)]
+          nil)))
 
     (let [test-server (rand-server (d/db conn))]
       (prn 'test-server test-server)
@@ -233,7 +310,7 @@
                                        (for [server-id servers]
                                          [server-id (vec (server->user-ids db server-id))])))]
       ;(prn 'server->users server->users)
-      (when false ; true                                            ; false ; do
+      (when false                                           ; true                                            ; false ; do
         (log/debug "Starting benchmark...")
         (crit/quick-bench
           (let [random-server      (rand-nth servers)
@@ -292,7 +369,7 @@
   (d/q '[:find (count ?account) .
          :where
          [?account :resource/type :account]]
-   (d/db conn))
+       (d/db conn))
 
   (d/q '[:find (count ?server) .
          :where
