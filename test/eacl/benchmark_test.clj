@@ -2,11 +2,11 @@
   (:require [criterium.core :as crit]
             [eacl.core :as eacl]
             [eacl.datomic.core :as spiceomic]
-            [eacl.datomic.impl-base :as base :refer [Relation Relationship Permission]]
-            ;[eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
+           ; [eacl.datomic.impl-base :as base :refer [Relation Relationship Permission]]
+            [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]
             [eacl.datomic.schema :as schema]
             [datomic.api :as d]
-            [eacl.datomic.fixtures :as fixtures :refer [->account ->user ->server]]
+            [eacl.datomic.fixtures :as fixtures :refer [->platform ->account ->user ->server]]
             [clojure.test :as t :refer [deftest testing is]]
             [clojure.tools.logging :as log]))
 
@@ -31,7 +31,9 @@
           :resource/type :user
           :entity/id     (str user-uuid)
           :user/account  account-tempid}                    ; only to police permission checks.
-         (impl/Relationship user-tempid :owner account-tempid)]))))
+         (Relationship (->user user-tempid)
+                       :owner
+                       (->account account-tempid))]))))
 
 (defn make-account-server-txes [account-tempid n]
   (let [server-uuids        (repeatedly n d/squuid)
@@ -44,7 +46,7 @@
           :server/account account-tempid                    ; only to police permission checks.
           :entity/id      (str server-uuid)
           :server/name    (str "Servers " server-uuid)}
-         (impl/Relationship account-tempid :account server-tempid)]))))
+         (Relationship (->account account-tempid) :account (->server server-tempid))]))))
 
 (defn make-account-txes [{:keys [num-users num-servers]} account-uuid]
   (let [account-tempid (d/tempid :db.part/user)
@@ -97,36 +99,66 @@
               expected (contains? user-set server-id)]]
     [actual expected]))
 
+(defn rand-user [db]
+  (d/q '[:find (rand ?user-uuid) .
+         :in $
+         :where
+         [?user :user/account ?account]
+         [?user :entity/id ?user-uuid]]
+       db))
+
+(defn rand-server [db]
+  (d/q '[:find (rand ?server-uuid) .
+         :in $
+         :where
+         [?server :server/account ?account]
+         [?server :entity/id ?server-uuid]]
+       db))
+
 (deftest eacl-benchmarks
   ; todo switch to with-mem-conn.
   ;(def datomic-uri "datomic:dev://localhost:4597/eacl-benchmark")
-  (def datomic-uri "datomic:mem://mem-eacl-benchmark")
-  (d/delete-database datomic-uri)
-  (d/create-database datomic-uri)
-  (def conn (d/connect datomic-uri))
+
+  (comment
+    (def datomic-uri "datomic:mem://mem-eacl-benchmark")
+    (d/delete-database datomic-uri)
+    (d/create-database datomic-uri)
+    (def conn (d/connect datomic-uri))
+    (.release conn)
+    #_ [])
 
   (comment
 
-    (d/q '[:find (count ?account) .
-           :where
-           [?account :resource/type :account]]
-         (d/db conn))
+    (testing "Transact EACL Datomic Schema"
+      (tx! conn (concat schema/v4-schema)))
 
-    (d/q '[:find (count ?server) .
-           :where
-           [?server :resource/type :server]]
-         (d/db conn))
+    (testing "Transact a realistic EACL Permission Schema"
+      (tx! conn fixtures/base-fixtures))
 
-    (d/q '[:find (count ?user) .
-           :where
-           [?user :resource/type :user]]
-         (d/db conn))
+    (testing "some schema to police our data"
+      (tx! conn [{:db/ident       :server/name
+                  :db/doc         "Just to add some real data into the mix."
+                  :db/cardinality :db.cardinality/one
+                  :db/valueType   :db.type/string
+                  :db/index       true}
+
+                 {:db/ident       :user/account
+                  :db/cardinality :db.cardinality/many
+                  :db/valueType   :db.type/ref
+                  :db/index       true}
+
+                 {:db/ident       :server/account
+                  :db/cardinality :db.cardinality/one
+                  :db/valueType   :db.type/ref
+                  :db/index       true}]))
 
     (def test-account (d/q '[:find (rand ?account-uuid) .
                              :where
                              [?account :resource/type :account]
                              [?account :entity/id ?account-uuid]]
                            (d/db conn)))
+
+    test-account
 
     (def test-user (d/q '[:find (rand ?user-uuid) .
                           :in $ ?account-uuid
@@ -137,62 +169,42 @@
 
     (def client (spiceomic/make-client conn))
 
-    (defn rand-user [db]
-      (d/q '[:find (rand ?user-uuid) .
-             :in $
-             :where
-             [?user :user/account ?account]
-             [?user :entity/id ?user-uuid]]
-           db))
+    ;; Add platform relations for all accounts:
+
+    (let [platform-id (d/entid (d/db conn) [:entity/id "platform"])]
+      (->> (d/q '[:find [?account ...]
+                  :where [?server :server/account ?account]]
+                (d/db conn))
+           (map (fn [acc]
+                  (Relationship (->platform platform-id) :platform (->account acc))))
+           (d/transact conn)
+           (deref)))
+
+    (time (count (:data (eacl/lookup-resources client {:subject       (->user "super-user")
+                                                       :permission    :view
+                                                       :resource/type :server
+                                                       :cursor        nil
+                                                       :limit         100000000000}))))
 
     (let [test-user (rand-user (d/db conn))]
       (prn 'test-user test-user)
-      (count (time (eacl/lookup-resources client {:resource/type :server
-                                                  :permission    :view
-                                                  :subject       (->user test-user)
-                                                  :limit         100000000000}))))
-
-    (defn rand-server [db]
-      (d/q '[:find (rand ?server-uuid) .
-             :in $
-             :where
-             [?server :server/account ?account]
-             [?server :entity/id ?server-uuid]]
-           db))
+      (time (count (:data (eacl/lookup-resources client {:subject       (->user test-user)
+                                                         :permission    :view
+                                                         :resource/type :server
+                                                         :cursor        nil
+                                                         :limit         100000000000})))))
 
     (let [test-server (rand-server (d/db conn))]
       (prn 'test-server test-server)
-      (time (eacl/lookup-subjects client {:resource     (->server test-server)
-                                          :permission   :view
-                                          :subject/type :user})))
+      (time (count (eacl/lookup-subjects client {:resource     (->server test-server)
+                                                 :permission   :view
+                                                 :subject/type :user}))))
 
-    (eacl/read-relationships client {:resource/type :account})
-    (eacl/read-relationships client {:resource/type :server})
+    (time (count (eacl/read-relationships client {:resource/type :account})))
+    (time (count (eacl/read-relationships client {:resource/type :server})))
     ())
 
-  (testing "Transact EACL Datomic Schema"
-    (tx! conn (concat schema/v4-schema)))
-
-  (testing "Transact a realistic EACL Permission Schema"
-    (tx! conn fixtures/base-fixtures))
-
-  (testing "some schema to police our data"
-    (tx! conn [{:db/ident       :server/name
-                :db/doc         "Just to add some real data into the mix."
-                :db/cardinality :db.cardinality/one
-                :db/valueType   :db.type/string
-                :db/index       true}
-
-               {:db/ident       :user/account
-                :db/cardinality :db.cardinality/many
-                :db/valueType   :db.type/ref
-                :db/index       true}
-
-               {:db/ident       :server/account
-                :db/cardinality :db.cardinality/one
-                :db/valueType   :db.type/ref
-                :db/index       true}]))
-
+  ; Transact Test Data
   (let [num-accounts  100
         num-users     10
         num-servers   1000
@@ -221,7 +233,7 @@
                                        (for [server-id servers]
                                          [server-id (vec (server->user-ids db server-id))])))]
       ;(prn 'server->users server->users)
-      (when true                                            ; false ; do
+      (when false ; true                                            ; false ; do
         (log/debug "Starting benchmark...")
         (crit/quick-bench
           (let [random-server      (rand-nth servers)
@@ -276,3 +288,18 @@
         subject  (rand-nth subjects)]))
 ;(prn 'can? (eacl/can? (d/db conn) (:db/id subject) :company/view [:entity/id (first cids)]))))
 
+(comment
+  (d/q '[:find (count ?account) .
+         :where
+         [?account :resource/type :account]]
+   (d/db conn))
+
+  (d/q '[:find (count ?server) .
+         :where
+         [?server :resource/type :server]]
+       (d/db conn))
+
+  (d/q '[:find (count ?user) .
+         :where
+         [?user :resource/type :user]]
+       (d/db conn)))

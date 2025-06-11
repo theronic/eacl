@@ -103,19 +103,19 @@
                   via-rel
                   target-perm)))))
 
-(defn find-indirect-resources
-  "Find resources through indirect paths - fallback for complex cases"
-  [db subject-eid resource-type permission]
-  ;; Use the full rules as a fallback
-  (d/q '[:find [?resource ...]
-         :in $ % ?subject ?permission ?resource-type
-         :where
-         (has-permission ?subject ?permission ?resource-type ?resource)]
-       db
-       rules/rules-lookup-resources
-       subject-eid
-       permission
-       resource-type))
+;(defn find-indirect-resources
+;  "Find resources through indirect paths - fallback for complex cases"
+;  [db subject-eid resource-type permission]
+;  ;; Use the full rules as a fallback
+;  (d/q '[:find [?resource ...]
+;         :in $ % ?subject ?permission ?resource-type
+;         :where
+;         (has-permission ?subject ?permission ?resource-type ?resource)]
+;       db
+;       rules/rules-lookup-resources
+;       subject-eid
+;       permission
+;       resource-type))
 
 ;(defn lookup-resources-staged
 ;  "Staged approach to resource lookup for better performance"
@@ -200,14 +200,16 @@
         {:as         subject-ent
          subject-eid :db/id} (d/entity db [object-id-attr subject-id])]
     (assert subject-eid (str "lookup-resources requires a valid resource with unique attr " (pr-str object-id-attr) "."))
-    (assert (= subject-type (:resource/type subject-ent)) (str "Resource type does not match " subject-type "."))
+    (assert (= subject-type (:resource/type subject-ent)) (str "Specified subject type does not match actual type: " subject-type "."))
     (let [resource-eids  (->> (d/q '[:find [?resource ...]
-                                     :in $ % ?subject-eid ?permission ?resource-type
+                                     :in $ % ?subject-type ?subject-eid ?permission ?resource-type
                                      :where
+                                     ;(has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
                                      (has-permission ?subject-eid ?permission ?resource-type ?resource)
                                      [(not= ?resource ?subject-eid)]] ; do we still need this?
                                    db
                                    rules/rules-lookup-resources
+                                   subject-type
                                    subject-eid
                                    permission
                                    resource-type))

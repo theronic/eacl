@@ -2,9 +2,8 @@
   "EACL: Enterprise Access Control. Spice-compatible authorization system in Datomic."
   (:require
     [eacl.datomic.impl-base :as base]
-    [eacl.datomic.impl-optimized :as impl]))
-    ;[eacl.datomic.impl-indexed :as impl-idx]))
-
+    [eacl.datomic.impl-optimized :as impl-optimized]
+    [eacl.datomic.impl-indexed :as impl-indexed]))
 
 ; A central place to configure how IDs and resource types are handled:
 ; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
@@ -34,9 +33,12 @@
 (def Permission base/Permission)
 (def Relationship base/Relationship)
 
-;; Use optimized implementation
-(def can? impl/can?)
-(def can! impl/can!)
-(def entity->spice-object impl/entity->spice-object)
-(def lookup-subjects impl/lookup-subjects)
-(def lookup-resources impl/lookup-resources)
+;; Use indexed implementation for better performance with large offsets
+(def can? impl-optimized/can?)
+(def can! impl-optimized/can!)
+(def entity->spice-object impl-optimized/entity->spice-object)
+(def lookup-subjects impl-optimized/lookup-subjects)
+;(def lookup-resources impl/lookup-resources)
+;(def lookup-resources impl-grok/lookup-resources)
+
+(def lookup-resources impl-indexed/lookup-resources)

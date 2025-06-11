@@ -1,4 +1,4 @@
-(ns eacl.datomic.rules.optimized
+(ns eacl.datomic.rules.optimized-old
   "Optimized Datalog rules for EACL performance improvements")
 
 (def check-permission-rules
@@ -146,114 +146,15 @@
      [(not= ?subject ?intermediate-resource)]
      [(not= ?this-resource ?intermediate-resource)]]])
 
-;(def rules-lookup-resources
-;  "Optimized rules for lookup-resources - subject-centric approach"
-;  '[;; Helper rule: find relationships from subject
-;
-;    [(relations-between-subject-resource ?subject ?relation ?resource-type ?resource)
-;     [(tuple ?subject ?resource-type) ?subject+resource-type]
-;     [?relationship :eacl.relationship/subject+resource-type ?subject+resource-type]
-;
-;     [?relationship :eacl.relationship/relation-name ?relation]
-;     [?relationship :eacl.relationship/subject ?subject]
-;     [?relationship :eacl.relationship/resource ?resource]
-;     [?relationship :eacl.relationship/resource-type ?resource-type]]
-;
-;    [(subject-has-relationships ?subject-type ?subject ?relation ?resource-type ?resource)
-;     ;; Start from subject
-;
-;     [(tuple ?subject ?relation ?resource) ?subject+relation+resource]
-;     [?relationship :eacl.relationship/subject+relation-name+resource ?subject+relation+resource]
-;
-;     [?relationship :eacl.relationship/subject ?subject]
-;     [?relationship :eacl.relationship/resource ?resource]
-;     [?relationship :eacl.relationship/relation-name ?relation]
-;     [?relationship :eacl.relationship/subject-type ?subject-type]
-;     [?relationship :eacl.relationship/resource-type ?resource-type]]
-;
-;    ;; Direct permission check - subject-centric
-;    [(has-permission ?subject-type ?subject ?permission ?resource-type ?resource)
-;     ;; Check if resource is of correct type
-;     ;[?resource :resource/type ?resource-type]
-;
-;     [(tuple ?resource-type ?permission) ?rtype+permission]
-;     [?perm :eacl.permission/resource-type+permission-name ?rtype+permission]
-;
-;     ;; Check if relation grants permission
-;     ;[?perm :eacl.permission/resource-type ?resource-type]
-;     [?perm :eacl.permission/relation-name ?relation]
-;     ;[?perm :eacl.permission/permission-name ?permission]
-;
-;     (subject-has-relationships ?subject-type ?subject ?relation ?resource-type ?resource)]
-;
-;    ;; Indirect permission via intermediate resources
-;    [(has-permission ?subject-type ?subject ?permission ?resource-type ?resource)
-;     ;; Find relationships where subject can reach an intermediate
-;
-;     ; Find relations that grant this permission:
-;     [(tuple ?resource-type ?permission) ?rtype+permission]
-;     [?perm-def :eacl.permission/resource-type+permission-name ?rtype+permission]
-;     [?perm-def :eacl.permission/resource-type ?resource-type]
-;     [?perm-def :eacl.permission/permission-name ?permission]
-;     [?perm-def :eacl.permission/relation-name ?rel2]
-;
-;     (relations-between-subject-resource ?subject ?rel1 ?intermediate-type ?intermediate)
-;     ;(subject-has-relationships ?subject-type ?subject ?rel1 ?intermediate-type ?intermediate)
-;
-;     ;[(tuple ?intermediate ?rel2 ?resource-type) ?intermediate+rel2+rtype]
-;     ;[?relationship2 :eacl.relationship/subject+relation-name+resource-type ?intermediate+rel2+rtype]
-;
-;     ;; Find resources connected to intermediate via rel2
-;     [?relationship2 :eacl.relationship/subject-type ?intermediate-type]
-;     [?relationship2 :eacl.relationship/subject ?intermediate]
-;     [?relationship2 :eacl.relationship/relation-name ?rel2]
-;     [?relationship2 :eacl.relationship/resource ?resource]
-;     [?relationship2 :eacl.relationship/resource-type ?resource-type]]
-;
-;     ;; Verify resource type
-;     ;[?resource :resource/type ?resource-type]]
-;
-;    ;; Arrow permission - optimized for subject-centric lookup
-;    [(has-permission ?subject-type ?subject ?permission ?resource-type ?resource)
-;     ; known: subject-type ,subject, permission, resource-type.
-;     ;; Find arrow permissions for the target resource type and permission
-;
-;     [(tuple ?resource-type ?permission) ?rtype+perm]
-;     [?arrow :eacl.arrow-permission/resource-type+permission-name ?rtype+perm]
-;
-;     ;[?arrow :eacl.arrow-permission/resource-type ?resource-type]
-;     ;[?arrow :eacl.arrow-permission/permission-name ?permission]
-;     [?arrow :eacl.arrow-permission/source-relation-name ?via-rel]
-;     [?arrow :eacl.arrow-permission/target-permission-name ?target-perm]
-;
-;     ;; Find intermediate resources linked to target resource (resource is not known here)
-;     ; the problem is we know via-rel, but not ?intermediate or ?resource.
-;     ; how to cull ?resource here.
-;     ; we should be able to narrow down relationships here to find the relevant ?intermediate subjects for traversal
-;
-;     ;[(tuple ?resource-type ?via-rel) ?rtype+via-rel]
-;     ;[?link :eacl.relationship/resource-type+relation-name ?rtype+via-rel]
-;     ;[?link :eacl.relationship/resource-type+relation-name ?subject+via-rel+rtype]
-;
-;     [?link :eacl.relationship/resource ?resource] ; this is unknown and expands.
-;     [?link :eacl.relationship/resource-type ?resource-type] ; this is known via arg.
-;     [?link :eacl.relationship/relation-name ?via-rel] ; this is known via arrow.
-;
-;     [?link :eacl.relationship/subject ?intermediate] ; this is looked up here
-;     [?link :eacl.relationship/subject-type ?intermediate-type] ; this is looked up here
-;
-;     ;; Get intermediate resource type
-;     ;[?intermediate :resource/type ?intermediate-type]
-;
-;     ;; Check if subject has target permission on intermediate (recursive)
-;     (has-permission ?subject-type ?subject ?target-perm ?intermediate-type ?intermediate)]])
-
 (def rules-lookup-resources
-  "Too slow. Superseded by direct index impl.
-  Was optimized rules for lookup-resources - subject-centric approach"
+  "Optimized rules for lookup-resources - subject-centric approach"
   '[;; Helper rule: find relationships from subject
     [(subject-has-relationships ?subject ?relation ?resource)
      ;; Start from subject
+
+     ;[(tuple ?subject ?relation ?resource) ?subject+relation+resource]
+     ;[?relationship :eacl.relationship/]
+
      [?relationship :eacl.relationship/subject ?subject]
      [?relationship :eacl.relationship/relation-name ?relation]
      [?relationship :eacl.relationship/resource ?resource]]
@@ -291,18 +192,30 @@
 
     ;; Arrow permission - optimized for subject-centric lookup
     [(has-permission ?subject ?permission ?resource-type ?resource)
+     ; known: subject, permission, resource-type.
      ;; Find arrow permissions for the target resource type and permission
-     [?arrow :eacl.arrow-permission/resource-type ?resource-type]
-     [?arrow :eacl.arrow-permission/permission-name ?permission]
+
+     [(tuple ?resource-type ?permission) ?rtype+perm]
+     [?arrow :eacl.arrow-permission/resource-type+permission-name ?rtype+perm]
+
+     ;[?arrow :eacl.arrow-permission/resource-type ?resource-type]
+     ;[?arrow :eacl.arrow-permission/permission-name ?permission]
      [?arrow :eacl.arrow-permission/source-relation-name ?via-rel]
      [?arrow :eacl.arrow-permission/target-permission-name ?target-perm]
 
      ;; Find resources of target type
-     [?resource :resource/type ?resource-type]
+     [?resource :resource/type ?resource-type] ; this looks slow.
 
-     ;; Find intermediate resources linked to target resource
-     [?link :eacl.relationship/resource ?resource]
+     ;; Find intermediate resources linked to target resource (resource is not known here)
+     ; the problem is we know via-rel, but not ?intermediate or ?resource.
+     ; how to cull ?resource here.
+     ; we should be able to narrow down relationships here to find the relevant ?intermediate subjects for traversal
+
+     ;[(tuple ?subject ?via-rel) ?subject+via-rel]
+     ;[?link :eacl.relationship/subject+relation-name ?subject+via-rel]
+
      [?link :eacl.relationship/relation-name ?via-rel]
+     [?link :eacl.relationship/resource ?resource]
      [?link :eacl.relationship/subject ?intermediate]
 
      ;; Get intermediate resource type

@@ -42,14 +42,17 @@
         ;; Create relationships
         ;; Each user owns an account
         user-account-rels   (for [i (range (min num-users num-accounts))]
-                              (Relationship (str prefix "-user-" i) :owner (str prefix "-account-" i)))
+                              (Relationship (->user (str prefix "-user-" i))
+                                            :owner
+                                            (->account (str prefix "-account-" i))))
 
         ;; Each account has servers
         servers-per-account (quot num-servers num-accounts)
         account-server-rels (for [i (range num-accounts)
                                   j (range servers-per-account)]
-                              (Relationship (str prefix "-account-" i) :account
-                                            (str prefix "-server-" (+ (* i servers-per-account) j))))]
+                              (Relationship (->account (str prefix "-account-" i))
+                                            :account
+                                            (->server (str prefix "-server-" (+ (* i servers-per-account) j)))))]
 
     @(d/transact conn (concat users accounts servers
                               user-account-rels account-server-rels))))
@@ -124,8 +127,7 @@
               (d/q '[:find [?resource ...]
                      :in $ % ?subject-type ?subject-eid ?permission ?resource-type
                      :where
-                     (has-permission ?subject-eid ?permission ?resource-type ?resource)
-                     [?resource :resource/type ?resource-type]]
+                     (has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)]
                    db rules
                    :user
                    (:db/id subject)

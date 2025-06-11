@@ -118,9 +118,11 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   Note: `relation` in relationship filters corresponds to `:resource/relation` here.
   We don't validate resource & subject types here."
   [{:as _relationship :keys [subject relation resource]}]
-  {:eacl.relationship/subject       [:entity/id (:id subject)]
-   :eacl.relationship/relation-name relation
-   :eacl.relationship/resource      [:entity/id (:id resource)]})
+  ; this is kind of grosos
+  (impl/Relationship
+    {:type (:type subject), :id [:entity/id (:id subject)]}
+    relation
+    {:type (:type resource), :id [:entity/id (:id resource)]}))
 
 (defn tx-update-relationship
   "Note that delete costs N queries."

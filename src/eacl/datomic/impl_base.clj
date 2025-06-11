@@ -75,22 +75,27 @@
     grant-permission]
    {:pre [(keyword? resource-type) (keyword? grant-permission)
           (keyword? arrow-source-relation) (keyword? arrow-target-permission)]}
+   ; read as:
+   ; definition resource_type {
+   ;   relation arrow_source_relation: subject_type
+   ;   grant_permission = arrow_source_relation->arrow_target_permission
+   ; }
    {:eacl.arrow-permission/resource-type          resource-type
-    :eacl.arrow-permission/permission-name        grant-permission
+    :eacl.arrow-permission/target-permission-name arrow-target-permission
     :eacl.arrow-permission/source-relation-name   arrow-source-relation
-    :eacl.arrow-permission/target-permission-name arrow-target-permission}))
+    :eacl.arrow-permission/permission-name        grant-permission}))
 
 (defn Relationship
   "A Relationship between a subject and a resource via Relation. Copied from core2."
   [subject relation-name resource]
-  {:pre [(some? subject) (keyword? relation-name) (some? resource)]}
-  {:eacl.relationship/resource      resource
+  ; :pre can be expensive.
+  {:pre [(:id subject)
+         (:type subject)
+         (keyword? relation-name)
+         (:id resource)
+         (:type resource)]}
+  {:eacl.relationship/resource-type (:type resource)
+   :eacl.relationship/resource      (:id resource)
    :eacl.relationship/relation-name relation-name
-   :eacl.relationship/subject       subject})
-;
-;;; Use optimized implementation
-;(def can? impl-opt/can?)
-;(def can! impl-opt/can!)
-;(def entity->spice-object impl-opt/entity->spice-object)
-;(def lookup-subjects impl-opt/lookup-subjects)
-;(def lookup-resources impl-opt/lookup-resources)
+   :eacl.relationship/subject-type  (:type subject)
+   :eacl.relationship/subject       (:id subject)})
