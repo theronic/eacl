@@ -217,7 +217,7 @@ clj -X:test
 ## Run Test for One Namespace
 
 ```bash
-clj -M:test -n eacl.core3-test
+clj -M:test -n eacl.datomic.impl-test
 ```
 
 ## Run Tests for Multiple Namespaces

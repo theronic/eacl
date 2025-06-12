@@ -68,6 +68,9 @@
   ; - limit - optional number.
   ; - offset - optional number.
 
+  (count-resources [this {:as query :keys [consistency]}])
+  ; counting can be slow because it enumerates lookup-resources from cursor
+
   (lookup-subjects [this {:as query :keys [consistency]}])
   ; lookup-subjects (formerly 'who-can?') accepts:
   ; - :resource has {:keys [type id]}. Required.
