@@ -254,6 +254,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   (lookup-resources [this filters]
     (spiceomic-lookup-resources (d/db conn) filters))
 
+  (count-resources [this filters]
+    (impl/count-resources (d/db conn) filters))
+
   (lookup-subjects [this filters]
     (spiceomic-lookup-subjects (d/db conn) filters))
 

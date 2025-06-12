@@ -84,32 +84,34 @@
         ;; Now traverse backwards through the steps
         reverse-steps (reverse steps)]
     (reduce
-      (fn [current-eids step] ; we'll need to track offsets here unfortunately and switch to reduce. also need to deduplicate IDs.
+      (fn [current-eids step]                               ; we'll need to track offsets here unfortunately and switch to reduce. also need to deduplicate IDs.
         ;(log/debug "arrow step:" {:step step, :current-eids (count (into [] current-eids))})
         ;; For each current entity, find entities that it points to with the given relation
-        (let [next-eids (doall
-                          (mapcat
-                            (fn [eid]
-                              ;; Find relationships where this eid is the subject with the given relation
-                              (let [relation (:relation step)
-                                    source-resource-type (:source-resource-type step)
-                                    start-tuple [eid relation source-resource-type nil]
-                                    datoms (d/index-range db :eacl.relationship/subject+relation-name+resource-type+resource start-tuple nil)
-                                    matches (->> datoms
-                                                 (take-while (fn [{:as datom, v :v}]
-                                                               (let [[datom-subject datom-relation datom-rtype datom-resource] v]
-                                                                 (and (= datom-subject eid)
-                                                                      (= datom-relation relation)
-                                                                      (= datom-rtype source-resource-type)))))
-                                                 (map (fn [{:as datom, v :v}]
-                                                        (let [[datom-subject datom-relation datomic-rtype datom-resource] v]
-                                                          datom-resource)))
-                                                 (drop-while (fn [resource-eid]  ; TODO more complex cursor needed here to avoid dupes.
-                                                               (and cursor-eid (not= resource-eid cursor-eid)))))]
-                                ; watch out: this materializes everything.
-                                ;(log/debug "For eid" eid "found" (count (into [] matches)) "entities it points to via" (:relation step))
-                                matches))
-                            current-eids))]
+        (let [next-eids ;doall                               ; do we need doall here?
+              (mapcat
+                (fn [eid]
+                  ;; Find relationships where this eid is the subject with the given relation
+                  (let [relation             (:relation step)
+                        source-resource-type (:source-resource-type step)
+                        start-tuple          [eid relation source-resource-type nil]
+                        datoms               (d/index-range db :eacl.relationship/subject+relation-name+resource-type+resource start-tuple nil)
+                        matches              (->> datoms
+                                                  (take-while (fn [{:as datom, v :v}]
+                                                                (let [[datom-subject datom-relation datom-rtype datom-resource] v]
+                                                                  (and (= datom-subject eid)
+                                                                       (= datom-relation relation)
+                                                                       (= datom-rtype source-resource-type)))))
+                                                  (map (fn [{:as datom, v :v}]
+                                                         (let [[datom-subject datom-relation datomic-rtype datom-resource] v]
+                                                           datom-resource)))
+                                                  ; TODO: suspect drop-while has to be before take-while...
+                                                  ; I'm not sure this is needed
+                                                  (drop-while (fn [resource-eid] ; TODO more complex cursor needed here to avoid dupes.
+                                                                (and cursor-eid (not= resource-eid cursor-eid)))))]
+                    ; watch out: this materializes everything.
+                    ;(log/debug "For eid" eid "found" (count (into [] matches)) "entities it points to via" (:relation step))
+                    matches))
+                current-eids)]
           ;(log/debug "next eids:" (count next-eids))
           next-eids))
       initial-eids
@@ -149,16 +151,19 @@
                                                   (map #(vector % path-idx) eids)))))
 
         ;; Apply deduplication and cursor filtering lazily
-        seen                     (atom #{})
+        ;; can we ditch the paths at this point?
+
+        seen                     (volatile! #{})                 ; TODO: optimize. seen set can be passed in earlier to lazy-*.
         deduplicated-resources   (filter (fn [[eid path-idx]]
-                                           (if (@seen eid)
+                                           (if (contains? @seen eid)
                                              false
-                                             (do (swap! seen conj eid)
+                                             (do (vswap! seen conj eid)
                                                  true)))
                                          resource-eids-with-paths)
 
         ; we shouldn't need to do this. It's possible we return less than limit because of dupes.
         ;; Apply cursor filtering if needed
+        ;; this seems superfluous.
         resources-after-cursor   (if cursor-eid
                                    (drop-while (fn [[eid _]]
                                                  (not= eid cursor-eid))
@@ -184,6 +189,63 @@
         resources                (map (fn [[eid _]] (entity->spice-object (d/entity db eid))) realized-resources)]
     {:cursor new-cursor
      :data   resources}))
+
+(defn count-resources
+  ; this could reuse most of lookup-resources. unfortunately can't get around deduplication.
+  "Counts resources where subject has permission. Materializes full index, so can be slow!"
+  [db {:as           _query
+       subject       :subject
+       permission    :permission
+       resource-type :resource/type
+       cursor        :cursor                                ; only count after-cursor.
+       :or           {cursor nil}}]
+  {:pre [(:type subject)
+         (keyword? (:type subject))
+         (:id subject)
+         (keyword? permission)
+         (keyword? resource-type)]}
+  (let [subject-eid              (d/entid db [:entity/id (:id subject)])
+        paths                    (get-permission-paths db resource-type permission)
+        ;_                        (log/debug "lookup-resources paths" paths)
+        ;; Handle cursor as either a string or a cursor object
+        cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
+        cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor))
+        cursor-eid               (when cursor-resource-id (d/entid db [:entity/id cursor-resource-id]))
+        ;_                        (log/debug 'cursor-eid cursor-eid)
+
+        ;; Create a lazy sequence of all resource eids with their path indices
+        resource-eids-with-paths (->> paths
+                                      (map-indexed vector)
+                                      (mapcat (fn [[path-idx [steps direct-relation]]]
+                                                (let [eids (if (empty? steps)
+                                                             (lazy-direct-permission-resources db subject-eid direct-relation resource-type nil)
+                                                             (lazy-arrow-permission-resources db subject-eid steps direct-relation resource-type nil))]
+                                                  (map #(vector % path-idx) eids)))))
+
+        ;; Apply deduplication and cursor filtering lazily
+        ;; deduplication costs O(N) unfortunately
+        seen                     (volatile! #{})                 ; can be optimized. a seen set can be passed in earlier.
+        deduplicated-resources   (filter (fn [[eid path-idx]]
+                                           (if (@seen eid)
+                                             false
+                                             (do (vswap! seen conj eid)
+                                                 true)))
+                                         resource-eids-with-paths)
+
+        resources-after-cursor   (if cursor-eid
+                                   (drop-while (fn [[eid _]]
+                                                 (not= eid cursor-eid))
+                                               deduplicated-resources)
+                                   deduplicated-resources)
+
+        ;; Skip the cursor itself if present
+        resources-to-return      (if (and cursor-eid (seq resources-after-cursor))
+                                   (rest resources-after-cursor)
+                                   resources-after-cursor)
+
+        total-count              (count resources-to-return)]
+    ;; Convert to spice objects
+    total-count))
 
 (comment
   ;; Setup test database

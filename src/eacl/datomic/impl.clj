@@ -42,3 +42,4 @@
 ;(def lookup-resources impl-grok/lookup-resources)
 
 (def lookup-resources impl-indexed/lookup-resources)
+(def count-resources impl-indexed/count-resources)

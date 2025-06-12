@@ -21,6 +21,7 @@
     (let [db             (d/db conn)
           super-user-eid (d/entid db [:entity/id "super-user"])
           paths          (lazy-impl/get-permission-paths db :server :view)]
+
       (prn 'super-user-eid super-user-eid)
       (prn 'paths paths)
 
@@ -77,6 +78,11 @@
                                                          :resource/type :server
                                                          :cursor        nil})))))
 
+      (is (= 3 (lazy-impl/count-resources db {:subject       (->user "super-user")
+                                              :permission    :view
+                                              :resource/type :server
+                                              :cursor        nil})))
+
       (is (= #{(->server "account1-server1")
                (->server "account1-server2")}
              (set (:data (lazy-impl/lookup-resources db {:subject       (->user "user-1")
@@ -84,8 +90,21 @@
                                                          :resource/type :server
                                                          :cursor        nil})))))
 
+      (is (= 2 (lazy-impl/count-resources db {:subject       (->user "user-1")
+                                              :permission    :view
+                                              :resource/type :server})))
+
       (is (= #{(->server "account2-server1")}
              (set (:data (lazy-impl/lookup-resources db {:subject       (->user "user-2")
                                                          :permission    :view
                                                          :resource/type :server
-                                                         :cursor        nil}))))))))
+                                                         :cursor        nil})))))
+
+      (is (= 1 (lazy-impl/count-resources db {:subject       (->user "user-2")
+                                              :permission    :view
+                                              :resource/type :server})))
+
+      (is (= 0 (lazy-impl/count-resources db {:subject       (->user "user-2")
+                                              :permission    :view
+                                              :resource/type :server
+                                              :cursor        {:path-index 3, :resource-id "account2-server1"}}))))))

@@ -251,6 +251,18 @@
             c2 (count data)]
         [p1-cursor p2-cursor]))
 
+    (eacl/count-resources client {:subject       (->user "super-user")
+                                  :permission    :view
+                                  :resource/type :server
+                                  :cursor        nil})
+
+    (crit/quick-bench
+      (let [page (eacl/lookup-resources client {:subject       (->user "super-user")
+                                                :permission    :view
+                                                :resource/type :server
+                                                :cursor        nil
+                                                :limit         1000000000})]))
+
     (crit/quick-bench
       (let [test-user (rand-user (d/db conn))]
         ; fetch two pages of data (we are not checking correctness here)
