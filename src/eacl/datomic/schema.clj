@@ -1,13 +1,13 @@
 (ns eacl.datomic.schema)
 
 (def v4-schema
-  [{:db/ident       :resource/type
+  [{:db/ident       :eacl/type
     :db/doc         "Resource Type on Domain Entities. Used by EACL."
     :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :entity/id                              ; todo: figure out how to support :id, :object/id or :spice/id of different types.
+   {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
     :db/valueType   :db.type/string
     :db/unique      :db.unique/identity
@@ -268,7 +268,7 @@
     :db/unique      :db.unique/identity}
 
    ;; NEW PERFORMANCE OPTIMIZATION INDICES
-   
+
    ;; Critical for subject-based lookups
    {:db/ident       :eacl.relationship/subject+relation-name
     :db/doc         "Index for efficient subject-based lookups"

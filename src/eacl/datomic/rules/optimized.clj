@@ -19,7 +19,7 @@
     ;; Direct permission - optimized clause ordering
     [(has-permission ?subject ?permission-name ?resource)
      ;; Get resource type first
-     [?resource :resource/type ?resource-type]
+     [?resource :eacl/type ?resource-type]
 
      ;; Find relationships for this resource
      [?relationship :eacl.relationship/resource ?resource]
@@ -36,7 +36,7 @@
     ;; Indirect permission inheritance - optimized
     [(has-permission ?subject ?permission-name ?resource)
      ;; Get resource type first (we already have the resource)
-     [?resource :resource/type ?resource-type]
+     [?resource :eacl/type ?resource-type]
 
      ;; Find permission definitions for this resource type
      [?perm-def :eacl.permission/resource-type ?resource-type]
@@ -55,7 +55,7 @@
     ;; Arrow permission - optimized
     [(has-permission ?subject ?perm-name-on-this-resource ?this-resource)
      ;; Get resource type from the resource we already have
-     [?this-resource :resource/type ?this-resource-type]
+     [?this-resource :eacl/type ?this-resource-type]
 
      ;; Find arrow permission definitions
      [?arrow-perm :eacl.arrow-permission/resource-type ?this-resource-type]
@@ -91,7 +91,7 @@
     ;; Direct permission check - optimized for known resource
     [(has-permission ?subject-type ?subject ?permission-name ?resource)
      ;; Get resource type (we already have resource entity)
-     [?resource :resource/type ?resource-type]
+     [?resource :eacl/type ?resource-type]
 
      ;; Find relationships for this resource
      [?relationship :eacl.relationship/resource ?resource]
@@ -99,7 +99,7 @@
      [?relationship :eacl.relationship/relation-name ?relation-name]
 
      ;; Check subject type
-     [?subject :resource/type ?subject-type]
+     [?subject :eacl/type ?subject-type]
 
      ;; Check permission using tuple
      [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
@@ -109,7 +109,7 @@
 
     ;; Indirect permission inheritance
     [(has-permission ?subject-type ?subject ?permission-name ?resource)
-     [?resource :resource/type ?resource-type]
+     [?resource :eacl/type ?resource-type]
 
      ;; Find permission definitions
      [?perm-def :eacl.permission/resource-type ?resource-type]
@@ -122,12 +122,12 @@
      [?structural-rel :eacl.relationship/resource ?target]
 
      (reachable ?target ?subject)
-     [?subject :resource/type ?subject-type]
+     [?subject :eacl/type ?subject-type]
      [(not= ?subject ?resource)]]
 
     ;; Arrow permission
     [(has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource)
-     [?this-resource :resource/type ?this-resource-type]
+     [?this-resource :eacl/type ?this-resource-type]
 
      ;; Find arrow permissions
      [?arrow-perm :eacl.arrow-permission/resource-type ?this-resource-type]
@@ -174,7 +174,7 @@
 ;    ;; Direct permission check - subject-centric
 ;    [(has-permission ?subject-type ?subject ?permission ?resource-type ?resource)
 ;     ;; Check if resource is of correct type
-;     ;[?resource :resource/type ?resource-type]
+;     ;[?resource :eacl/type ?resource-type]
 ;
 ;     [(tuple ?resource-type ?permission) ?rtype+permission]
 ;     [?perm :eacl.permission/resource-type+permission-name ?rtype+permission]
@@ -211,7 +211,7 @@
 ;     [?relationship2 :eacl.relationship/resource-type ?resource-type]]
 ;
 ;     ;; Verify resource type
-;     ;[?resource :resource/type ?resource-type]]
+;     ;[?resource :eacl/type ?resource-type]]
 ;
 ;    ;; Arrow permission - optimized for subject-centric lookup
 ;    [(has-permission ?subject-type ?subject ?permission ?resource-type ?resource)
@@ -243,7 +243,7 @@
 ;     [?link :eacl.relationship/subject-type ?intermediate-type] ; this is looked up here
 ;
 ;     ;; Get intermediate resource type
-;     ;[?intermediate :resource/type ?intermediate-type]
+;     ;[?intermediate :eacl/type ?intermediate-type]
 ;
 ;     ;; Check if subject has target permission on intermediate (recursive)
 ;     (has-permission ?subject-type ?subject ?target-perm ?intermediate-type ?intermediate)]])
@@ -264,7 +264,7 @@
      (subject-has-relationships ?subject ?relation ?resource)
 
      ;; Check if resource is of correct type
-     [?resource :resource/type ?resource-type]
+     [?resource :eacl/type ?resource-type]
 
      ;; Check if relation grants permission
      [?perm :eacl.permission/resource-type ?resource-type]
@@ -287,7 +287,7 @@
      [?relationship2 :eacl.relationship/resource ?resource]
 
      ;; Verify resource type
-     [?resource :resource/type ?resource-type]]
+     [?resource :eacl/type ?resource-type]]
 
     ;; Arrow permission - optimized for subject-centric lookup
     [(has-permission ?subject ?permission ?resource-type ?resource)
@@ -298,7 +298,7 @@
      [?arrow :eacl.arrow-permission/target-permission-name ?target-perm]
 
      ;; Find resources of target type
-     [?resource :resource/type ?resource-type]
+     [?resource :eacl/type ?resource-type]
 
      ;; Find intermediate resources linked to target resource
      [?link :eacl.relationship/resource ?resource]
@@ -306,7 +306,7 @@
      [?link :eacl.relationship/subject ?intermediate]
 
      ;; Get intermediate resource type
-     [?intermediate :resource/type ?intermediate-type]
+     [?intermediate :eacl/type ?intermediate-type]
 
      ;; Check if subject has target permission on intermediate (recursive)
      (has-permission ?subject ?target-perm ?intermediate-type ?intermediate)]])

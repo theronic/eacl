@@ -20,8 +20,8 @@ The primary API call is `can?`:
 ```
 
 To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
-- `:resource/type` (keyword), e.g. `:server` or `:account`
-- `:entity/id` (unique string), e.g. `"unique-account-1"`
+- `:eacl/type` (keyword), e.g. `:server` or `:account`
+- `:eacl/id` (unique string), e.g. `"unique-account-1"`
 
 You can construct a Spice Object using `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`. It returns a SpiceObject.
 
@@ -63,13 +63,13 @@ E.g.
 ; Make an EACL Datomic client that satisfies IAuthorization protocol:
 (def client (spiceomic/make-client conn))
 
-; Ensure your resources have `:resource/type` & `:entity/id`:
+; Ensure your resources have `:eacl/type` & `:eacl/id`:
 @(d/transact conn
-   [{:resource/type :user
-     :entity/id     "user1"}
+   [{:eacl/type :user
+     :eacl/id   "user1"}
   
-    {:resource/type :server
-     :entity/id     "server1"}])
+    {:eacl/type :server
+     :eacl/id   "server1"}])
 
 ; Transact EACL Relationships (schema is detailed below):
 @(d/transact conn your-relationships)
@@ -187,15 +187,15 @@ Now you can transact relationships:
 
 ```clojure
 @(d/transact conn
-  [{:db/id         "user1"
-    :resource/type :user
-    :entity/id     "user1"}
+  [{:db/id     "user1-tempid"
+    :eacl/type :user
+    :eacl/id   "user1"}
 
-   {:db/id         "account1"
-    :resource/type :account
-    :entity/id     "account1"}
+   {:db/id     "account1-tempid"
+    :eacl/type :account
+    :eacl/id   "account1"}
 
-   (Relationship "user1" :owner "account1")])
+   (Relationship "user1-tempid" :owner "account1-tempid")])
 ```
 
 (I'm using tempids in example because entities are defined in same tx as relationships)

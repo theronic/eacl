@@ -3,19 +3,19 @@
 
 (defn id->identifier
   "This is to support custom unique entity IDs."
-  [entity-id]
-  [:entity/id entity-id])
+  [eacl-id]
+  [:eacl/id eacl-id])
 
 ; A central place to configure how IDs and resource types are handled:
 ; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
 ; - To retain parity with SpiceDB, you can configure EACL to coerce object types & IDs of different
 ;   types (usually UUIDs) to/from Datomic when returning SpiceObject.
-; - By default EACL, uses :entity/id (unique string) and :resource/type (keyword) for objects.
+; - By default EACL, uses :eacl/id (unique string) and :eacl/type (keyword) for objects (subject & resources).
 ; - Below, you can configure how these are coerced to/from Datomic below.
 
 ; this should be passed into the impl.
-(def object-id-attr :entity/id)                             ; we default to :entity/id (string).
-(def resource-type-attr :resource/type)                     ; we default to :resource/type
+(def object-id-attr :eacl/id)                               ; we default to :eacl/id (string).
+(def resource-type-attr :eacl/type)                         ; we default to :eacl/type
 
 ; To support other types of IDs that can be coerced to/from string-formattable entity IDs, than UUIDs
 

@@ -145,8 +145,8 @@
                                        my-account acme-account
                                        super-user my-user joe's-user
                                        my-server my-other-server joe's-server]]
-                              {:resource/type (:type ent)
-                               :entity/id     (:id ent)}))))
+                              {:eacl/type (:type ent)
+                               :eacl/id   (:id ent)}))))
 
     (testing "Write relationships so my-user is the :owner of my-account and my-server is in my-account. Note the order of subjects vs. resources in ->Relationship."
       (let [{:as response, token :zed/token}
@@ -274,8 +274,8 @@
                                         (->account "other-account")
                                         (->vpc "my-vpc")
                                         (->vpc "other-vpc")]]
-                            {:resource/type (:type object)
-                             :entity/id     (:id object)})))
+                            {:eacl/type (:type object)
+                             :eacl/id   (:id object)})))
 
       (is (eacl/create-relationships! *client
                                       [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
@@ -288,6 +288,7 @@
                                                :subject/type      :account
                                                :subject/id        "test-account"}))))
 
+    ; expand-permission-tree not impl. yet.
     (testing "We can expand permissions hierarchy for (->server 123)."
       (is (= [[[[{:object   (->account "operativa")
                   :relation :owner
