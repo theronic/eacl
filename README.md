@@ -56,47 +56,59 @@ E.g.
 (def conn (d/connect datomic-uri))
 
 ; Transact the EACL Datomic Attributes
-@(d/transact conn schema/v3-schema) ; transact EACL schema attributes
+@(d/transact conn schema/v4-schema) ; transact EACL schema attributes
+
 ; Transact your Spice-compatible EACL Schema (details below):
 @(d/transact conn your-eacl-schema)
 
-; Make an EACL Datomic client that satisfies IAuthorization protocol:
+; Make an EACL Datomic client that satisfies the `IAuthorization` protocol:
 (def client (spiceomic/make-client conn))
 
-; Ensure your resources have `:eacl/type` & `:eacl/id`:
+; Ensure your entities have `:eacl/type` & `:eacl/id` attributes:
 @(d/transact conn
    [{:eacl/type :user
      :eacl/id   "user1"}
   
     {:eacl/type :server
      :eacl/id   "server1"}])
+; These correspond to Spice type + id and populate SpiceObject. 
+; - `:eacl/type` is a keyword, e.g. :account
+; - `:eacl/id` is a unique string ident to retain compatibility with SpiceDB, which uses strings.
 
 ; Transact EACL Relationships (schema is detailed below):
 @(d/transact conn your-relationships)
 
 ; Now you can do `can?` permission checks:
 (eacl/can? client (->user "user1") :view (->server "server1"))
-=> true | false
+=> true|false
 
 (eacl/can! client (->user "user1" :view (->server "server1"))
 => true or throws if `can?` returns false.
 
-; You can enumerate resources: 
-(eacl/lookup-resources client {:resource/type :server
+; Given a subject, you can enumerate the resources they have a permission for using
+; cursor-based pagination: 
+(eacl/lookup-resources client {:subject       (->user "user1")
                                :permission    :view
-                               :subject/id    "user1"})
-=> [{:type :server :id "server1"},
-    {:type :server :id "server2"}
-    ...]
+                               :resource/type :server
+                               :limit         1000
+                               :cursor        'cursor}) ; nil for 1st page
+=> {:data [{:type :server :id "server1"},
+           {:type :server :id "server2"}
+           ...]
+    :cursor 'next-cursor}
 ; ^ collection of :server resources (spice-object) that subject user1 can :view.
 
-; You can enumerate subjects:
-(eacl/lookup-subjects client {:resource/type :server
+; Given a resource, you can enumerate the subjects who have a given permission on resources of a type,
+; using limit / offset pagination (cursors are todo):
+(eacl/lookup-subjects client {:resource      (->server "server1")
                               :permission    :view
-                              :resource/id   "server1"})
-=> [{:type :user, :id "user1"},
-    {:type :account, :id   "account1"} 
-    ...]
+                              :resource/type :server
+                              :limit         1000
+                              :offset        0}) ; cursor pagination WIP for lookup-subjects.
+=> {:data [{:type :user, :id "user1"},
+           {:type :account, :id   "account1"} 
+           ...]
+    :cursor nil} ; cursor not supported for lookup-subjects yet, but coming soon.
 ; collection of subjects that can :view the :server resource "server1".
 ```
 
