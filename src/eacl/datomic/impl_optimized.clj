@@ -42,10 +42,13 @@
                                    resource-eid))
           paginated-eids (cond->> subject-eids
                                   offset (drop offset)
-                                  limit (take limit))]
-      (->> paginated-eids
-           (map #(d/entity db %))
-           (map entity->spice-object)))))
+                                  limit (take limit))
+          objects (->> paginated-eids
+                       (map #(d/entity db %))
+                       (map entity->spice-object))]
+      ; todo: cursor WIP.
+      {:data objects
+       :cursor nil})))
 
 ;; Helper functions for staged lookup-resources
 (defn find-direct-resources

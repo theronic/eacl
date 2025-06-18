@@ -74,17 +74,17 @@
           (is (= #{(spice-object :user "user-1")
                    ;(spice-object :account "account-1")
                    (spice-object :user "super-user")}
-                 (set (lookup-subjects db {:resource     (->server "account1-server1")
-                                           :permission   :view
-                                           :subject/type :user}))))
+                 (set (:data (lookup-subjects db {:resource     (->server "account1-server1")
+                                                  :permission   :view
+                                                  :subject/type :user})))))
 
           (testing ":test/user2 is only subject who can delete :test/server2"
             (is (= #{(spice-object :user "user-2")
                      (spice-object :user "super-user")}
                    ; todo pagination + cursor. this is outdated.
-                   (set (lookup-subjects db {:resource     (->server "account2-server1")
-                                             :permission   :delete
-                                             :subject/type :user}))))))
+                   (set (:data (lookup-subjects db {:resource     (->server "account2-server1")
+                                                    :permission   :delete
+                                                    :subject/type :user})))))))
 
         (testing "We can enumerate resources with lookup-resources"
           (is (= #{(spice-object :server "account1-server1")
@@ -132,9 +132,9 @@
           (is (= #{(spice-object :user "super-user")
                    (spice-object :user "user-1")
                    (spice-object :user "user-2")}
-                 (set (lookup-subjects db {:resource     (->server "account2-server1")
-                                           :permission   :delete
-                                           :subject/type :user})))))
+                 (set (:data (lookup-subjects db {:resource     (->server "account2-server1")
+                                                  :permission   :delete
+                                                  :subject/type :user}))))))
 
         (testing "Now let's delete all :server/owner Relationships for :test/user2"
           (let [db-for-delete (d/db conn)
@@ -151,9 +151,9 @@
                      ;(spice-object :account "account-2")
                      (spice-object :user "user-1")
                      (spice-object :user "super-user")}
-                   (set (lookup-subjects db' {:resource     (->server "account2-server1")
-                                              :permission   :view
-                                              :subject/type :user}))))
+                   (set (:data (lookup-subjects db' {:resource     (->server "account2-server1")
+                                                     :permission   :view
+                                                     :subject/type :user})))))
             (testing ":test/user2 cannot access any servers" ; is this correct?
               (is (= #{}                                    ; Expect empty set of spice objects
                      (set (:data (lookup-resources db' {:resource/type :server

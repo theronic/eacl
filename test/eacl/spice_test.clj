@@ -190,14 +190,14 @@
 
     (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
-      (is (= [my-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                      :resource my-server
-                                                      :permission    :reboot
-                                                      :subject/type  :user})))
-      (is (= [joe's-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                         :resource joe's-server
-                                                         :permission    :reboot
-                                                         :subject/type  :user}))))
+      (is (= [my-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
+                                                             :resource     my-server
+                                                             :permission   :reboot
+                                                             :subject/type :user}))))
+      (is (= [joe's-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
+                                                                :resource     joe's-server
+                                                                :permission   :reboot
+                                                                :subject/type :user})))))
 
     (testing "joe's-user can :reboot their server, but I cannot:"
       (is (true? (eacl/can? *client joe's-user :reboot joe's-server fully-consistent)))

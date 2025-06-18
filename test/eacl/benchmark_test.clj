@@ -187,6 +187,18 @@
                                                        :cursor        nil
                                                        :limit         1000}))))
 
+    (time (count (:data (eacl/lookup-resources client {:subject       (->user "super-user")
+                                                       :permission    :view
+                                                       :resource/type :server
+                                                       :cursor        nil
+                                                       :limit         100000000}))))
+
+    (time (count (:data (eacl/lookup-resources client {:subject       (->user "super-user")
+                                                       :permission    :view
+                                                       :resource/type :server
+                                                       :cursor        nil
+                                                       :limit         1000}))))
+
     (let [test-user (rand-user (d/db conn))]
       (let [{:as       page1
              p1-data   :data

@@ -18,6 +18,7 @@
    (Relation :platform :super_admin :user)                   ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
    ; definition platform {
    ;   relation super_admin: user;
+   ;   permission platform_admin = super_admin   # EACL requires this hack for arrow relations because we traverse permissions->relations. Could be fixed.
    ; }
 
    (Relation :vpc/account :account)                         ; vpc, relation account: account.
