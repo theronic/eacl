@@ -26,11 +26,15 @@
 
       (let [db (d/db conn)]
         "super-user can view all servers"
-        (is (= #{(spice-object :server "server-1")
-                 (spice-object :server "server-2")}
-               (set (lookup-resources db {:subject       (->user "super-user")
-                                          :permission    :view
-                                          :resource/type :server}))))
+        ; this should now be sorted... but is it fast?
+        (is (= #{(spice-object :server "account1-server1")
+                 (spice-object :server "account1-server2")
+                 (spice-object :server "account2-server1")}
+               (set (:data (lookup-resources db {:subject       (->user "super-user")
+                                                 :permission    :view
+                                                 :resource/type :server
+                                                 :limit         1000
+                                                 :cursor        nil})))))
 
         ":test/user can :view and :reboot their server"
 
@@ -70,51 +74,67 @@
           (is (= #{(spice-object :user "user-1")
                    ;(spice-object :account "account-1")
                    (spice-object :user "super-user")}
-                 (set (lookup-subjects db {:resource     (->server "server-1")
-                                           :permission   :view
-                                           :subject/type :user}))))
+                 (set (:data (lookup-subjects db {:resource     (->server "account1-server1")
+                                                  :permission   :view
+                                                  :subject/type :user})))))
 
           (testing ":test/user2 is only subject who can delete :test/server2"
             (is (= #{(spice-object :user "user-2")
                      (spice-object :user "super-user")}
-                   (set (lookup-subjects db {:resource     (->server "server-2")
-                                             :permission   :delete
-                                             :subject/type :user}))))))
+                   ; todo pagination + cursor. this is outdated.
+                   (set (:data (lookup-subjects db {:resource     (->server "account2-server1")
+                                                    :permission   :delete
+                                                    :subject/type :user})))))))
 
         (testing "We can enumerate resources with lookup-resources"
-          (is (= #{(spice-object :server "server-1")}
-                 (set (lookup-resources db {:resource/type :server
-                                            :permission    :view
-                                            :subject       (->user "user-1")}))))
+          (is (= #{(spice-object :server "account1-server1")
+                   (spice-object :server "account1-server2")}
+                 ; todo cursor
+                 (set (:data (lookup-resources db {:subject       (->user "user-1")
+                                                   :permission    :view
+                                                   :resource/type :server})))))
+
+          (testing "same for :reboot permission"
+            (is (= #{(spice-object :server "account1-server1")
+                     (spice-object :server "account1-server2")}
+                   ; todo cursor
+                   (set (:data (lookup-resources db {:subject       (->user "user-1")
+                                                     :permission    :reboot
+                                                     :resource/type :server}))))))
 
           (is (= #{(spice-object :account "account-1")}
-                 (set (lookup-resources db {:resource/type :account
-                                            :permission    :view
-                                            :subject       (->user "user-1")}))))
+                 ; todo cursor
+                 (set (:data (lookup-resources db {:subject       (->user "user-1")
+                                                   :permission    :view
+                                                   :resource/type :account})))))
 
-          (is (= #{(spice-object :server "server-2")}
-                 (set (lookup-resources db {:resource/type :server
-                                            :permission    :view
-                                            :subject       (->user "user-2")})))))
+          ; todo cursor
+          (is (= #{(spice-object :server "account2-server1")}
+                 (set (:data (lookup-resources db {:subject       (->user "user-2")
+                                                   :permission    :view
+                                                   :resource/type :server}))))))
 
         (testing "Make user-1 a shared_admin of server-2"
-          (is @(d/transact conn [(Relationship :test/user1 :shared_admin :test/server2)]))) ; this shouldn't be working. no schema for it.
+          (is @(d/transact conn [(Relationship (->user :test/user1) :shared_admin (->server :test/server2))]))) ; this shouldn't be working. no schema for it.
 
         (let [db (d/db conn)]
           "Now :test/user1 can also :server/delete server 2"
           (is (can? db :test/user1 :delete :test/server2))
 
-          (is (= #{(spice-object :server "server-1")
-                   (spice-object :server "server-2")}
-                 (set (spiceomic/lookup-resources db {:resource/type :server
-                                                      :permission    :view
-                                                      :subject       (->user "user-1")}))))
+          (is (= #{(spice-object :server "account1-server1")
+                   (spice-object :server "account1-server2")
+                   (spice-object :server "account2-server1")}
+                 (set (:data (lookup-resources db {:subject       (->user "user-1")
+                                                   :permission    :view
+                                                   :resource/type :server
+                                                   :cursor        nil})))))
+
           (is (= #{(spice-object :user "super-user")
                    (spice-object :user "user-1")
                    (spice-object :user "user-2")}
-                 (set (spiceomic/lookup-subjects db {:resource     (->server "server-2")
-                                                     :permission   :delete
-                                                     :subject/type :user})))))
+                 (set (:data (lookup-subjects db {:resource     (->server "account2-server1")
+                                                  :permission   :delete
+                                                  :subject/type :user}))))))
 
         (testing "Now let's delete all :server/owner Relationships for :test/user2"
           (let [db-for-delete (d/db conn)
@@ -125,34 +145,49 @@
                                    db-for-delete)]
             (is @(d/transact conn (for [rel rels] [:db.fn/retractEntity (:db/id rel)])))))
 
-        (testing "Now only :test/user1 can access both servers."
+        (testing "Now only user-1 can :view all 3 servers."
           (let [db' (d/db conn)]
             (is (= #{
                      ;(spice-object :account "account-2")
                      (spice-object :user "user-1")
                      (spice-object :user "super-user")}
-                   (set (lookup-subjects db' {:resource     (->server "server-2")
-                                              :permission   :view
-                                              :subject/type :user}))))
+                   (set (:data (lookup-subjects db' {:resource     (->server "account2-server1")
+                                                     :permission   :view
+                                                     :subject/type :user})))))
             (testing ":test/user2 cannot access any servers" ; is this correct?
               (is (= #{}                                    ; Expect empty set of spice objects
-                     (set (lookup-resources db' {:resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "user-2")})))))
+                     (set (:data (lookup-resources db' {:resource/type :server
+                                                        :permission    :view
+                                                        :subject       (->user "user-2")}))))))
 
             (is (not (can? db' :test/user2 :server/delete :test/server2)))
 
             (testing ":test/user1 permissions remain unchanged"
-              (is (= #{(spice-object :server "server-1")
-                       (spice-object :server "server-2")}
-                     (set (lookup-resources db' {:resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "user-1")}))))
+              (is (= #{(spice-object :server "account1-server1")
+                       (spice-object :server "account1-server2")
+                       (spice-object :server "account2-server1")}
+                     (set (:data (lookup-resources db' {:resource/type :server
+                                                        :permission    :reboot
+                                                        :subject       (->user "user-1")})))))
+
+              (is (= #{(spice-object :server "account1-server1")
+                       (spice-object :server "account1-server2")
+                       (spice-object :server "account2-server1")}
+                     (set (:data (lookup-resources db' {:resource/type :server
+                                                        :permission    :reboot
+                                                        :subject       (->user "super-user")})))))
+
+              (is (= #{(spice-object :server "account1-server1")
+                       (spice-object :server "account1-server2")
+                       (spice-object :server "account2-server1")}
+                     (set (:data (lookup-resources db' {:resource/type :server
+                                                        :permission    :view
+                                                        :subject       (->user "user-1")})))))
 
               (is (= #{(spice-object :account "account-1")}
-                     (set (lookup-resources db' {:resource/type :account
-                                                 :permission    :view
-                                                 :subject       (->user "user-1")})))))))
+                     (set (:data (lookup-resources db' {:resource/type :account
+                                                        :permission    :view
+                                                        :subject       (->user "user-1")}))))))))
 
         (testing "pagination: limit & offset are handled correctly for arrow permissions"
           (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
@@ -160,74 +195,83 @@
                                 :db/ident      :test/server3
                                 :resource/type :server      ; note, no account.
                                 :entity/id     "server-3"}
-                               (Relationship :user/super-user :shared_admin :test/server1)
-                               (Relationship :user/super-user :shared_admin "server3")]))
+                               (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))
+                               (Relationship (->user :user/super-user) :shared_admin (->server "server3"))]))
 
           (let [db' (d/db conn)]
             (testing "limit: 10, offset 0 should include all 3 servers"
-              (is (= #{(spice-object :server "server-1")
-                       (spice-object :server "server-2")
+              (is (= #{(spice-object :server "account1-server1")
+                       (spice-object :server "account1-server2")
+                       (spice-object :server "account2-server1")
                        (spice-object :server "server-3")}
-                     (set (lookup-resources db' {:limit         10
-                                                 :offset        0
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+                     (set (:data (lookup-resources db' {:limit         10
+                                                        :cursor        nil ; no cursor should return all 3 servers
+                                                        :resource/type :server
+                                                        :permission    :view
+                                                        :subject       (->user "super-user")}))))))
 
             (testing "limit: 10, offset: 1 should exclude server-1"
-              (is (= #{(spice-object :server "server-2")
-                       (spice-object :server "server-3")}
-                     (set (lookup-resources db' {:limit         10
-                                                 :offset        1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+              (is (= [ ; excluded: (spice-object :server "account1-server1")
+                      (spice-object :server "server-3")
+                      (spice-object :server "account1-server2")
+                      (spice-object :server "account2-server1")]
+                     ; cursor seems weird here. shouldn't it be exclusive?
+                     (:data (lookup-resources db' {:limit         10
+                                                   :cursor        "account1-server1"
+                                                   :resource/type :server
+                                                   :permission    :view
+                                                   :subject       (->user "super-user")})))))
 
             ; Note that return order of Spice resources is not defined, because we do not sort during lookup.
             ; We assume order will be: [server-1, server-3, server-2].
             (testing "limit 1, offset 0 should return first result only, server-1"
-              (is (= #{(spice-object :server "server-1")}
-                     (set (lookup-resources db' {:offset        0
-                                                 :limit         1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+              (is (= #{(spice-object :server "account1-server1")}
+                     (set (:data (lookup-resources db' {:cursor        nil
+                                                        :limit         1
+                                                        :resource/type :server
+                                                        :permission    :view
+                                                        :subject       (->user "super-user")}))))))
 
             (testing "limit 1, offset 1 should return 2nd result, server-3"
-              (is (= #{(spice-object :server "server-3")}
-                     (set (lookup-resources db' {:offset        1
-                                                 :limit         1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+              (is (= [(spice-object :server "server-3")]
+                     (:data (lookup-resources db' {:cursor        "account1-server1"
+                                                   :limit         1
+                                                   :resource/type :server
+                                                   :permission    :view
+                                                   :subject       (->user "super-user")})))))
 
-            (testing "offset: 2, limit: 10, should return last result only, server-2"
-              (is (= #{(spice-object :server "server-2")}
-                     (set (lookup-resources db' {:offset        2
-                                                 :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+            (testing "offset: 2, limit: 10, should return last result only, server-3"
+              (is (= [(spice-object :server "account1-server2")
+                      (spice-object :server "account2-server1")]
+                     (:data (lookup-resources db' {:cursor        "server-3"
+                                                   ;:offset        2
+                                                   :limit         10
+                                                   :resource/type :server
+                                                   :permission    :view
+                                                   :subject       (->user "super-user")})))))
 
-            (testing "offset: 3, limit: 10 should be empty"
-              (is (= #{} (set (lookup-resources db' {:limit         10
-                                                     :offset        3
-                                                     :resource/type :server
-                                                     :permission    :view
-                                                     :subject       (->user "super-user")})))))
+            (testing "offset: last cursor, limit: 10 should be empty"
+              (is (= [] (:data (lookup-resources db' {:limit         10
+                                                      :cursor        "account2-server1"
+                                                      :resource/type :server
+                                                      :permission    :view
+                                                      :subject       (->user "super-user")})))))
 
-            (testing "offset: 2, limit: 10 should return last result, server-2"
-              (is (= #{(spice-object :server "server-2")}
-                     (set (lookup-resources db' {:offset        2
-                                                 :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))
+            (testing "offset: 2, limit: 10 should return last result, server-3"
+              (is (= [(spice-object :server "account1-server2")
+                      (spice-object :server "account2-server1")]
+                     (:data (lookup-resources db' {:cursor        "server-3"
+                                                   ;:offset        2
+                                                   :limit         10
+                                                   :resource/type :server
+                                                   :permission    :view
+                                                   :subject       (->user "super-user")})))))
 
-            (testing "offset: 2, limit 1, should return last result only, server-2"
-              (is (= #{(spice-object :server "server-2")}
-                     (set (lookup-resources db' {:limit         1
-                                                 :offset        2
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user "super-user")})))))))))))
+            (testing "offset: 2, limit 1, should return last result only, server-3"
+              (is (= [(spice-object :server "account1-server2")]
+                     (:data (lookup-resources db' {:limit         1
+                                                   :cursor        "server-3"
+                                                   ;:offset        2
+                                                   :resource/type :server
+                                                   :permission    :view
+                                                   :subject       (->user "super-user")})))))))))))

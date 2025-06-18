@@ -15,11 +15,11 @@
 
 (def base-fixtures
   [; Schema
-   (Relation :platform/super_admin :user)                   ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
+   (Relation :platform :super_admin :user)                   ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
    ; definition platform {
    ;   relation super_admin: user;
+   ;   permission platform_admin = super_admin   # EACL requires this hack for arrow relations because we traverse permissions->relations. Could be fixed.
    ; }
-   (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
 
    (Relation :vpc/account :account)                         ; vpc, relation account: account.
    ;permission admin = account->admin + shared_admin
@@ -32,10 +32,13 @@
 
    ; Accounts:
    (Relation :account :owner :user)                         ; Account has an owner (a user)
+   (Relation :account :platform :platform)
+
    (Permission :account :owner :admin)                      ; Owner of account gets admin on account
    (Permission :account :owner :view)
-   (Permission :account :platform :platform_admin :admin)   ; hack for platform->super_admin
+   (Permission :account :platform :platform_admin :admin)   ; hack for platform->super_admin.
    (Permission :account :platform :platform_admin :view)    ; spurious.
+   (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
 
    ; Teams:
    (Relation :team/account :account)
@@ -53,6 +56,7 @@
    (Permission :server/account :edit)
    ; Server Shared Admin:
    (Permission :server/shared_admin :view)
+   (Permission :server/shared_admin :reboot)
    (Permission :server/shared_admin :admin)
    (Permission :server/shared_admin :delete)
 
@@ -79,8 +83,9 @@
     :db/ident      :test/user1
     :resource/type :user}
 
-   (Relationship "user-1" :member "team-1")                 ; User 1 is on Team 1
-   (Relationship "user-1" :owner "account-1")
+   ; we need to specify types for indices, but id can be tempid here.
+   (Relationship (->user "user-1") :member (->team "team-1")) ; User 1 is on Team 1
+   (Relationship (->user "user-1") :owner (->account "account-1"))
 
    ; Super User can do all the things:
    {:db/id         "super-user"
@@ -88,14 +93,14 @@
     :db/ident      :user/super-user
     :resource/type :user}
 
-   (Relationship "super-user" :super_admin "platform")
+   (Relationship (->user "super-user") :super_admin (->platform "platform"))
 
    {:db/id         "user-2"
     :entity/id     "user-2"
     :db/ident      :test/user2
     :resource/type :user}
 
-   (Relationship "user-2" :owner "account-2")
+   (Relationship (->user "user-2") :owner (->account "account-2"))
 
    ; Accounts
    {:db/id         "account-1"
@@ -103,14 +108,14 @@
     :db/ident      :test/account1
     :resource/type :account}
 
-   (Relationship "platform" :platform "account-1")
+   (Relationship (->platform "platform") :platform (->account "account-1"))
 
    {:db/id         "account-2"
     :entity/id     "account-2"
     :db/ident      :test/account2
     :resource/type :account}
 
-   (Relationship "platform" :platform "account-2")
+   (Relationship (->platform "platform") :platform (->account "account-2"))
 
    ; VPC
    {:db/id         "vpc-1"
@@ -118,14 +123,14 @@
     :db/ident      :test/vpc
     :resource/type :vpc}
 
-   (Relationship "account-1" :account "vpc-1")
+   (Relationship (->account "account-1") :account (->vpc "vpc-1"))
 
    {:db/id         "vpc-2"
     :entity/id     "vpc-2"
     :db/ident      :test/vpc2
     :resource/type :vpc}
 
-   (Relationship "account-2" :account "vpc-2")
+   (Relationship (->account "account-2") :account (->vpc "vpc-2"))
 
    ; Team
    {:db/id         "team-1"
@@ -134,29 +139,35 @@
     :db/ident      :test/team}
 
    ; Teams belongs to accounts
-   (Relationship "account-1" :account "team-1")
+   (Relationship (->account "account-1") :account (->team "team-1"))
 
    {:db/id         "team-2"
     :entity/id     "team-2"
     :db/ident      :test/team2
     :resource/type :team}
 
-   (Relationship "account-2" :account "team-2")
+   (Relationship (->account "account-2") :account (->team "team-2"))
 
    ;; Servers:
-   {:db/id         "server-1"
-    :entity/id     "server-1"
+   {:db/id         "account1-server1"
+    :entity/id     "account1-server1"
     :db/ident      :test/server1
     :resource/type :server}
 
-   (Relationship "account-1" :account "server-1") ; hmm let's check schema plz.
+   (Relationship (->account "account-1") :account (->server "account1-server1")) ; hmm let's check schema plz.
 
-   {:db/id         "server-2"
-    :entity/id     "server-2"
+   {:db/id         "account1-server2"
+    :entity/id     "account1-server2"
+    :resource/type :server}
+
+   (Relationship (->account "account-1") :account (->server "account1-server2"))
+
+   {:db/id         "account2-server1"
+    :entity/id     "account2-server1"
     :db/ident      :test/server2
     :resource/type :server}
 
-   (Relationship "account-2" :account "server-2")])
+   (Relationship (->account "account-2") :account (->server "account2-server1"))])
 
 ;; Team Membership:
 

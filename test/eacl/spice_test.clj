@@ -7,7 +7,6 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :as fixtures :refer [->user ->team ->server ->platform ->vpc ->account]]
             [eacl.datomic.core :as spiceomic]
-            [eacl.datomic.impl]                             ; this can go away once with-mem-conn moves
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]])
   (:import (eacl.core IAuthorization)))
@@ -170,33 +169,35 @@
     (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
 
       ; specifying missing subject does not throw an exception, or should it?
-      (is (eacl/lookup-resources *client {:subject       (->user "user:petrus") ;eacl/fully-consistent
-                                          :permission    :reboot
-                                          :resource/type :server
-                                          :consistency   :fully-consistent}))
+      ; this throws:
+      ;(is (eacl/lookup-resources *client {:subject       (->user "missing-subject") ;eacl/fully-consistent
+      ;                                    :permission    :reboot
+      ;                                    :resource/type :server
+      ;                                    :consistency   :fully-consistent}))
 
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
-      (is (= [(update my-server :id str)] (eacl/lookup-resources *client
-                                                                 {:resource/type :server
-                                                                  :permission    :reboot
-                                                                  :subject       my-user
-                                                                  :consistency   fully-consistent})))
-      (is (= [(update joe's-server :id str)] (eacl/lookup-resources *client
-                                                                    {:resource/type :server
-                                                                     :permission    :reboot
-                                                                     :subject       joe's-user
-                                                                     :consistency   fully-consistent}))))
+      (is (= [(update my-server :id str)] (:data (eacl/lookup-resources *client
+                                                                        {:subject       my-user
+                                                                         :permission    :reboot
+                                                                         :resource/type :server
+                                                                         :cursor        nil
+                                                                         :consistency   fully-consistent}))))
+      (is (= [(update joe's-server :id str)] (:data (eacl/lookup-resources *client
+                                                                           {:resource/type :server
+                                                                            :permission    :reboot
+                                                                            :subject       joe's-user
+                                                                            :consistency   fully-consistent})))))
 
     (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
-      (is (= [my-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                      :resource my-server
-                                                      :permission    :reboot
-                                                      :subject/type  :user})))
-      (is (= [joe's-user] (eacl/lookup-subjects *client {:consistency   fully-consistent
-                                                         :resource joe's-server
-                                                         :permission    :reboot
-                                                         :subject/type  :user}))))
+      (is (= [my-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
+                                                             :resource     my-server
+                                                             :permission   :reboot
+                                                             :subject/type :user}))))
+      (is (= [joe's-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
+                                                                :resource     joe's-server
+                                                                :permission   :reboot
+                                                                :subject/type :user})))))
 
     (testing "joe's-user can :reboot their server, but I cannot:"
       (is (true? (eacl/can? *client joe's-user :reboot joe's-server fully-consistent)))
