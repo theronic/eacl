@@ -193,8 +193,8 @@
           (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
             @(d/transact conn [{:db/id         "server3"
                                 :db/ident      :test/server3
-                                :resource/type :server      ; note, no account.
-                                :entity/id     "server-3"}
+                                :eacl/type :server      ; note, no account.
+                                :eacl/id     "server-3"}
                                (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))
                                (Relationship (->user :user/super-user) :shared_admin (->server "server3"))]))
 

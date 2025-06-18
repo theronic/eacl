@@ -69,12 +69,12 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
    ;subject-relation (conj '?subject-relation) ; todo.
    ; Clause ; order is perf. sensitive.
    :where '[[?relationship :eacl.relationship/resource ?resource]
-            [?resource :resource/type ?resource-type]
+            [?resource :eacl/type ?resource-type]
             [?relationship :eacl.relationship/relation-name ?relation-name]
             [?relationship :eacl.relationship/subject ?subject]
-            [?subject :resource/type ?subject-type]
-            [?subject :entity/id ?subject-id]
-            [?resource :entity/id ?resource-id]]})
+            [?subject :eacl/type ?subject-type]
+            [?subject :eacl/id ?subject-id]
+            [?resource :eacl/id ?resource-id]]})
 
 (comment
   (build-relationship-query {:resource/type :server}))
@@ -120,9 +120,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   [{:as _relationship :keys [subject relation resource]}]
   ; this is kind of grosos
   (impl/Relationship
-    {:type (:type subject), :id [:entity/id (:id subject)]}
+    {:type (:type subject), :id [:eacl/id (:id subject)]}
     relation
-    {:type (:type resource), :id [:entity/id (:id resource)]}))
+    {:type (:type resource), :id [:eacl/id (:id resource)]}))
 
 (defn tx-update-relationship
   "Note that delete costs N queries."
@@ -164,7 +164,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 (defn spiceomic-can?
   "Subject & Resource types must match in rules, but we don't check them here."
   [db subject permission resource]
-  (let [result (impl/can? db [:entity/id (:id subject)] permission [:entity/id (:id resource)])]
+  (let [result (impl/can? db [:eacl/id (:id subject)] permission [:eacl/id (:id resource)])]
     ;; Ensure we return a boolean
     (boolean result)))
 

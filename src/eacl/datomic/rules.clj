@@ -12,7 +12,7 @@
     [(reachable ?resource ?subject)
      [?relationship :eacl.relationship/resource ?resource]
      [?relationship :eacl.relationship/subject ?mid]
-     (reachable ?mid ?subject)] ; note inversion to traverse.
+     (reachable ?mid ?subject)]                             ; note inversion to traverse.
 
     ;; Direct permission check (copied and adapted from core2)
     [(has-permission ?subject ?permission-name ?resource)
@@ -138,7 +138,7 @@
      ;; Match the relation name from the relationship tuple with the one in permission definition
      [(= ?relation-name-in-tuple ?relation-name-in-perm-def)]
      [(not= ?subject ?resource)]                            ; can we avoid this?
-     [?resource :resource/type ?resource-type]]             ; this is super slow. different rules WIP.
+     [?resource :eacl/type ?resource-type]]                 ; this is super slow. different rules WIP.
 
    ;; Indirect permission inheritance (copied from core2 - may need review/replacement with arrows)
    ;; This rule means: ?subject gets ?permission-name on ?resource if:
@@ -167,7 +167,7 @@
 
        (reachable ?target ?subject)                         ; User must be able to reach the target of the structural relationship
        [(not= ?subject ?resource)]
-       [?resource :resource/type ?resource-type]])
+       [?resource :eacl/type ?resource-type]])
 
    ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
    ;; Example: User U gets :admin on VPC_X if VPC_X --:account--> ACC_Y and User U has :admin on ACC_Y.
@@ -206,13 +206,13 @@
      [(not= ?subject ?intermediate-resource)]
      ;; Ensure this-resource is not the same as intermediate for simple arrows like A -> B
      [(not= ?this-resource ?intermediate-resource)]
-     [?this-resource :resource/type ?this-resource-type]]]) ; this is super slow. different rules WIP.]])
+     [?this-resource :eacl/type ?this-resource-type]]])     ; this is super slow. different rules WIP.]])
 
-(def slow-lookup-rules (build-slow-rules :resource/type))
+(def slow-lookup-rules (build-slow-rules :eacl/type))
 
 (def rules-lookup-subjects
   '[;; Reachability rules to traverse relationships:
-    [(reachable ?resource ?subject) ; I think we need types here for speed.
+    [(reachable ?resource ?subject)                         ; I think we need types here for speed.
      [(tuple ?resource ?subject) ?resource+subject]
      [?relationship :eacl.relationship/resource+subject ?resource+subject]
 
@@ -250,7 +250,7 @@
      ;; Match the relation name from the relationship tuple with the one in permission definition
      [(= ?relation-name-in-tuple ?relation-name-in-perm-def)]
      [(not= ?subject ?resource)]                            ; can we avoid this?
-     [?subject :resource/type ?subject-type]]             ; this is super slow. different rules WIP.
+     [?subject :eacl/type ?subject-type]]                   ; this is super slow. different rules WIP.
 
     ;; Indirect permission inheritance (copied from core2 - may need review/replacement with arrows)
     ;; This rule means: ?subject gets ?permission-name on ?resource if:
@@ -278,7 +278,7 @@
 
      (reachable ?target ?subject)                           ; User must be able to reach the target of the structural relationship
      [(not= ?subject ?resource)]
-     [?subject :resource/type ?subject-type]]
+     [?subject :eacl/type ?subject-type]]
 
     ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
     ;; Example: User U gets :admin on VPC_X if VPC_X --:account--> ACC_Y and User U has :admin on ACC_Y.
@@ -319,12 +319,12 @@
      ;; Ensure this-resource is not the same as intermediate for simple arrows like A -> B
      [(not= ?this-resource ?intermediate-resource)]
      ; TODO: this-resource looks dubious here. do we need it?
-     [?this-resource :resource/type ?this-resource-type]]])
+     [?this-resource :eacl/type ?this-resource-type]]])
 
 (def rules-lookup-resources
   ; resource look has known subject Type + ID, and known resource type.
   '[;; Reachability rules to traverse relationships:
-    [(reachable ?resource ?subject) ; I think we need types here for speed.
+    [(reachable ?resource ?subject)                         ; I think we need types here for speed.
      [(tuple ?resource ?subject) ?resource+subject]
      [?relationship :eacl.relationship/resource+subject ?resource+subject]
 
@@ -362,7 +362,7 @@
      ;; Match the relation name from the relationship tuple with the one in permission definition
      [(= ?relation-name-in-tuple ?relation-name-in-perm-def)]
      [(not= ?subject ?resource)]                            ; can we avoid this?
-     [?resource :resource/type ?resource-type]]
+     [?resource :eacl/type ?resource-type]]
 
     ;; Indirect permission inheritance (copied from core2 - may need review/replacement with arrows)
     ;; This rule means: ?subject gets ?permission-name on ?resource if:
@@ -391,7 +391,7 @@
 
      (reachable ?target ?subject)                           ; User must be able to reach the target of the structural relationship
      [(not= ?subject ?resource)]
-     [?resource :resource/type ?this-resource-type]] ; is this correct?
+     [?resource :eacl/type ?this-resource-type]]            ; is this correct?
 
     ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
     ;; Example: User U gets :admin on VPC_X if VPC_X --:account--> ACC_Y and User U has :admin on ACC_Y.
@@ -422,7 +422,7 @@
      [?rel-linking-resources :eacl.relationship/relation-name ?via-relation-name] ; relation is :account
      [?rel-linking-resources :eacl.relationship/resource ?this-resource] ; e.g., server/vpc is resource of tuple
 
-     [?intermediate-resource :resource/type ?intermediate-resource-type] ; do we need this?
+     [?intermediate-resource :eacl/type ?intermediate-resource-type] ; do we need this?
 
      ;; 3. Subject must have the target permission on the intermediate resource (recursive call)
      (has-permission ?subject ?perm-on-related ?intermediate-resource-type ?intermediate-resource)
@@ -432,7 +432,7 @@
      [(not= ?subject ?intermediate-resource)]
      ;; Ensure this-resource is not the same as intermediate for simple arrows like A -> B
      [(not= ?this-resource ?intermediate-resource)]
-     [?this-resource :resource/type ?this-resource-type]]])
+     [?this-resource :eacl/type ?this-resource-type]]])
 
 ;(def rules-lookup-subjects
 ;  ; lookup-subjects knows resource & subject type which implies knowing resource type.
@@ -503,8 +503,8 @@
 ;     [?structural-rel :eacl.relationship/resource ?target]
 ;
 ;     (reachable ?target ?subject)                           ; User must be able to reach the target of the structural relationship
-;     [?resource :resource/type ?resource-type]             ; super slow. different rules WIP.
-;     [?subject :resource/type ?subject-type]
+;     [?resource :eacl/type ?resource-type]             ; super slow. different rules WIP.
+;     [?subject :eacl/type ?subject-type]
 ;     [(not= ?subject ?resource)]]
 ;
 ;    ;; Arrow permission rule: ?subject gets ?perm-name-on-this-resource if it has ?perm-name-on-related on an intermediate resource
@@ -536,8 +536,8 @@
 ;     [?rel-linking-resources :eacl.relationship/relation-name ?via-relation-name] ; relation is :account
 ;     [?rel-linking-resources :eacl.relationship/resource ?this-resource] ; e.g., server/vpc is resource of tuple
 ;
-;     ;[?this-resource :resource/type ?this-resource-type]
-;     ;[?subject :resource/type ?subject-type]
+;     ;[?this-resource :eacl/type ?this-resource-type]
+;     ;[?subject :eacl/type ?subject-type]
 ;     [?intermediate-resource :resource/type ?intermediate-resource-type]
 ;
 ;     ;; 3. Subject must have the target permission on the intermediate resource (recursive call)

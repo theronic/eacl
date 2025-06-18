@@ -6,8 +6,8 @@
 
 (def ->user (partial spice-object :user))
 
-(defn entity->spice-object [ent]
-  (spice-object (get ent :resource/type) (get ent :entity/id)))
+(defn entity->spice-object [eacl-ent]
+  (spice-object (get eacl-ent :eacl/type) (get eacl-ent :eacl/id)))
 
 (defn lazy-direct-permission-resources
   "Lazily fetches resource EIDs where subject has direct permission."
@@ -87,7 +87,7 @@
       (fn [current-eids step]                               ; we'll need to track offsets here unfortunately and switch to reduce. also need to deduplicate IDs.
         ;(log/debug "arrow step:" {:step step, :current-eids (count (into [] current-eids))})
         ;; For each current entity, find entities that it points to with the given relation
-        (let [next-eids ;doall                               ; do we need doall here?
+        (let [next-eids                                     ;doall                               ; do we need doall here?
               (mapcat
                 (fn [eid]
                   ;; Find relationships where this eid is the subject with the given relation
@@ -132,13 +132,13 @@
          (:id subject)
          (keyword? permission)
          (keyword? resource-type)]}
-  (let [subject-eid              (d/entid db [:entity/id (:id subject)])
+  (let [subject-eid              (d/entid db [:eacl/id (:id subject)])
         paths                    (get-permission-paths db resource-type permission)
         ;_                        (log/debug "lookup-resources paths" paths)
         ;; Handle cursor as either a string or a cursor object
         cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
         cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor))
-        cursor-eid               (when cursor-resource-id (d/entid db [:entity/id cursor-resource-id]))
+        cursor-eid               (when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
         ;_                        (log/debug 'cursor-eid cursor-eid)
 
         ;; Create a lazy sequence of all resource eids with their path indices
@@ -153,7 +153,7 @@
         ;; Apply deduplication and cursor filtering lazily
         ;; can we ditch the paths at this point?
 
-        seen                     (volatile! #{})                 ; TODO: optimize. seen set can be passed in earlier to lazy-*.
+        seen                     (volatile! #{})            ; TODO: optimize. seen set can be passed in earlier to lazy-*.
         deduplicated-resources   (filter (fn [[eid path-idx]]
                                            (if (contains? @seen eid)
                                              false
@@ -183,7 +183,7 @@
         [last-eid last-path-idx] (last realized-resources)
         new-cursor               (when last-eid
                                    {:path-index  last-path-idx
-                                    :resource-id (:entity/id (d/entity db last-eid))})
+                                    :resource-id (:eacl/id (d/entity db last-eid))})
 
         ;; Convert to spice objects
         resources                (map (fn [[eid _]] (entity->spice-object (d/entity db eid))) realized-resources)]
@@ -204,13 +204,13 @@
          (:id subject)
          (keyword? permission)
          (keyword? resource-type)]}
-  (let [subject-eid              (d/entid db [:entity/id (:id subject)])
+  (let [subject-eid              (d/entid db [:eacl/id (:id subject)])
         paths                    (get-permission-paths db resource-type permission)
         ;_                        (log/debug "lookup-resources paths" paths)
         ;; Handle cursor as either a string or a cursor object
         cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
         cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor))
-        cursor-eid               (when cursor-resource-id (d/entid db [:entity/id cursor-resource-id]))
+        cursor-eid               (when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
         ;_                        (log/debug 'cursor-eid cursor-eid)
 
         ;; Create a lazy sequence of all resource eids with their path indices
@@ -224,7 +224,7 @@
 
         ;; Apply deduplication and cursor filtering lazily
         ;; deduplication costs O(N) unfortunately
-        seen                     (volatile! #{})                 ; can be optimized. a seen set can be passed in earlier.
+        seen                     (volatile! #{})            ; can be optimized. a seen set can be passed in earlier.
         deduplicated-resources   (filter (fn [[eid path-idx]]
                                            (if (@seen eid)
                                              false
@@ -262,10 +262,10 @@
   (get-permission-paths (d/db conn) :server :reboot)
   (get-permission-paths (d/db conn) :account :view)
 
-  ; user1-eid (:db/id (d/entity db [:entity/id "user-1"]))
+  ; user1-eid (:db/id (d/entity db [:eacl/id "user-1"]))
 
   (let [db             (d/db conn)
-        super-user-eid (d/entid db [:entity/id "super-user"])
+        super-user-eid (d/entid db [:eacl/id "super-user"])
         paths          (get-permission-paths db :server :view)]
     (prn 'super-user-eid super-user-eid)
     (prn 'paths paths)
@@ -384,8 +384,8 @@
          [?rel :eacl.relationship/subject ?subject-eid]
          [?rel :eacl.relationship/relation-name ?relation]
          [?rel :eacl.relationship/resource ?resource-eid]
-         [?subject-eid :entity/id ?subject-oid]
-         [?resource-eid :entity/id ?resource-oid]]
+         [?subject-eid :eacl/id ?subject-oid]
+         [?resource-eid :eacl/id ?resource-oid]]
        (d/db conn))
   ;=>
   #{["user-1" :member "team-1"]

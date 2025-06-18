@@ -9,9 +9,9 @@
 (defn entity->spice-object [ent]
   (spice-object (get ent base/resource-type-attr) (get ent base/object-id-attr)))
 
-;; Configuration
-(def object-id-attr :entity/id)
-(def resource-type-attr :resource/type)
+;; Configuration (not used everywhere soz)
+(def object-id-attr :eacl/id)
+(def resource-type-attr :eacl/type)
 
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
@@ -29,7 +29,7 @@
         {:as          resource-ent
          resource-eid :db/id} (d/entity db [object-id-attr resource-id])]
     (assert resource-eid (str "lookup-subjects requires a valid resource with unique attr " (pr-str object-id-attr) "."))
-    (assert (= resource-type (:resource/type resource-ent)) (str "Resource type does not match " resource-type "."))
+    (assert (= resource-type (:eacl/type resource-ent)) (str "Resource type does not match " resource-type "."))
     (let [subject-eids   (->> (d/q '[:find [?subject ...]
                                      :in $ % ?subject-type ?permission ?resource-eid
                                      :where
@@ -43,11 +43,11 @@
           paginated-eids (cond->> subject-eids
                                   offset (drop offset)
                                   limit (take limit))
-          objects (->> paginated-eids
-                       (map #(d/entity db %))
-                       (map entity->spice-object))]
+          objects        (->> paginated-eids
+                              (map #(d/entity db %))
+                              (map entity->spice-object))]
       ; todo: cursor WIP.
-      {:data objects
+      {:data   objects
        :cursor nil})))
 
 ;; Helper functions for staged lookup-resources
@@ -63,7 +63,7 @@
          [?rel :eacl.relationship/resource ?resource]
 
          ;; Early type filter
-         [?resource :resource/type ?rtype]
+         [?resource :eacl/type ?rtype]
 
          ;; Check permission using tuple
          [(tuple ?rtype ?relation ?perm) ?perm-tuple]
@@ -95,7 +95,7 @@
                     [?link :eacl.relationship/subject ?intermediate]
 
                     ;; Filter by resource type
-                    [?resource :resource/type ?rtype]
+                    [?resource :eacl/type ?rtype]
 
                     ;; Check if subject has target permission on intermediate
                     (has-permission ?subject ?target-perm ?intermediate)]
