@@ -7,7 +7,7 @@ EACL is a [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.
 - Authentication or **AuthN** means, "Who are you?"
 - Authorization or **AuthZ** means "What can `<user>` do?" i.e. permissions.
 
-EACL leverages Datomic graph queries to embed a ReBAC authorization with your data.
+EACL leverages Datomic graph queries to support ReBAC authorization next to your data.
 
 ## Problem Statement
 
