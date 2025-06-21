@@ -7,11 +7,14 @@ EACL is a [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.
 - Authentication or **AuthN** means, "Who are you?"
 - Authorization or **AuthZ** means "What can `<user>` do?"
 
-EACL is an embedded Authorization system primarily concerned with efficiently answering "What can `<user>` do?" 'Embedded' means EACL is situated next to your data.
+EACL is an embedded Authorization system primarily concerned with efficiently answering "What can `<user>` do?"
+
+'Embedded' here means EACL is situated next to your data, requiring one less external system to sync with.
 
 ## Problem Statement
 
-Can we efficiently answer the following permission-related questions?
+How can we efficiently answer the following permission-related questions without a network hop?
+
 1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
 2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
 3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
