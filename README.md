@@ -414,6 +414,15 @@ Note difference between `-M` & `-X` switches.
 clojure -M:test -v my.namespace/test-name
 ```
 
+## *Spice Compatibility
+
+- No consistency semantics. All queries are fully-consistent.
+- `subject_relation` not supported yet. Useful for group memberships.
+- No Caveats
+- No exclusion / negation permissions, only sum types, e.g. `permission view = owner + admin` but not `permission edit = editor - viewer`
+- `expand-permission-tree` not impl. yet.
+- `read-schema` & `write-schema!` not supported yet because schema lives in Datomic.
+
 ## Funding
 
 This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
