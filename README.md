@@ -381,13 +381,16 @@ Now you can transact relationships:
 (I'm using tempids in example because entities are defined in same tx as relationships)
 
 ## Limitations, Deficiencies & Gotchas:
-- EACL makes no performance-related claims about being fast. It should be fine for <10k entities.
+
+- EACL makes no strong performance claims. It should be good for <1M Datomic entities.
 - Arrow syntax requires an explicit permission on the related resource.
 - Only "sum" permissions are supported, not negation, i.e. `permission admin = owner + shared_admin` is supported, but not `permission admin = owner - shared_member`. 
 - Specify a `Permission` for each relation in a sum-type permission.
-- EACL is fully consistent so does not support the SpiceDB consistency semantics enabled by ZedTokens or Zookies. However, you can simulate this by using an older cached `db` value.
+- No consistency semantics because all EACL queries are fully-consistent. Use SpiceDB if you need consistency semantics enabled by ZedTokens ala Zookies.
   SpiceDB is heavily optimised to maintain a consistent cache.
-- `subject.relation` is not currently supported, but can be added.
+- `subject.relation` not currently supported, which is useful for group memberships.
+- `expand-permission-tree` not impl. yet.
+- `read-schema` & `write-schema!` not supported yet because schema lives in Datomic. Hoping to add support for Spice schema.
 
 ## How to Run All Tests
 
@@ -413,15 +416,6 @@ Note difference between `-M` & `-X` switches.
 ```bash
 clojure -M:test -v my.namespace/test-name
 ```
-
-## *Spice Compatibility
-
-- No consistency semantics. All queries are fully-consistent.
-- `subject_relation` not supported yet. Useful for group memberships.
-- No Caveats
-- No exclusion / negation permissions, only sum types, e.g. `permission view = owner + admin` but not `permission edit = editor - viewer`
-- `expand-permission-tree` not impl. yet.
-- `read-schema` & `write-schema!` not supported yet because schema lives in Datomic.
 
 ## Funding
 
