@@ -145,10 +145,10 @@ EACL models two core concepts: Schema & Relationship.
    - `Permission` defines which permissions are granted to a subject via a `Relationship`.
      - Permissions can be _Direct Permissions_ or indirect _Arrow Permissions_. 
 2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via some relation, e.g.
-   - "`user:alice` is the `:owner` of `account:acme`, where
-     - `user:alice` is the Subject,
-     - `account:acme` is the Resource,
-     - and `:owner` is the name of the relation,
+   - `(->user "alice")` is the `:owner` of `(->account "acme")`, where
+     - `(->user "alice")` is the Subject,
+     - `:owner` is the name of the relation,
+     - and `(->account "acme")` is the Resource,
    - In EACL this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
    - Subjects & Resources have a `type` and a unique `id`, just a map of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` for short.
 
@@ -344,16 +344,18 @@ How to model this in EACL?
 (require '[eacl.datomic.impl :as impl :refer [Relation Permission Relationship]])
 
 @(d/transact conn
-             [(Relation :platform :super_admin :user)
+             [; Platform:
+              (Relation :platform :super_admin :user)
               (Permission :platform :super_admin :admin)
 
+              ; Accounts:
               (Relation :account :super_admin :user)
               (Relation :account :platform :platform)
-
+              
               (Permission :account :owner :admin)
-              (Permission :account :owner :admin)
-              (Permission :platform :super_admin :admin :admin)
+              (Permission :account :platform :super_admin :admin)
 
+              ; Servers:
               (Relation :server :account :account)
               (Relation :server :shared_admin :user)
 
