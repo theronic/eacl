@@ -46,6 +46,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/can? client subject permission resourc) => true | false`
 - `(eacl/lookup-subjects client filters) => [subjects...]`
 - `(eacl/lookup-resources client filters) => [resources...]`
+- `(eacl/count-resources client filters) => <count>` materializes full index, so can be slow. Use sparingly.
 - `(eacl/read-relationships client filters) => [relationships...]`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`
 
