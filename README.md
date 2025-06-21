@@ -19,13 +19,13 @@ EACL can answer the following permission questions:
 
 ## Why EACL?
 
-Embedded AuthZ has advantages in many situations:
+Embedded AuthZ has some advantages:
 
 1. Situated permissions avoids network I/O to an external AuthZ system.
 2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to an external ReBAC system like SpiceDB in real-time.
-3. Avoids complex diffing when creating/deleting/updating relationships.
+3. Avoids complex diffing when creating, deleting or updating Relationships.
 4. Queries are fully consistent, until you need the consistency semantics of SpiceDB.
-5. Better performance at small to medium-scale.
+5. EACL should outperform SpiceDB at small to medium-scale if you are already using Datomic.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -49,7 +49,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/read-relationships client filters) => [relationships...]`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`
 
-The primary API call is `ecan?`.
+The primary API call is `can?`.
 
 ```clojure
 (eacl/can? client subject permission resource) => true | false
