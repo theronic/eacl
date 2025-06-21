@@ -1,13 +1,39 @@
-# **EACL**: Enterprise Access Control
+# **EACL**: Enterprise Access ControL
 
-EACL is a [SpiceDB-compatible](https://authzed.com/spicedb) authorization system built in Clojure and Datomic, used at [CloudAfrica](https://cloudafrica.net/).
+EACL is a [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) Authorization system built in Clojure and backed by Datomic, used at [CloudAfrica](https://cloudafrica.net/).
 
-EACL aims to resolve the impedance mismatch between Datomic entities and SpiceDB Relationships to simplify synchronising relationships from Datomic to SpiceDB, while enabling later adoption of SpiceDB once you need the high-performance consistency semantics supported by Spice.
+## Authentication vs Authorization
 
-## Licence & Funding
+- Authentication or **AuthN** means, "Who are you?"
+- Authorization or **AuthZ** means "What can `<user>` do?"
 
-- The open-source work to make EACL Spice-compatible was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/). We are a Clojure shop, and sometimes we hire Clojure & Datomic experts.
-- EACL switched from BSL to an Affero GPL licence on 2025-05-27. 
+EACL is an embedded Authorization system primarily concerned with efficiently answering "What can `<user>` do?" 'Embedded' means EACL is situated next to your data.
+
+## Problem Statement
+
+Can we efficiently answer the following permission-related questions?
+1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
+2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
+3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
+
+## Why EACL?
+
+1. Avoids network I/O to an external AuthZ system, which can outperform SpiceDB at small to medium-scale.
+2. Fully consistent queries until you need `ZedTokens`, which still require a DB query or a cache. Caching is hard.
+3. Enables 1-for-1 `Relationship` syncing to an external ReBAC system like SpiceDB in near real-time without complex diffing once you need consistency semantics.
+
+## ReBAC
+
+In a ReBAC system like EACL, _Subjects_ & _Resources_ are related via _Relationships_. A `Relationship` is just:
+- `[subject relation resource]`,
+  - e.g. `[user1 :owner account1]`, i.e. `user-1` owns `account1`.
+- and `[account :account product]`,
+  - e.g. `[account1 :account product1]`, i.e. `product1` falls under `account1`.
+
+Therefore, we may want all users who own `account-1` should be able to `:view` or `:edit` products under that account, and these permissions are inferred from some permission schema.  
+
+A ReBAC system like EACL answers these permission questions without additional network I/O to an external authorization system.
+
 
 ## Usage
 
@@ -38,7 +64,7 @@ Then you can construct Spice-compatible records for passing subjects & resources
 
 E.g.
 ```clojure
-(can? db (->user "user1") :edit_product (->product "product1")) => true | false
+(eacl/can? acl (->user "user1") :edit (->product "product1")) => true | false
 ```
 
 (Todo better docs for `write-relationships`.)
@@ -49,7 +75,7 @@ E.g.
 (ns my-project
   (:require [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
-            [eacl.datomic.core :as spiceomic]))
+            [eacl.datomic.core :as eacl.datomic]))
 
 (def datomic-uri "datomic:mem://eacl-test")
 (d/create-database datomic-uri)
@@ -62,7 +88,7 @@ E.g.
 @(d/transact conn your-eacl-schema)
 
 ; Make an EACL Datomic client that satisfies the `IAuthorization` protocol:
-(def client (spiceomic/make-client conn))
+(def acl (eacl.datomic/make-client conn))
 
 ; Ensure your entities have `:eacl/type` & `:eacl/id` attributes:
 @(d/transact conn
@@ -79,39 +105,38 @@ E.g.
 @(d/transact conn your-relationships)
 
 ; Now you can do `can?` permission checks:
-(eacl/can? client (->user "user1") :view (->server "server1"))
-=> true|false
+(eacl/can? acl (->user "user1") :view (->server "server1"))
+=> true | false
 
-(eacl/can! client (->user "user1" :view (->server "server1"))
-=> true or throws if `can?` returns false.
+(eacl/can! acl (->user "user1" :view (->server "server1"))
+=> true or throws (if `can?` returned false)
 
 ; Given a subject, you can enumerate the resources they have a permission for using
 ; cursor-based pagination: 
-(eacl/lookup-resources client {:subject       (->user "user1")
-                               :permission    :view
-                               :resource/type :server
-                               :limit         1000
-                               :cursor        'cursor}) ; nil for 1st page
+(eacl/lookup-resources acl {:subject       (->user "user1")
+                            :permission    :view
+                            :resource/type :server
+                            :limit         1000
+                            :cursor        'cursor}) ; nil for 1st page
 => {:data [{:type :server :id "server1"},
            {:type :server :id "server2"}
            ...]
     :cursor 'next-cursor}
 ; ^ collection of :server resources (spice-object) that subject user1 can :view.
 
-; Given a resource, you can enumerate the subjects who have a given permission on resources of a type,
-; using limit / offset pagination (cursors are todo):
-(eacl/lookup-subjects client {:resource      (->server "server1")
-                              :permission    :view
-                              :resource/type :server
-                              :limit         1000
-                              :offset        0}) ; cursor pagination WIP for lookup-subjects.
-=> {:data [{:type :user, :id "user1"},
-           {:type :account, :id   "account1"} 
+; "Which subjects can :view (->server "server-1")?
+; lookup-subjects supprots limit & offset pending cursor-based pagination:
+(eacl/lookup-subjects acl {:resource      (->server "server1")
+                           :permission    :view
+                           :resource/type :server
+                           :limit         1000
+                           :offset        0}) ; cursor pagination WIP for lookup-subjects.
+; ; collection of subjects that can :view the :server resource "server1".
+=> {:data [{:type :user,    :id "user1"},
+           {:type :account, :id "account1"} ; notice how EACL returns subjects of multiple types 
            ...]
-    :cursor nil} ; cursor not supported for lookup-subjects yet, but coming soon.
-; collection of subjects that can :view the :server resource "server1".
+    :cursor nil} ; WIP cursor-based pagination for lookup-subjects (coming soon).
 ```
-
 ## Schema
 
 EACL schema lives in Datomic. The following functions correspond to SpiceDB schema and return Datomic entity maps:
@@ -261,8 +286,11 @@ Todo better docs, but there's also:
 - (lookup-subjects ...)
 - (lookup-resources ...)
 
+## Funding
+
+This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+
 # Licence
 
-I don't know what Licence to use for this, so I slapped a BSL on it.
-
-Just ask if you want to use it – I'm generally happy to open-source it.
+- EACL switched from BSL to an Affero GPL licence on 2025-05-27.
+- However, we are considering re-licensing under a more permissive open-source license.

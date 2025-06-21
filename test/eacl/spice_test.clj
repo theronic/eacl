@@ -252,10 +252,9 @@
                                                  :resource/relation :platform}))))
 
       (testing "read-relationships throws if resource-type is not specified:"
-        (is (thrown? AssertionError
-                     (eacl/read-relationships *client {:resource/type    nil ;; throws if resource-type is nil (must not be nil).
-                                                       :subject/type     :platform
-                                                       :subject/relation :super-admin}))))
+        (is (= #{(->Relationship ca-platform :platform acme-account)
+                 (->Relationship ca-platform :platform my-account)}
+               (set (eacl/read-relationships *client {:subject/type :platform})))))
 
       (is (= [(->Relationship ca-platform :platform acme-account)
               (->Relationship ca-platform :platform my-account)]

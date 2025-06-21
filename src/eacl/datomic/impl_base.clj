@@ -57,10 +57,10 @@
   ;; Arity 1: Direct grant, from namespaced keyword resource-type/relation-name
   ([resource-type+relation-name permission-to-grant]
    {:pre [(keyword? resource-type+relation-name) (namespace resource-type+relation-name) (keyword? permission-to-grant)]}
-   (let [rt (keyword (namespace resource-type+relation-name))
-         rn (keyword (name resource-type+relation-name))]
+   (let [resource-type (keyword (namespace resource-type+relation-name))
+         relation-name (keyword (name resource-type+relation-name))]
      ;; Call arity 2
-     (Permission rt rn permission-to-grant)))
+     (Permission resource-type relation-name permission-to-grant)))
 
   ;; Arity 2: Direct grant
   ([resource-type direct-relation-name permission-to-grant]

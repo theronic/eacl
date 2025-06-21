@@ -31,11 +31,12 @@
      :subject/id    123}))
 
 (defn build-relationship-query
-  "One of these filters are required:
+  "One of these filters is required:
   - :resource/type,
   - :resource/id,
   - :resource/id-prefix, or
-  - :resource/relation.
+  - :resource/relation
+  - :subject/id.
 
 Not supported yet:
 - subject_relation not supported yet.
@@ -50,7 +51,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     subject-type      :subject/type
     subject-id        :subject/id
     _subject-relation :subject/relation}]                   ; not supported yet.
-  {:pre [(or resource-type resource-id _resource-prefix resource-relation)
+  {:pre [(or resource-type resource-id _resource-prefix resource-relation subject-type)
          (not _resource-prefix)]}                           ; not supported.
   {:find  '[?resource-type ?resource-id
             ?relation-name
