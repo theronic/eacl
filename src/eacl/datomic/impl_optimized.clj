@@ -163,12 +163,12 @@
 
 (defn can?
   "Optimized version of can? using optimized rules"
-  [db subject-id permission resource-id]
-  {:pre [subject-id
+  [db subject-ident permission resource-ident]
+  {:pre [subject-ident
          (keyword? permission)
-         resource-id]}
-  (let [{:as _subject-ent, subject-eid :db/id} (d/entity db subject-id)
-        {:as _resource-ent, resource-eid :db/id} (d/entity db resource-id)]
+         resource-ident]}
+  (let [subject-eid  (d/entid db subject-ident)
+        resource-eid (d/entid db resource-ident)]
     (if-not (and subject-eid resource-eid)
       false
       (->> (d/q '[:find ?subject .

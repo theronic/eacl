@@ -27,10 +27,10 @@
         user-uuid->tempid (ids->tempid-map user-uuids)]
     (for [user-uuid user-uuids]
       (let [user-tempid (user-uuid->tempid user-uuid)]
-        [{:db/id         user-tempid
-          :resource/type :user
-          :entity/id     (str user-uuid)
-          :user/account  account-tempid}                    ; only to police permission checks.
+        [{:db/id        user-tempid
+          :eacl/type    :user
+          :eacl/id      (str user-uuid)
+          :user/account account-tempid}                     ; only to police permission checks.
          (Relationship (->user user-tempid)
                        :owner
                        (->account account-tempid))]))))
@@ -42,18 +42,18 @@
     (for [server-uuid server-uuids]
       (let [server-tempid (server-uuid->tempid server-uuid)]
         [{:db/id          server-tempid
-          :resource/type  :server
+          :eacl/type      :server
+          :eacl/id        (str server-uuid)
           :server/account account-tempid                    ; only to police permission checks.
-          :entity/id      (str server-uuid)
           :server/name    (str "Servers " server-uuid)}
          (Relationship (->account account-tempid) :account (->server server-tempid))]))))
 
 (defn make-account-txes [{:keys [num-users num-servers]} account-uuid]
   (let [account-tempid (d/tempid :db.part/user)
-        account-txes   [{:db/id         account-tempid
-                         :resource/type :account
-                         :entity/id     (str account-uuid)}
-                        (Relationship (->platform [:entity/id "platform"]) :platform (->account account-tempid))]
+        account-txes   [{:db/id     account-tempid
+                         :eacl/type :account
+                         :eacl/id   (str account-uuid)}
+                        (Relationship (->platform [:eacl/id "platform"]) :platform (->account account-tempid))]
         user-txes      (make-account-user-txes account-tempid num-users)
         server-txes    (make-account-server-txes account-tempid num-servers)]
     (concat account-txes (flatten user-txes) (flatten server-txes))))
@@ -62,27 +62,27 @@
   (d/q '[:find [?user-id ...]
          :in $ ?server-id
          :where
-         [?server :entity/id ?server-id]
+         [?server :eacl/id ?server-id]
          [?server :server/account ?account]
          [?user :user/account ?account]
-         [?user :entity/id ?user-id]]
+         [?user :eacl/id ?user-id]]
        db server-id))
 
 (defn setup-benchmark [db]
   {:accounts (d/q '[:find [?account-id ...]
                     :where
-                    [?account :resource/type :account]
-                    [?account :entity/id ?account-id]]
+                    [?account :eacl/type :account]
+                    [?account :eacl/id ?account-id]]
                   db)
    :users    (d/q '[:find [?user-id ...]
                     :where
-                    [?user :resource/type :user]
-                    [?user :entity/id ?user-id]]
+                    [?user :eacl/type :user]
+                    [?user :eacl/id ?user-id]]
                   db)
    :servers  (d/q '[:find [?server-id ...]
                     :where
-                    [?server :resource/type :server]
-                    [?server :entity/id ?server-id]]
+                    [?server :eacl/type :server]
+                    [?server :eacl/id ?server-id]]
                   db)})
 
 (defn run-benchmark [!counter client {:keys [accounts users servers]}]
@@ -105,7 +105,7 @@
          :in $
          :where
          [?user :user/account ?account]
-         [?user :entity/id ?user-uuid]]
+         [?user :eacl/id ?user-uuid]]
        db))
 
 (defn rand-server [db]
@@ -113,7 +113,7 @@
          :in $
          :where
          [?server :server/account ?account]
-         [?server :entity/id ?server-uuid]]
+         [?server :eacl/id ?server-uuid]]
        db))
 
 (deftest eacl-benchmarks
@@ -155,8 +155,8 @@
 
     (def test-account (d/q '[:find (rand ?account-uuid) .
                              :where
-                             [?account :resource/type :account]
-                             [?account :entity/id ?account-uuid]]
+                             [?account :eacl/type :account]
+                             [?account :eacl/id ?account-uuid]]
                            (d/db conn)))
 
     test-account
@@ -165,14 +165,14 @@
                           :in $ ?account-uuid
                           :where
                           [?user :user/account ?account]
-                          [?user :entity/id ?user-uuid]]
+                          [?user :eacl/id ?user-uuid]]
                         (d/db conn) test-account))
 
     (def client (spiceomic/make-client conn))
 
     ;; Add platform relations for all accounts:
 
-    (let [platform-id (d/entid (d/db conn) [:entity/id "platform"])]
+    (let [platform-id (d/entid (d/db conn) [:eacl/id "platform"])]
       (->> (d/q '[:find [?account ...]
                   :where [?server :server/account ?account]]
                 (d/db conn))
@@ -208,7 +208,7 @@
                                            :resource/type :server
                                            :cursor        nil
                                            :limit         600})
-            page1-count (count p1-data)
+            page1-count    (count p1-data)
 
             {:as       page2
              p2-data   :data
@@ -218,7 +218,7 @@
                                            :resource/type :server
                                            :cursor        p1-cursor
                                            :limit         400})
-            page2-count (count p2-data)
+            page2-count    (count p2-data)
 
             {:as       page3
              p3-data   :data
@@ -228,22 +228,22 @@
                                            :resource/type :server
                                            :cursor        p2-cursor
                                            :limit         100})
-            page3-count (count p3-data)
+            page3-count    (count p3-data)
 
-            total-count (+ page1-count page2-count page3-count)
+            total-count    (+ page1-count page2-count page3-count)
             all-pages-data (concat p1-data p2-data p3-data)
-            unique-count (count (distinct all-pages-data))]
+            unique-count   (count (distinct all-pages-data))]
         (assert (> total-count 700))
-        {:total/count total-count
-         :count [page1-count page2-count page3-count]
-         :cursors [p1-cursor p2-cursor p3-cursor]
-         :data (concat p1-data p2-data p3-data)
+        {:total/count  total-count
+         :count        [page1-count page2-count page3-count]
+         :cursors      [p1-cursor p2-cursor p3-cursor]
+         :data         (concat p1-data p2-data p3-data)
          :unique-count unique-count}))
 
     (let [test-user (rand-user (d/db conn))]
       ; fetch two pages of data (we are not checking correctness here)
-      (let [{:as    page1
-             data   :data
+      (let [{:as       page1
+             data      :data
              p1-cursor :cursor}
             (eacl/lookup-resources client {:subject       (->user test-user)
                                            :permission    :view
@@ -252,8 +252,8 @@
                                            :limit         600})
             c1 (count data)
 
-            {:as page2
-             data :data
+            {:as       page2
+             data      :data
              p2-cursor :cursor}
             (eacl/lookup-resources client {:subject       (->user test-user)
                                            :permission    :view
@@ -387,20 +387,20 @@
                         [?subject :eacl/subject]]
                       (d/db conn))
         subject  (rand-nth subjects)]))
-;(prn 'can? (eacl/can? (d/db conn) (:db/id subject) :company/view [:entity/id (first cids)]))))
+;(prn 'can? (eacl/can? (d/db conn) (:db/id subject) :company/view [:eacl/id (first cids)]))))
 
 (comment
   (d/q '[:find (count ?account) .
          :where
-         [?account :resource/type :account]]
+         [?account :eacl/type :account]]
        (d/db conn))
 
   (d/q '[:find (count ?server) .
          :where
-         [?server :resource/type :server]]
+         [?server :eacl/type :server]]
        (d/db conn))
 
   (d/q '[:find (count ?user) .
          :where
-         [?user :resource/type :user]]
+         [?user :eacl/type :user]]
        (d/db conn)))

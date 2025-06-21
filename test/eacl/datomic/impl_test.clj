@@ -5,7 +5,7 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->server]]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
-            [eacl.datomic.impl :as spiceomic :refer [Relation Relationship Permission can? lookup-subjects lookup-resources]]))
+            [eacl.datomic.impl :as spiceomic :refer [Relation Relationship Permission can? lookup-subjects lookup-resources read-relationships]]))
 
 (deftest eacl3-tests
 
@@ -41,6 +41,14 @@
         (is (can? db :test/user1 :view :test/server1))
         (is (can? db :test/user1 :reboot :test/server1))
 
+        (testing "can? supports idents"
+          (is (can? db [:eacl/id "user-1"] :view [:eacl/id "account1-server1"])))
+
+        (testing "can? supports :db/id"
+          (let [subject-eid  (d/entid db :test/user1)
+                resource-eid (d/entid db :test/server1)]
+            (is (can? db subject-eid :view resource-eid))))
+
         "...but :test/user2 can't."
         (is (not (can? db :test/user2 :view :test/server1)))
         (is (not (can? db :test/user2 :reboot :test/server1)))
@@ -68,6 +76,14 @@
         (is (can? db :test/user2 :delete :test/server2))
         "...but not :test/user1"
         (is (not (can? db :test/user1 :delete :test/server2)))
+
+        (testing "read-relationships filters"
+          ;(is (= [] (read-relationships db {})))
+          ; need better tests here.
+          (is (= #{:server} (set (map (comp :type :resource) (read-relationships db {:resource/type :server})))))
+          (is (= #{:owner} (set (map :relation (read-relationships db {:resource/relation :owner})))))
+          (is (= #{:account} (set (map :relation (read-relationships db {:resource/type :server
+                                                                         :resource/relation :account}))))))
 
         (testing "We can enumerate subjects that can access a resource."
           ; Bug: currently returns the subject itself which needs a fix.

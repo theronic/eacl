@@ -16,6 +16,7 @@
 (def base-fixtures
   [; Schema
    (Relation :platform :super_admin :user)                  ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
+   (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
    ; definition platform {
    ;   relation super_admin: user;
    ;   permission platform_admin = super_admin   # EACL requires this hack for arrow relations because we traverse permissions->relations. Could be fixed.
@@ -38,7 +39,6 @@
    (Permission :account :owner :view)
    (Permission :account :platform :platform_admin :admin)   ; hack for platform->super_admin.
    (Permission :account :platform :platform_admin :view)    ; spurious.
-   (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
 
    ; Teams:
    (Relation :team/account :account)
