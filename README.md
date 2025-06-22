@@ -411,15 +411,19 @@ Now you can transact relationships:
 
 ## Limitations, Deficiencies & Gotchas:
 
-- EACL makes no strong performance claims. It should be good for <1M Datomic entities.
-- Arrow syntax requires an explicit permission on the related resource.
-- Only "sum" permissions are supported, not negation, i.e. `permission admin = owner + shared_admin` is supported, but not `permission admin = owner - shared_member`. 
+- No consistency semantics because all EACL queries are fully-consistent. Use SpiceDB if you need consistency semantics enabled by ZedTokens ala Zookies. SpiceDB is heavily optimised to maintain a consistent cache.
+- EACL makes no strong performance claims. It should be good for <1M Datomic entities. Goal is 10M entities.
+- Arrow syntax is limited to one level of nesting, e.g.
+  - Supported: `permission arrow = relation->via-permission` is valid
+  - Not supported: `permission arrow = relation->subrelation->permission` is not valid. Add multiple nesting levels with intermediate resources.
+- Tail of Arrow syntax tail must be a permission on the relation resource, i.e. given `permission admin = account->admin`, `admin` must be a permission on `account` relation, not a relation on account.
+- Only union permissions are supported:
+  - Supported: `permission admin = owner + shared_admin`
+  - Not supported: `permission admin = owner - shared_member`. Exclusion types require complex caching to avoid multiple `can?` queries.
 - Specify a `Permission` for each relation in a sum-type permission.
-- No consistency semantics because all EACL queries are fully-consistent. Use SpiceDB if you need consistency semantics enabled by ZedTokens ala Zookies.
-  SpiceDB is heavily optimised to maintain a consistent cache.
 - `subject.relation` not currently supported, which is useful for group memberships.
-- `expand-permission-tree` not impl. yet.
-- `read-schema` & `write-schema!` not supported yet because schema lives in Datomic. Hoping to add support for Spice schema.
+- `expand-permission-tree` not implemented yet.
+- `read-schema` & `write-schema!` not supported yet because schema lives in Datomic. Hoping to add support for Spice schema soon.
 
 ## How to Run All Tests
 
