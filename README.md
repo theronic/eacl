@@ -1,25 +1,29 @@
 # **EACL**: Enterprise Access ControL
 
-EACL is a [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) Authorization system built in Clojure and backed by Datomic, used at [CloudAfrica](https://cloudafrica.net/).
+EACL is an embedded [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library built in Clojure and backed by Datomic, used at [CloudAfrica](https://cloudafrica.net/).
+
+## Project Goals
+
+- Best-in-class ReBAC authorization for Clojure/Datomic products with <10M Datomic entities.
+- Clean migration path to SpiceDB once you need consistency semantics with heavily optimized cache.
+- Retain gRPC API compatibility with 1-for-1 Relationship syncing.
+
+EACL can answer the following permission questions by querying Datomic:
+
+1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
+2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
+3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
 
 ## Authentication vs Authorization
 
 - Authentication or **AuthN** means, "Who are you?"
 - Authorization or **AuthZ** means "What can `<user>` do?" i.e. permissions.
 
-EACL leverages Datomic graph queries to support ReBAC authorization next to your data.
-
-## Problem Statement
-
-EACL can answer the following permission questions:
-
-1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
-2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
-3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
+EACL leverages recursive Datomic graph queries and direct index access to support ReBAC authorization situated next to your data.
 
 ## Why EACL?
 
-Embedded AuthZ has some advantages:
+Embedded AuthZ offers some advantages for typical use-cases:
 
 1. Situated permissions avoids network I/O to an external AuthZ system.
 2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to an external ReBAC system like SpiceDB in real-time.
@@ -39,21 +43,43 @@ By defining a permission schema, we can grant `:view` & `:edit` permissions to a
 
 A situated ReBAC system like EACL can traverse the graph of relationships between subjects and permissions to calculate permissions while avoiding network I/O to an external authorization system.
 
-## EACL API Usage
+## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface to the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1).
+The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that matches the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resourc) => true | false`
-- `(eacl/lookup-subjects client filters) => [subjects...]`
-- `(eacl/lookup-resources client filters) => [resources...]`
+- `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
+- `(eacl/lookup-resources client filters) => {:data [resources...], :cursor 'next-cursor}`.
 - `(eacl/count-resources client filters) => <count>` materializes full index, so can be slow. Use sparingly.
 - `(eacl/read-relationships client filters) => [relationships...]`
-- `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`
+- `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
+  - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:update` or `:delete`.
+- `(eacl/create-relationships! client relationships)` simply calls write-relationships! with `:create` operation.
+- `(eacl/delete-relationships! client relationships)` simply calls write-relationships! with `:delete` operation.
+- `(eacl/write-schema! client)` is not impl. yet because schema lives in Datomic. TODO.
+- `(eacl/read-schema client)` is not impl. yet because schema lives in Datomic. TODO.
+- `(eacl/expand-permission-tree client filters)` is not impl. yet.
 
-The primary API call is `can?`.
+The primary API call is `can?`, e.g.
 
 ```clojure
-(eacl/can? client subject permission resource) => true | false
+(eacl/can? client subject permission resource)
+=> true | false
+```
+
+The other primary API call is `lookup-resources`, e.g.
+
+```clojure
+(eacl/lookup-resources client
+  {:subject       (->user "alice")
+   :permission    :view
+   :resource/type :server
+   :limit         1000
+   :cursor        nil}) ; pass nil for 1st page.
+=> {:cursor 'next-cursor
+    :data [{:type :server :id "server-1"}
+           {:type :server :id "server-2"}
+           ...]}
 ```
 
 ## Quickstart
@@ -169,9 +195,11 @@ definition account {
 
 We define two resource types, `user` & `account`, where a `user` subject can be an `owner` of an `account` resource. 
 
-In EACL we use `(Relation resource-type relation-name subject-type)`, i.e.
+In EACL we use:
+ - `(Relation resource-type relation-name subject-type)`, i.e.
  - `(Relation :account :owner :user)`
- - Which, in this case means that an `<account>` resource can be related to a `<user>` via an `:owner` Relationship.
+
+ This means that an `<account>` resource can be related to a `<user>` via an `:owner` Relationship.
 
 ### Modelling Direct Permissions
 

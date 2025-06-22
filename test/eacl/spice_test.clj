@@ -307,7 +307,8 @@
               ; no shared_member subjects:
               {:object   (update (->server 123) :id str)
                :relation :shared_member
-               :subjects []}] (eacl/expand-permission-tree *client {} :reboot (->server 123)))))
+               :subjects []}] (eacl/expand-permission-tree *client {:resource   (->server 123)
+                                                                    :permission :reboot}))))
 
     (testing "Expand permissions hierarchy for joe's-server shows team member"
       ; Note: numeric IDs are not coerced back from strings yet.
@@ -323,4 +324,5 @@
                 :relation :shared_admin}]
               {:object   (->server "not-my-server"),
                :subjects [],
-               :relation :shared_member}] (eacl/expand-permission-tree *client {} :reboot joe's-server))))))
+               :relation :shared_member}] (eacl/expand-permission-tree *client {:resource   joe's-server
+                                                                                :permission :reboot}))))))

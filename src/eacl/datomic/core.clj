@@ -18,7 +18,7 @@
         tx-data (->> updates
                      (map #(impl/tx-update-relationship db %))
                      (remove nil?))]                        ; :delete operation can be nil.
-    (log/debug 'tx-data tx-data)
+    ;(log/debug 'tx-data tx-data)
     (let [{:keys [db-after]} @(d/transact conn tx-data)
           basis (d/basis-t db-after)]
       ; we return the latest DB basis as :zed/token to simulate consistency semantics.
@@ -133,7 +133,7 @@
   (lookup-subjects [this filters]
     (spiceomic-lookup-subjects (d/db conn) filters))
 
-  (expand-permission-tree [this {:as opts :keys [consistency]} permission resource]
+  (expand-permission-tree [this {:as opts :keys [consistency permission resource]}]
     (throw (Exception. "not impl."))))
 
 (defn make-client [conn]

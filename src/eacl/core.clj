@@ -31,9 +31,9 @@
   ;  :subject/keys  [type id relation]
   ;  :resource/keys [type id id-prefix relation]}
   ;
-  ; :resource/type is required. The rest is optional.
+  ; one of :resource/type, :subject/type or :resource/relation is required.
   ;
-  ; When filtering by :subject/relation, subject schema must have the given relation.
+  ; :subject/relation is not supported by EACL. (future: when filtering by :subject/relation, subject schema must have the given relation.)
 
   (write-relationships! [this updates])
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
@@ -78,7 +78,7 @@
   ; - :subject/type (keyword) required.
   ; - :subject/relation (keyword) optional, e.g. :member.
 
-  (expand-permission-tree [this {:as opts :keys [consistency]} permission resource]))
+  (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
 
 ; Spice affordances from previous impl.
 (defrecord Relationship [subject relation resource])

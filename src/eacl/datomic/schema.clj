@@ -32,12 +32,14 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl.relation/resource-type+relation-name ; + subject-type?
-    :db/doc         "EACL Relation: Unique identity tuple to enforce uniqueness of Resource Type + Relation Name, e.g. product/owner relation."
-    ; this won't work if we want to support multiple subject types per relation.
+   ; Relation Indices (these are cheap because Relations are sparse)
+
+   {:db/ident       :eacl.relation/resource-type+relation-name+subject-type
+    :db/doc         "EACL Relation: Unique identity tuple enforce uniqueness of Resource Type + Relation Name + Subject Type"
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.relation/resource-type
-                     :eacl.relation/relation-name]
+                     :eacl.relation/relation-name
+                     :eacl.relation/subject-type]
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
 
@@ -60,6 +62,7 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
+   ; Permission Indices
    {:db/ident       :eacl.permission/resource-type+relation-name+permission-name
     :db/doc         "EACL Permission: Unique identity tuple to enforce uniqueness of [Resource Type + Relation + Permission]."
     :db/valueType   :db.type/tuple
@@ -68,6 +71,15 @@
                      :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
+
+   ; used by lookup-resources:
+   {:db/ident       :eacl.permission/resource-type+permission-name
+    :db/doc         "EACL Permission: Index for finding all relations that grant a permission"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
 
    ;; Arrow-syntax Permissions, e.g. `permission reboot = owner + account->admin`.
 
@@ -83,8 +95,6 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ; suspect we also need to store the related resource type here, which is known.
-
    {:db/ident       :eacl.arrow-permission/source-relation-name
     :db/doc         "EACL Arrow Permission: Name of the relation on this resource type that points to another resource where the target permission should be checked."
     :db/valueType   :db.type/keyword
@@ -97,7 +107,17 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ;; For arrow permission traversal
+   ;; Arrow Permission Indices:
+   {:db/ident       :eacl.arrow-permission/resource-type+source-relation-name+target-permission-name+permission-name
+    :db/doc         "EACL Arrow Permission: Unique identity tuple to enforce uniqueness of [Resource Type + Source Relation + Via Permission + Permission Grant]."
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.arrow-permission/resource-type
+                     :eacl.arrow-permission/source-relation-name
+                     :eacl.arrow-permission/target-permission-name
+                     :eacl.arrow-permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/unique      :db.unique/identity}
+
    {:db/ident       :eacl.arrow-permission/resource-type+permission-name
     :db/doc         "Index for arrow permission lookups"
     :db/valueType   :db.type/tuple
@@ -114,18 +134,7 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ; Arrow Permission Uniqueness Constraint
-   {:db/ident       :eacl.arrow-permission/resource-type+source-relation-name+target-permission-name+permission-name
-    :db/doc         "EACL Permission: Unique identity tuple to enforce uniqueness of [Resource Type + Source Relation + Target Permission + Permission Grant]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.arrow-permission/resource-type
-                     :eacl.arrow-permission/source-relation-name
-                     :eacl.arrow-permission/target-permission-name
-                     :eacl.arrow-permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
-
-   ;; Relationships (Subject -> Relation -> Resource)
+   ;; Relationships [Subject Relation Resource]
    {:db/ident       :eacl.relationship/subject-type
     :db/doc         "EACL: Subject Type Keyword"
     :db/valueType   :db.type/keyword
@@ -135,7 +144,7 @@
    {:db/ident       :eacl.relationship/subject
     :db/doc         "EACL: Ref to Subject"
     :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one                     ; was many
+    :db/cardinality :db.cardinality/one                     ; This used to be many, but simpler if one.
     :db/index       true}
 
    {:db/ident       :eacl.relationship/relation-name
@@ -156,77 +165,86 @@
     :db/cardinality :db.cardinality/one                     ; was many
     :db/index       true}
 
-   ;; Relationship Indices
-   ;; Some of these may be overkill and no longer needed.
-
-   {:db/ident       :eacl.relationship/subject+resource-type
-    :db/doc         "EACL Relationship: Tuple Index on [Subject Type + Resource Type]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject
-                     :eacl.relationship/resource-type]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/resource-type+relation-name
-    :db/doc         "EACL Relationship: Tuple Index on [Resource Type + Relation Name]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource-type
-                     :eacl.relationship/relation-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/subject-type+relation-name
-    :db/doc         "EACL Relationship: Tuple Index on [Subject Type + Relation Name]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/relation-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/resource-type+relation-name+subject
-    :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource-type
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/subject-type+relation-name+resource-type
-    :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/resource-type]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/subject+relation-name+resource-type
-    :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
+   ;; Relationship Indices (expensive)
+   {:db/ident       :eacl.relationship/subject+relation-name+resource-type+resource
+    :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.relationship/subject
                      :eacl.relationship/relation-name
-                     :eacl.relationship/resource-type]
+                     :eacl.relationship/resource-type
+                     :eacl.relationship/resource]
     :db/cardinality :db.cardinality/one
-    :db/index       true}
+    :db/unique      :db.unique/identity}])
 
-   {:db/ident       :eacl.relationship/resource+relation-name+subject-type
-    :db/doc         "EACL Relationship: Tuple Index on [Resource + Relation + Subject Type]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/subject-type]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
+   ; This will be needed for efficient lookup-subjects
+   ;{:db/ident       :eacl.relationship/subject+resource-type
+   ; :db/doc         "EACL Relationship: Tuple Index on [Subject Type + Resource Type]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject
+   ;                  :eacl.relationship/resource-type]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl.relationship/resource-type+relation-name
+   ; :db/doc         "EACL Relationship: Tuple Index on [Resource Type + Relation Name]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource-type
+   ;                  :eacl.relationship/relation-name]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl.relationship/subject-type+relation-name
+   ; :db/doc         "EACL Relationship: Tuple Index on [Subject Type + Relation Name]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject-type
+   ;                  :eacl.relationship/relation-name]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl.relationship/resource-type+relation-name+subject
+   ; :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource-type
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/subject]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl.relationship/subject-type+relation-name+resource-type
+   ; :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject-type
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/resource-type]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl.relationship/subject+relation-name+resource-type
+   ; :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/resource-type]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;{:db/ident       :eacl.relationship/resource+relation-name+subject-type
+   ; :db/doc         "EACL Relationship: Tuple Index on [Resource + Relation + Subject Type]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/subject-type]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
 
    ; do we still need this?
-   {:db/ident       :eacl.relationship/resource+subject
-    :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
+   ;{:db/ident       :eacl.relationship/resource+subject
+   ; :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource
+   ;                  :eacl.relationship/subject]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
    ;:db/unique      :db.unique/identity}
 
    ;; hmm I think we're going to need relationship indices on subject & resource types
@@ -239,60 +257,40 @@
    ; :db/cardinality :db.cardinality/one
    ; :db/index       true}
 
-   {:db/ident       :eacl.relationship/resource+relation-name+subject
-    :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
+   ;{:db/ident       :eacl.relationship/resource+relation-name+subject
+   ; :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/subject]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/unique      :db.unique/identity}
 
-   {:db/ident       :eacl.relationship/subject+relation-name+resource
-    :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
-
-   {:db/ident       :eacl.relationship/subject+relation-name+resource-type+resource
-    :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/resource-type
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
-
-   ;; NEW PERFORMANCE OPTIMIZATION INDICES
+   ;{:db/ident       :eacl.relationship/subject+relation-name+resource
+   ; :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/resource]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/unique      :db.unique/identity}
 
    ;; Critical for subject-based lookups
-   {:db/ident       :eacl.relationship/subject+relation-name
-    :db/doc         "Index for efficient subject-based lookups"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject
-                     :eacl.relationship/relation-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
+   ;{:db/ident       :eacl.relationship/subject+relation-name
+   ; :db/doc         "Index for efficient subject-based lookups"
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject
+   ;                  :eacl.relationship/relation-name]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
 
-   {:db/ident       :eacl.relationship/relation-name+resource
-    :db/doc         "Index for relation-based traversal"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/relation-name
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
+   ;{:db/ident       :eacl.relationship/relation-name+resource
+   ; :db/doc         "Index for relation-based traversal"
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/relation-name
+   ;                  :eacl.relationship/resource]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
 
-   ;; Index for permission lookups by type
-   {:db/ident       :eacl.permission/resource-type+permission-name
-    :db/doc         "Index for finding all relations that grant a permission"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}])
 
 
