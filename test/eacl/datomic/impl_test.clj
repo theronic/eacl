@@ -2,8 +2,9 @@
   (:require [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [eacl.datomic.fixtures :as fixtures :refer [->user ->server]]
+            [eacl.datomic.fixtures :as fixtures :refer [->user ->server ->account]]
             [eacl.core :as eacl :refer [spice-object]]
+            [eacl.datomic.impl :as impl]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :as spiceomic :refer [Relation Relationship Permission can? lookup-subjects lookup-resources read-relationships]]))
 
@@ -25,26 +26,50 @@
       (is @(d/transact conn fixtures/base-fixtures))
 
       (let [db (d/db conn)]
-        "super-user can view all servers"
-        ; this should now be sorted... but is it fast?
-        (is (= #{(spice-object :server "account1-server1")
-                 (spice-object :server "account1-server2")
-                 (spice-object :server "account2-server1")}
-               (set (:data (lookup-resources db {:subject       (->user "super-user")
-                                                 :permission    :view
-                                                 :resource/type :server
-                                                 :limit         1000
-                                                 :cursor        nil})))))
 
-        ":test/user can :view and :reboot their server"
+        ;(prn 'datoms (d/datoms db :avet
+        ;                       :eacl.relationship/subject+relation-name+resource-type+resource
+        ;                       [(:db/id subject-ent)
+        ;                        relation
+        ;                        (:type resource)
+        ;                        (:db/id resource-ent)]))
 
-        (is (can? db :test/user1 :view :test/server1))
-        (is (can? db :test/user1 :reboot :test/server1))
+        (testing "we can find a relationship using internals"
+          (is (= {:eacl.relationship/subject       {:eacl/type :user, :eacl/id "user-1"}
+                  :eacl.relationship/relation-name :owner
+                  :eacl.relationship/resource      {:eacl/type :account, :eacl/id "account-1"}}
+                 (let [rel-eid (impl/find-one-relationship-id db
+                                                              {:subject  (->user "user-1")
+                                                               :relation :owner
+                                                               :resource (->account "account-1")})]
+                   (d/pull db '[{:eacl.relationship/subject [:eacl/type :eacl/id]}
+                                :eacl.relationship/relation-name
+                                {:eacl.relationship/resource [:eacl/type :eacl/id]}] rel-eid)))))
+
+        (testing "find-one-relationship-by-id returns nil for missing relationship"
+          (is (nil? (impl/find-one-relationship-id db
+                                                   {:subject  (->user "missing-user")
+                                                    :relation :owner
+                                                    :resource (->account "account-1")}))))
+
+        (testing "super-user can view all servers"
+          (is (= #{(spice-object :server "account1-server1")
+                   (spice-object :server "account1-server2")
+                   (spice-object :server "account2-server1")}
+                 (set (:data (lookup-resources db {:subject       (->user "super-user")
+                                                   :permission    :view
+                                                   :resource/type :server
+                                                   :limit         1000
+                                                   :cursor        nil}))))))
+
+        (testing ":test/user can :view and :reboot their server"
+          (is (can? db :test/user1 :view :test/server1))
+          (is (can? db :test/user1 :reboot :test/server1)))
 
         (testing "can? supports idents"
           (is (can? db [:eacl/id "user-1"] :view [:eacl/id "account1-server1"])))
 
-        (testing "can? supports :db/id"
+        (testing "can? supports passing :db/id directly"
           (let [subject-eid  (d/entid db :test/user1)
                 resource-eid (d/entid db :test/server1)]
             (is (can? db subject-eid :view resource-eid))))

@@ -53,7 +53,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/count-resources client filters) => <count>` materializes full index, so can be slow. Use sparingly.
 - `(eacl/read-relationships client filters) => [relationships...]`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
-  - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:update` or `:delete`.
+  - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! client relationships)` simply calls write-relationships! with `:create` operation.
 - `(eacl/delete-relationships! client relationships)` simply calls write-relationships! with `:delete` operation.
 - `(eacl/write-schema! client)` is not impl. yet because schema lives in Datomic. TODO.

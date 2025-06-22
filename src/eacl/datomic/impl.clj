@@ -131,27 +131,51 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     (->> (apply d/q qry db args)
          (map rel-map->Relationship))))
 
-(defn find-one-relationship
+;(defn find-one-relationship-id-slow
+;  [db {:as relationship :keys [subject relation resource]}]
+;  ;(log/debug 'find-one-relationship relationship)
+;  (let [filters {:resource/type     (:type resource)
+;                 :resource/id       (:id resource)
+;                 :resource/relation relation
+;                 :subject/type      (:type subject)
+;                 :subject/id        (:id subject)}
+;        ;_       (log/debug 'filters filters)
+;        qry     (-> (build-relationship-query filters)
+;                    (assoc :find '[?relationship .])
+;                    (dissoc :keys))
+;        args    (relationship-filters->args filters)]
+;    (apply d/q qry db args)))
+
+(defn find-one-relationship-id
   [db {:as relationship :keys [subject relation resource]}]
   ;(log/debug 'find-one-relationship relationship)
-  (let [filters {:resource/type     (:type resource)
-                 :resource/id       (:id resource)
-                 :resource/relation relation
-                 :subject/type      (:type subject)
-                 :subject/id        (:id subject)}
-        ;_       (log/debug 'filters filters)
-        qry     (-> (build-relationship-query filters)
-                    (assoc :find '[?relationship .])
-                    (dissoc :keys))
-        args    (relationship-filters->args filters)]
-    (apply d/q qry db args)))
+  (let [{:as _subject-ent
+         subject-type :eacl/type
+         subject-eid :db/id} (d/entity db [:eacl/id (:id subject)])
+        {:as _resource-ent
+         resource-type :eacl/type
+         resource-eid :db/id} (d/entity db [:eacl/id (:id resource)])]
+    ;(assert subject-eid (str "No such subject: " subject))
+    ;(assert resource-eid (str "No such resource: " resource))
+    (if-not (and subject-eid resource-eid)
+      nil ; return nil if missing
+      (do
+        (assert (= (:type subject) subject-type) (str "Subject Type " subject-type " does not match " (:type subject) "."))
+        (assert (= (:type resource) resource-type) (str "Resource Type " resource-type " does not match " (:type resource) "."))
+        (->> (d/datoms db :avet
+                       :eacl.relationship/subject+relation-name+resource-type+resource
+                       [subject-eid
+                        relation
+                        (:type resource)
+                        resource-eid])
+             (map :e)
+             (first))))))
 
 (defn tx-relationship
   "Translate a Relationship to a Datomic entity map.
   Note: `relation` in relationship filters corresponds to `:resource/relation` here.
   We don't validate resource & subject types here."
   [{:as _relationship :keys [subject relation resource]}]
-  ; this is kind of grosos
   (base/Relationship
     {:type (:type subject), :id [:eacl/id (:id subject)]}
     relation
@@ -162,17 +186,17 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   [db {:as update :keys [operation relationship]}]
   (case operation
     :touch                                                  ; ensure update existing. we don't have uniqueness on this yet.
-    (let [rel-id (find-one-relationship db relationship)]
+    (let [rel-id (find-one-relationship-id db relationship)]
       (cond-> (tx-relationship relationship)
         rel-id (assoc :db/id rel-id)))
 
     :create
-    (if-let [rel-id (find-one-relationship db relationship)]
+    (if-let [rel-id (find-one-relationship-id db relationship)]
       (throw (Exception. ":create relationship conflicts with existing: " rel-id))
       (tx-relationship relationship))
 
     :delete
-    (if-let [rel-id (find-one-relationship db relationship)]
+    (if-let [rel-id (find-one-relationship-id db relationship)]
       [:db.fn/retractEntity rel-id]
       nil)
 
