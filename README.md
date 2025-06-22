@@ -84,6 +84,8 @@ The other primary API call is `lookup-resources`, e.g.
 
 ## Quickstart
 
+The following example is contained in [eacl-example](https://github.com/theronic/eacl-example).
+
 Add the EACL dependency to your `deps.edn` file:
 
 ```clojure
@@ -137,7 +139,7 @@ Add the EACL dependency to your `deps.edn` file:
 (def ->product (partial spice-object :product))
   
 ; Write some Relationships to EACL (you can also transact this with your entities):
-(eacl/write-relationships! acl
+(eacl/create-relationships! acl
   [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))
    (eacl/->Relationship (->account "account-1") :account (->product "product-1"))])
 
@@ -152,7 +154,7 @@ Add the EACL dependency to your `deps.edn` file:
 (eacl/can? acl (->user "user-2") :update_sku (->product "product-1"))
 ; => false
 
-; 9. Enumerate resources via `lookup-resources`:
+; You can enumerate resources via `lookup-resources`:
 (eacl/lookup-resources acl
   {:subject       (->user "user-1")
    :permission    :update_sku
