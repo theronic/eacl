@@ -37,7 +37,7 @@ In a ReBAC system like EACL, _Subjects_ & _Resources_ are related via _Relations
 
 A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
 - `[user1 :owner account1]` means the subject `user1` owns the account resource `account1`.
-- whereas `[account1 :account product1]` means subject `product1` falls under account resource `account1`.
+- whereas `[account1 :account product1]` means subject `account1` is the account for resource `product1`.
 
 By defining a permission schema, we can grant `:view` & `:edit` permissions to any user who is an `:owner` of an `<account>`.
 
