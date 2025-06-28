@@ -168,7 +168,7 @@
                           [?user :eacl/id ?user-uuid]]
                         (d/db conn) test-account))
 
-    (def client (spiceomic/make-client conn))
+    (def client (spiceomic/make-client conn {}))
 
     ;; Add platform relations for all accounts:
 
@@ -321,7 +321,7 @@
 
     (let [!counter         (atom 0)
           !mistakes        (atom 0)
-          client           (spiceomic/make-client conn)
+          client           (spiceomic/make-client conn {})
           db               (d/db conn)
           {:as setup :keys [accounts users servers]} (time (setup-benchmark db))
           _                (do (log/debug "N accounts" (count accounts))

@@ -15,20 +15,24 @@
 
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
-  [db {:as              filters
-       resource         :resource
-       permission       :permission
-       subject-type     :subject/type
-       subject-relation :subject/relation
-       limit            :limit
-       offset           :offset}]
+  [db
+   {:as opts :keys [object->entid entid->object]}
+   {:as              filters
+    resource         :resource
+    permission       :permission
+    subject-type     :subject/type
+    subject-relation :subject/relation
+    limit            :limit
+    offset           :offset}]
   {:pre [(:type resource) (:id resource)]}
   (let [{resource-type :type
          resource-id   :id} resource
 
-        {:as          resource-ent
-         resource-eid :db/id} (d/entity db [object-id-attr resource-id])]
-    (assert resource-eid (str "lookup-subjects requires a valid resource with unique attr " (pr-str object-id-attr) "."))
+        resource-eid (object->entid db resource)
+        resource-ent (d/entity db resource-eid)]
+    ; Q: can we support dynamic object type resolution?
+    (assert resource-eid (str "lookup-subjects (object->entid " (pr-str resource) ") must resolve to a valid Datomic entid."))
+    ; todo configurable type resolution.
     (assert (= resource-type (:eacl/type resource-ent)) (str "Resource type does not match " resource-type "."))
     (let [subject-eids   (->> (d/q '[:find [?subject ...]
                                      :in $ % ?subject-type ?permission ?resource-eid
@@ -43,12 +47,13 @@
           paginated-eids (cond->> subject-eids
                                   offset (drop offset)
                                   limit (take limit))
-          objects        (->> paginated-eids
-                              (map #(d/entity db %))
-                              (map entity->spice-object))]
-      ; todo: cursor WIP.
+          objects        (for [eid paginated-eids]
+                           (entid->object db eid))]
+      ; todo: subjects cursor is WIP. We still support offset & limit.
       {:data   objects
        :cursor nil})))
+
+(comment entity->spice-object)
 
 ;; Helper functions for staged lookup-resources
 (defn find-direct-resources
@@ -161,15 +166,23 @@
 ;         (map #(d/entity db %))
 ;         (map entity->spice-object))))
 
+(defn eid? [eid] (number? eid))
+
+(defn ident->eid [db ident-or-eid]
+  (if (eid? ident->eid)
+    ident-or-eid
+    (d/entid db ident-or-eid)))
+
 (defn can?
-  "Optimized version of can? using optimized rules"
+  ; TODO: this needs another layer of ID resolution.
+  "can? using optimized Datalog rules"
   [db subject-ident permission resource-ident]
   {:pre [subject-ident
          (keyword? permission)
          resource-ident]}
-  (let [subject-eid  (d/entid db subject-ident)
-        resource-eid (d/entid db resource-ident)]
-    (if-not (and subject-eid resource-eid)
+  (let [subject-eid  (ident->eid db subject-ident)
+        resource-eid (ident->eid db resource-ident)]
+    (if-not (and subject-eid resource-eid)                  ; duplicated in Spiceomic.
       false
       (->> (d/q '[:find ?subject .
                   :in $ % ?subject ?perm ?resource
@@ -182,12 +195,13 @@
                 resource-eid)
            (boolean)))))
 
-(def can! (fn [db subject-id permission resource-id]
-            (if (can? db subject-id permission resource-id)
-              true
-              (throw (Exception. "Unauthorized")))))
+;(def can! (fn [db subject-id permission resource-id]
+;            (if (can? db subject-id permission resource-id)
+;              true
+;              (throw (Exception. "Unauthorized")))))
 
 (defn lookup-resources
+  ; outdated.
   "Optimized version of lookup-resources"
   [db {:as               filters
        subject           :subject

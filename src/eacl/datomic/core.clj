@@ -4,11 +4,10 @@
                                         ->Relationship map->Relationship
                                         ->RelationshipUpdate]]
             [eacl.datomic.impl :as impl]
+            [eacl.spicedb.consistency :as consistency]
             [datomic.api :as d]
             [eacl.datomic.schema :as schema]
             [clojure.tools.logging :as log]))
-
-;(ns-unalias *ns* 'impl)
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -27,69 +26,39 @@
 ; Steps:
 ; - handle spice-object type & ID.
 
-(defn object->ident
-  "Accepts SpiceObject, or Datomic ident, or :db/id"
-  [obj-or-ident]
-  (if (:type obj-or-ident)
-    [:eacl/id (:id obj-or-ident)]
-    obj-or-ident))
-
 (defn spiceomic-can?
   "Subject & Resource types must match in rules, but we don't check them here."
-  [db subject permission resource]
-  (let [result (impl/can? db (object->ident subject) permission (object->ident resource))]
-    ;; Ensure we return a boolean
-    (boolean result)))
+  [db
+   {:as opts :keys [object->entid]}
+   subject permission resource
+   consistency]
+  (log/debug 'spiceomic-can? 'opts opts)
+  (assert (= consistency/fully-consistent consistency) "EACL only supports consistency/fully-consistent at this time.")
+  (let [subject-eid  (object->entid db subject)
+        resource-eid (object->entid db resource)]
+    (if-not (and subject-eid resource-eid)
+      false ; should we throw on missing IDs?
+      (impl/can? db subject-eid permission resource-eid))))
 
-;(defn
-;  ->RelationshipFilter
-;  "All fields are optional, but at least one field is required.
-;  Performance is sensitive to indexing."
-;  [{:as            filters
-;    :resource/keys [type id id-prefix relation]             ; destructured for call signature.
-;    :subject/keys  [type id relation]}]                     ; where relation means subject_relation.
-;  (assert (or (:resource/type filters)
-;              (:resource/id filters)
-;              (:resource/id-prefix filters)
-;              (:resource/relation filters))
-;          "One of the filters :resource/type, :resource/id, :resource/id-prefix or :resource/relation are required.")
-;  (let [subject-filter (let [{:subject/keys [type id relation]} filters]
-;                         (if (or type id relation)          ; only construct SubjectFilter if any subject filters are present.
-;                           (->SubjectFilter filters)))
-;        {:resource/keys [type id id-prefix relation]} filters]
-;    ;; pass through for :subject/* filters.
-;    (->> (cond-> (PermissionService$RelationshipFilter/newBuilder)
-;           type (.setResourceType (name type))              ;; optional. not named optional for legacy SpiceDB reasons.
-;           id (.setOptionalResourceId (str id))
-;           id-prefix (.setOptionalResourceIdPrefix id-prefix)
-;           relation (.setOptionalRelation (name relation))
-;           subject-filter (.setOptionalSubjectFilter subject-filter))
-;         (.build))))
+(defn spiceomic-lookup-resources [db opts filters]
+  (impl/lookup-resources db opts filters))
 
+(defn spiceomic-lookup-subjects [db opts filters]
+  (impl/lookup-subjects db opts filters))
 
-(comment
-  (build-relationship-query))
-
-(defn spiceomic-lookup-resources [db filters]
-  ; todo coercion
-  (impl/lookup-resources db filters))
-
-(defn spiceomic-lookup-subjects [db filters]
-  ; todo coercion
-  (impl/lookup-subjects db filters))
-
-(defrecord Spiceomic [conn]
+(defrecord Spiceomic [conn opts]
+  ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.
   IAuthorization
   (can? [this subject permission resource]
     ; how to resolve these?
-    (spiceomic-can? (d/db conn) subject permission resource))
+    (spiceomic-can? (d/db conn) opts subject permission resource consistency/fully-consistent))
 
-  (can? [this subject permission resource _consistency]
-    ; todo: throw if consistency not fully-consistent.
-    (spiceomic-can? (d/db conn) subject permission resource))
+  (can? [this subject permission resource consistency]
+    (spiceomic-can? (d/db conn) opts subject permission resource consistency))
 
   (can? [this {:as demand :keys [subject permission resource consistency]}]
-    (spiceomic-can? (d/db conn) subject permission resource))
+    (assert (= consistency))
+    (spiceomic-can? (d/db conn) opts subject permission resource consistency))
 
   (read-schema [this]
     ; this can be read from DB.
@@ -125,21 +94,31 @@
                                       (->RelationshipUpdate :delete rel))))
 
   (lookup-resources [this filters]
-    (spiceomic-lookup-resources (d/db conn) filters))
+    (spiceomic-lookup-resources (d/db conn) opts filters))
 
   (count-resources [this filters]
     (impl/count-resources (d/db conn) filters))
 
   (lookup-subjects [this filters]
-    (spiceomic-lookup-subjects (d/db conn) filters))
+    (spiceomic-lookup-subjects (d/db conn) opts filters))
 
   (expand-permission-tree [this {:as opts :keys [consistency permission resource]}]
     (throw (Exception. "not impl."))))
 
-(defn make-client [conn]
-  (->Spiceomic conn))
+(defn make-client
+  "Takes conn and opts. You can configure how EACL converts Spice Objects to/from entities."
+  [conn
+   {:as   opts
+    :keys [object->entid
+           entid->object]
+    :or   {object->entid impl/default-object->entid
+           entid->object impl/default-entid->object}}]
+  (assert (fn? object->entid) "object->eid fn is required to coerce SpiceObject to Datomic eid.")
+  (assert (fn? entid->object) "entid->object fn is required to coerce Datomic entid to SpiceObject.")
+  (->Spiceomic conn {:object->entid object->entid
+                     :entid->object entid->object})) ; object->eid))
 
 (comment
   (require '[eacl.datomic.datomic-helpers :refer [with-mem-conn]])
   (with-mem-conn [conn []]
-                 (make-client conn)))
+                 (make-client conn {})))

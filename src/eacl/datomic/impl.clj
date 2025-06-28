@@ -7,6 +7,20 @@
     [eacl.datomic.impl-optimized :as impl-optimized]
     [eacl.datomic.impl-indexed :as impl-indexed]))
 
+(defn default-object->entid
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [db {:as object :keys [type id]}]
+  (let [ident (cond
+                (number? id) id                             ; support :db/id.
+                (keyword? id) id                            ; :db/ident support.
+                (string? id) [:eacl/id id])]
+    ;(log/debug 'default-object->entid (pr-str object) '->ident (pr-str ident))
+    (d/entid db ident)))
+
+(defn default-entid->object [db eid]
+  (let [ent (d/entity db eid)]
+    (spice-object (:eacl/type ent) (:eacl/id ent))))
+
 ; A central place to configure how IDs and resource types are handled:
 ; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
 ; - To retain parity with SpiceDB, you can configure EACL to coerce object types & IDs of different
@@ -20,12 +34,6 @@
 
 ; To support other types of IDs that can be coerced to/from string-formattable entity IDs, than UUIDs
 
-;(defn id->datomic
-;  "EACL uses unique string ID under :entity/id"
-;  [id] (identity id))
-;
-;(defn datomic->id [id] (identity id))
-
 ;; Graph Traversal Strategy to resolve permissions between subjects & resources:
 ;; - schema is typically small, i.e. we have a low number of relations and permissions
 ;; - resources (like servers) are typically far more numerous than subjects (like users or accounts)
@@ -37,12 +45,7 @@
 
 ;; Use indexed implementation for better performance with large offsets
 (def can? impl-optimized/can?)
-(def can! impl-optimized/can!)
-(def entity->spice-object impl-optimized/entity->spice-object)
 (def lookup-subjects impl-optimized/lookup-subjects)
-;(def lookup-resources impl/lookup-resources)
-;(def lookup-resources impl-grok/lookup-resources)
-
 (def lookup-resources impl-indexed/lookup-resources)
 (def count-resources impl-indexed/count-resources)
 
@@ -68,8 +71,9 @@
   "One of these filters is required:
   - :resource/type,
   - :resource/id,
-  - :resource/id-prefix, or
+  - :resource/id-prefix,
   - :resource/relation
+  - :subject/type
   - :subject/id.
 
 Not supported yet:
@@ -85,7 +89,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     subject-type      :subject/type
     subject-id        :subject/id
     _subject-relation :subject/relation}]                   ; not supported yet.
-  {:pre [(or resource-type resource-id _resource-prefix resource-relation subject-type)
+  {:pre [(or resource-type resource-id _resource-prefix resource-relation subject-type subject-id)
          (not _resource-prefix)]}                           ; not supported.
   {:find  '[?resource-type ?resource-id
             ?resource-relation ; bug!

@@ -50,7 +50,7 @@
       (def acme-account (->account "acme")))
 
     (testing "Make a Spice client and hold onto channel for disposal later."
-      (let [client (spiceomic/make-client conn)]
+      (let [client (spiceomic/make-client conn {})]
         (is client)
         ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
@@ -155,7 +155,8 @@
                                          (->Relationship my-account :account my-server)])]
         (testing "All Spice operations returns a ZedToken that can be passed to subsequent read operations to guarantee consistent cache."
           (is (string? token))
-          (is (true? (eacl/can? *client my-user :reboot my-server (consistency/fresh token)))))))
+          (testing "passing anything but consistency/fully-consistent throws until we have a cache to support consistency/fresh."
+            (is (thrown? Throwable (eacl/can? *client my-user :reboot my-server (consistency/fresh token))))))))
 
     (testing "assign joe as the owner of acme-account and joe's server to acme-account"
       (is (eacl/create-relationships! *client
@@ -166,7 +167,7 @@
       (is (true? (eacl/can? *client my-user :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client joe's-user :reboot my-server fully-consistent))))
 
-    (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
+    (testing "Query `lookup-resources` to enumerate the resources of a given type (:server) a user can :reboot"
 
       ; specifying missing subject does not throw an exception, or should it?
       ; this throws:

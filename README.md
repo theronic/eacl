@@ -47,7 +47,7 @@ A situated ReBAC system like EACL can traverse the graph of relationships betwee
 
 The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that matches the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
-- `(eacl/can? client subject permission resourc) => true | false`
+- `(eacl/can? client subject permission resource) => true | false`
 - `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
 - `(eacl/lookup-resources client filters) => {:data [resources...], :cursor 'next-cursor}`.
 - `(eacl/count-resources client filters) => <count>` materializes full index, so can be slow. Use sparingly.
@@ -131,7 +131,12 @@ Add the EACL dependency to your `deps.edn` file:
    {:eacl/type :product, :eacl/id "product-2"}])
 
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
-(def acl (eacl.datomic.core/make-client conn))
+(def acl (eacl.datomic.core/make-client conn
+           ; optional config:
+           {:object->entid (fn [db {:as obj :keys [type id]] (d/entid db [:custom/id id]))
+            :entid->object (fn [db eid]
+                             (let [ent (d/entity db eid)]
+                               (spice-object (:eacl/type ent) (:custom/id ent))))}))
 
 ; Define some convenience methods over spice-object:
 (def ->user (partial spice-object :user))
@@ -304,9 +309,11 @@ Internally, EACL models Relations, Permissions and Relationships as Datomic enti
 
 We have an implementation for the gRPC API that is not open-sourced yet, but will be open-sourced.
 
-To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
+* To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
 - `:eacl/type` (keyword), e.g. `:server` or `:account`
 - `:eacl/id` (unique string), e.g. `"unique-account-1"`
+
+- Update as of 2025-06-28: EACL now supports configuration `entid->object` & `object->entid` that lets you reuse existing Datomic entity IDs.
 
 You can construct a Spice Object using `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`. It returns a SpiceObject.
 
