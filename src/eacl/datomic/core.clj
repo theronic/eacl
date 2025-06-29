@@ -77,16 +77,10 @@
   (assert (= consistency/fully-consistent consistency) "EACL only supports consistency/fully-consistent at this time.")
   (let [subject-eid  (object->entid db subject)
         resource-eid (object->entid db resource)]
+    ; Note: we do not check types here, but we should.
     (if-not (and subject-eid resource-eid)
       false                                                 ; should we throw on missing IDs?
       (impl/can? db subject-eid permission resource-eid))))
-
-(defmacro spy
-  "A macro that prints the expression and its evaluated value, then returns the value."
-  [expr]
-  `(let [value# ~expr]
-     (log/debug (str (quote ~expr) " => ") value#)
-     value#))
 
 (defn spiceomic-lookup-resources
   [db

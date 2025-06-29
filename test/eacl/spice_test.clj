@@ -8,8 +8,7 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->team ->server ->platform ->vpc ->account]]
             [eacl.datomic.core :as spiceomic]
             [clojure.tools.logging :as log]
-            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]])
-  (:import (eacl.core IAuthorization)))
+            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
 (deftest spicedb-tests
 
@@ -140,7 +139,7 @@
       (is (false? (eacl/can? *client new-joiner :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client super-user :reboot my-server fully-consistent))))
 
-    (testing "transact the entities with :resource/type & :entity/id we are about to use so [:entity/id 'ben'] resolves"
+    (testing "transact the entities with :eacl/type & :eacl/id we are about to use so [:eacl/id 'ben'] resolves"
       (is @(d/transact conn (for [ent [ca-platform
                                        my-account acme-account
                                        super-user my-user joe's-user
