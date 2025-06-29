@@ -1,11 +1,67 @@
 (ns eacl.datomic.impl
   "EACL: Enterprise Access Control. Spice-compatible authorization system in Datomic."
   (:require
+    [clojure.tools.logging :as log]
     [datomic.api :as d]
     [eacl.core :as eacl :refer [spice-object]]
     [eacl.datomic.impl-base :as base]
     [eacl.datomic.impl-optimized :as impl-optimized]
     [eacl.datomic.impl-indexed :as impl-indexed]))
+
+(defn default-object-id->ident
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [object-id]
+  (cond
+    (number? object-id) object-id                             ; support :db/id.
+    (keyword? object-id) object-id                            ; :db/ident support.
+    (string? object-id) [:eacl/id object-id]))
+
+(defn default-object-id->entid
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [db object-id]
+  (let [ident (default-object-id->ident object-id)]
+    ;(log/debug 'default-object->entid (pr-str object) '->ident (pr-str ident))
+    (d/entid db ident)))
+
+(defn default-object->entid
+  ; this can go away.
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [db {:as object :keys [type id]}]
+  (default-object-id->entid db id))
+
+(defn default-entity->object-id [entity]
+  (:eacl/id entity))
+
+; do we need all of these?
+(defn default-entid->object-id [db eid]
+  (let [ent (d/entity db eid)]
+    (default-entity->object-id ent)))
+
+(defn default-entity->object-type [ent]
+  (:eacl/type ent))
+
+(defn default-entid->object [db eid]
+  (let [ent (d/entity db eid)]
+    (spice-object (default-entity->object-type ent) (default-entity->object-id ent))))
+
+(defn default-spice->internal-object [db {:as obj :keys [type id]}]
+  {:type type :id (default-object-id->entid db id)})
+
+(defn default-internal-object->spice [db {:as obj :keys [type id]}]
+  (spice-object type (default-entid->object-id db id)))
+
+(defn default-internal-cursor->spice
+  [db
+   {:as opts :keys [entid->object-id]}
+   {:as cursor :keys [path-index resource-id]}]
+  (base/->Cursor path-index (entid->object-id db resource-id)))
+
+(defn default-spice-cursor->internal
+  [db
+   {:as opts :keys [object-id->entid]}
+   {:as cursor :keys [path-index resource-id]}]
+  {:path-index path-index :resource-id (object-id->entid db resource-id)})
+
 
 ; A central place to configure how IDs and resource types are handled:
 ; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
@@ -20,12 +76,6 @@
 
 ; To support other types of IDs that can be coerced to/from string-formattable entity IDs, than UUIDs
 
-;(defn id->datomic
-;  "EACL uses unique string ID under :entity/id"
-;  [id] (identity id))
-;
-;(defn datomic->id [id] (identity id))
-
 ;; Graph Traversal Strategy to resolve permissions between subjects & resources:
 ;; - schema is typically small, i.e. we have a low number of relations and permissions
 ;; - resources (like servers) are typically far more numerous than subjects (like users or accounts)
@@ -37,12 +87,7 @@
 
 ;; Use indexed implementation for better performance with large offsets
 (def can? impl-optimized/can?)
-(def can! impl-optimized/can!)
-(def entity->spice-object impl-optimized/entity->spice-object)
 (def lookup-subjects impl-optimized/lookup-subjects)
-;(def lookup-resources impl/lookup-resources)
-;(def lookup-resources impl-grok/lookup-resources)
-
 (def lookup-resources impl-indexed/lookup-resources)
 (def count-resources impl-indexed/count-resources)
 
@@ -68,8 +113,9 @@
   "One of these filters is required:
   - :resource/type,
   - :resource/id,
-  - :resource/id-prefix, or
+  - :resource/id-prefix,
   - :resource/relation
+  - :subject/type
   - :subject/id.
 
 Not supported yet:
@@ -79,17 +125,17 @@ Not supported yet:
 subject-type treatment reuses :resource/type. Maybe this should be entity type."
   [{:as               _relationship-filters
     resource-type     :resource/type
-    resource-id       :resource/id
+    resource-eid      :resource/id
     _resource-prefix  :resource/id-prefix                   ; not supported yet.
     resource-relation :resource/relation
     subject-type      :subject/type
-    subject-id        :subject/id
+    subject-eid       :subject/id
     _subject-relation :subject/relation}]                   ; not supported yet.
-  {:pre [(or resource-type resource-id _resource-prefix resource-relation subject-type)
+  {:pre [(or resource-type resource-eid _resource-prefix resource-relation subject-type subject-eid)
          (not _resource-prefix)]}                           ; not supported.
-  {:find  '[?resource-type ?resource-id
+  {:find  '[?resource-type ?resource
             ?resource-relation ; bug!
-            ?subject-type ?subject-id]
+            ?subject-type ?subject]
    ; big todo: string ID support, via UUIDs?
 
    :keys  [:resource/type :resource/id
@@ -97,35 +143,35 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
            :subject/type :subject/id]
    :in    (cond-> ['$]                                      ; this would be a nice macro.
             resource-type (conj '?resource-type)
-            resource-id (conj '?resource-id)
+            resource-eid (conj '?resource)
             ;resource-prefix (conj '?resource-prefix) ; todo.
             resource-relation (conj '?resource-relation) ; ?relation-name
             subject-type (conj '?subject-type)
-            subject-id (conj '?subject-id))
+            subject-eid (conj '?subject))
    ;subject-relation (conj '?subject-relation) ; todo.
    ; Clause ; order is perf. sensitive.
    :where '[[?relationship :eacl.relationship/resource ?resource]
             [?resource :eacl/type ?resource-type]
             [?relationship :eacl.relationship/relation-name ?resource-relation]
             [?relationship :eacl.relationship/subject ?subject]
-            [?subject :eacl/type ?subject-type]
-            [?subject :eacl/id ?subject-id]
-            [?resource :eacl/id ?resource-id]]})
+            [?subject :eacl/type ?subject-type]]})
 
 (defn rel-map->Relationship
   [{:as               _rel-map
-    resource-type     :resource/type
-    resource-id       :resource/id
+    resource-type     :resource/type ; we are doing extra work here to look up the rel.
+    resource-eid      :resource/id
     resource-relation :resource/relation
     subject-type      :subject/type
-    subject-id        :subject/id}]
+    subject-eid       :subject/id}]
+  ; todo make this more efficient
   (eacl/map->Relationship
-    {:subject  (spice-object subject-type subject-id)
+    {:subject  (spice-object subject-type subject-eid)                   ; todo: 3-arity for type
      :relation resource-relation
-     :resource (spice-object resource-type resource-id)}))
+     :resource (spice-object resource-type resource-eid)}))
 
 (defn read-relationships
   [db filters]
+  ;(log/debug 'read-relationships 'filters filters)
   (let [qry  (build-relationship-query filters)
         args (relationship-filters->args filters)]
     (->> (apply d/q qry db args)
@@ -148,13 +194,15 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (defn find-one-relationship-id
   [db {:as relationship :keys [subject relation resource]}]
+  ; hmm this coercion does not belong here.
   ;(log/debug 'find-one-relationship relationship)
-  (let [{:as _subject-ent
-         subject-type :eacl/type
-         subject-eid :db/id} (d/entity db [:eacl/id (:id subject)])
-        {:as _resource-ent
-         resource-type :eacl/type
-         resource-eid :db/id} (d/entity db [:eacl/id (:id resource)])]
+  (let [subject-type (:type subject) ; todo config.
+        ; TODO Hoist up the d/entid calls.
+        subject-eid  (d/entid db (:id subject))             ;object-id->entid db (:id subject))
+
+        resource-type (:type resource) ; todo config.
+        resource-eid (d/entid db (:id resource))]           ;object-id->entid db (:id resource))]
+    ;(log/debug 'find-one-relationship-id 'subject-eid subject-eid 'resource-eid resource-eid)
     ;(assert subject-eid (str "No such subject: " subject))
     ;(assert resource-eid (str "No such resource: " resource))
     (if-not (and subject-eid resource-eid)
@@ -177,9 +225,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   We don't validate resource & subject types here."
   [{:as _relationship :keys [subject relation resource]}]
   (base/Relationship
-    {:type (:type subject), :id [:eacl/id (:id subject)]}
+    subject
     relation
-    {:type (:type resource), :id [:eacl/id (:id resource)]}))
+    resource))
 
 (defn tx-update-relationship
   "Note that delete costs N queries."

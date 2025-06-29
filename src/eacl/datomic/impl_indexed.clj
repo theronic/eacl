@@ -2,7 +2,8 @@
   (:require [clojure.tools.logging :as log]
             [datomic.api :as d]
             [eacl.core :refer [spice-object]]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.datomic.impl-base :as base]))
 
 (def ->user (partial spice-object :user))
 
@@ -119,26 +120,33 @@
 
 (defn lookup-resources
   "Lazily finds resources where subject has permission."
-  [db {:as           _query
-       subject       :subject
-       permission    :permission
-       resource-type :resource/type
-       cursor        :cursor
-       limit         :limit
-       :or           {cursor nil
-                      limit  1000}}]
+  [db
+   {:as           _query
+    subject       :subject
+    permission    :permission
+    resource-type :resource/type
+    cursor        :cursor
+    limit         :limit
+    :or           {cursor nil
+                   limit  1000}}]
   {:pre [(:type subject)
          (keyword? (:type subject))
          (:id subject)
          (keyword? permission)
          (keyword? resource-type)]}
-  (let [subject-eid              (d/entid db [:eacl/id (:id subject)])
+  (log/debug 'lookup-resources 'query _query)
+  (let [subject-eid              (:id subject) ; (object->entid db subject)
+        ;subject-ent              (d/entity db subject-eid) ; do we need this if d/entid has already been called?
+        ;subject-eid              (:db/id subject-ent)
         paths                    (get-permission-paths db resource-type permission)
         ;_                        (log/debug "lookup-resources paths" paths)
         ;; Handle cursor as either a string or a cursor object
-        cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
-        cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor))
-        cursor-eid               (when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
+        ;cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
+        ; TODO: cursor cannot be a string in internals.
+        cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor)) ; todo: rename to resource
+        ; TODO: cursor should also use object->entid
+        ; TODO: can't cursor return the eid directly?
+        cursor-eid               cursor-resource-id ;(object->entid db {:type :n/a, :id cursor-resource-id}) ;(when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
         ;_                        (log/debug 'cursor-eid cursor-eid)
 
         ;; Create a lazy sequence of all resource eids with their path indices
@@ -182,13 +190,15 @@
         ;; Create cursor for next page
         [last-eid last-path-idx] (last realized-resources)
         new-cursor               (when last-eid
-                                   {:path-index  last-path-idx
-                                    :resource-id (:eacl/id (d/entity db last-eid))})
+                                   (base/->Cursor last-path-idx last-eid))
 
-        ;; Convert to spice objects
-        resources                (map (fn [[eid _]] (entity->spice-object (d/entity db eid))) realized-resources)]
+        realized-resource-eids   (for [[eid _path] realized-resources]
+                                   eid)]
+
+    ;; Convert to spice objects
+    ;resources                (map (fn [[eid _]] (entity->spice-object (d/entity db eid))) realized-resource-eids)]
     {:cursor new-cursor
-     :data   resources}))
+     :data   realized-resource-eids}))
 
 (defn count-resources
   ; this could reuse most of lookup-resources. unfortunately can't get around deduplication.
@@ -204,11 +214,11 @@
          (:id subject)
          (keyword? permission)
          (keyword? resource-type)]}
-  (let [subject-eid              (d/entid db [:eacl/id (:id subject)])
+  (let [subject-eid              (:id subject) ; (d/entid db [:eacl/id (:id subject)])
         paths                    (get-permission-paths db resource-type permission)
         ;_                        (log/debug "lookup-resources paths" paths)
         ;; Handle cursor as either a string or a cursor object
-        cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
+        ; cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0)) ; this feels like a bug...
         cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor))
         cursor-eid               (when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
         ;_                        (log/debug 'cursor-eid cursor-eid)
