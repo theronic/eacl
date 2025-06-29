@@ -14,7 +14,7 @@
 
 (defn object->spice
   [db
-   {:as opts
+   {:as   opts
     :keys [entid->object-id]}
    object]
   (update object :id #(entid->object-id db %)))
@@ -22,7 +22,7 @@
 (defn relationship->spice
   [db opts {:as rel :keys [subject relation resource]}]
   (map->Relationship
-    {:subject (object->spice db opts subject)
+    {:subject  (object->spice db opts subject)
      :relation relation
      :resource (object->spice db opts resource)}))
 
@@ -44,11 +44,11 @@
 
 (defn spice-relationship->internal
   [db
-   {:as opts :keys [spice->internal-object]}
+   {:as opts :keys [spice-object->internal]}
    {:as rel :keys [subject relation resource]}]
-  {:subject (spice->internal-object db subject)
+  {:subject  (spice-object->internal db subject)
    :relation relation
-   :resource (spice->internal-object db resource)})
+   :resource (spice-object->internal db resource)})
 
 (defn spiceomic-write-relationships!
   [conn opts updates]
@@ -58,7 +58,7 @@
                      (map #(impl/tx-update-relationship db %))
                      (remove nil?))]                        ; :delete operation can be nil.
     ;(log/debug 'tx-data tx-data)
-    (let [{:as _tx-report
+    (let [{:as   _tx-report
            :keys [db-after]} @(d/transact conn tx-data)
           basis (d/basis-t db-after)]
       ; we return the latest DB basis as :zed/token to simulate consistency semantics.
@@ -78,14 +78,46 @@
   (let [subject-eid  (object->entid db subject)
         resource-eid (object->entid db resource)]
     (if-not (and subject-eid resource-eid)
-      false ; should we throw on missing IDs?
+      false                                                 ; should we throw on missing IDs?
       (impl/can? db subject-eid permission resource-eid))))
 
-(defn spiceomic-lookup-resources [db opts filters]
-  (impl/lookup-resources db opts filters))
+(defmacro spy
+  "A macro that prints the expression and its evaluated value, then returns the value."
+  [expr]
+  `(let [value# ~expr]
+     (log/debug (str (quote ~expr) " => ") value#)
+     value#))
 
-(defn spiceomic-lookup-subjects [db opts filters]
-  (impl/lookup-subjects db opts filters))
+(defn spiceomic-lookup-resources
+  [db
+   {:as   opts
+    :keys [internal-object->spice
+           spice-object->internal
+
+           entid->object
+
+           internal-cursor->spice
+           spice-cursor->internal]}
+   query]
+  (let [x (->> query
+               (S/transform [:subject] #(spice-object->internal db %))
+               (S/transform [:cursor] #(spice-cursor->internal db opts %))
+               (impl/lookup-resources db))]
+    (log/debug 'x '===> x)
+    (->> x
+         (S/transform [:cursor] #(internal-cursor->spice db opts %))
+         (S/transform [:data S/ALL] #(entid->object db %)))))
+
+(defn spiceomic-lookup-subjects
+  [db
+   {:as opts
+    :keys [entid->object
+           spice-object->internal]}
+   query]
+  (->> query
+       (S/transform [:resource] #(spice-object->internal db %))
+       (impl/lookup-subjects db)
+       (S/transform [:data S/ALL] #(entid->object db %))))
 
 (defrecord Spiceomic [conn opts]
   ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.
@@ -134,14 +166,14 @@
                                     (for [rel relationships]
                                       (->RelationshipUpdate :delete rel))))
 
-  (lookup-resources [this filters]
-    (spiceomic-lookup-resources (d/db conn) opts filters))
+  (lookup-resources [this query]
+    (spiceomic-lookup-resources (d/db conn) opts query))
 
-  (count-resources [this filters]
-    (impl/count-resources (d/db conn) filters))
+  (count-resources [this query]
+    (impl/count-resources (d/db conn) query))
 
-  (lookup-subjects [this filters]
-    (spiceomic-lookup-subjects (d/db conn) opts filters))
+  (lookup-subjects [this query]
+    (spiceomic-lookup-subjects (d/db conn) opts query))
 
   (expand-permission-tree [this {:as opts :keys [consistency permission resource]}]
     (throw (Exception. "not impl."))))
@@ -151,26 +183,41 @@
   ; a bunch of these options are unnecessary. probably going to switch to d/entity internally.
   [conn
    {:as   opts
-    :keys [spice->internal-object
-           internal->spice-object
-           entid->object-id
+    :keys [entid->object-id
            object-id->entid
+
+           entid->object
            object->entid
-           entid->object]
-    :or   {spice->internal-object impl/default-spice->internal-object
-           internal->spice-object impl/default-internal->spice-object
-           entid->object-id impl/default-entid->object-id
-           object-id->entid impl/default-object-id->entid
-           entid->object impl/default-entid->object
-           object->entid impl/default-object->entid}}]
+
+           spice-object->internal
+           internal-object->spice
+
+           internal-cursor->spice
+           spice-cursor->internal]
+    :or   {entid->object-id       impl/default-entid->object-id
+           object-id->entid       impl/default-object-id->entid
+
+           entid->object          impl/default-entid->object
+           object->entid          impl/default-object->entid
+
+           spice-object->internal impl/default-spice->internal-object
+           internal-object->spice impl/default-internal-object->spice
+
+           internal-cursor->spice impl/default-internal-cursor->spice
+           spice-cursor->internal impl/default-spice-cursor->internal}}]
   (assert (fn? object->entid) "object->eid fn is required to coerce SpiceObject to Datomic eid.")
   (assert (fn? entid->object) "entid->object fn is required to coerce Datomic entid to SpiceObject.")
-  (->Spiceomic conn {:spice->internal-object spice->internal-object
-                     :internal->spice-object internal->spice-object
-                     :entid->object-id entid->object-id
-                     :object-id->entid object-id->entid
-                     :entid->object entid->object
-                     :object->entid object->entid})) ; object->eid))
+  (->Spiceomic conn {:entid->object-id       entid->object-id
+                     :object-id->entid       object-id->entid
+
+                     :entid->object          entid->object
+                     :object->entid          object->entid
+
+                     :spice-object->internal spice-object->internal
+                     :internal-object->spice internal-object->spice
+
+                     :internal-cursor->spice internal-cursor->spice
+                     :spice-cursor->internal spice-cursor->internal})) ; object->eid))
 
 (comment
   (require '[eacl.datomic.datomic-helpers :refer [with-mem-conn]])

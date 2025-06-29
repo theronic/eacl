@@ -177,19 +177,19 @@
       ;                                    :consistency   :fully-consistent}))
 
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
-      (is (= [(update my-server :id str)] (:data (eacl/lookup-resources *client
-                                                                        {:subject       my-user
-                                                                         :permission    :reboot
-                                                                         :resource/type :server
-                                                                         :cursor        nil
-                                                                         :consistency   fully-consistent}))))
-      (is (= [(update joe's-server :id str)] (:data (eacl/lookup-resources *client
-                                                                           {:resource/type :server
-                                                                            :permission    :reboot
-                                                                            :subject       joe's-user
-                                                                            :consistency   fully-consistent})))))
+      (is (= [my-server] (:data (eacl/lookup-resources *client
+                                                       {:subject       my-user
+                                                        :permission    :reboot
+                                                        :resource/type :server
+                                                        :cursor        nil
+                                                        :consistency   fully-consistent}))))
+      (is (= [joe's-server] (:data (eacl/lookup-resources *client
+                                                          {:resource/type :server
+                                                           :permission    :reboot
+                                                           :subject       joe's-user
+                                                           :consistency   fully-consistent})))))
 
-    (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
+    (testing "We can use `lookup-subjects` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
       (is (= [my-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
                                                              :resource     my-server

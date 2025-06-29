@@ -1,6 +1,8 @@
 (ns eacl.datomic.impl-base
   "EACL: Enterprise Access Control. Spice-compatible authorization system in Datomic.")
 
+(defrecord Cursor [path-index resource-id])
+
 (defn id->identifier
   "This is to support custom unique entity IDs."
   [eacl-id]

@@ -47,8 +47,20 @@
 (defn default-spice->internal-object [db {:as obj :keys [type id]}]
   {:type type :id (default-object-id->entid db id)})
 
-(defn default-internal->spice-object [db {:as obj :keys [type id]}]
+(defn default-internal-object->spice [db {:as obj :keys [type id]}]
   (spice-object type (default-entid->object-id db id)))
+
+(defn default-internal-cursor->spice
+  [db
+   {:as opts :keys [entid->object-id]}
+   {:as cursor :keys [path-index resource-id]}]
+  (base/->Cursor path-index (entid->object-id db resource-id)))
+
+(defn default-spice-cursor->internal
+  [db
+   {:as opts :keys [object-id->entid]}
+   {:as cursor :keys [path-index resource-id]}]
+  {:path-index path-index :resource-id (object-id->entid db resource-id)})
 
 
 ; A central place to configure how IDs and resource types are handled:

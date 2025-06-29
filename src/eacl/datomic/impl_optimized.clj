@@ -16,7 +16,7 @@
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
   [db
-   {:as opts :keys [object->entid entid->object]}
+   ;{:as opts :keys [object->entid entid->object]}
    {:as              filters
     resource         :resource
     permission       :permission
@@ -26,9 +26,7 @@
     offset           :offset}]
   {:pre [(:type resource) (:id resource)]}
   (let [{resource-type :type
-         resource-id   :id} resource
-
-        resource-eid (object->entid db resource)
+         resource-eid   :id} resource
         resource-ent (d/entity db resource-eid)]
     ; Q: can we support dynamic object type resolution?
     (assert resource-eid (str "lookup-subjects (object->entid " (pr-str resource) ") must resolve to a valid Datomic entid."))
@@ -46,11 +44,9 @@
                                    resource-eid))
           paginated-eids (cond->> subject-eids
                                   offset (drop offset)
-                                  limit (take limit))
-          objects        (for [eid paginated-eids]
-                           (entid->object db eid))]
+                                  limit (take limit))]
       ; todo: subjects cursor is WIP. We still support offset & limit.
-      {:data   objects
+      {:data   paginated-eids
        :cursor nil})))
 
 (comment entity->spice-object)
