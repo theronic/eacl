@@ -30,7 +30,7 @@
   [db
    {:as   opts
     :keys [object-id->entid
-           entid->object-id]}                               ; tempted to hoist coercion up to call-site.
+           entid->object-id]}
    {:as          filters
     subject-oid  :subject/id
     resource-oid :resource/id}]
@@ -99,14 +99,12 @@
            internal-cursor->spice
            spice-cursor->internal]}
    query]
-  (let [x (->> query
-               (S/transform [:subject] #(spice-object->internal db %))
-               (S/transform [:cursor] #(spice-cursor->internal db opts %))
-               (impl/lookup-resources db))]
-    (log/debug 'x '===> x)
-    (->> x
-         (S/transform [:cursor] #(internal-cursor->spice db opts %))
-         (S/transform [:data S/ALL] #(entid->object db %)))))
+  (->> query
+       (S/transform [:subject] #(spice-object->internal db %))
+       (S/transform [:cursor] #(spice-cursor->internal db opts %))
+       (impl/lookup-resources db)
+       (S/transform [:cursor] #(internal-cursor->spice db opts %))
+       (S/transform [:data S/ALL] #(entid->object db %))))
 
 (defn spiceomic-lookup-subjects
   [db
@@ -116,6 +114,7 @@
    query]
   (->> query
        (S/transform [:resource] #(spice-object->internal db %))
+       ; todo cursor coercion.
        (impl/lookup-subjects db)
        (S/transform [:data S/ALL] #(entid->object db %))))
 

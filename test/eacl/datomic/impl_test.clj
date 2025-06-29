@@ -48,11 +48,11 @@
     (with-mem-conn [conn schema/v4-schema]
       (is @(d/transact conn fixtures/base-fixtures))
 
-      (let [db (d/db conn)
+      (let [db             (d/db conn)
 
             super-user-eid (d/entid db :user/super-user)
-            user1-eid (d/entid db :test/user1)
-            user2-eid (d/entid db :test/user2)]
+            user1-eid      (d/entid db :test/user1)
+            user2-eid      (d/entid db :test/user2)]
 
         (testing "we can find a relationship using internals"
           ; todo update for opts & internals
@@ -292,10 +292,10 @@
 
         (testing "pagination: limit & offset are handled correctly for arrow permissions"
           (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
-            @(d/transact conn [{:db/id         "server3"
-                                :db/ident      :test/server3
-                                :eacl/type :server      ; note, no account.
-                                :eacl/id     "server-3"}
+            @(d/transact conn [{:db/id     "server3"
+                                :db/ident  :test/server3
+                                :eacl/type :server          ; note, no account.
+                                :eacl/id   "server-3"}
                                (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))
                                (Relationship (->user :user/super-user) :shared_admin (->server "server3"))]))
 
@@ -313,7 +313,7 @@
                           (paginated->spice-set db')))))
 
             (testing "limit: 10, offset: 1 should exclude server-1"
-              (is (= [ ; excluded: (spice-object :server "account1-server1")
+              (is (= [; excluded: (spice-object :server "account1-server1")
                       (spice-object :server "server-3")
                       (spice-object :server "account1-server2")
                       (spice-object :server "account2-server1")]

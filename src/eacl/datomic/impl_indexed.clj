@@ -134,19 +134,15 @@
          (:id subject)
          (keyword? permission)
          (keyword? resource-type)]}
-  (log/debug 'lookup-resources 'query _query)
-  (let [subject-eid              (:id subject) ; (object->entid db subject)
-        ;subject-ent              (d/entity db subject-eid) ; do we need this if d/entid has already been called?
-        ;subject-eid              (:db/id subject-ent)
+  (let [subject-eid              (:id subject)
         paths                    (get-permission-paths db resource-type permission)
-        ;_                        (log/debug "lookup-resources paths" paths)
-        ;; Handle cursor as either a string or a cursor object
+        ;; TODO: do we want to support string-based cursor here? Handle cursor as either a string or a cursor object
         ;cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
-        ; TODO: cursor cannot be a string in internals.
-        cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor)) ; todo: rename to resource
+        ;cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor)) ; todo: rename to resource
         ; TODO: cursor should also use object->entid
         ; TODO: can't cursor return the eid directly?
-        cursor-eid               cursor-resource-id ;(object->entid db {:type :n/a, :id cursor-resource-id}) ;(when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
+        {cursor-eid  :resource-id
+         _path-index :path-index} cursor
         ;_                        (log/debug 'cursor-eid cursor-eid)
 
         ;; Create a lazy sequence of all resource eids with their path indices
@@ -194,9 +190,6 @@
 
         realized-resource-eids   (for [[eid _path] realized-resources]
                                    eid)]
-
-    ;; Convert to spice objects
-    ;resources                (map (fn [[eid _]] (entity->spice-object (d/entity db eid))) realized-resource-eids)]
     {:cursor new-cursor
      :data   realized-resource-eids}))
 
@@ -214,7 +207,7 @@
          (:id subject)
          (keyword? permission)
          (keyword? resource-type)]}
-  (let [subject-eid              (:id subject) ; (d/entid db [:eacl/id (:id subject)])
+  (let [subject-eid              (:id subject)              ; (d/entid db [:eacl/id (:id subject)])
         paths                    (get-permission-paths db resource-type permission)
         ;_                        (log/debug "lookup-resources paths" paths)
         ;; Handle cursor as either a string or a cursor object
@@ -235,7 +228,7 @@
         ;; Apply deduplication and cursor filtering lazily
         ;; deduplication costs O(N) unfortunately
         seen                     (volatile! #{})            ; can be optimized. a seen set can be passed in earlier.
-        deduplicated-resources   (filter (fn [[eid path-idx]]
+        deduplicated-resources   (filter (fn [[eid _path-idx]]
                                            (if (@seen eid)
                                              false
                                              (do (vswap! seen conj eid)
