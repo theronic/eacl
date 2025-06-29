@@ -239,15 +239,15 @@
              (eacl/read-relationships *client {:resource/type :platform}))))
 
     (testing "We can enumerate account owners:"
-      (is (= [(->Relationship joe's-user :owner acme-account)
-              (->Relationship my-user :owner my-account)]
+      (is (= [(->Relationship my-user :owner my-account)
+              (->Relationship joe's-user :owner acme-account)]
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :user}))))
 
     (testing "read-relationships supports various filters:"
       (testing "query platform->account"
-        (is (= [(->Relationship ca-platform :platform acme-account)
-                (->Relationship ca-platform :platform my-account)]
+        (is (= [(->Relationship ca-platform :platform my-account)
+                (->Relationship ca-platform :platform acme-account)]
                (eacl/read-relationships *client {:subject/type      :platform
                                                  :resource/type     :account
                                                  :resource/relation :platform}))))
@@ -257,13 +257,13 @@
                  (->Relationship ca-platform :platform my-account)}
                (set (eacl/read-relationships *client {:subject/type :platform})))))
 
-      (is (= [(->Relationship ca-platform :platform acme-account)
-              (->Relationship ca-platform :platform my-account)]
+      (is (= [(->Relationship ca-platform :platform my-account)
+              (->Relationship ca-platform :platform acme-account)]
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :platform})))
 
-      (is (= [(->Relationship ca-platform :platform acme-account)
-              (->Relationship ca-platform :platform my-account)]
+      (is (= [(->Relationship ca-platform :platform my-account)
+              (->Relationship ca-platform :platform acme-account)]
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :platform}))))
 

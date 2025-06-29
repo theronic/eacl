@@ -37,7 +37,8 @@
       (is @(d/transact conn fixtures/base-fixtures))
 
       (let [db (d/db conn)
-            opts {:object->entid impl/default-object->entid
+            opts {:object-id->entid impl/default-object->entid
+                  :object->entid impl/default-object->entid
                   :entid->object impl/default-entid->object}]
 
         ;(prn 'datoms (d/datoms db :avet
@@ -48,22 +49,21 @@
         ;                        (:db/id resource-ent)]))
 
         (testing "we can find a relationship using internals"
+          ; todo update for opts & internals
           (is (= {:eacl.relationship/subject       {:eacl/type :user, :eacl/id "user-1"}
                   :eacl.relationship/relation-name :owner
                   :eacl.relationship/resource      {:eacl/type :account, :eacl/id "account-1"}}
-                 (let [rel-eid (impl/find-one-relationship-id db
-                                                              {:subject  (->user "user-1")
-                                                               :relation :owner
-                                                               :resource (->account "account-1")})]
+                 (let [rel-eid (impl/find-one-relationship-id db {:subject  (->user :test/user1)
+                                                                  :relation :owner
+                                                                  :resource (->account :test/account1)})]
                    (d/pull db '[{:eacl.relationship/subject [:eacl/type :eacl/id]}
                                 :eacl.relationship/relation-name
                                 {:eacl.relationship/resource [:eacl/type :eacl/id]}] rel-eid)))))
 
-        (testing "find-one-relationship-by-id returns nil for missing relationship"
-          (is (nil? (impl/find-one-relationship-id db
-                                                   {:subject  (->user "missing-user")
-                                                    :relation :owner
-                                                    :resource (->account "account-1")}))))
+        (testing "find-one-relationship-by-id throws if you pass missing subject or resource"
+          (is (thrown? Throwable (impl/find-one-relationship-id db {:subject  (->user "missing-user")
+                                                                    :relation :owner
+                                                                    :resource (->account "account-1")}))))
 
         (testing "lookup-resources: super-user can view all servers"
           (is (= #{(spice-object :server "account1-server1")
@@ -137,7 +137,7 @@
           ; need better tests here.
           (is (= #{:server} (set (map (comp :type :resource) (read-relationships db {:resource/type :server})))))
           (is (= #{:owner} (set (map :relation (read-relationships db {:resource/relation :owner})))))
-          (is (= #{:account} (set (map :relation (read-relationships db {:resource/type :server
+          (is (= #{:account} (set (map :relation (read-relationships db {:resource/type     :server
                                                                          :resource/relation :account}))))))
 
         (testing "We can enumerate subjects that can access a resource."
