@@ -9,9 +9,7 @@
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
                      can? lookup-subjects lookup-resources
-                     read-relationships
-                     default-object->entid
-                     default-entid->object]]))
+                     read-relationships]]))
 
 ;(let [id "account1-server"]
 ;  (cond
@@ -56,15 +54,15 @@
 
         (testing "we can find a relationship using internals"
           ; todo update for opts & internals
-          (is (= {:eacl.relationship/subject       {:eacl/type :user, :eacl/id "user-1"}
+          (is (= {:eacl.relationship/subject       {:eacl/type :user, :db/ident :test/user1}
                   :eacl.relationship/relation-name :owner
-                  :eacl.relationship/resource      {:eacl/type :account, :eacl/id "account-1"}}
+                  :eacl.relationship/resource      {:eacl/type :account, :db/ident :test/account1}}
                  (let [rel-eid (impl/find-one-relationship-id db {:subject  (->user :test/user1)
                                                                   :relation :owner
                                                                   :resource (->account :test/account1)})]
-                   (d/pull db '[{:eacl.relationship/subject [:eacl/type :eacl/id]}
+                   (d/pull db '[{:eacl.relationship/subject [:eacl/type :db/ident]}
                                 :eacl.relationship/relation-name
-                                {:eacl.relationship/resource [:eacl/type :eacl/id]}] rel-eid)))))
+                                {:eacl.relationship/resource [:eacl/type :db/ident]}] rel-eid)))))
 
         (testing "find-one-relationship-by-id throws if you pass missing subject or resource"
           (is (thrown? Throwable (impl/find-one-relationship-id db {:subject  (->user "missing-user")
@@ -101,7 +99,7 @@
 
         (testing "can? supports :db/id and idents"
           (let [user1-eid (d/entid db :test/user1)]
-            (is (can? db user1-eid :view [:eacl/id "account1-server1"])))
+            (is (can? db user1-eid :view :test/server1)))
           (is (can? db [:eacl/id "user-1"] :view [:eacl/id "account1-server1"]))
           (is (can? db :test/user1 :view [:eacl/id "account1-server1"])))
 
@@ -151,7 +149,7 @@
           (is (= #{(spice-object :user "user-1")
                    ;(spice-object :account "account-1")
                    (spice-object :user "super-user")}
-                 (->> (lookup-subjects db {:resource     (->server (d/entid db [:eacl/id "account1-server1"]))
+                 (->> (lookup-subjects db {:resource     (->server (d/entid db :test/server1))
                                            :permission   :view
                                            :subject/type :user})
                       (paginated->spice db)
@@ -218,8 +216,7 @@
                                             :permission    :view
                                             :resource/type :server
                                             :cursor        nil})
-                      (paginated->spice db)
-                      (set))))
+                      (paginated->spice-set db))))
 
           (is (= #{(spice-object :user "super-user")
                    (spice-object :user "user-1")
@@ -227,8 +224,7 @@
                  (->> (lookup-subjects db {:resource     (->server (d/entid db [:eacl/id "account2-server1"])) ; todo fix
                                            :permission   :delete
                                            :subject/type :user})
-                      (paginated->spice db)
-                      (set)))))
+                      (paginated->spice-set db)))))
 
         (testing "Now let's delete all :server/owner Relationships for :test/user2"
           (let [db-for-delete (d/db conn)
@@ -246,10 +242,7 @@
                    (->> (lookup-subjects db' {:resource     (->server (d/entid db [:eacl/id "account2-server1"]))
                                               :permission   :view
                                               :subject/type :user})
-                        (:data)
-                        (map #(d/entity db %))
-                        (map #(spice-object (:eacl/type %) (:eacl/id %)))
-                        (set))))
+                        (paginated->spice-set db))))
 
             (testing ":test/user2 cannot access any servers" ; is this correct?
               (is (= #{}                                    ; Expect empty set of spice objects

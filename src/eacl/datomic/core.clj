@@ -3,12 +3,69 @@
   (:require [eacl.core :as eacl :refer [IAuthorization spice-object
                                         ->Relationship map->Relationship
                                         ->RelationshipUpdate]]
+            [eacl.datomic.impl-base :as base] ; only for Cursor.
             [eacl.datomic.impl :as impl]
             [eacl.spicedb.consistency :as consistency]
             [datomic.api :as d]
             [com.rpl.specter :as S]
             [eacl.datomic.schema :as schema]
             [clojure.tools.logging :as log]))
+
+;; ID Configuration
+
+(defn default-object-id->ident
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [object-id]
+  (cond
+    (number? object-id) object-id                             ; support :db/id.
+    (keyword? object-id) object-id                            ; :db/ident support.
+    (string? object-id) [:eacl/id object-id]))
+
+(defn default-object-id->entid
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [db object-id]
+  (let [ident (default-object-id->ident object-id)]
+    ;(log/debug 'default-object->entid (pr-str object) '->ident (pr-str ident))
+    (d/entid db ident)))
+
+(defn default-object->entid
+  ; this can go away.
+  "Default implementation interprets :id in object as :eacl/id. Configurable."
+  [db {:as object :keys [type id]}]
+  (default-object-id->entid db id))
+
+(defn default-entity->object-id [entity]
+  (:eacl/id entity))
+
+; do we need all of these?
+(defn default-entid->object-id [db eid]
+  (let [ent (d/entity db eid)]
+    (default-entity->object-id ent)))
+
+(defn default-entity->object-type [ent]
+  (:eacl/type ent))
+
+(defn default-entid->object [db eid]
+  (let [ent (d/entity db eid)]
+    (spice-object (default-entity->object-type ent) (default-entity->object-id ent))))
+
+(defn default-spice->internal-object [db {:as obj :keys [type id]}]
+  {:type type :id (default-object-id->entid db id)})
+
+(defn default-internal-object->spice [db {:as obj :keys [type id]}]
+  (spice-object type (default-entid->object-id db id)))
+
+(defn default-internal-cursor->spice
+  [db
+   {:as opts :keys [entid->object-id]}
+   {:as cursor :keys [path-index resource-id]}]
+  (base/->Cursor path-index (entid->object-id db resource-id)))
+
+(defn default-spice-cursor->internal
+  [db
+   {:as opts :keys [object-id->entid]}
+   {:as cursor :keys [path-index resource-id]}]
+  {:path-index path-index :resource-id (object-id->entid db resource-id)})
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -30,7 +87,7 @@
   [db
    {:as   opts
     :keys [object-id->entid
-           entid->object-id]}
+           entid->object-id]} ; used by relationship->spice via object->spice.
    {:as          filters
     subject-oid  :subject/id
     resource-oid :resource/id}]
@@ -75,6 +132,7 @@
    consistency]
   ;(log/debug 'spiceomic-can? 'opts opts)
   (assert (= consistency/fully-consistent consistency) "EACL only supports consistency/fully-consistent at this time.")
+  ; impl/can? also runs d/entid. We can probably simply this to ident.
   (let [subject-eid  (object->entid db subject)
         resource-eid (object->entid db resource)]
     ; Note: we do not check types here, but we should.
@@ -187,17 +245,17 @@
 
            internal-cursor->spice
            spice-cursor->internal]
-    :or   {entid->object-id       impl/default-entid->object-id
-           object-id->entid       impl/default-object-id->entid
+    :or   {entid->object-id       default-entid->object-id
+           object-id->entid       default-object-id->entid
 
-           entid->object          impl/default-entid->object
-           object->entid          impl/default-object->entid
+           entid->object          default-entid->object
+           object->entid          default-object->entid
 
-           spice-object->internal impl/default-spice->internal-object
-           internal-object->spice impl/default-internal-object->spice
+           spice-object->internal default-spice->internal-object
+           internal-object->spice default-internal-object->spice
 
-           internal-cursor->spice impl/default-internal-cursor->spice
-           spice-cursor->internal impl/default-spice-cursor->internal}}]
+           internal-cursor->spice default-internal-cursor->spice
+           spice-cursor->internal default-spice-cursor->internal}}]
   (assert (fn? object->entid) "object->eid fn is required to coerce SpiceObject to Datomic eid.")
   (assert (fn? entid->object) "entid->object fn is required to coerce Datomic entid to SpiceObject.")
   (->Spiceomic conn {:entid->object-id       entid->object-id

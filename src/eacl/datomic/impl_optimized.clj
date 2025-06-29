@@ -16,7 +16,6 @@
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
   [db
-   ;{:as opts :keys [object->entid entid->object]}
    {:as              filters
     resource         :resource
     permission       :permission
@@ -162,13 +161,6 @@
 ;         (map #(d/entity db %))
 ;         (map entity->spice-object))))
 
-(defn eid? [eid] (number? eid))
-
-(defn ident->eid [db ident-or-eid]
-  (if (eid? ident->eid)
-    ident-or-eid
-    (d/entid db ident-or-eid)))
-
 (defn can?
   ; TODO: this needs another layer of ID resolution.
   "can? using optimized Datalog rules"
@@ -176,8 +168,8 @@
   {:pre [subject-ident
          (keyword? permission)
          resource-ident]}
-  (let [subject-eid  (ident->eid db subject-ident)
-        resource-eid (ident->eid db resource-ident)]
+  (let [subject-eid  (d/entid db subject-ident)
+        resource-eid (d/entid db resource-ident)]
     (if-not (and subject-eid resource-eid)                  ; duplicated in Spiceomic.
       false
       (->> (d/q '[:find ?subject .

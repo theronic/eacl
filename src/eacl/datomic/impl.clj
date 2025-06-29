@@ -8,61 +8,6 @@
     [eacl.datomic.impl-optimized :as impl-optimized]
     [eacl.datomic.impl-indexed :as impl-indexed]))
 
-(defn default-object-id->ident
-  "Default implementation interprets :id in object as :eacl/id. Configurable."
-  [object-id]
-  (cond
-    (number? object-id) object-id                             ; support :db/id.
-    (keyword? object-id) object-id                            ; :db/ident support.
-    (string? object-id) [:eacl/id object-id]))
-
-(defn default-object-id->entid
-  "Default implementation interprets :id in object as :eacl/id. Configurable."
-  [db object-id]
-  (let [ident (default-object-id->ident object-id)]
-    ;(log/debug 'default-object->entid (pr-str object) '->ident (pr-str ident))
-    (d/entid db ident)))
-
-(defn default-object->entid
-  ; this can go away.
-  "Default implementation interprets :id in object as :eacl/id. Configurable."
-  [db {:as object :keys [type id]}]
-  (default-object-id->entid db id))
-
-(defn default-entity->object-id [entity]
-  (:eacl/id entity))
-
-; do we need all of these?
-(defn default-entid->object-id [db eid]
-  (let [ent (d/entity db eid)]
-    (default-entity->object-id ent)))
-
-(defn default-entity->object-type [ent]
-  (:eacl/type ent))
-
-(defn default-entid->object [db eid]
-  (let [ent (d/entity db eid)]
-    (spice-object (default-entity->object-type ent) (default-entity->object-id ent))))
-
-(defn default-spice->internal-object [db {:as obj :keys [type id]}]
-  {:type type :id (default-object-id->entid db id)})
-
-(defn default-internal-object->spice [db {:as obj :keys [type id]}]
-  (spice-object type (default-entid->object-id db id)))
-
-(defn default-internal-cursor->spice
-  [db
-   {:as opts :keys [entid->object-id]}
-   {:as cursor :keys [path-index resource-id]}]
-  (base/->Cursor path-index (entid->object-id db resource-id)))
-
-(defn default-spice-cursor->internal
-  [db
-   {:as opts :keys [object-id->entid]}
-   {:as cursor :keys [path-index resource-id]}]
-  {:path-index path-index :resource-id (object-id->entid db resource-id)})
-
-
 ; A central place to configure how IDs and resource types are handled:
 ; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
 ; - To retain parity with SpiceDB, you can configure EACL to coerce object types & IDs of different
