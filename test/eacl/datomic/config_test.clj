@@ -12,12 +12,26 @@
   (testing ""
     (with-mem-conn [conn schema/v4-schema]
       @(d/transact conn fixtures/base-fixtures)
+      ;@(d/transact conn [{:db/ident :my/id
+      ;                    :db/doc "Your custom ID here, e.g. UUID in this case."
+      ;                    :db/valueType :db.type/uuid
+      ;                    :db/cardinality :db.cardinality/one
+      ;                    :db/unique :db.unique/identity}])
       ; Q: do we want lookups to fail if entity does not exist?
       (testing "we can override EACL's object ID to Datomic ident resolution"
         (let [client (eacl.datomic.core/make-client conn
-                                                    {:object-id->ident (fn [obj-id] [:db/ident obj-id])})]
+                                                    {;:object-id->ident (fn [obj-id] [:my/id obj-id])})]
+                                                     :object-id->ident (fn [obj-id] [:db/ident obj-id])})]
 
           ; todo: also test read/write-relationships, and count-resources.
+
+          (testing "lookup-resources throws for missing subject ident with some detail"
+            (is (eacl/lookup-resources client
+                                       {:subject       (->user :missing-ident)
+                                        :permission    :view
+                                        :resource/type :server
+                                        :limit         1000
+                                        :cursor        nil})))
 
           (testing "basic can? works when passing :db/ident"
             (is (true? (eacl/can? client (->user :test/user1) :view (->server :test/server1))))

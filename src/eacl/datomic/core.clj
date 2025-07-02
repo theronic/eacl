@@ -154,12 +154,13 @@
    {:as   opts
     :keys [spice-object->internal
            entid->object
+           object-id->ident ; why is this nil?
 
            internal-cursor->spice
            spice-cursor->internal]}
    {:as query :keys [subject]}]
   (let [subject-ent (spice-object->internal db subject)]
-    (assert (:id subject-ent) (str "subject passed to lookup-resources does not exist: " (pr-str subject)))
+    (assert (:id subject-ent) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
     (assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
     (->> query
          (S/setval [:subject] subject-ent)
@@ -288,16 +289,17 @@
                              (entity->object-id ent)))
 
         opts'            {:entity->type           entity->type
+                          :object-id->ident       object-id->ident
 
                           :entid->object-id       entid->object-id
 
-                          :entity->object-id entity->object-id ; can we compose this better?
+                          :entity->object-id      entity->object-id ; can we compose this better?
 
                           :object-id->entid       object-id->entid
 
                           ; we probably don't need this? just use id to entid at call-site.
-                          :object->entid (fn [db {:as obj :keys [type id]}]
-                                           (object-id->entid db id))
+                          :object->entid          (fn [db {:as obj :keys [type id]}]
+                                                    (object-id->entid db id))
 
                           ;(fn [db obj] (default-object->entid db object-id->ident obj))
                           :entid->object          (fn [db entid]
