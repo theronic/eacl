@@ -5,11 +5,6 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl-base :as base]))
 
-(def ->user (partial spice-object :user))
-
-(defn entity->spice-object [eacl-ent]
-  (spice-object (get eacl-ent :eacl/type) (get eacl-ent :eacl/id)))
-
 (defn lazy-direct-permission-resources
   "Lazily fetches resource EIDs where subject has direct permission."
   [db subject-type subject-eid relation resource-type cursor-eid]
@@ -306,6 +301,8 @@
                            :resource/type :server
                            :cursor        nil
                            :limit         1000}))
+
+  (def ->user (partial spice-object :user))
 
   (lookup-resources (d/db conn)
                     {:subject       (->user "user-1")

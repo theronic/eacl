@@ -19,6 +19,13 @@
 (def lookup-resources impl-optimized/lookup-resources) ; impl-fixed/lookup-resources
 (def count-resources impl-optimized/count-resources) ; impl-fixed/count-resources
 
+(defn can!
+  "The thrown exception should probably be configurable."
+  [db subject permission resource]
+  (if (can? db subject permission resource)
+    true
+    (throw (Exception. "Unauthorized"))))
+
 (defn relationship-filters->args
   "Order matters. Maps to :in value."
   [filters]

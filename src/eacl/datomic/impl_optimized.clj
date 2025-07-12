@@ -6,9 +6,6 @@
     [eacl.datomic.impl-base :as base]
     [eacl.datomic.rules.optimized :as rules]))
 
-;; Configuration (not used everywhere soz)
-(def object-id-attr :eacl/id)
-
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
   [db
@@ -16,7 +13,7 @@
     resource         :resource
     permission       :permission
     subject-type     :subject/type
-    subject-relation :subject/relation
+    _subject-relation :subject/relation ; not currently supported.
     limit            :limit
     offset           :offset}]
   {:pre [(:type resource) (:id resource)]}
@@ -49,120 +46,8 @@
       {:data   formatted
        :cursor nil})))
 
-;; Helper functions for staged lookup-resources
-;(defn find-direct-resources
-;  "Find resources directly accessible by subject"
-;  [db subject-eid resource-type permission]
-;  (d/q '[:find [?resource ...]
-;         :in $ ?subject ?rtype ?perm
-;         :where
-;         ;; Start from subject's relationships
-;         [?rel :eacl.relationship/subject ?subject]
-;         [?rel :eacl.relationship/relation-name ?relation]
-;         [?rel :eacl.relationship/resource ?resource]
-;
-;         ;; Early type filter
-;         [?resource :eacl/type ?rtype]
-;
-;         ;; Check permission using tuple
-;         [(tuple ?rtype ?relation ?perm) ?perm-tuple]
-;         [?p :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]]
-;       db subject-eid resource-type permission))
-
-;(defn find-arrow-resources
-;  "Find resources via arrow permissions (e.g., account->admin)"
-;  [db subject-eid resource-type permission]
-;  ;; First, find what intermediate permissions we need
-;  (let [arrow-paths (d/q '[:find ?via-rel ?target-perm
-;                           :in $ ?rtype ?perm
-;                           :where
-;                           [?arrow :eacl.arrow-permission/resource-type ?rtype]
-;                           [?arrow :eacl.arrow-permission/permission-name ?perm]
-;                           [?arrow :eacl.arrow-permission/source-relation-name ?via-rel]
-;                           [?arrow :eacl.arrow-permission/target-permission-name ?target-perm]]
-;                         db resource-type permission)]
-;    ;; For each arrow path, find accessible resources
-;    (apply concat
-;           (for [[via-rel target-perm] arrow-paths]
-;             ;; Use rules to check if subject has target permission on intermediates
-;             (d/q '[:find [?resource ...]
-;                    :in $ % ?subject ?rtype ?via-rel ?target-perm
-;                    :where
-;                    ;; Find resources of target type that have the via-relation
-;                    [?link :eacl.relationship/relation-name ?via-rel]
-;                    [?link :eacl.relationship/resource ?resource]
-;                    [?link :eacl.relationship/subject ?intermediate]
-;
-;                    ;; Filter by resource type
-;                    [?resource :eacl/type ?rtype]
-;
-;                    ;; Check if subject has target permission on intermediate
-;                    (has-permission ?subject ?target-perm ?intermediate)]
-;                  db
-;                  rules/check-permission-rules
-;                  subject-eid
-;                  resource-type
-;                  via-rel
-;                  target-perm)))))
-
-;(defn find-indirect-resources
-;  "Find resources through indirect paths - fallback for complex cases"
-;  [db subject-eid resource-type permission]
-;  ;; Use the full rules as a fallback
-;  (d/q '[:find [?resource ...]
-;         :in $ % ?subject ?permission ?resource-type
-;         :where
-;         (has-permission ?subject ?permission ?resource-type ?resource)]
-;       db
-;       rules/rules-lookup-resources
-;       subject-eid
-;       permission
-;       resource-type))
-
-;(defn lookup-resources-staged
-;  "Staged approach to resource lookup for better performance"
-;  [db {:keys [resource/type subject permission limit offset]
-;       :or   {limit 1000 offset 0}}]
-;  {:pre [(keyword? type)
-;         (:type subject) (:id subject)
-;         (keyword? permission)]}
-;  (let [{subject-id :id} subject
-;        subject-eid     (:db/id (d/entity db [object-id-attr subject-id]))
-;
-;        ;; We need enough results to satisfy offset + limit
-;        target-count    (+ offset limit)
-;
-;        ;; Stage 1: Find direct relationships
-;        stage1-direct   (if subject-eid
-;                          (find-direct-resources db subject-eid type permission)
-;                          [])
-;
-;        ;; Stage 2: Find via arrow permissions (if we need more results)
-;        stage2-arrow    (when (and subject-eid
-;                                   (< (count stage1-direct) target-count))
-;                          (find-arrow-resources db subject-eid type permission))
-;
-;        ;; Stage 3: Multi-hop paths (only if we still need more results)
-;        stage3-indirect (when (and subject-eid
-;                                   (< (+ (count stage1-direct)
-;                                         (count (or stage2-arrow [])))
-;                                      target-count))
-;                          (find-indirect-resources db subject-eid type permission))
-;
-;        ;; Combine and deduplicate
-;        all-results     (distinct (concat stage1-direct
-;                                          (or stage2-arrow [])
-;                                          (or stage3-indirect [])))]
-;
-;    (->> all-results
-;         (drop offset)
-;         (take limit)
-;         (map #(d/entity db %))
-;         (map entity->spice-object))))
-
 (defn can?
-  ; TODO: this needs another layer of ID resolution.
-  "can? using optimized Datalog rules"
+  "can? uses recursive Datalog rules. Seems to be fast enough."
   [db subject permission resource]
   {:pre [subject
          resource
@@ -199,19 +84,14 @@
                 resource-eid)
            (boolean)))))
 
-;(def can! (fn [db subject-id permission resource-id]
-;            (if (can? db subject-id permission resource-id)
-;              true
-;              (throw (Exception. "Unauthorized")))))
-
 (defn lookup-resources
   ; outdated.
-  "Optimized version of lookup-resources"
-  [db {:as               filters
+  "Slow version of lookup-resources that reuses check-permission-rules.
+  Does not support cursor, only limit & offset."
+  [db {:as               _query
        subject           :subject
        permission        :permission
        resource-type     :resource/type
-       resource-relation :resource/relation
        limit             :limit
        offset            :offset}]
   {:pre [(:type subject) (:id subject)]}
@@ -245,7 +125,9 @@
        :data   formatted})))
 
 (defn count-resources
-  "Temporary. Super inefficient due to the sort in lookup-resources, which is not required."
+  "Temporary. Just calls lookup-resources.
+  Super inefficient due to the sort in lookup-resources, which is not required.
+  Any complete count will need to materialize full index."
   [db query]
   (->> (assoc query :limit Long/MAX_VALUE :offset 0) ; note: we do not currently support cursor here.
        (lookup-resources db)
