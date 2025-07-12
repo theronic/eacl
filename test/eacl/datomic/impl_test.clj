@@ -11,7 +11,7 @@
                      can? lookup-subjects #_lookup-resources
                      read-relationships]]
             ;[eacl.datomic.impl-fixed :refer [lookup-resources]]
-            [eacl.datomic.impl-optimized :refer [lookup-resources]]))
+            [eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
 
 ;(let [id "account1-server"]
 ;  (cond
@@ -146,17 +146,12 @@
                       (paginated->spice db)
                       (set))))
 
-          (testing "we can configure object->entid resolution"
-            (is (= #{(spice-object :server "account1-server1")
-                     (spice-object :server "account1-server2")
-                     (spice-object :server "account2-server1")}
-                   (->> (lookup-resources db {:subject       (->user super-user-eid)
-                                              :permission    :view
-                                              :resource/type :server
-                                              :limit         1000
-                                              :cursor        nil})
-                        (paginated->spice db)
-                        (set))))))
+          (testing "we can count resources (materializes full index)"
+            (is (= 3 (count-resources db {:subject       (->user super-user-eid)
+                                          :permission    :view
+                                          :resource/type :server
+                                          :limit         1000
+                                          :cursor        nil})))))
 
         (testing ":test/user can :view and :reboot their server"
           (is (can? db (->user :test/user1) :view (->server :test/server1)))
@@ -210,22 +205,6 @@
           (is (= #{:account} (set (map :relation (read-relationships db {:resource/type     :server
                                                                          :resource/relation :account}))))))
 
-        ;(require '[eacl.datomic.rules.optimized :as opt-rules])
-        ;(let [subject-type :user
-        ;      permission :view
-        ;      resource-type :user]
-        ;  (->> (d/q '[:find [?subject-type ?subject ...]
-        ;              :in $ % ?subject-type ?permission ?resource-type ?resource-eid
-        ;              :where
-        ;              (has-permission ?subject-type ?subject ?permission ?resource-type ?resource-eid)
-        ;              [(not= ?subject ?resource-eid)]]
-        ;            db
-        ;            opt-rules/rules-lookup-subjects
-        ;            subject-type
-        ;            permission
-        ;            resource-type
-        ;            resource-eid)))
-
         (testing "We can enumerate subjects that can access a resource."
           ; Bug: currently returns the subject itself which needs a fix.
           (is (= #{(->user "user-1")
@@ -248,15 +227,17 @@
         (testing "We can enumerate resources with lookup-resources"
           (is (= #{(spice-object :server "account1-server1")
                    (spice-object :server "account1-server2")}
-                 ; todo cursor
                  (->> (lookup-resources db {:subject       (->user user1-eid)
                                             :permission    :view
                                             :resource/type :server})
                       (:data)
                       (map (fn [{:as obj :keys [type id]}] (spice-object type (:eacl/id (d/entity db id)))))
                       (set))))
-          ;(paginated->spice db)
-          ;(set))))
+
+          (testing "count-resources returns 2 as above"
+            (is (= 2 (count-resources db {:subject       (->user user1-eid)
+                                          :permission    :view
+                                          :resource/type :server}))))
 
           (testing "same for :reboot permission"
             (is (= #{(->server "account1-server1")
@@ -270,15 +251,19 @@
                         ;(paginated->spice db)
                         (set)))))
 
-          (is (= #{(->account "account-1")}
-                 ; todo cursor
-                 (->> (lookup-resources db {:subject       (->user user1-eid)
-                                            :permission    :view
-                                            :resource/type :account})
-                      (paginated->spice db)
-                      (set))))
+          (testing "we can enumerate :account objects user1 can :view"
+            (is (= #{(->account "account-1")}
+                   (->> (lookup-resources db {:subject       (->user user1-eid)
+                                              :permission    :view
+                                              :resource/type :account})
+                        (paginated->spice db)
+                        (set))))
 
-          ; todo cursor
+            (testing "count matches lookup"
+              (is (= 1 (count-resources db {:subject       (->user user1-eid)
+                                            :permission    :view
+                                            :resource/type :account})))))
+
           (is (= #{(->server "account2-server1")}
                  (->> (lookup-resources db
                                         {:subject       (->user user2-eid)
@@ -320,7 +305,7 @@
                                    db-for-delete)]
             (is @(d/transact conn (for [rel rels] [:db.fn/retractEntity (:db/id rel)])))))
 
-        (testing "Now only user-1 can :view all 3 servers."
+        (testing "Now only user-1 can :view all 3 servers, including those in account2."
           (let [db' (d/db conn)]
             (is (= #{(spice-object :user "user-1")
                      (spice-object :user "super-user")}
@@ -330,10 +315,15 @@
                         (paginated->spice-set db))))
 
             (testing ":test/user2 cannot access any servers" ; is this correct?
-              (is (= #{}                                    ; Expect empty set of spice objects
-                     (set (:data (lookup-resources db' {:resource/type :server
-                                                        :permission    :view
-                                                        :subject       (->user "user-2")}))))))
+              (is (= #{} (->> (lookup-resources db' {:resource/type :server
+                                                     :permission    :view
+                                                     :subject       (->user [:eacl/id "user-2"])})
+                              (:data)
+                              (set))))
+              (testing "count-resources also zero"
+                (is (zero? (count-resources db' {:resource/type :server
+                                                 :permission    :view
+                                                 :subject       (->user [:eacl/id "user-2"])})))))
 
             (is (not (can? db' (->user :test/user2) :delete (->server :test/server2))))
 
@@ -346,21 +336,14 @@
                                                  :subject       (->user user1-eid)})
                           (paginated->spice-set db))))
 
-              (is (= #{(spice-object :server "account1-server1")
-                       (spice-object :server "account1-server2")
-                       (spice-object :server "account2-server1")}
-                     (->> (lookup-resources db' {:resource/type :server
-                                                 :permission    :reboot
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice-set db))))
-
-              (is (= #{(spice-object :server "account1-server1")
-                       (spice-object :server "account1-server2")
-                       (spice-object :server "account2-server1")}
-                     (->> (lookup-resources db' {:resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user user1-eid)})
-                          (paginated->spice-set db))))
+              (testing "super-user can still view all servers"
+                (is (= #{(spice-object :server "account1-server1")
+                         (spice-object :server "account1-server2")
+                         (spice-object :server "account2-server1")}
+                       (->> (lookup-resources db' {:resource/type :server
+                                                   :permission    :reboot
+                                                   :subject       (->user super-user-eid)})
+                            (paginated->spice-set db)))))
 
               (is (= #{(spice-object :account "account-1")}
                      (->> (lookup-resources db' {:resource/type :account
@@ -370,11 +353,12 @@
 
         (testing "pagination: limit & offset are handled correctly for arrow permissions"
           (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
-            @(d/transact conn [{:db/id    "server3"
-                                :db/ident :test/server3
-                                :eacl/id  "server-3"}
-                               (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))
-                               (Relationship (->user :user/super-user) :shared_admin (->server "server3"))]))
+            (is @(d/transact conn [{:db/id    "server3"
+                                    :db/ident :test/server3
+                                    :eacl/id  "server-3"}
+                                   (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))
+                                   ; We can use tempids in Relationship because it produces 's in same tx-data.
+                                   (Relationship (->user :user/super-user) :shared_admin (->server "server3"))])))
 
           (let [db' (d/db conn)]
             (testing "limit: 10, offset 0 should include all 3 servers"
@@ -383,14 +367,19 @@
                        (spice-object :server "account2-server1")
                        (spice-object :server "server-3")}
                      (->> (lookup-resources db' {:limit         10
-                                                 :cursor        nil ; no cursor should return all 3 servers
+                                                 :cursor        nil ; no cursor should return all 4 servers
                                                  :resource/type :server
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})
-                          (paginated->spice-set db')))))
+                          (paginated->spice-set db'))))
+
+              (testing "count-resources matches above"
+                (is (= 4 (count-resources db' {:resource/type :server
+                                               :permission    :view
+                                               :subject       (->user super-user-eid)})))))
 
             (testing "limit: 10, offset: 1 should exclude server-1"
-              ; the order here is broken because we changed test suites.
+              ; test failing because return order is oriented towards how it's stored in index
               (is (= [; excluded: (spice-object :server "account1-server1")
                       (spice-object :server "server-3")
                       (spice-object :server "account1-server2")
@@ -453,6 +442,7 @@
                           (paginated->spice db')))))
 
             (testing "offset: 2, limit 1, should return last result only, server-3"
+              ; this only passes incidentally at the moment.
               (is (= [(spice-object :server "account1-server2")]
                      (->> (lookup-resources db' {:limit         1
                                                  :cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}

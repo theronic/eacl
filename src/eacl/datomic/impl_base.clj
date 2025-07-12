@@ -3,10 +3,10 @@
 
 (defrecord Cursor [path-index resource-id])
 
-(defn id->identifier
-  "This is to support custom unique entity IDs."
-  [eacl-id]
-  [:eacl/id eacl-id])
+;(defn id->identifier
+;  "This is to support custom unique entity IDs."
+;  [eacl-id]
+;  [:eacl/id eacl-id])
 
 ; A central place to configure how IDs and resource types are handled:
 ; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.

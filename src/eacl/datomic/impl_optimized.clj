@@ -6,12 +6,8 @@
     [eacl.datomic.impl-base :as base]
     [eacl.datomic.rules.optimized :as rules]))
 
-(defn entity->spice-object [ent]
-  (spice-object (get ent base/resource-type-attr) (get ent base/object-id-attr)))
-
 ;; Configuration (not used everywhere soz)
 (def object-id-attr :eacl/id)
-(def resource-type-attr :eacl/type)
 
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
@@ -52,8 +48,6 @@
       ; todo: subjects cursor is WIP. We still support offset & limit.
       {:data   formatted
        :cursor nil})))
-
-(comment entity->spice-object)
 
 ;; Helper functions for staged lookup-resources
 ;(defn find-direct-resources
@@ -226,7 +220,7 @@
 
         subject-eid (d/entid db subject-ident)]
 
-    (assert subject-eid (str "lookup-resources requires a valid resource with unique attr " (pr-str object-id-attr) "."))
+    (assert subject-eid (pr-str "lookup-resources requires a valid subject :id that resolves to an eid via d/entid: " subject-ident "."))
     (let [resource-types+eids  (->> (d/q '[:find ?resource-type ?resource
                                            :in $ % ?subject-type ?subject-eid ?permission ?resource-type
                                            :where
@@ -250,3 +244,10 @@
        :offset offset
        :data   formatted})))
 
+(defn count-resources
+  "Temporary. Super inefficient due to the sort in lookup-resources, which is not required."
+  [db query]
+  (->> (assoc query :limit Long/MAX_VALUE :offset 0) ; note: we do not currently support cursor here.
+       (lookup-resources db)
+       (:data)
+       (count)))

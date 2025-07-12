@@ -16,8 +16,8 @@
 ;; Use indexed implementation for better performance with large offsets
 (def can? impl-optimized/can?)
 (def lookup-subjects impl-optimized/lookup-subjects)
-(def lookup-resources impl-optimized/lookup-resources)
-(def count-resources impl-fixed/count-resources)
+(def lookup-resources impl-optimized/lookup-resources) ; impl-fixed/lookup-resources
+(def count-resources impl-optimized/count-resources) ; impl-fixed/count-resources
 
 (defn relationship-filters->args
   "Order matters. Maps to :in value."
