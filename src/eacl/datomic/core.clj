@@ -12,66 +12,27 @@
             [eacl.datomic.schema :as schema]
             [clojure.tools.logging :as log]))
 
-;; ID Configuration
+;; How to Configure Spice Object ID Coercion
 
-;; what's the main thing we care about?
-;; default-object-id->ident, which currently supports :db/ident, which I'm not sure it shuold support.
-;; entity->object-id
-;; entity->type
-;; object->entid
-
-;(defn default-object-id->ident
-;  "Default implementation interprets :id in object as :eacl/id. Configurable."
-;  [object-id]
-;  [:eacl/id object-id]
-;  #_(cond
-;      (number? object-id) object-id                             ; support :db/id.
-;      (keyword? object-id) object-id                            ; :db/ident support.
-;      (string? object-id) [:eacl/id object-id]))
-
-(defn default-object-id->entid
-  "Default implementation interprets :id in object as :eacl/id. Configurable."
-  [db object-id->ident object-id]
-  (let [ident (object-id->ident object-id)]
-    ;(log/debug 'default-object->entid (pr-str object) '->ident (pr-str ident))
-    (d/entid db ident)))
-
-(defn default-object->entid
-  ; this can go away.
-  "Default implementation interprets :id in object as :eacl/id. Configurable."
-  [db object-id->ident {:as object :keys [type id]}]
-  (default-object-id->entid db object-id->ident id))
-
-(defn default-entity->object-id [entity]
-  (:eacl/id entity))
-
-; do we need all of these?
-(defn default-entid->object-id [db entity->object-id eid]
-  (let [ent (d/entity db eid)]
-    (entity->object-id ent)))
-
-;(defn default-entity->object-type [ent]
-;  (:eacl/type ent))
-
-(defn default-entid->object
-  [db
-   entity->object-type
-   entity->object-id
-   eid]
-  (let [ent (d/entity db eid)]
-    (spice-object entity->object-type (entity->object-id ent))))
-
-(defn default-spice-object->internal [db object-id->entid {:as obj :keys [type id]}]
-  {:type type :id (object-id->entid db id)})
-
-(defn default-internal-object->spice [db entid->object-id {:as obj :keys [type id]}]
-  (spice-object type (entid->object-id db id)))
+; SpiceDB uses strings for subject/resource IDs, but internally EACL uses Datomic :db/id Long IDs.
+; EACL lets you configure how to coerce internal Datomic IDs to/from an external ID, typically via a lookup-ref, e.g.
+(comment
+  (eacl.datomic.core/make-client conn {:entity->object-id (fn [ent] (:your/ident ent))
+                                       :object-id->ident  (fn [obj-id] [:your/ident obj-id])}))
+; Typical usage here is if you already have a UUID attribute you want to use for coercion.
+; If you do not intend to expose EACL to an external system, you can use internal Datomic IDs, e.g.
+(comment
+  (eacl.datomic.core/make-client conn {:entity->object-id (fn [ent] (:db/id ent))
+                                       :object-id->ident  (fn [obj-id] obj-id)})) ;; passthrough.
 
 (defn default-internal-cursor->spice
   [db
    {:as opts :keys [entid->object-id]}
-   {:as cursor :keys [path-index resource-id]}]
-  (base/->Cursor path-index (entid->object-id db resource-id)))
+   {:as cursor :keys [path-index type+resource-id]}]
+  (let [[type resource-id] type+resource-id
+        cursor-resource (spice-object type (entid->object-id db resource-id))]
+    ;(prn 'default-internal-cursor->spice 'cursor cursor)
+    (base/->Cursor path-index cursor-resource)))
 
 (defn default-spice-cursor->internal
   [db
@@ -142,32 +103,46 @@
   ;(log/debug 'spiceomic-can? 'opts opts)
   (assert (= consistency/fully-consistent consistency) "EACL only supports consistency/fully-consistent at this time.")
   ; impl/can? also runs d/entid. We can probably simply this to ident.
-  (let [subject-eid  (object->entid db subject)
-        resource-eid (object->entid db resource)]
+  (let [subject-type  (:type subject)
+        subject-eid   (object->entid db subject)
+        resource-type (:type resource)
+        resource-eid  (object->entid db resource)]
     ; Note: we do not check types here, but we should.
     (if-not (and subject-eid resource-eid)
       false                                                 ; should we throw on missing IDs?
-      (impl/can? db subject-eid permission resource-eid))))
+      (impl/can? db
+                 (spice-object subject-type subject-eid)
+                 permission
+                 (spice-object resource-type resource-eid)))))
 
 (defn spiceomic-lookup-resources
   [db
    {:as   opts
     :keys [spice-object->internal
            entid->object
-           object-id->ident ; why is this nil?
+           entid->object-id
+           object-id->ident                                 ; why is this nil?
+           object-id->entid                                 ; do we need this?
 
            internal-cursor->spice
            spice-cursor->internal]}
-   {:as query :keys [subject]}]
+   {:as           query
+    :keys         [subject]
+    resource-type :resource/type}]
+  ;(log/debug 'spiceomic-lookup-resources 'query query)
   (let [subject-ent (spice-object->internal db subject)]
     (assert (:id subject-ent) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
-    (assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
-    (->> query
-         (S/setval [:subject] subject-ent)
-         (S/transform [:cursor] #(spice-cursor->internal db opts %))
-         (impl/lookup-resources db)
-         (S/transform [:cursor] #(internal-cursor->spice db opts %))
-         (S/transform [:data S/ALL] #(entid->object db %)))))
+    ;(assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
+    (let [rx (->> query
+                  (S/setval [:subject] subject-ent)
+                  (S/transform [:cursor] #(spice-cursor->internal db opts %))
+                  (impl/lookup-resources db)
+                  (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
+                                               (spice-object type (entid->object-id db id))))
+                  (S/transform [:cursor] #(internal-cursor->spice db opts %)))] ;; TODO FIX!
+      ;(log/debug 'rx rx)
+      rx)))
+
 
 (defn spiceomic-count-resources
   [db
@@ -186,14 +161,15 @@
 (defn spiceomic-lookup-subjects
   [db
    {:as   opts
-    :keys [entid->object
+    :keys [entid->object-id
            spice-object->internal]}
    query]
   (->> query
        (S/transform [:resource] #(spice-object->internal db %))
        ; todo cursor coercion.
        (impl/lookup-subjects db)
-       (S/transform [:data S/ALL] #(entid->object db %))))
+       (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
+                                    (spice-object type (entid->object-id db id))))))
 
 (defrecord Spiceomic [conn opts]
   ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.
@@ -269,7 +245,7 @@
            spice-cursor->internal]
     ; You can configure how to look up the type of subject or resource.
     ; EACL can potentially support dynamic type resolution, but it gets messy.
-    :or   {entity->type           (fn [ent] (:eacl/type ent))
+    :or   {entity->type           (fn [ent] (:eacl/type ent)) ; no longer relevant. types are now encoded in relationships.
            entity->object-id      (fn [ent] (:eacl/id ent))
            object-id->ident       (fn [obj-id] [:eacl/id obj-id])
 
@@ -284,7 +260,7 @@
                              ;(log/debug 'default-object->entid (pr-str object) '->ident (pr-str ident))
                              (d/entid db ident)))
 
-        entid->object-id (fn [db eid] ; can be composed.
+        entid->object-id (fn [db eid]                       ; can be composed.
                            (let [ent (d/entity db eid)]
                              (entity->object-id ent)))
 
@@ -302,6 +278,7 @@
                                                     (object-id->entid db id))
 
                           ;(fn [db obj] (default-object->entid db object-id->ident obj))
+                          ; this is outdated: entid->object no longer needed. type comes from Relationships
                           :entid->object          (fn [db entid]
                                                     ; could this use an intermediate entid->entity fn?
                                                     (let [ent (d/entity db entid)]
@@ -310,8 +287,9 @@
                           :internal-object->spice (fn [db {:as obj :keys [type id]}]
                                                     (spice-object type (entid->object-id db id)))
 
-                          :spice-object->internal (fn [db {:as obj :keys [type id]}]
-                                                    {:type type :id (object-id->entid db id)})
+                          :spice-object->internal (fn [db {:as obj :keys [_type id]}]
+                                                    ;(log/debug 'spice-object->internal (pr-str obj) (pr-str (object-id->entid db id)))
+                                                    (update obj :id #(object-id->entid db %)))
 
                           :internal-cursor->spice internal-cursor->spice
                           :spice-cursor->internal spice-cursor->internal}]

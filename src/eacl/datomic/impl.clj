@@ -6,25 +6,8 @@
     [eacl.core :as eacl :refer [spice-object]]
     [eacl.datomic.impl-base :as base]
     [eacl.datomic.impl-optimized :as impl-optimized]
-    [eacl.datomic.impl-indexed :as impl-indexed]))
-
-; A central place to configure how IDs and resource types are handled:
-; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
-; - To retain parity with SpiceDB, you can configure EACL to coerce object types & IDs of different
-;   types (usually UUIDs) to/from Datomic when returning SpiceObject.
-; - By default EACL, uses :entity/id (unique string) and :resource/type (keyword) for objects.
-; - Below, you can configure how these are coerced to/from Datomic below.
-
-; this should be passed into the impl.
-;(def object-id-attr :entity/id)                             ; we default to :entity/id (string).
-;(def resource-type-attr :resource/type)                     ; we default to :resource/type
-
-; To support other types of IDs that can be coerced to/from string-formattable entity IDs, than UUIDs
-
-;; Graph Traversal Strategy to resolve permissions between subjects & resources:
-;; - schema is typically small, i.e. we have a low number of relations and permissions
-;; - resources (like servers) are typically far more numerous than subjects (like users or accounts)
-;;
+    [eacl.datomic.impl-indexed :as impl-indexed]
+    [eacl.datomic.impl-fixed :as impl-fixed]))
 
 (def Relation base/Relation)
 (def Permission base/Permission)
@@ -33,8 +16,8 @@
 ;; Use indexed implementation for better performance with large offsets
 (def can? impl-optimized/can?)
 (def lookup-subjects impl-optimized/lookup-subjects)
-(def lookup-resources impl-indexed/lookup-resources)
-(def count-resources impl-indexed/count-resources)
+(def lookup-resources impl-optimized/lookup-resources)
+(def count-resources impl-fixed/count-resources)
 
 (defn relationship-filters->args
   "Order matters. Maps to :in value."
@@ -96,10 +79,10 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
    ;subject-relation (conj '?subject-relation) ; todo.
    ; Clause ; order is perf. sensitive.
    :where '[[?relationship :eacl.relationship/resource ?resource]
-            [?resource :eacl/type ?resource-type]
+            [?relationship :eacl.relationship/resource-type ?resource-type]
             [?relationship :eacl.relationship/relation-name ?resource-relation]
             [?relationship :eacl.relationship/subject ?subject]
-            [?subject :eacl/type ?subject-type]]})
+            [?relationship :eacl.relationship/subject-type ?subject-type]]})
 
 (defn rel-map->Relationship
   [{:as               _rel-map
@@ -156,8 +139,9 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
         (assert (= (:type subject) subject-type) (str "Subject Type " subject-type " does not match " (:type subject) "."))
         (assert (= (:type resource) resource-type) (str "Resource Type " resource-type " does not match " (:type resource) "."))
         (->> (d/datoms db :avet
-                       :eacl.relationship/subject+relation-name+resource-type+resource
-                       [subject-eid
+                       :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                       [subject-type
+                        subject-eid
                         relation
                         (:type resource)
                         resource-eid])

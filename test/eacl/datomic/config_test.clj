@@ -10,7 +10,7 @@
 
 (deftest eacl-config-tests
   (testing ""
-    (with-mem-conn [conn schema/v4-schema]
+    (with-mem-conn [conn schema/v5-schema]
       @(d/transact conn fixtures/base-fixtures)
       ;@(d/transact conn [{:db/ident :my/id
       ;                    :db/doc "Your custom ID here, e.g. UUID in this case."
@@ -26,12 +26,12 @@
           ; todo: also test read/write-relationships, and count-resources.
 
           (testing "lookup-resources throws for missing subject ident with some detail"
-            (is (eacl/lookup-resources client
-                                       {:subject       (->user :missing-ident)
-                                        :permission    :view
-                                        :resource/type :server
-                                        :limit         1000
-                                        :cursor        nil})))
+            (is (thrown? Throwable (eacl/lookup-resources client
+                                                          {:subject       (->user :missing-ident)
+                                                           :permission    :view
+                                                           :resource/type :server
+                                                           :limit         1000
+                                                           :cursor        nil}))))
 
           (testing "basic can? works when passing :db/ident"
             (is (true? (eacl/can? client (->user :test/user1) :view (->server :test/server1))))

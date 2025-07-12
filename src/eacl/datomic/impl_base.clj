@@ -16,8 +16,8 @@
 ; - Below, you can configure how these are coerced to/from Datomic below.
 
 ; this should be passed into the impl.
-(def object-id-attr :eacl/id)                               ; we default to :eacl/id (string).
-(def resource-type-attr :eacl/type)                         ; we default to :eacl/type
+(def object-id-attr :eacl/id) ; we default to :eacl/id (string).
+(def resource-type-attr :eacl/type) ; we default to :eacl/type
 
 ; To support other types of IDs that can be coerced to/from string-formattable entity IDs, than UUIDs
 
@@ -39,13 +39,13 @@
    {:pre [(keyword? resource-type) (keyword? relation-name) (keyword? subject-type)]}
    {:eacl.relation/resource-type resource-type
     :eacl.relation/relation-name relation-name
-    :eacl.relation/subject-type  subject-type})
+    :eacl.relation/subject-type subject-type})
   ([resource-type+relation-name subject-type]
    {:pre [(keyword? resource-type+relation-name) (namespace resource-type+relation-name) (keyword? subject-type)]}
    (Relation
-     (keyword (namespace resource-type+relation-name))
-     (keyword (name resource-type+relation-name))
-     subject-type)))
+    (keyword (namespace resource-type+relation-name))
+    (keyword (name resource-type+relation-name))
+    subject-type)))
 
 (defn Permission
   "Defines how a permission is granted.
@@ -53,9 +53,8 @@
     => For :document, relation :owner grants :view permission.
   Arity 2 (direct relation): (Permission :document :owner :view)
     => For :document, relation :owner grants :view permission.
-  Arity 3 (arrow relation): (Permission :vpc :admin :account :admin)
-    => For :vpc, :admin permission is granted if subject has :admin on the resource linked by vpc's :account relation."
-
+  Arity 4 (arrow relation): (Permission :vpc :admin :account :admin :account)
+    => For :vpc, :admin permission is granted if subject has :admin on the resource of type :account linked by vpc's :account relation."
   ;; Arity 1: Direct grant, from namespaced keyword resource-type/relation-name
   ([resource-type+relation-name permission-to-grant]
    {:pre [(keyword? resource-type+relation-name) (namespace resource-type+relation-name) (keyword? permission-to-grant)]}
@@ -63,29 +62,20 @@
          relation-name (keyword (name resource-type+relation-name))]
      ;; Call arity 2
      (Permission resource-type relation-name permission-to-grant)))
-
   ;; Arity 2: Direct grant
   ([resource-type direct-relation-name permission-to-grant]
    {:pre [(keyword? resource-type) (keyword? direct-relation-name) (keyword? permission-to-grant)]}
-   {:eacl.permission/resource-type   resource-type
+   {:eacl.permission/resource-type resource-type
     :eacl.permission/permission-name permission-to-grant
-    :eacl.permission/relation-name   direct-relation-name})
-
-  ;; Arity 3: Arrow grant
-  ([resource-type
-    arrow-source-relation arrow-target-permission
-    grant-permission]
+    :eacl.permission/relation-name direct-relation-name})
+  ;; Arity 4: Arrow grant
+  ([resource-type arrow-source-relation arrow-target-permission grant-permission]
    {:pre [(keyword? resource-type) (keyword? grant-permission)
           (keyword? arrow-source-relation) (keyword? arrow-target-permission)]}
-   ; read as:
-   ; definition resource_type {
-   ;   relation arrow_source_relation: subject_type
-   ;   grant_permission = arrow_source_relation->arrow_target_permission
-   ; }
-   {:eacl.arrow-permission/resource-type          resource-type
-    :eacl.arrow-permission/target-permission-name arrow-target-permission
-    :eacl.arrow-permission/source-relation-name   arrow-source-relation
-    :eacl.arrow-permission/permission-name        grant-permission}))
+   {:eacl.arrow-permission/resource-type resource-type
+    :eacl.arrow-permission/permission-name grant-permission
+    :eacl.arrow-permission/source-relation-name arrow-source-relation
+    :eacl.arrow-permission/target-permission-name arrow-target-permission}))
 
 (defn Relationship
   "A Relationship between a subject and a resource via Relation. Copied from core2."
@@ -97,7 +87,7 @@
          (:id resource)
          (:type resource)]}
   {:eacl.relationship/resource-type (:type resource)
-   :eacl.relationship/resource      (:id resource)
+   :eacl.relationship/resource (:id resource)
    :eacl.relationship/relation-name relation-name
-   :eacl.relationship/subject-type  (:type subject)
-   :eacl.relationship/subject       (:id subject)})
+   :eacl.relationship/subject-type (:type subject)
+   :eacl.relationship/subject (:id subject)})
