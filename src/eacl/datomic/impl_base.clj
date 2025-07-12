@@ -3,35 +3,6 @@
 
 (defrecord Cursor [path-index resource-id])
 
-;(defn id->identifier
-;  "This is to support custom unique entity IDs."
-;  [eacl-id]
-;  [:eacl/id eacl-id])
-
-; A central place to configure how IDs and resource types are handled:
-; - All SpiceDB objects have a type (string) and a unique ID (string). Spice likes strings.
-; - To retain parity with SpiceDB, you can configure EACL to coerce object types & IDs of different
-;   types (usually UUIDs) to/from Datomic when returning SpiceObject.
-; - By default EACL, uses :eacl/id (unique string) and :eacl/type (keyword) for objects (subject & resources).
-; - Below, you can configure how these are coerced to/from Datomic below.
-
-; this should be passed into the impl.
-(def object-id-attr :eacl/id) ; we default to :eacl/id (string).
-(def resource-type-attr :eacl/type) ; we default to :eacl/type
-
-; To support other types of IDs that can be coerced to/from string-formattable entity IDs, than UUIDs
-
-;(defn id->datomic
-;  "EACL uses unique string ID under :entity/id"
-;  [id] (identity id))
-;
-;(defn datomic->id [id] (identity id))
-
-;; Graph Traversal Strategy to resolve permissions between subjects & resources:
-;; - schema is typically small, i.e. we have a low number of relations and permissions
-;; - resources (like servers) are typically far more numerous than subjects (like users or accounts)
-;;
-
 (defn Relation
   "Defines a relation type. Copied from core2.
   (Relation :product :owner :user) or (Relation :product/owner :user)"
