@@ -127,21 +127,6 @@
   (let [[_ _ _ resource-type resource-eid] v]
     [resource-type resource-eid]))
 
-;(defn matches-backward-tuple
-;  "Checks if a datom matches the expected backward tuple pattern"
-;  [{:as datom, v :v} resource-type resource-eid relation subject-type]
-;  (let [[dt-resource-type dt-resource dt-relation dt-subject-type _subject-eid] v]
-;    (and (= dt-resource-type resource-type)
-;         (= dt-resource resource-eid)
-;         (= dt-relation relation)
-;         (= dt-subject-type subject-type))))
-
-;(defn extract-subject-from-backward-datom
-;  "Extracts [subject-type subject-eid] from a backward datom"
-;  [{:as datom, v :v}]
-;  (let [[_ _ _ subject-type subject-eid] v]
-;    [subject-type subject-eid]))
-
 (defn traverse-relationship-forward
   "Traverses relationships forward: subject → resource via relation"
   [db subject-type subject-eid relation target-resource-type cursor limit]
