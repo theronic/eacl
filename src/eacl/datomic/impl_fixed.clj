@@ -198,15 +198,6 @@
     (map? cursor) (:resource-id cursor)
     :else cursor))
 
-;(defn apply-cursor-filter
-;  "Applies cursor filtering to a sequence of resources"
-;  [resources cursor-eid]
-;  (if cursor-eid
-;    (->> resources
-;         (drop-while (fn [[_ resource-eid]] (not= resource-eid cursor-eid)))
-;         (drop 1))                                          ; Skip the cursor itself
-;    resources))
-
 ;; Phase 2: Union permission result combination
 
 (defn combine-union-results
