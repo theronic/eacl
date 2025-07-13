@@ -22,16 +22,17 @@
    (Permission :platform :super_admin :platform_admin) ; hack to support platform->admin
 
    (Relation :vpc :account :account) ; vpc, relation account: account.
-   ;permission admin = account->admin + shared_admin
-   (Permission :vpc :shared_admin :admin)
-   (Permission :vpc :account :admin :admin) ; vpc/admin = account->admin (arrow syntax)
 
    ; VPCs:
-   ; model: server -> nic -> lease <- network <- vpc.
+   ; model: server -> nic -> lease -> network -> vpc.
    (Relation :server :nic :network_interface) ; a server can have many NICs.
    (Relation :network_interface :lease :lease) ; a NIC can have a lease (to an IP)
    (Relation :lease :network :network) ; a lease has a network
    (Relation :network :vpc :vpc) ; a network has a vpc.
+
+   ;permission admin = account->admin + shared_admin 
+   (Permission :vpc :shared_admin :admin)
+   (Permission :vpc :account :admin :admin) ; vpc/admin = account->admin (arrow syntax)
 
    ; Permissions for the model
 
@@ -47,6 +48,7 @@
    ; Accounts:
    (Relation :account :owner :user) ; Account has an owner (a user)
    (Relation :account :platform :platform)
+
    (Permission :account :owner :admin) ; Owner of account gets admin on account
    (Permission :account :owner :view)
    (Permission :account :platform :platform_admin :admin) ; arrow
@@ -57,6 +59,7 @@
 
    ;; Servers:
    (Relation :server :account :account)
+
    (Permission :server :account :view) ; direct
    (Permission :server :account :admin :view) ; arrow
    (Permission :server :account :admin :delete) ; arrow
@@ -69,6 +72,7 @@
    (Permission :server :shared_admin :delete)
 
    (Relation :server :owner :user)
+   
    (Permission :server :owner :view)
    (Permission :server :owner :edit)
    (Permission :server :owner :delete)])

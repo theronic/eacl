@@ -20,7 +20,9 @@
       ; Q: do we want lookups to fail if entity does not exist?
       (testing "we can override EACL's object ID to Datomic ident resolution"
         (let [client (eacl.datomic.core/make-client conn
-                                                    {;:object-id->ident (fn [obj-id] [:my/id obj-id])})]
+                                                    {
+                                                     ;:entity->object-id (fn [ent] (:))
+                                                     ;:object-id->ident (fn [obj-id] [:my/id obj-id])})]
                                                      :object-id->ident (fn [obj-id] [:db/ident obj-id])})]
 
           ; todo: also test read/write-relationships, and count-resources.

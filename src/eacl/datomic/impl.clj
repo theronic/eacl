@@ -6,8 +6,8 @@
     [eacl.core :as eacl :refer [spice-object]]
     [eacl.datomic.impl-base :as base]
     [eacl.datomic.impl-optimized :as impl-optimized]
-    [eacl.datomic.impl-indexed :as impl-indexed]
-    [eacl.datomic.impl-fixed :as impl-fixed]))
+    [eacl.datomic.impl-indexed :as impl-indexed]))
+    ;[eacl.datomic.impl-fixed :as impl-fixed])) ; only use impl-fixed once it's ready. note tests are using impl-indexed.
 
 (def Relation base/Relation)
 (def Permission base/Permission)
@@ -16,8 +16,8 @@
 ;; Use indexed implementation for better performance with large offsets
 (def can? impl-optimized/can?)
 (def lookup-subjects impl-optimized/lookup-subjects)
-(def lookup-resources impl-optimized/lookup-resources) ; impl-fixed/lookup-resources
-(def count-resources impl-optimized/count-resources) ; impl-fixed/count-resources
+(def lookup-resources impl-indexed/lookup-resources)
+(def count-resources impl-indexed/count-resources)
 
 (defn can!
   "The thrown exception should probably be configurable."

@@ -122,22 +122,20 @@ Add the EACL dependency to your `deps.edn` file:
 
 ; Transact some Datomic test entities with `:eacl/type` & `:eacl/id`:
 @(d/transact conn
-  [{:eacl/type :user,    :eacl/id "user-1"}
-   {:eacl/type :user,    :eacl/id "user-2"}
+  [{:eacl/id "user-1"}
+   {:eacl/id "user-2"}
    
-   {:eacl/type :account, :eacl/id "account-1"}
+   {:eacl/id "account-1"}
    
-   {:eacl/type :product, :eacl/id "product-1"}
-   {:eacl/type :product, :eacl/id "product-2"}])
+   {:eacl/id "product-1"}
+   {:eacl/id "product-2"}])
 
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn
            ; optional config:
-           {:object->entid (fn [db {:as obj :keys [type id]] (d/entid db [:custom/id id]))
-            :entid->object (fn [db eid]
-                             (let [ent (d/entity db eid)]
-                               (spice-object (:eacl/type ent) (:custom/id ent))))}))
-
+           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :your/id can be a unique UUID attr.
+            :entity->object-id (fn [ent] (:eacl/id obj-id))})) ; optional. to internal IDs to your external IDs.
+ 
 ; Define some convenience methods over spice-object:
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))

@@ -8,9 +8,9 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
-                     can? lookup-subjects #_lookup-resources
+                     can? lookup-subjects
                      read-relationships]]
-            ;[eacl.datomic.impl-fixed :refer [lookup-resources]]
+            ;[eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
             [eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
 
 ;(let [id "account1-server"]

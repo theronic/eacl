@@ -236,8 +236,8 @@
   [conn
    {:as   opts
     :keys [entity->type
+           
            entity->object-id
-
            object-id->ident
 
            ; Cursors:
@@ -245,7 +245,8 @@
            spice-cursor->internal]
     ; You can configure how to look up the type of subject or resource.
     ; EACL can potentially support dynamic type resolution, but it gets messy.
-    :or   {entity->type           (fn [ent] (:eacl/type ent)) ; no longer relevant. types are now encoded in relationships.
+    :or   {
+           ;entity->type           (fn [ent] (:eacl/type ent)) ; no longer relevant. types are now encoded in relationships.
            entity->object-id      (fn [ent] (:eacl/id ent))
            object-id->ident       (fn [obj-id] [:eacl/id obj-id])
 
@@ -264,7 +265,8 @@
                            (let [ent (d/entity db eid)]
                              (entity->object-id ent)))
 
-        opts'            {:entity->type           entity->type
+        opts'            {
+                          ;:entity->type           entity->type
                           :object-id->ident       object-id->ident
 
                           :entid->object-id       entid->object-id
@@ -279,10 +281,10 @@
 
                           ;(fn [db obj] (default-object->entid db object-id->ident obj))
                           ; this is outdated: entid->object no longer needed. type comes from Relationships
-                          :entid->object          (fn [db entid]
-                                                    ; could this use an intermediate entid->entity fn?
-                                                    (let [ent (d/entity db entid)]
-                                                      (spice-object (entity->type ent) (entity->object-id ent))))
+                          ;:entid->object          (fn [db entid]
+                          ;                          ; could this use an intermediate entid->entity fn?
+                          ;                          (let [ent (d/entity db entid)]
+                          ;                            (spice-object (entity->type ent) (entity->object-id ent))))
 
                           :internal-object->spice (fn [db {:as obj :keys [type id]}]
                                                     (spice-object type (entid->object-id db id)))
