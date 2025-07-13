@@ -258,16 +258,14 @@
   "Combines results from multiple permission paths with efficient deduplication"
   [path-results cursor limit]
   (let [all-resources (apply concat path-results)
-        ;; Use transient for efficient deduplication
-        seen (transient #{})
-        deduplicated (persistent!
-                      (reduce (fn [acc resource]
-                                (if (contains? seen resource)
-                                  acc
-                                  (do (conj! seen resource)
-                                      (conj! acc resource))))
-                              (transient [])
-                              all-resources))]
+        ;; Use volatile for efficient deduplication
+        seen (volatile! #{})
+        deduplicated (filter (fn [resource]
+                               (if (contains? @seen resource)
+                                 false
+                                 (do (vswap! seen conj resource)
+                                     true)))
+                             all-resources)]
     (apply-cursor-and-limit deduplicated cursor limit)))
 
 ;; Phase 6: Main implementation
@@ -315,18 +313,18 @@
                             (traverse-traversal-path db subject-type subject-eid path
                                                      resource-type safe-limit))
                           permission-paths)
-        
+
         ;; Use existing correct helper function
         combined-resources (combine-union-results path-results cursor-eid limit)
-        
+
         ;; Convert to SpiceObjects
         spice-objects (map (fn [[type eid]] (eid->spice-object db type eid)) combined-resources)
-        
+
         ;; Create next cursor (only if we got full limit, indicating more results)
         next-cursor (when (= (count combined-resources) limit)
                       (when-let [last-resource (last combined-resources)]
                         (base/->Cursor 0 (second last-resource))))]
-    
+
     {:data spice-objects
      :cursor next-cursor}))
 
