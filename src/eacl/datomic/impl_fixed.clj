@@ -159,22 +159,6 @@
          (map extract-resource-from-forward-datom)
          (take limit))))
 
-(defn traverse-relationship-backward
-  "Traverses relationships backward: resource → subject via relation"
-  [db resource-type resource-eid relation target-subject-type cursor limit]
-  ;; Since we don't have a reverse index, use Datalog query
-  (let [results (d/q '[:find ?subject
-                       :in $ ?resource-type ?resource-eid ?relation ?target-subject-type
-                       :where
-                       [?rel :eacl.relationship/resource-type ?resource-type]
-                       [?rel :eacl.relationship/resource ?resource-eid]
-                       [?rel :eacl.relationship/relation-name ?relation]
-                       [?rel :eacl.relationship/subject-type ?target-subject-type]
-                       [?rel :eacl.relationship/subject ?subject]]
-                     db resource-type resource-eid relation target-subject-type)]
-    ;; Convert to [type eid] format to match forward traversal
-    (map (fn [[subject-eid]] [target-subject-type subject-eid]) results)))
-
 (defn find-resources-with-permission
   "Finds resources where subject has a specific permission (using full permission resolution)"
   [db subject-type subject-eid permission resource-type cursor limit]
@@ -220,16 +204,6 @@
                       (traverse-relationship-forward db inter-type inter-eid source-relation resource-type cursor limit))
                     intermediate-entities)))))))
 
-;; Phase 5: Stable ordering and cursor handling
-
-(defn stable-resource-comparator
-  "Defines stable ordering for resources across all permission paths"
-  [[type1 eid1] [type2 eid2]]
-  (let [type-cmp (compare (str type1) (str type2))]
-    (if (zero? type-cmp)
-      (compare eid1 eid2)
-      type-cmp)))
-
 (defn extract-cursor-eid
   "Extracts cursor EID from cursor object"
   [db cursor]
@@ -239,14 +213,14 @@
     (map? cursor) (:resource-id cursor)
     :else cursor))
 
-(defn apply-cursor-filter
-  "Applies cursor filtering to a sequence of resources"
-  [resources cursor-eid]
-  (if cursor-eid
-    (->> resources
-         (drop-while (fn [[_ resource-eid]] (not= resource-eid cursor-eid)))
-         (drop 1))                                          ; Skip the cursor itself
-    resources))
+;(defn apply-cursor-filter
+;  "Applies cursor filtering to a sequence of resources"
+;  [resources cursor-eid]
+;  (if cursor-eid
+;    (->> resources
+;         (drop-while (fn [[_ resource-eid]] (not= resource-eid cursor-eid)))
+;         (drop 1))                                          ; Skip the cursor itself
+;    resources))
 
 ;; Phase 2: Union permission result combination
 
