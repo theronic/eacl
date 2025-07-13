@@ -10,8 +10,8 @@
              :refer [Relation Relationship Permission
                      can? lookup-subjects
                      read-relationships]]
-            ;[eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
-            [eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
+            [eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
+            ;[eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
 
 ;(let [id "account1-server"]
 ;  (cond
@@ -43,14 +43,18 @@
                               :cursor        nil})
            (:data)))))
 
-(defn paginated->spice
+(defn paginated-data->spice
   "To make tests pass after we moved to eids in internals."
-  [db {:as page :keys [data cursor]}]
-  ;(prn 'paginated-spice page)
+  [db data]
   (->> data
        (map (fn [{:as obj :keys [type id]}]
               (let [ent (d/entity db id)]
                 (spice-object type (:eacl/id ent)))))))
+
+(defn paginated->spice
+  "To make tests pass after we moved to eids in internals."
+  [db {:as page :keys [data cursor]}]
+  (paginated-data->spice db data))
 
 (defn paginated->spice-set
   "To make tests pass after we moved to eids in internals."
@@ -361,36 +365,49 @@
                                    (Relationship (->user :user/super-user) :shared_admin (->server "server3"))])))
 
           (let [db' (d/db conn)]
-            (testing "limit: 10, offset 0 should include all 3 servers"
-              (is (= #{(spice-object :server "account1-server1")
-                       (spice-object :server "account1-server2")
-                       (spice-object :server "account2-server1")
-                       (spice-object :server "server-3")}
-                     (->> (lookup-resources db' {:limit         10
-                                                 :cursor        nil ; no cursor should return all 4 servers
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice-set db'))))
+            (testing "limit: 2, :cursor nil should return the first 2 servers"
+              (let [page1 (->> (lookup-resources db' {:limit         2
+                                                      :cursor        nil ; no cursor should return all 4 servers
+                                                      :resource/type :server
+                                                      :permission    :view
+                                                      :subject       (->user super-user-eid)}))
+                    page2 (->> (lookup-resources db' {:limit         2
+                                                      :cursor        (:cursor page1)
+                                                      :resource/type :server
+                                                      :permission    :view
+                                                      :subject       (->user super-user-eid)}))]
 
-              (testing "count-resources matches above"
-                (is (= 4 (count-resources db' {:resource/type :server
-                                               :permission    :view
-                                               :subject       (->user super-user-eid)})))))
+                (prn 'lookup-resources 'page1 page1)
+                (prn 'lookup-resources 'page2 page2)
 
-            (testing "limit: 10, offset: 1 should exclude server-1"
-              ; test failing because return order is oriented towards how it's stored in index
-              (is (= [; excluded: (spice-object :server "account1-server1")
-                      (spice-object :server "server-3")
-                      (spice-object :server "account1-server2")
-                      (spice-object :server "account2-server1")]
-                     ; cursor seems weird here. shouldn't it be exclusive?
-                     (->> (lookup-resources db' {:limit         10
-                                                 :cursor        {:resource-id (d/entid db' [:eacl/id "account1-server1"])}
-                                                 :resource/type :server
+                (is (= #{(spice-object :server "account1-server1")
+                         (spice-object :server "server-3")}
+                         ;(spice-object :server "account2-server1")
+                         ;(spice-object :server "server-3")}
+                       (->> page1 (paginated->spice-set db'))))
+
+                (is (= #{(spice-object :server "account1-server2")
+                         (spice-object :server "account2-server1")}
+                       (->> page2 (paginated->spice-set db'))))
+
+                (testing "count-resources matches above"
+                  (is (= 4 (count-resources db' {:resource/type :server
                                                  :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice db')))))
+                                                 :subject       (->user super-user-eid)}))))
+
+                (testing "limit: 10, offset: 1 should exclude server-1"
+                  ; test failing because return order is oriented towards how it's stored in index
+                  (is (= [; excluded: (spice-object :server "account1-server1")
+                          (spice-object :server "server-3")
+                          (spice-object :server "account1-server2")
+                          (spice-object :server "account2-server1")]
+                         ; cursor seems weird here. shouldn't it be exclusive?
+                         (->> (lookup-resources db' {:limit         10
+                                                     :cursor        (:cursor page1)
+                                                     :resource/type :server
+                                                     :permission    :view
+                                                     :subject       (->user super-user-eid)})
+                              (paginated->spice db')))))))
 
             ; Note that return order of Spice resources is not defined, because we do not sort during lookup.
             ; We assume order will be: [server-1, server-3, server-2].
