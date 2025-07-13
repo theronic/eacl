@@ -127,20 +127,20 @@
   (let [[_ _ _ resource-type resource-eid] v]
     [resource-type resource-eid]))
 
-(defn matches-backward-tuple
-  "Checks if a datom matches the expected backward tuple pattern"
-  [{:as datom, v :v} resource-type resource-eid relation subject-type]
-  (let [[dt-resource-type dt-resource dt-relation dt-subject-type _subject-eid] v]
-    (and (= dt-resource-type resource-type)
-         (= dt-resource resource-eid)
-         (= dt-relation relation)
-         (= dt-subject-type subject-type))))
+;(defn matches-backward-tuple
+;  "Checks if a datom matches the expected backward tuple pattern"
+;  [{:as datom, v :v} resource-type resource-eid relation subject-type]
+;  (let [[dt-resource-type dt-resource dt-relation dt-subject-type _subject-eid] v]
+;    (and (= dt-resource-type resource-type)
+;         (= dt-resource resource-eid)
+;         (= dt-relation relation)
+;         (= dt-subject-type subject-type))))
 
-(defn extract-subject-from-backward-datom
-  "Extracts [subject-type subject-eid] from a backward datom"
-  [{:as datom, v :v}]
-  (let [[_ _ _ subject-type subject-eid] v]
-    [subject-type subject-eid]))
+;(defn extract-subject-from-backward-datom
+;  "Extracts [subject-type subject-eid] from a backward datom"
+;  [{:as datom, v :v}]
+;  (let [[_ _ _ subject-type subject-eid] v]
+;    [subject-type subject-eid]))
 
 (defn traverse-relationship-forward
   "Traverses relationships forward: subject → resource via relation"
@@ -300,7 +300,7 @@
         spice-objects      (map (fn [[type eid]] (eid->spice-object db type eid)) combined-resources)
 
         ;; Create next cursor (only if we got full limit, indicating more results)
-        next-cursor        (when (= (count combined-resources) limit)
+        next-cursor        (when (>= (count combined-resources) limit)
                              (when-let [last-resource (last combined-resources)]
                                (base/->Cursor 0 (second last-resource))))]
 
