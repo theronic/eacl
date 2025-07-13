@@ -245,10 +245,9 @@
     resources))
 
 (defn apply-cursor-and-limit
-  "Applies cursor filtering and limit with stable ordering"
+  "Applies cursor filtering and limit WITHOUT sorting (preserves index order)"
   [resources cursor limit]
-  (let [sorted-resources (sort stable-resource-comparator resources)
-        cursor-filtered (apply-cursor-filter sorted-resources cursor)
+  (let [cursor-filtered (apply-cursor-filter resources cursor) ; NO SORTING!
         limited-resources (take limit cursor-filtered)]
     limited-resources))
 
