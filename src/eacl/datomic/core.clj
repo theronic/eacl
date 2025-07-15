@@ -5,6 +5,7 @@
                                         ->RelationshipUpdate]]
             [eacl.datomic.impl-base :as base]               ; only for Cursor.
             [eacl.datomic.impl :as impl]
+            [eacl.datomic.impl-fixed :as impl-fixed]        ; Use fixed implementation
             [eacl.spicedb.consistency :as consistency]
             [datomic.api :as d]
             [com.rpl.specter :as S]
@@ -28,17 +29,16 @@
 (defn default-internal-cursor->spice
   [db
    {:as opts :keys [entid->object-id]}
-   {:as cursor :keys [path-index type+resource-id]}]
-  (let [[type resource-id] type+resource-id
-        cursor-resource (spice-object type (entid->object-id db resource-id))]
-    ;(prn 'default-internal-cursor->spice 'cursor cursor)
-    (base/->Cursor path-index cursor-resource)))
+   {:as cursor :keys [_path-index _resource]}]
+  (->> cursor
+       (S/transform [:resource :id] #(entid->object-id db %))))
 
 (defn default-spice-cursor->internal
   [db
    {:as opts :keys [object-id->entid]}
-   {:as cursor :keys [path-index resource-id]}]
-  {:path-index path-index :resource-id (object-id->entid db resource-id)})
+   {:as cursor :keys [_path-index _resource]}]
+  (->> cursor
+       (S/transform [:resource :id] #(object-id->entid db %))))
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -129,20 +129,23 @@
    {:as           query
     :keys         [subject]
     resource-type :resource/type}]
-  ;(log/debug 'spiceomic-lookup-resources 'query query)
-  (let [subject-ent (spice-object->internal db subject)]
-    (assert (:id subject-ent) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
+  (log/debug 'spiceomic-lookup-resources 'query query)
+  (let [internal-subject (spice-object->internal db subject)]
+    (assert (:id internal-subject) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
     ;(assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
     (let [rx (->> query
-                  (S/setval [:subject] subject-ent)
-                  (S/transform [:cursor] #(spice-cursor->internal db opts %))
-                  (impl/lookup-resources db)
+                  (S/setval [:subject] internal-subject) ; do we need to coerce this subject?
+                  (S/transform [:cursor] (fn [external-cursor] (spice-cursor->internal db opts external-cursor)))
+                  (impl-fixed/lookup-resources db)
                   (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
                                                (spice-object type (entid->object-id db id))))
-                  (S/transform [:cursor] #(internal-cursor->spice db opts %)))] ;; TODO FIX!
+                  (S/transform [:cursor] (fn [internal-cursor]
+                                           (prn 'coercing-internal-cursor internal-cursor)
+                                           (let [x (internal-cursor->spice db opts internal-cursor)]
+                                             (prn 'coerced-to x)
+                                             x))))]         ;; TODO FIX!
       ;(log/debug 'rx rx)
       rx)))
-
 
 (defn spiceomic-count-resources
   [db
@@ -156,7 +159,7 @@
     (->> query
          (S/setval [:subject] subject-ent)
          (S/transform [:cursor] #(spice-cursor->internal db opts %))
-         (impl/count-resources db))))
+         (impl-fixed/count-resources db))))
 
 (defn spiceomic-lookup-subjects
   [db
@@ -236,7 +239,7 @@
   [conn
    {:as   opts
     :keys [entity->type
-           
+
            entity->object-id
            object-id->ident
 
@@ -245,12 +248,11 @@
            spice-cursor->internal]
     ; You can configure how to look up the type of subject or resource.
     ; EACL can potentially support dynamic type resolution, but it gets messy.
-    :or   {
-           ;entity->type           (fn [ent] (:eacl/type ent)) ; no longer relevant. types are now encoded in relationships.
+    :or   {;entity->type           (fn [ent] (:eacl/type ent)) ; no longer relevant. types are now encoded in relationships.
            entity->object-id      (fn [ent] (:eacl/id ent))
            object-id->ident       (fn [obj-id] [:eacl/id obj-id])
 
-           ; Cursor coercion:
+             ; Cursor coercion:
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
   ;  object-id->ident
@@ -265,32 +267,28 @@
                            (let [ent (d/entity db eid)]
                              (entity->object-id ent)))
 
-        opts'            {
-                          ;:entity->type           entity->type
-                          :object-id->ident       object-id->ident
-
+        opts'            {:object-id->ident       object-id->ident ; is this still used?
                           :entid->object-id       entid->object-id
 
                           :entity->object-id      entity->object-id ; can we compose this better?
-
                           :object-id->entid       object-id->entid
 
-                          ; we probably don't need this? just use id to entid at call-site.
+                                     ; we probably don't need this? just use id to entid at call-site.
                           :object->entid          (fn [db {:as obj :keys [type id]}]
                                                     (object-id->entid db id))
 
-                          ;(fn [db obj] (default-object->entid db object-id->ident obj))
-                          ; this is outdated: entid->object no longer needed. type comes from Relationships
-                          ;:entid->object          (fn [db entid]
-                          ;                          ; could this use an intermediate entid->entity fn?
-                          ;                          (let [ent (d/entity db entid)]
-                          ;                            (spice-object (entity->type ent) (entity->object-id ent))))
+                                     ;(fn [db obj] (default-object->entid db object-id->ident obj))
+                                     ; this is outdated: entid->object no longer needed. type comes from Relationships
+                                     ;:entid->object          (fn [db entid]
+                                     ;                          ; could this use an intermediate entid->entity fn?
+                                     ;                          (let [ent (d/entity db entid)]
+                                     ;                            (spice-object (entity->type ent) (entity->object-id ent))))
 
                           :internal-object->spice (fn [db {:as obj :keys [type id]}]
                                                     (spice-object type (entid->object-id db id)))
 
                           :spice-object->internal (fn [db {:as obj :keys [_type id]}]
-                                                    ;(log/debug 'spice-object->internal (pr-str obj) (pr-str (object-id->entid db id)))
+                                                               ;(log/debug 'spice-object->internal (pr-str obj) (pr-str (object-id->entid db id)))
                                                     (update obj :id #(object-id->entid db %)))
 
                           :internal-cursor->spice internal-cursor->spice
@@ -300,4 +298,5 @@
 (comment
   (require '[eacl.datomic.datomic-helpers :refer [with-mem-conn]])
   (with-mem-conn [conn []]
-                 (make-client conn {})))
+                 (let [client (make-client conn {:entity->object-id (fn [ent] (:db/id ent))
+                                                 :object-id->ident  (fn [obj-id] obj-id)})])))

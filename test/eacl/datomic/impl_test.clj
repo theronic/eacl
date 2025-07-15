@@ -11,7 +11,7 @@
                      can? lookup-subjects
                      read-relationships]]
             [eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
-            ;[eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
+;[eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
 
 ;(let [id "account1-server"]
 ;  (cond
@@ -366,18 +366,30 @@
           (let [db' (d/db conn)]
             (testing "limit: 2, :cursor nil should return the first 2 servers"
               (let [page1 (->> (lookup-resources db' {:limit         2
-                                                      :cursor        nil ; no cursor should return all 4 servers
+                                                      :cursor        nil ; no cursor should the first page.
                                                       :resource/type :server
                                                       :permission    :view
                                                       :subject       (->user super-user-eid)}))
+                    _     (prn 'page1 'cursor (:cursor page1))
                     page2 (->> (lookup-resources db' {:limit         2
                                                       :cursor        (:cursor page1)
                                                       :resource/type :server
                                                       :permission    :view
-                                                      :subject       (->user super-user-eid)}))]
+                                                      :subject       (->user super-user-eid)}))
 
-                (prn 'lookup-resources 'page1 page1)
-                (prn 'lookup-resources 'page2 page2)
+                    _     (prn 'page2 'cursor (:cursor page2))]
+
+
+                ; possible to have cursor be the next value? also, can we get a :more field? or cursor :next?
+                (testing "page1 returns a cursor that should match first value of page2"
+                  (is (= (get-in page1 [:cursor :resource])
+                         (last (:data page1))))
+
+                  (is (= (get-in page2 [:cursor :resource])
+                         (last (:data page2)))))
+
+                (prn 'internal/lookup-resources 'page1 page1)
+                (prn 'internal/lookup-resources 'page2 page2)
 
                 (is (= #{(spice-object :server "account1-server1")
                          (spice-object :server "server-3")}
@@ -395,58 +407,56 @@
             ; Note that return order of Spice resources is not defined, because we do not sort during lookup.
             ; We assume order will be: [server-1, server-3, server-2].
             (testing "limit 1, cursor nil should return first result only, account1-server1"
-              (is (= #{(spice-object :server "account1-server1")}
-                     (->> (lookup-resources db' {:cursor        nil
-                                                 :limit         1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice-set db)))))
+              (let [{:as          page1
+                     page1-data   :data
+                     page1-cursor :cursor} (lookup-resources db' {:cursor        nil
+                                                                  :limit         1
+                                                                  :resource/type :server
+                                                                  :permission    :view
+                                                                  :subject       (->user super-user-eid)})]
+                (is (= [(spice-object :server "account1-server1")]
+                       (paginated-data->spice db' page1-data)))
 
-            (testing "limit 1, offset 1 should return 2nd result, server-3"
-              (is (= [(spice-object :server "server-3")]
-                     (->> (lookup-resources db' {:cursor        {:resource-id (d/entid db' [:eacl/id "account1-server1"])}
-                                                 :limit         1
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice db')))))
+                (testing "limit 1 with previous cursor should return 2nd result, server-3"
+                  (let [{:as          page2
+                         page2-data   :data
+                         page2-cursor :cursor} (lookup-resources db' {:cursor        page1-cursor
+                                                                      :limit         1
+                                                                      :resource/type :server
+                                                                      :permission    :view
+                                                                      :subject       (->user super-user-eid)})]
+                    (is (= [(spice-object :server "server-3")]
+                           (paginated-data->spice db' page2-data)))
 
-            (testing "offset: 2, limit: 10, should return last result only, server-3"
-              (is (= [(spice-object :server "account1-server2")
-                      (spice-object :server "account2-server1")]
-                     (->> (lookup-resources db' {:cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}
-                                                 ;:offset        2
-                                                 :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice db')))))
+                    (let [{:as          page3
+                           page3-data   :data
+                           page3-cursor :cursor} (lookup-resources db' {:cursor        page2-cursor
+                                                                        :limit         10
+                                                                        :resource/type :server
+                                                                        :permission    :view
+                                                                        :subject       (->user super-user-eid)})]
+                      (testing "offset: 2, limit: 10, should return last result only, server-3"
+                        (is (= (last page3-data) (:resource page3-cursor)))
+                        (is (= [(spice-object :server "account1-server2")
+                                (spice-object :server "account2-server1")]
+                               (paginated-data->spice db' page3-data))))
 
-            (testing "offset: last cursor, limit: 10 should be empty"
-              (is (= [] (:data (lookup-resources db' {:limit         10
-                                                      :cursor        "account2-server1" ; todo fix wrong cursor.
-                                                      :resource/type :server
-                                                      :permission    :view
-                                                      :subject       (->user super-user-eid)})))))
+                      (testing "final page should be empty"
+                        (let [{:as          page4
+                               page4-data   :data
+                               page4-cursor :cursor} (lookup-resources db' {:limit         10
+                                                                            :cursor        page3-cursor
+                                                                            :resource/type :server
+                                                                            :permission    :view
+                                                                            :subject       (->user super-user-eid)})]
+                          (is (= [] page4-data)))))))))
 
             (testing "offset: 2, limit: 10 should return last result, server-3"
               (is (= [(spice-object :server "account1-server2")
                       (spice-object :server "account2-server1")]
-                     (->> (lookup-resources db' {:cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}
+                     (->> (lookup-resources db' {:cursor        {:resource (spice-object :server (d/entid db' [:eacl/id "server-3"]))}
                                                  ;:offset        2
                                                  :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice db')))))
-
-            (testing "offset: 2, limit 1, should return last result only, server-3"
-              ; this only passes incidentally at the moment.
-              (is (= [(spice-object :server "account1-server2")]
-                     (->> (lookup-resources db' {:limit         1
-                                                 :cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}
-                                                 ;:offset        2
                                                  :resource/type :server
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})

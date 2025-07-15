@@ -144,7 +144,7 @@
                                        my-account acme-account
                                        super-user my-user joe's-user
                                        my-server my-other-server joe's-server]]
-                              {:eacl/id   (:id ent)}))))
+                              {:eacl/id (:id ent)}))))
 
     (testing "Write relationships so my-user is the :owner of my-account and my-server is in my-account. Note the order of subjects vs. resources in ->Relationship."
       (let [{:as response, token :zed/token}
@@ -186,6 +186,7 @@
       (is (= [joe's-server] (->> (eacl/lookup-resources *client
                                                         {:resource/type :server
                                                          :permission    :reboot
+                                                         :cursor        nil
                                                          :subject       joe's-user
                                                          :consistency   fully-consistent})
                                  (:data)))))
@@ -269,6 +270,35 @@
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :platform}))))
 
+    (let [page1 (->> (eacl/lookup-resources *client {:limit         2
+                                                     :cursor        nil ; no cursor should return all 4 servers
+                                                     :resource/type :server
+                                                     :permission    :view
+                                                     :subject       (->user "super-user")}))
+          _ (prn 'page1 page1)
+          _ (prn 'page1 'cursor (:cursor page1))
+          page2 (->> (eacl/lookup-resources *client {:limit         2
+                                                     :cursor        (:cursor page1)
+                                                     :resource/type :server
+                                                     :permission    :view
+                                                     :subject       (->user "super-user")}))]
+
+      _ (prn 'page2 'cursor (:cursor page2))
+
+      (is (= #{(spice-object :server "account1-server1")
+               (spice-object :server "server-3")}
+             (->> page1 :data)))
+
+      (is (= #{(spice-object :server "account1-server2")
+               (spice-object :server "account2-server1")}
+             (->> page2 :data)))
+
+      (is (= (get-in page1 [:cursor :resource-id])
+             (:id (last (:data page1)))))
+
+      (is (= (get-in page2 [:cursor :resource-id])
+             (:id (last (:data page2))))))
+
     (testing "spice-read-relationships results are constrained by filters for resource type & ID"
 
       (testing "transact the test entities we are about to use"
@@ -276,7 +306,7 @@
                                         (->account "other-account")
                                         (->vpc "my-vpc")
                                         (->vpc "other-vpc")]]
-                            {:eacl/id   (:id object)})))
+                            {:eacl/id (:id object)})))
 
       (is (eacl/create-relationships! *client
                                       [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))

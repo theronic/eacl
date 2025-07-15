@@ -1,7 +1,7 @@
 (ns eacl.datomic.impl-base
   "EACL: Enterprise Access Control. Spice-compatible authorization system in Datomic.")
 
-(defrecord Cursor [path-index resource-id])
+(defrecord Cursor [path-index resource])
 
 (defn Relation
   "Defines a relation type. Copied from core2.

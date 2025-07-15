@@ -146,10 +146,10 @@
         ;_ (prn 'paths paths)
         ;; TODO: do we want to support string-based cursor here? Handle cursor as either a string or a cursor object
         ;cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0))
-        ;cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor)) ; todo: rename to resource
+        ;cursor-resource-id       (if (string? cursor) cursor (:resource cursor)) ; Fixed: use :resource instead of :resource-id
         ; TODO: cursor should also use object->entid
         ; TODO: can't cursor return the eid directly?
-        {cursor-eid  :resource-id
+        {cursor-eid  :resource
          _path-index :path-index} cursor
         ;_                        (log/debug 'cursor-eid cursor-eid)
 
@@ -167,7 +167,7 @@
         ;; Apply deduplication and cursor filtering lazily
         ;; can we ditch the paths at this point?
 
-        seen                          (volatile! #{})            ; TODO: optimize. seen set can be passed in earlier to lazy-*.
+        seen                          (volatile! #{})       ; TODO: optimize. seen set can be passed in earlier to lazy-*.
         deduplicated-resources        (filter (fn [[obj path-idx]]
                                                 ;(prn 'dedupe [type eid] path-idx)
                                                 (if (contains? @seen obj)
@@ -221,13 +221,13 @@
          (keyword? permission)
          (keyword? resource-type)]}
   (let [{subject-type :type
-         subject-eid :id} subject
+         subject-eid  :id} subject
 
         paths                    (get-permission-paths db resource-type permission)
         ;_                        (log/debug "lookup-resources paths" paths)
         ;; Handle cursor as either a string or a cursor object
         ; cursor-path-idx          (if (string? cursor) 0 (or (:path-index cursor) 0)) ; this feels like a bug...
-        cursor-resource-id       (if (string? cursor) cursor (:resource-id cursor))
+        cursor-resource-id       (if (string? cursor) cursor (:resource cursor)) ; Fixed: use :resource instead of :resource-id
         cursor-eid               (when cursor-resource-id (d/entid db [:eacl/id cursor-resource-id]))
         ;_                        (log/debug 'cursor-eid cursor-eid)
 

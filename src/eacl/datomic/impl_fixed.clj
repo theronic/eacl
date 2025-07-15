@@ -131,16 +131,22 @@
   "Traverses relationships forward: subject → resource via relation"
   [db subject-type subject-eid relation target-resource-type cursor limit]
   (let [;; FIX: Proper cursor handling for index-range
-        start-tuple [subject-type subject-eid relation target-resource-type cursor] ; cursor is eid and can be nil.
-        datoms      (d/index-range db
-                                   :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                   start-tuple nil)]
+        {cursor-path     :path-index
+         cursor-resource :resource} cursor
+        cursor-resource-eid (:id cursor-resource)
+
+        ; should we be using cursor resource type here, or the resource-type that was passed in?
+        start-tuple         [subject-type subject-eid relation target-resource-type cursor] ; cursor is eid and can be nil.
+        datoms              (d/index-range db
+                                           :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                                           start-tuple nil)]
     (->> datoms
          ;; Verify we're still in the right "section" of index
          (take-while #(matches-forward-tuple % subject-type subject-eid relation target-resource-type))
          ;; FIX: Skip cursor record itself if we started exactly at cursor
-         (drop-while (fn [datom]
-                       (and cursor (= (last (:v datom)) cursor))))
+         (drop-while (fn [[_subject-type _subject-eid _relation_name _resource-type resource-eid :as datom]]
+                       ; todo: should we include the resource type against cursor comparison?
+                       (and cursor (= resource-eid cursor-resource-eid)))) ; do we need this?
          (map extract-resource-from-forward-datom)
          (take limit))))
 
@@ -189,15 +195,6 @@
                       (traverse-relationship-forward db inter-type inter-eid source-relation resource-type cursor limit))
                     intermediate-entities)))))))
 
-(defn extract-cursor-eid
-  "Extracts cursor EID from cursor object"
-  [db cursor]
-  (cond
-    (nil? cursor) nil
-    (string? cursor) (d/entid db [:eacl/id cursor])
-    (map? cursor) (:resource-id cursor)
-    :else cursor))
-
 ;; Phase 2: Union permission result combination
 
 (defn combine-union-results
@@ -241,9 +238,11 @@
   {:pre [(:type subject) (:id subject)
          (keyword? permission) (keyword? resource-type)]}
 
+  (log/debug 'impl-fixed/lookup-resources query)
+
   (let [{subject-type :type subject-id :id} subject
 
-        ;; Convert subject ID to entity ID if needed
+        ;; TODO delete this. Internal impl. should will always be passed internal entids.
         subject-eid        (cond
                              (number? subject-id) subject-id
                              (string? subject-id) (d/entid db [:eacl/id subject-id])
@@ -258,7 +257,10 @@
         permission-paths   (get-unified-permission-paths db resource-type permission)
 
         ;; Handle cursor extraction
-        cursor-eid         (extract-cursor-eid db cursor)
+        cursor-resource    (:resource cursor)
+        cursor-eid         (:id cursor-resource)
+
+        _                  (prn 'cursor 'passed-in cursor 'extracted-eid cursor-eid)
 
         ;; CRITICAL FIX: Get all path results WITHOUT cursor filtering
         safe-limit         (if (= limit Long/MAX_VALUE) limit (min Long/MAX_VALUE (* limit 2)))
@@ -275,10 +277,11 @@
         ;; Convert to SpiceObjects
         spice-objects      (map (fn [[type eid]] (eid->spice-object db type eid)) combined-resources)
 
-        ;; Create next cursor (only if we got full limit, indicating more results)
-        next-cursor        (when (>= (count combined-resources) limit)
-                             (when-let [last-resource (last combined-resources)]
-                               (base/->Cursor 0 (second last-resource))))]
+        ;; Create next cursor with type+id map format (internal format)
+        next-cursor        (when-let [last-resource (last combined-resources)]
+                             (let [[type eid] last-resource]
+                               (base/->Cursor 0 (spice-object type eid))))]
+    ; (when (>= (count combined-resources) limit))
 
     {:data   spice-objects
      :cursor next-cursor}))
