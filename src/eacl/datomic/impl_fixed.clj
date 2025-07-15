@@ -84,7 +84,7 @@
   (let [key [(:resource-type unified-permission) (:permission-name unified-permission)]]
     (if (contains? visited-permissions key)
       []                                                    ; Circular reference, return empty
-      (let [visited (conj visited-permissions key)]
+      (let [visited (conj visited-permissions key)] ; why are we are not using this?
         (if (= :self (:source-relation unified-permission))
           ;; Direct permission - terminal case
           [(->TraversalPath [] (:target-permission unified-permission))]
@@ -112,111 +112,131 @@
 
 ;; Phase 3: Index traversal functions
 
-(defn matches-forward-tuple
+(defn datom-matches-forward-tuple?
   "Checks if a datom matches the expected forward tuple pattern"
   [{:as datom, v :v} subject-type subject-eid relation resource-type]
+  (log/debug 'take? v)
   (let [[dt-subject-type dt-subject dt-relation dt-resource-type _resource-eid] v]
     (and (= dt-subject-type subject-type)
          (= dt-subject subject-eid)
          (= dt-relation relation)
          (= dt-resource-type resource-type))))
 
-(defn extract-resource-from-forward-datom
+(defn tuple-datom->resource-type+eid
   "Extracts [resource-type resource-eid] from a forward datom"
-  [{:as datom, v :v}]
+  [{:as _datom, v :v}]
   (let [[_ _ _ resource-type resource-eid] v]
     [resource-type resource-eid]))
 
 (defn traverse-relationship-forward
   "Traverses relationships forward: subject → resource via relation"
-  [db subject-type subject-eid relation target-resource-type cursor limit]
+  [db subject-type subject-eid relation target-resource-type cursor]
   (let [;; FIX: Proper cursor handling for index-range
         {cursor-path     :path-index
          cursor-resource :resource} cursor
         cursor-resource-eid (:id cursor-resource)
 
         ; should we be using cursor resource type here, or the resource-type that was passed in?
-        start-tuple         [subject-type subject-eid relation target-resource-type cursor] ; cursor is eid and can be nil.
+        start-tuple         [subject-type subject-eid relation target-resource-type cursor-resource-eid] ; cursor is eid and can be nil.
         datoms              (d/index-range db
                                            :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
                                            start-tuple nil)]
     (->> datoms
          ;; Verify we're still in the right "section" of index
-         (take-while #(matches-forward-tuple % subject-type subject-eid relation target-resource-type))
+         ;; ; this is experimental to avoid drop 1 weirdness.
+         ; I'm not sure we need this drop-while?
+         (drop-while (fn [{:as _datom v :v}]
+                       (let [[_subject-type _subject-eid _relation resource-type resource-eid] v]
+                         ; we don't check type because it is encoded in tuple index.
+
+                         (log/debug 'drop-while? v)         ; 'compare '< resource-eid cursor-resource-eid)
+                         (not= target-resource-type resource-type))))
+         ;(if cursor-resource-eid
+         ;  (= resource-eid cursor-resource-eid)
+         ;  false))))
+         (take-while #(datom-matches-forward-tuple? % subject-type subject-eid relation target-resource-type))
          ;; FIX: Skip cursor record itself if we started exactly at cursor
-         (drop-while (fn [[_subject-type _subject-eid _relation_name _resource-type resource-eid :as datom]]
-                       ; todo: should we include the resource type against cursor comparison?
-                       (and cursor (= resource-eid cursor-resource-eid)))) ; do we need this?
-         (map extract-resource-from-forward-datom)
-         (take limit))))
+         (drop-while (fn [{:as _datom v :v}]
+                       (let [[_subject-type _subject-eid _relation_name _resource-type resource-eid] v]
+                         (log/debug 'drop? v)
+                         ; todo: should we include the resource type against cursor comparison?
+                         (and cursor (= resource-eid cursor-resource-eid))))) ; do we need this?
+         (map tuple-datom->resource-type+eid))))
 
 (defn find-resources-with-permission
   "Finds resources where subject has a specific permission (using full permission resolution)"
-  [db subject-type subject-eid permission resource-type cursor limit]
-  (let [permission-paths (get-unified-permission-paths db resource-type permission)]
+  [db subject-type subject-eid permission resource-type cursor]
+  (let [permission-paths (get-unified-permission-paths db resource-type permission)] ; this is slow.
     (mapcat (fn [path]
               ;; Use traverse-traversal-path for all paths (direct and arrow) - PASS CURSOR!
-              (traverse-traversal-path db subject-type subject-eid path resource-type cursor limit))
+              (traverse-traversal-path db subject-type subject-eid path resource-type cursor))
             permission-paths)))
 
 ;; Phase 4: Single traversal algorithm
 
 (defn traverse-traversal-path
   "Traverses a complete traversal path"
-  [db subject-type subject-eid traversal-path resource-type cursor limit]
-  (let [steps             (:steps traversal-path)
-        terminal-relation (:terminal-relation traversal-path)]
+  [db subject-type subject-eid path resource-type cursor]
+  (let [steps             (:steps path)
+        terminal-relation (:terminal-relation path)]
     (if (empty? steps)
       ;; Direct permission case (:self)
       ;; Find resources where subject has the terminal relation TO the resource
-      (traverse-relationship-forward db subject-type subject-eid terminal-relation resource-type cursor limit)
+      (traverse-relationship-forward db subject-type subject-eid terminal-relation resource-type cursor)
       ;; Arrow permission case - need to traverse the chain
       ;; For arrow permissions like server.view = account->admin:
       ;; 1. Find servers that have :account relation to some account
       ;; 2. Check if subject has :admin permission on those accounts
-      (let [first-step           (first steps)
+      (let [[first-step & remaining-steps] steps
             source-relation      (:relation first-step)
-            target-resource-type (:target-resource-type first-step)
-            remaining-steps      (rest steps)]
+            target-resource-type (:target-resource-type first-step)]
 
         ;; Find all resources of the target type that the subject has permission for
         (if (empty? remaining-steps)
           ;; Simple one-step arrow: server.view = account->admin
           ;; 1. Find entities where subject has terminal-relation PERMISSION on target-resource-type
-          (let [intermediate-entities (find-resources-with-permission db subject-type subject-eid terminal-relation target-resource-type cursor limit)]
+          (let [intermediate-entities (find-resources-with-permission db subject-type subject-eid terminal-relation target-resource-type cursor)]
             ;; 2. For each intermediate entity, find resources connected via source-relation (forward traversal)
             (mapcat (fn [[inter-type inter-eid]]
-                      (traverse-relationship-forward db inter-type inter-eid source-relation resource-type cursor limit))
+                      (traverse-relationship-forward db inter-type inter-eid source-relation resource-type cursor))
                     intermediate-entities))
           ;; Multi-step arrow: more complex chain
           (let [sub-path              (->TraversalPath remaining-steps terminal-relation)
-                intermediate-entities (traverse-traversal-path db subject-type subject-eid sub-path target-resource-type cursor limit)]
-            (mapcat (fn [[inter-type inter-eid]]
-                      (traverse-relationship-forward db inter-type inter-eid source-relation resource-type cursor limit))
-                    intermediate-entities)))))))
+                intermediate-entities (traverse-traversal-path db subject-type subject-eid sub-path target-resource-type cursor)]
+            (->> intermediate-entities
+                 (mapcat (fn [[inter-type inter-eid]]
+                           (traverse-relationship-forward db inter-type inter-eid source-relation resource-type cursor))))))))))
 
 ;; Phase 2: Union permission result combination
 
-(defn combine-union-results
-  "Combines results from multiple permission paths with efficient deduplication"
-  [path-results cursor limit]
-  (let [all-resources   (apply concat path-results)
-        ;; Use volatile for efficient deduplication
-        seen            (volatile! #{})
-        deduplicated    (filter (fn [resource]
-                                  (if (contains? @seen resource)
-                                    false
-                                    (do (vswap! seen conj resource)
-                                        true)))
-                                all-resources)
-        ;; Apply cursor filtering if needed (for union permissions)
-        cursor-filtered (if cursor
-                          (->> deduplicated
-                               (drop-while (fn [[_ resource-eid]] (not= resource-eid cursor)))
-                               (drop 1))                    ; Skip cursor itself
-                          deduplicated)]
-    ;; Take limit from cursor-filtered results
-    (take limit cursor-filtered)))
+(defn dedupe-stable-order [coll]
+  (let [seen (volatile! #{})]
+    (->> coll (filter (fn [item]
+                        (if (contains? @seen item)
+                          false
+                          (do (vswap! seen conj item)
+                              true)))))))
+
+;(defn combine-union-results
+;  "Combines results from multiple permission paths."
+;  [path-results cursor limit]
+;  ; why not mapcat?
+;  (let [all-resources      (apply concat path-results)
+;        ;last-eids-in-paths (remove nil? (map last path-results)) ; (map :id (map last path-results))
+;        ;_ (log/debug 'last-eids-in-paths last-eids-in-paths)
+;        ;max-eid-of-last    (apply max last-eids-in-paths)
+;        ;; Use volatile for efficient deduplication
+;        deduplicated       (dedupe-stable-order all-resources)]
+;        ;; Apply cursor filtering if needed (for union permissions)
+;
+;        ;cursor-filtered    (if cursor
+;        ;                     (->> deduplicated
+;        ;                          ; not sure if this is correct.
+;        ;                          (drop-while (fn [[_ resource-eid]] (not= resource-eid max-eid-of-last)))
+;        ;                          (drop 1))                  ; Skip cursor itself. Why are we skipping cursor itself here?
+;        ;                     deduplicated)]
+;    ;; Take limit from cursor-filtered results
+;    (take limit deduplicated))) ; was: cursor-filtered
 
 ;; Phase 6: Main implementation
 
@@ -240,51 +260,57 @@
 
   (log/debug 'impl-fixed/lookup-resources query)
 
-  (let [{subject-type :type subject-id :id} subject
-
-        ;; TODO delete this. Internal impl. should will always be passed internal entids.
-        subject-eid        (cond
-                             (number? subject-id) subject-id
-                             (string? subject-id) (d/entid db [:eacl/id subject-id])
-                             (keyword? subject-id) (d/entid db subject-id)
-                             (vector? subject-id) (d/entid db subject-id) ; FIX: Handle vectors!
-                             :else subject-id)
+  (let [{subject-type :type subject-eid :id} subject
 
         ;; Subject ID is always a valid Datomic entid in the internal implementation
-        _                  (assert subject-eid (str "Subject not found: " subject-id))
+        _                  (assert subject-eid (str "Subject not found: " subject-eid))
 
         ;; Resolve all permission paths using unified model
-        permission-paths   (get-unified-permission-paths db resource-type permission)
+        paths              (get-unified-permission-paths db resource-type permission)
 
-        ;; Handle cursor extraction
-        cursor-resource    (:resource cursor)
-        cursor-eid         (:id cursor-resource)
-
-        _                  (prn 'cursor 'passed-in cursor 'extracted-eid cursor-eid)
+        _                  (log/debug 'unified-permission-paths paths)
+        _                  (log/debug 'lookup 'cursor cursor)
 
         ;; CRITICAL FIX: Get all path results WITHOUT cursor filtering
-        safe-limit         (if (= limit Long/MAX_VALUE) limit (min Long/MAX_VALUE (* limit 2)))
-        path-results       (map (fn [path]
-                                  ;; FIX: Only pass cursor for single path, not union permissions
-                                  (let [path-cursor (if (= 1 (count permission-paths)) cursor-eid nil)]
-                                    (traverse-traversal-path db subject-type subject-eid path
-                                                             resource-type path-cursor safe-limit)))
-                                permission-paths)
+
+        path-results       (->> paths
+                                (map (fn [path]
+                                       ;; FIX: Only pass cursor for single path, not union permissions
+                                       (let [path-cursor cursor] ;(if (= 1 (count paths)) cursor nil)]
+                                         (traverse-traversal-path db subject-type subject-eid path resource-type path-cursor)))))
 
         ;; Use existing correct helper function
-        combined-resources (combine-union-results path-results cursor-eid limit)
+        combined-resources (apply concat path-results)      ; note: this is lazy.
+        _                  (log/debug 'combined-resources combined-resources)
 
-        ;; Convert to SpiceObjects
-        spice-objects      (map (fn [[type eid]] (eid->spice-object db type eid)) combined-resources)
+        deduplicated       (dedupe-stable-order combined-resources)
+        _                  (log/debug 'deduplicated deduplicated)
+
+        ; note: search one more than requested and drop it, so we have cursor for next lookup.
+        ; can probably be more efficient.
+        limited-results    (->> deduplicated (take limit))  ; idea: what if we take one more, and drop it later for next cursor.
+        ; this O(limit) cost sort can be avoided if we are smarter about multiple paths and limits:
+        ; (todo: pull out my lazy-merge-sort from multiple colls to find)
+        sorted-results     (->> limited-results (sort-by (fn [[type id]] id))) ; we need to sort here because we don't have smarter last-tracking, which can be done.
+        _                  (log/debug 'sorted-results sorted-results)
+        last-result        (last sorted-results)            ; for next cursor.
+        ;without-last-result (if (> (count limited-results) limit) ; in case there are more results, we take one more, otherwise return last. not ideal. should be :end or something.
+        ;                      (butlast limited-results)
+        ;                      limited-results) ;
+        ; todo fix feels wrong.
+
+        spice-objects      (->> limited-results (map (fn [[type eid]] (eid->spice-object db type eid))))
 
         ;; Create next cursor with type+id map format (internal format)
-        next-cursor        (when-let [last-resource (last combined-resources)]
-                             (let [[type eid] last-resource]
+        next-cursor        (if last-result
+                             (let [[type eid] last-result]
+                               ; why are we not returning the path-index here? this looks like regression.
                                (base/->Cursor 0 (spice-object type eid))))]
-    ; (when (>= (count combined-resources) limit))
 
-    {:data   spice-objects
-     :cursor next-cursor}))
+    (let [results {:data   spice-objects
+                   :cursor next-cursor}]
+      (log/debug 'internal/lookup-resources 'returning results 'next next-cursor)
+      results)))
 
 (defn count-resources
   "counts resources using the lookup-resources implementation.

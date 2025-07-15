@@ -86,7 +86,7 @@
         (is (not (can? db (->vpc :test/vpc2) :view (->server :test/server1))))
 
         (is (= [(->server "account1-server1")] (->> (lookup-resources db
-                                                                      {:subject       (->vpc :test/vpc1)
+                                                                      {:subject       (->vpc (d/entid db :test/vpc1))
                                                                        :permission    :view
                                                                        :resource/type :server
                                                                        :limit         1000
@@ -365,39 +365,72 @@
 
           (let [db' (d/db conn)]
             (testing "limit: 2, :cursor nil should return the first 2 servers"
-              (let [page1 (->> (lookup-resources db' {:limit         2
-                                                      :cursor        nil ; no cursor should the first page.
-                                                      :resource/type :server
-                                                      :permission    :view
-                                                      :subject       (->user super-user-eid)}))
-                    _     (prn 'page1 'cursor (:cursor page1))
-                    page2 (->> (lookup-resources db' {:limit         2
-                                                      :cursor        (:cursor page1)
-                                                      :resource/type :server
-                                                      :permission    :view
-                                                      :subject       (->user super-user-eid)}))
+              (let [both-pages (->> (lookup-resources db' {:limit         5
+                                                           :cursor        nil ; no cursor should the first page.
+                                                           :resource/type :server
+                                                           :permission    :view
+                                                           :subject       (->user super-user-eid)}))
+                    page1      (->> (lookup-resources db' {:limit         2
+                                                           :cursor        nil ; no cursor should the first page.
+                                                           :resource/type :server
+                                                           :permission    :view
+                                                           :subject       (->user super-user-eid)}))
+                    _          (prn 'page1 'cursor (:cursor page1))
+                    page2      (->> (lookup-resources db' {:limit         2
+                                                           :cursor        (:cursor page1)
+                                                           :resource/type :server
+                                                           :permission    :view
+                                                           :subject       (->user super-user-eid)}))
+                    empty-page3 (->> (lookup-resources db' {:limit         2
+                                                            :cursor        (:cursor page2)
+                                                            :resource/type :server
+                                                            :permission    :view
+                                                            :subject       (->user super-user-eid)}))
 
-                    _     (prn 'page2 'cursor (:cursor page2))]
+                    _          (prn 'page2 'cursor (:cursor page2))]
 
+                (testing "page1 cursor points to next page"
+                  (is (:cursor page1))
+                  (is (get-in page1 [:cursor :resource])))
+
+                (testing "page2 cursor points to next page"
+                  (is (:cursor page2))
+                  (is (get-in page2 [:cursor :resource])))
+
+                (testing "page3 cursor is nil because exhausted. Should probably return previous cursor?"
+                  ; todo what should this return?
+                  (is (nil? (:cursor empty-page3))))
 
                 ; possible to have cursor be the next value? also, can we get a :more field? or cursor :next?
-                (testing "page1 returns a cursor that should match first value of page2"
-                  (is (= (get-in page1 [:cursor :resource])
-                         (last (:data page1))))
-
-                  (is (= (get-in page2 [:cursor :resource])
-                         (last (:data page2)))))
+                ;(testing "page1 returns a cursor that should match first value of page2"
+                ;  (is (= (get-in page1 [:cursor :resource])
+                ;         (last (:data page1))))
+                ;
+                ;  (is (= (get-in page2 [:cursor :resource])
+                ;         (last (:data page2)))))
 
                 (prn 'internal/lookup-resources 'page1 page1)
                 (prn 'internal/lookup-resources 'page2 page2)
 
-                (is (= #{(spice-object :server "account1-server1")
-                         (spice-object :server "server-3")}
-                       (->> page1 (paginated->spice-set db'))))
+                (testing "limit 4 should include all 4 results"
+                  (is (= [(spice-object :server "account1-server1")
+                          (spice-object :server "server-3")
+                          (spice-object :server "account1-server2")
+                          (spice-object :server "account2-server1")]
+                         (paginated-data->spice db' (:data both-pages)))))
 
-                (is (= #{(spice-object :server "account1-server2")
-                         (spice-object :server "account2-server1")}
-                       (->> page2 (paginated->spice-set db'))))
+                (testing "page1 with 0-1 of 4 should match the first 2 results"
+                  (is (= #{(spice-object :server "account1-server1")
+                           (spice-object :server "server-3")}
+                         (->> page1 (paginated->spice-set db')))))
+
+                (testing "page2 with 2-4 of 4 should match the second two results"
+                  (is (= [(spice-object :server "account1-server2")
+                          (spice-object :server "account2-server1")]
+                         (->> page2 (paginated->spice db')))))
+
+                (testing "page3 with 5 of 4 should have no results"
+                  (is (= [] (paginated-data->spice db' (:data empty-page3)))))
 
                 (testing "count-resources matches above"
                   (is (= 4 (count-resources db' {:resource/type :server
@@ -437,7 +470,9 @@
                                                                         :subject       (->user super-user-eid)})]
                       (testing "offset: 2, limit: 10, should return last result only, server-3"
                         (is (= (last page3-data) (:resource page3-cursor)))
-                        (is (= [(spice-object :server "account1-server2")
+                        (is (= [; (spice-object :server "account1-server2") ; all expect first one.
+                                ;(spice-object :server "server-3")
+                                (spice-object :server "account1-server2")
                                 (spice-object :server "account2-server1")]
                                (paginated-data->spice db' page3-data))))
 

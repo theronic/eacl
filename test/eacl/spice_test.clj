@@ -271,7 +271,7 @@
                                                :subject/type  :platform}))))
 
     (let [page1 (->> (eacl/lookup-resources *client {:limit         2
-                                                     :cursor        nil ; no cursor should return all 4 servers
+                                                     :cursor        nil ; no cursor means page 1.
                                                      :resource/type :server
                                                      :permission    :view
                                                      :subject       (->user "super-user")}))
@@ -292,6 +292,10 @@
       (is (= #{(spice-object :server "account1-server2")
                (spice-object :server "account2-server1")}
              (->> page2 :data)))
+
+      (testing "page1 cursor should be non-nil"
+        (is (get-in page1 [:cursor]))
+        (is (get-in page1 [:cursor :resource-id])))
 
       (is (= (get-in page1 [:cursor :resource-id])
              (:id (last (:data page1)))))

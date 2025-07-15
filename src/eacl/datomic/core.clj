@@ -30,15 +30,17 @@
   [db
    {:as opts :keys [entid->object-id]}
    {:as cursor :keys [_path-index _resource]}]
-  (->> cursor
-       (S/transform [:resource :id] #(entid->object-id db %))))
+  (when cursor
+    (->> cursor
+         (S/transform [:resource :id] #(entid->object-id db %)))))
 
 (defn default-spice-cursor->internal
   [db
    {:as opts :keys [object-id->entid]}
    {:as cursor :keys [_path-index _resource]}]
-  (->> cursor
-       (S/transform [:resource :id] #(object-id->entid db %))))
+  (when cursor
+    (->> cursor
+         (S/transform [:resource :id] #(object-id->entid db %)))))
 
 ; operation: :create, :touch, :delete unspecified
 
