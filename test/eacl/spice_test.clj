@@ -8,12 +8,11 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->team ->server ->platform ->vpc ->account]]
             [eacl.datomic.core :as spiceomic]
             [clojure.tools.logging :as log]
-            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]])
-  (:import (eacl.core IAuthorization)))
+            [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
 (deftest spicedb-tests
 
-  (with-mem-conn [conn schema/v4-schema]
+  (with-mem-conn [conn schema/v5-schema]
 
     (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
       (is (= #eacl.core.SpiceObject{:type :user, :id "my-user", :relation nil}
@@ -50,7 +49,7 @@
       (def acme-account (->account "acme")))
 
     (testing "Make a Spice client and hold onto channel for disposal later."
-      (let [client (spiceomic/make-client conn)]
+      (let [client (spiceomic/make-client conn {})]
         (is client)
         ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
@@ -140,13 +139,12 @@
       (is (false? (eacl/can? *client new-joiner :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client super-user :reboot my-server fully-consistent))))
 
-    (testing "transact the entities with :resource/type & :entity/id we are about to use so [:entity/id 'ben'] resolves"
+    (testing "transact the entities with :eacl/type & :eacl/id we are about to use so [:eacl/id 'ben'] resolves"
       (is @(d/transact conn (for [ent [ca-platform
                                        my-account acme-account
                                        super-user my-user joe's-user
                                        my-server my-other-server joe's-server]]
-                              {:eacl/type (:type ent)
-                               :eacl/id   (:id ent)}))))
+                              {:eacl/id   (:id ent)}))))
 
     (testing "Write relationships so my-user is the :owner of my-account and my-server is in my-account. Note the order of subjects vs. resources in ->Relationship."
       (let [{:as response, token :zed/token}
@@ -155,7 +153,8 @@
                                          (->Relationship my-account :account my-server)])]
         (testing "All Spice operations returns a ZedToken that can be passed to subsequent read operations to guarantee consistent cache."
           (is (string? token))
-          (is (true? (eacl/can? *client my-user :reboot my-server (consistency/fresh token)))))))
+          (testing "passing anything but consistency/fully-consistent throws until we have a cache to support consistency/fresh."
+            (is (thrown? Throwable (eacl/can? *client my-user :reboot my-server (consistency/fresh token))))))))
 
     (testing "assign joe as the owner of acme-account and joe's server to acme-account"
       (is (eacl/create-relationships! *client
@@ -166,7 +165,7 @@
       (is (true? (eacl/can? *client my-user :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client joe's-user :reboot my-server fully-consistent))))
 
-    (testing "Query `what-can?` to enumerate the resources of a given type (:server) a user can :reboot"
+    (testing "Query `lookup-resources` to enumerate the resources of a given type (:server) a user can :reboot"
 
       ; specifying missing subject does not throw an exception, or should it?
       ; this throws:
@@ -176,28 +175,32 @@
       ;                                    :consistency   :fully-consistent}))
 
       ; We need to coerce local resource :id to a string because IDs are read back as strings until we decide if numeric coercion is desirable.
-      (is (= [(update my-server :id str)] (:data (eacl/lookup-resources *client
-                                                                        {:subject       my-user
-                                                                         :permission    :reboot
-                                                                         :resource/type :server
-                                                                         :cursor        nil
-                                                                         :consistency   fully-consistent}))))
-      (is (= [(update joe's-server :id str)] (:data (eacl/lookup-resources *client
-                                                                           {:resource/type :server
-                                                                            :permission    :reboot
-                                                                            :subject       joe's-user
-                                                                            :consistency   fully-consistent})))))
+      (is (= [my-server] (->> (eacl/lookup-resources *client
+                                                     {:subject       my-user
+                                                      :permission    :reboot
+                                                      :resource/type :server
+                                                      :cursor        nil
+                                                      :consistency   fully-consistent})
+                              (:data))))
 
-    (testing "We can use `who-can?` to enumerate the subjects (users) who can :reboot servers:"
+      (is (= [joe's-server] (->> (eacl/lookup-resources *client
+                                                        {:resource/type :server
+                                                         :permission    :reboot
+                                                         :subject       joe's-user
+                                                         :consistency   fully-consistent})
+                                 (:data)))))
+
+    (testing "We can use `lookup-subjects` to enumerate the subjects (users) who can :reboot servers:"
       ; We coerce local resource :id to string because reads come back as strings. Need to decide if coercion is desirable.
-      (is (= [my-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
-                                                             :resource     my-server
+      (is (= [my-user] (:data (eacl/lookup-subjects *client {:resource     my-server
                                                              :permission   :reboot
-                                                             :subject/type :user}))))
-      (is (= [joe's-user] (:data (eacl/lookup-subjects *client {:consistency  fully-consistent
-                                                                :resource     joe's-server
+                                                             :subject/type :user
+                                                             :consistency  fully-consistent}))))
+
+      (is (= [joe's-user] (:data (eacl/lookup-subjects *client {:resource     joe's-server
                                                                 :permission   :reboot
-                                                                :subject/type :user})))))
+                                                                :subject/type :user
+                                                                :consistency  fully-consistent})))))
 
     (testing "joe's-user can :reboot their server, but I cannot:"
       (is (true? (eacl/can? *client joe's-user :reboot joe's-server fully-consistent)))
@@ -238,8 +241,8 @@
              (eacl/read-relationships *client {:resource/type :platform}))))
 
     (testing "We can enumerate account owners:"
-      (is (= [(->Relationship joe's-user :owner acme-account)
-              (->Relationship my-user :owner my-account)]
+      (is (= [(->Relationship my-user :owner my-account)
+              (->Relationship joe's-user :owner acme-account)]
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :user}))))
 
@@ -273,8 +276,7 @@
                                         (->account "other-account")
                                         (->vpc "my-vpc")
                                         (->vpc "other-vpc")]]
-                            {:eacl/type (:type object)
-                             :eacl/id   (:id object)})))
+                            {:eacl/id   (:id object)})))
 
       (is (eacl/create-relationships! *client
                                       [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))

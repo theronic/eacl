@@ -47,7 +47,7 @@ A situated ReBAC system like EACL can traverse the graph of relationships betwee
 
 The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that matches the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
-- `(eacl/can? client subject permission resourc) => true | false`
+- `(eacl/can? client subject permission resource) => true | false`
 - `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
 - `(eacl/lookup-resources client filters) => {:data [resources...], :cursor 'next-cursor}`.
 - `(eacl/count-resources client filters) => <count>` materializes full index, so can be slow. Use sparingly.
@@ -122,17 +122,20 @@ Add the EACL dependency to your `deps.edn` file:
 
 ; Transact some Datomic test entities with `:eacl/type` & `:eacl/id`:
 @(d/transact conn
-  [{:eacl/type :user,    :eacl/id "user-1"}
-   {:eacl/type :user,    :eacl/id "user-2"}
+  [{:eacl/id "user-1"}
+   {:eacl/id "user-2"}
    
-   {:eacl/type :account, :eacl/id "account-1"}
+   {:eacl/id "account-1"}
    
-   {:eacl/type :product, :eacl/id "product-1"}
-   {:eacl/type :product, :eacl/id "product-2"}])
+   {:eacl/id "product-1"}
+   {:eacl/id "product-2"}])
 
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
-(def acl (eacl.datomic.core/make-client conn))
-
+(def acl (eacl.datomic.core/make-client conn
+           ; optional config:
+           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :your/id can be a unique UUID attr.
+            :entity->object-id (fn [ent] (:eacl/id obj-id))})) ; optional. to internal IDs to your external IDs.
+ 
 ; Define some convenience methods over spice-object:
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))
@@ -304,9 +307,11 @@ Internally, EACL models Relations, Permissions and Relationships as Datomic enti
 
 We have an implementation for the gRPC API that is not open-sourced yet, but will be open-sourced.
 
-To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
+* To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
 - `:eacl/type` (keyword), e.g. `:server` or `:account`
 - `:eacl/id` (unique string), e.g. `"unique-account-1"`
+
+- Update as of 2025-06-28: EACL now supports configuration `entid->object` & `object->entid` that lets you reuse existing Datomic entity IDs.
 
 You can construct a Spice Object using `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`. It returns a SpiceObject.
 

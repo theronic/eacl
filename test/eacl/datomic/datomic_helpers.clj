@@ -17,12 +17,12 @@
   [[sym schema] & body]
   `(let [random-uuid# (java.util.UUID/randomUUID)
          datomic-uri# (str "datomic:mem://test-" (.toString random-uuid#))
-         g#           (d/create-database datomic-uri#)]     ; can fail, but should not.
+         g#           (datomic.api/create-database datomic-uri#)]     ; can fail, but should not.
      (assert (true? g#) (str "Failed to create in-memory Datomic:" datomic-uri#))
-     (let [~sym (d/connect datomic-uri#)]
+     (let [~sym (datomic.api/connect datomic-uri#)]
        (try
-         @(d/transact ~sym ~schema)                         ; can fail.
+         @(datomic.api/transact ~sym ~schema)                         ; can fail.
          (do ~@body)
          (finally
-           (d/release ~sym)
-           (d/delete-database datomic-uri#))))))
+           (datomic.api/release ~sym)
+           (datomic.api/delete-database datomic-uri#))))))

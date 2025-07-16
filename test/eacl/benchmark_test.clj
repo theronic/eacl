@@ -28,7 +28,6 @@
     (for [user-uuid user-uuids]
       (let [user-tempid (user-uuid->tempid user-uuid)]
         [{:db/id        user-tempid
-          :eacl/type    :user
           :eacl/id      (str user-uuid)
           :user/account account-tempid}                     ; only to police permission checks.
          (Relationship (->user user-tempid)
@@ -42,7 +41,6 @@
     (for [server-uuid server-uuids]
       (let [server-tempid (server-uuid->tempid server-uuid)]
         [{:db/id          server-tempid
-          :eacl/type      :server
           :eacl/id        (str server-uuid)
           :server/account account-tempid                    ; only to police permission checks.
           :server/name    (str "Servers " server-uuid)}
@@ -51,7 +49,6 @@
 (defn make-account-txes [{:keys [num-users num-servers]} account-uuid]
   (let [account-tempid (d/tempid :db.part/user)
         account-txes   [{:db/id     account-tempid
-                         :eacl/type :account
                          :eacl/id   (str account-uuid)}
                         (Relationship (->platform [:eacl/id "platform"]) :platform (->account account-tempid))]
         user-txes      (make-account-user-txes account-tempid num-users)
@@ -71,17 +68,17 @@
 (defn setup-benchmark [db]
   {:accounts (d/q '[:find [?account-id ...]
                     :where
-                    [?account :eacl/type :account]
+                    [?server :server/account ?account]
                     [?account :eacl/id ?account-id]]
                   db)
    :users    (d/q '[:find [?user-id ...]
                     :where
-                    [?user :eacl/type :user]
+                    [?user :user/account ?account]
                     [?user :eacl/id ?user-id]]
                   db)
    :servers  (d/q '[:find [?server-id ...]
                     :where
-                    [?server :eacl/type :server]
+                    [?server :server/account ?account]
                     [?server :eacl/id ?server-id]]
                   db)})
 
@@ -131,7 +128,7 @@
   (comment
 
     (testing "Transact EACL Datomic Schema"
-      (tx! conn (concat schema/v4-schema)))
+      (tx! conn (concat schema/v5-schema)))
 
     (testing "Transact a realistic EACL Permission Schema"
       (tx! conn fixtures/base-fixtures))
@@ -155,7 +152,7 @@
 
     (def test-account (d/q '[:find (rand ?account-uuid) .
                              :where
-                             [?account :eacl/type :account]
+                             [?server :server/account ?account]
                              [?account :eacl/id ?account-uuid]]
                            (d/db conn)))
 
@@ -168,7 +165,7 @@
                           [?user :eacl/id ?user-uuid]]
                         (d/db conn) test-account))
 
-    (def client (spiceomic/make-client conn))
+    (def client (spiceomic/make-client conn {}))
 
     ;; Add platform relations for all accounts:
 
@@ -321,7 +318,7 @@
 
     (let [!counter         (atom 0)
           !mistakes        (atom 0)
-          client           (spiceomic/make-client conn)
+          client           (spiceomic/make-client conn {})
           db               (d/db conn)
           {:as setup :keys [accounts users servers]} (time (setup-benchmark db))
           _                (do (log/debug "N accounts" (count accounts))
