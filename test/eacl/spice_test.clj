@@ -328,3 +328,5 @@
                :subjects [],
                :relation :shared_member}] (eacl/expand-permission-tree *client {:resource   joe's-server
                                                                                 :permission :reboot}))))))
+
+;; todo: test that shows behaviour of read-relationships when subject or resource is missing.

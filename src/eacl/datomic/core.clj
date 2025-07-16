@@ -66,6 +66,11 @@
     resource-oid :resource/id}]
   (let [subject-eid  (object-id->entid db subject-oid)
         resource-eid (object-id->entid db resource-oid)
+        
+        ; we need to check for a valid ID so we don't assoc a nil filter, which does not filter.
+        _            (if subject-oid (assert subject-eid "read-relationships is missing a valid :subject/id."))
+        _            (if resource-oid (assert resource-eid "read-relationships is missing a valid :resource/id."))
+
         filters'     (cond-> filters
                        subject-oid (assoc :subject/id subject-eid)
                        resource-oid (assoc :resource/id resource-eid))]
