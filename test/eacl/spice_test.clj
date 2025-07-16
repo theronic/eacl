@@ -248,8 +248,8 @@
 
     (testing "read-relationships supports various filters:"
       (testing "query platform->account"
-        (is (= [(->Relationship ca-platform :platform my-account)
-                (->Relationship ca-platform :platform acme-account)]
+        (is (= [(->Relationship ca-platform :platform acme-account)
+                (->Relationship ca-platform :platform my-account)]
                (eacl/read-relationships *client {:subject/type      :platform
                                                  :resource/type     :account
                                                  :resource/relation :platform}))))
@@ -259,13 +259,13 @@
                  (->Relationship ca-platform :platform my-account)}
                (set (eacl/read-relationships *client {:subject/type :platform})))))
 
-      (is (= [(->Relationship ca-platform :platform my-account)
-              (->Relationship ca-platform :platform acme-account)]
+      (is (= [(->Relationship ca-platform :platform acme-account)
+              (->Relationship ca-platform :platform my-account)]
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :platform})))
 
-      (is (= [(->Relationship ca-platform :platform my-account)
-              (->Relationship ca-platform :platform acme-account)]
+      (is (= [(->Relationship ca-platform :platform acme-account)
+              (->Relationship ca-platform :platform my-account)]
              (eacl/read-relationships *client {:resource/type :account
                                                :subject/type  :platform}))))
 

@@ -9,13 +9,13 @@
 (defn lookup-subjects
   "Optimized version of lookup-subjects"
   [db
-   {:as              filters
-    resource         :resource
-    permission       :permission
-    subject-type     :subject/type
-    _subject-relation :subject/relation ; not currently supported.
-    limit            :limit
-    offset           :offset}]
+   {:as               filters
+    resource          :resource
+    permission        :permission
+    subject-type      :subject/type
+    _subject-relation :subject/relation                     ; not currently supported.
+    limit             :limit
+    offset            :offset}]
   {:pre [(:type resource) (:id resource)]}
   (let [{resource-type :type
          resource-eid  :id} resource]
@@ -88,15 +88,21 @@
   ; outdated.
   "Slow version of lookup-resources that reuses check-permission-rules.
   Does not support cursor, only limit & offset."
-  [db {:as               _query
-       subject           :subject
-       permission        :permission
-       resource-type     :resource/type
-       limit             :limit
-       offset            :offset}]
+  [db {:as           _query
+       subject       :subject
+       permission    :permission
+       resource-type :resource/type
+       limit         :limit
+       cursor        :cursor}]
   {:pre [(:type subject) (:id subject)]}
   (let [{subject-type  :type
          subject-ident :id} subject
+
+        {cursor-path     :path-index
+         cursor-resource :resource} cursor
+
+        {cursor-resource-type :type
+         cursor-resource-eid  :id} cursor-resource
 
         subject-eid (d/entid db subject-ident)]
 
@@ -113,15 +119,23 @@
                                          subject-eid
                                          permission
                                          resource-type))
-          paginated-types+eids (cond->> resource-types+eids
-                                        offset (drop offset)
+          sorted-by-type+eid   (sort resource-types+eids)
+          offsetted-results    (if (and cursor-resource-type cursor-resource-eid)
+                                 (->> sorted-by-type+eid
+                                      (drop-while (fn [[resource-type resource-eid]]
+                                                    ; design decision on <= vs < is to skip the matching value until next cursor is smarter.
+                                                    (<= resource-eid cursor-resource-eid))))
+                                 sorted-by-type+eid)
+
+          paginated-types+eids (cond->> offsetted-results   ; resource-types+eids
+                                        ; offset (drop offset) ; cursor should take care of this.
                                         limit (take limit))
-          sorted-by-type+eid   (sort paginated-types+eids)
-          formatted            (->> sorted-by-type+eid
-                                    (map (fn [[type eid]] (spice-object type eid))))]
-      {:cursor 'unsupported
+          ;sorted-by-type+eid   (sort paginated-types+eids)
+          formatted            (->> paginated-types+eids    ; sorted-by-type+eid
+                                    (map (fn [[type eid]] (spice-object type eid))))
+          last-result          (last formatted)]
+      {:cursor {:resource last-result}                      ; todo: path index.
        :limit  limit
-       :offset offset
        :data   formatted})))
 
 (defn count-resources
@@ -129,7 +143,7 @@
   Super inefficient due to the sort in lookup-resources, which is not required.
   Any complete count will need to materialize full index."
   [db query]
-  (->> (assoc query :limit Long/MAX_VALUE :offset 0) ; note: we do not currently support cursor here.
+  (->> (assoc query :limit Long/MAX_VALUE :offset 0)        ; note: we do not currently support cursor here.
        (lookup-resources db)
        (:data)
        (count)))

@@ -10,7 +10,7 @@
              :refer [Relation Relationship Permission
                      can? lookup-subjects
                      read-relationships]]
-            ;[eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
+    ;[eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
             [eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
 
 ;(let [id "account1-server"]
@@ -361,32 +361,32 @@
                                    (Relationship (->user :user/super-user) :shared_admin (->server "server3"))])))
 
           (let [db' (d/db conn)]
-            (testing "limit: 10, offset 0 should include all 3 servers"
-              (is (= #{(spice-object :server "account1-server1")
-                       (spice-object :server "account1-server2")
-                       (spice-object :server "account2-server1")
-                       (spice-object :server "server-3")}
+            (testing "limit: 10 with nil cursor should return all 4 servers"
+              (is (= [(spice-object :server "account1-server1")
+                      (spice-object :server "account1-server2")
+                      (spice-object :server "account2-server1")
+                      (spice-object :server "server-3")]
                      (->> (lookup-resources db' {:limit         10
                                                  :cursor        nil ; no cursor should return all 4 servers
                                                  :resource/type :server
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})
-                          (paginated->spice-set db'))))
+                          (paginated->spice db'))))
 
               (testing "count-resources matches above"
                 (is (= 4 (count-resources db' {:resource/type :server
                                                :permission    :view
                                                :subject       (->user super-user-eid)})))))
 
-            (testing "limit: 10, offset: 1 should exclude server-1"
+            (testing "limit: 10 with cursor set to 1st result should exclude the first result"
               ; test failing because return order is oriented towards how it's stored in index
-              (is (= [; excluded: (spice-object :server "account1-server1")
-                      (spice-object :server "server-3")
-                      (spice-object :server "account1-server2")
-                      (spice-object :server "account2-server1")]
+              (is (= [(spice-object :server "account1-server2") ; (spice-object :server "account1-server1") is excludced.
+                      (spice-object :server "account2-server1")
+                      (spice-object :server "server-3")]
                      ; cursor seems weird here. shouldn't it be exclusive?
                      (->> (lookup-resources db' {:limit         10
-                                                 :cursor        {:resource-id (d/entid db' [:eacl/id "account1-server1"])}
+                                                 :cursor        {:resource {:type :account
+                                                                            :id   (d/entid db' [:eacl/id "account1-server1"])}}
                                                  :resource/type :server
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})
@@ -394,29 +394,31 @@
 
             ; Note that return order of Spice resources is not defined, because we do not sort during lookup.
             ; We assume order will be: [server-1, server-3, server-2].
-            (testing "limit 1, offset 0 should return first result only, server-1"
-              (is (= #{(spice-object :server "account1-server1")}
-                     (->> (lookup-resources db' {:cursor        nil
+            (testing "limit 1 with cursor set to 2nd result should skip first two and return only 3rd result"
+              (is (= [(spice-object :server "account2-server1")]
+                      ;(spice-object :server "server-3")] excluded because of limit.
+                     (->> (lookup-resources db' {:cursor        {:resource {:type :server
+                                                                            :id   (d/entid db' [:eacl/id "account1-server2"])}}
                                                  :limit         1
                                                  :resource/type :server
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})
-                          (paginated->spice-set db)))))
+                          (paginated->spice db)))))
 
-            (testing "limit 1, offset 1 should return 2nd result, server-3"
+            (testing "limit 1, 3rd cursor offset should return 2nd result, server-3"
               (is (= [(spice-object :server "server-3")]
-                     (->> (lookup-resources db' {:cursor        {:resource-id (d/entid db' [:eacl/id "account1-server1"])}
+                     (->> (lookup-resources db' {:cursor        {:resource {:type :server
+                                                                            :id   (d/entid db' [:eacl/id "account2-server1"])}}
                                                  :limit         1
                                                  :resource/type :server
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})
                           (paginated->spice db')))))
 
-            (testing "offset: 2, limit: 10, should return last result only, server-3"
-              (is (= [(spice-object :server "account1-server2")
-                      (spice-object :server "account2-server1")]
-                     (->> (lookup-resources db' {:cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}
-                                                 ;:offset        2
+            (testing "limit: 10, cursor at 3rd result only the 4th result"
+              (is (= [(spice-object :server "server-3")]
+                     (->> (lookup-resources db' {:cursor        {:resource {:type :server
+                                                                            :id   (d/entid db' [:eacl/id "account2-server1"])}}
                                                  :limit         10
                                                  :resource/type :server
                                                  :permission    :view
@@ -424,30 +426,10 @@
                           (paginated->spice db')))))
 
             (testing "offset: last cursor, limit: 10 should be empty"
-              (is (= [] (:data (lookup-resources db' {:limit         10
-                                                      :cursor        "account2-server1"
+              (is (empty? (->> (lookup-resources db' {:limit         10
+                                                      :cursor        {:resource {:type :server
+                                                                                 :id   (d/entid db' [:eacl/id "server-3"])}}
                                                       :resource/type :server
                                                       :permission    :view
-                                                      :subject       (->user super-user-eid)})))))
-
-            (testing "offset: 2, limit: 10 should return last result, server-3"
-              (is (= [(spice-object :server "account1-server2")
-                      (spice-object :server "account2-server1")]
-                     (->> (lookup-resources db' {:cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}
-                                                 ;:offset        2
-                                                 :limit         10
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice db')))))
-
-            (testing "offset: 2, limit 1, should return last result only, server-3"
-              ; this only passes incidentally at the moment.
-              (is (= [(spice-object :server "account1-server2")]
-                     (->> (lookup-resources db' {:limit         1
-                                                 :cursor        {:resource-id (d/entid db' [:eacl/id "server-3"])}
-                                                 ;:offset        2
-                                                 :resource/type :server
-                                                 :permission    :view
-                                                 :subject       (->user super-user-eid)})
-                          (paginated->spice db')))))))))))
+                                                      :subject       (->user super-user-eid)})
+                               (paginated->spice db')))))))))))
