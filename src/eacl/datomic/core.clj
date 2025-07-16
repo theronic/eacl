@@ -5,7 +5,7 @@
                                         ->RelationshipUpdate]]
             [eacl.datomic.impl-base :as base]               ; only for Cursor.
             [eacl.datomic.impl :as impl]
-            ;[eacl.datomic.impl-fixed :as impl-fixed]        ; impl-fixed is an experimental implementation. avoid until correct.
+    ;[eacl.datomic.impl-fixed :as impl-fixed]        ; impl-fixed is an experimental implementation. avoid until correct.
             [eacl.spicedb.consistency :as consistency]
             [datomic.api :as d]
             [com.rpl.specter :as S]
@@ -30,7 +30,7 @@
   [db
    {:as opts :keys [entid->object-id]}
    {:as cursor :keys [_path-index _resource]}]
-  (when cursor
+  (when (and cursor (:resource cursor))                     ; Fix: only transform when cursor has a valid resource
     (->> cursor
          (S/transform [:resource :id] #(entid->object-id db %)))))
 
@@ -68,7 +68,7 @@
     resource-oid :resource/id}]
   (let [subject-eid  (object-id->entid db subject-oid)
         resource-eid (object-id->entid db resource-oid)
-        
+
         ; we need to check for a valid ID so we don't assoc a nil filter, which does not filter.
         _            (if subject-oid (assert subject-eid "read-relationships is missing a valid :subject/id."))
         _            (if resource-oid (assert resource-eid "read-relationships is missing a valid :resource/id."))
@@ -141,7 +141,7 @@
     (assert (:id internal-subject) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
     ;(assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
     (let [rx (->> query
-                  (S/setval [:subject] internal-subject) ; do we need to coerce this subject?
+                  (S/setval [:subject] internal-subject)    ; do we need to coerce this subject?
                   (S/transform [:cursor] (fn [external-cursor] (spice-cursor->internal db opts external-cursor)))
                   (impl/lookup-resources db)
                   (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]

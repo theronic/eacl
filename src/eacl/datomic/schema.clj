@@ -14,24 +14,25 @@
    [:eacl.relation/subject-type :keyword]
    [:eacl.relation/relation-name :keyword]])
 
-(def DirectPermission
-  [:map
-   [:eacl.permission/resource-type :keyword]
-   [:eacl.permission/relation-name :keyword]
-   [:eacl.permission/permission-name :keyword]
+; todo: fix the Malli schema for unified Permission.
+;(def DirectPermission
+;  [:map
+;   [:eacl.permission/resource-type :keyword]
+;   [:eacl.permission/relation-name :keyword]
+;   [:eacl.permission/permission-name :keyword]
+;
+;   [:eacl.relation/subject-type :keyword]
+;   [:eacl.relation/relation-name :keyword]])
 
-   [:eacl.relation/subject-type :keyword]
-   [:eacl.relation/relation-name :keyword]])
+;(def ArrowPermission
+;  [:map
+;   [:eacl.arrow-permission/resource-type :keyword]
+;   [:eacl.arrow-permission/source-relation-name :keyword]
+;   [:eacl.arrow-permission/target-permission-name :keyword]
+;   [:eacl.arrow-permission/permission-name :keyword]])
 
-(def ArrowPermission
-  [:map
-   [:eacl.arrow-permission/resource-type :keyword]
-   [:eacl.arrow-permission/source-relation-name :keyword]
-   [:eacl.arrow-permission/target-permission-name :keyword]
-   [:eacl.arrow-permission/permission-name :keyword]])
-
-(def Permission
-  [:or DirectPermission ArrowPermission])
+;(def Permission
+;  [:or DirectPermission ArrowPermission])
 
 (def v5-schema
   [; :eacl/id is now optional.

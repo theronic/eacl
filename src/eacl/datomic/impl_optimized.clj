@@ -110,7 +110,7 @@
     (let [resource-types+eids  (->> (d/q '[:find ?resource-type ?resource
                                            :in $ % ?subject-type ?subject-eid ?permission ?resource-type
                                            :where
-                                           ;(has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
+                                            ;(has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
                                            (has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
                                            [(not= ?resource ?subject-eid)]] ; do we still need this?
                                          db
@@ -123,7 +123,7 @@
           offsetted-results    (if (and cursor-resource-type cursor-resource-eid)
                                  (->> sorted-by-type+eid
                                       (drop-while (fn [[resource-type resource-eid]]
-                                                    ; design decision on <= vs < is to skip the matching value until next cursor is smarter.
+                                                       ; design decision on <= vs < is to skip the matching value until next cursor is smarter.
                                                     (<= resource-eid cursor-resource-eid))))
                                  sorted-by-type+eid)
 
@@ -133,8 +133,8 @@
           ;sorted-by-type+eid   (sort paginated-types+eids)
           formatted            (->> paginated-types+eids    ; sorted-by-type+eid
                                     (map (fn [[type eid]] (spice-object type eid))))
-          last-result          (last formatted)]
-      {:cursor {:resource last-result}                      ; todo: path index.
+          last-result          (when (seq formatted) (last formatted))] ; Fix: only get last when there are results
+      {:cursor (when last-result {:resource last-result})   ; Fix: only create cursor when there's a last result
        :limit  limit
        :data   formatted})))
 
