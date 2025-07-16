@@ -19,7 +19,7 @@
 (def relations+permissions
   [; Schema
    (Relation :platform :super_admin :user) ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
-   (Permission :platform :super_admin :platform_admin) ; hack to support platform->admin
+   (Permission :platform {:relation :super_admin} :platform_admin) ; hack to support platform->admin
 
    (Relation :vpc :account :account) ; vpc, relation account: account.
 
@@ -31,28 +31,28 @@
    (Relation :network :vpc :vpc) ; a network has a vpc.
 
    ;permission admin = account->admin + shared_admin 
-   (Permission :vpc :shared_admin :admin)
-   (Permission :vpc :account :admin :admin) ; vpc/admin = account->admin (arrow syntax)
+   (Permission :vpc {:relation :shared_admin} :admin)
+   (Permission :vpc {:arrow :account :permission :admin} :admin) ; vpc/admin = account->admin (arrow syntax)
 
    ; Permissions for the model
 
-   (Permission :server :nic :view :view)                    ; permission view = nic->view
-   (Permission :network_interface :lease :view)             ; direct
-   (Permission :network_interface :lease :view :view)       ; arrow
-   (Permission :lease :network :view)                       ; direct
-   (Permission :lease :network :view :view)                 ; arrow
-   (Permission :network :vpc :view)                         ; direct
-   (Permission :network :vpc :view :view)                   ; arrow
-   (Permission :vpc :owner :admin)                          ; direct
+   (Permission :server {:arrow :nic :permission :view} :view) ; permission view = nic->view
+   (Permission :network_interface {:relation :lease} :view) ; direct
+   (Permission :network_interface {:arrow :lease :permission :view} :view) ; arrow
+   (Permission :lease {:relation :network} :view) ; direct
+   (Permission :lease {:arrow :network :permission :view} :view) ; arrow
+   (Permission :network {:relation :vpc} :view) ; direct
+   (Permission :network {:arrow :vpc :permission :view} :view) ; arrow
+   (Permission :vpc {:relation :owner} :admin) ; direct
 
    ; Accounts:
    (Relation :account :owner :user) ; Account has an owner (a user)
    (Relation :account :platform :platform)
 
-   (Permission :account :owner :admin) ; Owner of account gets admin on account
-   (Permission :account :owner :view)
-   (Permission :account :platform :platform_admin :admin) ; arrow
-   (Permission :account :platform :platform_admin :view) ; arrow
+   (Permission :account {:relation :owner} :admin) ; Owner of account gets admin on account
+   (Permission :account {:relation :owner} :view)
+   (Permission :account {:arrow :platform :permission :platform_admin} :admin) ; arrow
+   (Permission :account {:arrow :platform :permission :platform_admin} :view) ; arrow
 
    ; Teams:
    (Relation :team :account :account)
@@ -60,22 +60,22 @@
    ;; Servers:
    (Relation :server :account :account)
 
-   (Permission :server :account :view) ; direct
-   (Permission :server :account :admin :view) ; arrow
-   (Permission :server :account :admin :delete) ; arrow
-   (Permission :server :account :admin :reboot) ; arrow
+   (Permission :server {:relation :account} :view) ; direct
+   (Permission :server {:arrow :account :permission :admin} :view) ; arrow
+   (Permission :server {:arrow :account :permission :admin} :delete) ; arrow
+   (Permission :server {:arrow :account :permission :admin} :reboot) ; arrow
 
    ; Server Shared Admin:
-   (Permission :server :shared_admin :view)
-   (Permission :server :shared_admin :reboot)
-   (Permission :server :shared_admin :admin)
-   (Permission :server :shared_admin :delete)
+   (Permission :server {:relation :shared_admin} :view)
+   (Permission :server {:relation :shared_admin} :reboot)
+   (Permission :server {:relation :shared_admin} :admin)
+   (Permission :server {:relation :shared_admin} :delete)
 
    (Relation :server :owner :user)
-   
-   (Permission :server :owner :view)
-   (Permission :server :owner :edit)
-   (Permission :server :owner :delete)])
+
+   (Permission :server {:relation :owner} :view)
+   (Permission :server {:relation :owner} :edit)
+   (Permission :server {:relation :owner} :delete)])
 
 (def entity-fixtures
   [; Global Platform for Super Admins:

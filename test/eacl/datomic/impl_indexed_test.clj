@@ -1,17 +1,18 @@
-(ns eacl.datomic.impl-test
+(ns eacl.datomic.impl-indexed-test
+  "Separate set of tests for newer indexed impl."
   (:require [clojure.test :as t :refer [deftest testing is]]
             [clojure.tools.logging :as log]
             [datomic.api :as d]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :as fixtures :refer [->user ->server ->account ->vpc ->nic ->network ->lease]]
             [eacl.core :as eacl :refer [spice-object]]
+            [eacl.datomic.impl-fixed :as impl-fixed]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
                      can? lookup-subjects
                      read-relationships]]
-    ;[eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
-            [eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
+            [eacl.datomic.impl-fixed :refer [lookup-resources count-resources]]))
 
 ; Test grouping & cleanup is in progress.
 
@@ -72,7 +73,6 @@
 (defn paginated->spice
   "To make tests pass after we moved to eids in internals."
   [db {:as page :keys [data cursor]}]
-  ;(prn 'paginated-spice page)
   (->> data
        (map (fn [{:as obj :keys [type id]}]
               (let [ent (d/entity db id)]
@@ -83,34 +83,23 @@
   [db {:as page :keys [data cursor]}]
   (set (paginated->spice db page)))
 
-;(defn exists? [db ident-lookup]
-;  {:pre [(vector? ident-lookup)]}
-;  (cond
-;    (number? ident-lookup) (seq (d/datoms db :eavt ident-lookup))
-;    (vector? ident-lookup) (some? (d/entid db ident-lookup))
-;    (keyword? ident-lookup) (d/entid db ident-lookup)))
+(deftest path-calculation-tests
+  (let [db (d/db *conn*)]
+    (testing "we can enumerate all possible permission paths through the graph"
+      (is (= [1 2 3]                                        ; this should match all paths and be sorted from short to long, where the first result is direct permission (:self) matches
+             (impl-fixed/get-unified-permission-paths db :server :view))))))
 
 (deftest permission-helper-tests
-  (testing "Permission helper with new unified API"
+  (testing "Permission helper"
     (is (= #:eacl.permission{:resource-type   :server
                              :permission-name :admin
-                             :target-type     :relation
-                             :target-name     :owner}
-           (Permission :server {:relation :owner} :admin)))
-    (testing "arrow permission to permission"
-      (is (= #:eacl.permission{:resource-type        :server
-                               :permission-name      :admin
-                               :source-relation-name :account
-                               :target-type          :permission
-                               :target-name          :admin}
-             (Permission :server {:arrow :account :permission :admin} :admin))))
-    (testing "arrow permission to relation"
-      (is (= #:eacl.permission{:resource-type        :server
-                               :permission-name      :view
-                               :source-relation-name :account
-                               :target-type          :relation
-                               :target-name          :owner}
-             (Permission :server {:arrow :account :relation :owner} :view))))))
+                             :relation-name   :owner}
+           (Permission :server :owner :admin)))
+    (testing "permission admin Permission can infer resource type from namespaced relation keyword"
+      (is (= #:eacl.permission{:resource-type   :server
+                               :permission-name :admin
+                               :relation-name   :owner}
+             (Permission :server/owner :admin))))))
 
 (deftest check-permission-tests
   (let [db             (d/db *conn*)
@@ -486,11 +475,11 @@
 
       (let [db' (d/db *conn*)]
         (testing "ask for 5 results (there are only 4), and ensure page1 & page2 are subsequences with matching cursor"
-          (let [both-pages          (lookup-resources db' {:limit         5
-                                                           :cursor        nil ; :cursor nil = first page.
-                                                           :resource/type :server
-                                                           :permission    :view
-                                                           :subject       (->user super-user-eid)})
+          (let [both-pages (lookup-resources db' {:limit         5
+                                                  :cursor        nil ; :cursor nil = first page.
+                                                  :resource/type :server
+                                                  :permission    :view
+                                                  :subject       (->user super-user-eid)})
 
                 both-pages-resolved (paginated-data->spice db' (:data both-pages))
                 [page1-expected
@@ -504,7 +493,7 @@
                                                               :resource/type :server
                                                               :permission    :view
                                                               :subject       (->user super-user-eid)})
-                _                   (prn 'page1 'cursor (:cursor page1))
+                _          (prn 'page1 'cursor (:cursor page1))
                 {:as          page2
                  page2-data   :data
                  page2-cursor :cursor} (lookup-resources db' {:limit         2
@@ -520,7 +509,7 @@
                                                                    :permission    :view
                                                                    :subject       (->user super-user-eid)}))
 
-                _                   (prn 'page2 'cursor (:cursor page2))]
+                _          (prn 'page2 'cursor (:cursor page2))]
 
             (testing "page1 cursor points to next page"
               (is page1-cursor)

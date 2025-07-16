@@ -1,4 +1,4 @@
-(ns eacl.datomic.impl-test
+(ns eacl.datomic.impl-old-but-good-test
   (:require [clojure.test :as t :refer [deftest testing is]]
             [clojure.tools.logging :as log]
             [datomic.api :as d]
@@ -91,26 +91,16 @@
 ;    (keyword? ident-lookup) (d/entid db ident-lookup)))
 
 (deftest permission-helper-tests
-  (testing "Permission helper with new unified API"
+  (testing "Permission helper"
     (is (= #:eacl.permission{:resource-type   :server
                              :permission-name :admin
-                             :target-type     :relation
-                             :target-name     :owner}
-           (Permission :server {:relation :owner} :admin)))
-    (testing "arrow permission to permission"
-      (is (= #:eacl.permission{:resource-type        :server
-                               :permission-name      :admin
-                               :source-relation-name :account
-                               :target-type          :permission
-                               :target-name          :admin}
-             (Permission :server {:arrow :account :permission :admin} :admin))))
-    (testing "arrow permission to relation"
-      (is (= #:eacl.permission{:resource-type        :server
-                               :permission-name      :view
-                               :source-relation-name :account
-                               :target-type          :relation
-                               :target-name          :owner}
-             (Permission :server {:arrow :account :relation :owner} :view))))))
+                             :relation-name   :owner}
+           (Permission :server :owner :admin)))
+    (testing "permission admin Permission can infer resource type from namespaced relation keyword"
+      (is (= #:eacl.permission{:resource-type   :server
+                               :permission-name :admin
+                               :relation-name   :owner}
+             (Permission :server/owner :admin))))))
 
 (deftest check-permission-tests
   (let [db             (d/db *conn*)
@@ -486,11 +476,11 @@
 
       (let [db' (d/db *conn*)]
         (testing "ask for 5 results (there are only 4), and ensure page1 & page2 are subsequences with matching cursor"
-          (let [both-pages          (lookup-resources db' {:limit         5
-                                                           :cursor        nil ; :cursor nil = first page.
-                                                           :resource/type :server
-                                                           :permission    :view
-                                                           :subject       (->user super-user-eid)})
+          (let [both-pages (lookup-resources db' {:limit         5
+                                                  :cursor        nil ; :cursor nil = first page.
+                                                  :resource/type :server
+                                                  :permission    :view
+                                                  :subject       (->user super-user-eid)})
 
                 both-pages-resolved (paginated-data->spice db' (:data both-pages))
                 [page1-expected
@@ -504,7 +494,7 @@
                                                               :resource/type :server
                                                               :permission    :view
                                                               :subject       (->user super-user-eid)})
-                _                   (prn 'page1 'cursor (:cursor page1))
+                _          (prn 'page1 'cursor (:cursor page1))
                 {:as          page2
                  page2-data   :data
                  page2-cursor :cursor} (lookup-resources db' {:limit         2
@@ -520,7 +510,7 @@
                                                                    :permission    :view
                                                                    :subject       (->user super-user-eid)}))
 
-                _                   (prn 'page2 'cursor (:cursor page2))]
+                _          (prn 'page2 'cursor (:cursor page2))]
 
             (testing "page1 cursor points to next page"
               (is page1-cursor)

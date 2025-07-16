@@ -5,7 +5,7 @@
                                         ->RelationshipUpdate]]
             [eacl.datomic.impl-base :as base]               ; only for Cursor.
             [eacl.datomic.impl :as impl]
-            [eacl.datomic.impl-fixed :as impl-fixed]        ; Use fixed implementation
+            ;[eacl.datomic.impl-fixed :as impl-fixed]        ; impl-fixed is an experimental implementation. avoid until correct.
             [eacl.spicedb.consistency :as consistency]
             [datomic.api :as d]
             [com.rpl.specter :as S]
@@ -143,7 +143,7 @@
     (let [rx (->> query
                   (S/setval [:subject] internal-subject) ; do we need to coerce this subject?
                   (S/transform [:cursor] (fn [external-cursor] (spice-cursor->internal db opts external-cursor)))
-                  (impl-fixed/lookup-resources db)
+                  (impl/lookup-resources db)
                   (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
                                                (spice-object type (entid->object-id db id))))
                   (S/transform [:cursor] (fn [internal-cursor]
@@ -166,7 +166,7 @@
     (->> query
          (S/setval [:subject] subject-ent)
          (S/transform [:cursor] #(spice-cursor->internal db opts %))
-         (impl-fixed/count-resources db))))
+         (impl/count-resources db))))
 
 (defn spiceomic-lookup-subjects
   [db

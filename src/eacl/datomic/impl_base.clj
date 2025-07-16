@@ -19,34 +19,47 @@
     subject-type)))
 
 (defn Permission
-  "Defines how a permission is granted.
-  Arity 1 (direct relation from namespaced keyword): (Permission :document/owner :view)
-    => For :document, relation :owner grants :view permission.
-  Arity 2 (direct relation): (Permission :document :owner :view)
-    => For :document, relation :owner grants :view permission.
-  Arity 4 (arrow relation): (Permission :vpc :admin :account :admin :account)
-    => For :vpc, :admin permission is granted if subject has :admin on the resource of type :account linked by vpc's :account relation."
-  ;; Arity 1: Direct grant, from namespaced keyword resource-type/relation-name
-  ([resource-type+relation-name permission-to-grant]
-   {:pre [(keyword? resource-type+relation-name) (namespace resource-type+relation-name) (keyword? permission-to-grant)]}
-   (let [resource-type (keyword (namespace resource-type+relation-name))
-         relation-name (keyword (name resource-type+relation-name))]
-     ;; Call arity 2
-     (Permission resource-type relation-name permission-to-grant)))
-  ;; Arity 2: Direct grant
-  ([resource-type direct-relation-name permission-to-grant]
-   {:pre [(keyword? resource-type) (keyword? direct-relation-name) (keyword? permission-to-grant)]}
-   {:eacl.permission/resource-type resource-type
-    :eacl.permission/permission-name permission-to-grant
-    :eacl.permission/relation-name direct-relation-name})
-  ;; Arity 4: Arrow grant
-  ([resource-type arrow-source-relation arrow-target-permission grant-permission]
-   {:pre [(keyword? resource-type) (keyword? grant-permission)
-          (keyword? arrow-source-relation) (keyword? arrow-target-permission)]}
-   {:eacl.arrow-permission/resource-type resource-type
-    :eacl.arrow-permission/permission-name grant-permission
-    :eacl.arrow-permission/source-relation-name arrow-source-relation
-    :eacl.arrow-permission/target-permission-name arrow-target-permission}))
+  "Defines how a permission is granted using the unified permission schema.
+  
+  Direct permission: (Permission resource-type {:relation relation-name} permission-name)
+    => For resource-type, relation grants permission
+  
+  Arrow to permission: (Permission resource-type {:arrow source-relation :permission target-permission} permission-name)
+    => For resource-type, permission is granted if subject has target-permission on the resource 
+       of type linked by source-relation
+  
+  Arrow to relation: (Permission resource-type {:arrow source-relation :relation target-relation} permission-name)
+    => For resource-type, permission is granted if subject has target-relation on the resource 
+       linked by source-relation"
+  [resource-type spec permission-name]
+  {:pre [(keyword? resource-type) (map? spec) (keyword? permission-name)]}
+  (cond
+    ;; Arrow permission: {:arrow source-relation :permission target-permission}
+    (and (:arrow spec) (:permission spec))
+    {:eacl.permission/resource-type resource-type
+     :eacl.permission/permission-name permission-name
+     :eacl.permission/source-relation-name (:arrow spec)
+     :eacl.permission/target-type :permission
+     :eacl.permission/target-name (:permission spec)}
+
+    ;; Arrow permission: {:arrow source-relation :relation target-relation}
+    (and (:arrow spec) (:relation spec))
+    {:eacl.permission/resource-type resource-type
+     :eacl.permission/permission-name permission-name
+     :eacl.permission/source-relation-name (:arrow spec)
+     :eacl.permission/target-type :relation
+     :eacl.permission/target-name (:relation spec)}
+
+    ;; Direct permission: {:relation relation-name}
+    (:relation spec)
+    {:eacl.permission/resource-type resource-type
+     :eacl.permission/permission-name permission-name
+     :eacl.permission/target-type :relation
+     :eacl.permission/target-name (:relation spec)}
+
+    :else
+    (throw (ex-info "Invalid Permission spec. Expected {:relation name} or {:arrow source :permission target} or {:arrow source :relation target}"
+                    {:spec spec}))))
 
 (defn Relationship
   "A Relationship between a subject and a resource via Relation. Copied from core2."
