@@ -31,8 +31,10 @@
   Arrow to relation: (Permission resource-type {:arrow source-relation :relation target-relation} permission-name)
     => For resource-type, permission is granted if subject has target-relation on the resource 
        linked by source-relation"
-  [resource-type spec permission-name]
-  {:pre [(keyword? resource-type) (map? spec) (keyword? permission-name)]}
+  [resource-type permission-name spec]
+  {:pre [(keyword? resource-type)
+         (keyword? permission-name)
+         (map? spec)]}  ;(or (map? spec) (keyword? spec))
   (cond
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     (and (:arrow spec) (:permission spec))

@@ -96,21 +96,21 @@
                              :permission-name :admin
                              :target-type     :relation
                              :target-name     :owner}
-           (Permission :server {:relation :owner} :admin)))
+           (Permission :server :admin {:relation :owner})))
     (testing "arrow permission to permission"
       (is (= #:eacl.permission{:resource-type        :server
                                :permission-name      :admin
                                :source-relation-name :account
                                :target-type          :permission
                                :target-name          :admin}
-             (Permission :server {:arrow :account :permission :admin} :admin))))
+             (Permission :server :admin {:arrow :account :permission :admin}))))
     (testing "arrow permission to relation"
       (is (= #:eacl.permission{:resource-type        :server
                                :permission-name      :view
                                :source-relation-name :account
                                :target-type          :relation
                                :target-name          :owner}
-             (Permission :server {:arrow :account :relation :owner} :view))))))
+             (Permission :server :view {:arrow :account :relation :owner}))))))
 
 (deftest check-permission-tests
   (let [db             (d/db *conn*)
