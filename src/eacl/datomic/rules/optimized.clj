@@ -31,7 +31,7 @@
      [?perm-def :eacl.permission/permission-name ?permission-name]
      [?perm-def :eacl.permission/target-type :relation]
      [?perm-def :eacl.permission/target-name ?relation-name]
-     [(missing? $ ?perm-def :eacl.permission/source-relation-name)]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      ;; Exclude self-references
      [(not= ?subject ?resource)]]
@@ -44,7 +44,7 @@
      [?perm-def :eacl.permission/permission-name ?permission-name]
      [?perm-def :eacl.permission/target-type :relation]
      [?perm-def :eacl.permission/target-name ?relation-name]
-     [(missing? $ ?perm-def :eacl.permission/source-relation-name)]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      ;; Find structural relationships where resource is the subject
      [?structural-rel :eacl.relationship/subject ?resource]
@@ -186,7 +186,7 @@
      [?perm-def :eacl.permission/permission-name ?permission-name]
      [?perm-def :eacl.permission/target-type :relation]
      [?perm-def :eacl.permission/target-name ?relation-name]
-     [(missing? $ ?perm-def :eacl.permission/source-relation-name)]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      [(not= ?subject ?resource)]]
 
@@ -197,7 +197,7 @@
      [?perm-def :eacl.permission/permission-name ?permission-name]
      [?perm-def :eacl.permission/target-type :relation]
      [?perm-def :eacl.permission/target-name ?relation-name]
-     [(missing? $ ?perm-def :eacl.permission/source-relation-name)]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      ;; Find structural relationships
      [?structural-rel :eacl.relationship/subject ?resource]

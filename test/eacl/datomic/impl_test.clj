@@ -94,6 +94,7 @@
   (testing "Permission helper with new unified API"
     (is (= #:eacl.permission{:resource-type   :server
                              :permission-name :admin
+                             :source-relation-name :self
                              :target-type     :relation
                              :target-name     :owner}
            (Permission :server :admin {:relation :owner})))
