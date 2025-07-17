@@ -138,7 +138,7 @@ Add the EACL dependency to your `deps.edn` file:
     (Relation :product :account :account)                ; relation account: account
     (Permission :product :account :admin :update_sku)])    ; permission update_sku = account->admin
 
-; Transact some Datomic test entities with `:eacl/type` & `:eacl/id`:
+; Transact some Datomic entities with a unique ID, e.g. `:eacl/id`:
 @(d/transact conn
   [{:eacl/id "user-1"}
    {:eacl/id "user-2"}
@@ -151,8 +151,8 @@ Add the EACL dependency to your `deps.edn` file:
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn
            ; optional config:
-           {:object-id->ident (fn [obj-id] [:your/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :your/id can be a unique UUID attr.
-            :entid->object-id (fn [db eid] (:your/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
+           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
+            :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
  
 ; Define some convenience methods over spice-object:
 (def ->user (partial spice-object :user))
@@ -434,11 +434,9 @@ Now you can transact relationships:
 ```clojure
 @(d/transact conn
   [{:db/id     "user1-tempid"
-    :eacl/type :user
     :eacl/id   "user1"}
 
    {:db/id     "account1-tempid"
-    :eacl/type :account
     :eacl/id   "account1"}
 
    (Relationship "user1-tempid" :owner "account1-tempid")])
