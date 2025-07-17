@@ -17,7 +17,7 @@ EACL can answer the following permission questions by querying Datomic:
 ## Authentication vs Authorization
 
 - Authentication or **AuthN** means, "Who are you?"
-- Authorization or **AuthZ** means "What can `<user>` do?" i.e. permissions.
+- Authorization or **AuthZ** means "What can `<subject>` do?" i.e. permissions.
 
 EACL leverages recursive Datomic graph queries and direct index access to support ReBAC authorization situated next to your data.
 
@@ -45,7 +45,7 @@ A situated ReBAC system like EACL can traverse the graph of relationships betwee
 
 ## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that matches the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
+The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resource) => true | false`
 - `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
@@ -70,17 +70,35 @@ The primary API call is `can?`, e.g.
 The other primary API call is `lookup-resources`, e.g.
 
 ```clojure
+(def page1
+  (eacl/lookup-resources client
+    {:subject       (->user "alice")
+     :permission    :view
+     :resource/type :server
+     :limit         2 ; defaults to 1000.
+     :cursor        nil})) ; pass nil for 1st page.
+page1
+=> {:cursor 'next-cursor
+    :data [{:type :server :id "server-1"}
+           {:type :server :id "server-2"}]}
+```
+
+To query the next page, simply pass the cursor from page1 into the next query:  
+
+```clojure
 (eacl/lookup-resources client
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :server
-   :limit         1000
-   :cursor        nil}) ; pass nil for 1st page.
+   :limit         3
+   :cursor        (:cursor page1)}) ; pass nil for 1st page.
 => {:cursor 'next-cursor
-    :data [{:type :server :id "server-1"}
-           {:type :server :id "server-2"}
-           ...]}
+    :data [{:type :server :id "server-3"}
+           {:type :server :id "server-4"}
+           {:type :server :id "server-5"}]}
 ```
+
+*Note:* the return order of resources from `lookup-resources` is stable, but undefined, because results are read directly from index for speed.
 
 ## Quickstart
 
@@ -120,7 +138,7 @@ Add the EACL dependency to your `deps.edn` file:
     (Relation :product :account :account)                ; relation account: account
     (Permission :product :account :admin :update_sku)])    ; permission update_sku = account->admin
 
-; Transact some Datomic test entities with `:eacl/type` & `:eacl/id`:
+; Transact some Datomic entities with a unique ID, e.g. `:eacl/id`:
 @(d/transact conn
   [{:eacl/id "user-1"}
    {:eacl/id "user-2"}
@@ -133,8 +151,8 @@ Add the EACL dependency to your `deps.edn` file:
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn
            ; optional config:
-           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :your/id can be a unique UUID attr.
-            :entity->object-id (fn [ent] (:eacl/id obj-id))})) ; optional. to internal IDs to your external IDs.
+           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
+            :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
  
 ; Define some convenience methods over spice-object:
 (def ->user (partial spice-object :user))
@@ -270,7 +288,7 @@ definition account {
 
 definition product {
   relation account: account
-  permission update_sku = account->admin  ; <= arrow permission
+  permission update_sku = account->admin  ; (this is an arrow permission)
 }
 ```
 
@@ -305,15 +323,27 @@ Now you can use `can?` to check those arrow permissions:
 
 Internally, EACL models Relations, Permissions and Relationships as Datomic entities, along with several tuple indices for efficient querying.
 
-We have an implementation for the gRPC API that is not open-sourced yet, but will be open-sourced.
+We have an implementation for the gRPC API that is not open-sourced at this time.
 
-* To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
-- `:eacl/type` (keyword), e.g. `:server` or `:account`
-- `:eacl/id` (unique string), e.g. `"unique-account-1"`
+## EACL ID Configuration
 
-- Update as of 2025-06-28: EACL now supports configuration `entid->object` & `object->entid` that lets you reuse existing Datomic entity IDs.
+SpiceDB uses strings for subject & resource IDs, whereas EACL internally uses Datomic entity IDs.
 
-You can construct a Spice Object using `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`. It returns a SpiceObject.
+Internal Datomic eids are not guaranteed to be stable after a DB rebuild, so EACL lets you configure how IDs should be coerced from internal to external & vice versa, so e.g. you can configure EACL to return a UUID or string in your database. Note that this attribute should have `:db/unique :db.unique/identity` set: 
+
+```clojure
+(def acl (eacl.datomic.core/make-client conn
+           {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
+            :object-id->ident (fn [obj-id] [:your/id obj-id])}))
+```
+The default options are to use `:eacl/id`, but if you want to use internal Datomic eids (e.g. if you don't expose anything to the outside world), you can pass the following options:
+```clojure
+(def acl (eacl.datomic.core/make-client conn
+           {:entid->object-id (fn [_db eid] eid)
+            :object-id->ident (fn [obj-id] obj-id)}))
+```
+
+`eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`, and returns a SpiceObject.
 
 ## Schema Syntax
 
@@ -404,11 +434,9 @@ Now you can transact relationships:
 ```clojure
 @(d/transact conn
   [{:db/id     "user1-tempid"
-    :eacl/type :user
     :eacl/id   "user1"}
 
    {:db/id     "account1-tempid"
-    :eacl/type :account
     :eacl/id   "account1"}
 
    (Relationship "user1-tempid" :owner "account1-tempid")])
