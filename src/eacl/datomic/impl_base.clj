@@ -21,20 +21,20 @@
 (defn Permission
   "Defines how a permission is granted using the unified permission schema.
   
-  Direct permission: (Permission resource-type {:relation relation-name} permission-name)
+  Direct permission: (Permission resource-type permission-name {:relation relation-name})
     => For resource-type, relation grants permission
   
-  Arrow to permission: (Permission resource-type {:arrow source-relation :permission target-permission} permission-name)
+  Arrow to permission: (Permission resource-type permission-name {:arrow source-relation :permission target-permission})
     => For resource-type, permission is granted if subject has target-permission on the resource 
        of type linked by source-relation
   
-  Arrow to relation: (Permission resource-type {:arrow source-relation :relation target-relation} permission-name)
+  Arrow to relation: (Permission resource-type permission-name {:arrow source-relation :relation target-relation})
     => For resource-type, permission is granted if subject has target-relation on the resource 
        linked by source-relation"
   [resource-type permission-name spec]
   {:pre [(keyword? resource-type)
          (keyword? permission-name)
-         (map? spec)]}  ;(or (map? spec) (keyword? spec))
+         (map? spec)]} ;(or (map? spec) (keyword? spec))
   (cond
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     (and (:arrow spec) (:permission spec))
@@ -56,6 +56,7 @@
     (:relation spec)
     {:eacl.permission/resource-type resource-type
      :eacl.permission/permission-name permission-name
+     :eacl.permission/source-relation-name :self ; Use :self for direct permissions to avoid nil in index
      :eacl.permission/target-type :relation
      :eacl.permission/target-name (:relation spec)}
 

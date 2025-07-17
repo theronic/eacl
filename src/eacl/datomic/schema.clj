@@ -112,15 +112,39 @@
     :db/cardinality :db.cardinality/one
     :db/index true}
 
-   {:db/ident :eacl.permission/resource-type+target-type+target-name+permission-name
-    :db/doc "EACL Permission: Unique identity tuple to enforce uniqueness"
+   ;; REMOVED: This tuple was causing conflicts for arrow permissions
+   ;; with same [:resource-type :target-type :target-name :permission-name]
+   ;; but different :source-relation-name
+   ;; {:db/ident :eacl.permission/resource-type+target-type+target-name+permission-name
+   ;;  :db/doc "EACL Permission: Unique identity tuple to enforce uniqueness"
+   ;;  :db/valueType :db.type/tuple
+   ;;  :db/tupleAttrs [:eacl.permission/resource-type
+   ;;                  :eacl.permission/target-type
+   ;;                  :eacl.permission/target-name
+   ;;                  :eacl.permission/permission-name]
+   ;;  :db/cardinality :db.cardinality/one
+   ;;  :db/unique :db.unique/identity}
+
+   ;; Added: Enumeration indices for efficient arrow permission lookup
+   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+    :db/doc "EACL Permission: Index for enumerating permission-type arrows"
     :db/valueType :db.type/tuple
     :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
                     :eacl.permission/target-type
-                    :eacl.permission/target-name
                     :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
+    :db/index true}
+
+   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name
+    :db/doc "EACL Permission: Index for enumerating relation-type arrows"
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/target-name]
+    :db/cardinality :db.cardinality/one
+    :db/index true}
 
    {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
     :db/doc "EACL Permission: Full unique identity tuple for arrow permissions"
