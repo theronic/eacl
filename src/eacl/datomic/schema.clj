@@ -147,7 +147,8 @@
     :db/index true}
 
    {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
-    :db/doc "EACL Permission: Full unique identity tuple for arrow permissions"
+    :db/doc "EACL Permission: Full unique identity tuple to prevent duplicate permissions."
+    ; I suspect the tuple order can be improved for faster permission enumeration.
     :db/valueType :db.type/tuple
     :db/tupleAttrs [:eacl.permission/resource-type
                     :eacl.permission/source-relation-name

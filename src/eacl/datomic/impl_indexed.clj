@@ -51,7 +51,7 @@
                                 [?arrow :eacl.arrow-permission/target-permission-name ?target-permission]]
                               db resource-type permission)]
     (concat
-      (map (fn [relation] [[] relation]) direct-relations)
+      (map (fn [relation] [[] relation]) direct-relations) ; prepend direct path [] for direct relations.
       (for [[source-relation target-permission] arrows
             :let [target-resource-type (d/q '[:find ?subject-type .
                                               :in $ ?resource-type ?source-relation

@@ -30,9 +30,9 @@
    (Relation :lease :network :network) ; a lease has a network
    (Relation :network :vpc :vpc) ; a network has a vpc.
 
-   ;permission admin = account->admin + shared_admin 
+   ;vpc { permission admin = account->admin + shared_admin }
    (Permission :vpc :admin {:relation :shared_admin})
-   (Permission :vpc :admin {:arrow :account :permission :admin}) ; vpc/admin = account->admin (arrow syntax)
+   (Permission :vpc :admin {:arrow :account :permission :admin})
 
    ; Permissions for the model
    ; What about: (Permission :server view := nic->view).
@@ -71,6 +71,8 @@
    (Permission :server :admin {:arrow :vpc :permission :admin})
 
    ; Server Shared Admin:
+   (Relation :server :shared_admin :user)
+
    (Permission :server :view {:relation :shared_admin})
    (Permission :server :reboot {:relation :shared_admin})
    (Permission :server :admin {:relation :shared_admin})

@@ -6,7 +6,29 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl-base :as base]))
 
-;; Phase 1: Data structures for unified permission model
+; Goals:
+; We need to manually implement the recursive Datalog rules in eacl.datomic.rules.optimized/has-permission
+; to support efficient index-based traversal for `lookup-resources` with support for efficient cursor-based pagination with stable return order,
+; that can performantly query 10M entities from an index of Relationships, which implies we can never
+; materialize the full index, or sort against the full index.
+
+; Refer to eacl.datomic.schema for Relation & Permission schema in Datomic.
+; All Permissions are arrow permissions, but some point to the current resource via the magic word :self,
+; which means no additional traversal is required.
+
+; Note that permissions can resolve via a relation, or via another permission, indicated by :eacl.permission/target-type #{:relation :permission}.
+; It is possible that in the future, it may be more efficient to have separate tuple indices for these two types.
+; The traversal code needs to account for these two possibilities.
+
+; Note that direct permissions have the magic word, :self under :eacl.
+
+; Plan:
+; - determine all possible paths of Relations & Permissions between a subject & a resource for a given permission or relation
+; - each of these paths should yield a lazy seq that seqs over a tuple index of Relationships
+; - a path will either look up a relation directly, or a permission. in case of a permission, it should first resolve that permission to a seq for relations
+; - a more complex permission schema will yield more paths. This is fine, as we assume schema will generally be sparse.
+
+;; Data structures for unified permission model
 
 (defrecord UnifiedPermission [resource-type permission-name source-relation target-permission])
 (defrecord TraversalPath [steps terminal-relation])
