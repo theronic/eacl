@@ -205,7 +205,7 @@
                                                                                               intermediate-type nil Integer/MAX_VALUE)
                                                intermediate-eids    (map first intermediate-results)]
                                            ;; Then find resources connected to these intermediates
-                                           (->> intermediate-eids
+                                           (->> intermediate-eids ; we need a lazy-merge-dedupe-sort-by here.
                                                 (mapcat (fn [intermediate-eid]
                                                           (let [resources (d/q '[:find [?resource ...]
                                                                                  :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
@@ -258,19 +258,19 @@
                                            (map extract-resource-id-from-rel-tuple-datom))]
           ;; Now find resources connected to these intermediates
           (->> intermediate-eids
-               (mapcat (fn [intermediate-eid]
-                         ; to use index here, we need a different tuple index, because subject type not known.
-                         ; however, it feels like it should be known based on the Relation.
-                         (d/q '[:find [?resource ...]
-                                :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
-                                :where
-                                [?rel :eacl.relationship/subject ?intermediate-eid]
-                                [?rel :eacl.relationship/relation-name ?via-rel]
-                                [?rel :eacl.relationship/resource ?resource]
-                                [?rel :eacl.relationship/resource-type ?resource-type]
-                                [(> ?resource ?cursor)]]
-                              db intermediate-eid via-relation resource-type (or cursor-eid 0))))
-               (sort))) ; TODO: we can't sort here! Use index.
+               (map (fn [intermediate-eid]
+                      ; TODO: use index here. to use index here, we need a different tuple index, because subject type not known.
+                      ; however, it feels like it should be known based on the Relation.
+                      (d/q '[:find [?resource ...]
+                             :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
+                             :where
+                             [?rel :eacl.relationship/subject ?intermediate-eid]
+                             [?rel :eacl.relationship/relation-name ?via-rel]
+                             [?rel :eacl.relationship/resource ?resource]
+                             [?rel :eacl.relationship/resource-type ?resource-type]
+                             [(> ?resource ?cursor)]]
+                           db intermediate-eid via-relation resource-type (or cursor-eid 0))))
+               (lazy-merge-dedupe-sort))) ; TODO: we can't sort here! Use index.
         ;; Arrow to permission
         (let [target-permission    (:target-permission path)
               ;; Get all intermediates recursively
@@ -280,49 +280,19 @@
               intermediate-eids    (map first intermediate-results)]
           ;; Find resources connected to these intermediates
           (->> intermediate-eids
-               (mapcat (fn [intermediate-eid]
-                         ; todo: use index here.
-                         (d/q '[:find [?resource ...]
-                                :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
-                                :where
-                                [?rel :eacl.relationship/subject ?intermediate-eid]
-                                [?rel :eacl.relationship/relation-name ?via-rel]
-                                [?rel :eacl.relationship/resource ?resource]
-                                [?rel :eacl.relationship/resource-type ?resource-type]
-                                ; this will be slow!
-                                [(> ?resource ?cursor)]]
-                              db intermediate-eid via-relation resource-type (or cursor-eid 0))))
-               (sort))))))) ; TODO: we can't sort here! Use index.
-
-;(defn lookup-resources-optimized
-;  "Optimized lookup-resources using direct index traversal.
-;  Returns {:data [resources] :cursor cursor} map compatible with IAuthorization.
-;  Returns internal Datomic IDs as per implementation requirements."
-;  [db {:keys [subject permission resource/type limit cursor]}]
-;  (let [{subject-type :type
-;         subject-eid  :id} subject
-;        {cursor-resource :resource} cursor
-;        cursor-eid    (when cursor-resource (:id cursor-resource))
-;
-;        ;; Get resources with path information
-;        results       (traverse-permission-path db subject-type subject-eid
-;                                                permission type
-;                                                cursor-eid (or limit 100))
-;
-;        ;; Extract just the resource eids (discard path info for now)
-;        resource-eids (map first results)
-;
-;        ;; Convert to spice objects with internal IDs
-;        resources     (map #(spice-object type %) resource-eids)
-;
-;        ;; Create cursor from last result
-;        last-resource (last resources)
-;        new-cursor    (when (and last-resource
-;                                 (>= (count resources) (or limit 100)))
-;                        {:resource last-resource})]
-;
-;    {:data   resources
-;     :cursor new-cursor}))
+               (map (fn [intermediate-eid]
+                      ; todo: use index here.
+                      (d/q '[:find [?resource ...]
+                             :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
+                             :where
+                             [?rel :eacl.relationship/subject ?intermediate-eid]
+                             [?rel :eacl.relationship/relation-name ?via-rel]
+                             [?rel :eacl.relationship/resource ?resource]
+                             [?rel :eacl.relationship/resource-type ?resource-type]
+                             ; this will be slow!
+                             [(> ?resource ?cursor)]]
+                           db intermediate-eid via-relation resource-type (or cursor-eid 0))))
+               (lazy-merge-dedupe-sort)))))))
 
 (defn lazy-merged-lookup-resources
   "Lookup resources using lazy merge for multiple paths.
