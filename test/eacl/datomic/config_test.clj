@@ -10,7 +10,7 @@
 
 (deftest eacl-config-tests
   (testing ""
-    (with-mem-conn [conn schema/v5-schema]
+    (with-mem-conn [conn schema/v6-schema]
       @(d/transact conn fixtures/base-fixtures)
       ;@(d/transact conn [{:db/ident :my/id
       ;                    :db/doc "Your custom ID here, e.g. UUID in this case."

@@ -26,7 +26,7 @@
            (take 20 (lazy-merge-dedupe-sort [seq1 seq2 seq3]))))))
 
 (defn eacl-schema-fixture [f]
-  (with-mem-conn [conn schema/v5-schema]
+  (with-mem-conn [conn schema/v6-schema]
     (is @(d/transact conn fixtures/base-fixtures))
     (binding [*conn* conn]
       (doall (f)))))
@@ -48,7 +48,7 @@
 
       (when created?
         (prn 'transacting 'schema)
-        @(d/transact conn schema/v5-schema)
+        @(d/transact conn schema/v6-schema)
         @(d/transact conn fixtures/base-fixtures))
 
       (->> (lookup-resources (d/db conn)
@@ -251,19 +251,30 @@
                                         :limit         1000
                                         :cursor        nil})
                   (paginated->spice db)
+                  (set)))))
+
+    (testing "view_via_arrow_relation works"
+      (is (= #{(spice-object :account "account-1")
+               (spice-object :account "account-2")}
+             (->> (lookup-resources db {:subject       (->user super-user-eid)
+                                        :permission    :view_via_arrow_relation
+                                        :resource/type :account
+                                        :limit         1000
+                                        :cursor        nil})
+                  (paginated->spice db)
                   (set))))
 
-      (testing "this is currently failing due to broken :arrow + :relation traversal"
-        (is (= #{(spice-object :server "account1-server1")
-                 (spice-object :server "account1-server2")
-                 (spice-object :server "account2-server1")}
-               (->> (lookup-resources db {:subject       (->user super-user-eid)
-                                          :permission    :relation_view
-                                          :resource/type :server
-                                          :limit         1000
-                                          :cursor        nil})
-                    (paginated->spice db)
-                    (set))))))
+      (testing "...and server { permission view_via_arrow_relation = account->view_via_arrow_relation } works")
+      (is (= #{(spice-object :server "account1-server1")
+               (spice-object :server "account1-server2")
+               (spice-object :server "account2-server1")}
+             (->> (lookup-resources db {:subject       (->user super-user-eid)
+                                        :permission    :view_server_via_arrow_relation
+                                        :resource/type :server
+                                        :limit         1000
+                                        :cursor        nil})
+                  (paginated->spice db)
+                  (set)))))
 
     (testing "We can enumerate resources with lookup-resources"
       (is (= #{(spice-object :server "account1-server1")

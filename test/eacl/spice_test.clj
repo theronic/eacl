@@ -18,7 +18,7 @@
            (spice-object :team "dev-team" :member)))))
 
 (deftest spicedb-tests
-  (with-mem-conn [conn schema/v5-schema]
+  (with-mem-conn [conn schema/v6-schema]
     (testing "->user means (partial spice-object :user). Creates a SpiceObject record with {:keys [type id relation]}"
       (def my-user (->user "ben"))
       (def joe's-user (->user "joe"))

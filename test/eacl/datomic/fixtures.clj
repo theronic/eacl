@@ -17,81 +17,89 @@
 (def ->host (partial spice-object :host))
 
 (def relations+permissions
-  [; Schema
-   (Relation :platform :super_admin :user) ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
-   (Permission :platform :platform_admin {:relation :super_admin}) ; hack to support platform->admin. can go away soon.
+  [;; Schema
+   ; Platform for super_admin rights
+   (Relation :platform :super_admin :user) ; definition platform { relation super_admin: user }
 
-   (Relation :vpc :account :account) ; vpc, relation account: account.
+   ; VPC Relations:
+   (Relation :vpc :shared_admin :user) ; definition vpc { relation shared_admin: user }
+   (Relation :vpc :account :account) ; definition vpc { relation account: account }
 
-   ; VPCs:
+   ;(Permission :vpc :admin {:relation :owner}) ; direct
+
    ; model: server -> nic -> lease -> network -> vpc.
-   (Relation :server :nic :network_interface) ; a server can have many NICs.
-   (Relation :network_interface :lease :lease) ; a NIC can have a lease (to an IP)
-   (Relation :lease :network :network) ; a lease has a network
-   (Relation :network :vpc :vpc) ; a network has a vpc.
+   (Relation :server :nic :network_interface) ; a server can have many NICs. definition server { relation nic: network_interface }
+   (Relation :network_interface :lease :lease) ; a NIC can have a lease (to an IP). definition network { relation lease: lease }
+   (Relation :lease :network :network) ; a lease has a network. definition lease { relation network: network }
+   (Relation :network :vpc :vpc) ; a network has a vpc. definition network { relation vpc: vpc }
 
-   ;vpc { permission admin = account->admin + shared_admin }
+   ; VPC Permissions:
+   ; definition vpc { permission admin = account->admin + shared_admin }
    (Permission :vpc :admin {:relation :shared_admin})
    (Permission :vpc :admin {:arrow :account :permission :admin})
 
-   ; Permissions for the model
-   ; What about: (Permission :server view := nic->view).
-   ; We'd need to be schema aware to resolve whether view is a relation or permission.
-
-   (Permission :server :view {:arrow :nic :permission :view}) ; permission view = nic->view
    (Permission :network_interface :view {:relation :lease}) ; direct
    (Permission :network_interface :view {:arrow :lease :permission :view}) ; arrow
+
    (Permission :lease :view {:relation :network}) ; direct
    (Permission :lease :view {:arrow :network :permission :view}) ; arrow
+
    (Permission :network :view {:relation :vpc}) ; direct
    (Permission :network :view {:arrow :vpc :permission :view}) ; arrow
-   (Permission :vpc :admin {:relation :owner}) ; direct
+
+   ; definition server { permission view =
 
    ; Accounts:
    (Relation :account :owner :user) ; Account has an owner (a user)
    (Relation :account :platform :platform)
 
+   ; definition account { permission admin = owner + platform->super_admin }
    (Permission :account :admin {:relation :owner}) ; Owner of account gets admin on account
+   (Permission :account :admin {:arrow :platform :relation :super_admin})
+
+   ; definition account { permission view = owner + platform->super_admin }
    (Permission :account :view {:relation :owner})
-   (Permission :account :admin {:arrow :platform :permission :platform_admin}) ; arrow
-   (Permission :account :view {:arrow :platform :permission :platform_admin}) ; arrow
+   (Permission :account :view {:arrow :platform :relation :super_admin})
 
-   (Permission :account :relation_view {:arrow :platform :relation :super_admin})
-
-   ; arrow relation currently broken
-   ;(Permission :account :admin {:arrow :platform :relation :super_admin}) ; arrow
-   ;(Permission :account :view {:arrow :platform :relation :super_admin}) ; arrow
+   ; Special permission for test case:
+   ; definition account { permission view_via_arrow_relation = platform->super_admin }
+   (Permission :account :view_via_arrow_relation {:arrow :platform :relation :super_admin})
 
    ; Teams:
    (Relation :team :account :account)
 
    ;; Servers:
    (Relation :server :account :account)
-
-   (Permission :server :view {:relation :account}) ; direct
-   (Permission :server :view {:arrow :account :permission :admin}) ; arrow
-   (Permission :server :delete {:arrow :account :permission :admin}) ; arrow
-   (Permission :server :reboot {:arrow :account :permission :admin}) ; arrow
-
-   (Permission :server :admin {:arrow :account :permission :admin})
-   (Permission :server :admin {:arrow :vpc :permission :admin})
-
-   ; this is to show that :arrow + :relation is broken:
-   (Permission :server :relation_view {:arrow :platform :relation :super_admin})
-
-   ; Server Shared Admin:
    (Relation :server :shared_admin :user)
-
-   (Permission :server :view {:relation :shared_admin})
-   (Permission :server :reboot {:relation :shared_admin})
-   (Permission :server :admin {:relation :shared_admin})
-   (Permission :server :delete {:relation :shared_admin})
-
    (Relation :server :owner :user)
 
+   ; definition server { permission view = owner + account + account->admin + nic->view + shared_admin }
    (Permission :server :view {:relation :owner})
+   (Permission :server :view {:relation :account})
+   (Permission :server :view {:arrow :account :permission :admin})
+   (Permission :server :view {:arrow :nic :permission :view})
+   (Permission :server :view {:relation :shared_admin})
+
+   ; definition server { permission edit = owner } ; admin?
    (Permission :server :edit {:relation :owner})
-   (Permission :server :delete {:relation :owner})])
+
+   ; definition server { permission delete = account->admin }
+   (Permission :server :delete {:arrow :account :permission :admin})
+
+   ; definition server { permission reboot = account->admin + shared_admin }
+   (Permission :server :reboot {:arrow :account :permission :admin})
+   (Permission :server :reboot {:relation :shared_admin})
+
+   ; definition server { permission admin = account->admin + vpc->admin + shared_admin }
+   (Permission :server :admin {:arrow :account :permission :admin})
+   (Permission :server :admin {:arrow :vpc :permission :admin})
+   (Permission :server :admin {:relation :shared_admin})
+
+   (Permission :server :view_server_via_arrow_relation {:arrow :account :permission :view_via_arrow_relation}) ; special test case.
+
+   ; definition server { permission delete = owner + shared_admin }
+   (Permission :server :delete {:relation :owner})
+   (Permission :server :delete {:relation :shared_admin})])
 
 (def entity-fixtures
   [; Global Platform for Super Admins:
