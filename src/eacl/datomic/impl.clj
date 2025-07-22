@@ -18,7 +18,7 @@
 (def can? impl.datalog/can?)
 (def lookup-subjects impl.datalog/lookup-subjects)
 (def lookup-resources impl.indexed/lookup-resources)
-(def count-resources impl.datalog/count-resources)
+(def count-resources impl.indexed/count-resources)
 
 (defn can!
   "The thrown exception should probably be configurable."

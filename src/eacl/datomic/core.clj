@@ -147,9 +147,9 @@
                   (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
                                                (spice-object type (entid->object-id db id))))
                   (S/transform [:cursor] (fn [internal-cursor]
-                                           (prn 'coercing-internal-cursor internal-cursor)
+                                           ;(prn 'coercing-internal-cursor internal-cursor)
                                            (let [x (internal-cursor->spice db opts internal-cursor)]
-                                             (prn 'coerced-to x)
+                                             ;(prn 'coerced-to x)
                                              x))))]         ;; TODO FIX!
       ;(log/debug 'rx rx)
       rx)))

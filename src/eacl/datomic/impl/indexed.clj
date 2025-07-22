@@ -323,7 +323,7 @@
         subject-eid    (d/entid db subject-id)
 
         {cursor-resource :resource} cursor
-        cursor-eid     (when cursor-resource (:id cursor-resource))
+        cursor-eid     (:id cursor-resource)                ; can be nil.
 
         ;; Get all permission paths
         paths          (get-permission-paths db type permission)
