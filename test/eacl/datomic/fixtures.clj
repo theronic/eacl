@@ -19,7 +19,7 @@
 (def relations+permissions
   [; Schema
    (Relation :platform :super_admin :user) ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
-   (Permission :platform :platform_admin {:relation :super_admin}) ; hack to support platform->admin
+   (Permission :platform :platform_admin {:relation :super_admin}) ; hack to support platform->admin. can go away soon.
 
    (Relation :vpc :account :account) ; vpc, relation account: account.
 
@@ -56,6 +56,12 @@
    (Permission :account :admin {:arrow :platform :permission :platform_admin}) ; arrow
    (Permission :account :view {:arrow :platform :permission :platform_admin}) ; arrow
 
+   (Permission :account :relation_view {:arrow :platform :relation :super_admin})
+
+   ; arrow relation currently broken
+   ;(Permission :account :admin {:arrow :platform :relation :super_admin}) ; arrow
+   ;(Permission :account :view {:arrow :platform :relation :super_admin}) ; arrow
+
    ; Teams:
    (Relation :team :account :account)
 
@@ -69,6 +75,9 @@
 
    (Permission :server :admin {:arrow :account :permission :admin})
    (Permission :server :admin {:arrow :vpc :permission :admin})
+
+   ; this is to show that :arrow + :relation is broken:
+   (Permission :server :relation_view {:arrow :platform :relation :super_admin})
 
    ; Server Shared Admin:
    (Relation :server :shared_admin :user)

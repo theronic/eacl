@@ -38,7 +38,7 @@
     (testing "The platform definition is an abstraction to support super administrators"
       (def ca-platform (->platform "platform"))) ; todo: better name
 
-    (testing "Define some server fixtures (we coerce numeric IDs to strings, but not back yet)"
+    (testing "Define some server fixtures"
       (def my-server (->server "123"))
       (def my-other-server (->server "456"))
       (def joe's-server (->server "not-my-server")))
@@ -140,7 +140,8 @@
       (is (false? (eacl/can? *client new-joiner :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client super-user :reboot my-server fully-consistent))))
 
-    (testing "transact the entities with :eacl/type & :eacl/id we are about to use so [:eacl/id 'ben'] resolves"
+    (testing "transact the entities with :eacl/id we are about to use so [:eacl/id 'ben'] resolves"
+      ; TODO: this is outdated. rather use the base fixtures.
       (is @(d/transact conn (for [ent [ca-platform
                                        my-account acme-account
                                        super-user my-user joe's-user
@@ -271,6 +272,13 @@
                                                       :subject/type  :platform}))))))
 
     (testing "lookup-resources pagination tests"
+
+      (prn 'debug 'all-results (eacl/lookup-resources *client {:limit         100
+                                                               :cursor        nil ; no cursor means page 1.
+                                                               :resource/type :server
+                                                               :permission    :view
+                                                               :subject       (->user "super-user")}))
+
       (let [{:as          page1
              page1-data   :data
              page1-cursor :cursor} (->> (eacl/lookup-resources *client {:limit         2
@@ -290,6 +298,8 @@
 
         _ (prn 'page2 'cursor (:cursor page2))
 
+        ; these are currently failing. suspect order is fixed now, which is why showin gup.
+        ; tbh not sure how they were ever passing given the base-fixtures.
         (is (= [(spice-object :server "account1-server1")
                 (spice-object :server "account1-server2")]
                page1-data))

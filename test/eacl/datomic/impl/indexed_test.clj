@@ -251,7 +251,19 @@
                                         :limit         1000
                                         :cursor        nil})
                   (paginated->spice db)
-                  (set)))))
+                  (set))))
+
+      (testing "this is currently failing due to broken :arrow + :relation traversal"
+        (is (= #{(spice-object :server "account1-server1")
+                 (spice-object :server "account1-server2")
+                 (spice-object :server "account2-server1")}
+               (->> (lookup-resources db {:subject       (->user super-user-eid)
+                                          :permission    :relation_view
+                                          :resource/type :server
+                                          :limit         1000
+                                          :cursor        nil})
+                    (paginated->spice db)
+                    (set))))))
 
     (testing "We can enumerate resources with lookup-resources"
       (is (= #{(spice-object :server "account1-server1")
@@ -745,6 +757,10 @@
 
     (testing "Cursor works with merged results"
       (let [super-user-eid (d/entid db :user/super-user)
+            both-pages (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                          :permission    :view
+                                                          :resource/type :server
+                                                          :limit         4})
             page1          (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
                                                               :permission    :view
                                                               :resource/type :server
@@ -754,9 +770,10 @@
                                                               :resource/type :server
                                                               :limit         2
                                                               :cursor        (:cursor page1)})
-            all-eids       (concat (map :id (:data page1))
-                                   (map :id (:data page2)))]
+            page1+page2-data (apply concat (map :data [page1 page2]))
+            all-eids       (map :id page1+page2-data)]
         ;; No duplicates across pages
+        (is (= (:data both-pages) page1+page2-data))
         (is (= (count all-eids) (count (distinct all-eids))))
         ;; Results are in order
         (is (= all-eids (sort all-eids)))))))
