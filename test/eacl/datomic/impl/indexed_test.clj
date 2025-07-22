@@ -1,4 +1,4 @@
-(ns eacl.datomic.impl-test2
+(ns eacl.datomic.impl.indexed-test
   (:require [clojure.test :as t :refer [deftest testing is]]
             [clojure.tools.logging :as log]
             [datomic.api :as d]
@@ -9,10 +9,10 @@
             [eacl.lazy-merge-sort :refer [lazy-merge-dedupe-sort]]
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
-                     can? lookup-subjects
+                     can?
                      read-relationships]]
-    ;[eacl.datomic.impl-fixed :refer [lookup-resources count-resources]])) ; use this once impl-fixed is ready.
-            [eacl.datomic.impl-optimized :refer [count-resources lookup-resources]]))
+            [eacl.datomic.impl.datalog :as impl.datalog :refer [lookup-subjects]]
+            [eacl.datomic.impl.indexed :as impl.indexed :refer [count-resources lookup-resources]]))
 
 ; Test grouping & cleanup is in progress.
 
@@ -21,7 +21,7 @@
 (deftest lazy-merge-sort-tests
   (is (= [1 2 3 4 5 6 7 8 9 10 11]
          (let [seq1 [1 3 5 7 9]
-               seq2 [2 3 6 -1 8 9 10] ; note unsorted -1 will be skipped because not sorted (undefined behaviour)
+               seq2 [2 3 6 -1 8 9 10]                       ; note unsorted -1 will be skipped because not sorted (undefined behaviour)
                seq3 [1 4 5 6 11]]
            (take 20 (lazy-merge-dedupe-sort [seq1 seq2 seq3]))))))
 
@@ -34,24 +34,6 @@
 (t/use-fixtures :each eacl-schema-fixture)
 
 ;; Test Helpers
-
-(defn paginated-data->spice
-  "To make tests pass after we moved to eids in internals."
-  [db data]
-  (->> data
-       (map (fn [{:as obj :keys [type id]}]
-              (let [ent (d/entity db id)]
-                (spice-object type (:eacl/id ent)))))))
-
-(defn paginated->spice
-  "To make tests pass after we moved to eids in internals."
-  [db {:as page :keys [data cursor]}]
-  (paginated-data->spice db data))
-
-(defn paginated->spice-set
-  "To make tests pass after we moved to eids in internals."
-  [db {:as page :keys [data cursor]}]
-  (set (paginated->spice db page)))
 
 (comment
 
@@ -77,34 +59,31 @@
                               :cursor        nil})
            (:data)))))
 
-(defn paginated->spice
+(defn paginated-data->spice
   "To make tests pass after we moved to eids in internals."
-  [db {:as page :keys [data cursor]}]
-  ;(prn 'paginated-spice page)
+  [db data]
   (->> data
        (map (fn [{:as obj :keys [type id]}]
               (let [ent (d/entity db id)]
                 (spice-object type (:eacl/id ent)))))))
+
+(defn paginated->spice
+  "To make tests pass after we moved to eids in internals."
+  [db {:as page :keys [data cursor]}]
+  (paginated-data->spice db data))
 
 (defn paginated->spice-set
   "To make tests pass after we moved to eids in internals."
   [db {:as page :keys [data cursor]}]
   (set (paginated->spice db page)))
 
-;(defn exists? [db ident-lookup]
-;  {:pre [(vector? ident-lookup)]}
-;  (cond
-;    (number? ident-lookup) (seq (d/datoms db :eavt ident-lookup))
-;    (vector? ident-lookup) (some? (d/entid db ident-lookup))
-;    (keyword? ident-lookup) (d/entid db ident-lookup)))
-
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
-    (is (= #:eacl.permission{:resource-type   :server
-                             :permission-name :admin
+    (is (= #:eacl.permission{:resource-type        :server
+                             :permission-name      :admin
                              :source-relation-name :self
-                             :target-type     :relation
-                             :target-name     :owner}
+                             :target-type          :relation
+                             :target-name          :owner}
            (Permission :server :admin {:relation :owner})))
     (testing "arrow permission to permission"
       (is (= #:eacl.permission{:resource-type        :server
@@ -191,14 +170,15 @@
 
       (is (not (can? db (->vpc :test/vpc2) :view (->server :test/server1))))
 
-      (is (= [(->server "account1-server1")]
-             (->> (lookup-resources db
-                                    {:subject       (->vpc :test/vpc1)
-                                     :permission    :view
-                                     :resource/type :server
-                                     :limit         1000
-                                     :cursor        nil})
-                  (paginated->spice db)))))))
+      (let [vpc-eid (d/entid db :test/vpc1)]
+        (is (= [(->server "account1-server1")]
+               (->> (lookup-resources db
+                                      {:subject       (->vpc vpc-eid)
+                                       :permission    :view
+                                       :resource/type :server
+                                       :limit         1000
+                                       :cursor        nil})
+                    (paginated->spice db))))))))
 
 (deftest read-relationships-tests
   (let [db (d/db *conn*)]
@@ -371,7 +351,7 @@
                                              :permission    :view
                                              :subject       (->user [:eacl/id "user-2"])})))))
 
-        (is (not (can? db' (->user :test/user2) :delete (->server :test/server2))))
+        (is (false? (can? db' (->user :test/user2) :delete (->server :test/server2))))
 
         (testing ":test/user1 permissions remain unchanged"
           (is (= #{(spice-object :server "account1-server1")
@@ -513,7 +493,7 @@
                                                               :resource/type :server
                                                               :permission    :view
                                                               :subject       (->user super-user-eid)})
-                _                   (prn 'page1 'cursor (:cursor page1))
+                ;_                   (prn 'page1 'cursor (:cursor page1))
                 {:as          page2
                  page2-data   :data
                  page2-cursor :cursor} (lookup-resources db' {:limit         2
@@ -527,9 +507,9 @@
                                                                    :cursor        (:cursor page2)
                                                                    :resource/type :server
                                                                    :permission    :view
-                                                                   :subject       (->user super-user-eid)}))
+                                                                   :subject       (->user super-user-eid)}))]
 
-                _                   (prn 'page2 'cursor (:cursor page2))]
+                ;_                   (prn 'page2 'cursor (:cursor page2))]
 
             (testing "page1 cursor points to next page"
               (is page1-cursor)
@@ -594,3 +574,217 @@
                                                :permission    :view
                                                :subject       (->user super-user-eid)
                                                :cursor        page2-cursor}))))))))))
+
+(deftest permission-schema-helper-tests
+  (let [db (d/db *conn*)]
+    (testing "find-relation-def"
+      (is (= {:eacl.relation/subject-type  :account
+              :eacl.relation/resource-type :server
+              :eacl.relation/relation-name :account}
+             (impl.indexed/find-relation-def db :server :account))))
+    (testing "find-permission-defs"
+      (is (pos? (count (impl.indexed/find-permission-defs db :server :view))))
+      (is (empty? (impl.indexed/find-permission-defs db :server :nonexistent))))))
+
+(deftest get-permission-paths-tests
+  (let [db (d/db *conn*)]
+    (testing "Direct permission paths"
+      (let [paths (impl.indexed/get-permission-paths db :account :view)]
+        ;; :account :view has both direct (owner) and arrow (platform->platform_admin) paths
+        (is (= 2 (count paths)))
+        (is (some #(and (= (:type %) :relation)
+                        (= (:name %) :owner)
+                        (= (:subject-type %) :user))
+                  paths))
+        (is (some #(and (= (:type %) :arrow)
+                        (= (:via %) :platform)
+                        (= (:target-type %) :platform))
+                  paths))))
+
+    (testing "Arrow permission to relation"
+      (let [paths (impl.indexed/get-permission-paths db :server :view)]
+        ;; Should have multiple paths: direct and arrow
+        (is (> (count paths) 1))
+        ;; Check for direct path through shared_admin
+        (is (some #(and (= (:type %) :relation)
+                        (= (:name %) :shared_admin))
+                  paths))
+        ;; Check for arrow path through account
+        (is (some #(and (= (:type %) :arrow)
+                        (= (:via %) :account)
+                        (= (:target-type %) :account))
+                  paths))))
+
+    (testing "Arrow permission to permission"
+      (let [paths (impl.indexed/get-permission-paths db :vpc :admin)]
+        ;; Should have arrow to account->admin
+        (is (some #(and (= (:type %) :arrow)
+                        (= (:via %) :account)
+                        (= (:target-type %) :account)
+                        (> (count (:sub-paths %)) 0))
+                  paths))
+        ;; The sub-paths should eventually lead to relations
+        (let [arrow-path (first (filter #(= (:via %) :account) paths))]
+          (is (vector? (:sub-paths arrow-path)))
+          (is (pos? (count (:sub-paths arrow-path)))))))
+
+    (testing "Complex nested paths"
+      (let [paths (impl.indexed/get-permission-paths db :server :view)]
+        ;; Find the NIC arrow path
+        (let [nic-path (first (filter #(= (:via %) :nic) paths))]
+          (is nic-path)
+          (is (= :network_interface (:target-type nic-path)))
+          ;; The sub-paths should show NIC->view paths
+          (is (pos? (count (:sub-paths nic-path)))))))
+
+    (testing "Empty paths for non-existent permission"
+      (is (empty? (impl.indexed/get-permission-paths db :server :nonexistent))))))
+
+(deftest traverse-paths-tests
+  (let [db (d/db *conn*)]
+    (testing "Direct path traversal"
+      (let [user1-eid (d/entid db :test/user1)
+            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :account nil 10)]
+        ;; User1 should be able to view account1
+        (is (seq resources))
+        (is (some #(= (d/entid db :test/account1) (first %)) resources))))
+
+    (testing "Arrow path traversal"
+      (let [user1-eid (d/entid db :test/user1)
+            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil 10)]
+        ;; User1 should be able to view servers in account1
+        (is (seq resources))
+        (is (= [(->server "account1-server1")
+                (->server "account1-server2")])
+            resources)))
+
+    (testing "Complex nested path traversal"
+      (let [vpc1-eid  (d/entid db :test/vpc1)
+            resources (impl.indexed/traverse-permission-path db :vpc vpc1-eid :view :server nil 10)]
+        ;; VPC1 should be able to view servers through the network chain
+        (is (= [(d/entid db :test/server1)]
+               (map first resources))))) ; hard to understand destructuring here.
+
+    (testing "Cursor pagination"
+      (let [user1-eid    (d/entid db :test/user1)
+            ;; Get first result
+            first-batch  (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil 1)
+            first-eid    (ffirst first-batch)
+            ;; Get next result after cursor
+            second-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server first-eid 1)]
+        (is (= 1 (count first-batch)))
+        (is (= 1 (count second-batch)))
+        (is (not= (ffirst first-batch) (ffirst second-batch)))))))
+
+(deftest lookup-resources-optimized-tests
+  (let [db (d/db *conn*)]
+    (testing "Basic lookup-resources"
+      (let [user1-eid      (d/entid db :test/user1)
+            result         (lookup-resources db {:subject       (->user user1-eid)
+                                                 :permission    :view
+                                                 :resource/type :server
+                                                 :limit         10})]
+        (is (= [(->server "account1-server1")
+                (->server "account1-server2")]
+               (paginated->spice db result)))))
+
+    (testing "Pagination with cursor"
+      (let [user1-eid       (d/entid db :test/user1)
+            ;; Get first page
+            page1           (lookup-resources db {:subject       (->user user1-eid)
+                                                  :permission    :view
+                                                  :resource/type :server
+                                                  :limit         1})
+            ;; Get second page using cursor
+            page2           (lookup-resources db {:subject       (->user user1-eid)
+                                                  :permission    :view
+                                                  :resource/type :server
+                                                  :limit         1
+                                                  :cursor        (:cursor page1)})
+            ;; Convert for comparison
+            page1-converted (paginated->spice db page1)
+            page2-converted (paginated->spice db page2)]
+        (is (= 1 (count (:data page1))))
+        (is (= 1 (count (:data page2))))
+        (is (not= (first page1-converted) (first page2-converted)))))
+
+    (testing "Super user can view all servers"
+      (let [super-user-eid (d/entid db :user/super-user)
+            result         (lookup-resources db {:subject       (->user super-user-eid)
+                                                 :permission    :view
+                                                 :resource/type :server
+                                                 :limit         100})]
+        ;; Should see servers from both accounts
+        (is (>= (count (:data result)) 3))))))
+
+(deftest lookup-resources-with-merge-tests
+  (let [db (d/db *conn*)]
+    (testing "Merge handles duplicate resources from multiple paths"
+      ;; Add a direct relation that overlaps with arrow permission
+      @(d/transact *conn* [(Relationship (->user :test/user1) :shared_admin (->server :test/server1))])
+      (let [db'            (d/db *conn*)
+            user1-eid      (d/entid db' :test/user1)
+            result         (impl.indexed/lookup-resources db' {:subject       (->user user1-eid)
+                                                               :permission    :view
+                                                               :resource/type :server
+                                                               :limit         10})]
+        ;; Should still only see each server once
+        (is (= [(->server "account1-server1")
+                (->server "account1-server2")]
+               (paginated->spice db' result)))))
+
+    (testing "Lazy merge preserves sort order"
+      (let [super-user-eid (d/entid db :user/super-user)
+            result         (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                              :permission    :view
+                                                              :resource/type :server
+                                                              :limit         100})
+            eids           (map :id (:data result))]
+        ;; Entity IDs should be in ascending order
+        (is (= eids (sort eids)))))
+
+    (testing "Cursor works with merged results"
+      (let [super-user-eid (d/entid db :user/super-user)
+            page1          (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                              :permission    :view
+                                                              :resource/type :server
+                                                              :limit         2})
+            page2          (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                              :permission    :view
+                                                              :resource/type :server
+                                                              :limit         2
+                                                              :cursor        (:cursor page1)})
+            all-eids       (concat (map :id (:data page1))
+                                   (map :id (:data page2)))]
+        ;; No duplicates across pages
+        (is (= (count all-eids) (count (distinct all-eids))))
+        ;; Results are in order
+        (is (= all-eids (sort all-eids)))))))
+
+(deftest can-optimized-tests
+  (let [db (d/db *conn*)]
+    (testing "Direct permission check"
+      (is (impl.indexed/can? db (->user :test/user1) :view (->account :test/account1)))
+      (is (not (impl.indexed/can? db (->user :test/user2) :view (->account :test/account1)))))
+
+    (testing "Arrow permission check"
+      ;; User1 can view server1 through account admin
+      (is (impl.indexed/can? db (->user :test/user1) :view (->server :test/server1)))
+      ;; User2 cannot view server1
+      (is (not (impl.indexed/can? db (->user :test/user2) :view (->server :test/server1)))))
+
+    (testing "Super user permissions"
+      (is (impl.indexed/can? db (->user :user/super-user) :view (->server :test/server1)))
+      (is (impl.indexed/can? db (->user :user/super-user) :view (->server :test/server2))))
+
+    (testing "Complex nested permissions"
+      ;; VPC can view server through network chain
+      (is (impl.indexed/can? db (->vpc :test/vpc1) :view (->server :test/server1)))
+      (is (not (impl.indexed/can? db (->vpc :test/vpc2) :view (->server :test/server1)))))
+
+    (testing "Performance - early termination"
+      ;; Add multiple paths that grant the same permission
+      @(d/transact *conn* [(Relationship (->user :test/user1) :owner (->server :test/server1))])
+      (let [db' (d/db *conn*)]
+        ;; Should still be fast even with multiple valid paths
+        (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))

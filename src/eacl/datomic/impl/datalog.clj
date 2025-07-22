@@ -1,9 +1,9 @@
-(ns eacl.datomic.impl-optimized
+(ns eacl.datomic.impl.datalog
   "Optimized EACL implementation with performance improvements"
   (:require
     [datomic.api :as d]
     [eacl.core :as proto :refer [spice-object]]
-    [eacl.datomic.impl-base :as base]
+    ;[eacl.datomic.impl.base :as base]
     [eacl.datomic.rules.optimized :as rules]))
 
 (defn lookup-subjects
@@ -18,7 +18,9 @@
     offset            :offset}]
   {:pre [(:type resource) (:id resource)]}
   (let [{resource-type :type
-         resource-eid  :id} resource]
+         resource-id  :id} resource
+
+        resource-eid (d/entid db resource-id)]
     ; Q: can we support dynamic object type resolution?
     (assert resource-eid (str "lookup-subjects (object->entid " (pr-str resource) ") must resolve to a valid Datomic entid."))
     ; todo configurable type resolution.

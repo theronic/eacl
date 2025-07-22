@@ -3,7 +3,7 @@
   (:require [eacl.core :as eacl :refer [IAuthorization spice-object
                                         ->Relationship map->Relationship
                                         ->RelationshipUpdate]]
-            [eacl.datomic.impl-base :as base]               ; only for Cursor.
+            [eacl.datomic.impl.base :as base]               ; only for Cursor.
             [eacl.datomic.impl :as impl]
     ;[eacl.datomic.impl-fixed :as impl-fixed]        ; impl-fixed is an experimental implementation. avoid until correct.
             [eacl.spicedb.consistency :as consistency]

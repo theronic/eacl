@@ -4,8 +4,9 @@
     [clojure.tools.logging :as log]
     [datomic.api :as d]
     [eacl.core :as eacl :refer [spice-object]]
-    [eacl.datomic.impl-base :as base]
-    [eacl.datomic.impl-optimized :as impl-optimized]))
+    [eacl.datomic.impl.base :as base]
+    [eacl.datomic.impl.datalog :as impl.datalog]
+    [eacl.datomic.impl.indexed :as impl.indexed]))
 
 ; note that eacl.datomic.impl-fixed is an experimental impl. and should be avoided until correct.
 
@@ -14,10 +15,10 @@
 (def Relationship base/Relationship)
 
 ;; Use indexed implementation for better performance with large offsets
-(def can? impl-optimized/can?)
-(def lookup-subjects impl-optimized/lookup-subjects)
-(def lookup-resources impl-optimized/lookup-resources)
-(def count-resources impl-optimized/count-resources)
+(def can? impl.datalog/can?)
+(def lookup-subjects impl.datalog/lookup-subjects)
+(def lookup-resources impl.indexed/lookup-resources)
+(def count-resources impl.datalog/count-resources)
 
 (defn can!
   "The thrown exception should probably be configurable."
@@ -111,21 +112,6 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
         args (relationship-filters->args filters)]
     (->> (apply d/q qry db args)
          (map rel-map->Relationship))))
-
-;(defn find-one-relationship-id-slow
-;  [db {:as relationship :keys [subject relation resource]}]
-;  ;(log/debug 'find-one-relationship relationship)
-;  (let [filters {:resource/type     (:type resource)
-;                 :resource/id       (:id resource)
-;                 :resource/relation relation
-;                 :subject/type      (:type subject)
-;                 :subject/id        (:id subject)}
-;        ;_       (log/debug 'filters filters)
-;        qry     (-> (build-relationship-query filters)
-;                    (assoc :find '[?relationship .])
-;                    (dissoc :keys))
-;        args    (relationship-filters->args filters)]
-;    (apply d/q qry db args)))
 
 (defn find-one-relationship-id
   [db {:as relationship :keys [subject relation resource]}]

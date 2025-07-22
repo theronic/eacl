@@ -1,4 +1,4 @@
-(ns eacl.datomic.impl-base
+(ns eacl.datomic.impl.base
   "EACL: Enterprise Access Control. Spice-compatible authorization system in Datomic.")
 
 (defrecord Cursor [path-index resource])
@@ -10,13 +10,13 @@
    {:pre [(keyword? resource-type) (keyword? relation-name) (keyword? subject-type)]}
    {:eacl.relation/resource-type resource-type
     :eacl.relation/relation-name relation-name
-    :eacl.relation/subject-type subject-type})
+    :eacl.relation/subject-type  subject-type})
   ([resource-type+relation-name subject-type]
    {:pre [(keyword? resource-type+relation-name) (namespace resource-type+relation-name) (keyword? subject-type)]}
    (Relation
-    (keyword (namespace resource-type+relation-name))
-    (keyword (name resource-type+relation-name))
-    subject-type)))
+     (keyword (namespace resource-type+relation-name))
+     (keyword (name resource-type+relation-name))
+     subject-type)))
 
 (defn Permission
   "Defines how a permission is granted using the unified permission schema.
@@ -34,31 +34,31 @@
   [resource-type permission-name spec]
   {:pre [(keyword? resource-type)
          (keyword? permission-name)
-         (map? spec)]} ;(or (map? spec) (keyword? spec))
+         (map? spec)]}                                      ;(or (map? spec) (keyword? spec))
   (cond
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     (and (:arrow spec) (:permission spec))
-    {:eacl.permission/resource-type resource-type
-     :eacl.permission/permission-name permission-name
+    {:eacl.permission/resource-type        resource-type
+     :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name (:arrow spec)
-     :eacl.permission/target-type :permission
-     :eacl.permission/target-name (:permission spec)}
+     :eacl.permission/target-type          :permission
+     :eacl.permission/target-name          (:permission spec)}
 
     ;; Arrow permission: {:arrow source-relation :relation target-relation}
     (and (:arrow spec) (:relation spec))
-    {:eacl.permission/resource-type resource-type
-     :eacl.permission/permission-name permission-name
+    {:eacl.permission/resource-type        resource-type
+     :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name (:arrow spec)
-     :eacl.permission/target-type :relation
-     :eacl.permission/target-name (:relation spec)}
+     :eacl.permission/target-type          :relation
+     :eacl.permission/target-name          (:relation spec)}
 
     ;; Direct permission: {:relation relation-name}
     (:relation spec)
-    {:eacl.permission/resource-type resource-type
-     :eacl.permission/permission-name permission-name
-     :eacl.permission/source-relation-name :self ; Use :self for direct permissions to avoid nil in index
-     :eacl.permission/target-type :relation
-     :eacl.permission/target-name (:relation spec)}
+    {:eacl.permission/resource-type        resource-type
+     :eacl.permission/permission-name      permission-name
+     :eacl.permission/source-relation-name :self            ; Use :self for direct permissions to avoid nil in index
+     :eacl.permission/target-type          :relation
+     :eacl.permission/target-name          (:relation spec)}
 
     :else
     (throw (ex-info "Invalid Permission spec. Expected {:relation name} or {:arrow source :permission target} or {:arrow source :relation target}"
@@ -74,7 +74,7 @@
          (:id resource)
          (:type resource)]}
   {:eacl.relationship/resource-type (:type resource)
-   :eacl.relationship/resource (:id resource)
+   :eacl.relationship/resource      (:id resource)
    :eacl.relationship/relation-name relation-name
-   :eacl.relationship/subject-type (:type subject)
-   :eacl.relationship/subject (:id subject)})
+   :eacl.relationship/subject-type  (:type subject)
+   :eacl.relationship/subject       (:id subject)})
