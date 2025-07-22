@@ -155,74 +155,74 @@
   [db subject-type subject-eid permission-name resource-type cursor-eid limit]
   (let [paths          (get-permission-paths db resource-type permission-name)
         ;; For each path, determine traversal strategy
-        path-results   (map (fn [path]
-                              (case (:type path)
-                                :relation
-                                ;; Direct relation - forward traversal
-                                (when (= subject-type (:subject-type path))
-                                  (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                        start-tuple [subject-type subject-eid (:name path) resource-type (or cursor-eid 0)]
-                                        end-tuple   [subject-type subject-eid (:name path) resource-type Long/MAX_VALUE]]
-                                    (->> (d/index-range db tuple-attr start-tuple end-tuple)
-                                         (map (fn [datom]
-                                                (let [resource-eid (extract-resource-id-from-rel-tuple-datom datom)]
-                                                  (when (> resource-eid (or cursor-eid 0))
-                                                    [resource-eid path]))))
-                                         (filter some?))))
+        path-results   (->> paths
+                            (map (fn [path]
+                                   (case (:type path)
+                                     :relation
+                                     ;; Direct relation - forward traversal
+                                     (when (= subject-type (:subject-type path))
+                                       (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                                             start-tuple [subject-type subject-eid (:name path) resource-type (or cursor-eid 0)]
+                                             end-tuple   [subject-type subject-eid (:name path) resource-type Long/MAX_VALUE]]
+                                         (->> (d/index-range db tuple-attr start-tuple end-tuple)
+                                              (map (fn [datom]
+                                                     (let [resource-eid (extract-resource-id-from-rel-tuple-datom datom)]
+                                                       (when (> resource-eid (or cursor-eid 0))
+                                                         [resource-eid path]))))
+                                              (filter some?))))
 
-                                :arrow
-                                ;; Arrow permission - reverse traversal
-                                (let [via-relation      (:via path)
-                                      intermediate-type (:target-type path)]
-                                  (if (:target-relation path)
-                                    ;; Arrow to relation: find intermediates with that relation to subject
-                                    (let [target-relation         (:target-relation path)
-                                          intermediate-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                          intermediate-start      [subject-type subject-eid target-relation intermediate-type 0]
-                                          intermediate-end        [subject-type subject-eid target-relation intermediate-type Long/MAX_VALUE]
-                                          intermediate-eids       (->> (d/index-range db intermediate-tuple-attr
-                                                                                      intermediate-start intermediate-end)
-                                                                       (map extract-resource-id-from-rel-tuple-datom))]
-                                      ;; Now find resources connected to these intermediates using query
-                                      (->> intermediate-eids
-                                           (mapcat (fn [intermediate-eid]
-                                                     (let [resources (d/q '[:find [?resource ...]
-                                                                            :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
-                                                                            :where
-                                                                            [?rel :eacl.relationship/subject ?intermediate-eid]
-                                                                            [?rel :eacl.relationship/relation-name ?via-rel]
-                                                                            [?rel :eacl.relationship/resource ?resource]
-                                                                            [?rel :eacl.relationship/resource-type ?resource-type]
-                                                                            [(> ?resource ?cursor)]]
-                                                                          db intermediate-eid via-relation resource-type (or cursor-eid 0))]
-                                                       (map #(vector % path) resources))))))
-                                    ;; Arrow to permission: recursively find intermediates with permission
-                                    (let [target-permission    (:target-permission path)
-                                          ;; First get all intermediates the subject has permission on
-                                          intermediate-results (traverse-permission-path db subject-type subject-eid
-                                                                                         target-permission
-                                                                                         intermediate-type nil Integer/MAX_VALUE)
-                                          intermediate-eids    (map first intermediate-results)]
-                                      ;; Then find resources connected to these intermediates
-                                      (->> intermediate-eids
-                                           (mapcat (fn [intermediate-eid]
-                                                     (let [resources (d/q '[:find [?resource ...]
-                                                                            :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
-                                                                            :where
-                                                                            [?rel :eacl.relationship/subject ?intermediate-eid]
-                                                                            [?rel :eacl.relationship/relation-name ?via-rel]
-                                                                            [?rel :eacl.relationship/resource ?resource]
-                                                                            [?rel :eacl.relationship/resource-type ?resource-type]
-                                                                            [(> ?resource ?cursor)]]
-                                                                          db intermediate-eid via-relation resource-type (or cursor-eid 0))]
-                                                       (map #(vector % path) resources))))))))))
-                            paths)
+                                     :arrow
+                                     ;; Arrow permission - reverse traversal
+                                     (let [via-relation      (:via path)
+                                           intermediate-type (:target-type path)]
+                                       (if (:target-relation path)
+                                         ;; Arrow to relation: find intermediates with that relation to subject
+                                         (let [target-relation         (:target-relation path)
+                                               intermediate-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                                               intermediate-start      [subject-type subject-eid target-relation intermediate-type 0]
+                                               intermediate-end        [subject-type subject-eid target-relation intermediate-type Long/MAX_VALUE]
+                                               intermediate-eids       (->> (d/index-range db intermediate-tuple-attr
+                                                                                           intermediate-start intermediate-end)
+                                                                            (map extract-resource-id-from-rel-tuple-datom))]
+                                           ;; Now find resources connected to these intermediates using query
+                                           (->> intermediate-eids
+                                                (mapcat (fn [intermediate-eid]
+                                                          (let [resources (d/q '[:find [?resource ...]
+                                                                                 :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
+                                                                                 :where
+                                                                                 [?rel :eacl.relationship/subject ?intermediate-eid]
+                                                                                 [?rel :eacl.relationship/relation-name ?via-rel]
+                                                                                 [?rel :eacl.relationship/resource ?resource]
+                                                                                 [?rel :eacl.relationship/resource-type ?resource-type]
+                                                                                 [(> ?resource ?cursor)]]
+                                                                               db intermediate-eid via-relation resource-type (or cursor-eid 0))]
+                                                            (map (fn [resource-eid] [resource-eid path]) resources))))))
+                                         ;; Arrow to permission: recursively find intermediates with permission
+                                         (let [target-permission    (:target-permission path)
+                                               ;; First get all intermediates the subject has permission on
+                                               intermediate-results (traverse-permission-path db subject-type subject-eid
+                                                                                              target-permission
+                                                                                              intermediate-type nil Integer/MAX_VALUE)
+                                               intermediate-eids    (map first intermediate-results)]
+                                           ;; Then find resources connected to these intermediates
+                                           (->> intermediate-eids
+                                                (mapcat (fn [intermediate-eid]
+                                                          (let [resources (d/q '[:find [?resource ...]
+                                                                                 :in $ ?intermediate-eid ?via-rel ?resource-type ?cursor
+                                                                                 :where
+                                                                                 [?rel :eacl.relationship/subject ?intermediate-eid]
+                                                                                 [?rel :eacl.relationship/relation-name ?via-rel]
+                                                                                 [?rel :eacl.relationship/resource ?resource]
+                                                                                 [?rel :eacl.relationship/resource-type ?resource-type]
+                                                                                 [(> ?resource ?cursor)]]
+                                                                               db intermediate-eid via-relation resource-type (or cursor-eid 0))]
+                                                            (map (fn [resource-eid] [resource-eid path]) resources))))))))))))
         ;; Merge all path results
-        all-results    (apply concat path-results)
-        ;; Sort by resource-eid and dedupe
+        all-results    (apply concat path-results) ; TODO: can't concat here! It throws away index order, requiring re-sort. We need to lazily merge results from all paths using lazy-merge-dedupe-sort.
+        ;; Sort by resource-eid and dedupe. sort and dedupe materializes whole index.
         sorted-deduped (->> all-results
-                            (sort-by first)
-                            (dedupe))]
+                            (sort-by first) ; TODO: can't do this! ruins perf.
+                            (dedupe))] ; TODO: don't do this! we need do lazily deduplicate via lazy-merge-dedupe-sort.
     (take limit sorted-deduped)))
 
 (defn traverse-single-permission-path
@@ -233,13 +233,14 @@
     ;; Direct relation - forward traversal
     (when (= subject-type (:subject-type path))
       (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-            start-tuple [subject-type subject-eid (:name path) resource-type (or cursor-eid 0)]
+            start-tuple [subject-type subject-eid (:name path) resource-type cursor-eid] ; cursor-eid can be nil.
             end-tuple   [subject-type subject-eid (:name path) resource-type Long/MAX_VALUE]]
         (->> (d/index-range db tuple-attr start-tuple end-tuple)
              (map (fn [datom]
                     (let [resource-eid (extract-resource-id-from-rel-tuple-datom datom)]
-                      (when (> resource-eid (or cursor-eid 0))
+                      (when (> resource-eid (or cursor-eid 0)) ; this should always be the case. not sure we need this.
                         resource-eid))))
+             ; can we avoid this filter some? with lazy yield above?
              (filter some?))))
 
     :arrow
