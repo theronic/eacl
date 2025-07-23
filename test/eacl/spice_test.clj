@@ -27,7 +27,8 @@
 
       (testing "We treat subject & resource types as keywords in Clojure-land."
         (is (= :user (:type my-user)))
-        (is (= "ben" (:id my-user)))))
+        (testing "in these fixtures IDs are strings, but you can tell EACL how resolve to/from internal ID in make-client opts"
+          (is (= "ben" (:id my-user))))))
 
     (testing "To define a SubjectReference with a :relation (subject_relation), pass another arg to spice-object"
       (let [team-member (->team "my-team" :member)]
@@ -141,7 +142,7 @@
       (is (false? (eacl/can? *client super-user :reboot my-server fully-consistent))))
 
     (testing "transact the entities with :eacl/id we are about to use so [:eacl/id 'ben'] resolves"
-      ; TODO: this is outdated. rather use the base fixtures.
+      ; TODO: this is outdated. rather test against the newer base-fixtures.
       (is @(d/transact conn (for [ent [ca-platform
                                        my-account acme-account
                                        super-user my-user joe's-user

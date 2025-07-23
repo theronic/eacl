@@ -273,7 +273,8 @@
               intermediate-start      [subject-type subject-eid target-relation intermediate-type cursor-eid]
               intermediate-end        [subject-type subject-eid target-relation intermediate-type Long/MAX_VALUE]
               intermediate-eids       (->> (d/index-range db intermediate-tuple-attr intermediate-start intermediate-end)
-                                           (map extract-resource-id-from-rel-tuple-datom))]
+                                           (map extract-resource-id-from-rel-tuple-datom)
+                                           (filter some?))]
           ;; Step 2: Find resources that those intermediates have via-relation to
           (let [resource-seqs
                 (map (fn [intermediate-eid]
@@ -283,6 +284,7 @@
                              resource-end        [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                          (->> (d/index-range db resource-tuple-attr resource-start resource-end)
                               (map extract-resource-id-from-rel-tuple-datom)
+                              (filter some?)
                               (filter #(if cursor-eid (> % cursor-eid) true)))))
                      intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
@@ -305,7 +307,8 @@
                              resource-end        [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                          (->> (d/index-range db resource-tuple-attr resource-start resource-end)
                               (map extract-resource-id-from-rel-tuple-datom)
-                              (filter #(> % (or cursor-eid 0))))))
+                              (filter some?) ; not sure how this can happen given we're mapping over a seq.
+                              (filter (fn [resource-eid] (> resource-eid (or cursor-eid 0)))))))
                      intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
             (if (seq resource-seqs)

@@ -21,22 +21,47 @@
    ; Platform for super_admin rights
    (Relation :platform :super_admin :user) ; definition platform { relation super_admin: user }
 
-   ; VPC Relations:
-   (Relation :vpc :shared_admin :user) ; definition vpc { relation shared_admin: user }
-   (Relation :vpc :account :account) ; definition vpc { relation account: account }
-
-   ;(Permission :vpc :admin {:relation :owner}) ; direct
-
    ; model: server -> nic -> lease -> network -> vpc.
    (Relation :server :nic :network_interface) ; a server can have many NICs. definition server { relation nic: network_interface }
    (Relation :network_interface :lease :lease) ; a NIC can have a lease (to an IP). definition network { relation lease: lease }
    (Relation :lease :network :network) ; a lease has a network. definition lease { relation network: network }
    (Relation :network :vpc :vpc) ; a network has a vpc. definition network { relation vpc: vpc }
 
+   ; VPC Relations:
+   (Relation :vpc :account :account) ; definition vpc { relation account: account }
+   (Relation :vpc :shared_admin :user) ; vpc { relation shared_admin: user }
+   (Relation :vpc :shared_member :user) ; vpc { relation shared_member: user }
+
    ; VPC Permissions:
-   ; definition vpc { permission admin = account->admin + shared_admin }
-   (Permission :vpc :admin {:relation :shared_admin})
+
+   ; vpc { permission admin = account->admin + shared_admin }
    (Permission :vpc :admin {:arrow :account :permission :admin})
+   (Permission :vpc :admin {:relation :shared_admin})
+
+   ; vpc { permission view = account->admin + shared_admin + shared_member }
+   (Permission :vpc :view {:arrow :account :permission :admin})
+   (Permission :vpc :view {:relation :shared_admin})
+   (Permission :vpc :view {:relation :shared_member})
+
+   ; vpc { permission rename = account->admin + shared_admin }
+   (Permission :vpc :rename {:arrow :account :permission :admin})
+   (Permission :vpc :rename {:relation :shared_admin})
+
+   ; vpc { permission share = account->admin + shared_admin }
+   (Permission :vpc :share {:arrow :account :permission :admin})
+   (Permission :vpc :share {:relation :shared_admin})
+
+   ; vpc { permission delete = account->admin + shared_admin }
+   (Permission :vpc :delete {:arrow :account :permission :admin})
+   (Permission :vpc :delete {:relation :shared_admin})
+
+   ; vpc { permission create_server = account->admin + shared_admin }
+   (Permission :vpc :create_server {:arrow :account :permission :admin})
+   (Permission :vpc :create_server {:relation :shared_admin})
+
+   ; vpc { permission restore_from_backup = account->admin + shared_admin }
+   (Permission :vpc :restore_from_backup {:arrow :account :permission :admin})
+   (Permission :vpc :restore_from_backup {:relation :shared_admin})
 
    (Permission :network_interface :view {:relation :lease}) ; direct
    (Permission :network_interface :view {:arrow :lease :permission :view}) ; arrow
@@ -69,9 +94,10 @@
    (Relation :team :account :account)
 
    ;; Servers:
+   (Relation :server :owner :user)
    (Relation :server :account :account)
    (Relation :server :shared_admin :user)
-   (Relation :server :owner :user)
+   (Relation :server :vpc :vpc)
 
    ; definition server { permission view = owner + account + account->admin + nic->view + shared_admin }
    (Permission :server :view {:relation :owner})
@@ -96,6 +122,12 @@
    (Permission :server :admin {:relation :shared_admin})
 
    (Permission :server :view_server_via_arrow_relation {:arrow :account :permission :view_via_arrow_relation}) ; special test case.
+
+   ; this is not supported yet, use :relation in meantime:
+   ;(Permission :server :share {:permission :admin})
+   (Permission :server :share {:arrow :account :permission :admin})
+   (Permission :server :share {:arrow :vpc :permission :admin})
+   (Permission :server :share {:relation :shared_admin})
 
    ; definition server { permission delete = owner + shared_admin }
    (Permission :server :delete {:relation :owner})
@@ -153,6 +185,14 @@
     :db/ident :test/vpc2
     :eacl/id "vpc-2"}
 
+   {:db/id "account1-vpc2"
+    :db/ident :test/account1-vpc2
+    :eacl/id "account1-vpc2"}
+
+   {:db/id "account1-vpc3"
+    :db/ident :test/account1-vpc3
+    :eacl/id "account1-vpc3"}
+
    ;; Networks, NICs & Leases
 
    {:db/id "network-1"
@@ -189,6 +229,9 @@
    (Relationship (->platform "platform") :platform (->account "account-2"))
 
    (Relationship (->account "account-1") :account (->vpc "vpc-1"))
+   (Relationship (->account "account-1") :account (->vpc "account1-vpc2"))
+   (Relationship (->account "account-1") :account (->vpc "account1-vpc3"))
+
    (Relationship (->account "account-2") :account (->vpc "vpc-2"))
 
    ; server -> nic -> lease -> network -> vpc

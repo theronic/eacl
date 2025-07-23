@@ -131,6 +131,10 @@
       (is (not (can? db (->user :test/user2) :view (->server :test/server1))))
       (is (not (can? db (->user :test/user2) :reboot (->server :test/server1)))))
 
+    (testing "user1 can share a server via a direct :permission on admin"
+      (is (can? db (->user :test/user1) :share (->server :test/server1)))
+      (is (not (can? db (->user :test/user2) :share (->server :test/server1)))))
+
     (testing ":test/user1 is admin of :test/vpc1 because they own account"
       (is (can? db (->user :test/user1) :admin (->vpc :test/vpc1))))
 
@@ -403,6 +407,14 @@
 (deftest lookup-resources-tests
   (let [db             (d/db *conn*)
         super-user-eid (d/entid db :user/super-user)]
+
+    (testing "lookup of :view against :vpc works"
+      (is (= #{(->vpc "vpc-1")
+               (->vpc "account1-vpc2")
+               (->vpc "account1-vpc3")} (->> (lookup-resources db {:subject       (->user :test/user1)
+                                                                   :permission    :view
+                                                                   :resource/type :vpc})
+                                             (paginated->spice-set db)))))
 
     (testing "pagination: limit & offset are handled correctly for arrow permissions"
       (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
