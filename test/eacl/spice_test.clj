@@ -274,11 +274,11 @@
 
     (testing "lookup-resources pagination tests"
 
-      (prn 'debug 'all-results (eacl/lookup-resources *client {:limit         100
-                                                               :cursor        nil ; no cursor means page 1.
-                                                               :resource/type :server
-                                                               :permission    :view
-                                                               :subject       (->user "super-user")}))
+      ;(prn 'debug 'all-results (eacl/lookup-resources *client {:limit         100
+      ;                                                         :cursor        nil ; no cursor means page 1.
+      ;                                                         :resource/type :server
+      ;                                                         :permission    :view
+      ;                                                         :subject       (->user "super-user")}))
 
       (let [{:as          page1
              page1-data   :data
@@ -287,8 +287,8 @@
                                                                         :resource/type :server
                                                                         :permission    :view
                                                                         :subject       (->user "super-user")}))
-            _ (prn 'page1 page1)
-            _ (prn 'page1 'cursor (:cursor page1))
+            ;_ (prn 'page1 page1)
+            ;_ (prn 'page1 'cursor (:cursor page1))
             {:as          page2
              page2-data   :data
              page2-cursor :cursor} (->> (eacl/lookup-resources *client {:limit         2
@@ -297,7 +297,7 @@
                                                                         :permission    :view
                                                                         :subject       (->user "super-user")}))]
 
-        _ (prn 'page2 'cursor (:cursor page2))
+        ;_ (prn 'page2 'cursor (:cursor page2))
 
         ; these are currently failing. suspect order is fixed now, which is why showin gup.
         ; tbh not sure how they were ever passing given the base-fixtures.
