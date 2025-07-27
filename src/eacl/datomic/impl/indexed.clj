@@ -262,6 +262,76 @@
         limited-results (take limit path-results)]
     limited-results))
 
+(defn can?
+  "Optimized can? implementation using direct index traversal.
+  Returns true as soon as any path grants permission."
+  [db subject permission resource]
+  (let [{subject-type :type
+         subject-id   :id} subject
+        {resource-type :type
+         resource-id   :id} resource
+
+        ;; Resolve to entity IDs if needed
+        subject-eid  (d/entid db subject-id)
+        resource-eid (d/entid db resource-id)
+
+        ;; Get permission paths
+        paths        (get-permission-paths db resource-type permission)]
+
+    ;; Check each path - return true on first match
+    (boolean
+      (->> paths
+           (some (fn [path]
+                   (case (:type path)
+                     :relation
+                     ;; Direct relation check
+                     (when (= subject-type (:subject-type path))
+                       (let [tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                             tuple-val  [subject-type subject-eid (:name path) resource-type resource-eid]]
+                         (seq (d/datoms db :avet tuple-attr tuple-val))))
+
+                     :self-permission
+                     ;; Self-permission: recursively check if the resource has the target permission
+                     (let [target-permission (:target-permission path)]
+                       (can? db subject target-permission resource))
+
+                     :arrow
+                     ;; Arrow permission check
+                     (let [via-relation      (:via path)
+                           intermediate-type (:target-type path)]
+                       (if (:target-relation path)
+                         ;; Arrow to relation: check if there's any intermediate that connects via the arrow
+                         (let [target-relation (:target-relation path)]
+                           ;; Find intermediates connected to this resource via via-relation (reverse lookup)
+                           ;; Use reverse index to find intermediates
+                           (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
+                                 reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
+                                 intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
+                                                         (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
+                             ;; Check if subject has the target relation to any intermediate
+                             (some (fn [intermediate-eid]
+                                     (let [check-tuple [subject-type subject-eid target-relation
+                                                        intermediate-type intermediate-eid]]
+                                       (seq (d/datoms db :avet
+                                                      :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+                                                      check-tuple))))
+                                   intermediates)))
+                         ;; Arrow to permission: recursively check permission
+                         (let [target-permission (:target-permission path)]
+                           ;; Find intermediates connected to this resource via via-relation (reverse lookup)
+                           ;; Use reverse index to find intermediates
+                           (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
+                                 reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
+                                 intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
+                                                         (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
+                             ;; Recursively check permission on any intermediate
+                             (some (fn [intermediate-eid]
+                                     (can? db subject target-permission
+                                           (spice-object intermediate-type intermediate-eid)))
+                                   intermediates))))))))))))
+
 (defn traverse-permission-path-via-subject
   "Subject must be known. Returns lazy seq of resource eids."
   [db subject-type subject-eid path resource-type cursor-eid]
@@ -388,73 +458,3 @@
 (defn count-resources
   [db query]
   (count (lazy-merged-lookup-resources db query)))
-
-(defn can?
-  "Optimized can? implementation using direct index traversal.
-  Returns true as soon as any path grants permission."
-  [db subject permission resource]
-  (let [{subject-type :type
-         subject-id   :id} subject
-        {resource-type :type
-         resource-id   :id} resource
-
-        ;; Resolve to entity IDs if needed
-        subject-eid  (d/entid db subject-id)
-        resource-eid (d/entid db resource-id)
-
-        ;; Get permission paths
-        paths        (get-permission-paths db resource-type permission)]
-
-    ;; Check each path - return true on first match
-    (boolean
-      (->> paths
-           (some (fn [path]
-                   (case (:type path)
-                     :relation
-                     ;; Direct relation check
-                     (when (= subject-type (:subject-type path))
-                       (let [tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                             tuple-val  [subject-type subject-eid (:name path) resource-type resource-eid]]
-                         (seq (d/datoms db :avet tuple-attr tuple-val))))
-
-                     :self-permission
-                     ;; Self-permission: recursively check if the resource has the target permission
-                     (let [target-permission     (:target-permission path)]
-                       (can? db subject target-permission resource))
-
-                     :arrow
-                     ;; Arrow permission check
-                     (let [via-relation      (:via path)
-                           intermediate-type (:target-type path)]
-                       (if (:target-relation path)
-                         ;; Arrow to relation: check if there's any intermediate that connects via the arrow
-                         (let [target-relation (:target-relation path)]
-                           ;; Find intermediates connected to this resource via via-relation (reverse lookup)
-                           ;; Use reverse index to find intermediates
-                           (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
-                                 reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
-                                 intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
-                                                         (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
-                             ;; Check if subject has the target relation to any intermediate
-                             (some (fn [intermediate-eid]
-                                     (let [check-tuple [subject-type subject-eid target-relation
-                                                        intermediate-type intermediate-eid]]
-                                       (seq (d/datoms db :avet
-                                                      :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                                      check-tuple))))
-                                   intermediates)))
-                         ;; Arrow to permission: recursively check permission
-                         (let [target-permission (:target-permission path)]
-                           ;; Find intermediates connected to this resource via via-relation (reverse lookup)
-                           ;; Use reverse index to find intermediates
-                           (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
-                                 reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
-                                 intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
-                                                         (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
-                             ;; Recursively check permission on any intermediate
-                             (some (fn [intermediate-eid]
-                                     (can? db subject target-permission
-                                           (spice-object intermediate-type intermediate-eid)))
-                                   intermediates))))))))))))
