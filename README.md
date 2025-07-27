@@ -125,18 +125,20 @@ Add the EACL dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install the latest EACL Datomic Schema:
-@(d/transact conn schema/v4-schema)
+@(d/transact conn schema/v6-schema)
 
 ; Transact your permission schema (details below).
 @(d/transact conn
   [; Account:
-    (Relation :account :owner :user)                     ; relation owner: user
-    (Permission :account :owner :admin)
-    (Permission :account :owner :update_billing_details)
+    (Relation :account :owner :user)                     ; account { relation owner: user }
+    
+    (Permission :account :admin {:relation :owner})
+    (Permission :account :update {:relation :owner})
     
     ; Product:
     (Relation :product :account :account)                ; relation account: account
-    (Permission :product :account :admin :update_sku)])    ; permission update_sku = account->admin
+    
+    (Permission :product :edit {:arrow :account :permisison :admin})])    ; permission update_sku = account->admin
 
 ; Transact some Datomic entities with a unique ID, e.g. `:eacl/id`:
 @(d/transact conn
@@ -165,14 +167,14 @@ Add the EACL dependency to your `deps.edn` file:
    (eacl/->Relationship (->account "account-1") :account (->product "product-1"))])
 
 ; Run some Permission Checks with `can?`:
-(eacl/can? acl (->user "user-1") :update_billing_details (->account "account-1"))
+(eacl/can? acl (->user "user-1") :update (->account "account-1"))
 ; => true
-(eacl/can? acl (->user "user-2") :update_billing_details (->account "account-1"))
+(eacl/can? acl (->user "user-2") :update (->account "account-1"))
 ; => false
 
-(eacl/can? acl (->user "user-1") :update_sku (->product "product-1"))
+(eacl/can? acl (->user "user-1") :edit (->product "product-1"))
 ; => true
-(eacl/can? acl (->user "user-2") :update_sku (->product "product-1"))
+(eacl/can? acl (->user "user-2") :edit (->product "product-1"))
 ; => false
 
 ; You can enumerate resources via `lookup-resources`:
@@ -219,10 +221,20 @@ definition account {
 We define two resource types, `user` & `account`, where a `user` subject can be an `owner` of an `account` resource. 
 
 In EACL we use:
- - `(Relation resource-type relation-name subject-type)`, i.e.
- - `(Relation :account :owner :user)`
+```
+ (Relation resource-type relation-name subject-type)
+```
+e.g.
+```
+(Relation :account :owner :user)
+```
 
- This means that an `<account>` resource can be related to a `<user>` via an `:owner` Relationship.
+This means a `user` subject can have  an `:owner` relation to an `account`, via a Relationship:
+```
+(Relationship (->user 123) :owner (->account 456))
+```
+
+A Relationship is just a 3-tuple of `[subject relation resource]`.
 
 ### Modelling Direct Permissions
 
@@ -233,18 +245,18 @@ definition user {}
 
 definition account {
   relation owner: user
-  permission update_billing_details = owner
+  permission update = owner
 }
 ```
 
 In EACL, **Direct Permissions** use `(Permission resource-type relation-name permission-to-grant)`,
- - e.g. `(Permission :account :owner :update_billing_details)`
- - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update_billing_details` permission for that account.
+ - e.g. `(Permission :account :owner :update)`
+ - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update` permission for that account.
 
 However, at this point, all permissions checks will return false because there are no Relationships defined:
 
 ```clojure
-(eacl/can? acl (->user "alice") :update_billing_details (->account "acme"))
+(eacl/can? acl (->user "alice") :update (->account "acme"))
 => false
 ```
 
@@ -261,14 +273,14 @@ We can create Relationships in EACL via `create-relationships!` or `write-relati
 
 ### Permission Checks 
 
-Now that we have a Relationship betweee a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account's billing details:
+Now that we have a Relationship betweee a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account:
 ```clojure
-(eacl/can? acl (->user "alice") :update_billing_details (->account "acme"))
+(eacl/can? acl (->user "alice") :update (->account "acme"))
 => true
 ```
 However, Bob cannot, because he is not an `:owner` of the ACME account:
 ```clojure
-(eacl/can? acl (->user "bob") :update_billing_details (->account "acme"))
+(eacl/can? acl (->user "bob") :update (->account "acme"))
 => false
 ```
 
@@ -283,41 +295,56 @@ definition account {
   relation owner: user
   
   permission admin = owner
-  permission update_billing_details = owner
+  permission update = owner
 }
 
 definition product {
   relation account: account
-  permission update_sku = account->admin  ; (this is an arrow permission)
+  
+  permission edit = account->admin  ; (this is an arrow permission)
 }
 ```
 
-The arrow permission implies that any subject who has the `admin` permission on the related account for that product, will also have the `update_sku` permission for that product.
+The arrow permission implies that any subject who has the `admin` permission on the related account for that product, will also have the `edit` permission for that product.
 
 Given that,
  1. `(->user "alice")` is the `:owner` of `(->account "acme")`, and
  2. `(->account "acme")` is the `:account` for `(->product "SKU-123")`
-EACL can traverse the permission graph from user->account->product to calculate that Alice can `update_sku` for product `SKU-123`, but not for any other products.
+EACL can traverse the permission graph from user->account->product to calculate that Alice can `edit` product `SKU-123`, but not for any other products.
 
 Here is the equivalent EACL schema (these are just Datomic tx-data):
-```
-[; Account:
- (Relation :account :owner :user)                     ; relation owner: user
- (Permission :account :owner :admin)                  ; EACL requires this permission for arrow permission lower down.
- (Permission :account :owner :update_billing_details)
+```clojure
+(require '[eacl.datomic.impl :refer [Relation Permission]])
 
- ; Product:
- (Relation :product :account :account)                ; relation account: account
- (Permission :product :account :admin :update_sku)    ; permission update_sku = account->admin
+[; Account:
+ ; definition account {
+ ;   relation owner: user
+ ; 
+ ;   permission admin = owner
+ ;   permission update = owner
+ ; } 
+ (Relation :account :owner :user) ; account { relation owner: user }
+ 
+ (Permission :account :admin {:relation :owner}) ; account { permission admin = owner }
+ (Permission :account :update {:relation :owner}) ; account { permission update = owner }
+
+ ; Product with an arrow permission:
+ ; definition product {
+ ;   relation account: account
+ ; 
+ ;   permission edit = account->admin
+ ; }
+ (Relation :product :account :account)
+ (Permission :product :edit {:arrow :account :permission :admin})
 ]
 ```
 
 Now you can use `can?` to check those arrow permissions:
 ```clojure
-(eacl/can? acl (->user "alice") :update_sku (->product "SKU-123"))
+(eacl/can? acl (->user "alice") :edit (->product "SKU-123"))
 => true ; if Alice is an :owner of the Account for that Product.
 
-(eacl/can? acl (->user "bob") :update_sku (->product "SKU-123"))
+(eacl/can? acl (->user "bob") :edit (->product "SKU-123"))
 => false ; if Bob is not the :owner of the Account for that Product.
 ```
 
@@ -350,15 +377,17 @@ The default options are to use `:eacl/id`, but if you want to use internal Datom
 Your EACL schema lives in Datomic. The following functions correspond to SpiceDB schema and return Datomic entity maps:
 
 - `(Relation resource-type relation-name subject-type)`
-- `(Permission resource-type relation-name permission-to-grant)`
+- `(Permission resource-type permission-to-grant spec)`, where spec has  `{:keys [arrow relation permission]}`.
 - `(Relationship user1 relation-name server1)` confers `permission` to subject `user1` on server1.
 
-Additionally, Permission has a 4-arity syntax to define arrow permissions:
-- `(Permission resource-type relation-name via-permission permission-to-grant)`
+`Permission` supports the following syntax: 
+- `(Permission resource-type permission {:arrow via-relation :permission via-permission})`
+- `(Permission resource-type permission {:arrow via-relation :relation via-relation})`
+- `(Permission resource-type permission {:relation some_relation})` ; the missing `:arrow` implies `:self`.
 
 e.g.
 ```
-(Permission :server :account :owner :admin)
+(Permission :server :admin {:arrow :account :relation :owner})
 ```
 
 Which you can read as follows:
@@ -381,25 +410,24 @@ definition server {
 Given the following SpiceDB schema,
 
 ```
-definition user {
-}
+definition user {}
 
 definition platform {
   relation super_admin: user
-  pemission admin = super_admin
 }
 
 definition account {
-  relation owner: user
   relation platform: platform
-  permission admin = owner + platform->admin
+  relation owner: user
+  
+  permission admin = owner + platform->super_admin
 }
 
 definition server {
   relation account: account
   relation shared_admin: user
   
-  permission reboot = shared_admin + account->admin
+  permission reboot = account->admin + shared_admin
 }
 ```
 
@@ -411,22 +439,37 @@ How to model this in EACL?
 
 @(d/transact conn
              [; Platform:
+              ; definition platform {
+              ;   relation super_admin: user
+              ; } 
               (Relation :platform :super_admin :user)
-              (Permission :platform :super_admin :admin)
-
-              ; Accounts:
-              (Relation :account :super_admin :user)
-              (Relation :account :platform :platform)
               
-              (Permission :account :owner :admin)
-              (Permission :account :platform :super_admin :admin)
+              ; Accounts:
+              ; definition account {
+              ;   relation platform: platform
+              ;   relation owner: user
+              ; }
+
+              (Relation :account :platform :platform)
+              (Relation :account :owner :user)
+              
+              ; definition account {
+              ;   permission admin = owner + platform->super_admin
+              ; }
+              (Permission :account :admin {:relation :owner})
+              (Permission :account :admin {:arrow :platform :relation :super_admin})
 
               ; Servers:
+              ; definition server {
+              ;   relation account: account
+              ;   relation shared_admin: user
+              ; }
               (Relation :server :account :account)
               (Relation :server :shared_admin :user)
 
-              (Permission :server :shared_admin :reboot)
-              (Permission :server :account :admin :reboot)])
+              ; server { permission reboot = account->admin + shared_admin }
+              (Permission :server :reboot {:arrow :account :permission :admin})
+              (Permission :server :reboot {:relation :shared_admin})])
 ```
 
 Now you can transact relationships:

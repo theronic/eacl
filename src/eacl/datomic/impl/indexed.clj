@@ -43,6 +43,8 @@
   "Finds the Relation definition for a given resource-type and relation-name.
   Returns map with :eacl.relation/subject-type as the target type for arrows, or nil if not found."
   [db resource-type relation-name]
+  ; this can be optimized, since we already know resource type & relation name.
+  ; only need to add subject-type.
   (d/q '[:find (pull ?rel [:eacl.relation/subject-type
                            :eacl.relation/resource-type
                            :eacl.relation/relation-name]) .
@@ -82,18 +84,21 @@
   [db resource-type permission-name]
   (let [perm-defs (find-permission-defs db resource-type permission-name)]
     (->> perm-defs
-         (keep (fn [perm-def]
-                 (let [{:keys [eacl.permission/source-relation-name
-                               eacl.permission/target-type
-                               eacl.permission/target-name]} perm-def]
-                   (if (= source-relation-name :self)
-                     (resolve-self-relation db resource-type target-name)
-                     ;; Arrow permission
-                     ;; (Find what type the via relation points to)
+         (keep (fn [{:as perm-def
+                     :eacl.permission/keys [source-relation-name
+                                            target-type
+                                            target-name]}]
+                 ; how to handle {:relation :self :permission :local-permission} ?
+                 (if (= source-relation-name :self)
+                   (case target-type
+                     :relation (resolve-self-relation db resource-type target-name)
+                     :permission (throw (Exception. "we don't handle this")))
+                   ; OK, so this special case does not seem to account for self arrow :permission, only self :relation.
+                   (do
                      (if-let [via-rel-def (find-relation-def db resource-type source-relation-name)]
                        (let [intermediate-type (:eacl.relation/subject-type via-rel-def)]
                          {:type              :arrow
-                          :via               source-relation-name
+                          :via               source-relation-name ; this can be :self, but we don't handle it
                           :target-type       intermediate-type ;; This is the actual type of the intermediate
                           :target-permission (when (= target-type :permission) target-name)
                           :target-relation   (when (= target-type :relation) target-name)

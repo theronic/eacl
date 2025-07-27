@@ -124,10 +124,12 @@
    (Permission :server :view_server_via_arrow_relation {:arrow :account :permission :view_via_arrow_relation}) ; special test case.
 
    ; this is not supported yet, use :relation in meantime:
-   ;(Permission :server :share {:permission :admin})
+   (Permission :server :share {:permission :admin}) ; this fixture is here to show {:arrow :self :permission :admin} currently broken.
    (Permission :server :share {:arrow :account :permission :admin})
    (Permission :server :share {:arrow :vpc :permission :admin})
    (Permission :server :share {:relation :shared_admin})
+
+   (Permission :server :via_self_admin {:arrow :self :permission :admin}) ; to test :self->permission.
 
    ; definition server { permission delete = owner + shared_admin }
    (Permission :server :delete {:relation :owner})

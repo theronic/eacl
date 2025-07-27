@@ -111,9 +111,15 @@
                                     :limit         1000
                                     :cursor        nil}))))
 
-    (testing ":test/user can :view and :reboot their server"
+    (testing ":test/user1 can :view, :reboot or :share server1"
       (is (can? db (->user :test/user1) :view (->server :test/server1)))
+      (is (can? db (->user :test/user1) :share (->server :test/server1)))
       (is (can? db (->user :test/user1) :reboot (->server :test/server1))))
+
+    (testing "but :test/user2 can't :view, :reboot or :share server1"
+      (is (not (can? db (->user :test/user2) :view (->server :test/server1))))
+      (is (not (can? db (->user :test/user2) :share (->server :test/server1))))
+      (is (not (can? db (->user :test/user2) :reboot (->server :test/server1)))))
 
     (testing "can? supports :db/id and idents"
       (let [user1-eid (d/entid db :test/user1)]
@@ -171,6 +177,9 @@
       (is (can? db (->lease :test/lease1) :view (->server :test/server1)))
       (is (can? db (->network :test/network1) :view (->server :test/server1)))
       (is (can? db (->vpc :test/vpc1) :view (->server :test/server1))) ; why does htis work, but below does not?
+
+      (is (can? db (->vpc :test/user1) :via_self_admin (->server :test/server1)))
+      (is (not (can? db (->vpc :test/user2) :via_self_admin (->server :test/server1))))
 
       (is (not (can? db (->vpc :test/vpc2) :view (->server :test/server1))))
 
