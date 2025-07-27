@@ -419,9 +419,8 @@
 
                      :self-permission
                      ;; Self-permission: recursively check if the resource has the target permission
-                     (let [target-permission     (:target-permission path)
-                           resource-spice-object (spice-object resource-type resource-eid)]
-                       (can? db subject target-permission resource-spice-object))
+                     (let [target-permission     (:target-permission path)]
+                       (can? db subject target-permission resource))
 
                      :arrow
                      ;; Arrow permission check
