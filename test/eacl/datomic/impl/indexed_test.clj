@@ -425,6 +425,11 @@
                                                                    :resource/type :vpc})
                                              (paginated->spice-set db)))))
 
+    (testing "`permission via_self_admin = admin` should work, but currently throws"
+      (is (->> (lookup-resources db {:subject (->user :test/user1)
+                                     :permission :via_self_admin
+                                     :resource/type :server}))))
+
     (testing "pagination: limit & offset are handled correctly for arrow permissions"
       (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
         (is @(d/transact *conn* [{:db/id    "server3"
