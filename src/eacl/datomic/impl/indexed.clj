@@ -84,7 +84,7 @@
   [db resource-type permission-name]
   (let [perm-defs (find-permission-defs db resource-type permission-name)]
     (->> perm-defs
-         (keep (fn [{:as perm-def
+         (keep (fn [{:as                   perm-def
                      :eacl.permission/keys [source-relation-name
                                             target-type
                                             target-name]}]
@@ -92,7 +92,9 @@
                  (if (= source-relation-name :self)
                    (case target-type
                      :relation (resolve-self-relation db resource-type target-name)
-                     :permission (throw (Exception. "we don't handle this")))
+                     :permission {:type              :self-permission
+                                  :target-permission target-name
+                                  :resource-type     resource-type})
                    ; OK, so this special case does not seem to account for self arrow :permission, only self :relation.
                    (do
                      (if-let [via-rel-def (find-relation-def db resource-type source-relation-name)]
@@ -128,13 +130,13 @@
   Returns lazy seq of resource eids."
   [db
    subject-type subject-eid
-   {:as path
-    path-name :name
-    path-type :type
-    path-subject-type :subject-type
+   {:as                  path
+    path-name            :name
+    path-type            :type
+    path-subject-type    :subject-type
     target-relation-name :target-type
-    path-via :via
-    sub-paths :sub-paths}
+    path-via             :via
+    sub-paths            :sub-paths}
    resource-type cursor-eid]
   (case path-type
     :relation
@@ -275,6 +277,18 @@
              (filter (fn [resource-eid]
                        (and resource-eid (> resource-eid (or cursor-eid 0))))))))
 
+    :self-permission
+    ;; Self-permission: check if the resource itself has the target permission for the subject
+    (let [target-permission     (:target-permission path)
+          resource-spice-object (spice-object resource-type subject-eid)]
+      (if (can? db (spice-object subject-type subject-eid) target-permission resource-spice-object)
+        ;; If permission exists, return the resource itself (filtered by cursor)
+        (if (or (nil? cursor-eid) (> subject-eid (or cursor-eid 0)))
+          [subject-eid]
+          [])
+        ;; If no permission, return empty
+        []))
+
     :arrow
     ;; Arrow permission - reverse traversal
     (let [via-relation      (:via path)
@@ -402,6 +416,12 @@
                        (let [tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
                              tuple-val  [subject-type subject-eid (:name path) resource-type resource-eid]]
                          (seq (d/datoms db :avet tuple-attr tuple-val))))
+
+                     :self-permission
+                     ;; Self-permission: recursively check if the resource has the target permission
+                     (let [target-permission     (:target-permission path)
+                           resource-spice-object (spice-object resource-type resource-eid)]
+                       (can? db subject target-permission resource-spice-object))
 
                      :arrow
                      ;; Arrow permission check

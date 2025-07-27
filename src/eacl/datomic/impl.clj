@@ -15,7 +15,7 @@
 (def Relationship base/Relationship)
 
 ;; Use indexed implementation for better performance with large offsets
-(def can? impl.datalog/can?)
+(def can? impl.indexed/can?)
 (def lookup-subjects impl.datalog/lookup-subjects)
 (def lookup-resources impl.indexed/lookup-resources)
 (def count-resources impl.indexed/count-resources)

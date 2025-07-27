@@ -178,8 +178,8 @@
       (is (can? db (->network :test/network1) :view (->server :test/server1)))
       (is (can? db (->vpc :test/vpc1) :view (->server :test/server1))) ; why does htis work, but below does not?
 
-      (is (can? db (->vpc :test/user1) :via_self_admin (->server :test/server1)))
-      (is (not (can? db (->vpc :test/user2) :via_self_admin (->server :test/server1))))
+      (is (can? db (->user :test/user1) :via_self_admin (->server :test/server1)))
+      (is (not (can? db (->user :test/user2) :via_self_admin (->server :test/server1))))
 
       (is (not (can? db (->vpc :test/vpc2) :view (->server :test/server1))))
 
