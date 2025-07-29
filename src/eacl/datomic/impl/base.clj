@@ -24,32 +24,67 @@
      subject-type)))
 
 (defn Permission
-  "Defines how a permission is granted using the unified permission schema.
-  
-  Direct permission: (Permission resource-type permission-name {:relation relation-name})
-    => For resource-type, relation grants permission
-  
-  Arrow to permission: (Permission resource-type permission-name {:arrow source-relation :permission target-permission})
-    => For resource-type, permission is granted if subject has target-permission on the resource 
-       of type linked by source-relation
-  
-  Arrow to relation: (Permission resource-type permission-name {:arrow source-relation :relation target-relation})
-    => For resource-type, permission is granted if subject has target-relation on the resource 
-       linked by source-relation"
+  "Defines a Permission via
+
+    (Permission :resource_type :permission_name spec)
+
+  Where `spec` describes one of:
+   1. Direct Relation  {:relation local_relation}
+   2. Arrow Relation   {:arrow relation, :relation via-relation}
+   3. Arrow Permission {:arrow relation, :permission via-permission}
+   4. Self Permission  {:permission other_permission}
+
+  Note that EACL does not detect or prevent cycles in schema (big todo!).
+
+  E.g. given the following SpiceDB definition:
+
+  definition user {}
+
+  definition account {
+    relation owner: user
+
+    permission admin = owner
+  }
+
+  definition product {
+    relation account: account
+
+    permission direct_permission  = account
+    permission arrow_relation     = account->owner
+    permission arrow_permission   = account->admin
+    permission self_permission    = direct_relation
+
+    permission union_permission   = account + account->admin
+  }
+
+  In EACL, this would be modelled as:
+
+    (Relation :account :owner :user)
+    (Relation :product :account :account)
+
+    (Permission :product :direct_relation  {:relation :account})
+    (Permission :product :arrow_relation   {:arrow :account :relation :owner})
+    (Permission :product :arrow_permission {:arrow :account :permission :admin})
+    (Permission :product :self_permission  {:permission :admin})
+
+  For a self permission, the omitted :arrow is inferred as :self (reserved word).
+
+  In the future, when EACL manages schema via write-schema!, arrow specs will be
+  able to support :arrow->permission or :arrow->relation syntax."
   [resource-type permission-name
-   {:as spec
+   {:as   spec
     :keys [arrow relation permission]
-    :or {arrow :self}}] ; default to :self if no arrow relation specified.
+    :or   {arrow :self}}]                                   ; default to :self if no arrow relation specified.
   {:pre [(keyword? resource-type)
          (keyword? permission-name)
          (map? spec)
-         (not (and relation permission))]} ; a permission resolves via a relation or a permission, but not both.
+         (not (and relation permission))]}                  ; a permission resolves via a relation or a permission, but not both.
   (cond
     ;; Direct permission: {:relation relation-name}
     relation
     {:eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
-     :eacl.permission/source-relation-name arrow ; this can be :self.
+     :eacl.permission/source-relation-name arrow            ; this can be :self.
      :eacl.permission/target-type          :relation
      :eacl.permission/target-name          relation}
 
@@ -57,12 +92,12 @@
     permission
     {:eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
-     :eacl.permission/source-relation-name arrow ; this can be :self.
+     :eacl.permission/source-relation-name arrow            ; this can be :self.
      :eacl.permission/target-type          :permission
      :eacl.permission/target-name          permission}
 
     :else
-    (throw (ex-info "Invalid Permission spec. Expected {:relation name} or {:arrow source :permission target} or {:arrow source :relation target}"
+    (throw (ex-info "Invalid Permission spec. Expected one of {:relation name}, {:permission name}, {:arrow source :permission target} or {:arrow source :relation target}"
                     {:spec spec}))))
 
 (defn Relationship

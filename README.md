@@ -1,6 +1,6 @@
 # **EACL**: Enterprise Access ControL
 
-EACL is an embedded [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library built in Clojure and backed by Datomic, used at [CloudAfrica](https://cloudafrica.net/).
+EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB-compatible](https://authzed.com/spicedb)*, built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
 ## Project Goals
 
@@ -236,7 +236,7 @@ This means a `user` subject can have  an `:owner` relation to an `account`, via 
 
 A Relationship is just a 3-tuple of `[subject relation resource]`.
 
-### Modelling Direct Permissions
+### Permission Schema: Direct Relations
 
 Let's add a direct permission to the schema for `account` resources:
 
@@ -249,8 +249,8 @@ definition account {
 }
 ```
 
-In EACL, **Direct Permissions** use `(Permission resource-type relation-name permission-to-grant)`,
- - e.g. `(Permission :account :owner :update)`
+In EACL, **Direct Permissions** use `(Permission resource-type permission {:relation relation_name)`,
+ - e.g. `(Permission :account :update {:relation :owner})`
  - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update` permission for that account.
 
 However, at this point, all permissions checks will return false because there are no Relationships defined:
@@ -381,9 +381,12 @@ Your EACL schema lives in Datomic. The following functions correspond to SpiceDB
 - `(Relationship user1 relation-name server1)` confers `permission` to subject `user1` on server1.
 
 `Permission` supports the following syntax: 
-- `(Permission resource-type permission {:arrow via-relation :permission via-permission})`
-- `(Permission resource-type permission {:arrow via-relation :relation via-relation})`
 - `(Permission resource-type permission {:relation some_relation})` ; the missing `:arrow` implies `:self`.
+- `(Permission resource-type permission {:permisison some_permission})` ; the missing `:arrow` implies `:self`.
+- `(Permission resource-type permission {:arrow source :permission via_permission})`
+- `(Permission resource-type permission {:arrow source :relation via_relation})`
+
+Internally everything is an arrow permission, but omitted `:arrow` means `:self` (reserved word). 
 
 e.g.
 ```
@@ -400,7 +403,7 @@ definition account {
 
 definition server {
   relation account: account
-  permission admin = account->admin # <-- 4 arity arrow syntax
+  permission admin = account->admin
 }
 
 ```
@@ -493,8 +496,7 @@ Now you can transact relationships:
 - EACL makes no strong performance claims. It should be good for <1M Datomic entities. Goal is 10M entities.
 - Arrow syntax is limited to one level of nesting, e.g.
   - Supported: `permission arrow = relation->via-permission` is valid
-  - Not supported: `permission arrow = relation->subrelation->permission` is not valid. Add multiple nesting levels with intermediate resources.
-- Tail of Arrow syntax tail must be a permission on the relation resource, i.e. given `permission admin = account->admin`, `admin` must be a permission on `account` relation, not a relation on account.
+  - Not supported: `permission arrow = relation->subrelation->permission` is not valid (yet).
 - Only union permissions are supported:
   - Supported: `permission admin = owner + shared_admin`
   - Not supported: `permission admin = owner - shared_member`. Exclusion types require complex caching to avoid multiple `can?` queries.
@@ -511,7 +513,7 @@ clj -X:test
 ## Run Test for One Namespace
 
 ```bash
-clj -M:test -n eacl.datomic.impl-test
+clj -M:test -n eacl.datomic.impl.indexed_test
 ```
 
 ## Run Tests for Multiple Namespaces

@@ -3,7 +3,7 @@
             [clojure.tools.logging :as log]
             [datomic.api :as d]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [eacl.datomic.fixtures :as fixtures :refer [->user ->server ->account ->vpc ->nic ->network ->lease]]
+            [eacl.datomic.fixtures :as fixtures :refer [->user ->server ->account ->vpc ->nic ->network ->lease ->backup ->backup-schedule]]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
             [eacl.lazy-merge-sort :refer [lazy-merge-dedupe-sort]]
@@ -168,18 +168,24 @@
 (deftest complex-relation-tests
   (testing "does EACL support reverse lookups?"
     (let [db (d/db *conn*)]
-      ; server -> vpc via NIC & lease
-      ; so what's the permission there?
-      ; basically, we want to find all the servers in a given VPC...
-      ; so the permission is on server, but for the VPC via the thing
-      ; model: server -> nic -> lease <- network <- vpc.
-      ;(is (can? db (->nic :test/nic1) :view (->server :test/server1)))
       (is (can? db (->lease :test/lease1) :view (->server :test/server1)))
       (is (can? db (->network :test/network1) :view (->server :test/server1)))
       (is (can? db (->vpc :test/vpc1) :view (->server :test/server1))) ; why does htis work, but below does not?
 
       (is (can? db (->user :test/user1) :via_self_admin (->server :test/server1)))
       (is (not (can? db (->user :test/user2) :via_self_admin (->server :test/server1))))
+
+      (is (can? db (->user :test/user1) :view (->backup :test/backup1)))
+      (is (not (can? db (->user :test/user2) :view (->backup :test/backup1))))
+
+      (testing ":test/user1 can :view backup-schedule-1, but not :test/user2"
+        (is (can? db (->user :test/user1) :view (->backup-schedule :test/backup-schedule1)))
+        (is (not (can? db (->user :test/user2) :view (->backup-schedule :test/backup-schedule1)))))
+
+      (testing "Adding :test/user2 as a :viewer of a backup schedule, lets them view related backups:"
+        (let [rx (d/with db [(Relationship (->user :test/user2) :viewer (->backup-schedule :test/backup-schedule1))])]
+          (is (can? (:db-after rx) (->user :test/user2) :view (->backup-schedule :test/backup-schedule1)))
+          (is (can? (:db-after rx) (->user :test/user2) :view (->backup :test/backup1)))))
 
       (is (not (can? db (->vpc :test/vpc2) :view (->server :test/server1))))
 
@@ -426,8 +432,8 @@
                                              (paginated->spice-set db)))))
 
     (testing "`permission via_self_admin = admin` should work, but currently throws"
-      (is (->> (lookup-resources db {:subject (->user :test/user1)
-                                     :permission :via_self_admin
+      (is (->> (lookup-resources db {:subject       (->user :test/user1)
+                                     :permission    :via_self_admin
                                      :resource/type :server}))))
 
     (testing "pagination: limit & offset are handled correctly for arrow permissions"
@@ -558,7 +564,7 @@
                                                                    :permission    :view
                                                                    :subject       (->user super-user-eid)}))]
 
-                ;_                   (prn 'page2 'cursor (:cursor page2))]
+            ;_                   (prn 'page2 'cursor (:cursor page2))]
 
             (testing "page1 cursor points to next page"
               (is page1-cursor)
@@ -712,7 +718,7 @@
             resources (impl.indexed/traverse-permission-path db :vpc vpc1-eid :view :server nil 10)]
         ;; VPC1 should be able to view servers through the network chain
         (is (= [(d/entid db :test/server1)]
-               (map first resources))))) ; hard to understand destructuring here.
+               (map first resources)))))                    ; hard to understand destructuring here.
 
     (testing "Cursor pagination"
       (let [user1-eid    (d/entid db :test/user1)
@@ -728,11 +734,11 @@
 (deftest lookup-resources-optimized-tests
   (let [db (d/db *conn*)]
     (testing "Basic lookup-resources"
-      (let [user1-eid      (d/entid db :test/user1)
-            result         (lookup-resources db {:subject       (->user user1-eid)
-                                                 :permission    :view
-                                                 :resource/type :server
-                                                 :limit         10})]
+      (let [user1-eid (d/entid db :test/user1)
+            result    (lookup-resources db {:subject       (->user user1-eid)
+                                            :permission    :view
+                                            :resource/type :server
+                                            :limit         10})]
         (is (= [(->server "account1-server1")
                 (->server "account1-server2")]
                (paginated->spice db result)))))
@@ -771,12 +777,12 @@
     (testing "Merge handles duplicate resources from multiple paths"
       ;; Add a direct relation that overlaps with arrow permission
       @(d/transact *conn* [(Relationship (->user :test/user1) :shared_admin (->server :test/server1))])
-      (let [db'            (d/db *conn*)
-            user1-eid      (d/entid db' :test/user1)
-            result         (impl.indexed/lookup-resources db' {:subject       (->user user1-eid)
-                                                               :permission    :view
-                                                               :resource/type :server
-                                                               :limit         10})]
+      (let [db'       (d/db *conn*)
+            user1-eid (d/entid db' :test/user1)
+            result    (impl.indexed/lookup-resources db' {:subject       (->user user1-eid)
+                                                          :permission    :view
+                                                          :resource/type :server
+                                                          :limit         10})]
         ;; Should still only see each server once
         (is (= [(->server "account1-server1")
                 (->server "account1-server2")]
@@ -793,22 +799,22 @@
         (is (= eids (sort eids)))))
 
     (testing "Cursor works with merged results"
-      (let [super-user-eid (d/entid db :user/super-user)
-            both-pages (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
-                                                          :permission    :view
-                                                          :resource/type :server
-                                                          :limit         4})
-            page1          (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
-                                                              :permission    :view
-                                                              :resource/type :server
-                                                              :limit         2})
-            page2          (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
-                                                              :permission    :view
-                                                              :resource/type :server
-                                                              :limit         2
-                                                              :cursor        (:cursor page1)})
+      (let [super-user-eid   (d/entid db :user/super-user)
+            both-pages       (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                                :permission    :view
+                                                                :resource/type :server
+                                                                :limit         4})
+            page1            (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                                :permission    :view
+                                                                :resource/type :server
+                                                                :limit         2})
+            page2            (impl.indexed/lookup-resources db {:subject       (->user super-user-eid)
+                                                                :permission    :view
+                                                                :resource/type :server
+                                                                :limit         2
+                                                                :cursor        (:cursor page1)})
             page1+page2-data (apply concat (map :data [page1 page2]))
-            all-eids       (map :id page1+page2-data)]
+            all-eids         (map :id page1+page2-data)]
         ;; No duplicates across pages
         (is (= (:data both-pages) page1+page2-data))
         (is (= (count all-eids) (count (distinct all-eids))))
