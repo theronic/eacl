@@ -4,20 +4,21 @@
     [clojure.tools.logging :as log]
     [datomic.api :as d]
     [eacl.core :as eacl :refer [spice-object]]
-    [eacl.datomic.impl-base :as base]
-    [eacl.datomic.impl-optimized :as impl-optimized]
-    [eacl.datomic.impl-indexed :as impl-indexed]))
-    ;[eacl.datomic.impl-fixed :as impl-fixed])) ; only use impl-fixed once it's ready. note tests are using impl-indexed.
+    [eacl.datomic.impl.base :as base]
+    [eacl.datomic.impl.datalog :as impl.datalog]
+    [eacl.datomic.impl.indexed :as impl.indexed]))
+
+; note that eacl.datomic.impl-fixed is an experimental impl. and should be avoided until correct.
 
 (def Relation base/Relation)
 (def Permission base/Permission)
 (def Relationship base/Relationship)
 
 ;; Use indexed implementation for better performance with large offsets
-(def can? impl-optimized/can?)
-(def lookup-subjects impl-optimized/lookup-subjects)
-(def lookup-resources impl-indexed/lookup-resources)
-(def count-resources impl-indexed/count-resources)
+(def can? impl.indexed/can?)
+(def lookup-subjects impl.datalog/lookup-subjects)
+(def lookup-resources impl.indexed/lookup-resources)
+(def count-resources impl.indexed/count-resources)
 
 (defn can!
   "The thrown exception should probably be configurable."
@@ -69,7 +70,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   {:pre [(or resource-type resource-eid _resource-prefix resource-relation subject-type subject-eid)
          (not _resource-prefix)]}                           ; not supported.
   {:find  '[?resource-type ?resource
-            ?resource-relation ; bug!
+            ?resource-relation                              ; bug!
             ?subject-type ?subject]
    ; big todo: string ID support, via UUIDs?
 
@@ -80,7 +81,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
             resource-type (conj '?resource-type)
             resource-eid (conj '?resource)
             ;resource-prefix (conj '?resource-prefix) ; todo.
-            resource-relation (conj '?resource-relation) ; ?relation-name
+            resource-relation (conj '?resource-relation)    ; ?relation-name
             subject-type (conj '?subject-type)
             subject-eid (conj '?subject))
    ;subject-relation (conj '?subject-relation) ; todo.
@@ -93,14 +94,14 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
 (defn rel-map->Relationship
   [{:as               _rel-map
-    resource-type     :resource/type ; we are doing extra work here to look up the rel.
+    resource-type     :resource/type                        ; we are doing extra work here to look up the rel.
     resource-eid      :resource/id
     resource-relation :resource/relation
     subject-type      :subject/type
     subject-eid       :subject/id}]
   ; todo make this more efficient
   (eacl/map->Relationship
-    {:subject  (spice-object subject-type subject-eid)                   ; todo: 3-arity for type
+    {:subject  (spice-object subject-type subject-eid)      ; todo: 3-arity for type
      :relation resource-relation
      :resource (spice-object resource-type resource-eid)}))
 
@@ -112,36 +113,21 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     (->> (apply d/q qry db args)
          (map rel-map->Relationship))))
 
-;(defn find-one-relationship-id-slow
-;  [db {:as relationship :keys [subject relation resource]}]
-;  ;(log/debug 'find-one-relationship relationship)
-;  (let [filters {:resource/type     (:type resource)
-;                 :resource/id       (:id resource)
-;                 :resource/relation relation
-;                 :subject/type      (:type subject)
-;                 :subject/id        (:id subject)}
-;        ;_       (log/debug 'filters filters)
-;        qry     (-> (build-relationship-query filters)
-;                    (assoc :find '[?relationship .])
-;                    (dissoc :keys))
-;        args    (relationship-filters->args filters)]
-;    (apply d/q qry db args)))
-
 (defn find-one-relationship-id
   [db {:as relationship :keys [subject relation resource]}]
   ; hmm this coercion does not belong here.
   ;(log/debug 'find-one-relationship relationship)
-  (let [subject-type (:type subject) ; todo config.
+  (let [subject-type  (:type subject)                       ; todo config.
         ; TODO Hoist up the d/entid calls.
-        subject-eid  (d/entid db (:id subject))             ;object-id->entid db (:id subject))
+        subject-eid   (d/entid db (:id subject))            ;object-id->entid db (:id subject))
 
-        resource-type (:type resource) ; todo config.
-        resource-eid (d/entid db (:id resource))]           ;object-id->entid db (:id resource))]
+        resource-type (:type resource)                      ; todo config.
+        resource-eid  (d/entid db (:id resource))]          ;object-id->entid db (:id resource))]
     ;(log/debug 'find-one-relationship-id 'subject-eid subject-eid 'resource-eid resource-eid)
     ;(assert subject-eid (str "No such subject: " subject))
     ;(assert resource-eid (str "No such resource: " resource))
     (if-not (and subject-eid resource-eid)
-      nil ; return nil if missing
+      nil                                                   ; return nil if missing
       (do
         (assert (= (:type subject) subject-type) (str "Subject Type " subject-type " does not match " (:type subject) "."))
         (assert (= (:type resource) resource-type) (str "Resource Type " resource-type " does not match " (:type resource) "."))
@@ -186,7 +172,6 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 
     :unspecified
     (throw (Exception. ":unspecified relationship update not supported."))))
-
 
 (comment
   (build-relationship-query {:resource/type :server}))

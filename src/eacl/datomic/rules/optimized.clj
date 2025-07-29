@@ -2,7 +2,7 @@
   "Optimized Datalog rules for EACL performance improvements")
 
 (def check-permission-rules
-  "Recursive Datalog rules for can? & lookup-resources."
+  "Recursive Datalog rules for can? & lookup-resources using unified permission schema."
   '[;; Optimized reachability using tuples
     [(reachable ?resource ?subject)
      ;; Direct relationship - most common case
@@ -16,7 +16,7 @@
      ;; Only traverse if needed
      (reachable ?mid ?subject)]
 
-    ;; Direct permission - optimized clause ordering
+    ;; Direct permission - unified schema (no source-relation-name)
     [(has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
 
      ;; Find relationships for this resource
@@ -26,20 +26,25 @@
      [?relationship :eacl.relationship/subject-type ?subject-type]
      [?relationship :eacl.relationship/relation-name ?relation-name]
 
-     ;; Check permission using tuple
-     [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
-     [?perm-def :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]
+     ;; Find direct permission (no source-relation-name means direct)
+     [?perm-def :eacl.permission/resource-type ?resource-type]
+     [?perm-def :eacl.permission/permission-name ?permission-name]
+     [?perm-def :eacl.permission/target-type :relation]
+     [?perm-def :eacl.permission/target-name ?relation-name]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      ;; Exclude self-references
      [(not= ?subject ?resource)]]
 
-    ;; Indirect permission inheritance - optimized
+    ;; Indirect permission inheritance via direct permissions
     [(has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
 
-     ;; Find permission definitions for this resource type
+     ;; Find direct permission definitions for this resource type
      [?perm-def :eacl.permission/resource-type ?resource-type]
      [?perm-def :eacl.permission/permission-name ?permission-name]
-     [?perm-def :eacl.permission/relation-name ?relation-name]
+     [?perm-def :eacl.permission/target-type :relation]
+     [?perm-def :eacl.permission/target-name ?relation-name]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      ;; Find structural relationships where resource is the subject
      [?structural-rel :eacl.relationship/subject ?resource]
@@ -52,14 +57,15 @@
      (reachable ?target ?subject)
      [(not= ?subject ?resource)]]
 
-    ;; Arrow permission - optimized
+    ;; Arrow permission to permission - unified schema
     [(has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource-type ?this-resource)
 
-     ;; Find arrow permission definitions
-     [?arrow-perm :eacl.arrow-permission/resource-type ?this-resource-type]
-     [?arrow-perm :eacl.arrow-permission/permission-name ?perm-name-on-this-resource]
-     [?arrow-perm :eacl.arrow-permission/source-relation-name ?via-relation]
-     [?arrow-perm :eacl.arrow-permission/target-permission-name ?perm-on-related]
+     ;; Find arrow permission definitions that target permissions
+     [?arrow-perm :eacl.permission/resource-type ?this-resource-type]
+     [?arrow-perm :eacl.permission/permission-name ?perm-name-on-this-resource]
+     [?arrow-perm :eacl.permission/source-relation-name ?via-relation]
+     [?arrow-perm :eacl.permission/target-type :permission]
+     [?arrow-perm :eacl.permission/target-name ?perm-on-related]
 
      ;; Find intermediate resource
      [?rel-linking :eacl.relationship/resource-type ?this-resource-type]
@@ -74,57 +80,86 @@
      ;; Safety checks
      [(not= ?subject ?this-resource)]
      [(not= ?subject ?intermediate-resource)]
+     [(not= ?this-resource ?intermediate-resource)]]
+
+    ;; Arrow permission to relation - unified schema
+    [(has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource-type ?this-resource)
+
+     ;; Find arrow permission definitions that target relations
+     [?arrow-perm :eacl.permission/resource-type ?this-resource-type]
+     [?arrow-perm :eacl.permission/permission-name ?perm-name-on-this-resource]
+     [?arrow-perm :eacl.permission/source-relation-name ?via-relation]
+     [?arrow-perm :eacl.permission/target-type :relation]
+     [?arrow-perm :eacl.permission/target-name ?target-relation]
+
+     ;; Find intermediate resource
+     [?rel-linking :eacl.relationship/resource-type ?this-resource-type]
+     [?rel-linking :eacl.relationship/resource ?this-resource]
+     [?rel-linking :eacl.relationship/relation-name ?via-relation]
+     [?rel-linking :eacl.relationship/subject ?intermediate-resource]
+     [?rel-linking :eacl.relationship/subject-type ?intermediate-resource-type]
+
+     ;; Check if subject has the target relation on intermediate resource
+     [?target-rel :eacl.relationship/resource ?intermediate-resource]
+     [?target-rel :eacl.relationship/resource-type ?intermediate-resource-type]
+     [?target-rel :eacl.relationship/subject ?subject]
+     [?target-rel :eacl.relationship/subject-type ?subject-type]
+     [?target-rel :eacl.relationship/relation-name ?target-relation]
+
+     ;; Safety checks
+     [(not= ?subject ?this-resource)]
+     [(not= ?subject ?intermediate-resource)]
      [(not= ?this-resource ?intermediate-resource)]]])
 
-(def check-permission-rules-broken
-  '[(reachable ?resource ?subject)
-    [?structural-rel :eacl.relationship/subject ?subject]
-    [?structural-rel :eacl.relationship/resource ?resource]
-
-    (reachable ?resource ?subject)
-    [?structural-rel :eacl.relationship/subject ?mid]
-    [?structural-rel :eacl.relationship/resource ?resource]
-    (reachable ?mid ?subject)
-
-    (has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
-    [?relationship :eacl.relationship/resource ?resource]
-    [?relationship :eacl.relationship/subject ?subject]
-    [?relationship :eacl.relationship/relation-name ?relation-name]
-    [?relationship :eacl.relationship/resource-type ?resource-type]
-    [?relationship :eacl.relationship/subject-type ?subject-type]
-    [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
-    [?perm-def :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]
-    [(not= ?subject ?resource)]
-
-    (has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
-    [?perm-def :eacl.permission/resource-type ?resource-type]
-    [?perm-def :eacl.permission/permission-name ?permission-name]
-    [?perm-def :eacl.permission/relation-name ?relation-name]
-    [?structural-rel :eacl.relationship/subject ?resource]
-    [?structural-rel :eacl.relationship/relation-name ?relation-name]
-    [?structural-rel :eacl.relationship/resource ?target]
-    [?structural-rel :eacl.relationship/subject-type ?resource-type]
-    [?structural-rel :eacl.relationship/resource-type ?target-type]
-    (reachable ?target ?subject)
-    [(not= ?subject ?resource)]
-
-    (has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource-type ?this-resource)
-    [?arrow-perm :eacl.arrow-permission/resource-type ?this-resource-type]
-    [?arrow-perm :eacl.arrow-permission/permission-name ?perm-name-on-this-resource]
-    [?arrow-perm :eacl.arrow-permission/source-relation-name ?via-relation]
-    [?arrow-perm :eacl.arrow-permission/target-permission-name ?perm-on-related]
-    [?rel-linking :eacl.relationship/resource ?this-resource]
-    [?rel-linking :eacl.relationship/resource-type ?this-resource-type]
-    [?rel-linking :eacl.relationship/relation-name ?via-relation]
-    [?rel-linking :eacl.relationship/subject ?intermediate-resource]
-    [?rel-linking :eacl.relationship/subject-type ?intermediate-resource-type]
-    (has-permission ?subject-type ?subject ?perm-on-related ?intermediate-resource-type ?intermediate-resource)
-    [(not= ?subject ?this-resource)]
-    [(not= ?subject ?intermediate-resource)]
-    [(not= ?this-resource ?intermediate-resource)]])
+;(def check-permission-rules-broken
+;  '[(reachable ?resource ?subject)
+;    [?structural-rel :eacl.relationship/subject ?subject]
+;    [?structural-rel :eacl.relationship/resource ?resource]
+;
+;    (reachable ?resource ?subject)
+;    [?structural-rel :eacl.relationship/subject ?mid]
+;    [?structural-rel :eacl.relationship/resource ?resource]
+;    (reachable ?mid ?subject)
+;
+;    (has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
+;    [?relationship :eacl.relationship/resource ?resource]
+;    [?relationship :eacl.relationship/subject ?subject]
+;    [?relationship :eacl.relationship/relation-name ?relation-name]
+;    [?relationship :eacl.relationship/resource-type ?resource-type]
+;    [?relationship :eacl.relationship/subject-type ?subject-type]
+;    [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
+;    [?perm-def :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]
+;    [(not= ?subject ?resource)]
+;
+;    (has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
+;    [?perm-def :eacl.permission/resource-type ?resource-type]
+;    [?perm-def :eacl.permission/permission-name ?permission-name]
+;    [?perm-def :eacl.permission/relation-name ?relation-name]
+;    [?structural-rel :eacl.relationship/subject ?resource]
+;    [?structural-rel :eacl.relationship/relation-name ?relation-name]
+;    [?structural-rel :eacl.relationship/resource ?target]
+;    [?structural-rel :eacl.relationship/subject-type ?resource-type]
+;    [?structural-rel :eacl.relationship/resource-type ?target-type]
+;    (reachable ?target ?subject)
+;    [(not= ?subject ?resource)]
+;
+;    (has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource-type ?this-resource)
+;    [?arrow-perm :eacl.arrow-permission/resource-type ?this-resource-type]
+;    [?arrow-perm :eacl.arrow-permission/permission-name ?perm-name-on-this-resource]
+;    [?arrow-perm :eacl.arrow-permission/source-relation-name ?via-relation]
+;    [?arrow-perm :eacl.arrow-permission/target-permission-name ?perm-on-related]
+;    [?rel-linking :eacl.relationship/resource ?this-resource]
+;    [?rel-linking :eacl.relationship/resource-type ?this-resource-type]
+;    [?rel-linking :eacl.relationship/relation-name ?via-relation]
+;    [?rel-linking :eacl.relationship/subject ?intermediate-resource]
+;    [?rel-linking :eacl.relationship/subject-type ?intermediate-resource-type]
+;    (has-permission ?subject-type ?subject ?perm-on-related ?intermediate-resource-type ?intermediate-resource)
+;    [(not= ?subject ?this-resource)]
+;    [(not= ?subject ?intermediate-resource)]
+;    [(not= ?this-resource ?intermediate-resource)]])
 
 (def rules-lookup-subjects
-  "Optimized rules for lookup-subjects"
+  "Optimized rules for lookup-subjects using unified permission schema"
   '[;; Reachability rules remain the same
     ; Note: resource is known. subject is unknown.
     [(reachable ?resource ?subject)
@@ -136,30 +171,33 @@
      [?relationship :eacl.relationship/resource+subject ?resource+mid]
      (reachable ?mid ?subject)]
 
-    ;; Direct permission check - optimized for known resource
+    ;; Direct permission check - unified schema
     [(has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
 
      ;; Find relationships for this resource
-     ; todo: use index here. order matters for perf.
      [?relationship :eacl.relationship/resource ?resource]
      [?relationship :eacl.relationship/subject ?subject]
      [?relationship :eacl.relationship/relation-name ?relation-name]
      [?relationship :eacl.relationship/resource-type ?resource-type]
      [?relationship :eacl.relationship/subject-type ?subject-type]
 
-     ;; Check permission using tuple
-     [(tuple ?resource-type ?relation-name ?permission-name) ?perm-tuple]
-     [?perm-def :eacl.permission/resource-type+relation-name+permission-name ?perm-tuple]
+     ;; Find direct permission (no source-relation-name means direct)
+     [?perm-def :eacl.permission/resource-type ?resource-type]
+     [?perm-def :eacl.permission/permission-name ?permission-name]
+     [?perm-def :eacl.permission/target-type :relation]
+     [?perm-def :eacl.permission/target-name ?relation-name]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      [(not= ?subject ?resource)]]
 
-    ;; Indirect permission inheritance
+    ;; Indirect permission inheritance via direct permissions
     [(has-permission ?subject-type ?subject ?permission-name ?resource-type ?resource)
-     ; non-optimal order.
-     ;; Find permission definitions
+     ;; Find direct permission definitions
      [?perm-def :eacl.permission/resource-type ?resource-type]
      [?perm-def :eacl.permission/permission-name ?permission-name]
-     [?perm-def :eacl.permission/relation-name ?relation-name]
+     [?perm-def :eacl.permission/target-type :relation]
+     [?perm-def :eacl.permission/target-name ?relation-name]
+     [?perm-def :eacl.permission/source-relation-name :self]
 
      ;; Find structural relationships
      [?structural-rel :eacl.relationship/subject ?resource]
@@ -171,24 +209,52 @@
      (reachable ?target ?subject)
      [(not= ?subject ?resource)]]
 
-    ;; Arrow permission
+    ;; Arrow permission to permission - unified schema
     [(has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource-type ?this-resource)
 
-     ;; Find arrow permissions
-     [?arrow-perm :eacl.arrow-permission/resource-type ?this-resource-type]
-     [?arrow-perm :eacl.arrow-permission/permission-name ?perm-name-on-this-resource]
-     [?arrow-perm :eacl.arrow-permission/source-relation-name ?via-relation]
-     [?arrow-perm :eacl.arrow-permission/target-permission-name ?perm-on-related]
+     ;; Find arrow permissions that target permissions
+     [?arrow-perm :eacl.permission/resource-type ?this-resource-type]
+     [?arrow-perm :eacl.permission/permission-name ?perm-name-on-this-resource]
+     [?arrow-perm :eacl.permission/source-relation-name ?via-relation]
+     [?arrow-perm :eacl.permission/target-type :permission]
+     [?arrow-perm :eacl.permission/target-name ?perm-on-related]
 
      ;; Find intermediate
      [?rel-linking :eacl.relationship/resource ?this-resource]
      [?rel-linking :eacl.relationship/relation-name ?via-relation]
      [?rel-linking :eacl.relationship/subject ?intermediate-resource]
      [?rel-linking :eacl.relationship/subject-type ?intermediate-resource-type]
-     ; what aboaut subject-type? we need to constrain this.
      [?rel-linking :eacl.relationship/resource-type ?this-resource-type]
 
      (has-permission ?subject-type ?subject ?perm-on-related ?intermediate-resource-type ?intermediate-resource)
+
+     [(not= ?subject ?this-resource)]
+     [(not= ?subject ?intermediate-resource)]
+     [(not= ?this-resource ?intermediate-resource)]]
+
+    ;; Arrow permission to relation - unified schema
+    [(has-permission ?subject-type ?subject ?perm-name-on-this-resource ?this-resource-type ?this-resource)
+
+     ;; Find arrow permissions that target relations
+     [?arrow-perm :eacl.permission/resource-type ?this-resource-type]
+     [?arrow-perm :eacl.permission/permission-name ?perm-name-on-this-resource]
+     [?arrow-perm :eacl.permission/source-relation-name ?via-relation]
+     [?arrow-perm :eacl.permission/target-type :relation]
+     [?arrow-perm :eacl.permission/target-name ?target-relation]
+
+     ;; Find intermediate
+     [?rel-linking :eacl.relationship/resource ?this-resource]
+     [?rel-linking :eacl.relationship/relation-name ?via-relation]
+     [?rel-linking :eacl.relationship/subject ?intermediate-resource]
+     [?rel-linking :eacl.relationship/subject-type ?intermediate-resource-type]
+     [?rel-linking :eacl.relationship/resource-type ?this-resource-type]
+
+     ;; Check if subject has the target relation on intermediate resource
+     [?target-rel :eacl.relationship/resource ?intermediate-resource]
+     [?target-rel :eacl.relationship/resource-type ?intermediate-resource-type]
+     [?target-rel :eacl.relationship/subject ?subject]
+     [?target-rel :eacl.relationship/subject-type ?subject-type]
+     [?target-rel :eacl.relationship/relation-name ?target-relation]
 
      [(not= ?subject ?this-resource)]
      [(not= ?subject ?intermediate-resource)]

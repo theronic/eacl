@@ -1,9 +1,9 @@
-(ns eacl.datomic.impl-optimized
+(ns eacl.datomic.impl.datalog
   "Optimized EACL implementation with performance improvements"
   (:require
     [datomic.api :as d]
     [eacl.core :as proto :refer [spice-object]]
-    [eacl.datomic.impl-base :as base]
+    ;[eacl.datomic.impl.base :as base]
     [eacl.datomic.rules.optimized :as rules]))
 
 (defn lookup-subjects
@@ -18,7 +18,9 @@
     offset            :offset}]
   {:pre [(:type resource) (:id resource)]}
   (let [{resource-type :type
-         resource-eid  :id} resource]
+         resource-id  :id} resource
+
+        resource-eid (d/entid db resource-id)]
     ; Q: can we support dynamic object type resolution?
     (assert resource-eid (str "lookup-subjects (object->entid " (pr-str resource) ") must resolve to a valid Datomic entid."))
     ; todo configurable type resolution.
@@ -110,7 +112,7 @@
     (let [resource-types+eids  (->> (d/q '[:find ?resource-type ?resource
                                            :in $ % ?subject-type ?subject-eid ?permission ?resource-type
                                            :where
-                                           ;(has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
+                                            ;(has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
                                            (has-permission ?subject-type ?subject-eid ?permission ?resource-type ?resource)
                                            [(not= ?resource ?subject-eid)]] ; do we still need this?
                                          db
@@ -123,7 +125,7 @@
           offsetted-results    (if (and cursor-resource-type cursor-resource-eid)
                                  (->> sorted-by-type+eid
                                       (drop-while (fn [[resource-type resource-eid]]
-                                                    ; design decision on <= vs < is to skip the matching value until next cursor is smarter.
+                                                       ; design decision on <= vs < is to skip the matching value until next cursor is smarter.
                                                     (<= resource-eid cursor-resource-eid))))
                                  sorted-by-type+eid)
 
@@ -133,17 +135,19 @@
           ;sorted-by-type+eid   (sort paginated-types+eids)
           formatted            (->> paginated-types+eids    ; sorted-by-type+eid
                                     (map (fn [[type eid]] (spice-object type eid))))
-          last-result          (last formatted)]
-      {:cursor {:resource last-result}                      ; todo: path index.
+          last-result          (when (seq formatted) (last formatted))] ; Fix: only get last when there are results
+      {:cursor (when last-result {:resource last-result})   ; Fix: only create cursor when there's a last result
        :limit  limit
        :data   formatted})))
 
 (defn count-resources
   "Temporary. Just calls lookup-resources.
   Super inefficient due to the sort in lookup-resources, which is not required.
-  Any complete count will need to materialize full index."
+  Any complete count will need to materialize full index.
+  Note that count-resources supports cursor, so if you count from a :cursor,
+  it will only return the results after the cursor."
   [db query]
-  (->> (assoc query :limit Long/MAX_VALUE :offset 0)        ; note: we do not currently support cursor here.
+  (->> (assoc query :limit Long/MAX_VALUE)
        (lookup-resources db)
        (:data)
        (count)))

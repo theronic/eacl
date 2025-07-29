@@ -1,6 +1,6 @@
 # **EACL**: Enterprise Access ControL
 
-EACL is an embedded [SpiceDB-compatible](https://authzed.com/spicedb)* [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library built in Clojure and backed by Datomic, used at [CloudAfrica](https://cloudafrica.net/).
+EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB-compatible](https://authzed.com/spicedb)*, built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
 ## Project Goals
 
@@ -17,7 +17,7 @@ EACL can answer the following permission questions by querying Datomic:
 ## Authentication vs Authorization
 
 - Authentication or **AuthN** means, "Who are you?"
-- Authorization or **AuthZ** means "What can `<user>` do?" i.e. permissions.
+- Authorization or **AuthZ** means "What can `<subject>` do?" i.e. permissions.
 
 EACL leverages recursive Datomic graph queries and direct index access to support ReBAC authorization situated next to your data.
 
@@ -45,7 +45,7 @@ A situated ReBAC system like EACL can traverse the graph of relationships betwee
 
 ## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that matches the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
+The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resource) => true | false`
 - `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
@@ -70,17 +70,35 @@ The primary API call is `can?`, e.g.
 The other primary API call is `lookup-resources`, e.g.
 
 ```clojure
+(def page1
+  (eacl/lookup-resources client
+    {:subject       (->user "alice")
+     :permission    :view
+     :resource/type :server
+     :limit         2 ; defaults to 1000.
+     :cursor        nil})) ; pass nil for 1st page.
+page1
+=> {:cursor 'next-cursor
+    :data [{:type :server :id "server-1"}
+           {:type :server :id "server-2"}]}
+```
+
+To query the next page, simply pass the cursor from page1 into the next query:  
+
+```clojure
 (eacl/lookup-resources client
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :server
-   :limit         1000
-   :cursor        nil}) ; pass nil for 1st page.
+   :limit         3
+   :cursor        (:cursor page1)}) ; pass nil for 1st page.
 => {:cursor 'next-cursor
-    :data [{:type :server :id "server-1"}
-           {:type :server :id "server-2"}
-           ...]}
+    :data [{:type :server :id "server-3"}
+           {:type :server :id "server-4"}
+           {:type :server :id "server-5"}]}
 ```
+
+*Note:* the return order of resources from `lookup-resources` is stable, but undefined, because results are read directly from index for speed.
 
 ## Quickstart
 
@@ -107,20 +125,22 @@ Add the EACL dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install the latest EACL Datomic Schema:
-@(d/transact conn schema/v4-schema)
+@(d/transact conn schema/v6-schema)
 
 ; Transact your permission schema (details below).
 @(d/transact conn
   [; Account:
-    (Relation :account :owner :user)                     ; relation owner: user
-    (Permission :account :owner :admin)
-    (Permission :account :owner :update_billing_details)
+    (Relation :account :owner :user)                     ; account { relation owner: user }
+    
+    (Permission :account :admin {:relation :owner})
+    (Permission :account :update {:relation :owner})
     
     ; Product:
     (Relation :product :account :account)                ; relation account: account
-    (Permission :product :account :admin :update_sku)])    ; permission update_sku = account->admin
+    
+    (Permission :product :edit {:arrow :account :permisison :admin})])    ; permission update_sku = account->admin
 
-; Transact some Datomic test entities with `:eacl/type` & `:eacl/id`:
+; Transact some Datomic entities with a unique ID, e.g. `:eacl/id`:
 @(d/transact conn
   [{:eacl/id "user-1"}
    {:eacl/id "user-2"}
@@ -133,8 +153,8 @@ Add the EACL dependency to your `deps.edn` file:
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn
            ; optional config:
-           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :your/id can be a unique UUID attr.
-            :entity->object-id (fn [ent] (:eacl/id obj-id))})) ; optional. to internal IDs to your external IDs.
+           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
+            :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
  
 ; Define some convenience methods over spice-object:
 (def ->user (partial spice-object :user))
@@ -147,14 +167,14 @@ Add the EACL dependency to your `deps.edn` file:
    (eacl/->Relationship (->account "account-1") :account (->product "product-1"))])
 
 ; Run some Permission Checks with `can?`:
-(eacl/can? acl (->user "user-1") :update_billing_details (->account "account-1"))
+(eacl/can? acl (->user "user-1") :update (->account "account-1"))
 ; => true
-(eacl/can? acl (->user "user-2") :update_billing_details (->account "account-1"))
+(eacl/can? acl (->user "user-2") :update (->account "account-1"))
 ; => false
 
-(eacl/can? acl (->user "user-1") :update_sku (->product "product-1"))
+(eacl/can? acl (->user "user-1") :edit (->product "product-1"))
 ; => true
-(eacl/can? acl (->user "user-2") :update_sku (->product "product-1"))
+(eacl/can? acl (->user "user-2") :edit (->product "product-1"))
 ; => false
 
 ; You can enumerate resources via `lookup-resources`:
@@ -201,12 +221,22 @@ definition account {
 We define two resource types, `user` & `account`, where a `user` subject can be an `owner` of an `account` resource. 
 
 In EACL we use:
- - `(Relation resource-type relation-name subject-type)`, i.e.
- - `(Relation :account :owner :user)`
+```
+ (Relation resource-type relation-name subject-type)
+```
+e.g.
+```
+(Relation :account :owner :user)
+```
 
- This means that an `<account>` resource can be related to a `<user>` via an `:owner` Relationship.
+This means a `user` subject can have  an `:owner` relation to an `account`, via a Relationship:
+```
+(Relationship (->user 123) :owner (->account 456))
+```
 
-### Modelling Direct Permissions
+A Relationship is just a 3-tuple of `[subject relation resource]`.
+
+### Permission Schema: Direct Relations
 
 Let's add a direct permission to the schema for `account` resources:
 
@@ -215,18 +245,18 @@ definition user {}
 
 definition account {
   relation owner: user
-  permission update_billing_details = owner
+  permission update = owner
 }
 ```
 
-In EACL, **Direct Permissions** use `(Permission resource-type relation-name permission-to-grant)`,
- - e.g. `(Permission :account :owner :update_billing_details)`
- - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update_billing_details` permission for that account.
+In EACL, **Direct Permissions** use `(Permission resource-type permission {:relation relation_name)`,
+ - e.g. `(Permission :account :update {:relation :owner})`
+ - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update` permission for that account.
 
 However, at this point, all permissions checks will return false because there are no Relationships defined:
 
 ```clojure
-(eacl/can? acl (->user "alice") :update_billing_details (->account "acme"))
+(eacl/can? acl (->user "alice") :update (->account "acme"))
 => false
 ```
 
@@ -243,14 +273,14 @@ We can create Relationships in EACL via `create-relationships!` or `write-relati
 
 ### Permission Checks 
 
-Now that we have a Relationship betweee a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account's billing details:
+Now that we have a Relationship betweee a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account:
 ```clojure
-(eacl/can? acl (->user "alice") :update_billing_details (->account "acme"))
+(eacl/can? acl (->user "alice") :update (->account "acme"))
 => true
 ```
 However, Bob cannot, because he is not an `:owner` of the ACME account:
 ```clojure
-(eacl/can? acl (->user "bob") :update_billing_details (->account "acme"))
+(eacl/can? acl (->user "bob") :update (->account "acme"))
 => false
 ```
 
@@ -265,70 +295,102 @@ definition account {
   relation owner: user
   
   permission admin = owner
-  permission update_billing_details = owner
+  permission update = owner
 }
 
 definition product {
   relation account: account
-  permission update_sku = account->admin  ; <= arrow permission
+  
+  permission edit = account->admin  ; (this is an arrow permission)
 }
 ```
 
-The arrow permission implies that any subject who has the `admin` permission on the related account for that product, will also have the `update_sku` permission for that product.
+The arrow permission implies that any subject who has the `admin` permission on the related account for that product, will also have the `edit` permission for that product.
 
 Given that,
  1. `(->user "alice")` is the `:owner` of `(->account "acme")`, and
  2. `(->account "acme")` is the `:account` for `(->product "SKU-123")`
-EACL can traverse the permission graph from user->account->product to calculate that Alice can `update_sku` for product `SKU-123`, but not for any other products.
+EACL can traverse the permission graph from user->account->product to calculate that Alice can `edit` product `SKU-123`, but not for any other products.
 
 Here is the equivalent EACL schema (these are just Datomic tx-data):
-```
-[; Account:
- (Relation :account :owner :user)                     ; relation owner: user
- (Permission :account :owner :admin)                  ; EACL requires this permission for arrow permission lower down.
- (Permission :account :owner :update_billing_details)
+```clojure
+(require '[eacl.datomic.impl :refer [Relation Permission]])
 
- ; Product:
- (Relation :product :account :account)                ; relation account: account
- (Permission :product :account :admin :update_sku)    ; permission update_sku = account->admin
+[; Account:
+ ; definition account {
+ ;   relation owner: user
+ ; 
+ ;   permission admin = owner
+ ;   permission update = owner
+ ; } 
+ (Relation :account :owner :user) ; account { relation owner: user }
+ 
+ (Permission :account :admin {:relation :owner}) ; account { permission admin = owner }
+ (Permission :account :update {:relation :owner}) ; account { permission update = owner }
+
+ ; Product with an arrow permission:
+ ; definition product {
+ ;   relation account: account
+ ; 
+ ;   permission edit = account->admin
+ ; }
+ (Relation :product :account :account)
+ (Permission :product :edit {:arrow :account :permission :admin})
 ]
 ```
 
 Now you can use `can?` to check those arrow permissions:
 ```clojure
-(eacl/can? acl (->user "alice") :update_sku (->product "SKU-123"))
+(eacl/can? acl (->user "alice") :edit (->product "SKU-123"))
 => true ; if Alice is an :owner of the Account for that Product.
 
-(eacl/can? acl (->user "bob") :update_sku (->product "SKU-123"))
+(eacl/can? acl (->user "bob") :edit (->product "SKU-123"))
 => false ; if Bob is not the :owner of the Account for that Product.
 ```
 
 Internally, EACL models Relations, Permissions and Relationships as Datomic entities, along with several tuple indices for efficient querying.
 
-We have an implementation for the gRPC API that is not open-sourced yet, but will be open-sourced.
+We have an implementation for the gRPC API that is not open-sourced at this time.
 
-* To maintain Spice-compatibility, all Spice objects (subjects or resources) require,
-- `:eacl/type` (keyword), e.g. `:server` or `:account`
-- `:eacl/id` (unique string), e.g. `"unique-account-1"`
+## EACL ID Configuration
 
-- Update as of 2025-06-28: EACL now supports configuration `entid->object` & `object->entid` that lets you reuse existing Datomic entity IDs.
+SpiceDB uses strings for subject & resource IDs, whereas EACL internally uses Datomic entity IDs.
 
-You can construct a Spice Object using `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`. It returns a SpiceObject.
+Internal Datomic eids are not guaranteed to be stable after a DB rebuild, so EACL lets you configure how IDs should be coerced from internal to external & vice versa, so e.g. you can configure EACL to return a UUID or string in your database. Note that this attribute should have `:db/unique :db.unique/identity` set: 
+
+```clojure
+(def acl (eacl.datomic.core/make-client conn
+           {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
+            :object-id->ident (fn [obj-id] [:your/id obj-id])}))
+```
+The default options are to use `:eacl/id`, but if you want to use internal Datomic eids (e.g. if you don't expose anything to the outside world), you can pass the following options:
+```clojure
+(def acl (eacl.datomic.core/make-client conn
+           {:entid->object-id (fn [_db eid] eid)
+            :object-id->ident (fn [obj-id] obj-id)}))
+```
+
+`eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`, and returns a SpiceObject.
 
 ## Schema Syntax
 
 Your EACL schema lives in Datomic. The following functions correspond to SpiceDB schema and return Datomic entity maps:
 
 - `(Relation resource-type relation-name subject-type)`
-- `(Permission resource-type relation-name permission-to-grant)`
+- `(Permission resource-type permission-to-grant spec)`, where spec has  `{:keys [arrow relation permission]}`.
 - `(Relationship user1 relation-name server1)` confers `permission` to subject `user1` on server1.
 
-Additionally, Permission has a 4-arity syntax to define arrow permissions:
-- `(Permission resource-type relation-name via-permission permission-to-grant)`
+`Permission` supports the following syntax: 
+- `(Permission resource-type permission {:relation some_relation})` ; the missing `:arrow` implies `:self`.
+- `(Permission resource-type permission {:permisison some_permission})` ; the missing `:arrow` implies `:self`.
+- `(Permission resource-type permission {:arrow source :permission via_permission})`
+- `(Permission resource-type permission {:arrow source :relation via_relation})`
+
+Internally everything is an arrow permission, but omitted `:arrow` means `:self` (reserved word). 
 
 e.g.
 ```
-(Permission :server :account :owner :admin)
+(Permission :server :admin {:arrow :account :relation :owner})
 ```
 
 Which you can read as follows:
@@ -341,7 +403,7 @@ definition account {
 
 definition server {
   relation account: account
-  permission admin = account->admin # <-- 4 arity arrow syntax
+  permission admin = account->admin
 }
 
 ```
@@ -351,25 +413,24 @@ definition server {
 Given the following SpiceDB schema,
 
 ```
-definition user {
-}
+definition user {}
 
 definition platform {
   relation super_admin: user
-  pemission admin = super_admin
 }
 
 definition account {
-  relation owner: user
   relation platform: platform
-  permission admin = owner + platform->admin
+  relation owner: user
+  
+  permission admin = owner + platform->super_admin
 }
 
 definition server {
   relation account: account
   relation shared_admin: user
   
-  permission reboot = shared_admin + account->admin
+  permission reboot = account->admin + shared_admin
 }
 ```
 
@@ -381,22 +442,37 @@ How to model this in EACL?
 
 @(d/transact conn
              [; Platform:
+              ; definition platform {
+              ;   relation super_admin: user
+              ; } 
               (Relation :platform :super_admin :user)
-              (Permission :platform :super_admin :admin)
-
-              ; Accounts:
-              (Relation :account :super_admin :user)
-              (Relation :account :platform :platform)
               
-              (Permission :account :owner :admin)
-              (Permission :account :platform :super_admin :admin)
+              ; Accounts:
+              ; definition account {
+              ;   relation platform: platform
+              ;   relation owner: user
+              ; }
+
+              (Relation :account :platform :platform)
+              (Relation :account :owner :user)
+              
+              ; definition account {
+              ;   permission admin = owner + platform->super_admin
+              ; }
+              (Permission :account :admin {:relation :owner})
+              (Permission :account :admin {:arrow :platform :relation :super_admin})
 
               ; Servers:
+              ; definition server {
+              ;   relation account: account
+              ;   relation shared_admin: user
+              ; }
               (Relation :server :account :account)
               (Relation :server :shared_admin :user)
 
-              (Permission :server :shared_admin :reboot)
-              (Permission :server :account :admin :reboot)])
+              ; server { permission reboot = account->admin + shared_admin }
+              (Permission :server :reboot {:arrow :account :permission :admin})
+              (Permission :server :reboot {:relation :shared_admin})])
 ```
 
 Now you can transact relationships:
@@ -404,11 +480,9 @@ Now you can transact relationships:
 ```clojure
 @(d/transact conn
   [{:db/id     "user1-tempid"
-    :eacl/type :user
     :eacl/id   "user1"}
 
    {:db/id     "account1-tempid"
-    :eacl/type :account
     :eacl/id   "account1"}
 
    (Relationship "user1-tempid" :owner "account1-tempid")])
@@ -422,8 +496,7 @@ Now you can transact relationships:
 - EACL makes no strong performance claims. It should be good for <1M Datomic entities. Goal is 10M entities.
 - Arrow syntax is limited to one level of nesting, e.g.
   - Supported: `permission arrow = relation->via-permission` is valid
-  - Not supported: `permission arrow = relation->subrelation->permission` is not valid. Add multiple nesting levels with intermediate resources.
-- Tail of Arrow syntax tail must be a permission on the relation resource, i.e. given `permission admin = account->admin`, `admin` must be a permission on `account` relation, not a relation on account.
+  - Not supported: `permission arrow = relation->subrelation->permission` is not valid (yet).
 - Only union permissions are supported:
   - Supported: `permission admin = owner + shared_admin`
   - Not supported: `permission admin = owner - shared_member`. Exclusion types require complex caching to avoid multiple `can?` queries.
@@ -440,7 +513,7 @@ clj -X:test
 ## Run Test for One Namespace
 
 ```bash
-clj -M:test -n eacl.datomic.impl-test
+clj -M:test -n eacl.datomic.impl.indexed_test
 ```
 
 ## Run Tests for Multiple Namespaces
