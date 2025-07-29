@@ -449,9 +449,7 @@
         limited-results (take limit merged-results)
         resources       (map #(spice-object type %) limited-results)
         last-resource   (last resources)
-        next-cursor     (when (and last-resource
-                                   (>= (count resources) limit))
-                          {:resource last-resource})]
+        next-cursor     {:resource (or last-resource (:resource cursor))}]
     {:data   resources
      :cursor next-cursor}))
 

@@ -261,16 +261,24 @@
     (testing "lookup-resources: super-user can view all servers"
       ; note: the return order of `lookup-resources` depends on the tuple index, or any sort operation.
       ; currently we sort, which is super slow. this needs to revert to the tuple-index order.
-      (is (= #{(spice-object :server "account1-server1")
-               (spice-object :server "account1-server2")
-               (spice-object :server "account2-server1")}
-             (->> (lookup-resources db {:subject       (->user super-user-eid)
-                                        :permission    :view
-                                        :resource/type :server
-                                        :limit         1000
-                                        :cursor        nil})
-                  (paginated->spice db)
-                  (set)))))
+      (let [{:as page1
+             page1-data :data
+             page1-cursor :cursor} (lookup-resources db {:subject       (->user super-user-eid)
+                                                                :permission    :view
+                                                                :resource/type :server
+                                                                :limit         1000
+                                                                :cursor        nil})
+            resources (paginated->spice db page1)]
+        (is (= [(spice-object :server "account1-server1")
+                (spice-object :server "account1-server2")
+                (spice-object :server "account2-server1")]
+               resources))
+        (testing "cursor should be the last resource"
+          (is page1-cursor)
+          (let [last-resource     (:resource page1-cursor)
+                last-resource-ent (d/entity db (:id last-resource))
+                last-resource-internal (spice-object (:type last-resource) (:eacl/id last-resource-ent))]
+            (is (= (spice-object :server "account2-server1") last-resource-internal))))))
 
     (testing "view_via_arrow_relation works"
       (is (= #{(spice-object :account "account-1")
@@ -613,6 +621,15 @@
                                                  :permission    :view
                                                  :subject       (->user super-user-eid)})
                           (paginated->spice db')))))
+
+            (testing "lookup-resources returns cursor input when looking beyond any values"
+              (let [page3-empty (lookup-resources db' {:limit         100
+                                                       :cursor        page2-cursor
+                                                       :resource/type :server
+                                                       :permission    :view
+                                                       :subject       (->user super-user-eid)})]
+                (is (empty? (:data page3-empty)))
+                (is (= page2-cursor (:cursor page3-empty)))))
 
             (testing "count-resources should return count of all result"
               (is (= 4 (count-resources db' {:resource/type :server
