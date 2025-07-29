@@ -84,6 +84,8 @@
 (defrecord Relationship [subject relation resource])
 (defrecord RelationshipUpdate [operation relationship])
 
+; Todo: move SpiceObject out of core impl to Spice-specific namespace.
+
 (defrecord SpiceObject [type id relation]) ; where relation means subject_relation, which is distinct from Relationship.relation
 
 (defn spice-object

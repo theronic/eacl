@@ -10,168 +10,336 @@
 (def ->platform (partial spice-object :platform))
 (def ->account (partial spice-object :account))
 (def ->vpc (partial spice-object :vpc))
+(def ->network (partial spice-object :network))
+(def ->lease (partial spice-object :lease))
+(def ->nic (partial spice-object :network_interface))
 (def ->backup (partial spice-object :backup))
+(def ->backup-schedule (partial spice-object :backup_schedule))
 (def ->host (partial spice-object :host))
 
-(def base-fixtures
-  [; Schema
-   (Relation :platform :super_admin :user)                  ; means resource-type/relation subject-type, e.g. definition platform { relation super_admin: user }.
-   (Permission :platform :super_admin :platform_admin)      ; hack to support platform->admin
-   ; definition platform {
-   ;   relation super_admin: user;
-   ;   permission platform_admin = super_admin   # EACL requires this hack for arrow relations because we traverse permissions->relations. Could be fixed.
-   ; }
+(def relations+permissions
+  [;; Schema
+   ; Platform for super_admin rights
+   (Relation :platform :super_admin :user)                  ; definition platform { relation super_admin: user }
 
-   (Relation :vpc/account :account)                         ; vpc, relation account: account.
-   ;permission admin = account->admin + shared_admin
-   (Permission :vpc :shared_admin :admin)
-   (Permission :vpc :account :admin :admin)                 ; vpc/admin = account->admin (arrow syntax)
+   ; model: server -> nic -> lease -> network -> vpc.
+   (Relation :server :nic :network_interface)               ; a server can have many NICs. definition server { relation nic: network_interface }
+   (Relation :network_interface :lease :lease)              ; a NIC can have a lease (to an IP). definition network { relation lease: lease }
+   (Relation :lease :network :network)                      ; a lease has a network. definition lease { relation network: network }
+   (Relation :network :vpc :vpc)                            ; a network has a vpc. definition network { relation vpc: vpc }
 
-   ; VPCs:
-   (Relation :vpc/owner :user)
-   (Permission :vpc/owner :admin)                           ; just admin?
+   ; VPC Relations:
+   (Relation :vpc :account :account)                        ; definition vpc { relation account: account }
+   (Relation :vpc :shared_admin :user)                      ; vpc { relation shared_admin: user }
+   (Relation :vpc :shared_member :user)                     ; vpc { relation shared_member: user }
+
+   ; VPC Permissions:
+
+   ; vpc { permission admin = account->admin + shared_admin }
+   (Permission :vpc :admin {:arrow :account :permission :admin})
+   (Permission :vpc :admin {:relation :shared_admin})
+
+   ; vpc { permission view = account->admin + shared_admin + shared_member }
+   (Permission :vpc :view {:arrow :account :permission :admin})
+   (Permission :vpc :view {:relation :shared_admin})
+   (Permission :vpc :view {:relation :shared_member})
+
+   ; vpc { permission rename = account->admin + shared_admin }
+   (Permission :vpc :rename {:arrow :account :permission :admin})
+   (Permission :vpc :rename {:relation :shared_admin})
+
+   ; vpc { permission share = account->admin + shared_admin }
+   (Permission :vpc :share {:arrow :account :permission :admin})
+   (Permission :vpc :share {:relation :shared_admin})
+
+   ; vpc { permission delete = account->admin + shared_admin }
+   (Permission :vpc :delete {:arrow :account :permission :admin})
+   (Permission :vpc :delete {:relation :shared_admin})
+
+   ; vpc { permission create_server = account->admin + shared_admin }
+   (Permission :vpc :create_server {:arrow :account :permission :admin})
+   (Permission :vpc :create_server {:relation :shared_admin})
+
+   ; vpc { permission restore_from_backup = account->admin + shared_admin }
+   (Permission :vpc :restore_from_backup {:arrow :account :permission :admin})
+   (Permission :vpc :restore_from_backup {:relation :shared_admin})
+
+   (Permission :network_interface :view {:relation :lease}) ; direct
+   (Permission :network_interface :view {:arrow :lease :permission :view}) ; arrow
+
+   (Permission :lease :view {:relation :network})           ; direct
+   (Permission :lease :view {:arrow :network :permission :view}) ; arrow
+
+   (Permission :network :view {:relation :vpc})             ; direct
+   (Permission :network :view {:arrow :vpc :permission :view}) ; arrow
+
+   ; definition server { permission view =
 
    ; Accounts:
    (Relation :account :owner :user)                         ; Account has an owner (a user)
    (Relation :account :platform :platform)
 
-   (Permission :account :owner :admin)                      ; Owner of account gets admin on account
-   (Permission :account :owner :view)
-   (Permission :account :platform :platform_admin :admin)   ; hack for platform->super_admin.
-   (Permission :account :platform :platform_admin :view)    ; spurious.
+   ; definition account { permission admin = owner + platform->super_admin }
+   (Permission :account :admin {:relation :owner})          ; Owner of account gets admin on account
+   (Permission :account :admin {:arrow :platform :relation :super_admin})
+
+   ; definition account { permission view = owner + platform->super_admin }
+   (Permission :account :view {:relation :owner})
+   (Permission :account :view {:arrow :platform :relation :super_admin})
+
+   ; Special permission for test case:
+   ; definition account { permission view_via_arrow_relation = platform->super_admin }
+   (Permission :account :view_via_arrow_relation {:arrow :platform :relation :super_admin})
 
    ; Teams:
-   (Relation :team/account :account)
+   (Relation :team :account :account)
 
    ;; Servers:
-   (Relation :server/account :account)
+   (Relation :server :owner :user)
+   (Relation :server :account :account)
+   (Relation :server :shared_admin :user)
+   (Relation :server :vpc :vpc)
 
-   (Permission :server/account :view)
+   ; definition server { permission view = owner + account + account->admin + nic->view + shared_admin }
+   (Permission :server :view {:relation :owner})
+   (Permission :server :view {:relation :account})
+   (Permission :server :view {:arrow :account :permission :admin})
+   (Permission :server :view {:arrow :nic :permission :view})
+   (Permission :server :view {:relation :shared_admin})
 
-   (Permission :server :account :admin :view)
-   (Permission :server :account :admin :delete)
-   (Permission :server :account :admin :reboot)
-   ;(Permission :server :account :admin :reboot)
+   ; definition server { permission edit = owner } ; admin?
+   (Permission :server :edit {:relation :owner})
 
-   (Permission :server/account :edit)
-   ; Server Shared Admin:
-   (Permission :server/shared_admin :view)
-   (Permission :server/shared_admin :reboot)
-   (Permission :server/shared_admin :admin)
-   (Permission :server/shared_admin :delete)
+   ; definition server { permission delete = account->admin }
+   (Permission :server :delete {:arrow :account :permission :admin})
 
-   ;(Relation :server/company :company)
-   ; can we combine these into one with multi-cardinality?
+   ; definition server { permission reboot = account->admin + shared_admin }
+   (Permission :server :reboot {:arrow :account :permission :admin})
+   (Permission :server :reboot {:relation :shared_admin})
 
-   ; these can go away
-   (Relation :server/owner :user)
+   ; definition server { permission admin = account->admin + vpc->admin + shared_admin }
+   (Permission :server :admin {:arrow :account :permission :admin})
+   (Permission :server :admin {:arrow :vpc :permission :admin})
+   (Permission :server :admin {:relation :shared_admin})
 
-   (Permission :server/owner :view)
-   ;(Permission :server/owner :reboot)
-   (Permission :server/owner :edit)
-   (Permission :server/owner :delete)
+   (Permission :server :view_server_via_arrow_relation {:arrow :account :permission :view_via_arrow_relation}) ; special test case.
 
-   ; Global Platform for Super Admins:
-   {:db/id     "platform"
-    :db/ident  :test/platform
-    :eacl/type :platform
-    :eacl/id   "platform"}
+   ; this is not supported yet, use :relation in meantime:
+   (Permission :server :share {:permission :admin})
+   (Permission :server :share {:arrow :account :permission :admin})
+   (Permission :server :share {:arrow :vpc :permission :admin})
+   (Permission :server :share {:relation :shared_admin})
+
+   (Permission :server :via_self_admin {:arrow :self :permission :admin}) ; to test :self->permission.
+
+   ; definition server { permission delete = owner + shared_admin }
+   (Permission :server :delete {:relation :owner})
+   (Permission :server :delete {:relation :shared_admin})
+
+
+   ; Server Backup & Restore
+   ; server { permission restore_over = account->admin + shared_admin }
+   (Permission :server :restore_over {:permission :admin})
+
+   ;(Permission :server :restore_over {:arrow :account :permission :admin})
+   ;(Permission :server :restore_over {:relation :shared_admin})
+
+   ; server { permission take_backup = account->admin + shared_admin }
+
+   (Permission :server :take_backup {:permission :admin})
+
+   ;(Permission :server :take_backup {:arrow :account :permission :admin})
+   ;(Permission :server :take_backup {:relation :shared_admin})
+
+   ; Server Backup Schedule Creation
+   ; Note that deletion of backup_schedule is handled by own resource_type, :backup_schedule.
+
+   ; server { permission create_backup_schedule = account->admin + shared_admin }
+
+   (Permission :server :create_backup_schedule {:permission :admin})
+
+   ;(Permission :server :create_backup_schedule {:arrow :account :permission :admin})
+   ;(Permission :server :create_backup_schedule {:relation :shared_admin})
+
+   ; Backup Schedules
+   (Relation :backup_schedule :server :server)
+   (Relation :backup_schedule :shared_backup_viewer :user)
+   (Relation :backup_schedule :viewer :user)
+
+   ; backup_schedule { permission view = server->admin + viewer}
+   (Permission :backup_schedule :view {:arrow :server :permission :admin})
+   (Permission :backup_schedule :view {:relation :viewer})  ; should not need :self.
+
+   ; backup_schedule { permission share = server->admin }
+   ; note: share permission reused for unshare.
+   (Permission :backup_schedule :share {:arrow :server :permission :admin})
+
+   ; backup_schedule { permission delete = server->admin }
+   (Permission :backup_schedule :delete {:arrow :server :permission :admin})
+
+   ;; Backup Relations
+   (Relation :backup :server :server)
+   (Relation :backup :account :account)
+   (Relation :backup :vpc :vpc)
+   (Relation :backup :schedule :backup_schedule)
+
+   ;; Backup Permissions
+   ; backup { permission view = account->admin + vpc->admin + server->admin }
+   (Permission :backup :view {:arrow :account :permission :admin})
+   (Permission :backup :view {:arrow :vpc :permission :admin})
+   (Permission :backup :view {:arrow :server :permission :admin})
+   ;(Permission :backup :view {:arrow :schedule :relation :viewer}) ; bug: should not need this.
+   (Permission :backup :view {:arrow :schedule :permission :view}) ; :viewers can also see backups created by this schedule.
+
+   ; backup { permission delete = account->admin + vpc->admin + server->admin }
+   (Permission :backup :delete {:arrow :account :permission :admin})
+   (Permission :backup :delete {:arrow :vpc :permission :admin})
+   (Permission :backup :delete {:arrow :server :permission :admin})])
+
+(def entity-fixtures
+  [; Global Platform for Super Admins:
+   {:db/id    "platform"
+    :db/ident :test/platform
+    :eacl/id  "platform"}
 
    ; Users:
-   {:db/id     "user-1"
-    :db/ident  :test/user1
-    :eacl/type :user
-    :eacl/id   "user-1"}
+   {:db/id    "user-1"
+    :db/ident :test/user1
+    :eacl/id  "user-1"}
 
-   ; we need to specify types for indices, but id can be tempid here.
+   {:db/id    "user-2"
+    :db/ident :test/user2
+    :eacl/id  "user-2"}
+
+   ; Super User can do all the things:
+   {:db/id    "super-user"
+    :db/ident :user/super-user
+    :eacl/id  "super-user"}
+
+   ; Accounts
+   {:db/id    "account-1"
+    :db/ident :test/account1
+    :eacl/id  "account-1"}
+
+   {:db/id    "account-2"
+    :db/ident :test/account2
+    :eacl/id  "account-2"}
+
+   ;; Servers
+   ;; ...Account 1 Servers:
+   {:db/id    "account1-server1"
+    :db/ident :test/server1
+    :eacl/id  "account1-server1"}
+
+   {:db/id   "account1-server2"
+    :eacl/id "account1-server2"}
+
+   ; ...Account 2 Servers:
+   {:db/id    "account2-server1"
+    :db/ident :test/server2
+    :eacl/id  "account2-server1"}
+
+   ; VPC
+   {:db/id    "vpc-1"
+    :db/ident :test/vpc1
+    :eacl/id  "vpc-1"}
+
+   {:db/id    "vpc-2"
+    :db/ident :test/vpc2
+    :eacl/id  "vpc-2"}
+
+   {:db/id    "account1-vpc2"
+    :db/ident :test/account1-vpc2
+    :eacl/id  "account1-vpc2"}
+
+   {:db/id    "account1-vpc3"
+    :db/ident :test/account1-vpc3
+    :eacl/id  "account1-vpc3"}
+
+   ;; Networks, NICs & Leases
+
+   {:db/id    "network-1"
+    :db/ident :test/network1
+    :eacl/id  "network-1"}
+
+   {:db/id    "nic-1"
+    :db/ident :test/nic1
+    :eacl/id  "nic-1"}
+
+   {:db/id    "lease-1"
+    :db/ident :test/lease1
+    :eacl/id  "lease-1"}
+
+   ; Team
+   {:db/id    "team-1"
+    :db/ident :test/team
+    :eacl/id  "team-1"}
+
+   {:db/id    "team-2"
+    :db/ident :test/team2
+    :eacl/id  "team-2"}
+
+   {:db/id    "backup-schedule-1"
+    :db/ident :test/backup-schedule1
+    :eacl/id  "backup-schedule-1"}
+
+   ; Backup
+   {:db/id    "backup-1"
+    :db/ident :test/backup1
+    :eacl/id  "backup-1"}
+
+   {:db/id    "backup-2"
+    :db/ident :test/backup2
+    :eacl/id  "backup-2"}])
+
+(def relationship-fixtures
+  [; we need to specify types for indices, but id can be tempid here.
    (Relationship (->user "user-1") :member (->team "team-1")) ; User 1 is on Team 1
    (Relationship (->user "user-1") :owner (->account "account-1"))
 
-   ; Super User can do all the things:
-   {:db/id     "super-user"
-    :db/ident  :user/super-user
-    :eacl/type :user
-    :eacl/id   "super-user"}
-
    (Relationship (->user "super-user") :super_admin (->platform "platform"))
-
-   {:db/id     "user-2"
-    :db/ident  :test/user2
-    :eacl/type :user
-    :eacl/id   "user-2"}
 
    (Relationship (->user "user-2") :owner (->account "account-2"))
 
-   ; Accounts
-   {:db/id     "account-1"
-    :db/ident  :test/account1
-    :eacl/type :account
-    :eacl/id   "account-1"}
-
    (Relationship (->platform "platform") :platform (->account "account-1"))
-
-   {:db/id     "account-2"
-    :db/ident  :test/account2
-    :eacl/type :account
-    :eacl/id   "account-2"}
-
    (Relationship (->platform "platform") :platform (->account "account-2"))
 
-   ; VPC
-   {:db/id     "vpc-1"
-    :db/ident  :test/vpc
-    :eacl/type :vpc
-    :eacl/id   "vpc-1"}
-
    (Relationship (->account "account-1") :account (->vpc "vpc-1"))
-
-   {:db/id     "vpc-2"
-    :db/ident  :test/vpc2
-    :eacl/type :vpc
-    :eacl/id   "vpc-2"}
+   (Relationship (->account "account-1") :account (->vpc "account1-vpc2"))
+   (Relationship (->account "account-1") :account (->vpc "account1-vpc3"))
 
    (Relationship (->account "account-2") :account (->vpc "vpc-2"))
 
-   ; Team
-   {:db/id     "team-1"
-    :db/ident  :test/team
-    :eacl/type :team
-    :eacl/id   "team-1"}
+   ; server -> nic -> lease -> network -> vpc
+   (Relationship (->vpc "vpc-1") :vpc (->network "network-1"))
+   (Relationship (->network "network-1") :network (->lease "lease-1"))
+   (Relationship (->lease "lease-1") :lease (->nic "nic-1"))
+   (Relationship (->nic "nic-1") :nic (->server "account1-server1"))
 
    ; Teams belongs to accounts
    (Relationship (->account "account-1") :account (->team "team-1"))
-
-   {:db/id     "team-2"
-    :db/ident  :test/team2
-    :eacl/type :team
-    :eacl/id   "team-2"}
-
    (Relationship (->account "account-2") :account (->team "team-2"))
 
-   ;; Servers:
-   {:db/id     "account1-server1"
-    :db/ident  :test/server1
-    :eacl/type :server
-    :eacl/id   "account1-server1"}
-
    (Relationship (->account "account-1") :account (->server "account1-server1")) ; hmm let's check schema plz.
-
-   {:db/id     "account1-server2"
-    :eacl/type :server
-    :eacl/id   "account1-server2"}
-
    (Relationship (->account "account-1") :account (->server "account1-server2"))
 
-   {:db/id     "account2-server1"
-    :db/ident  :test/server2
-    :eacl/type :server
-    :eacl/id   "account2-server1"}
+   (Relationship (->account "account-2") :account (->server "account2-server1"))
 
-   (Relationship (->account "account-2") :account (->server "account2-server1"))])
+   ; this should warn:
+   ;(Relationship (->account "account-1") :account (->backup-schedule "backup-schedule-1"))
+   (Relationship (->server "account1-server1") :server (->backup-schedule "backup-schedule-1"))
 
-;; Team Membership:
+   (Relationship (->backup-schedule "backup-schedule-1") :schedule (->backup "backup-1"))
+   (Relationship (->account "account-1") :account (->backup "backup-1"))
+   (Relationship (->server "account1-server1") :server (->backup "backup-1"))])
 
+(def base-fixtures
+  (concat
+    relations+permissions
+    entity-fixtures
+    relationship-fixtures))
+
+;; (For Later) Team Membership:
 ;(Relationship "user-2" :team/member "team-2")
-
 
 
