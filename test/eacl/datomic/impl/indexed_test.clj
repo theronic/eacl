@@ -352,7 +352,7 @@
       (is @(d/transact *conn* [(Relationship (->user :test/user1) :shared_admin (->server :test/server2))]))) ; this shouldn't be working. no schema for it.
 
     (let [db (d/db *conn*)]
-      (testing "Now :test/user1 can also :server/delete server 2"
+      (testing "As a :shared_admin, :test/user1 can also :server/delete server 2"
         (is (can? db (->user :test/user1) :delete (->server :test/server2)))
 
         (is (= #{(spice-object :server "account1-server1")
@@ -857,11 +857,12 @@
     (testing "Complex nested permissions"
       ;; VPC can view server through network chain
       (is (impl.indexed/can? db (->vpc :test/vpc1) :view (->server :test/server1)))
-      (is (not (impl.indexed/can? db (->vpc :test/vpc2) :view (->server :test/server1)))))
+      (is (not (impl.indexed/can? db (->vpc :test/vpc2) :view (->server :test/server1)))))))
 
-    (testing "Performance - early termination"
-      ;; Add multiple paths that grant the same permission
-      @(d/transact *conn* [(Relationship (->user :test/user1) :owner (->server :test/server1))])
-      (let [db' (d/db *conn*)]
-        ;; Should still be fast even with multiple valid paths
-        (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
+    ; uncommented because server :owner relation went away.
+    ;(testing "Performance - early termination"
+    ;  ;; Add multiple paths that grant the same permission
+    ;  @(d/transact *conn* [(Relationship (->user :test/user1) :owner (->server :test/server1))])
+    ;  (let [db' (d/db *conn*)]
+    ;    ;; Should still be fast even with multiple valid paths
+    ;    (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
