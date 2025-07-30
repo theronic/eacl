@@ -95,20 +95,24 @@
    (Relation :team :account :account)
 
    ;; Servers:
-   (Relation :server :owner :user)
    (Relation :server :account :account)
    (Relation :server :shared_admin :user)
    (Relation :server :vpc :vpc)
 
-   ; definition server { permission view = owner + account + account->admin + nic->view + shared_admin }
-   (Permission :server :view {:relation :owner})
-   (Permission :server :view {:relation :account})
-   (Permission :server :view {:arrow :account :permission :admin})
+   ; definition server { permission admin = account->admin + vpc->admin + shared_admin }
+   (Permission :server :admin {:arrow :account :permission :admin})
+   (Permission :server :admin {:arrow :vpc :permission :admin})
+   (Permission :server :admin {:relation :shared_admin})
+
+   ; definition server { permission view = admin + account + nic->view }
+   (Permission :server :view {:permission :admin})
+   ;(Permission :server :view {:relation :account}) ; why do we need this?
+   ;(Permission :server :view {:arrow :account :permission :admin})
    (Permission :server :view {:arrow :nic :permission :view})
-   (Permission :server :view {:relation :shared_admin})
+   ;(Permission :server :view {:relation :shared_admin})
 
    ; definition server { permission edit = owner } ; admin?
-   (Permission :server :edit {:relation :owner})
+   (Permission :server :edit {:permission :admin})
 
    ; definition server { permission delete = account->admin }
    (Permission :server :delete {:arrow :account :permission :admin})
@@ -117,25 +121,18 @@
    (Permission :server :reboot {:arrow :account :permission :admin})
    (Permission :server :reboot {:relation :shared_admin})
 
-   ; definition server { permission admin = account->admin + vpc->admin + shared_admin }
-   (Permission :server :admin {:arrow :account :permission :admin})
-   (Permission :server :admin {:arrow :vpc :permission :admin})
-   (Permission :server :admin {:relation :shared_admin})
-
    (Permission :server :view_server_via_arrow_relation {:arrow :account :permission :view_via_arrow_relation}) ; special test case.
 
    ; this is not supported yet, use :relation in meantime:
    (Permission :server :share {:permission :admin})
-   (Permission :server :share {:arrow :account :permission :admin})
-   (Permission :server :share {:arrow :vpc :permission :admin})
-   (Permission :server :share {:relation :shared_admin})
+   ;(Permission :server :share {:arrow :account :permission :admin})
+   ;(Permission :server :share {:arrow :vpc :permission :admin})
+   ;(Permission :server :share {:relation :shared_admin})
 
    (Permission :server :via_self_admin {:arrow :self :permission :admin}) ; to test :self->permission.
 
-   ; definition server { permission delete = owner + shared_admin }
-   (Permission :server :delete {:relation :owner})
-   (Permission :server :delete {:relation :shared_admin})
-
+   ; definition server { permission delete = admin }
+   (Permission :server :delete {:permission :admin})
 
    ; Server Backup & Restore
    ; server { permission restore_over = account->admin + shared_admin }
