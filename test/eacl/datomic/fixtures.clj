@@ -106,14 +106,13 @@
 
    ; definition server { permission view = admin + account + nic->view }
    (Permission :server :view {:permission :admin})
-   (Permission :server :view {:relation :owner})
    ;(Permission :server :view {:relation :account}) ; why do we need this?
    ;(Permission :server :view {:arrow :account :permission :admin})
    (Permission :server :view {:arrow :nic :permission :view})
    ;(Permission :server :view {:relation :shared_admin})
 
    ; definition server { permission edit = owner } ; admin?
-   (Permission :server :edit {:relation :owner})
+   (Permission :server :edit {:permission :admin})
 
    ; definition server { permission delete = account->admin }
    (Permission :server :delete {:arrow :account :permission :admin})
@@ -132,10 +131,8 @@
 
    (Permission :server :via_self_admin {:arrow :self :permission :admin}) ; to test :self->permission.
 
-   ; definition server { permission delete = owner + shared_admin }
-   (Permission :server :delete {:relation :owner})
-   (Permission :server :delete {:relation :shared_admin})
-
+   ; definition server { permission delete = admin }
+   (Permission :server :delete {:permission :admin})
 
    ; Server Backup & Restore
    ; server { permission restore_over = account->admin + shared_admin }
