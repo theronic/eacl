@@ -263,11 +263,7 @@
                              (map (fn [{:as path, path-type :type}]
                                     (case path-type
 
-                                      ; this :self-permission check is incomplete:
-                                      ;:self-permission
-                                      ;;; Self-permission: recursively check if the resource has the target permission
-                                      ;(let [target-permission (:target-permission path)]
-                                      ;  (can? db (->spice-object subject-type subject-eid) target-permission (->spice-objct resource-type resource-id)))
+                                      ; do we need a self-permission case here that checks for existence of direct Relationship? (do not call can? again)
 
                                       :relation
                                       ;; Direct relation - forward traversal
@@ -338,6 +334,12 @@
         ;; Take the requested limit from merged results
         limited-results (take limit path-results)]
     limited-results))
+
+(defn direct-match-datoms-in-relationship-index
+  [db subject-type subject-eid relation-name resource-type resource-eid]
+  (d/datoms db
+            :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+            subject-type subject-eid relation-name resource-type resource-eid))
 
 (defn traverse-permission-path-via-subject
   "Subject must be known. Returns lazy seq of resource eids."
