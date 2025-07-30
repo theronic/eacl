@@ -263,8 +263,6 @@
                              (map (fn [{:as path, path-type :type}]
                                     (case path-type
 
-                                      ; do we need a self-permission case here that checks for existence of direct Relationship? (do not call can? again)
-
                                       :relation
                                       ;; Direct relation - forward traversal
                                       (when (= subject-type (:subject-type path))
@@ -277,6 +275,13 @@
                                                         (when (> resource-eid (or cursor-eid 0))
                                                           [resource-eid path]))))
                                                (filter some?))))
+
+                                      :self-permission
+                                      ;; Self-permission: recursively find resources where subject has target permission
+                                      (let [target-permission (:target-permission path)]
+                                        ;; Recursively traverse with target permission to find matching resources
+                                        (traverse-permission-path db subject-type subject-eid
+                                                                  target-permission resource-type cursor-eid limit))
 
                                       :arrow
                                       ;; Arrow permission - traverse using index-range
@@ -357,16 +362,13 @@
                        (and resource-eid (> resource-eid (or cursor-eid 0))))))))
 
     :self-permission
-    ;; Self-permission: check if the resource itself has the target permission for the subject
-    (let [target-permission     (:target-permission path)
-          resource-spice-object (spice-object resource-type subject-eid)]
-      (if (can? db (spice-object subject-type subject-eid) target-permission resource-spice-object)
-        ;; If permission exists, return the resource itself (filtered by cursor)
-        (if (or (nil? cursor-eid) (> subject-eid (or cursor-eid 0)))
-          [subject-eid]
-          [])
-        ;; If no permission, return empty
-        []))
+    ;; Self-permission: recursively get resources where subject has target permission
+    (let [target-permission (:target-permission path)]
+      ;; Use traverse-permission-path to get resources where subject has target permission
+      (->> (traverse-permission-path db subject-type subject-eid target-permission resource-type cursor-eid Long/MAX_VALUE)
+           (map first)                                      ; Extract resource-eids from [resource-eid path] tuples
+           (filter (fn [resource-eid]
+                     (and resource-eid (> resource-eid (or cursor-eid 0)))))))
 
     :arrow
     ;; Arrow permission - reverse traversal
