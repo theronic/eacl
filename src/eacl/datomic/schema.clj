@@ -1,12 +1,41 @@
-(ns eacl.datomic.schema)
+(ns eacl.datomic.schema
+  (:require [clojure.set]
+            [datomic.api :as d]
+            [com.rpl.specter :as S]
+            [malli.core :as m]))
 
-(def v4-schema
-  [{:db/ident       :eacl/type
-    :db/doc         "Resource Type on Domain Entities. Used by EACL."
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
+; should these Malli specs be in a separate namespace, e.g. specs?
+; might be confused for Datomic fn's like Relation / Permission in impl. base.
+; Ideally Datomic impl. should reuse these.
 
+(def Relation
+  [:map
+   [:eacl.relation/resource-type :keyword]
+   [:eacl.relation/subject-type :keyword]
+   [:eacl.relation/relation-name :keyword]])
+
+; todo: fix the Malli schema for unified Permission.
+;(def DirectPermission
+;  [:map
+;   [:eacl.permission/resource-type :keyword]
+;   [:eacl.permission/relation-name :keyword]
+;   [:eacl.permission/permission-name :keyword]
+;
+;   [:eacl.relation/subject-type :keyword]
+;   [:eacl.relation/relation-name :keyword]])
+
+;(def ArrowPermission
+;  [:map
+;   [:eacl.arrow-permission/resource-type :keyword]
+;   [:eacl.arrow-permission/source-relation-name :keyword]
+;   [:eacl.arrow-permission/target-permission-name :keyword]
+;   [:eacl.arrow-permission/permission-name :keyword]])
+
+;(def Permission
+;  [:or DirectPermission ArrowPermission])
+
+(def v6-schema
+  [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
     :db/valueType   :db.type/string
@@ -43,7 +72,7 @@
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
 
-   ;; Permissions
+   ;; Unified Permissions Schema
    {:db/ident       :eacl.permission/resource-type
     :db/doc         "EACL Permission: Resource Type"
     :db/valueType   :db.type/keyword
@@ -56,93 +85,75 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl.permission/relation-name          ; For direct relation grant
-    :db/doc         "EACL Permission: Name of the direct relation that grants this permission."
+   {:db/ident       :eacl.permission/source-relation-name
+    :db/doc         "EACL Permission: Source relation for arrow permissions (optional - not present for direct permissions)"
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.permission/target-type
+    :db/doc         "EACL Permission: Target type (:relation or :permission)"
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.permission/target-name
+    :db/doc         "EACL Permission: Target name (relation name or permission name)"
     :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
    ; Permission Indices
-   {:db/ident       :eacl.permission/resource-type+relation-name+permission-name
-    :db/doc         "EACL Permission: Unique identity tuple to enforce uniqueness of [Resource Type + Relation + Permission]."
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/relation-name
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
-
-   ; used by lookup-resources:
    {:db/ident       :eacl.permission/resource-type+permission-name
-    :db/doc         "EACL Permission: Index for finding all relations that grant a permission"
+    :db/doc         "EACL Permission: Index for finding all permissions on a resource type"
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.permission/resource-type
                      :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ;; Arrow-syntax Permissions, e.g. `permission reboot = owner + account->admin`.
-
-   {:db/ident       :eacl.arrow-permission/resource-type
-    :db/doc         "EACL Arrow Permission: Resource Type"
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.arrow-permission/permission-name
-    :db/doc         "EACL Arrow Permission: Permission Name"
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.arrow-permission/source-relation-name
-    :db/doc         "EACL Arrow Permission: Name of the relation on this resource type that points to another resource where the target permission should be checked."
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.arrow-permission/target-permission-name
-    :db/doc         "EACL Arrow Permission: Name of the permission to check on the resource type pointed to by arrow-source-relation."
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   ;; Arrow Permission Indices:
-   {:db/ident       :eacl.arrow-permission/resource-type+source-relation-name+target-permission-name+permission-name
-    :db/doc         "EACL Arrow Permission: Unique identity tuple to enforce uniqueness of [Resource Type + Source Relation + Via Permission + Permission Grant]."
+   ;; Added: Enumeration indices for efficient arrow permission lookup
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+    :db/doc         "EACL Permission: Index for enumerating permission-type arrows"
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.arrow-permission/resource-type
-                     :eacl.arrow-permission/source-relation-name
-                     :eacl.arrow-permission/target-permission-name
-                     :eacl.arrow-permission/permission-name]
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name
+    :db/doc         "EACL Permission: Index for enumerating relation-type arrows"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/target-name]
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
+    :db/doc         "EACL Permission: Full unique identity tuple to prevent duplicate permissions."
+    ; I suspect the tuple order can be improved for faster permission enumeration.
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/target-name
+                     :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
-
-   {:db/ident       :eacl.arrow-permission/resource-type+permission-name
-    :db/doc         "Index for arrow permission lookups"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.arrow-permission/resource-type
-                     :eacl.arrow-permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.arrow-permission/resource-type+target-permission-name
-    :db/doc         "Index for arrow permission lookups"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.arrow-permission/resource-type
-                     :eacl.arrow-permission/target-permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
 
    ;; Relationships [Subject Relation Resource]
    {:db/ident       :eacl.relationship/subject-type
-    :db/doc         "EACL: Subject Type Keyword"
+    :db/doc         "EACL Relationship: Subject Type Keyword"
     :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
    {:db/ident       :eacl.relationship/subject
-    :db/doc         "EACL: Ref to Subject"
+    :db/doc         "EACL Relationship: Ref to Subject"
     :db/valueType   :db.type/ref
     :db/cardinality :db.cardinality/one                     ; This used to be many, but simpler if one.
     :db/index       true}
@@ -166,131 +177,101 @@
     :db/index       true}
 
    ;; Relationship Indices (expensive)
-   {:db/ident       :eacl.relationship/subject+relation-name+resource-type+resource
+   {:db/ident       :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
     :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject
+    :db/tupleAttrs  [:eacl.relationship/subject-type
+                     :eacl.relationship/subject
                      :eacl.relationship/relation-name
                      :eacl.relationship/resource-type
                      :eacl.relationship/resource]
     :db/cardinality :db.cardinality/one
+    :db/unique      :db.unique/identity}
+
+   ; This can go away as soon as `can?` uses direct index access. May still be needed, though.
+   ;{:db/ident       :eacl.relationship/resource+subject
+   ; :db/doc         "EACL Relationship Index: for check-permission reachable? hop. Will go away once can? uses direct index."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource
+   ;                  :eacl.relationship/subject]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true}
+
+   ;; Reverse tuple index for efficient reverse traversal
+   {:db/ident       :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+    :db/doc         "Reverse tuple index for efficient reverse traversal in can? and arrow permissions"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relationship/resource-type
+                     :eacl.relationship/resource
+                     :eacl.relationship/relation-name
+                     :eacl.relationship/subject-type
+                     :eacl.relationship/subject]
+    :db/cardinality :db.cardinality/one
+    :db/index       true
     :db/unique      :db.unique/identity}])
 
-   ; This will be needed for efficient lookup-subjects
-   ;{:db/ident       :eacl.relationship/subject+resource-type
-   ; :db/doc         "EACL Relationship: Tuple Index on [Subject Type + Resource Type]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/subject
-   ;                  :eacl.relationship/resource-type]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
+(defn read-relations
+  "Enumerates all EACL Relation schema entities in DB and returns pull maps."
+  [db]
+  (d/q '[:find [(pull ?relation [:eacl.relation/subject-type
+                                 :eacl.relation/resource-type
+                                 :eacl.relation/relation-name]) ...]
+         :where
+         [?relation :eacl.relation/relation-name ?relation-name]]
+       db))
 
-   ;{:db/ident       :eacl.relationship/resource-type+relation-name
-   ; :db/doc         "EACL Relationship: Tuple Index on [Resource Type + Relation Name]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource-type
-   ;                  :eacl.relationship/relation-name]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
+(defn read-permissions
+  "Enumerates all EACL permission schema entities in DB and returns maps."
+  [db]
+  (d/q '[:find [(pull ?perm [:eacl.permission/resource-type
+                             :eacl.permission/permission-name
+                             :eacl.permission/source-relation-name
+                             :eacl.permission/target-type
+                             :eacl.permission/target-name]) ...]
+         :where
+         [?perm :eacl.permission/permission-name]]
+       db))
 
-   ;{:db/ident       :eacl.relationship/subject-type+relation-name
-   ; :db/doc         "EACL Relationship: Tuple Index on [Subject Type + Relation Name]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/subject-type
-   ;                  :eacl.relationship/relation-name]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
+(defn read-schema
+  "Enumerates all EACL permission schema entities in DB and returns maps."
+  ; todo: unparse into SpiceDB string schema if desired.
+  [db & [_format]]
+  {:relations   (read-relations db)
+   :permissions (read-permissions db)})
 
-   ;{:db/ident       :eacl.relationship/resource-type+relation-name+subject
-   ; :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource-type
-   ;                  :eacl.relationship/relation-name
-   ;                  :eacl.relationship/subject]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
+; now we have to do a diff of relations and permissions
+; we can safely delete permissions because will simply resolve
+; but when deleting Relations, we need to check if there are any relationships
+; can we use the existing read-relationships internals for this?
 
-   ;{:db/ident       :eacl.relationship/subject-type+relation-name+resource-type
-   ; :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/subject-type
-   ;                  :eacl.relationship/relation-name
-   ;                  :eacl.relationship/resource-type]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
+(defn compare-schema
+  "Compares before & after schema (without DB IDs) and returns a diff via clojure.set/difference."
+  [{:as                before
+    before-relations   :relations
+    before-permissions :permissions}
+   {:as               after
+    after-relations   :relations
+    after-permissions :permissions}]
+  ; how to get a nice left vs. right diff?
+  {:relations   (clojure.set/difference
+                    (->> before-relations
+                            (S/setval [S/ALL :db/id] S/NONE)     ; no longer needed.
+                            (set))
+                    (->> after-relations
+                            (S/setval [S/ALL :db/id] S/NONE)
+                            (set)))
+   :permissions (clojure.set/difference
+                  (->> before-permissions
+                       (S/setval [S/ALL :db/id] S/NONE)
+                       (set))
+                  (->> after-permissions
+                       (S/setval [S/ALL :db/id] S/NONE)
+                       (set)))})
 
-   ;{:db/ident       :eacl.relationship/subject+relation-name+resource-type
-   ; :db/doc         "EACL Relationship: Tuple Index on [Subject + Relation + Resource Type]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/subject
-   ;                  :eacl.relationship/relation-name
-   ;                  :eacl.relationship/resource-type]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-
-   ;{:db/ident       :eacl.relationship/resource+relation-name+subject-type
-   ; :db/doc         "EACL Relationship: Tuple Index on [Resource + Relation + Subject Type]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource
-   ;                  :eacl.relationship/relation-name
-   ;                  :eacl.relationship/subject-type]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-
-   ; do we still need this?
-   ;{:db/ident       :eacl.relationship/resource+subject
-   ; :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource
-   ;                  :eacl.relationship/subject]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-   ;:db/unique      :db.unique/identity}
-
-   ;; hmm I think we're going to need relationship indices on subject & resource types
-   ; do we need this?
-   ;{:db/ident       :eacl.relationship/resource+relation-name
-   ; :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource
-   ;                  :eacl.relationship/relation-name]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-
-   ;{:db/ident       :eacl.relationship/resource+relation-name+subject
-   ; :db/doc         "EACL Relationship: Unique identity tuple to enforce uniqueness of [Subject + Relation + Resource]."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource
-   ;                  :eacl.relationship/relation-name
-   ;                  :eacl.relationship/subject]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/unique      :db.unique/identity}
-
-   ;{:db/ident       :eacl.relationship/subject+relation-name+resource
-   ; :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/subject
-   ;                  :eacl.relationship/relation-name
-   ;                  :eacl.relationship/resource]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/unique      :db.unique/identity}
-
-   ;; Critical for subject-based lookups
-   ;{:db/ident       :eacl.relationship/subject+relation-name
-   ; :db/doc         "Index for efficient subject-based lookups"
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/subject
-   ;                  :eacl.relationship/relation-name]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-
-   ;{:db/ident       :eacl.relationship/relation-name+resource
-   ; :db/doc         "Index for relation-based traversal"
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/relation-name
-   ;                  :eacl.relationship/resource]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-
-
-
+(defn write-schema!
+  "Gets existing EACL schema, Loops over tx-data, validates the shape."
+  [conn {:as new-schema :keys [relations permissions]}]
+  (let [db              (d/db conn)
+        existing-schema (read-schema db)]
+    ; WIP.
+    (compare-schema existing-schema new-schema)))
