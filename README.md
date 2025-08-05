@@ -1,6 +1,6 @@
 # **EACL**: Enterprise Access ControL
 
-EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB-compatible](https://authzed.com/spicedb)*, built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
 ## Project Goals
 
@@ -25,23 +25,42 @@ EACL leverages recursive Datomic graph queries and direct index access to suppor
 
 Embedded AuthZ offers some advantages for typical use-cases:
 
-1. Situated permissions avoids network I/O to an external AuthZ system.
-2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to an external ReBAC system like SpiceDB in real-time.
-3. Avoids complex diffing when creating, deleting or updating Relationships.
-4. Queries are fully consistent, until you need the consistency semantics of SpiceDB.
-5. EACL should outperform SpiceDB at small to medium-scale if you are already using Datomic.
+1. Situated permissions avoids network I/O to an external AuthZ system, which should be faster at small-to-medium scale.
+2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing, in real-time.
+3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
 
 ## ReBAC: Relationship-based Access Control
 
 In a ReBAC system like EACL, _Subjects_ & _Resources_ are related via _Relationships_.
 
 A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
-- `[user1 :owner account1]` means the subject `user1` owns the account resource `account1`.
-- whereas `[account1 :account product1]` means subject `account1` is the account for resource `product1`.
+- `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`,
+- whereas `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
 
-By defining a permission schema, we can grant `:view` & `:edit` permissions to any user who is an `:owner` of an `<account>`.
+To create a relationship, defined a potential `Relation`, like so:
 
-A situated ReBAC system like EACL can traverse the graph of relationships between subjects and permissions to calculate permissions while avoiding network I/O to an external authorization system.
+```clojure
+; Account Resource:
+(Relation :account :owner :user)      ; an :account can have :owner(s)
+(Relation :account :viewer :user)     ; an :account can have :viewer(s)
+; Product Resource:
+(Relation :product :account :account) ; a :product has an :account
+```
+
+Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can define a schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
+
+```clojure
+; account { permission admin = owner }
+(Permission :account :admin {:relation :owner})
+
+; account { permission edit = account-.admin }
+(Permission :account :edit {:arrow :account :permission :admin})
+
+; product { permission view = admin + account->viewer }
+(Permission :product :view {:arrow :account :permission :admin})
+(Permission :product :view {:arrow :account :relation :viewer})
+; (multiple permissions mean 'OR'. EACL does not support negation.)
+```
 
 ## EACL API
 
@@ -98,7 +117,7 @@ To query the next page, simply pass the cursor from page1 into the next query:
            {:type :server :id "server-5"}]}
 ```
 
-*Note:* the return order of resources from `lookup-resources` is stable, but undefined, because results are read directly from index for speed.
+The return order of resources from `lookup-resources` is stable and sorted by internal resource ID. Future enhancements may enable a sort key.
 
 ## Quickstart
 
@@ -108,7 +127,7 @@ Add the EACL dependency to your `deps.edn` file:
 
 ```clojure
 {:deps {cloudafrica/eacl {:git/url "git@github.com:cloudafrica/eacl.git" 
-                          :git/sha "a1671e4c8d6abb9925f94a7a6dfe9dffc5173ed5"}}}
+                          :git/sha "3c4d93a58c49a90c018f72ff99aed2b7ed790831"}}}
 ```
 
 ```clojure
@@ -119,9 +138,11 @@ Add the EACL dependency to your `deps.edn` file:
             [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :refer [Relation Permission]]))
 
-; Connect to an in-memory Datomic database:
+; Create an in-memory Datomic database:
 (def datomic-uri "datomic:mem://eacl")
 (d/create-database datomic-uri)
+
+; Connect to it:
 (def conn (d/connect datomic-uri))
 
 ; Install the latest EACL Datomic Schema:
@@ -130,15 +151,21 @@ Add the EACL dependency to your `deps.edn` file:
 ; Transact your permission schema (details below).
 @(d/transact conn
   [; Account:
-    (Relation :account :owner :user)                     ; account { relation owner: user }
+    ; account { relation owner: user }
+    (Relation :account :owner :user)
     
+    ; account {
+    ;   permission admin = owner
+    ;   permission update = admin
+    ; }
     (Permission :account :admin {:relation :owner})
-    (Permission :account :update {:relation :owner})
-    
-    ; Product:
-    (Relation :product :account :account)                ; relation account: account
-    
-    (Permission :product :edit {:arrow :account :permisison :admin})])    ; permission update_sku = account->admin
+    (Permission :account :update {:permission :admin})
+   
+    ; product { relation account: account }
+    (Relation :product :account :account)
+
+    ; product { permission edit = account->admin }
+    (Permission :product :edit {:arrow :account :permission :admin})])
 
 ; Transact some Datomic entities with a unique ID, e.g. `:eacl/id`:
 @(d/transact conn
@@ -177,10 +204,10 @@ Add the EACL dependency to your `deps.edn` file:
 (eacl/can? acl (->user "user-2") :edit (->product "product-1"))
 ; => false
 
-; You can enumerate resources via `lookup-resources`:
+; You can enumerate the :product resources a :user subject can :edit via `lookup-resources`:
 (eacl/lookup-resources acl
   {:subject       (->user "user-1")
-   :permission    :update_sku
+   :permission    :edit
    :resource/type :product
    :limit         1000
    :cursor        nil})
@@ -321,17 +348,20 @@ Here is the equivalent EACL schema (these are just Datomic tx-data):
  ;   relation owner: user
  ; 
  ;   permission admin = owner
- ;   permission update = owner
+ ;   permission update = admin
  ; } 
- (Relation :account :owner :user) ; account { relation owner: user }
- 
- (Permission :account :admin {:relation :owner}) ; account { permission admin = owner }
- (Permission :account :update {:relation :owner}) ; account { permission update = owner }
+
+ ; account { relation owner: user }
+ (Relation :account :owner :user)
+
+ ; account { permission admin = owner }
+ (Permission :account :admin {:relation :owner})
+ ; account { permission update = owner }
+ (Permission :account :update {:permission :admin})
 
  ; Product with an arrow permission:
  ; definition product {
  ;   relation account: account
- ; 
  ;   permission edit = account->admin
  ; }
  (Relation :product :account :account)
@@ -441,18 +471,15 @@ How to model this in EACL?
 (require '[eacl.datomic.impl :as impl :refer [Relation Permission Relationship]])
 
 @(d/transact conn
-             [; Platform:
-              ; definition platform {
+             [; definition platform {
               ;   relation super_admin: user
               ; } 
               (Relation :platform :super_admin :user)
               
-              ; Accounts:
               ; definition account {
               ;   relation platform: platform
               ;   relation owner: user
               ; }
-
               (Relation :account :platform :platform)
               (Relation :account :owner :user)
               
@@ -461,16 +488,16 @@ How to model this in EACL?
               ; }
               (Permission :account :admin {:relation :owner})
               (Permission :account :admin {:arrow :platform :relation :super_admin})
-
-              ; Servers:
+              
               ; definition server {
               ;   relation account: account
               ;   relation shared_admin: user
+              ; 
+              ;   permission reboot = account->admin + shared_admin
               ; }
               (Relation :server :account :account)
               (Relation :server :shared_admin :user)
-
-              ; server { permission reboot = account->admin + shared_admin }
+              
               (Permission :server :reboot {:arrow :account :permission :admin})
               (Permission :server :reboot {:relation :shared_admin})])
 ```
@@ -479,12 +506,16 @@ Now you can transact relationships:
 
 ```clojure
 @(d/transact conn
-  [{:db/id     "user1-tempid"
+  [{:db/id     "platform-tempid"
+    :eacl/id   "my-platform"}
+   
+   {:db/id     "user1-tempid"
     :eacl/id   "user1"}
 
    {:db/id     "account1-tempid"
     :eacl/id   "account1"}
 
+   (Relationship "platform-tempid" :platform "account1-tempid")
    (Relationship "user1-tempid" :owner "account1-tempid")])
 ```
 
@@ -497,13 +528,14 @@ Now you can transact relationships:
 - Arrow syntax is limited to one level of nesting, e.g.
   - Supported: `permission arrow = relation->via-permission` is valid
   - Not supported: `permission arrow = relation->subrelation->permission` is not valid (yet).
-- Only union permissions are supported:
+- Only union permissions are supported, not negating permissions:
   - Supported: `permission admin = owner + shared_admin`
-  - Not supported: `permission admin = owner - shared_member`. Exclusion types require complex caching to avoid multiple `can?` queries.
-- Specify a `Permission` for each relation in a sum-type permission.
-- `subject.relation` not currently supported, which is useful for group memberships.
-- `expand-permission-tree` not implemented yet.
-- `read-schema` & `write-schema!` not supported yet because schema lives in Datomic. Hoping to add support for Spice schema soon.
+  - Not supported: `permission admin = owner - shared_member` (note the minus). Exclusion types require complex caching to avoid multiple `can?` queries.
+- You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
+- `subject.relation` is not currently supported. It's useful for group memberships.
+- `expand-permission-tree` is not implemented yet.
+- `read-schema` & `write-schema!` are not supported yet because schema lives in Datomic, but needs to be added soon to validate schema changes.
+- No cycle detection at present, but a high-priority to implement.
 
 ## How to Run All Tests
 
@@ -536,5 +568,4 @@ This open-source work was generously funded by my employer, [CloudAfrica](https:
 
 # Licence
 
-- EACL switched from BSL to an Affero GPL licence on 2025-05-27.
-- However, we are considering re-licensing under a more permissive open-source license.
+- EACL switched from BSL to an Affero GPL licence on 2025-05-27. However, we are considering re-licensing under a more permissive open-source license.
