@@ -47,6 +47,8 @@
   "Finds the Relation definition for a given resource-type and relation-name.
   Returns map with :eacl.relation/subject-type as the target type for arrows, or nil if not found."
   [db resource-type relation-name]
+  {:pre [(keyword? resource-type)
+         (keyword? relation-name)]}
   ; this can be optimized, since we already know resource type & relation name.
   ; only need to add subject-type.
   (d/q '[:find (pull ?rel [:eacl.relation/subject-type
@@ -93,39 +95,40 @@
                                             target-type
                                             target-name]}]
                  ; how to handle {:relation :self :permission :local-permission} ?
-                 (if (= source-relation-name :self)
+                 (log/debug 'perm-def perm-def)
+                 (assert resource-type "resource-type missing")
+                 (assert source-relation-name "source-relation-name missing")
+                 (if (= :self source-relation-name)
                    (case target-type
-                     :relation (resolve-self-relation db resource-type target-name)
+                     :relation (resolve-self-relation db resource-type target-name) ; target-name can be nil here. why?
                      :permission {:type              :self-permission
                                   :target-permission target-name
                                   :resource-type     resource-type})
-                   ; OK, so this special case does not seem to account for self arrow :permission, only self :relation.
-                   (do
-                     (if-let [via-rel-def (find-relation-def db resource-type source-relation-name)]
-                       (let [intermediate-type (:eacl.relation/subject-type via-rel-def)]
-                         {:type              :arrow
-                          :via               source-relation-name ; this can be :self, but we don't handle it
-                          :target-type       intermediate-type ;; This is the actual type of the intermediate
-                          :target-permission (when (= target-type :permission) target-name)
-                          :target-relation   (when (= target-type :relation) target-name)
-                          :sub-paths         (case target-type
-                                               ;; Recursive permission call - types already resolved in recursion
-                                               :permission (get-permission-paths db intermediate-type target-name)
-                                               ;; Direct relation - build the path with proper type resolution
-                                               :relation (if-let [target-rel-def (find-relation-def db intermediate-type target-name)]
-                                                           [{:type         :relation
-                                                             :name         target-name
-                                                             :subject-type (:eacl.relation/subject-type target-rel-def)}]
-                                                           (do ; Return empty sub-paths if missing Relation
-                                                             (log/warn "Missing Relation definition for arrow target relation"
-                                                                       {:intermediate-type    intermediate-type
-                                                                        :target-relation-name target-name})
-                                                             [])))}) ; Skip this permission path
-                       (do
-                         (log/warn "Missing Relation definition for via relation"
-                                   {:resource-type     resource-type
-                                    :via-relation-name source-relation-name})
-                         nil))))))
+                   (if-let [via-rel-def (find-relation-def db resource-type source-relation-name)]
+                     (let [intermediate-type (:eacl.relation/subject-type via-rel-def)]
+                       {:type              :arrow
+                        :via               source-relation-name ; this can be :self, but we don't handle it
+                        :target-type       intermediate-type ;; This is the actual type of the intermediate
+                        :target-permission (when (= target-type :permission) target-name)
+                        :target-relation   (when (= target-type :relation) target-name)
+                        :sub-paths         (case target-type
+                                             ;; Recursive permission call - types already resolved in recursion
+                                             :permission (get-permission-paths db intermediate-type target-name)
+                                             ;; Direct relation - build the path with proper type resolution
+                                             :relation (if-let [target-rel-def (find-relation-def db intermediate-type target-name)]
+                                                         [{:type         :relation
+                                                           :name         target-name
+                                                           :subject-type (:eacl.relation/subject-type target-rel-def)}]
+                                                         (do ; Return empty sub-paths if missing Relation
+                                                           (log/warn "Missing Relation definition for arrow target relation"
+                                                                     {:intermediate-type    intermediate-type
+                                                                      :target-relation-name target-name})
+                                                           [])))}) ; Skip this permission path
+                     (do
+                       (log/warn "Missing Relation definition for via relation"
+                                 {:resource-type     resource-type
+                                  :via-relation-name source-relation-name})
+                       nil)))))
 
          (vec))))
 
@@ -166,7 +169,12 @@
           intermediate-start      [subject-type subject-eid path-via target-relation-name cursor-eid] ; cursor-eid can be nil
           intermediate-end        [subject-type subject-eid path-via target-relation-name Long/MAX_VALUE]
           intermediate-eids       (->> (d/index-range db intermediate-tuple-attr intermediate-start intermediate-end)
-                                       (map extract-resource-id-from-rel-tuple-datom))]
+                                    (map extract-resource-id-from-rel-tuple-datom)
+                                    (filter (fn [resource-eid]
+                                              (if cursor-eid
+                                                (> resource-eid cursor-eid)
+                                                true))))]
+
       ;; For each intermediate-eid, recursively traverse its sub-paths
       (->> intermediate-eids
            (map (fn [intermediate-eid]
@@ -224,7 +232,7 @@
                            ;; Find intermediates connected to this resource via via-relation (reverse lookup)
                            ;; Use reverse index to find intermediates
                            (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
+                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0] ; cursor = 0 because no pagination.
                                  reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
                                  intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
                                                          (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
@@ -241,7 +249,7 @@
                            ;; Find intermediates connected to this resource via via-relation (reverse lookup)
                            ;; Use reverse index to find intermediates
                            (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
+                                 reverse-start      [resource-type resource-eid via-relation intermediate-type 0] ; cursor = 0 because no pagination.
                                  reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
                                  intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
                                                          (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
@@ -477,7 +485,7 @@
     ;; Only proceed if the subject-type matches the expected type for this relation
     (when (= subject-type (:subject-type path))
       (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-            start-tuple        [resource-type resource-eid (:name path) subject-type (or cursor-eid 0)]
+            start-tuple        [resource-type resource-eid (:name path) subject-type 0] ; (or cursor-eid 0)]
             end-tuple          [resource-type resource-eid (:name path) subject-type Long/MAX_VALUE]]
         (->> (d/index-range db reverse-tuple-attr start-tuple end-tuple)
              (map extract-subject-id-from-reverse-rel-tuple-datom)
@@ -508,16 +516,17 @@
         (let [target-relation    (:target-relation path)
               ;; Step 1: Find intermediates connected to this resource via via-relation (reverse lookup)
               reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-              reverse-start      [resource-type resource-eid via-relation intermediate-type 0]
+              reverse-start      [resource-type resource-eid via-relation intermediate-type 0] ; why is cursor-eid = 0 here?
               reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
               intermediate-eids  (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
                                       (map extract-subject-id-from-reverse-rel-tuple-datom))]
+          ; do we need a filter on cursor-eid here?
           ;; Step 2: For each intermediate, find subjects that have target-relation to it
           (let [subject-seqs
                 (map (fn [intermediate-eid]
                        ;; Use reverse index again to find subjects with target-relation to this intermediate
                        (let [subject-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-                             subject-start      [intermediate-type intermediate-eid target-relation subject-type (or cursor-eid 0)]
+                             subject-start      [intermediate-type intermediate-eid target-relation subject-type 0] ; (or cursor-eid 0)]
                              subject-end        [intermediate-type intermediate-eid target-relation subject-type Long/MAX_VALUE]]
                          (->> (d/index-range db subject-tuple-attr subject-start subject-end)
                               (map extract-subject-id-from-reverse-rel-tuple-datom)
