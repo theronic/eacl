@@ -181,6 +181,10 @@
        (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
                                     (spice-object type (entid->object-id db id))))))
 
+(defn validate-schema-map! [{:as schema :keys [relations permissions]}]
+  ; check that relations & permissions conform to Malli schema
+  true)
+
 (defrecord Spiceomic [conn opts]
   ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.
   IAuthorization
@@ -196,14 +200,10 @@
     (spiceomic-can? (d/db conn) opts subject permission resource consistency))
 
   (read-schema [this]
-    ; this can be read from DB.
-    (throw (Exception. "not impl.")))
+    (schema/read-schema (d/db conn)))
 
-  (write-schema! [this schema]
-    ; todo: potentially parse Spice schema.
-    ; we'll need to support
-    ; write-schema can take and validaet Relations.
-    (throw (Exception. "not impl.")))
+  (write-schema! [this schema-map]
+    (schema/write-schema! conn schema-map))
 
   (read-relationships [this filters]
     (spiceomic-read-relationships (d/db conn) opts filters))

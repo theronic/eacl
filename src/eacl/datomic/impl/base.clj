@@ -13,7 +13,8 @@
           ; :self is reserved word.
           (not= resource-type :self)
           (not= relation-name :self)]}
-   {:eacl.relation/resource-type resource-type
+   {:eacl/id                     (str "eacl.relation:" resource-type ":" relation-name ":" subject-type)
+    :eacl.relation/resource-type resource-type
     :eacl.relation/relation-name relation-name
     :eacl.relation/subject-type  subject-type})
   ([resource-type+relation-name subject-type]
@@ -82,15 +83,18 @@
   (cond
     ;; Direct permission: {:relation relation-name}
     relation
-    {:eacl.permission/resource-type        resource-type
-     :eacl.permission/permission-name      permission-name
+    ; id format: 'eacl:permission:{resource-type}:{permission-name}:{arrow}:{relation|permission}:{target-name}'
+    {:eacl/id (str "eacl:permission:" resource-type ":" permission-name ":" arrow ":relation:" relation)
+     :eacl.permission/resource-type resource-type
+     :eacl.permission/permission-name permission-name
      :eacl.permission/source-relation-name arrow            ; this can be :self.
-     :eacl.permission/target-type          :relation
-     :eacl.permission/target-name          relation}
+     :eacl.permission/target-type :relation
+     :eacl.permission/target-name relation}
 
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     permission
-    {:eacl.permission/resource-type        resource-type
+    {:eacl/id (str "eacl:permission:" resource-type ":" permission-name ":" arrow ":permission:" permission)
+     :eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name arrow            ; this can be :self.
      :eacl.permission/target-type          :permission

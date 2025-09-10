@@ -21,7 +21,7 @@
 
   ;; Schema
   (read-schema [this])
-  (write-schema! [this schema])
+  (write-schema! [this schema-string])
 
   ;; Relationships
   (read-relationships [this query])
