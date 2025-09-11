@@ -3,6 +3,11 @@
 
 (defrecord Cursor [path-index resource])
 
+(defn ->relation-id
+  "Uses (str kw) instead of (name kw) to retain namespaces. Leading colons are expected."
+  [resource-type relation-name subject-type]
+  (str "eacl.relation:" resource-type ":" relation-name ":" subject-type))
+
 (defn Relation
   "Defines a relation type. Copied from core2.
   (Relation :product :owner :user) or (Relation :product/owner :user)"
@@ -13,7 +18,8 @@
           ; :self is reserved word.
           (not= resource-type :self)
           (not= relation-name :self)]}
-   {:eacl.relation/resource-type resource-type
+   {:eacl/id                     (->relation-id resource-type relation-name subject-type)
+    :eacl.relation/resource-type resource-type
     :eacl.relation/relation-name relation-name
     :eacl.relation/subject-type  subject-type})
   ([resource-type+relation-name subject-type]
@@ -22,6 +28,11 @@
      (keyword (namespace resource-type+relation-name))
      (keyword (name resource-type+relation-name))
      subject-type)))
+
+(defn ->permission-id
+  "Uses (str kw) instead of (name kw) to retain namespaces. Leading colons are expected."
+  [resource-type permission-name arrow target-type relation]
+  (str "eacl:permission:" resource-type ":" permission-name ":" arrow ":" target-type ":" relation))
 
 (defn Permission
   "Defines a Permission via
@@ -82,7 +93,9 @@
   (cond
     ;; Direct permission: {:relation relation-name}
     relation
-    {:eacl.permission/resource-type        resource-type
+    ; id format: 'eacl:permission:{resource-type}:{permission-name}:{arrow}:{relation|permission}:{target-name}'
+    {:eacl/id                              (->permission-id resource-type permission-name arrow :relation relation)
+     :eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name arrow            ; this can be :self.
      :eacl.permission/target-type          :relation
@@ -90,7 +103,8 @@
 
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     permission
-    {:eacl.permission/resource-type        resource-type
+    {:eacl/id                              (->permission-id resource-type permission-name arrow :permission relation)
+     :eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name arrow            ; this can be :self.
      :eacl.permission/target-type          :permission
@@ -98,7 +112,7 @@
 
     :else
     (throw (ex-info "Invalid Permission spec. Expected one of {:relation name}, {:permission name}, {:arrow source :permission target} or {:arrow source :relation target}"
-                    {:spec spec}))))
+             {:spec spec}))))
 
 (defn Relationship
   "A Relationship between a subject and a resource via Relation. Copied from core2."
