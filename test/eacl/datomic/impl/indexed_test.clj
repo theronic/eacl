@@ -79,21 +79,24 @@
 
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
-    (is (= #:eacl.permission{:resource-type        :server
+    (is (= #:eacl.permission{:eacl/id              "eacl:permission::server::admin::self:relation::owner"
+                             :resource-type        :server
                              :permission-name      :admin
                              :source-relation-name :self
                              :target-type          :relation
                              :target-name          :owner}
           (Permission :server :admin {:relation :owner})))
     (testing "arrow permission to permission"
-      (is (= #:eacl.permission{:resource-type        :server
+      (is (= #:eacl.permission{:eacl/id              "eacl:permission::server::admin::account:permission::admin"
+                               :resource-type        :server
                                :permission-name      :admin
                                :source-relation-name :account
                                :target-type          :permission
                                :target-name          :admin}
             (Permission :server :admin {:arrow :account :permission :admin}))))
     (testing "arrow permission to relation"
-      (is (= #:eacl.permission{:resource-type        :server
+      (is (= #:eacl.permission{:eacl/id              "eacl:permission::server::view::account:relation::owner"
+                               :resource-type        :server
                                :permission-name      :view
                                :source-relation-name :account
                                :target-type          :relation
@@ -435,6 +438,10 @@
   (let [db             (d/db *conn*)
         super-user-eid (d/entid db :user/super-user)]
 
+    (testing "what happens when find-relation-def is called with source-relation-name `:self`?"
+      ; what do we expect here?
+      (is (impl.indexed/find-relation-def db :server :self)))
+
     (testing "lookup of :view against :vpc works"
       (is (= #{(->vpc "vpc-1")
                (->vpc "account1-vpc2")
@@ -649,7 +656,115 @@
               (is (zero? (count-resources db' {:resource/type :server
                                                :permission    :view
                                                :subject       (->user super-user-eid)
-                                               :cursor        page2-cursor}))))))))))
+                                               :cursor        page2-cursor})))))
+
+          (testing "now test pagination for :view permission on :account for  account->super_admin with {:arrow :account :relation :super_admin}"
+            (let [both-pages          (lookup-resources db' {:limit         5
+                                                             :cursor        nil ; :cursor nil = first page.
+                                                             :resource/type :account
+                                                             :permission    :view
+                                                             :subject       (->user super-user-eid)})
+
+                  both-pages-resolved (paginated-data->spice db' (:data both-pages))
+                  [page1-expected
+                   page2-expected
+                   page3-expected] (partition-all 1 both-pages-resolved)
+
+                  {:as          page1
+                   page1-data   :data
+                   page1-cursor :cursor} (lookup-resources db' {:limit         1
+                                                                :cursor        nil ; no cursor should the first page.
+                                                                :resource/type :account
+                                                                :permission    :view
+                                                                :subject       (->user super-user-eid)})
+                  ;_                   (prn 'page1 'cursor (:cursor page1))
+                  {:as          page2
+                   page2-data   :data
+                   page2-cursor :cursor} (lookup-resources db' {:limit         5
+                                                                :cursor        (:cursor page1)
+                                                                :resource/type :account
+                                                                :permission    :view
+                                                                :subject       (->user super-user-eid)})
+                  {:as          page3-empty
+                   page3-data   :data
+                   page3-cursor :cursor} (->> (lookup-resources db' {:limit         2
+                                                                     :cursor        (:cursor page2)
+                                                                     :resource/type :account
+                                                                     :permission    :view
+                                                                     :subject       (->user super-user-eid)}))]
+
+              ;_                   (prn 'page2 'cursor (:cursor page2))]
+
+              (testing "page1 cursor points to next page"
+                (is page1-cursor)
+                (is (:resource page1-cursor)))
+
+              (testing "page2 cursor points to next page"
+                (is page2-cursor)
+                (is (:resource page2-cursor)))
+
+              (testing "page3 cursor matches page 2 because we exhausted results on page 2"
+                ; TODO: figure out what this should return. The previous cursor?
+                ; we probably need a flag for empty, but empty :data implies that.
+                (is (= page2-cursor page3-cursor)))
+
+              (testing "limit 5 should include all 4 results, in sorted order" ; (depends on tuple index or costly sort)
+                (is (= [(spice-object :account "account-1")
+                        (spice-object :account "account-2")]
+                      (paginated-data->spice db' (:data both-pages)))))
+
+              (testing "page1 with 0-1 of 4 should match the first 2 results"
+                (is (= page1-expected (paginated-data->spice db' page1-data))))
+
+              (testing "page2 with 2-4 of 4 should match the second two results"
+                (is (= page2-expected (paginated-data->spice db' page2-data))))
+
+              (testing "page3 with 5-6 of 4 should be empty (results exhausted)"
+                (is (nil? page3-expected))
+                (is (empty? (paginated-data->spice db' page3-data))))
+
+              (testing "repeating page2 query with limit: 1 should return only the first result on that page"
+                (is (= (take 1 page2-expected)
+                      (->> (lookup-resources db' {:limit         1
+                                                  :cursor        page1-cursor
+                                                  :resource/type :account
+                                                  :permission    :view
+                                                  :subject       (->user super-user-eid)})
+                        (paginated->spice db')))))
+
+              (testing "repeat page2 query with limit: 10 should return remainder"
+                (is (= (drop 2 both-pages-resolved)
+                      (->> (lookup-resources db' {:limit         10
+                                                  :cursor        page1-cursor
+                                                  :resource/type :account
+                                                  :permission    :view
+                                                  :subject       (->user super-user-eid)})
+                        (paginated->spice db')))))
+
+              (testing "lookup-resources returns cursor input when looking beyond any values"
+                (let [page3-empty (lookup-resources db' {:limit         100
+                                                         :cursor        page2-cursor
+                                                         :resource/type :account
+                                                         :permission    :view
+                                                         :subject       (->user super-user-eid)})]
+                  (is (empty? (:data page3-empty)))
+                  (is (= page2-cursor (:cursor page3-empty)))))
+
+              (testing "count-resources should return count of all result"
+                (is (= 4 (count-resources db' {:resource/type :server
+                                               :permission    :view
+                                               :subject       (->user super-user-eid)}))))
+
+              (testing "count-resources is also cursor-sensitive"
+                (is (= 2 (count-resources db' {:resource/type :server
+                                               :permission    :view
+                                               :cursor        page1-cursor
+                                               :subject       (->user super-user-eid)})))
+
+                (is (zero? (count-resources db' {:resource/type :server
+                                                 :permission    :view
+                                                 :subject       (->user super-user-eid)
+                                                 :cursor        page2-cursor})))))))))))
 
 (deftest permission-schema-helper-tests
   (let [db (d/db *conn*)]
@@ -763,6 +878,7 @@
                                             :permission    :view
                                             :resource/type :server
                                             :limit         10})]
+        ; this replicates bug where find-relation-def is called with resource-type = nil.
         (is (= [(->server "account1-server1")
                 (->server "account1-server2")]
               (paginated->spice db result)))))
@@ -873,3 +989,35 @@
 ;  (let [db' (d/db *conn*)]
 ;    ;; Should still be fast even with multiple valid paths
 ;    (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
+
+(deftest reproduce-infinite-recursion-test
+  (testing "lookup-resources should handle cyclic permissions without throwing InterruptedException"
+    ;; Introduce a dependency cycle:
+    ;; server/view -> server/admin -> account/admin -> server/view
+    @(d/transact *conn*
+       [;; 1. Relation for account to have a primary server
+        (Relation :account :primary-server :server)
+        ;; 2. Permission making account/admin depend on server/view, completing the cycle.
+        (Permission :account :admin {:arrow :primary-server :permission :view})])
+
+    ;; 3. Create a relationship connecting a specific account and server.
+    @(d/transact *conn*
+       [(Relationship (->server :test/server1) :primary-server (->account :test/account1))])
+
+    (let [db' (d/db *conn*)]
+      ;; This call will trigger the infinite recursion in get-permission-paths
+      ;; when checking for :view on a :server. The expected behavior is an exception,
+      ;; which this test confirms. A proper fix would involve adding cycle detection
+      ;; to get-permission-paths.
+
+      ; this causes infinite loop because we do not guard against loops yet.
+      ; this should be prevented at schema write time, not runtime.
+      (is (lookup-resources db'
+            {:subject       (->user :test/user1)
+             :permission    :view
+             :resource/type :server}))
+      (is (thrown? java.lang.Exception
+            (lookup-resources db'
+              {:subject       (->user :test/user1)
+               :permission    :view
+               :resource/type :server}))))))
