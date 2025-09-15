@@ -279,7 +279,7 @@
                                    ;; Direct relation - forward traversal
                                    (when (= subject-type (:subject-type path))
                                      (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                           start-tuple [subject-type subject-eid (:name path) resource-type (or cursor-eid 0)]
+                                           start-tuple [subject-type subject-eid (:name path) resource-type 0] ;(or cursor-eid 0)]
                                            end-tuple   [subject-type subject-eid (:name path) resource-type Long/MAX_VALUE]]
                                        (->> (d/index-range db tuple-attr start-tuple end-tuple)
                                          (map (fn [datom]
@@ -303,7 +303,7 @@
                                        ;; Arrow to relation: find intermediates with that relation to subject
                                        (let [target-relation         (:target-relation path)
                                              intermediate-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                             intermediate-start      [subject-type subject-eid target-relation intermediate-type cursor-eid] ; cursor-eid can be nil
+                                             intermediate-start      [subject-type subject-eid target-relation intermediate-type 0] ;cursor-eid] ; cursor-eid can be nil
                                              intermediate-end        [subject-type subject-eid target-relation intermediate-type Long/MAX_VALUE]
                                              intermediate-eids       (->> (d/index-range db intermediate-tuple-attr
                                                                             intermediate-start intermediate-end)
@@ -313,7 +313,7 @@
                                                (map (fn [intermediate-eid]
                                                       ;; Use forward index from intermediate to resources
                                                       (let [resource-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                                            resource-start      [intermediate-type intermediate-eid via-relation resource-type cursor-eid] ; cursor-eid can be nil
+                                                            resource-start      [intermediate-type intermediate-eid via-relation resource-type 0] ;cursor-eid] ; cursor-eid can be nil
                                                             resource-end        [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                                                         (->> (d/index-range db resource-tuple-attr resource-start resource-end)
                                                           (map extract-resource-id-from-rel-tuple-datom)
@@ -336,7 +336,7 @@
                                                                (map (fn [intermediate-eid]
                                                                       ;; Use forward index from intermediate to resources
                                                                       (let [resource-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                                                                            resource-start      [intermediate-type intermediate-eid via-relation resource-type cursor-eid]
+                                                                            resource-start      [intermediate-type intermediate-eid via-relation resource-type 0] ;cursor-eid]
                                                                             resource-end        [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                                                                         (->> (d/index-range db resource-tuple-attr resource-start resource-end)
                                                                           (map extract-resource-id-from-rel-tuple-datom)
@@ -361,12 +361,13 @@
 (defn traverse-permission-path-via-subject
   "Subject must be known. Returns lazy seq of resource eids."
   [db subject-type subject-eid path resource-type cursor-eid]
+  (prn 'traverse-permission-path-via-subject 'cursor-eid cursor-eid)
   (case (:type path)
     :relation
     ;; Direct relation - forward traversal
     (when (= subject-type (:subject-type path))
       (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-            start-tuple [subject-type subject-eid (:name path) resource-type cursor-eid] ; cursor-eid can be nil.
+            start-tuple [subject-type subject-eid (:name path) resource-type 0] ; cursor-eid] ; cursor-eid can be nil.
             end-tuple   [subject-type subject-eid (:name path) resource-type Long/MAX_VALUE]]
         (->> (d/index-range db tuple-attr start-tuple end-tuple)
           (map extract-resource-id-from-rel-tuple-datom)
@@ -377,7 +378,7 @@
     ;; Self-permission: recursively get resources where subject has target permission
     (let [target-permission (:target-permission path)]
       ;; Use traverse-permission-path to get resources where subject has target permission
-      (->> (traverse-permission-path db subject-type subject-eid target-permission resource-type cursor-eid Long/MAX_VALUE)
+      (->> (traverse-permission-path db subject-type subject-eid target-permission resource-type 0 #_ cursor-eid Long/MAX_VALUE)
         (map first)                                         ; Extract resource-eids from [resource-eid path] tuples
         (filter (fn [resource-eid]
                   (and resource-eid (> resource-eid (or cursor-eid 0)))))))
@@ -391,7 +392,7 @@
         (let [target-relation         (:target-relation path)
               ;; Step 1: Find intermediates that subject has target-relation to
               intermediate-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-              intermediate-start      [subject-type subject-eid target-relation intermediate-type cursor-eid]
+              intermediate-start      [subject-type subject-eid target-relation intermediate-type 0] ;cursor-eid]
               intermediate-end        [subject-type subject-eid target-relation intermediate-type Long/MAX_VALUE]
               intermediate-eids       (->> (d/index-range db intermediate-tuple-attr intermediate-start intermediate-end)
                                         (map extract-resource-id-from-rel-tuple-datom)
@@ -401,7 +402,7 @@
                 (map (fn [intermediate-eid]
                        ;; Use forward index from intermediate to resources via via-relation
                        (let [resource-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                             resource-start      [intermediate-type intermediate-eid via-relation resource-type cursor-eid]
+                             resource-start      [intermediate-type intermediate-eid via-relation resource-type 0] ;cursor-eid]
                              resource-end        [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                          (->> (d/index-range db resource-tuple-attr resource-start resource-end)
                            (map extract-resource-id-from-rel-tuple-datom)
@@ -427,7 +428,7 @@
                 (map (fn [intermediate-eid]
                        ;; Use forward index from intermediate to resources
                        (let [resource-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                             resource-start      [intermediate-type intermediate-eid via-relation resource-type cursor-eid] ; cursor-eid can be nil.
+                             resource-start      [intermediate-type intermediate-eid via-relation resource-type 0] ;cursor-eid] ; cursor-eid can be nil.
                              resource-end        [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                          (->> (d/index-range db resource-tuple-attr resource-start resource-end)
                            (map extract-resource-id-from-rel-tuple-datom)

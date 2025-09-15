@@ -210,6 +210,25 @@
     :db/index       true
     :db/unique      :db.unique/identity}])
 
+(defn count-relationships-using-relation
+  "Counts how many Relationships are using the given Relation.
+  The search attrs are indexed, but this can be way faster in v7 using references types,
+  or adding a tuple index like :eacl.relationship/resource-type+relation-name+subject-type,
+  but that would increase storage & write costs."
+  [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
+  {:pre [(keyword? resource-type)
+         (keyword? relation-name)
+         (keyword? subject-type)]}
+  ; TODO: throw for invalid Relation not present in schema.
+  (or (d/q '[:find (count ?relationship) .
+             :in $ ?resource-type ?relation-name ?subject-type
+             :where
+             [?relationship :eacl.relationship/resource-type ?resource-type]
+             [?relationship :eacl.relationship/relation-name ?relation-name]
+             [?relationship :eacl.relationship/subject-type ?subject-type]]
+        db resource-type relation-name subject-type)
+    0))
+
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
   [db]
@@ -294,7 +313,7 @@
   ; we'll need to support
   ; write-schema can take and validate Relations.
   ;(validate-schema-map! schema-map) ; do we need to conform here?
-  ;(throw (Exception. "not impl WIP"))
+  (throw (Exception. "not impl WIP"))
   (let [db              (d/db conn)
         existing-schema (read-schema db)
         {:as   schema-deltas
@@ -307,7 +326,6 @@
                           [rel-retraction (count-relationships-using-relation db rel-retraction)])]
     (doseq [[rel cnt] orphaned-rels]
       (assert (zero? cnt) (str "Relation " rel " would orphan " cnt " relationships.")))
-    (log/warn "todo actually write schema")
     relation-deltas)
   ; WIP.
   #_(compare-schema existing-schema new-schema-map))

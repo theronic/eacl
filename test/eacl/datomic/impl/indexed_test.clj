@@ -724,6 +724,7 @@
                 (is (empty? (paginated-data->spice db' page3-data))))
 
               (testing "repeating page2 query with limit: 1 should return only the first result on that page"
+                (prn 'failing-test-here)
                 (is (= (take 1 page2-expected)
                       (->> (lookup-resources db' {:limit         1
                                                   :cursor        page1-cursor
@@ -970,8 +971,10 @@
     (testing "Arrow permission check"
       ;; User1 can view server1 through account admin
       (is (impl.indexed/can? db (->user :test/user1) :view (->server :test/server1)))
+      (is (impl.indexed/can? db (->user :test/user1) :start (->account :test/account1)))
       ;; User2 cannot view server1
-      (is (not (impl.indexed/can? db (->user :test/user2) :view (->server :test/server1)))))
+      (is (not (impl.indexed/can? db (->user :test/user2) :view (->server :test/server1))))
+      (is (not (impl.indexed/can? db (->user :test/user2) :start (->account :test/account1)))))
 
     (testing "Super user permissions"
       (is (impl.indexed/can? db (->user :user/super-user) :view (->server :test/server1)))
