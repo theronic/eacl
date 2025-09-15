@@ -734,7 +734,7 @@
                         (paginated->spice db')))))
 
               (testing "repeat page2 query with limit: 10 should return remainder"
-                (is (= (drop 2 both-pages-resolved)
+                (is (= (drop 1 both-pages-resolved)
                       (->> (lookup-resources db' {:limit         10
                                                   :cursor        page1-cursor
                                                   :resource/type :account
@@ -971,10 +971,10 @@
     (testing "Arrow permission check"
       ;; User1 can view server1 through account admin
       (is (impl.indexed/can? db (->user :test/user1) :view (->server :test/server1)))
-      (is (impl.indexed/can? db (->user :test/user1) :start (->account :test/account1)))
+      (is (impl.indexed/can? db (->user :test/user1) :start (->server :test/server1)))
       ;; User2 cannot view server1
       (is (not (impl.indexed/can? db (->user :test/user2) :view (->server :test/server1))))
-      (is (not (impl.indexed/can? db (->user :test/user2) :start (->account :test/account1)))))
+      (is (not (impl.indexed/can? db (->user :test/user2) :start (->server :test/server1)))))
 
     (testing "Super user permissions"
       (is (impl.indexed/can? db (->user :user/super-user) :view (->server :test/server1)))

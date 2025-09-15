@@ -103,7 +103,7 @@
 
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     permission
-    {:eacl/id                              (->permission-id resource-type permission-name arrow :permission relation)
+    {:eacl/id                              (->permission-id resource-type permission-name arrow :permission permission)
      :eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name arrow            ; this can be :self.
