@@ -407,7 +407,7 @@
                            (map extract-resource-id-from-rel-tuple-datom)
                            (filter some?)
                            (filter (fn [resource-eid]
-                                     (and resource-eid (if cursor-eid (> % cursor-eid) true)))))))
+                                     (and resource-eid (if cursor-eid (> resource-eid cursor-eid) true)))))))
                   intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
             (if (seq resource-seqs)
