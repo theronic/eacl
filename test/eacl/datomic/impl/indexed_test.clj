@@ -741,7 +741,8 @@
                                                :permission    :view
                                                :subject       (->user super-user-eid)}))))
 
-              (testing "count-resources is cursor-sensitive"
+              (testing "count-resources should be cursor-sensitive. why isn't it?"
+                (is (:resource page1-cursor))
                 (is (= 2 (count-resources db' {:resource/type :server
                                                :permission    :view
                                                :cursor        page1-cursor
@@ -824,14 +825,14 @@
   (let [db (d/db *conn*)]
     (testing "Direct path traversal"
       (let [user1-eid (d/entid db :test/user1)
-            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :account nil 10)]
+            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :account nil)]
         ;; User1 should be able to view account1
         (is (seq resources))
         (is (some #(= (d/entid db :test/account1) (first %)) resources))))
 
     (testing "Arrow path traversal"
       (let [user1-eid (d/entid db :test/user1)
-            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil 10)]
+            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)]
         ;; User1 should be able to view servers in account1
         (is (seq resources))
         (is (= [(->server "account1-server1")
@@ -840,7 +841,7 @@
 
     (testing "Complex nested path traversal"
       (let [vpc1-eid  (d/entid db :test/vpc1)
-            resources (impl.indexed/traverse-permission-path db :vpc vpc1-eid :view :server nil 10)]
+            resources (impl.indexed/traverse-permission-path db :vpc vpc1-eid :view :server nil)]
         ;; VPC1 should be able to view servers through the network chain
         (is (= [(d/entid db :test/server1)]
               (map first resources)))))                     ; hard to understand destructuring here.
@@ -848,12 +849,13 @@
     (testing "Cursor pagination"
       (let [user1-eid    (d/entid db :test/user1)
             ;; Get first result
-            first-batch  (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil 1)
+            first-batch  (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)
             first-eid    (ffirst first-batch)
             ;; Get next result after cursor
-            second-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server first-eid 1)]
-        (is (= 1 (count first-batch)))
-        (is (= 1 (count second-batch)))
+            second-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server first-eid)]
+        (is (= ["account1-server1"
+                "account1-server2"] (map (comp :eacl/id #(d/entity db %) first) first-batch)))
+        (is (= ["account1-server2"] (map (comp :eacl/id #(d/entity db %) first) second-batch)))
         (is (not= (ffirst first-batch) (ffirst second-batch)))))))
 
 (deftest lookup-resources-optimized-tests
@@ -1000,12 +1002,8 @@
 
       ; this causes infinite loop because we do not guard against loops yet.
       ; this should be prevented at schema write time, not runtime.
-      (is (lookup-resources db'
-            {:subject       (->user :test/user1)
-             :permission    :view
-             :resource/type :server}))
-      (is (thrown? java.lang.Exception
-            (lookup-resources db'
+      (testing "cycles should not throw (we return empty), as they should be prevented at schema write time"
+        (is (lookup-resources db'
               {:subject       (->user :test/user1)
                :permission    :view
                :resource/type :server}))))))
