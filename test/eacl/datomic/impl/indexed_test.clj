@@ -725,6 +725,7 @@
                 (is (empty? page3-expected))
                 (is (empty? (paginated-data->spice db' page3-data))))
 
+                (prn 'failing-test-here)
               (testing "lookup-resources returns cursor input when looking beyond any values"
                 (let [page3-empty (lookup-resources db' {:limit         100
                                                          :cursor        page2-cursor
@@ -955,8 +956,10 @@
     (testing "Arrow permission check"
       ;; User1 can view server1 through account admin
       (is (impl.indexed/can? db (->user :test/user1) :view (->server :test/server1)))
+      (is (impl.indexed/can? db (->user :test/user1) :start (->server :test/server1)))
       ;; User2 cannot view server1
-      (is (not (impl.indexed/can? db (->user :test/user2) :view (->server :test/server1)))))
+      (is (not (impl.indexed/can? db (->user :test/user2) :view (->server :test/server1))))
+      (is (not (impl.indexed/can? db (->user :test/user2) :start (->server :test/server1)))))
 
     (testing "Super user permissions"
       (is (impl.indexed/can? db (->user :user/super-user) :view (->server :test/server1)))

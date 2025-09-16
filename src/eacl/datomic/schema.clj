@@ -210,6 +210,25 @@
     :db/index       true
     :db/unique      :db.unique/identity}])
 
+(defn count-relationships-using-relation
+  "Counts how many Relationships are using the given Relation.
+  The search attrs are indexed, but this can be way faster in v7 using references types,
+  or adding a tuple index like :eacl.relationship/resource-type+relation-name+subject-type,
+  but that would increase storage & write costs."
+  [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
+  {:pre [(keyword? resource-type)
+         (keyword? relation-name)
+         (keyword? subject-type)]}
+  ; TODO: throw for invalid Relation not present in schema.
+  (or (d/q '[:find (count ?relationship) .
+             :in $ ?resource-type ?relation-name ?subject-type
+             :where
+             [?relationship :eacl.relationship/resource-type ?resource-type]
+             [?relationship :eacl.relationship/relation-name ?relation-name]
+             [?relationship :eacl.relationship/subject-type ?subject-type]]
+        db resource-type relation-name subject-type)
+    0))
+
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
   [db]
@@ -244,6 +263,11 @@
 ; but when deleting Relations, we need to check if there are any relationships
 ; can we use the existing read-relationships internals for this?
 
+(defn calc-set-deltas [before after]
+  {:additions   (clojure.set/difference after before)
+   :unchanged   (clojure.set/intersection before after)
+   :retractions (clojure.set/difference before after)})
+
 (defn compare-schema
   "Compares before & after schema (without DB IDs) and returns a diff via clojure.set/difference."
   [{:as                before
@@ -253,25 +277,55 @@
     after-relations   :relations
     after-permissions :permissions}]
   ; how to get a nice left vs. right diff?
-  {:relations   (clojure.set/difference
-                    (->> before-relations
-                            (S/setval [S/ALL :db/id] S/NONE)     ; no longer needed.
-                            (set))
-                    (->> after-relations
-                            (S/setval [S/ALL :db/id] S/NONE)
-                            (set)))
-   :permissions (clojure.set/difference
-                  (->> before-permissions
-                       (S/setval [S/ALL :db/id] S/NONE)
-                       (set))
-                  (->> after-permissions
-                       (S/setval [S/ALL :db/id] S/NONE)
-                       (set)))})
+  ; when can we ditch the setval :db/id?
+  (let [before-relations-set (->> before-relations
+                               ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
+                               (set))
+        after-relations-set  (->> after-relations
+                               ;(S/setval [S/ALL :db/id] S/NONE)
+                               (set))
+
+        before-permissions-set (->> before-permissions
+                                 ;(S/setval [S/ALL :db/id] S/NONE)
+                                 (set))
+        after-permissions-set (->> after-permissions
+                                ;(S/setval [S/ALL :db/id] S/NONE)
+                                (set))]
+    {:relations   (calc-set-deltas before-relations-set after-relations-set)
+     :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
 
 (defn write-schema!
-  "Gets existing EACL schema, Loops over tx-data, validates the shape."
-  [conn {:as new-schema :keys [relations permissions]}]
+  "Computes delta between existing schema and
+  new schema, checks for any orphaned relationships on retracted schema,
+  produces tx-ops and applies."
+  [conn {:as new-schema-map :keys [relations permissions]}]
+  ; what this needs to do:
+  ; - [ ] validate new schema
+  ; - [x] read current schema
+  ; - [ ] compare new vs old schema to get additions & retractions
+  ; - validate
+  ; - validate inputs for Relations & Permissions
+  ; - read current schema
+  ; - calculate delta (additions + retractions)
+  ; - check if retractions would orphan any relationships, i.e. used by any
+  ; - transact additions & retractions. it would still be convenient to
+  ; todo: potentially parse Spice schema.
+  ; we'll need to support
+  ; write-schema can take and validate Relations.
+  ;(validate-schema-map! schema-map) ; do we need to conform here?
+  (throw (Exception. "not impl WIP"))
   (let [db              (d/db conn)
-        existing-schema (read-schema db)]
-    ; WIP.
-    (compare-schema existing-schema new-schema)))
+        existing-schema (read-schema db)
+        {:as   schema-deltas
+         ; consider naming these deltas
+         relation-deltas :relations
+         permission-deltas :permissions} (compare-schema existing-schema new-schema-map)
+        {relation-additions :additions
+         relation-retractions :retractions} relation-deltas
+        orphaned-rels   (for [rel-retraction relation-retractions]
+                          [rel-retraction (count-relationships-using-relation db rel-retraction)])]
+    (doseq [[rel cnt] orphaned-rels]
+      (assert (zero? cnt) (str "Relation " rel " would orphan " cnt " relationships.")))
+    relation-deltas)
+  ; WIP.
+  #_(compare-schema existing-schema new-schema-map))
