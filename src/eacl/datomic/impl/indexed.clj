@@ -95,7 +95,7 @@
                                          target-type
                                          target-name]}]
               ; how to handle {:relation :self :permission :local-permission} ?
-              (log/debug 'perm-def perm-def)
+              ;(log/debug 'perm-def perm-def)
               (assert resource-type "resource-type missing")
               (assert source-relation-name "source-relation-name missing")
               (if (= :self source-relation-name)
