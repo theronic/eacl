@@ -85,8 +85,8 @@
 (defn get-permission-paths
   "Recursively builds paths granting permission-name on resource-type.
   Returns vector of path maps, where each path is:
-  {:type :relation, :name keyword, :subject-type keyword} for direct
-  or {:type :arrow, :via keyword, :target-type keyword, :sub-paths [paths]} for arrows."
+  {:type :relation, :name keyword, :subject-type keyword} for direct path, or
+  {:type :arrow, :via keyword, :target-type keyword, :sub-paths [paths]} for arrows."
   ([db resource-type permission-name]
    (get-permission-paths db resource-type permission-name #{}))
   ([db resource-type permission-name visited-perms]
