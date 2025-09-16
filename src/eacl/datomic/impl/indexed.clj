@@ -375,7 +375,7 @@
 (defn traverse-permission-path-via-subject
   "Subject must be known. Returns lazy seq of resource eids."
   [db subject-type subject-eid path resource-type cursor-eid]
-  (prn 'traverse-permission-path-via-subject 'cursor-eid cursor-eid)
+  ;(prn 'traverse-permission-path-via-subject 'cursor-eid cursor-eid)
   (case (:type path)
     :relation
     ;; Direct relation - forward traversal
@@ -434,7 +434,7 @@
               intermediate-results (traverse-permission-path db subject-type subject-eid
                                      target-permission
                                      intermediate-type
-                                     cursor-eid
+                                     nil
                                      #{})
               intermediate-eids    (map first intermediate-results)]
           ;; Now find resources connected to these intermediates using index-range
