@@ -111,6 +111,12 @@
    (Permission :server :view {:arrow :nic :permission :view})
    ;(Permission :server :view {:relation :shared_admin})
 
+   (Permission :server :view {:relation :shared_member})
+   (Permission :server :view {:relation :backup_creator})
+
+   (Permission :server :start {:arrow :account :permission :admin})
+   (Permission :server :start {:relation :shared_admin})
+
    ; definition server { permission edit = owner } ; admin?
    (Permission :server :edit {:permission :admin})
 

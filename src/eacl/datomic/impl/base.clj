@@ -31,8 +31,8 @@
 
 (defn ->permission-id
   "Uses (str kw) instead of (name kw) to retain namespaces. Leading colons are expected."
-  [resource-type permission-name arrow target-type relation]
-  (str "eacl:permission:" resource-type ":" permission-name ":" arrow ":" target-type ":" relation))
+  [resource-type permission-name arrow target-type relation-or-permission]
+  (str "eacl:permission:" resource-type ":" permission-name ":" arrow ":" target-type ":" relation-or-permission))
 
 (defn Permission
   "Defines a Permission via
@@ -89,11 +89,13 @@
   {:pre [(keyword? resource-type)
          (keyword? permission-name)
          (map? spec)
+         (or relation permission)
          (not (and relation permission))]}                  ; a permission resolves via a relation or a permission, but not both.
+  ; confusion here between permission & permission-name.
   (cond
     ;; Direct permission: {:relation relation-name}
     relation
-    ; id format: 'eacl:permission:{resource-type}:{permission-name}:{arrow}:{relation|permission}:{target-name}'
+    ; id format: 'eacl:permission:{resource-type}:{permission-name}:{arrow}:{:relation|:permission}:{target-name}'
     {:eacl/id                              (->permission-id resource-type permission-name arrow :relation relation)
      :eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
@@ -103,7 +105,7 @@
 
     ;; Arrow permission: {:arrow source-relation :permission target-permission}
     permission
-    {:eacl/id                              (->permission-id resource-type permission-name arrow :permission relation)
+    {:eacl/id                              (->permission-id resource-type permission-name arrow :permission permission)
      :eacl.permission/resource-type        resource-type
      :eacl.permission/permission-name      permission-name
      :eacl.permission/source-relation-name arrow            ; this can be :self.
