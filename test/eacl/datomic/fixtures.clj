@@ -97,6 +97,7 @@
    ;; Servers:
    (Relation :server :account :account)
    (Relation :server :shared_admin :user)
+   (Relation :server :shared_member :user)
    (Relation :server :vpc :vpc)
 
    ; definition server { permission admin = account->admin + vpc->admin + shared_admin }
@@ -219,15 +220,6 @@
     :db/ident :user/super-user
     :eacl/id  "super-user"}
 
-   ; Accounts
-   {:db/id    "account-1"
-    :db/ident :test/account1
-    :eacl/id  "account-1"}
-
-   {:db/id    "account-2"
-    :db/ident :test/account2
-    :eacl/id  "account-2"}
-
    ;; Servers
    ;; ...Account 1 Servers:
    {:db/id    "account1-server1"
@@ -241,6 +233,18 @@
    {:db/id    "account2-server1"
     :db/ident :test/server2
     :eacl/id  "account2-server1"}
+
+   ; Order matters here: accounts are intentionally after servers
+   ; to force eids to be larger than servers above.
+   ; Accounts
+   {:db/id    "account-1"
+    :db/ident :test/account1
+    :eacl/id  "account-1"}
+
+   {:db/id    "account-2"
+    :db/ident :test/account2
+    :eacl/id  "account-2"}
+
 
    ; VPC
    {:db/id    "vpc-1"
@@ -341,6 +345,19 @@
     relations+permissions
     entity-fixtures
     relationship-fixtures))
+
+(def txes-additional-account3+server
+  "To test accounts & servers with higher eids."
+  [{:db/id    "account3-server3.1"
+    :db/ident :test/account3-server1
+    :eacl/id  "account3-server3.1"}
+
+   {:db/id    "account-3"
+    :db/ident :test/account3
+    :eacl/id  "account-3"}
+
+   (Relationship (->account "account-3") :account (->server "account3-server3.1"))
+   (Relationship (->user :test/user1) :owner (->account "account-3"))])
 
 ;; (For Later) Team Membership:
 ;(Relationship "user-2" :team/member "team-2")

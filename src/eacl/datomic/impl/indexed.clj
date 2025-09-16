@@ -85,8 +85,8 @@
 (defn get-permission-paths
   "Recursively builds paths granting permission-name on resource-type.
   Returns vector of path maps, where each path is:
-  {:type :relation, :name keyword, :subject-type keyword} for direct
-  or {:type :arrow, :via keyword, :target-type keyword, :sub-paths [paths]} for arrows."
+  {:type :relation, :name keyword, :subject-type keyword} for direct path, or
+  {:type :arrow, :via keyword, :target-type keyword, :sub-paths [paths]} for arrows."
   ([db resource-type permission-name]
    (get-permission-paths db resource-type permission-name #{}))
   ([db resource-type permission-name visited-perms]
@@ -375,7 +375,7 @@
 (defn traverse-permission-path-via-subject
   "Subject must be known. Returns lazy seq of resource eids."
   [db subject-type subject-eid path resource-type cursor-eid]
-  (prn 'traverse-permission-path-via-subject 'cursor-eid cursor-eid)
+  ;(prn 'traverse-permission-path-via-subject 'cursor-eid cursor-eid)
   (case (:type path)
     :relation
     ;; Direct relation - forward traversal
@@ -434,7 +434,7 @@
               intermediate-results (traverse-permission-path db subject-type subject-eid
                                      target-permission
                                      intermediate-type
-                                     cursor-eid
+                                     nil
                                      #{})
               intermediate-eids    (map first intermediate-results)]
           ;; Now find resources connected to these intermediates using index-range
