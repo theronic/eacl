@@ -769,11 +769,19 @@
 
 (deftest permission-schema-helper-tests
   (let [db (d/db *conn*)]
+
+    ; skipped for now.
+    #_(testing "find-relation-def returns nil if called with any nil inputs"
+        (is (nil? (impl.indexed/find-relation-def db nil nil)))
+        (is (nil? (impl.indexed/find-relation-def db nil :something)))
+        (is (nil? (impl.indexed/find-relation-def db :something nil))))
+
     (testing "find-relation-def"
       (is (= {:eacl.relation/subject-type  :account
               :eacl.relation/resource-type :server
               :eacl.relation/relation-name :account}
             (impl.indexed/find-relation-def db :server :account))))
+
     (testing "find-permission-defs"
       (is (pos? (count (impl.indexed/find-permission-defs db :server :view))))
       (is (empty? (impl.indexed/find-permission-defs db :server :nonexistent))))))
@@ -999,14 +1007,14 @@
 ;    (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
 
 (deftest reproduce-infinite-recursion-test
-  (testing "lookup-resources should handle cyclic permissions without throwing InterruptedException"
+  (testing "lookup-resources should handle cyclic permissions without throwing"
     ;; Introduce a dependency cycle:
     ;; server/view -> server/admin -> account/admin -> server/view
     @(d/transact *conn*
        [;; 1. Relation for account to have a primary server
-        (Relation :account :primary-server :server)
+        (Relation :account :server-cycle :server)
         ;; 2. Permission making account/admin depend on server/view, completing the cycle.
-        (Permission :account :admin {:arrow :primary-server :permission :view})])
+        (Permission :account :admin {:arrow :server-cycle :permission :view})])
 
     ;; 3. Create a relationship connecting a specific account and server.
     @(d/transact *conn*
