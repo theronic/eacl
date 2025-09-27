@@ -34,10 +34,10 @@ Embedded AuthZ offers some advantages for typical use-cases:
 In a ReBAC system like EACL, _Subjects_ & _Resources_ are related via _Relationships_.
 
 A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
-- `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`,
-- whereas `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
+- `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`, and
+- `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
 
-To create a relationship, defined a potential `Relation`, like so:
+To create a relationship, define a potential `Relation`, like so:
 
 ```clojure
 ; Account Resource:
