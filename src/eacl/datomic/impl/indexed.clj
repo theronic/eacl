@@ -489,12 +489,13 @@
     lazy-merged-results))
 
 (defn lookup-resources
-  "Default :limit 1000, pass negative value e.g. -1 for all results."
+  "Default :limit 1000.
+  Pass :limit -1 for all results (or any negative value)."
   [db {:as   query
        :keys [subject permission resource/type limit cursor]
        :or   {limit 1000}}]
   (let [merged-results  (lazy-merged-lookup-resources db query)
-        limited-results (if (pos? limit)
+        limited-results (if (>= limit 0)
                           (take limit merged-results)
                           merged-results)
         resources       (map #(spice-object type %) limited-results)
@@ -618,13 +619,14 @@
 
 (defn lookup-subjects
   "Indexed implementation of lookup-subjects using direct index access.
-  Returns subjects that can access the given resource with the specified permission."
+  Returns subjects that can access the given resource with the specified permission.
+  Pass :limit -1 for all results (can be slow)."
   [db {:as   query
        :keys [resource permission subject/type limit cursor]
        :or   {limit 1000}}]
   {:pre [(:type resource) (:id resource)]}
   (let [merged-results  (lazy-merged-lookup-subjects db query)
-        limited-results (if (pos? limit)
+        limited-results (if (>= limit 0)
                           (take limit merged-results)
                           merged-results)
         subjects        (map #(spice-object type %) limited-results)
@@ -634,5 +636,18 @@
      :cursor next-cursor}))
 
 (defn count-resources
-  [db query]
-  (count (lazy-merged-lookup-resources db query)))
+  "Returns {:keys [count cursor limit]}, where limit matches input.
+  Pass :limit -1 for all results."
+  [db {:as   query
+       :keys [limit cursor]
+       :or   {limit -1}}]
+  (let [merged-results  (lazy-merged-lookup-resources db query)
+        limited-results (if (>= limit 0)
+                          (take limit merged-results)
+                          merged-results)
+        resources       (map #(spice-object type %) limited-results)
+        last-resource   (last resources)
+        next-cursor     {:resource (or last-resource (:resource cursor))}]
+    {:count (count limited-results)
+     :limit limit
+     :cursor next-cursor}))
