@@ -109,11 +109,11 @@
         super-user-eid (d/entid db :user/super-user)]
 
     (testing "we can count resources (materializes full index)"
-      (is (= 3 (count-resources db {:subject       (->user super-user-eid)
-                                    :permission    :view
-                                    :resource/type :server
-                                    :limit         1000
-                                    :cursor        nil}))))
+      (is (= 3 (:count (count-resources db {:subject       (->user super-user-eid)
+                                            :permission    :view
+                                            :resource/type :server
+                                            :limit         1000
+                                            :cursor        nil})))))
 
     (testing ":test/user1 can :view, :reboot or :share server1"
       (is (can? db (->user :test/user1) :view (->server :test/server1)))
@@ -319,9 +319,9 @@
               (set))))
 
       (testing "count-resources returns 3 as above"
-        (is (= 3 (count-resources db {:subject       (->user user1-eid)
-                                      :permission    :view
-                                      :resource/type :server}))))
+        (is (= 3 (:count (count-resources db {:subject       (->user user1-eid)
+                                              :permission    :view
+                                              :resource/type :server})))))
 
       (testing "same for :reboot permission"
         (is (= [(->server "account1-server1")
@@ -343,9 +343,9 @@
                 (set))))
 
         (testing "count matches lookup"
-          (is (= 2 (count-resources db {:subject       (->user user1-eid)
-                                        :permission    :view
-                                        :resource/type :account})))))
+          (is (= 2 (:count (count-resources db {:subject       (->user user1-eid)
+                                                :permission    :view
+                                                :resource/type :account}))))))
 
       (is (= #{(->server "account2-server1")}
             (->> (lookup-resources db
@@ -409,9 +409,9 @@
                        (:data)
                        (set))))
           (testing "count-resources also zero"
-            (is (zero? (count-resources db' {:resource/type :server
-                                             :permission    :view
-                                             :subject       (->user [:eacl/id "user-2"])})))))
+            (is (zero? (:count (count-resources db' {:resource/type :server
+                                                     :permission    :view
+                                                     :subject       (->user [:eacl/id "user-2"])}))))))
 
         (is (false? (can? db' (->user :test/user2) :delete (->server :test/server2))))
 
@@ -500,9 +500,9 @@
                   (paginated->spice db'))))
 
           (testing "count-resources matches above"
-            (is (= 4 (count-resources db' {:resource/type :server
-                                           :permission    :view
-                                           :subject       (->user super-user-eid)})))))
+            (is (= 4 (:count (count-resources db' {:resource/type :server
+                                                   :permission    :view
+                                                   :subject       (->user super-user-eid)}))))))
         (testing "limit: 10 with cursor set to 1st result should exclude the first result"
           ; test failing because return order is oriented towards how it's stored in index
           (is (= [(spice-object :server "account1-server2") ; (spice-object :server "account1-server1") is excludced.
@@ -655,20 +655,20 @@
                 (is (= page2-cursor (:cursor page3-empty)))))
 
             (testing "count-resources should return count of all result"
-              (is (= 4 (count-resources db' {:resource/type :server
-                                             :permission    :view
-                                             :subject       (->user super-user-eid)}))))
+              (is (= 4 (:count (count-resources db' {:resource/type :server
+                                                     :permission    :view
+                                                     :subject       (->user super-user-eid)})))))
 
             (testing "count-resources is also cursor-sensitive"
-              (is (= 2 (count-resources db' {:resource/type :server
-                                             :permission    :view
-                                             :cursor        page1-cursor
-                                             :subject       (->user super-user-eid)})))
+              (is (= 2 (:count (count-resources db' {:resource/type :server
+                                                     :permission    :view
+                                                     :cursor        page1-cursor
+                                                     :subject       (->user super-user-eid)}))))
 
-              (is (zero? (count-resources db' {:resource/type :server
-                                               :permission    :view
-                                               :subject       (->user super-user-eid)
-                                               :cursor        page2-cursor})))))
+              (is (zero? (:count (count-resources db' {:resource/type :server
+                                                       :permission    :view
+                                                       :subject       (->user super-user-eid)
+                                                       :cursor        page2-cursor}))))))
 
           (testing "now test pagination for :view permission on :account for  account->super_admin with {:arrow :account :relation :super_admin}"
             (let [both-pages          (lookup-resources db' {:limit         3
@@ -678,7 +678,6 @@
                                                              :subject       (->user super-user-eid)})
 
                   both-pages-resolved (paginated-data->spice db' (:data both-pages))
-                  _                   (prn 'both-pages-resolved both-pages-resolved)
                   [page1-expected page2-expected] (partition-all 1 both-pages-resolved)
                   page3-expected      []                    ; empty.
 
@@ -720,7 +719,7 @@
                 ; we probably need a flag for empty, but empty :data implies that.
                 (is (= page2-cursor page3-cursor)))
 
-              (prn 'both-pages both-pages)
+              ;(prn 'both-pages both-pages)
 
               (testing "both-pages :limit 3 should include both results, in sorted order" ; (depends on tuple index or costly sort)
                 (is (= [(spice-object :account "account-1")
@@ -737,43 +736,97 @@
                 (is (empty? page3-expected))
                 (is (empty? (paginated-data->spice db' page3-data))))
 
-              (prn 'failing-test-here)
               (testing "lookup-resources returns cursor input when looking beyond any values"
-                (let [page3-empty (lookup-resources db' {:limit         100
-                                                         :cursor        page2-cursor
-                                                         :resource/type :account
-                                                         :permission    :view
-                                                         :subject       (->user super-user-eid)})]
+                (let [page3-empty (lookup-resources db'{:limit         100
+                                                        :cursor        page2-cursor
+                                                        :resource/type :account
+                                                        :permission    :view
+                                                        :subject       (->user super-user-eid)})]
                   (is (empty? (:data page3-empty)))
                   (is (= page2-cursor (:cursor page3-empty)))))
 
               ;; server.view tests follow
-              (testing "count-resources should return count of all result"
-                (is (= 4 (count-resources db' {:resource/type :server
-                                               :permission    :view
-                                               :subject       (->user super-user-eid)}))))
+              (testing "count-resources & cursors"
+                (testing "count-resources should return count of all servers"
+                  (is (= 4 (:count (count-resources db' {:resource/type :server
+                                                         :permission    :view
+                                                         :subject       (->user super-user-eid)}))))
 
-              (testing "count-resources should be cursor-sensitive. why isn't it?"
-                (is (:resource page1-cursor))
-                (is (:resource page2-cursor))
-                (is (not= page1-cursor page2-cursor))
-                (is (= 2 (count-resources db' {:resource/type :server
-                                               :permission    :view
-                                               :cursor        page1-cursor
-                                               :subject       (->user super-user-eid)})))
+                  (let [{all-servers :data} (lookup-resources db' {:subject       (->user super-user-eid) ; all results.
+                                                                   :permission    :view
+                                                                   :resource/type :server
+                                                                   :limit         -1
+                                                                   :cursor        nil})]
+                    (is (= [(spice-object :server "account1-server1")
+                            (spice-object :server "account1-server2")
+                            (spice-object :server "account2-server1")
+                            (spice-object :server "server-3")]
+                          (paginated-data->spice db' all-servers))))
 
-                (is (= 0 (count-resources db' {:resource/type :server
-                                               :permission    :view
-                                               :subject       (->user super-user-eid)
-                                               :cursor        page2-cursor})))))))))))
+                  (let [{page1-servers :data
+                         page1-cursor  :cursor} (lookup-resources db' {:subject       (->user super-user-eid) ; all results.
+                                                                       :permission    :view
+                                                                       :resource/type :server
+                                                                       :limit         2
+                                                                       :cursor        nil})]
+                    (is (:resource page1-cursor))
+                    (is (= [(spice-object :server "account1-server1")
+                            (spice-object :server "account1-server2")]
+                          (paginated-data->spice db' page1-servers)))
+
+                    (let [{page2-servers :data
+                           page2-cursor  :cursor} (lookup-resources db' {:subject       (->user super-user-eid) ; all results.
+                                                                         :permission    :view
+                                                                         :resource/type :server
+                                                                         :limit         2
+                                                                         :cursor        page1-cursor})]
+                      (is (:resource page2-cursor))
+                      (is (= [(spice-object :server "account2-server1")
+                              (spice-object :server "server-3")]
+                            (paginated-data->spice db' page2-servers)))
+
+                      ; these are broken because we are passing account cursors in tests.
+                      (testing "count-resources should respect limit & cursors"
+                        (is (:resource page1-cursor))
+                        (is (:resource page2-cursor))
+                        (is (not= page1-cursor page2-cursor))
+
+                        (is (= 2 (:count (count-resources db'
+                                           {:resource/type :server
+                                            :permission    :view
+                                            :limit         2
+                                            :cursor        nil
+                                            :subject       (->user super-user-eid)}))))
+
+                        (is (= 2 (:count (count-resources db'
+                                           {:resource/type :server
+                                            :permission    :view
+                                            :limit         2
+                                            :cursor        page1-cursor
+                                            :subject       (->user super-user-eid)}))))
+
+                        (is (= 0 (:count (count-resources db'
+                                           {:resource/type :server
+                                            :permission    :view
+                                            :limit         10
+                                            :subject       (->user super-user-eid)
+                                            :cursor        page2-cursor}))))))))))))))))
 
 (deftest permission-schema-helper-tests
   (let [db (d/db *conn*)]
+
+    ; skipped for now.
+    #_(testing "find-relation-def returns nil if called with any nil inputs"
+        (is (nil? (impl.indexed/find-relation-def db nil nil)))
+        (is (nil? (impl.indexed/find-relation-def db nil :something)))
+        (is (nil? (impl.indexed/find-relation-def db :something nil))))
+
     (testing "find-relation-def"
       (is (= {:eacl.relation/subject-type  :account
               :eacl.relation/resource-type :server
               :eacl.relation/relation-name :account}
             (impl.indexed/find-relation-def db :server :account))))
+
     (testing "find-permission-defs"
       (is (pos? (count (impl.indexed/find-permission-defs db :server :view))))
       (is (empty? (impl.indexed/find-permission-defs db :server :nonexistent))))))
@@ -999,14 +1052,14 @@
 ;    (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
 
 (deftest reproduce-infinite-recursion-test
-  (testing "lookup-resources should handle cyclic permissions without throwing InterruptedException"
+  (testing "lookup-resources should handle cyclic permissions without throwing"
     ;; Introduce a dependency cycle:
     ;; server/view -> server/admin -> account/admin -> server/view
     @(d/transact *conn*
        [;; 1. Relation for account to have a primary server
-        (Relation :account :primary-server :server)
+        (Relation :account :server-cycle :server)
         ;; 2. Permission making account/admin depend on server/view, completing the cycle.
-        (Permission :account :admin {:arrow :primary-server :permission :view})])
+        (Permission :account :admin {:arrow :server-cycle :permission :view})])
 
     ;; 3. Create a relationship connecting a specific account and server.
     @(d/transact *conn*

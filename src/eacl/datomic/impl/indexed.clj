@@ -47,18 +47,21 @@
   "Finds the Relation definition for a given resource-type and relation-name.
   Returns map with :eacl.relation/subject-type as the target type for arrows, or nil if not found."
   [db resource-type relation-name]
-  {:pre [(keyword? resource-type)
-         (keyword? relation-name)]}
   ; this can be optimized, since we already know resource type & relation name.
   ; only need to add subject-type.
-  (d/q '[:find (pull ?rel [:eacl.relation/subject-type
-                           :eacl.relation/resource-type
-                           :eacl.relation/relation-name]) .
-         :in $ ?rtype ?rname
-         :where
-         [?rel :eacl.relation/resource-type ?rtype]
-         [?rel :eacl.relation/relation-name ?rname]]
-    db resource-type relation-name))
+  (if (and resource-type relation-name)
+    (d/q '[:find (pull ?rel [:eacl.relation/subject-type
+                             :eacl.relation/resource-type
+                             :eacl.relation/relation-name]) .
+           :in $ ?rtype ?rname
+           :where
+           [?rel :eacl.relation/resource-type ?rtype]
+           [?rel :eacl.relation/relation-name ?rname]]
+      db resource-type relation-name)
+    (do
+      (log/warn 'find-relation-def 'called-with resource-type relation-name)
+      (throw (Exception. (str 'find-relation-def 'called-with resource-type relation-name))) ; throw temporarily to debug.
+      nil)))
 
 (defn find-permission-defs
   "Finds all Permission definitions that grant permission-name on resource-type.
@@ -90,56 +93,60 @@
   ([db resource-type permission-name]
    (get-permission-paths db resource-type permission-name #{}))
   ([db resource-type permission-name visited-perms]
-   ;; Cycle detection: check if we've already visited this permission
-   (let [perm-key [resource-type permission-name]]
-     (if (contains? visited-perms perm-key)
-       (do
-         (log/warn "Cycle detected: " perm-key " in " visited-perms)
-         [])                                                ; Return empty paths if we detect a cycle. This should be detected during schema writes.
-       (let [updated-visited (conj visited-perms perm-key)
-             perm-defs       (find-permission-defs db resource-type permission-name)]
-         (->> perm-defs
-           (keep (fn [{:as                   perm-def
-                       :eacl.permission/keys [source-relation-name
-                                              target-type
-                                              target-name]}]
-                   ; how to handle {:relation :self :permission :local-permission} ?
-                   ;(log/debug 'perm-def perm-def)
-                   (assert resource-type "resource-type missing")
-                   (assert source-relation-name "source-relation-name missing")
-                   (if (= :self source-relation-name)
-                     (case target-type
-                       :relation (resolve-self-relation db resource-type target-name) ; target-name can be nil here. why?
-                       :permission {:type              :self-permission
-                                    :target-permission target-name
-                                    :resource-type     resource-type})
-                     (if-let [via-rel-def (find-relation-def db resource-type source-relation-name)]
-                       (let [intermediate-type (:eacl.relation/subject-type via-rel-def)]
-                         {:type              :arrow
-                          :via               source-relation-name ; this can be :self, but we don't handle it
-                          :target-type       intermediate-type ;; This is the actual type of the intermediate
-                          :target-permission (when (= target-type :permission) target-name)
-                          :target-relation   (when (= target-type :relation) target-name)
-                          :sub-paths         (case target-type
-                                               ;; Recursive permission call with cycle detection
-                                               :permission (get-permission-paths db intermediate-type target-name updated-visited)
-                                               ;; Direct relation - build the path with proper type resolution
-                                               :relation (if-let [target-rel-def (find-relation-def db intermediate-type target-name)]
-                                                           [{:type         :relation
-                                                             :name         target-name
-                                                             :subject-type (:eacl.relation/subject-type target-rel-def)}]
-                                                           (do ; Return empty sub-paths if missing Relation
-                                                             (log/warn "Missing Relation definition for arrow target relation"
-                                                               {:intermediate-type    intermediate-type
-                                                                :target-relation-name target-name})
-                                                             [])))}) ; Skip this permission path
-                       (do
-                         (log/warn "Missing Relation definition for via relation"
-                           {:resource-type     resource-type
-                            :via-relation-name source-relation-name})
-                         nil)))))
+   (let [perm-defs       (find-permission-defs db resource-type permission-name)
+         perm-eids       (map :db/id perm-defs)
+         updated-visited (reduce conj visited-perms perm-eids)]
+     (->> perm-defs
+       (keep (fn [{:as                   perm-def
+                   perm-eid              :db/id
+                   :eacl.permission/keys [source-relation-name
+                                          target-type
+                                          target-name]}]
+               ; how to handle {:relation :self :permission :local-permission} ?
+               ;(log/debug 'perm-def perm-def)
 
-           (vec)))))))
+               (assert resource-type "resource-type missing")
+               (assert source-relation-name "source-relation-name missing")
+
+               ;; Cycle detection: check if we've already visited this permission
+               (if (contains? visited-perms perm-eid)
+                 (do
+                   ; Return empty paths if we detect a cycle. This should be prevented during schema writes.
+                   (log/warn "Cycle detected: " perm-def " in " visited-perms)
+                   [])
+                 (if (= :self source-relation-name)
+                   (case target-type
+                     :relation (resolve-self-relation db resource-type target-name) ; target-name can be nil here. why?
+                     :permission {:type              :self-permission
+                                  :target-permission target-name
+                                  :resource-type     resource-type})
+                   (if-let [via-rel-def (find-relation-def db resource-type source-relation-name)]
+                     (let [intermediate-type (:eacl.relation/subject-type via-rel-def)]
+                       {:type              :arrow
+                        :via               source-relation-name ; this can be :self, but we don't handle it
+                        :target-type       intermediate-type ;; This is the actual type of the intermediate
+                        :target-permission (when (= target-type :permission) target-name)
+                        :target-relation   (when (= target-type :relation) target-name)
+                        :sub-paths         (case target-type
+                                             ;; Recursive permission call with cycle detection
+                                             :permission (get-permission-paths db intermediate-type target-name updated-visited)
+                                             ;; Direct relation - build the path with proper type resolution
+                                             :relation (if-let [target-rel-def (find-relation-def db intermediate-type target-name)]
+                                                         [{:type         :relation
+                                                           :name         target-name
+                                                           :subject-type (:eacl.relation/subject-type target-rel-def)}]
+                                                         (do ; Return empty sub-paths if missing Relation
+                                                           (log/warn "Missing Relation definition for arrow target relation"
+                                                             {:intermediate-type    intermediate-type
+                                                              :target-relation-name target-name})
+                                                           [])))}) ; Skip this permission path
+                     (do
+                       (log/warn "Missing Relation definition for via relation"
+                         {:resource-type     resource-type
+                          :via-relation-name source-relation-name})
+                       nil))))))
+
+       (vec)))))
 
 (defn traverse-single-path
   "Recursively traverses a single path from a subject to find matching resources.
@@ -466,7 +473,7 @@
         {cursor-resource :resource} cursor
         cursor-eid          (:id cursor-resource)           ; can be nil.
         ; we can't validate cursor because may have been deleted since previous call.
-        _                   (prn 'lazy-merged-lookup-resources 'cursor cursor)
+        ;_                   (prn 'lazy-merged-lookup-resources 'cursor cursor)
 
         paths               (get-permission-paths db type permission)
         path-seqs           (->> paths
@@ -482,12 +489,13 @@
     lazy-merged-results))
 
 (defn lookup-resources
-  "Default :limit 1000, pass negative value e.g. -1 for all results."
+  "Default :limit 1000.
+  Pass :limit -1 for all results (or any negative value)."
   [db {:as   query
        :keys [subject permission resource/type limit cursor]
        :or   {limit 1000}}]
   (let [merged-results  (lazy-merged-lookup-resources db query)
-        limited-results (if (pos? limit)
+        limited-results (if (>= limit 0)
                           (take limit merged-results)
                           merged-results)
         resources       (map #(spice-object type %) limited-results)
@@ -611,13 +619,14 @@
 
 (defn lookup-subjects
   "Indexed implementation of lookup-subjects using direct index access.
-  Returns subjects that can access the given resource with the specified permission."
+  Returns subjects that can access the given resource with the specified permission.
+  Pass :limit -1 for all results (can be slow)."
   [db {:as   query
        :keys [resource permission subject/type limit cursor]
        :or   {limit 1000}}]
   {:pre [(:type resource) (:id resource)]}
   (let [merged-results  (lazy-merged-lookup-subjects db query)
-        limited-results (if (pos? limit)
+        limited-results (if (>= limit 0)
                           (take limit merged-results)
                           merged-results)
         subjects        (map #(spice-object type %) limited-results)
@@ -627,5 +636,18 @@
      :cursor next-cursor}))
 
 (defn count-resources
-  [db query]
-  (count (lazy-merged-lookup-resources db query)))
+  "Returns {:keys [count cursor limit]}, where limit matches input.
+  Pass :limit -1 for all results."
+  [db {:as   query
+       :keys [limit cursor]
+       :or   {limit -1}}]
+  (let [merged-results  (lazy-merged-lookup-resources db query)
+        limited-results (if (>= limit 0)
+                          (take limit merged-results)
+                          merged-results)
+        resources       (map #(spice-object type %) limited-results)
+        last-resource   (last resources)
+        next-cursor     {:resource (or last-resource (:resource cursor))}]
+    {:count (count limited-results)
+     :limit limit
+     :cursor next-cursor}))
