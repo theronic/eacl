@@ -383,7 +383,6 @@
                                  (lazy-sort/lazy-fold2-merge-sorted-by first)
                                  (lazy-sort/dedupe-by first))] ; Merge results from all paths
          ; why is this returning dupes?
-         (prn 'lazy-path-results lazy-path-results)
          lazy-path-results)))))
 
 (defn direct-match-datoms-in-relationship-index
@@ -502,8 +501,6 @@
                                                       path type cursor-eid)]
                                         (when (seq results)
                                           results)))))      ; Already sorted by eid
-
-        _ (prn 'path-seqs path-seqs)
 
         lazy-merged-results (if (seq path-seqs)
                               (->> path-seqs
