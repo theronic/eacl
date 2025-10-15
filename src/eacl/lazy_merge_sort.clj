@@ -107,3 +107,110 @@
     (take 20 (lazy-merge-dedupe-sort-by first [seq1 seq2 seq3])))
   => ([1 :a1] [2 :b2] [3 :c1] [4 :d3] [5 :e1] [6 :f1] [7 :g1] [8 :h2] [9 :i1] [10 :j2] [11 :k3])
   #_nil)
+
+; Experimenting with answers from https://stackoverflow.com/questions/62806958/fast-sorting-algorithm-for-multiple-ordered-arrays
+
+(defn lazy-merge2
+  "Lazily merges two sorted sequences using a comparison function.
+   cmp should return true if first arg should come before second arg."
+  [cmp x y]
+  (lazy-seq
+    (cond
+      (nil? (seq x)) y
+      (nil? (seq y)) x
+      :else
+      (let [[xf & xn] x
+            [yf & yn] y]
+        (if (cmp xf yf)
+          (cons xf (lazy-merge2 cmp xn y))
+          (cons yf (lazy-merge2 cmp x yn)))))))
+
+(defn lazy-merge-all
+  "Lazily merges a collection of sorted sequences.
+   Returns empty seq if input is empty."
+  [cmp seqs]
+  (lazy-seq
+    (let [non-empty (seq (filter seq seqs))]
+      (when non-empty
+        (if-let [[y] (next non-empty)]
+          ;; Two or more sequences
+          (lazy-merge2 cmp (first non-empty) y)
+          ;; Only one sequence left
+          (first non-empty))))))
+
+(defn fold2
+  "Repeatedly applies function f to pairs of elements until one remains.
+   Uses a tournament-style folding approach."
+  [f s]
+  (loop [s s]
+    (if (next (next s)) ; if more than 2 elements
+      (recur (map f (partition-all 2 s)))
+      (f s))))
+
+(defn lazy-fold2-merge-sorted
+  "Merges multiple sorted sequences using lazy fold2 algorithm.
+   Sequences should already be sorted according to cmp.
+   cmp is a comparison function that returns true if first arg < second arg."
+  [cmp seqs]
+  (prn 'lazy-fold2-merge-sorted cmp seqs)
+  (fold2 (partial lazy-merge-all cmp) seqs))
+
+(defn lazy-fold2-merge-sorted-by
+  "Merges multiple sorted sequences using lazy fold2 algorithm.
+   keyfn extracts the comparison key from each element.
+   Sequences should already be sorted according to (keyfn element).
+
+   Example:
+   (lazy-fold2-merge-sorted-by identity [[1 3 5] [2 4 6] [0 7 8]])"
+  [keyfn seqs]
+  (lazy-fold2-merge-sorted #(< (keyfn %1) (keyfn %2)) seqs))
+
+(defn dedupe-by
+  "Returns a lazy sequence removing consecutive duplicates in coll based on the key function f.
+  Returns a transducer when no collection is provided."
+  {:added "1.7"}
+  ([f]
+   (fn [rf]
+     (let [pv (volatile! ::none)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [prior @pv
+                current (f input)]
+            (vreset! pv current)
+            (if (= prior current)
+              result
+              (rf result input))))))))
+  ([f coll] (sequence (dedupe-by f) coll)))
+
+(comment
+  (dedupe-by first [[:a 1] [:a 2] [:b 1]]))
+
+;; Example usage:
+(comment
+
+  (lazy-fold2-merge-sorted-by identity
+    '((17592186045501 17592186045502 17592186045503) (17592186045501) ()))
+
+  ;; Merge sorted sequences of numbers
+  (lazy-fold2-merge-sorted-by identity
+    [[1 3 5 7]
+     [1 2 4 6 8]
+     [0 9 10]])
+  ;; => (0 1 2 3 4 5 6 7 8 9 10)
+
+  ;; Merge sorted sequences by custom key
+  (lazy-fold2-merge-sorted-by :priority
+    [{:priority 1 :name "low"}
+     {:priority 5 :name "high"}]
+    [{:priority 2 :name "medium"}
+     {:priority 3 :name "mid"}])
+
+  ;; Works lazily - doesn't realize entire sequence at once
+  (take 5
+    (lazy-fold2-merge-sorted-by identity
+      [(range 0 1000 2)
+       (range 1 1000 2)
+       (range 0 1000 3)])))
+;; => (0 0 1 2 2)
