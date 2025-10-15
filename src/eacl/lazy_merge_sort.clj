@@ -214,3 +214,128 @@
        (range 1 1000 2)
        (range 0 1000 3)])))
 ;; => (0 0 1 2 2)
+
+;; AI Work:
+
+(defn lazy-merge2-dedupe-by
+  "Lazily merges two already-deduplicated sorted sequences, maintaining deduplication.
+   keyfn extracts the comparison/deduplication key from each element.
+   cmp compares two elements and returns true if first should come before second.
+   Assumes both input sequences are already deduplicated."
+  ([keyfn cmp x y]
+   (lazy-merge2-dedupe-by keyfn cmp nil x y))
+  ([keyfn cmp last-key x y]
+   (lazy-seq
+     (cond
+       (empty? x)
+       ;; Skip any remaining duplicates in y and return rest
+       (when-let [s (seq (drop-while #(= (keyfn %) last-key) y))]
+         s)
+
+       (empty? y)
+       ;; Skip any remaining duplicates in x and return rest
+       (when-let [s (seq (drop-while #(= (keyfn %) last-key) x))]
+         s)
+
+       :else
+       (let [xf (first x)
+             yf (first y)
+             xk (keyfn xf)
+             yk (keyfn yf)]
+         (cond
+           ;; Both sequences have elements with the same key
+           (= xk yk)
+           (if (= xk last-key)
+             ;; Duplicate of last emitted - skip both
+             (lazy-merge2-dedupe-by keyfn cmp last-key (rest x) (rest y))
+             ;; New value - emit first one, advance both
+             (cons xf (lazy-merge2-dedupe-by keyfn cmp xk (rest x) (rest y))))
+
+           ;; x element comes first
+           (cmp xf yf)
+           (if (= xk last-key)
+             ;; Duplicate of last emitted - skip x
+             (lazy-merge2-dedupe-by keyfn cmp last-key (rest x) y)
+             ;; New value - emit x
+             (cons xf (lazy-merge2-dedupe-by keyfn cmp xk (rest x) y)))
+
+           ;; y element comes first
+           :else
+           (if (= yk last-key)
+             ;; Duplicate of last emitted - skip y
+             (lazy-merge2-dedupe-by keyfn cmp last-key x (rest y))
+             ;; New value - emit y
+             (cons yf (lazy-merge2-dedupe-by keyfn cmp yk x (rest y))))))))))
+
+(defn lazy-merge-all-dedupe-by
+  "Lazily merges a collection of sorted, deduplicated sequences while maintaining deduplication.
+   keyfn extracts the comparison key.
+   cmp is a comparison function.
+   Returns empty seq if input is empty."
+  [keyfn cmp seqs]
+  (lazy-seq
+    (let [non-empty (seq (filter seq seqs))]
+      (when non-empty
+        (if-let [[y] (next non-empty)]
+          ;; Two or more sequences - merge first two with dedup
+          (lazy-merge2-dedupe-by keyfn cmp (first non-empty) y)
+          ;; Only one sequence left - return it as-is
+          (first non-empty))))))
+
+(defn lazy-fold2-merge-dedupe-sorted-by
+  "Merges multiple sorted, deduplicated sequences using tournament-style folding with deduplication.
+   keyfn extracts the comparison key from each element.
+   Sequences should already be sorted and deduplicated according to (keyfn element).
+
+   This combines the performance of lazy-fold2-merge-sorted-by with the deduplication
+   of lazy-merge-dedupe-sort-by. Deduplication happens at each merge level in the
+   tournament tree, which is much more efficient than deduplicating after merging all sequences.
+
+   Example:
+   (lazy-fold2-merge-dedupe-sorted-by identity
+     [[1 3 5 7]
+      [1 2 4 6 8]
+      [0 5 9 10]])
+   => (0 1 2 3 4 5 6 7 8 9 10)"
+  [keyfn seqs]
+  (fold2
+    (partial lazy-merge-all-dedupe-by keyfn #(< (keyfn %1) (keyfn %2)))
+    seqs))
+
+;; Example usage:
+(comment
+  ;; Basic merge with deduplication
+  (lazy-fold2-merge-dedupe-sorted-by identity
+    [[1 3 5 7 9]
+     [1 2 4 6 8]
+     [0 5 9 10]])
+  ;; => (0 1 2 3 4 5 6 7 8 9 10)
+
+  ;; Works with the example from the original code
+  (lazy-fold2-merge-dedupe-sorted-by identity
+    '((17592186045501 17592186045502 17592186045503)
+      (17592186045501)
+      ()))
+  ;; => (17592186045501 17592186045502 17592186045503)
+
+  ;; Merge with custom key function
+  (lazy-fold2-merge-dedupe-sorted-by first
+    [[[1 :a1] [3 :c1] [5 :e1]]
+     [[1 :a2] [2 :b2] [3 :c2] [5 :e2]]
+     [[0 :z] [5 :e3] [9 :i]]])
+  ;; => ([0 :z] [1 :a1] [2 :b2] [3 :c1] [5 :e1] [9 :i])
+
+  ;; Works lazily with infinite sequences
+  (take 10
+    (lazy-fold2-merge-dedupe-sorted-by identity
+      [(range 0 1000000 3)
+       (range 0 1000000 5)
+       (range 0 1000000 7)]))
+  ;; => (0 3 5 6 7 9 10 12 14 15)
+
+  ;; Handles many sequences efficiently
+  (take 20
+    (lazy-fold2-merge-dedupe-sorted-by identity
+      (map #(range % 1000 %) (range 1 20)))))
+  ;; Returns deduplicated merge of all ranges
+
