@@ -1,6 +1,6 @@
 (ns eacl.datomic.impl.indexed
   (:require [datomic.api :as d]
-            [eacl.lazy-merge-sort :refer [lazy-merge-dedupe-sort lazy-merge-dedupe-sort-by]]
+            [eacl.lazy-merge-sort :as lazy-sort :refer [lazy-merge-dedupe-sort lazy-merge-dedupe-sort-by]]
             [eacl.core :refer [spice-object]]
             [clojure.tools.logging :as log]))
 
@@ -202,8 +202,10 @@
                           sub-path
                           resource-type
                           cursor-eid)))
-                 (lazy-merge-dedupe-sort))))
-        (lazy-merge-dedupe-sort)))))
+                 (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity))))
+        ;(lazy-merge-dedupe-sort)
+        ; do we need dedupe here?
+        (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity)))))
 
 (defn can?
   "Optimized can? implementation using direct index traversal.
@@ -345,7 +347,8 @@
                                                         intermediate-eids)]
                                                   ;; Use lazy-merge-dedupe-sort-by to combine sorted sequences from all intermediates
                                                   (if (seq resource-seqs)
-                                                    (lazy-merge-dedupe-sort-by first resource-seqs)
+                                                    (lazy-sort/lazy-fold2-merge-dedupe-sorted-by first resource-seqs)
+                                                    ;(lazy-merge-dedupe-sort-by first resource-seqs)
                                                     [])))
                                               ;; Arrow to permission: recursively find intermediates with permission
                                               (let [target-permission    (:target-permission path)
@@ -367,10 +370,13 @@
                                                                                  (map (fn [resource-eid] [resource-eid path])))))))]
                                                   ;; Use lazy-merge-dedupe-sort-by to combine sorted sequences from all intermediates
                                                   (if (seq resource-seqs)
-                                                    (lazy-merge-dedupe-sort-by first resource-seqs)
+                                                    (lazy-sort/lazy-fold2-merge-dedupe-sorted-by first resource-seqs)
+                                                    ;(lazy-merge-dedupe-sort-by first resource-seqs)
                                                     []))))))))
                                  (filter some?)
-                                 (lazy-merge-dedupe-sort-by first))] ; Merge results from all paths
+                                 ;(lazy-merge-dedupe-sort-by first)
+                                 (lazy-sort/lazy-fold2-merge-dedupe-sorted-by first))] ; Merge results from all paths
+         ; why is this returning dupes?
          lazy-path-results)))))
 
 (defn direct-match-datoms-in-relationship-index
@@ -433,7 +439,8 @@
                   intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
             (if (seq resource-seqs)
-              (lazy-merge-dedupe-sort resource-seqs)
+              (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity resource-seqs)
+              ;(lazy-merge-dedupe-sort resource-seqs)
               [])))
         ;; Arrow to permission
         (let [target-permission    (:target-permission path)
@@ -458,7 +465,9 @@
                   intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
             (if (seq resource-seqs)
-              (lazy-merge-dedupe-sort resource-seqs)
+              ; why no dedupe here?
+              (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity resource-seqs)
+              ;(lazy-merge-dedupe-sort resource-seqs)
               [])))))))
 
 (defn lazy-merged-lookup-resources
@@ -484,7 +493,8 @@
                                           results)))))      ; Already sorted by eid
 
         lazy-merged-results (if (seq path-seqs)
-                              (lazy-merge-dedupe-sort path-seqs)
+                              (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
+                              ;(lazy-merge-dedupe-sort path-seqs)
                               [])]
     lazy-merged-results))
 
@@ -530,7 +540,8 @@
                                        target-path subject-type cursor-eid)))
                               (filter seq))]
       (if (seq path-seqs)
-        (lazy-merge-dedupe-sort path-seqs)
+        (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
+        ;(lazy-merge-dedupe-sort path-seqs)
         []))
 
     :arrow
@@ -562,7 +573,8 @@
                   intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
             (if (seq subject-seqs)
-              (lazy-merge-dedupe-sort subject-seqs)
+              (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity subject-seqs)
+              ;(lazy-merge-dedupe-sort subject-seqs)
               [])))
         ;; Arrow to permission:
         ;; 1. Use reverse index to find intermediates connected to resource via via-relation
@@ -584,12 +596,14 @@
                                                               sub-path subject-type cursor-eid)))
                                                      (filter seq))]
                                       (if (seq sub-seqs)
-                                        (lazy-merge-dedupe-sort sub-seqs)
+                                        (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity sub-seqs)
+                                        ;(lazy-merge-dedupe-sort sub-seqs)
                                         [])))
                                intermediate-eids)]
             ;; Use lazy-merge-dedupe-sort to combine sorted sequences from all intermediates
             (if (seq subject-seqs)
-              (lazy-merge-dedupe-sort subject-seqs)
+              (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity subject-seqs)
+              ;(lazy-merge-dedupe-sort subject-seqs)
               [])))))))
 
 (defn lazy-merged-lookup-subjects
@@ -613,7 +627,8 @@
                                      results)))))
 
         merged-results (if (seq path-seqs)
-                         (lazy-merge-dedupe-sort path-seqs)
+                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
+                         ;(lazy-merge-dedupe-sort path-seqs)
                          [])]
     merged-results))
 
