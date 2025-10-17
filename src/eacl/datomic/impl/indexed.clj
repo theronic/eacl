@@ -271,9 +271,7 @@
                                           (when (= subject-type (:subject-type path))
                                             (->> (rels-range-subject->resource db subject-type subject-eid (:name path) resource-type 0) ; we'd like to pass cursor here, but need better cursors.
                                               (map (fn [resource-eid]
-                                                     [resource-eid path]))
-                                              ; why do we need filter some? here?
-                                              (filter some?)))
+                                                     [resource-eid path]))))
 
                                           :self-permission
                                           ;; Self-permission: recursively find resources where subject has target permission
@@ -317,7 +315,7 @@
                                                   (if (seq resource-seqs)
                                                     (lazy-sort/lazy-fold2-merge-dedupe-sorted-by first resource-seqs)
                                                     []))))))))
-                                 (filter some?) ; not sure we need this.
+                                 (filter some?) ; not sure if we need this.
                                  (lazy-sort/lazy-fold2-merge-dedupe-sorted-by first))] ; Merge results from all paths
          lazy-path-results)))))
 
