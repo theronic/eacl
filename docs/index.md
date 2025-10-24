@@ -26,27 +26,25 @@ I spent the better half of 2024 integrating [SpiceDB](https://authzed.com/spiced
 ## The Problem with External AuthZ
 
 The problem with any external authorization system is modelling & synchronization:
-1. First you need to get your permissions into Spice, so you design your permission schema.
-  - If the schema fits your data model exactly, it's straightforward. It rarely is.
-2. You write a bunch of Datalog queries to compute a set of Relationship 3-tuples between subjects & resources, e.g. `[[product1 :account account1], [product2 :account account2] ...]` and so on.
-  - As your data set grows, these queries slow down.
-3. You then write these Relationships to SpiceDB.
-  - Spice write operations return a ZedToken string, which you need to store next to your resources if you want to leverage the SpiceDB cache.
-4. The problem is that as data changes, you have to maintain those Relationships in Spice by deleting some of them, or you'll show users things they should not have access to.
-5. But which Relationships do you delete? You can't drop and re-insert all Relationships every time, because it's too slow + lots of I/O.
-6. So you have to figure out which Relationships changed and sync them _incrementally_. How do you that?
-7. If your data model matches the schema in Spice, it's straightforward.
-8. However, if there is any impedance mismatch between your data model and SpiceDB, it becomes a hard diffing & batch syncing problem.
+1. First you need to get your permissions into Spice, so you design your permission schema. If the schema fits your data model exactly, it's straightforward. It rarely is.
+2. You write a bunch of Datalog queries to compute a set of Relationship 3-tuples between subjects & resources, e.g. `[[product1 :account account1], [product2 :account account2] ...]` and so on. But as your data set grows, these queries slow down.
+3. Then you have to implement wrap the SpiceDB gRPC or HTTP protocol in Clojure.
+4. You then write these Relationships to SpiceDB: Spice write operations return a ZedToken string, which you need to store next to your resources if you want to leverage the SpiceDB cache.
+5. As data changes, you need to maintain those Relationships in by deleting them in Spice or risk exposing data that users should not have access to.
+6. But which Relationships do you delete? You can't drop and re-insert all Relationships every time, because it's too slow + lots of I/O to an external system.
+7. So you have to figure out which Relationships changed and then sync them _incrementally_.
+8. If your data model matches the schema in Spice exactly, it's straightforward to know out which Relationships changed.
+9. However, if there is any impedance mismatch between your data model and SpiceDB, it becomes a hard diffing & batch syncing problem.
 
-I did exactly this for CA and it was a nightmare. Plus, because Spice is an external system, you need to deal with failures and retries and eventual consistency.
+I followed exactly this process at CA and it was a nightmare. Plus, because Spice is an external system, you need to deal with failures and retries and eventual consistency.
 
 ## The Solution
 
-What if we modelled our Relationships directly in Datomic? Then there would be zero impedance mismatch and we could simply tail the Datomic transactor queue via `d/tx-report-queue`, listen for :db/add & :db/retract on Relationship attrs, and immediately write or delete them to/from SpiceDB. All your syncing problems go away.
+What if we modelled our Relationships directly in Datomic? There would be zero impedance mismatch and we could simply tail the Datomic transactor queue via `d/tx-report-queue`, listen for `:db/add` & `:db/retract` datoms on a Relationship attr and immediately write/delete it to/from SpiceDB – all our syncing problems go away.
 
-And once you model your Spice Relationships directly in Datomic, you might as well model the schema too (to validate them).
+Well, once you model your Spice Relationships directly in Datomic, you might as well model the schema too (to validate them).
 
-But if you already have schema & Relationships, why not just query Datomic directly? Then you don't need to sync at all.
+And if you already have schema & Relationships, why not just query Datomic directly? That way you don't need to sync at all – all our problems go away.
 
 If you could make such an implementation fast enough, then you:
 - have one less external system to deal with & deploy
@@ -60,8 +58,8 @@ And that is exactly what EACL is:
 - EACL exposes an `IAuthorization` API that closely resembles SpiceDB's gRPC protocol
 - EACL situates your permission schema and Relationships directly next to your data in Datomic.
 - You design an EACL permission schema just like Spice.
-- You write some permissions. You query some permissions.
-- EACL is fast for <1M permissioned resources (depending on size of schema).
+- You write some permissions to EACL, and you query some permissions.
+- EACL is fast for at least 1M permissioned resources, depending on the size of your permisison schema.
 
 ## The Rest is TODO and largely lifted from the README:
 
