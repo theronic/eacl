@@ -1,6 +1,8 @@
 # **EACL**: Enterprise Access ControL
 
-- EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+
+This website is a work-in-progress.
 
 ## Is it good?
 
@@ -8,29 +10,70 @@ Yes.
 
 # What is EACL good for?
 
-- EACL is suitable for Clojure & Datomic applications that need sophisticated permissions out of the box.
-- EACL is especially suited to enterprise [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic, because it allows you to render dynamic permissioned menus in real-time.
-- EACL's performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
+- EACL is suitable for Clojure & Datomic applications.
+- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic, because it allows you to render dynamic permissioned menus in real-time.
+- EACL performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
+- EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 
 # Why was EACL built?
 
-I spent the better half of 2024 integrating our Clojure-based cloud provisioning platform at [CloudAfrica](https://cloudafrica.net/) with [SpiceDB](https://authzed.com/spicedb), a scalable ReBAC based authorization system based on Zanzibar, Google's globally-consistent authorization system.
+I spent the better half of 2024 integrating [SpiceDB](https://authzed.com/spicedb) at [CloudAfrica](https://cloudafrica.net/):
+- SpiceDB is a scalable ReBAC based authorization system based on Zanzibar, Google's globally-consistent authorization system.
+- SpiceDB has a text-based schema DSL that defines a graph of potential Relationships between subjects & resources, called Relations.
+- Relationships are 3-tuples of `[subject relation resource]`, i.e. some `<subject>` has `<relation>` to `<resource>`, e.g. `user:joe` is the `:owner` of `account-1`.
+- Permissions are granted to subjects based on Relationships to other resources, but there can be multiple hops along that graph.
 
+## The Problem with External AuthZ
 
 The problem with any external authorization system is modelling & synchronization:
-- SpiceDB has a text-based schema DSL that defines Relations & Permissions. Relationships are 3-tuples of `[subject relation resource]`, i.e. some `<subject>` has `<relation>` to `<resource>`, e.g. `user:joe` is the `owner` of `account-1`, which may grant them various permissions on that account and its related resources.
+1. First you need to get your permissions into Spice, so you design your permission schema.
+  - If the schema fits your data model exactly, it's straightforward. It rarely is.
+2. You write a bunch of Datalog queries to compute a set of Relationship 3-tuples between subjects & resources, e.g. `[[product1 :account account1], [product2 :account account2] ...]` and so on.
+  - As your data set grows, these queries slow down.
+3. You then write these Relationships to SpiceDB.
+  - Spice write operations return a ZedToken string, which you need to store next to your resources if you want to leverage the SpiceDB cache.
+4. The problem is that as data changes, you have to maintain those Relationships in Spice by deleting some of them, or you'll show users things they should not have access to.
+5. But which Relationships do you delete? You can't drop and re-insert all Relationships every time, because it's too slow + lots of I/O.
+6. So you have to figure out which Relationships changed and sync them _incrementally_. How do you that?
+7. If your data model matches the schema in Spice, it's straightforward.
+8. However, if there is any impedance mismatch between your data model and SpiceDB, it becomes a hard diffing & batch syncing problem.
 
+I did exactly this for CA and it was a nightmare. Plus, because Spice is an external system, you need to deal with failures and retries and eventual consistency.
 
-Syncing permissions to SpiceDB is a diffing problem if your data model does not model Spice Relations & Relationships, e.g. if you have attributes in Datomic like `:account/owner`, `:server/account`, `:vpc/account` and `:vpc/viewers`.
+## The Solution
 
-You can build up a 
+What if we modelled our Relationships directly in Datomic? Then there would be zero impedance mismatch and we could simply tail the Datomic transactor queue via `d/tx-report-queue`, listen for :db/add & :db/retract on Relationship attrs, and immediately write or delete them to/from SpiceDB. All your syncing problems go away.
 
-Figuring out which Relationships to create or delete in SpiceDB when anything changes becomes a diffing + batched sync problem, especially when you have an impedance mismatch between your data model and your permission schema.
+And once you model your Spice Relationships directly in Datomic, you might as well model the schema too (to validate them).
 
+But if you already have schema & Relationships, why not just query Datomic directly? Then you don't need to sync at all.
 
+If you could make such an implementation fast enough, then you:
+- have one less external system to deal with & deploy
+- avoid a network hop to an external system, which means it can actually be faster than Spice, up to some scale
+- retain the optionality to sync your Relationships 1-for-1 to SpiceDB in the future
+- don't need to deal with gRPC in Java / Clojure
+- don't need to do any complex diffing & syncing
 
+And that is exactly what EACL is:
+- EACL is a Clojure library that implements efficient permission graph traversal, so you just add it to your `deps.edn` file
+- EACL exposes an `IAuthorization` API that closely resembles SpiceDB's gRPC protocol
+- EACL situates your permission schema and Relationships directly next to your data in Datomic.
+- You design an EACL permission schema just like Spice.
+- You write some permissions. You query some permissions.
+- EACL is fast for <1M permissioned resources (depending on size of schema).
 
-I realized that if we modelled our AuthZ Relationships directly in Datomic, all our syncing problems would go away: you can simply tail the Datomic transactor queue and instantly create or delete Spice relationships in real-time. But once you do that, you might as well model the permission schema as well, and if you go one step further, you can implement the permission graph traversal directly in Clojure to avoid a network hop. And that is exactly what EACL is.
+## The Rest is TODO and largely lifted from the README:
+
+In your database, you probably have `:db.type/ref` attributes like:
+- `:product/account` – which account this product belongs.
+- `:account/owner` – who owns this account
+- `:product/category` – categories this product belongs so
+- `:product/viewers` if you want to share certain resources with other users.
+
+You can write Datalog queries to query via product -> account -> user, but these will slow down as the dataset grows. As soon as you introduce inheritance or shared viewers, e.g. product -> account -> viewers, you'll end up writing lots of Datalog queries that need to be maintained.
+
+Syncing permissions to SpiceDB is a diffing problem if your data model does not model Spice Relations & Relationships, e.g. if you have attributes in Datomic
 
 EACL (Enterprise Access ControL) is an embedded authorization library that lives next to your data in Datomic and avoids an external network hop. EACL is suitable for small-to-medium scale, while giving you the option to migrate to SpiceDB in future when you need more scale and consistency semantics.
 
