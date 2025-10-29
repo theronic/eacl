@@ -236,6 +236,9 @@
     (testing "read-relationships filters"
       ;(is (= [] (read-relationships db {})))
       ; need better tests here.
+      ; TODO: read-relationships broken because it tries to read old Relationship attrs, instead of enumerating tuples
+      ; Based on the filters, it will need to query the right indices, most likely :vaet, :avet, :eavt because
+      ; subject & resource types are encoded in the tuple and no longer stored as attrs of Relationships.
       (is (= #{:server} (set (map (comp :type :resource) (read-relationships db {:resource/type :server})))))
       (is (= #{:owner} (set (map :relation (read-relationships db {:resource/relation :owner})))))
       (is (= #{:account} (set (map :relation (read-relationships db {:resource/type     :server
@@ -836,7 +839,7 @@
       (is (= {:eacl.relation/subject-type  :account
               :eacl.relation/resource-type :server
               :eacl.relation/relation-name :account}
-            (impl.indexed/find-relation-def db :server :account))))
+            (dissoc (impl.indexed/find-relation-def db :server :account) :db/id))))
 
     (testing "find-permission-defs"
       (is (pos? (count (impl.indexed/find-permission-defs db :server :view))))

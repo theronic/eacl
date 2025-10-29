@@ -19,6 +19,7 @@
 (def lookup-subjects impl.indexed/lookup-subjects)
 (def lookup-resources impl.indexed/lookup-resources)
 (def count-resources impl.indexed/count-resources)
+(def count-subjects impl.indexed/count-subjects)
 
 (defn can!
   "The thrown exception should probably be configurable."
@@ -178,7 +179,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
                         (string? resource-ident) resource-ident ; tempid
                         (number? resource-ident) resource-ident ; eid.
                         (keyword? resource-ident) (d/entid db resource-ident)
-                        :default subject-ident)
+                        :default resource-ident)
 
          ;_ (prn 'subject-ident subject-ident 'resolved 'to subject-eid)
          ;_ (prn 'resource-ident resource-ident 'resolved 'to resource-eid)

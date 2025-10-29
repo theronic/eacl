@@ -630,3 +630,21 @@
     {:count  (count limited-results)
      :limit  limit
      :cursor next-cursor}))
+
+(defn count-subjects
+  "Returns {:keys [count cursor limit]}, where limit matches input.
+  Pass :limit -1 for all results."
+  [db {:as   query
+       :keys [limit cursor]
+       :or   {limit -1}}]
+  (prn 'count-subjects 'query query)
+  (let [merged-results  (lazy-merged-lookup-subjects db query)
+        limited-results (if (>= limit 0)
+                          (take limit merged-results)
+                          merged-results)
+        subjects        (map #(spice-object type %) limited-results)
+        last-subject   (last subjects)
+        next-cursor     {:subject (or last-subject (:subject cursor))}]
+    {:count  (count limited-results)
+     :limit  limit
+     :cursor next-cursor}))
