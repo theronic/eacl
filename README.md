@@ -19,7 +19,7 @@ EACL can answer the following permission questions by querying Datomic:
 3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
 
 > [!WARNING]
-> EACL is used at CloudAfrica, but it is under *active* development.
+> Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v6 is the current version of EACL, but just use the Git SHA as version for now.
 
