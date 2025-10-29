@@ -14,6 +14,11 @@ EACL can answer the following permission questions by querying Datomic:
 2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
 3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
 
+> [!WARNING]
+> EACL is used at CloudAfrica, but it is under *active* development.
+> I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
+> v6 is the current version of EACL, but just use the Git SHA as version for now.
+
 ## Authentication vs Authorization
 
 - Authentication or **AuthN** means, "Who are you?"
