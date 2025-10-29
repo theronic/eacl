@@ -4,13 +4,15 @@
             [eacl.core :refer [spice-object]]
             [clojure.tools.logging :as log]))
 
-(defn extract-resource-id-from-rel-tuple-datom [{:as _datom, v :v}]
-  (let [[_subject-type _subject-eid _relation-name _resource-type resource-eid] v]
-    resource-eid))
+(defn extract-resource-id-from-rel-tuple-datom [datom]
+  "Extracts resource eid from forward relationship tuple (position 4).
+  Tuple format: [subject-type subject-eid relation-name resource-type resource-eid]"
+  (nth (:v datom) 4))
 
-(defn extract-subject-id-from-reverse-rel-tuple-datom [{:as _datom, v :v}]
-  (let [[_resource-type _resource-eid _relation-name _subject-type subject-eid] v]
-    subject-eid))
+(defn extract-subject-id-from-reverse-rel-tuple-datom [datom]
+  "Extracts subject eid from reverse relationship tuple (position 4).
+  Tuple format: [resource-type resource-eid relation-name subject-type subject-eid]"
+  (nth (:v datom) 4))
 
 ;(defn find-arrow-permissions
 ;  "Arrows permission means either,
@@ -253,7 +255,7 @@
                               reverse-start      [resource-type resource-eid via-relation intermediate-type 0] ; cursor = 0 because no pagination.
                               reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
                               intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
-                                                   (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
+                                                   (map extract-subject-id-from-reverse-rel-tuple-datom))] ; Extract subject (intermediate) eid
                           ;; Check if subject has the target relation to any intermediate
                           (some (fn [intermediate-eid]
                                   (let [check-tuple [subject-type subject-eid target-relation
@@ -270,7 +272,7 @@
                               reverse-start      [resource-type resource-eid via-relation intermediate-type 0] ; cursor = 0 because no pagination.
                               reverse-end        [resource-type resource-eid via-relation intermediate-type Long/MAX_VALUE]
                               intermediates      (->> (d/index-range db reverse-tuple-attr reverse-start reverse-end)
-                                                   (map extract-resource-id-from-rel-tuple-datom))] ; Extract subject (intermediate) eid
+                                                   (map extract-subject-id-from-reverse-rel-tuple-datom))] ; Extract subject (intermediate) eid
                           ;; Recursively check permission on any intermediate
                           (some (fn [intermediate-eid]
                                   (can? db subject target-permission
