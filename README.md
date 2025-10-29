@@ -1,6 +1,10 @@
 # **EACL**: Enterprise Access ControL
 
-EACL is an embedded [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+
+Situated here means that your permission data is _next to_ your application data in Datomic. This avoids a network hop to an external authorization system and deletes a dependency & all its syncing systems. For smaller workloads, this can be superior, but is not meant for hyperscalers.
+
+At present, EACL has no cache because Datomic is fast enough for <1M resources, but a cache is planned.
 
 ## Project Goals
 
