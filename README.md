@@ -2,9 +2,9 @@
 
 EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
-Situated here means that your permission data is _next to_ your application data in Datomic. This avoids a network hop to an external authorization system and deletes a dependency & all its syncing systems. For smaller workloads, this can be superior, but is not meant for hyperscalers.
+Situated here means that your permission data is _next to_ your application data in Datomic. This avoids a network hop to an external authorization system and deletes a dependency with all the eventual consistency syncing pain. For smaller workloads, EACL can be superior, but is not meant for hyperscalers, and does not have all the features that SpiceDB has.
 
-At present, EACL has no cache because Datomic is fast enough for <1M resources, but a cache is planned.
+Note that at present, EACL has _no cache_ because Datomic is fast enough for ~1M permissioned resources, but a caching mechanism is planned.
 
 ## Project Goals
 
@@ -21,7 +21,7 @@ EACL can answer the following permission questions by querying Datomic:
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL, but just use the Git SHA as version for now.
+> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
 
 ## Authentication vs Authorization
 
