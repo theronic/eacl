@@ -188,12 +188,10 @@
    ; :db/cardinality :db.cardinality/one
    ; :db/unique      :db.unique/identity}
 
-   {:db/ident       :eacl.v7.relationship/subject-type+relation+resource-type+resource
-    :db/doc         "EACL v7 Relationship from Known Subject -> Unknown Resource"
+   {:db/ident       :eacl.v7.relationship/relation+resource
+    :db/doc         "EACL v7 Relationship from Known Subject -> Unknown Resource. Types are inferred from Relation."
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword                       ; subject-type. Could this be a ref?
-                     :db.type/ref                           ; Ref to Relation
-                     :db.type/keyword                       ; resource-type. Could this be a ref?
+    :db/tupleTypes  [:db.type/ref                           ; Ref to Relation (implies subject-type & resource-type)
                      :db.type/ref]                          ; resource-eid.
     :db/cardinality :db.cardinality/many
     :db/index       true}
@@ -220,12 +218,10 @@
    ; :db/index       true
    ; :db/unique      :db.unique/identity}
 
-   {:db/ident       :eacl.v7.relationship/resource-type+relation+subject-type+subject
-    :db/doc         "EACL v7 Relationship from Known Resource -> Unknown Subject for lookups."
+   {:db/ident       :eacl.v7.relationship/relation+subject
+    :db/doc         "EACL v7 Relationship from Known Resource -> Unknown Subject for lookups. Types are inferred from Relation."
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword                       ; resource-type. Could this be a Ref to Resource type?
-                     :db.type/ref                           ; Ref to Relation.
-                     :db.type/keyword                       ; subject-type
+    :db/tupleTypes  [:db.type/ref                           ; Ref to Relation (implies subject-type & resource-type)
                      :db.type/ref]                          ; Subject Ref.
     :db/cardinality :db.cardinality/many
     :db/index       true}])

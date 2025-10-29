@@ -192,20 +192,16 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
                  :subject/type  subject-type})))
      ; might be different for subject vs resource.
      ; what about retract?
-     ; Subject -> Resource
+     ; Subject -> Resource (types inferred from Relation)
      (let [txes [[:db/add subject-eid
-                  :eacl.v7.relationship/subject-type+relation+resource-type+resource
-                  [subject-type
-                   relation-eid
-                   resource-type
+                  :eacl.v7.relationship/relation+resource
+                  [relation-eid
                    resource-eid]]
 
-                 ; Resource -> Subject
+                 ; Resource -> Subject (types inferred from Relation)
                  [:db/add resource-eid
-                  :eacl.v7.relationship/resource-type+relation+subject-type+subject
-                  [resource-type
-                   relation-eid
-                   subject-type
+                  :eacl.v7.relationship/relation+subject
+                  [relation-eid
                    subject-eid]]]]
        ;(prn 'txes txes)
        txes)))

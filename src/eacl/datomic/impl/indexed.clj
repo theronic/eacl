@@ -5,13 +5,13 @@
             [clojure.tools.logging :as log]))
 
 (defn extract-resource-id-from-rel-tuple-datom [{:as _datom, v :v}]
-  ; could be (last v) but this probably faster.
-  (let [[_subject-type _subject-eid _relation-name _resource-type resource-eid] v]
+  ; Types are now inferred from Relation ref, not stored in tuple
+  (let [[_relation-eid resource-eid] v]
     resource-eid))
 
 (defn extract-subject-id-from-reverse-rel-tuple-datom [{:as _datom, v :v}]
-  ; could just be (last v) but probably faster.
-  (let [[_resource-type _resource-eid _relation-name _subject-type subject-eid] v]
+  ; Types are now inferred from Relation ref, not stored in tuple
+  (let [[_relation-eid subject-eid] v]
     subject-eid))
 
 (defn find-relation-def
@@ -147,34 +147,30 @@
 (defn subject->resources [db subject-type subject-eid relation-eid resource-type ?cursor-resource-eid]
   [{:pre [subject-type subject-eid relation-eid resource-type]}] ; todo more checks
   ;(log/debug 'subject->resources [subject-type subject-eid relation-eid resource-type ?cursor-resource-eid])
-  (let [attr     :eacl.v7.relationship/subject-type+relation+resource-type+resource
+  ;; Types are now inferred from relation-eid, not stored in tuple
+  (let [attr     :eacl.v7.relationship/relation+resource
         attr-eid (d/entid db attr)
         cursor   (or ?cursor-resource-eid 0)]               ; can be cached.
     (->> (d/seek-datoms db :eavt
            subject-eid
            attr-eid
-           [subject-type relation-eid resource-type ?cursor-resource-eid])
+           [relation-eid ?cursor-resource-eid])
       ; consider magic cursor-eid -1 value as opposed to nil.
       (drop-while (fn [[e A v]]
                     (and
                       (== subject-eid e)
                       (== attr-eid A)
-                      (let [[v-subject-type v-relation-eid v-resource-type v-resource-eid] v]
+                      (let [[v-relation-eid v-resource-eid] v]
                         (and
-                          (= subject-type v-subject-type)
                           (== relation-eid v-relation-eid)
-                          (= resource-type v-resource-type)
                           (<= v-resource-eid cursor))))))
 
       (take-while (fn [[e A v]]
                     (and
                       (== subject-eid e)
                       (== attr-eid A)
-                      (let [[v-subject-type v-relation-eid v-resource-type _v-resource-eid] v]
-                        (and
-                          (= subject-type v-subject-type)
-                          (== relation-eid v-relation-eid)
-                          (= resource-type v-resource-type))))))
+                      (let [[v-relation-eid _v-resource-eid] v]
+                        (== relation-eid v-relation-eid)))))
       (map (fn [[_e _a v]] (last v))))))
 
 ;(map extract-resource-id-from-rel-tuple-datom))       ; this can return nil.
@@ -184,35 +180,31 @@
 (defn resource->subjects [db resource-type resource-eid relation-eid subject-type ?cursor-subject-eid]
   [{:pre [resource-type resource-eid relation-eid subject-type]}] ; todo more checks
   ;(log/debug 'resource->subjects [resource-type resource-eid relation-eid subject-type ?cursor-subject-eid])
-  (let [attr     :eacl.v7.relationship/resource-type+relation+subject-type+subject
+  ;; Types are now inferred from relation-eid, not stored in tuple
+  (let [attr     :eacl.v7.relationship/relation+subject
         attr-eid (d/entid db attr)
         cursor   (or ?cursor-subject-eid 0)]                ; can be cached.
     (->> (d/seek-datoms db :eavt
            resource-eid
            attr-eid
            ; TODO: sort-key value. needs to be combined with eid for merge deduplication.
-           [resource-type relation-eid subject-type ?cursor-subject-eid])
+           [relation-eid ?cursor-subject-eid])
       ; consider magic cursor-eid -1 value as opposed to nil.
       ; do we even need these drop-whiles? I think we can drop them now
       (drop-while (fn [[e a v]]
                     (and
                       (== resource-eid e)
                       (== attr-eid a)
-                      (let [[v-resource-type v-relation-eid v-subject-type v-subject-eid] v]
+                      (let [[v-relation-eid v-subject-eid] v]
                         (and
-                          (= resource-type v-resource-type)
                           (== relation-eid v-relation-eid)
-                          (= subject-type v-subject-type)
                           (<= v-subject-eid cursor))))))
       (take-while (fn [[e a v]]
                     (and
                       (== resource-eid e)
                       (== attr-eid a)
-                      (let [[v-resource-type v-relation-eid v-subject-type _v-subject-eid] v]
-                        (and
-                          (= resource-type v-resource-type)
-                          (== relation-eid v-relation-eid)
-                          (= subject-type v-subject-type))))))
+                      (let [[v-relation-eid _v-subject-eid] v]
+                        (== relation-eid v-relation-eid)))))
       (map (fn [[e a v]] (last v))))))
 
 ;(defn relationship-datoms [db subject-type subject-eid relation-eid resource-type resource-eid]
@@ -258,14 +250,11 @@
           (some (fn [path]
                   (case (:type path)
                     :relation
-                    ;; Direct relation check
+                    ;; Direct relation check (types inferred from relation-eid)
                     (when (= subject-type (:subject-type path))
                       (let [relation-eid (:relation/id path)
-                            tuple-attr   :eacl.v7.relationship/subject-type+relation+resource-type+resource
-                            ; sort key will have to be known here
-                            tuple-val    [subject-type
-                                          relation-eid
-                                          resource-type resource-eid]]
+                            tuple-attr   :eacl.v7.relationship/relation+resource
+                            tuple-val    [relation-eid resource-eid]]
                         (seq (d/datoms db :eavt subject-eid tuple-attr tuple-val))))
 
                     :self-permission
@@ -287,14 +276,13 @@
                         (let [target-relation-eid (-> path :sub-paths first :relation/id)]
                           (->> (resource->subjects db resource-type resource-eid via-relation-eid intermediate-type 0)
                             (some (fn [intermediate-eid]
-                                    (let [check-tuple [subject-type
-                                                       target-relation-eid ; FIXED: was via-relation-eid
-                                                       intermediate-type intermediate-eid]]
+                                    (let [check-tuple [target-relation-eid ; FIXED: was via-relation-eid
+                                                       intermediate-eid]]
                                       ; this seems expensive. can we make it cheaper?
                                       ; why do we need another d/datoms here?
                                       (seq (d/datoms db :eavt
                                              subject-eid
-                                             :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                                             :eacl.v7.relationship/relation+resource
                                              check-tuple)))))))
                         ;; Arrow to permission: recursively check permission
                         (let [target-permission (:target-permission path)]
