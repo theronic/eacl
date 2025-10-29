@@ -12,7 +12,7 @@
 
 (def Relation base/Relation)
 (def Permission base/Permission)
-(def Relationship base/Relationship)
+; (def Relationship base/Relationship) ; superseded below
 
 ;; Use indexed implementation for better performance with large offsets
 (def can? impl.indexed/can?)
@@ -106,6 +106,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     :resource (spice-object resource-type resource-eid)}))
 
 (defn read-relationships
+  ; TODO: upgrade to v7 for faster seek-datoms.
   [db filters]
   ;(log/debug 'read-relationships 'filters filters)
   (let [qry (build-relationship-query filters)
@@ -114,6 +115,7 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
          (map rel-map->Relationship))))
 
 (defn find-one-relationship-id
+  ; this is outdated in v7.
   [db {:as relationship :keys [subject relation resource]}]
   ; hmm this coercion does not belong here.
   ;(log/debug 'find-one-relationship relationship)
@@ -141,15 +143,80 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
              (map :e)
              (first))))))
 
+;(defn tuple-subject->resource [])
+
+(defn find-relation [db resource-type relation-name subject-type]
+  (d/q '[:find ?relation .
+         :in $ ?resource-type ?relation-name ?subject-type
+         :where
+         [?relation :eacl.relation/resource-type ?resource-type]
+         [?relation :eacl.relation/relation-name ?relation-name]
+         [?relation :eacl.relation/subject-type ?subject-type]]
+    db resource-type relation-name subject-type))
+
 (defn tx-relationship
-  "Translate a Relationship to a Datomic entity map.
+  ; this is indexed impl. specific. does not belong here.
+  "Translate a Relationship to Datomic txes.
   Note: `relation` in relationship filters corresponds to `:resource/relation` here.
   We don't validate resource & subject types here."
-  [{:as _relationship :keys [subject relation resource]}]
-  (base/Relationship
-   subject
-   relation
-   resource))
+  ([db subject relation resource]
+   ; when should we resolve :id to eid?
+   ;(let [subject-eid (d/entid db [])])
+   (let [{subject-ident  :id
+          subject-type :type} subject
+
+         {resource-ident  :id
+          resource-type :type} resource
+
+         ; very gross. would prefer not to have to resolve entid:
+         subject-eid  (cond
+                        (string? subject-ident) subject-ident ; tempid
+                        (number? subject-ident) subject-ident ; eid.
+                        (keyword? subject-ident) (d/entid db subject-ident)
+                        :default subject-ident) ; :db/ident.
+         resource-eid (cond
+                        (string? resource-ident) resource-ident ; tempid
+                        (number? resource-ident) resource-ident ; eid.
+                        (keyword? resource-ident) (d/entid db resource-ident)
+                        :default subject-ident)
+
+         ;_ (prn 'subject-ident subject-ident 'resolved 'to subject-eid)
+         ;_ (prn 'resource-ident resource-ident 'resolved 'to resource-eid)
+
+         relation-eid (find-relation db resource-type relation subject-type)]
+     (when-not relation-eid
+       (throw (ex-info (str "Missing Relation: " relation " on resource type " resource-type " for subject type " subject-type ".")
+                {:resource/type resource-type
+                 :relation/name relation
+                 :subject/type  subject-type})))
+     ; might be different for subject vs resource.
+     ; what about retract?
+     ; Subject -> Resource
+     (let [txes [[:db/add subject-eid
+                  :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                  [subject-type
+                   relation-eid
+                   resource-type
+                   resource-eid]]
+
+                 ; Resource -> Subject
+                 [:db/add resource-eid
+                  :eacl.v7.relationship/resource-type+relation+subject-type+subject
+                  [resource-type
+                   relation-eid
+                   subject-type
+                   subject-eid]]]]
+       ;(prn 'txes txes)
+       txes)))
+  ([db {:as _relationship :keys [subject relation resource]}]
+   (tx-relationship db subject relation resource)))
+
+(def Relationship tx-relationship)
+
+;(base/Relationship
+; subject
+; relation
+; resource)
 
 (defn tx-update-relationship
   "Note that delete costs N queries."
@@ -157,13 +224,13 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
   (case operation
     :touch ; ensure update existing. we don't have uniqueness on this yet.
     (let [rel-id (find-one-relationship-id db relationship)]
-      (cond-> (tx-relationship relationship)
+      (cond-> (tx-relationship db relationship)
         rel-id (assoc :db/id rel-id)))
 
     :create
     (if-let [rel-id (find-one-relationship-id db relationship)]
       (throw (Exception. ":create relationship conflicts with existing: " rel-id))
-      (tx-relationship relationship))
+      (tx-relationship db relationship))
 
     :delete
     (if-let [rel-id (find-one-relationship-id db relationship)]
