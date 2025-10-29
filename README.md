@@ -2,16 +2,10 @@
 
 EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
-Situated here means that your permission data is _next to_ your application data in Datomic. This avoids a network hop to an external authorization system and deletes a dependency with all the eventual consistency syncing pain.
-
-For typical workloads, EACL may be superior, but is not meant for hyperscalers. EACL does not support all SpiceDB features, but supports the core functionality.
-
-Note that at present, EACL has _no cache_ because Datomic is fast enough for ~1M permissioned resources, but a caching mechanism is planned.
-
 ## Project Goals
 
 - Best-in-class ReBAC authorization for Clojure/Datomic products with <10M Datomic entities.
-- Clean migration path to SpiceDB once you need consistency semantics with heavily optimized cache.
+- Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
 - Retain gRPC API compatibility with 1-for-1 Relationship syncing.
 
 EACL can answer the following permission questions by querying Datomic:
@@ -24,6 +18,16 @@ EACL can answer the following permission questions by querying Datomic:
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+
+"Situated" means that your permission data lives _next to_ your application data in Datomic. This has some benefits:
+- full consistency, i.e. no need to calculate diffs & sync to an external system
+- avoids a network hop. To leverage SpiceDB's cache with ZedTokens, you need to hit your DB or cache to retrieve ZedToken anyway, so might as well query the DB.
+- deletes a dependency with all the eventual consistency syncing pain
+- is especially useful during development.
+
+For typical workloads, EACL may be superior, but is not meant for hyperscalers. EACL does not support all SpiceDB features, but supports the core functionality.
+
+Note that at present, EACL has _no cache_ because Datomic is fast enough for ~1M permissioned resources, but a caching mechanism is planned.
 
 ## Authentication vs Authorization
 
