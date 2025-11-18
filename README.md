@@ -5,7 +5,9 @@ EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_ac
 _Situated_ here means that your permission data lives _next to_ your application data in Datomic, which has some benefits:
 1. One less external dependency to deploy, diff & sync relationships to.
 2. All queries are fully consistent. An external system would bring eventual consistency.
-3. Avoid a network hop. Note that to leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken, so you might as well query the DB directly, which is what EACL does.
+3. Avoids a network hop. Note that to leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken, so you might as well query the DB directly, which is what EACL does.
+
+EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eye on permissions.
 
 ## Rationale
 
@@ -17,7 +19,7 @@ See [eacl.dev](https://eacl.dev/).
 - Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
 - Retain compatibility with SpiceDB gRPC API to enable 1-for-1 Relationship syncing by tailing Datomic transactor queue.
 
-EACL can query Datomic to answer the following permission queries:
+EACL can query Datomic to efficiently answer the following permission queries:
 
 1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
 2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
@@ -35,6 +37,7 @@ Embedded AuthZ offers some advantages for typical use-cases:
 1. Situated permissions avoids network I/O to an external AuthZ system, which should be faster at small-to-medium scale.
 2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing, in real-time.
 3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
+4. EACL is fast. You may be tempted to roll your own ReBAC using recursive Datomic child rules, but you will find the eager query engine too slow and unable to handle all the grounding cases. The first version of EACL used Datalog rules, but it was too slow. Correct cursor-pagination is also non-trivial, because parallel paths through the permission graph can return duplicate resources.
 
 ## Performance
 
