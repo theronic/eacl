@@ -1,4 +1,4 @@
-# **EACL**: Enterprise Access ControL
+# 🦅 **EACL**: Enterprise Access ControL
 
 EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
@@ -9,49 +9,39 @@ _Situated_ here means that your permission data lives _next to_ your application
 
 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eye on permissions.
 
-## Rationale
-
-See [eacl.dev](https://eacl.dev/).
-
 ## Goals
 
-- Best-in-class ReBAC authorization for Clojure/Datomic applications with up to 10M permissioned entities in Datomic.
+- Best-in-class ReBAC authorization for Clojure/Datomic applications with good performance for at least 10M permissioned Datomic entities.
 - Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
 - Retain compatibility with SpiceDB gRPC API to enable 1-for-1 Relationship syncing by tailing Datomic transactor queue.
 
-EACL can query Datomic to efficiently answer the following permission queries:
+## Rationale
 
-1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
-2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
-3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
+Please refer to [eacl.dev](https://eacl.dev/).
 
 ## Authentication vs Authorization
 
 - Authentication or **AuthN** means, "Who are you?"
-- Authorization or **AuthZ** means "What can `<subject>` do?" i.e. permissions.
+- Authorization or **AuthZ** means "What can `<subject>` do?", so AuthZ is all about permissions.
 
 ## Why EACL?
 
 Embedded AuthZ offers some advantages for typical use-cases:
 
-1. Situated permissions avoids network I/O to an external AuthZ system, which should be faster at small-to-medium scale.
-2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing, in real-time.
+1. Situated permissions avoids network I/O to an external AuthZ system, which reduces latency.
+2. An accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing in real-time, when you need SpiceDB.
 3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
 4. EACL is fast. You may be tempted to roll your own ReBAC using recursive Datomic child rules, but you will find the eager query engine too slow and unable to handle all the grounding cases. The first version of EACL used Datalog rules, but it was too slow. Correct cursor-pagination is also non-trivial, because parallel paths through the permission graph can return duplicate resources.
 
 ## Performance
 
-EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are always returned ordered by internal Datomic eid.
+- EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are always returned ordered by internal Datomic eid.
+- EACL is fast but makes no strong performance claims. For typical workloads, EACL should be as fast as, or faster than, SpiceDB, but is not meant for hyperscalers.
+- EACL is benchmarked locally against ~800k Datomic entities with good latency (5-30ms per query). You can scale Peers out horizontally dedicated to EACL queries. The goal is 10M permissioned entities.
+- EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
+- Presently, EACL has no cache because it's fast enough for ~1M permissioned resources. Once a cache lands, it should bring latency down to ~1-2ms per API call.
 
-For typical workloads, EACL should be as fast as, or faster than, SpiceDB, but is not meant for hyperscalers.
-
-EACL is fast but makes no strong performance claims. It is benchmarked locally against ~800k Datomic entities with good latency (5-30ms per query). You can scale Peers out horizontally dedicated to EACL queries. The goal is 10M permissioned entities.
-
-EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-
-Presently, EACL has no cache because it's fast enough for ~1M permissioned resources. Once a cache lands, it should bring latency down to ~1-2ms per API call.
-
-Note that each EACL API call currently calls `(d/db conn)` to retain SpiceDB API compatibility. You can save a few ms by calling functions in the `eacl.datomic.impl.indexed` namespace, which take a `db` value directly. You may need to coerce IDs though.
+Note that each EACL API call currently calls `(d/db conn)` to retain SpiceDB API compatibility. You can save a few ms by calling functions in the `eacl.datomic.impl.indexed` namespace, which take a `db` value directly, but then you will need to coerce IDs from internal Datomic to external IDs.
 
 ## Project Status
 
@@ -62,7 +52,7 @@ Note that each EACL API call currently calls `(d/db conn)` to retain SpiceDB API
 
 ## ReBAC: Relationship-based Access Control
 
-In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, _Subjects_ & _Resources_ are related via _Relationships_.
+In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, objects (_Subjects_ & _Resources_) are related via _Relationships_.
 
 A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
 - `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`, and
@@ -84,7 +74,7 @@ EACL models two core concepts: Schema & Relationship.
 
 ### Schema & Relationships
 
-Before creating a Relationship, first define a `Relation` schema that describes how subjects & resources can be related, e.g.:
+Before creating a Relationship, define a `Relations` that describe how subjects & resources can be related, e.g.
 
 ```clojure
 ; Account Resource:
@@ -118,21 +108,22 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/can? acl subject permission resource) => true | false`
 - `(eacl/lookup-subjects acl filters) => {:data [subjects...], cursor 'next-cursor}`
 - `(eacl/lookup-resources acl filters) => {:data [resources...], :cursor 'next-cursor}`.
-- `(eacl/count-resources acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterated counting. Use sparingly with `:limit -1` for all results.
+- `(eacl/count-resources acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterative counting. Use sparingly with `:limit -1` for all results.
+- `(eacl/count-subjects acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterative counting. Use sparingly with `:limit -1` for all results.
 
 ### Relationship Maintenance
 
 - `(eacl/read-relationships acl filters) => [relationships...]`
 - `(eacl/write-relationships! acl updates) => {:zed/token 'db-basis}`,
-  - where `updates` is just a coll of `[operation relationship]` and `operation` is one of `:create`, `:touch` or `:delete`.
-- `(eacl/create-relationships! acl relationships)` simply calls write-relationships! with `:create` operation.
-- `(eacl/delete-relationships! acl relationships)` simply calls write-relationships! with `:delete` operation.
+  - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
+- `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
+- `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
 
 ### Schema Maintenance
 
 - `(eacl/write-schema! acl schema-string)` is not implemented yet because schema lives in Datomic. Use `d/transact` to write schema for now. This is a high priority to suport.
 - `(eacl/read-schema acl) => "schema-string"` is not implemented because schema lives in Datomic. This is a high priority to support.
-- `(eacl/expand-permission-tree acl filters)` is not impl. yet. TODO. Low priority.
+- `(eacl/expand-permission-tree acl filters)` is not impl. yet. It is a low priority to implement.
 
 ### Example Queries
 
@@ -174,7 +165,7 @@ To query the next page, simply pass the `cursor` from page1 into the next query:
            {:type :server :id "server-5"}]}
 ```
 
-The return order of resources from `lookup-resources` is stable and sorted by internal resource ID. Future enhancements may enable a sort key.
+The return order of resources from `lookup-resources` is stable and sorted by internal resource ID.
 
 ## Quickstart
 
