@@ -2,13 +2,15 @@
 
 EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
+Project rationale is described at [eacl.dev](https://eacl.dev/).
+
 ## Project Goals
 
-- Best-in-class ReBAC authorization for Clojure/Datomic products with <10M Datomic entities.
+- Best-in-class ReBAC authorization for Clojure/Datomic applications with up to 10M permissioned entities in Datomic.
 - Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
-- Retain gRPC API compatibility with 1-for-1 Relationship syncing.
+- Retain compatibility with SpiceDB gRPC API to enable 1-for-1 Relationship syncing by tailing Datomic transactor queue.
 
-EACL can answer the following permission questions by querying Datomic:
+EACL can query Datomic to answer the following permission queries:
 
 1. **Check Permission:** "Does `<subject>` have `<permission>` on `<resource>`?"
 2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
@@ -65,13 +67,13 @@ To create a relationship, define a potential `Relation`, like so:
 Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can define a schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
 
 ```clojure
-; account { permission admin = owner }
+; definition account { permission admin = owner }
 (Permission :account :admin {:relation :owner})
 
-; account { permission edit = account-.admin }
+; definition account { permission edit = account->admin }
 (Permission :account :edit {:arrow :account :permission :admin})
 
-; product { permission view = admin + account->viewer }
+; definition  product { permission view = admin + account->viewer }
 (Permission :product :view {:arrow :account :permission :admin})
 (Permission :product :view {:arrow :account :relation :viewer})
 ; (multiple permissions mean 'OR'. EACL does not support negation.)
@@ -538,19 +540,21 @@ Now you can transact relationships:
 
 ## Limitations, Deficiencies & Gotchas:
 
-- No consistency semantics because all EACL queries are fully-consistent. Use SpiceDB if you need consistency semantics enabled by ZedTokens ala Zookies. SpiceDB is heavily optimised to maintain a consistent cache.
-- EACL makes no strong performance claims. It should be good for <1M Datomic entities. Goal is 10M entities.
+- *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
+  - `permission admin = owner + shared_admin` is valid,
+  - but `permission admin = owner - banned_member` is not (note the `-` Negation operator).
+  - You can work around this limitation by doing a negation in your application logic, e.g. `(and (not (eacl/can? acl ...) (eacl/can? acl ...)))`, but it's not free. Once EACL has a cache, this becomes more viable to implement in EACL.
+- *No consistency semantics:* all EACL queries are fully-consistent. If you need consistency semantics, use SpiceDB. SpiceDB is heavily optimised to maintain a consistent cache across the graph.
 - Arrow syntax is limited to one level of nesting, e.g.
-  - Supported: `permission arrow = relation->via-permission` is valid
-  - Not supported: `permission arrow = relation->subrelation->permission` is not valid (yet).
-- Only union permissions are supported, not negating permissions:
-  - Supported: `permission admin = owner + shared_admin`
-  - Not supported: `permission admin = owner - shared_member` (note the minus). Exclusion types require complex caching to avoid multiple `can?` queries.
+  - `permission arrow = relation->via-permission` is supported,
+  - but `permission arrow = relation->subrelation->permission` is not supported yet. To implement this would require anonymous shadow relations. May require schema changes.
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- `read-schema` & `write-schema!` are not supported yet because schema lives in Datomic, but needs to be added soon to validate schema changes.
-- No cycle detection at present, but a high-priority to implement.
+- `read-schema` & `write-schema!` are not supported yet because schema lives in Datomic, but this is high priority to validate schema changes.
+- *No cache:* EACL doesn't have a cache yet, because Datomic Peers cache datoms aggressively and queries so far are fast enough, but at scale, we will want a cache.
+- *Performance:* EACL is fast but makes no strong performance claims.
+  - EACL is benchmarked locally against ~800k Datomic entities with good latency. The goal is 10M permissioned entities. You can scale Peers out horizontally dedicated to EACL queries.
 
 ## How to Run All Tests
 
