@@ -74,7 +74,7 @@ EACL models two core concepts: Schema & Relationship.
 
 ### Schema & Relationships
 
-Before creating a Relationship, define a `Relations` that describe how subjects & resources can be related, e.g.
+Before creating a Relationship, define some `Relations`, which describe how subjects & resources can be related, e.g.
 
 ```clojure
 ; Account Resource:
@@ -84,7 +84,7 @@ Before creating a Relationship, define a `Relations` that describe how subjects 
 (Relation :product :account :account) ; a :product has an :account of type :account.
 ```
 
-Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can define a permission schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
+Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can now define a permission schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
 
 ```clojure
 ; definition account { permission admin = owner }
