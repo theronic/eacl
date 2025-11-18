@@ -25,17 +25,15 @@ Yes.
 
 I spent the better half of 2024 integrating [SpiceDB](https://authzed.com/spicedb) at [CloudAfrica](https://cloudafrica.net/).
 
-- It is non-trivial to continually keep permission data synced to an external authorization system, especially if there is an 
-- SpiceDB write operations like `WriteRelationships` return _ZedToken_ strings, which you'll need to store in your database to fully leverage the [SpiceDB cache](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) via `at_least_as_fresh` and `at_exact_snapshot` consistency semantics.
-
-If you're going to hit the DB anyway, you might as well situate your permission data in Datomic and avoid an external network hop as well as complex diffing & syncing operations – this is the promise of EACL.
+- It is non-trivial to continually keep permission data synced to an external authorization system, especially if there is an impedance mismatch between your data model and the SpiceDB model.
+- SpiceDB write operations return _ZedToken_ strings e.g. `WriteRelationships`, which you need to store on entities in your database to fully leverage the [SpiceDB cache](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) via `at_least_as_fresh` and `at_exact_snapshot` consistency semantics. If you need to hit the DB anyway, you might as well situate your permission data in Datomic and avoid an external network hop as well as complex diffing & syncing operations – this is the promise of EACL.
 
 High load can be mitigated by scaling Datomic Peers horizontally and even EACL API to external consumers.
 
 # What is EACL good for?
 
 - EACL is suitable for Clojure & Datomic Pro and Datomic Cloud applications.
-- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time.
+- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range` & `d/seek-datoms` to yield cursor-paginated resources in 5-40ms per call.
 - EACL performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
 - EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 
