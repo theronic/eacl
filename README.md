@@ -3,33 +3,13 @@
 EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
 _Situated_ here means that your permission data lives _next to_ your application data in Datomic, which has some benefits:
-1. All queries are fully consistent, so there is no need to implement diffing & syncing to an external system. Any external system brings eventual consistency.
-2. Avoid a network hop.
-  - To leverage SpiceDB's consistency semantics, bear in mind you need to hit your DB (or cache) to retrieve the latest ZedToken, so you might as well query the DB directly, and this is what EACL does.
-3. One less external dependency, which is especially convenient during development.
+1. One less external dependency to deploy, diff & sync relationships to.
+2. All queries are fully consistent. An external system would bring eventual consistency.
+3. Avoid a network hop. Note that to leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken, so you might as well query the DB directly, which is what EACL does.
 
 ## Rationale
 
 See [eacl.dev](https://eacl.dev/).
-
-## Authentication vs Authorization
-
-- Authentication or **AuthN** means, "Who are you?"
-- Authorization or **AuthZ** means "What can `<subject>` do?" i.e. permissions.
-
-## Performance
-
-EACL implements recursive ReBAC graph traversal via low-level Datomic `d/index-range` & `d/seek-datoms` calls to yield cursor-paginated resources in the order they are stored at-rest. Results are always ordered dy Datomic eid.
-
-EACL is fast but makes no strong performance claims, but is benchmarked locally against ~800k Datomic entities with good latency (5-30ms per query). You can scale Peers out horizontally dedicated to EACL queries. The goal is 10M permissioned entities.
-
-For typical workloads, EACL should be as fast as, or faster than, SpiceDB, but is not meant for hyperscalers.
-
-EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-
-Presently, EACL has no cache because it's fast enough for ~1M permissioned resources. Once a cache lands, it should bring latency down to ~1-2ms per API call.
-
-Each EACL API call currently calls `(d/db conn)` to retain SpiceDB API compatibility. You can save a few ms by using the internals in the `eacl.datomic.impl.indexed` namespace, which take `db` value directly.
 
 ## Goals
 
@@ -43,12 +23,10 @@ EACL can query Datomic to answer the following permission queries:
 2. **Enumerate Subjects:** "Which `<subjects>` have `<permission>` on `<resource>`?"
 3. **Enumerate Resources:** "Which `<resources>` does `<subject>` have `<permission>` for?"
 
-## Project Status
+## Authentication vs Authorization
 
-> [!WARNING]
-> Even though EACL is used in production at CloudAfrica, it is under *active* development.
-> I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+- Authentication or **AuthN** means, "Who are you?"
+- Authorization or **AuthZ** means "What can `<subject>` do?" i.e. permissions.
 
 ## Why EACL?
 
@@ -58,25 +36,62 @@ Embedded AuthZ offers some advantages for typical use-cases:
 2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing, in real-time.
 3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
 
+## Performance
+
+EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are always returned ordered by internal Datomic eid.
+
+For typical workloads, EACL should be as fast as, or faster than, SpiceDB, but is not meant for hyperscalers.
+
+EACL is fast but makes no strong performance claims. It is benchmarked locally against ~800k Datomic entities with good latency (5-30ms per query). You can scale Peers out horizontally dedicated to EACL queries. The goal is 10M permissioned entities.
+
+EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
+
+Presently, EACL has no cache because it's fast enough for ~1M permissioned resources. Once a cache lands, it should bring latency down to ~1-2ms per API call.
+
+Note that each EACL API call currently calls `(d/db conn)` to retain SpiceDB API compatibility. You can save a few ms by calling functions in the `eacl.datomic.impl.indexed` namespace, which take a `db` value directly. You may need to coerce IDs though.
+
+## Project Status
+
+> [!WARNING]
+> Even though EACL is used in production at CloudAfrica, it is under *active* development.
+> I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
+> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+
 ## ReBAC: Relationship-based Access Control
 
-In a ReBAC system like EACL, _Subjects_ & _Resources_ are related via _Relationships_.
+In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, _Subjects_ & _Resources_ are related via _Relationships_.
 
 A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
 - `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`, and
 - `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
 
-To create a relationship, define a potential `Relation`, like so:
+EACL models two core concepts: Schema & Relationship.
+
+1. _Schema_ consists of `Relations` and `Permissions`:
+   - `Relation` defines how a `<subject>` & `<resource>` can be related via a `Relationship`.
+   - `Permission` defines which permissions are granted to a subject via a `Relationship`.
+     - Permissions can be _Direct Permissions_ or indirect _Arrow Permissions_. 
+2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via some relation, e.g.
+   - `(->user "alice")` is the `:owner` of `(->account "acme")`, where
+     - `(->user "alice")` is the Subject,
+     - `:owner` is the name of the relation,
+     - and `(->account "acme")` is the Resource,
+   - In EACL this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
+   - Subjects & Resources have a `type` and a unique `id`, just a map of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` for short.
+
+### Schema & Relationships
+
+Before creating a Relationship, first define a `Relation` schema that describes how subjects & resources can be related, e.g.:
 
 ```clojure
 ; Account Resource:
-(Relation :account :owner :user)      ; an :account can have :owner(s)
-(Relation :account :viewer :user)     ; an :account can have :viewer(s)
+(Relation :account :owner :user)      ; an :account can have :owner(s) of type :user
+(Relation :account :viewer :user)     ; an :account can have :viewer(s) of type :user
 ; Product Resource:
-(Relation :product :account :account) ; a :product has an :account
+(Relation :product :account :account) ; a :product has an :account of type :account.
 ```
 
-Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can define a schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
+Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can define a permission schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
 
 ```clojure
 ; definition account { permission admin = owner }
@@ -253,22 +268,6 @@ Add the EACL dependency to your `deps.edn` file:
 ; => {:data [{:type :product, :id "product-1"}]
 ;     :cursor 'cursor}
 ```
-
-## Data Structures
-
-EACL models two core concepts: Schema & Relationship.
-
-1. _Schema_ consists of `Relations` and `Permissions`:
-   - `Relation` defines how a `<subject>` & `<resource>` can be related via a `Relationship`.
-   - `Permission` defines which permissions are granted to a subject via a `Relationship`.
-     - Permissions can be _Direct Permissions_ or indirect _Arrow Permissions_. 
-2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via some relation, e.g.
-   - `(->user "alice")` is the `:owner` of `(->account "acme")`, where
-     - `(->user "alice")` is the Subject,
-     - `:owner` is the name of the relation,
-     - and `(->account "acme")` is the Resource,
-   - In EACL this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
-   - Subjects & Resources have a `type` and a unique `id`, just a map of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` for short.
 
 ## EACL Schema
 
@@ -576,6 +575,7 @@ Now you can transact relationships:
 - `expand-permission-tree` is not implemented yet.
 - `read-schema` & `write-schema!` are not supported yet because schema lives in Datomic, but this is high priority to validate schema changes.
 - *No cache:* EACL does not presently have a cache, because Datomic Peers cache datoms aggressively and queries so far are fast enough. A cache is planned.
+- *Return order:* Unlike SpiceDB, EACL enumerates subjects & resources in the order they are stored in at-rest, which is always by Datomic eid (note: not external ID). SpiceDB returns results in order of discovery or schema order. SpiceDB guarantees stable order, but the order is non-deterministic. You should not rely on this order when using EACL or SpiceDB.
 
 ## How to Run All Tests
 
