@@ -40,8 +40,9 @@ Embedded AuthZ offers some advantages for typical use-cases:
 - EACL is benchmarked locally against ~800k Datomic entities with good latency (5-30ms per query). You can scale Peers out horizontally dedicated to EACL queries. The goal is 10M permissioned entities.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - Presently, EACL has no cache because it's fast enough for ~1M permissioned resources. Once a cache lands, it should bring latency down to ~1-2ms per API call.
+- Performance scales with permission graph complexity, number of intermediate hops and `O(logN)` of resources in terminal indices, i.e. in a simple graph, should approach O(logN) where N is number of resources. Subjects are typically sparse compared to resources, i.e. 1k users with 1M resources.
 
-Note that each EACL API call currently calls `(d/db conn)` to retain SpiceDB API compatibility. You can save a few ms by calling functions in the `eacl.datomic.impl.indexed` namespace, which take a `db` value directly, but then you will need to coerce IDs from internal Datomic to external IDs.
+Note that EACL calls `(d/db conn)` for each API call to retain SpiceDB API compatibility. You can shave off a few milliseconds by calling the functions in the `eacl.datomic.impl.indexed` namespace directly, which take `db` as opposed to implied `conn`. However, then you will need to coerce internal Datomiceids to/from your desired external IDs.
 
 ## Project Status
 
