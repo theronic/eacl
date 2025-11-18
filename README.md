@@ -11,7 +11,7 @@ EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchfu
 
 ## Goals
 
-- Best-in-class ReBAC authorization for Clojure/Datomic applications with good performance for at least 10M permissioned Datomic entities.
+- Best-in-class ReBAC authorization for Clojure/Datomic applications that is fast for 10M permissioned Datomic entities.
 - Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
 - Retain compatibility with SpiceDB gRPC API to enable 1-for-1 Relationship syncing by tailing Datomic transactor queue.
 
@@ -26,11 +26,11 @@ Please refer to [eacl.dev](https://eacl.dev/).
 
 ## Why EACL?
 
-Embedded AuthZ offers some advantages for typical use-cases:
+Situated AuthZ offers some advantages for typical use-cases:
 
-1. Situated permissions avoids network I/O to an external AuthZ system, which reduces latency.
-2. An accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing in real-time, when you need SpiceDB.
-3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
+1. Storing permission data in Datomic avoids network I/O to an external AuthZ system, reducing latency.
+2. An accurate ReBAC model allows 1-for-1 syncing of Relationships from Datomic to SpiceDB without complex diffing in real-time, for when you need SpiceDB performance or features.
+3. Queries are fully consistent. If you need `at_least_as_fresh` consistency semantics, use SpiceDB.
 4. EACL is fast. You may be tempted to roll your own ReBAC using recursive Datomic child rules, but you will find the eager query engine too slow and unable to handle all the grounding cases. The first version of EACL used Datalog rules, but it was too slow. Correct cursor-pagination is also non-trivial, because parallel paths through the permission graph can return duplicate resources.
 
 ## Performance
