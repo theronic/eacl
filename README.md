@@ -3,9 +3,9 @@
 EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
 _Situated_ here means that your permission data lives _next to_ your application data in Datomic, which has some benefits:
-1. One less external dependency to deploy, diff & sync relationships to.
-2. All queries are fully consistent. An external system would bring eventual consistency.
-3. Avoids a network hop. Note that to leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken, so you might as well query the DB directly, which is what EACL does.
+1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
+2. One less external dependency to deploy & sync relationships.
+3. Fully consistent queries – an external authz system necessitates eventual consistency.
 
 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eye on permissions.
 
@@ -28,21 +28,24 @@ Please refer to [eacl.dev](https://eacl.dev/).
 
 Situated AuthZ offers some advantages for typical use-cases:
 
-1. Storing permission data in Datomic avoids network I/O to an external AuthZ system, reducing latency.
-2. An accurate ReBAC model allows 1-for-1 syncing of Relationships from Datomic to SpiceDB without complex diffing in real-time, for when you need SpiceDB performance or features.
-3. Queries are fully consistent. If you need `at_least_as_fresh` consistency semantics, use SpiceDB.
-4. EACL is fast. You may be tempted to roll your own ReBAC using recursive Datomic child rules, but you will find the eager query engine too slow and unable to handle all the grounding cases. The first version of EACL used Datalog rules, but it was too slow. Correct cursor-pagination is also non-trivial, because parallel paths through the permission graph can return duplicate resources.
+1. If you want [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization without an external system, EACL is your only option.
+2. Storing permission data directly in Datomic avoids network I/O to an external AuthZ system, reducing latency.
+3. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
+4. Queries are fully consistent. If you need consistency semantics like `at_least_as_fresh`, use SpiceDB.
+5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but you will find the eager Datalog engine too slow and unable to handle all the grounding cases. The first version of EACL was implemented with Datalog rules, but it was simply too slow and materialized all intermediate results. Correct cursor-pagination is also non-trivial, because parallel paths through the permission graph can yield duplicate resources. EACL does this for you with good performance.
 
 ## Performance
 
-- EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are always returned ordered by internal Datomic eid.
-- EACL is fast but makes no strong performance claims. For typical workloads, EACL should be as fast as, or faster than, SpiceDB, but is not meant for hyperscalers.
-- EACL is benchmarked locally against ~800k Datomic entities with good latency (5-30ms per query). You can scale Peers out horizontally dedicated to EACL queries. The goal is 10M permissioned entities.
+- EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are _always_ returned in the order they stored in at-rest, which are internal Datomic eids.
+  - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
+- EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
+- EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
+- The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- Presently, EACL has no cache because it's fast enough for ~1M permissioned resources. Once a cache lands, it should bring latency down to ~1-2ms per API call.
-- Performance scales with permission graph complexity, number of intermediate hops and `O(logN)` of resources in terminal indices, i.e. in a simple graph, should approach O(logN) where N is number of resources. Subjects are typically sparse compared to resources, i.e. 1k users with 1M resources.
+- Presently, EACL has _no cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
+- Performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Parallel paths through the graph that return the same resources will slow EACL down, because these resources need to be deduplicated in stable order. In a simple graph, performance should approach `O(logN)` for N permissioned resources. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-Note that EACL calls `(d/db conn)` for each API call to retain SpiceDB API compatibility. You can shave off a few milliseconds by calling the functions in the `eacl.datomic.impl.indexed` namespace directly, which take `db` as opposed to implied `conn`. However, then you will need to coerce internal Datomiceids to/from your desired external IDs.
+*Note* that to retain future compatibility with the SpiceDB gRPC, the EACL Datomic client calls `(d/db conn)` on each API call, which means that if your DB changes inbetween EACL queries, you may see inconsistent results when cursor paginating. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
 
 ## Project Status
 
@@ -59,46 +62,59 @@ A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
 - `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`, and
 - `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
 
-EACL models two core concepts: Schema & Relationship.
+EACL models two core concepts to model the permission graph: Schema & Relationship.
 
 1. _Schema_ consists of `Relations` and `Permissions`:
    - `Relation` defines how a `<subject>` & `<resource>` can be related via a `Relationship`.
-   - `Permission` defines which permissions are granted to a subject via a `Relationship`.
-     - Permissions can be _Direct Permissions_ or indirect _Arrow Permissions_. 
-2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via some relation, e.g.
-   - `(->user "alice")` is the `:owner` of `(->account "acme")`, where
-     - `(->user "alice")` is the Subject,
-     - `:owner` is the name of the relation,
-     - and `(->account "acme")` is the Resource,
-   - In EACL this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
-   - Subjects & Resources have a `type` and a unique `id`, just a map of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` for short.
+   - `Permission` defines which permissions are granted to a subject via a chain of `Relationships` between subjects & resources.
+     - Permissions can be _Direct Permissions_ or indirect, known as _Arrow Permissions_. An arrow implies a graph traversal.
+2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via a named relation, e.g. `[(->user alice) :owner (->account "acme")]` means that
+   - `(->user "alice")` is the Subject,
+   -  `:owner` is the name of the `Relation` (as defined in the schema)
+   - `(->account "acme")` is the Resource
+   - so this reads as `(->user "alice")` is the `:owner` of `(->account "acme")`.
+   - In EACL, this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
+   - Subjects & Resources are just maps of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` when using a helper function.
 
 ### Schema & Relationships
 
-Before creating a Relationship, define some `Relations`, which describe how subjects & resources can be related, e.g.
+To create a Relationship, first define valid `Relations` to describe how subjects & resources can be related, e.g.
 
 ```clojure
-; Account Resource:
+; definition account {
+;   relation owner: user
+;   relation viewer: user
+; }
 (Relation :account :owner :user)      ; an :account can have :owner(s) of type :user
 (Relation :account :viewer :user)     ; an :account can have :viewer(s) of type :user
-; Product Resource:
+
+; definition product {
+;   relation account: account
+; }
 (Relation :product :account :account) ; a :product has an :account of type :account.
 ```
 
-Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can now define a permission schema that grants `:edit` permission to owners, and `:view` permissions to viewers:
+Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can now define a permission schema that grants the `:edit` permission to all owners of the account, and the `:view` permission to all viewers of the account:
 
 ```clojure
-; definition account { permission admin = owner }
+; definition account {
+;   permission admin = owner
+; }
 (Permission :account :admin {:relation :owner})
 
-; definition account { permission edit = account->admin }
+; definition account {
+;   permission edit = account->admin
+; }
 (Permission :account :edit {:arrow :account :permission :admin})
 
-; definition  product { permission view = admin + account->viewer }
+; definition  product {
+;   permission view = admin + account->viewer
+; }
 (Permission :product :view {:arrow :account :permission :admin})
 (Permission :product :view {:arrow :account :relation :viewer})
-; (multiple permissions mean 'OR'. EACL does not support negation.)
 ```
+
+In EACL, multiple permission definitions with the same resource_type & name, but different permission spec, imply Unification or OR-logic. EACL does not support negation yet, only Unification.
 
 ## EACL API
 
@@ -176,7 +192,7 @@ Add the EACL dependency to your `deps.edn` file:
 
 ```clojure
 {:deps {cloudafrica/eacl {:git/url "git@github.com:cloudafrica/eacl.git" 
-                          :git/sha "3c4d93a58c49a90c018f72ff99aed2b7ed790831"}}}
+                          :git/sha "884a1d0e08049cbf55fd59e9f235945fc6f732e4"}}}
 ```
 
 ```clojure
@@ -233,6 +249,8 @@ Add the EACL dependency to your `deps.edn` file:
             :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
  
 ; Define some convenience methods over spice-object:
+; `eacl.core/spice-object` is just a record helper that accepts `type`, `id` and optionally `subject_relation`, to return a SpiceObject of {:keys [type id]}. `subject-relation` is not currently supported in EACL.
+
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))
 (def ->product (partial spice-object :product))
@@ -278,7 +296,7 @@ definition account {
 }
 ```
 
-We define two resource types, `user` & `account`, where a `user` subject can be an `owner` of an `account` resource. 
+We define two resource types, `user` & `account`, where any `user` subject can be the `:owner` of an `account` resource. 
 
 In EACL we use:
 ```
@@ -313,41 +331,47 @@ In EACL, **Direct Permissions** use `(Permission resource-type permission {:rela
  - e.g. `(Permission :account :update {:relation :owner})`
  - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update` permission for that account.
 
-However, at this point, all permissions checks will return false because there are no Relationships defined:
+At this point, all permissions checks via `eacl/can?` will return `false`, because there are no Relationships defined:
 
 ```clojure
 (eacl/can? acl (->user "alice") :update (->account "acme"))
 => false
 ```
 
+What happens when we create some Relationships between users & accounts?
+
 ### Creating Relationships
 
-Before we can do some permission checks, let's define a Relationship between a `user` subject and an `account` resource:
-- `(->Relationship subject relation resource)`
-- e.g. `(eacl/->Relationship (->user "alice") :owner (->account "acme"))`
+In EACL, Relationships are expressed as 3-tuples of `[subject relation resource]` using the `->Relationship` helper, e.g. user alice is an `:owner` of acme account:
+```clojure
+(eacl/->Relationship (->user "alice") :owner (->account "acme"))
+```
 
-We can create Relationships in EACL via `create-relationships!` or `write-relationships!`:
+Now let's create a Relationship between a `user` subject and an `account` resource using `eacl/create-relationships!`:
 ```clojure
 (eacl/create-relationships! acl [(eacl/->Relationship (->user "alice") :owner (->account "acme"))])
 ```
 
+*Note*: `eacl/create-relationships!` is just a wrapper over `eacl/write-relationships!` with the `:create` operation. It will throw if there is an existing relationship that matches input.
+
 ### Permission Checks 
 
-Now that we have a Relationship betweee a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account:
+Now that we have created a Relationship between a user and an account, we can call `eacl/can?` to check if a given user has the `:update` permission on the ACME account, e.g. "can Alice :update the ACME account?"
 ```clojure
 (eacl/can? acl (->user "alice") :update (->account "acme"))
 => true
+Yes, she can, because Alice is the `:owner` of the account and the :update permission is granted to all :owner users.
 ```
-However, Bob cannot, because he is not an `:owner` of the ACME account:
+But can Bob `:update` the ACME account?
 ```clojure
 (eacl/can? acl (->user "bob") :update (->account "acme"))
 => false
 ```
+No, he cannot, because he is not an `:owner` of the ACME account.
 
 ### Arrow Permissions
 
-Let's model an indirect Arrow Permission:
-
+Arrow permissions require a graph hop. Arrows are designated by `->`. Let's look at arrow permissions in the SpiceDB schema DSL:
 ```
 definition user {}
 
@@ -365,14 +389,14 @@ definition product {
 }
 ```
 
-The arrow permission implies that any subject who has the `admin` permission on the related account for that product, will also have the `edit` permission for that product.
+Here, `permission edit = account->admin` states that subjects are granted the `edit` permission if, and only if they have the `admin` permission on the related account (for that product), and only account owners have the `admin` permission on the related account.
 
-Given that,
+So given that,
  1. `(->user "alice")` is the `:owner` of `(->account "acme")`, and
- 2. `(->account "acme")` is the `:account` for `(->product "SKU-123")`
-EACL can traverse the permission graph from user->account->product to calculate that Alice can `edit` product `SKU-123`, but not for any other products.
+ 2. `(->account "acme")` is the `:account` for `(->product "SKU-123")`,
+ 3. EACL can traverse the permission graph from user -> account -> product to derive that Alice may indeed `edit` product `SKU-123`.
 
-Here is the equivalent EACL schema (these are just Datomic tx-data):
+Here is the equivalent schema in the current EACL syntax:
 ```clojure
 (require '[eacl.datomic.impl :refer [Relation Permission]])
 
@@ -413,27 +437,30 @@ Now you can use `can?` to check those arrow permissions:
 
 Internally, EACL models Relations, Permissions and Relationships as Datomic entities, along with several tuple indices for efficient querying.
 
-We have an implementation for the gRPC API that is not open-sourced at this time.
-
 ## EACL ID Configuration
 
-SpiceDB uses strings for subject & resource IDs, whereas EACL internally uses Datomic entity IDs.
+SpiceDB uses strings for all external subject & resource IDs, whereas EACL uses Datomic entity IDs internally for all IDs. However, EACL lets you configure how internal IDs should be coerced to external IDs and vice versa.
 
-Internal Datomic eids are not guaranteed to be stable after a DB rebuild, so EACL lets you configure how IDs should be coerced from internal to external & vice versa, so e.g. you can configure EACL to return a UUID or string in your database. Note that this attribute should have `:db/unique :db.unique/identity` set: 
+*Note*: internal Datomic eids should not be exposed to consumers, because those eids are not guaranteed to be stable after a DB rebuild.
+
+`eacl.datomic.core/make-client` accepts a Datomic conn and a config map of `{:keys [entid->object-id object-id->ident]}`, which are functions to convert between internal to/from external IDs.
+
+It is common to attach a unique UUID to permissioned entities for exposing them externally, or you can convert external->internal at your call sites. Here is how you can configure EACL to convert to/from a unique attribute named `:your/id`:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
             :object-id->ident (fn [obj-id] [:your/id obj-id])}))
 ```
-The default options are to use `:eacl/id`, but if you want to use internal Datomic eids (e.g. if you don't expose anything to the outside world), you can pass the following options:
+
+Note that this attribute should have property `:db/unique :db.unique/identity`. 
+
+The default options are to use the built-in EACL string attr `:eacl/id`, but you can use the internal Datomic eids with the following "identity" functions:
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [_db eid] eid)
             :object-id->ident (fn [obj-id] obj-id)}))
 ```
-
-`eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`, and returns a SpiceObject.
 
 ## Schema Syntax
 
