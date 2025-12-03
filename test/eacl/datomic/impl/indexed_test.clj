@@ -219,9 +219,9 @@
               :eacl.relationship/relation-name :owner
               :eacl.relationship/resource      {:db/ident :test/account1}
               :eacl.relationship/resource-type :account}
-            (let [rel-eid (impl/find-one-relationship-id db {:subject  (->user :test/user1)
-                                                             :relation :owner
-                                                             :resource (->account :test/account1)})]
+            (let [rel-eid (impl/find-relationship db {:subject  (->user :test/user1)
+                                                      :relation :owner
+                                                      :resource (->account :test/account1)})]
               (d/pull db '[:eacl.relationship/subject-type
                            :eacl.relationship/resource-type
                            {:eacl.relationship/subject [:db/ident]}
@@ -229,9 +229,9 @@
                            {:eacl.relationship/resource [:db/ident]}] rel-eid)))))
 
     (testing "find-one-relationship-by-id throws if you pass missing subject or resource"
-      (is (thrown? Throwable (impl/find-one-relationship-id db {:subject  (->user "missing-user")
-                                                                :relation :owner
-                                                                :resource (->account "account-1")}))))
+      (is (thrown? Throwable (impl/find-relationship db {:subject  (->user "missing-user")
+                                                         :relation :owner
+                                                         :resource (->account "account-1")}))))
 
     (testing "read-relationships filters"
       ;(is (= [] (read-relationships db {})))
@@ -751,11 +751,11 @@
                 (is (empty? (paginated-data->spice db' page3-data))))
 
               (testing "lookup-resources returns cursor input when looking beyond any values"
-                (let [page3-empty (lookup-resources db'{:limit         100
-                                                        :cursor        page2-cursor
-                                                        :resource/type :account
-                                                        :permission    :view
-                                                        :subject       (->user super-user-eid)})]
+                (let [page3-empty (lookup-resources db' {:limit         100
+                                                         :cursor        page2-cursor
+                                                         :resource/type :account
+                                                         :permission    :view
+                                                         :subject       (->user super-user-eid)})]
                   (is (empty? (:data page3-empty)))
                   (is (= page2-cursor (:cursor page3-empty)))))
 
@@ -803,7 +803,14 @@
                       (testing "count-resources should respect limit & cursors"
                         (is (:resource page1-cursor))
                         (is (:resource page2-cursor))
+
                         (is (not= page1-cursor page2-cursor))
+
+                        (is (= :server (get-in page1-cursor [:resource :type])))
+                        (is (= :server (get-in page2-cursor [:resource :type])))
+
+                        (prn 'page1-cursor page1-cursor)
+                        (prn 'page2-cursor page2-cursor)
 
                         (is (= 2 (:count (count-resources db'
                                            {:resource/type :server
@@ -847,6 +854,7 @@
 
 (deftest get-permission-paths-tests
   (let [db (d/db *conn*)]
+    ; we need better tests here.
     (testing "Direct permission paths"
       (let [paths (impl.indexed/get-permission-paths db :account :view)]
         ;; :account :view has both direct (owner) and arrow (platform->platform_admin) paths

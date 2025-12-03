@@ -15,6 +15,7 @@
     subject-eid))
 
 (defn find-relation-def
+  ; BIG TODO: BROKEN. Needs to be subject-type specific.
   "Finds the Relation definition for a given resource-type and relation-name.
   Returns map with :eacl.relation/subject-type as the target type for arrows, or nil if not found."
   ; In v7 we only need the Relation eid.
@@ -143,6 +144,40 @@
 ;    ; why do we need the filter if we have the index tuple-start?
 ;    cursor-eid (filter (fn [resource-eid] (> resource-eid cursor-eid)))
 ;    (not cursor-eid) (filter some?)))                       ; we filter out nil resource-eids. can happen.
+
+(defn find-relationship [db subject-eid relation-eid resource-eid]
+  (let [relation (find-relation-def)
+
+        attr        :eacl.v7.relationship/relation+resource
+        attr-eid    (d/entid db attr)
+        cursor      (or ?cursor-resource-eid 0)             ; can be cached.
+        first-datom (first (d/seek-datoms db :eavt
+                             subject-eid
+                             attr-eid
+                             [relation-eid resource-eid]))
+        [e A v] first-datom]
+    (if (and
+          (= e subject-eid)
+          (= A attr-eid)
+          (= v resource-eid))
+      {:subject ()})
+    ; consider magic cursor-eid -1 value as opposed to nil.
+    (drop-while (fn [[e A v]]
+                  (and
+                    (== subject-eid e)
+                    (== attr-eid A)
+                    (let [[v-relation-eid v-resource-eid] v]
+                      (and
+                        (== relation-eid v-relation-eid)
+                        (<= v-resource-eid cursor))))))
+
+    (take-while (fn [[e A v]]
+                  (and
+                    (== subject-eid e)
+                    (== attr-eid A)
+                    (let [[v-relation-eid _v-resource-eid] v]
+                      (== relation-eid v-relation-eid)))))
+    (map (fn [[_e _a v]] (last v)))))
 
 (defn subject->resources [db subject-type subject-eid relation-eid resource-type ?cursor-resource-eid]
   [{:pre [subject-type subject-eid relation-eid resource-type]}] ; todo more checks

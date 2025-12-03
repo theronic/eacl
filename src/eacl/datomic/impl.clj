@@ -115,17 +115,40 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
     (->> (apply d/q qry db args)
          (map rel-map->Relationship))))
 
-(defn find-one-relationship-id
-  ; this is outdated in v7.
+(defn lookup-subject->resource-tuple
+  "Currently using d/datoms, but could be d/seek-datoms."
+  [db subject-eid relation-eid resource-eid]
+  (let [tuple-val])
+  (first (d/datoms db :eavt subject-eid :eacl.v7.relationship/relation+resource))
+  :eacl.v7.relationship/relation+resource)
+
+(defn find-relationship
+  "Finds a relationship by looking on subject tuple."
+  ; this is outdated in v7. how should it look?
   [db {:as relationship :keys [subject relation resource]}]
   ; hmm this coercion does not belong here.
   ;(log/debug 'find-one-relationship relationship)
-  (let [subject-type (:type subject) ; todo config.
-        ; TODO Hoist up the d/entid calls.
-        subject-eid (d/entid db (:id subject)) ;object-id->entid db (:id subject))
+  (let [{subject-id :id
+         subject-type :type} subject
 
-        resource-type (:type resource) ; todo config.
-        resource-eid (d/entid db (:id resource))] ;object-id->entid db (:id resource))]
+        {resource-id :id
+         resource-type :type} resource
+
+        ; TODO Hoist up the d/entid calls. We don't want them in impl.
+        subject-eid (d/entid db subject-id)
+        resource-eid (d/entid db resource-id)]
+
+    (cond
+      (not subject-eid) (throw (Exception. "Missing Subject: " subject-id))
+      (not resource-eid) (throw (Exception. "Missing Resource: " resource-id))
+
+      :default
+      (let [subject-ent (d/entity db subject-eid)
+            rel-tuple (:eacl.v7.relationship)]))
+
+        ;resource-eid (d/entid db resource-id)]
+
+        ;subject-ent (d/entity db subject-eid)]
     ;(log/debug 'find-one-relationship-id 'subject-eid subject-eid 'resource-eid resource-eid)
     ;(assert subject-eid (str "No such subject: " subject))
     ;(assert resource-eid (str "No such resource: " resource))
@@ -155,8 +178,24 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
          [?relation :eacl.relation/subject-type ?subject-type]]
     db resource-type relation-name subject-type))
 
-(defn tx-relationship
-  ; this is indexed impl. specific. does not belong here.
+(defn subject->resource-rel-tuple [op subject-eid relation-eid resource-eid]
+  [op subject-eid
+   :eacl.v7.relationship/relation+resource
+   [relation-eid
+    resource-eid]])
+
+(defn resource->subject-rel-tuple [op subject-eid relation-eid resource-eid]
+  [op resource-eid
+   :eacl.v7.relationship/relation+subject
+   [relation-eid
+    subject-eid]])
+
+(defn rel->tuples [op subject-eid relation-eid resource-eid]
+  [(subject->resource-rel-tuple op subject-eid relation-eid resource-eid)
+   (resource->subject-rel-tuple op subject-eid relation-eid resource-eid)])
+
+(defn relationship->tx-data
+  ; this is specific to indexed impl. does not belong here.
   "Translate a Relationship to Datomic txes.
   Note: `relation` in relationship filters corresponds to `:resource/relation` here.
   We don't validate resource & subject types here."
@@ -193,22 +232,11 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
      ; might be different for subject vs resource.
      ; what about retract?
      ; Subject -> Resource (types inferred from Relation)
-     (let [txes [[:db/add subject-eid
-                  :eacl.v7.relationship/relation+resource
-                  [relation-eid
-                   resource-eid]]
-
-                 ; Resource -> Subject (types inferred from Relation)
-                 [:db/add resource-eid
-                  :eacl.v7.relationship/relation+subject
-                  [relation-eid
-                   subject-eid]]]]
-       ;(prn 'txes txes)
-       txes)))
+     (rel->tuples :db/add subject-eid relation-eid resource-eid)))
   ([db {:as _relationship :keys [subject relation resource]}]
-   (tx-relationship db subject relation resource)))
+   (relationship->tx-data db subject relation resource)))
 
-(def Relationship tx-relationship)
+(def Relationship relationship->tx-data)
 
 ;(base/Relationship
 ; subject
@@ -216,26 +244,41 @@ subject-type treatment reuses :resource/type. Maybe this should be entity type."
 ; resource)
 
 (defn tx-update-relationship
+  ; todo update this returns txes now, not single.
   "Note that delete costs N queries."
   [db {:as update :keys [operation relationship]}]
-  (case operation
-    :touch ; ensure update existing. we don't have uniqueness on this yet.
-    (let [rel-id (find-one-relationship-id db relationship)]
-      (cond-> (tx-relationship db relationship)
-        rel-id (assoc :db/id rel-id)))
+  (let [{:keys [subject relation resource]} relationship
 
-    :create
-    (if-let [rel-id (find-one-relationship-id db relationship)]
-      (throw (Exception. ":create relationship conflicts with existing: " rel-id))
-      (tx-relationship db relationship))
+        {subject-eid :id
+         subject-type :type} subject
 
-    :delete
-    (if-let [rel-id (find-one-relationship-id db relationship)]
-      [:db.fn/retractEntity rel-id]
-      nil)
+        {resource-eid :id
+         resource-type :type} resource
+        relation-eid (find-relation db resource-type relation subject-type)]
+    (if-not relation-eid
+      (throw (ex-info
+               (str "Missing Relation " relation " for " operation " operation on Relationship.")
+               {:update update}))
+      (case operation
+        :touch                                                ; ensure update existing. we don't have uniqueness on this yet.
+        ; this will no-op for existing relationships but bump tx-id (may be undesirable for cache).
+        [(subject->resource-rel-tuple :db/add subject-eid relation-eid resource-eid)
+         (resource->subject-rel-tuple :db/add subject-eid relation-eid resource-eid)]
+        ;(let [rel-id (find-one-relationship-id db relationship)]
+        ;  (cond-> (relationship->tx-data db relationship)
+        ;    rel-id (assoc :db/id rel-id)))
 
-    :unspecified
-    (throw (Exception. ":unspecified relationship update not supported."))))
+        :create
+        (if-let [rel-id (find-relationship db relationship)]
+          (throw (Exception. ":create relationship conflicts with existing: " rel-id))
+          (relationship->tx-data db relationship))
+
+        :delete
+        [(subject->resource-rel-tuple :db/retract subject-eid relation-eid resource-eid)
+         (resource->subject-rel-tuple :db/retract subject-eid relation-eid resource-eid)]
+
+        :unspecified
+        (throw (Exception. ":unspecified relationship update not supported."))))))
 
 (comment
   (build-relationship-query {:resource/type :server}))
