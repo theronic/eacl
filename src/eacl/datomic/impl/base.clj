@@ -116,7 +116,7 @@
     (throw (ex-info "Invalid Permission spec. Expected one of {:relation name}, {:permission name}, {:arrow source :permission target} or {:arrow source :relation target}"
              {:spec spec}))))
 
-(defn Relationship
+(defn old-Relationship
   "A Relationship between a subject and a resource via Relation. Copied from core2."
   [subject relation-name resource]
   ; :pre can be expensive.
@@ -125,6 +125,23 @@
          (keyword? relation-name)
          (:id resource)
          (:type resource)]}
+  {:eacl.relationship/resource-type (:type resource)
+   :eacl.relationship/resource      (:id resource)
+   :eacl.relationship/relation-name relation-name
+   :eacl.relationship/subject-type  (:type subject)
+   :eacl.relationship/subject       (:id subject)})
+
+(defn Relationship
+  ; outdated use tx-relationship for now.
+  "A Relationship between a subject and a resource via Relation. Copied from core2."
+  [subject relation-name resource]
+  ; :pre can be expensive.
+  {:pre [(:id subject)
+         (:type subject)
+         (keyword? relation-name)
+         (:id resource)
+         (:type resource)]}
+  ; In the data write layer we translate this to v7 tuples.
   {:eacl.relationship/resource-type (:type resource)
    :eacl.relationship/resource      (:id resource)
    :eacl.relationship/relation-name relation-name

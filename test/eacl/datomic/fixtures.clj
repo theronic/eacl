@@ -1,6 +1,7 @@
 (ns eacl.datomic.fixtures
   (:require [datomic.api :as d]
             [eacl.core :refer [spice-object]]
+            [eacl.datomic.impl :as impl]
             [eacl.datomic.impl :as eacl :refer (Relation Relationship Permission)]))
 
 ; These are helpers specific to CA (todo move out):
@@ -299,65 +300,63 @@
     :db/ident :test/backup2
     :eacl/id  "backup-2"}])
 
-(def relationship-fixtures
-  [; we need to specify types for indices, but id can be tempid here.
-   (Relationship (->user "user-1") :member (->team "team-1")) ; User 1 is on Team 1
-   (Relationship (->user "user-1") :owner (->account "account-1"))
-
-   (Relationship (->user "super-user") :super_admin (->platform "platform"))
-
-   (Relationship (->user "user-2") :owner (->account "account-2"))
-
-   (Relationship (->platform "platform") :platform (->account "account-1"))
-   (Relationship (->platform "platform") :platform (->account "account-2"))
-
-   (Relationship (->account "account-1") :account (->vpc "vpc-1"))
-   (Relationship (->account "account-1") :account (->vpc "account1-vpc2"))
-   (Relationship (->account "account-1") :account (->vpc "account1-vpc3"))
-
-   (Relationship (->account "account-2") :account (->vpc "vpc-2"))
-
-   ; server -> nic -> lease -> network -> vpc
-   (Relationship (->vpc "vpc-1") :vpc (->network "network-1"))
-   (Relationship (->network "network-1") :network (->lease "lease-1"))
-   (Relationship (->lease "lease-1") :lease (->nic "nic-1"))
-   (Relationship (->nic "nic-1") :nic (->server "account1-server1"))
-
-   ; Teams belongs to accounts
-   (Relationship (->account "account-1") :account (->team "team-1"))
-   (Relationship (->account "account-2") :account (->team "team-2"))
-
-   (Relationship (->account "account-1") :account (->server "account1-server1")) ; hmm let's check schema plz.
-   (Relationship (->account "account-1") :account (->server "account1-server2"))
-
-   (Relationship (->account "account-2") :account (->server "account2-server1"))
-
-   ; this should warn:
-   ;(Relationship (->account "account-1") :account (->backup-schedule "backup-schedule-1"))
-   (Relationship (->server "account1-server1") :server (->backup-schedule "backup-schedule-1"))
-
-   (Relationship (->backup-schedule "backup-schedule-1") :schedule (->backup "backup-1"))
-   (Relationship (->account "account-1") :account (->backup "backup-1"))
-   (Relationship (->server "account1-server1") :server (->backup "backup-1"))])
-
-(def base-fixtures
-  (concat
-    relations+permissions
+(defn entities+relationships->txes [db]
+  (apply concat
     entity-fixtures
-    relationship-fixtures))
+    ;(Relationship db (->user "user-1") :member (->team "team-1")) ; User 1 is on Team 1
+    [(Relationship db (->user "user-1") :owner (->account "account-1"))
 
-(def txes-additional-account3+server
+     (Relationship db (->user "super-user") :super_admin (->platform "platform"))
+
+     (Relationship db (->user "user-2") :owner (->account "account-2"))
+
+     (Relationship db (->platform "platform") :platform (->account "account-1"))
+     (Relationship db (->platform "platform") :platform (->account "account-2"))
+
+     (Relationship db (->account "account-1") :account (->vpc "vpc-1"))
+     (Relationship db (->account "account-1") :account (->vpc "account1-vpc2"))
+     (Relationship db (->account "account-1") :account (->vpc "account1-vpc3"))
+
+     (Relationship db (->account "account-2") :account (->vpc "vpc-2"))
+
+     ; server -> nic -> lease -> network -> vpc
+     (Relationship db (->vpc "vpc-1") :vpc (->network "network-1"))
+     (Relationship db (->network "network-1") :network (->lease "lease-1"))
+     (Relationship db (->lease "lease-1") :lease (->nic "nic-1"))
+     (Relationship db (->nic "nic-1") :nic (->server "account1-server1"))
+
+     ; Teams belongs to accounts
+     (Relationship db (->account "account-1") :account (->team "team-1"))
+     (Relationship db (->account "account-2") :account (->team "team-2"))
+
+     (Relationship db (->account "account-1") :account (->server "account1-server1")) ; hmm let's check schema plz.
+     (Relationship db (->account "account-1") :account (->server "account1-server2"))
+
+     (Relationship db (->account "account-2") :account (->server "account2-server1"))
+
+     ; this should warn:
+     ;(Relationship (->account "account-1") :account (->backup-schedule "backup-schedule-1"))
+     (Relationship db (->server "account1-server1") :server (->backup-schedule "backup-schedule-1"))
+
+     (Relationship db (->backup-schedule "backup-schedule-1") :schedule (->backup "backup-1"))
+     (Relationship db (->account "account-1") :account (->backup "backup-1"))
+     (Relationship db (->server "account1-server1") :server (->backup "backup-1"))]))
+
+    ; TODO: must transact schema first. Can't do at same with lookups.
+    ;relationship-fixtures))
+
+(defn make-txes-additional-account3+server [db]
   "To test accounts & servers with higher eids."
-  [{:db/id    "account3-server3.1"
-    :db/ident :test/account3-server1
-    :eacl/id  "account3-server3.1"}
+  (into [{:db/id    "account3-server3.1"
+          :db/ident :test/account3-server1
+          :eacl/id  "account3-server3.1"}
 
-   {:db/id    "account-3"
-    :db/ident :test/account3
-    :eacl/id  "account-3"}
-
-   (Relationship (->account "account-3") :account (->server "account3-server3.1"))
-   (Relationship (->user :test/user1) :owner (->account "account-3"))])
+         {:db/id    "account-3"
+          :db/ident :test/account3
+          :eacl/id  "account-3"}]
+    (apply concat
+      [(Relationship db (->account "account-3") :account (->server "account3-server3.1"))
+       (Relationship db (->user :test/user1) :owner (->account "account-3"))])))
 
 ;; (For Later) Team Membership:
 ;(Relationship "user-2" :team/member "team-2")

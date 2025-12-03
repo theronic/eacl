@@ -34,7 +34,7 @@
 ;(def Permission
 ;  [:or DirectPermission ArrowPermission])
 
-(def v6-schema
+(def v7-schema
   [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
@@ -177,16 +177,24 @@
     :db/index       true}
 
    ;; Relationship Indices (expensive)
-   {:db/ident       :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-    :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
+   ;{:db/ident       :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+   ; :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/subject-type
+   ;                  :eacl.relationship/subject
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/resource-type
+   ;                  :eacl.relationship/resource]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/unique      :db.unique/identity}
+
+   {:db/ident       :eacl.v7.relationship/relation+resource
+    :db/doc         "EACL v7 Relationship from Known Subject -> Unknown Resource. Types are inferred from Relation."
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/subject
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/resource-type
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
+    :db/tupleTypes  [:db.type/ref                           ; Ref to Relation (implies subject-type & resource-type)
+                     :db.type/ref]                          ; resource-eid.
+    :db/cardinality :db.cardinality/many
+    :db/index       true}
 
    ; This can go away as soon as `can?` uses direct index access. May still be needed, though.
    ;{:db/ident       :eacl.relationship/resource+subject
@@ -198,17 +206,25 @@
    ; :db/index       true}
 
    ;; Reverse tuple index for efficient reverse traversal
-   {:db/ident       :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-    :db/doc         "Reverse tuple index for efficient reverse traversal in can? and arrow permissions"
+   ;{:db/ident       :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+   ; :db/doc         "Reverse tuple index for efficient reverse traversal in can? and arrow permissions"
+   ; :db/valueType   :db.type/tuple
+   ; :db/tupleAttrs  [:eacl.relationship/resource-type
+   ;                  :eacl.relationship/resource
+   ;                  :eacl.relationship/relation-name
+   ;                  :eacl.relationship/subject-type
+   ;                  :eacl.relationship/subject]
+   ; :db/cardinality :db.cardinality/one
+   ; :db/index       true
+   ; :db/unique      :db.unique/identity}
+
+   {:db/ident       :eacl.v7.relationship/relation+subject
+    :db/doc         "EACL v7 Relationship from Known Resource -> Unknown Subject for lookups. Types are inferred from Relation."
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource-type
-                     :eacl.relationship/resource
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/subject-type
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/index       true
-    :db/unique      :db.unique/identity}])
+    :db/tupleTypes  [:db.type/ref                           ; Ref to Relation (implies subject-type & resource-type)
+                     :db.type/ref]                          ; Subject Ref.
+    :db/cardinality :db.cardinality/many
+    :db/index       true}])
 
 (defn count-relationships-using-relation
   "Counts how many Relationships are using the given Relation.
@@ -237,7 +253,7 @@
                                  :eacl.relation/relation-name]) ...]
          :where
          [?relation :eacl.relation/relation-name ?relation-name]]
-       db))
+    db))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -249,7 +265,7 @@
                              :eacl.permission/target-name]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
-       db))
+    db))
 
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -278,19 +294,19 @@
     after-permissions :permissions}]
   ; how to get a nice left vs. right diff?
   ; when can we ditch the setval :db/id?
-  (let [before-relations-set (->> before-relations
-                               ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
-                               (set))
-        after-relations-set  (->> after-relations
-                               ;(S/setval [S/ALL :db/id] S/NONE)
-                               (set))
+  (let [before-relations-set   (->> before-relations
+                                 ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
+                                 (set))
+        after-relations-set    (->> after-relations
+                                 ;(S/setval [S/ALL :db/id] S/NONE)
+                                 (set))
 
         before-permissions-set (->> before-permissions
                                  ;(S/setval [S/ALL :db/id] S/NONE)
                                  (set))
-        after-permissions-set (->> after-permissions
-                                ;(S/setval [S/ALL :db/id] S/NONE)
-                                (set))]
+        after-permissions-set  (->> after-permissions
+                                 ;(S/setval [S/ALL :db/id] S/NONE)
+                                 (set))]
     {:relations   (calc-set-deltas before-relations-set after-relations-set)
      :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
 
@@ -316,11 +332,11 @@
   (throw (Exception. "not impl WIP"))
   (let [db              (d/db conn)
         existing-schema (read-schema db)
-        {:as   schema-deltas
+        {:as               schema-deltas
          ; consider naming these deltas
-         relation-deltas :relations
+         relation-deltas   :relations
          permission-deltas :permissions} (compare-schema existing-schema new-schema-map)
-        {relation-additions :additions
+        {relation-additions   :additions
          relation-retractions :retractions} relation-deltas
         orphaned-rels   (for [rel-retraction relation-retractions]
                           [rel-retraction (count-relationships-using-relation db rel-retraction)])]

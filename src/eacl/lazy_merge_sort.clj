@@ -1,4 +1,5 @@
-(ns eacl.lazy-merge-sort)
+(ns eacl.lazy-merge-sort
+  (:require [clojure.tools.logging :as log]))
 
 (defn lazy-merge-dedupe-sort
   "Lazily merges multiple _sorted_ sequences, deduplicating values.
@@ -298,6 +299,7 @@
       [0 5 9 10]])
    => (0 1 2 3 4 5 6 7 8 9 10)"
   [keyfn seqs]
+  ;(log/debug 'lazy-fold2 seqs)
   (fold2
     (partial lazy-merge-all-dedupe-by keyfn #(< (keyfn %1) (keyfn %2)))
     seqs))

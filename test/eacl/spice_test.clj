@@ -18,7 +18,7 @@
            (spice-object :team "dev-team" :member)))))
 
 (deftest spicedb-tests
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "->user means (partial spice-object :user). Creates a SpiceObject record with {:keys [type id relation]}"
       (def my-user (->user "ben"))
       (def joe's-user (->user "joe"))
@@ -59,7 +59,8 @@
         ; def *client REPL testing convenience and fewer parens.
         (def *client client)))
 
-    @(d/transact conn fixtures/base-fixtures)               ; temp until write-relationships
+    @(d/transact conn fixtures/relations+permissions)               ; temp until write-relationships
+    @(d/transact conn (fixtures/entities+relationships->txes (d/db conn)))
 
     ;(is (= [] (eacl/read-relationships *client {:resource/type :vpc})))
     ;(is (= [] (eacl/read-relationships *client {:resource/type :account})))

@@ -26,9 +26,15 @@
           (take 20 (lazy-merge-dedupe-sort [seq1 seq2 seq3]))))))
 
 (defn eacl-schema-fixture [f]
-  (with-mem-conn [conn schema/v6-schema]
-    (is @(d/transact conn fixtures/base-fixtures))
-    (is @(d/transact conn fixtures/txes-additional-account3+server))
+  (with-mem-conn [conn schema/v7-schema]
+    (is @(d/transact conn fixtures/relations+permissions))
+    (prn 'rel
+      (apply concat
+        [(Relationship (d/db conn) (->user "user-1") :owner (->account "account-1"))
+         (Relationship (d/db conn) (->user "user-1") :owner (->account "account-1"))]))
+    ;(prn 'entities+relationships->txes (fixtures/entities+relationships->txes (d/db conn)))
+    (is @(d/transact conn (fixtures/entities+relationships->txes (d/db conn))))
+    (is @(d/transact conn (fixtures/make-txes-additional-account3+server (d/db conn))))
     (binding [*conn* conn]
       (doall (f)))))
 
@@ -49,8 +55,9 @@
 
       (when created?
         (prn 'transacting 'schema)
-        @(d/transact conn schema/v6-schema)
-        @(d/transact conn fixtures/base-fixtures))
+        @(d/transact conn schema/v7-schema)
+        @(d/transact conn fixtures/relations+permissions)
+        @(d/transact conn (fixtures/entities+relationships->txes (d/db conn))))
 
       (->> (lookup-resources (d/db conn)
              {:subject       (->vpc :test/vpc1)
@@ -187,7 +194,7 @@
         (is (not (can? db (->user :test/user2) :view (->backup-schedule :test/backup-schedule1)))))
 
       (testing "Adding :test/user2 as a :viewer of a backup schedule, lets them view related backups:"
-        (let [rx (d/with db [(Relationship (->user :test/user2) :viewer (->backup-schedule :test/backup-schedule1))])]
+        (let [rx (d/with db (Relationship db (->user :test/user2) :viewer (->backup-schedule :test/backup-schedule1)))]
           (is (can? (:db-after rx) (->user :test/user2) :view (->backup-schedule :test/backup-schedule1)))
           (is (can? (:db-after rx) (->user :test/user2) :view (->backup :test/backup1)))))
 
@@ -212,9 +219,9 @@
               :eacl.relationship/relation-name :owner
               :eacl.relationship/resource      {:db/ident :test/account1}
               :eacl.relationship/resource-type :account}
-            (let [rel-eid (impl/find-one-relationship-id db {:subject  (->user :test/user1)
-                                                             :relation :owner
-                                                             :resource (->account :test/account1)})]
+            (let [rel-eid (impl/find-relationship db {:subject  (->user :test/user1)
+                                                      :relation :owner
+                                                      :resource (->account :test/account1)})]
               (d/pull db '[:eacl.relationship/subject-type
                            :eacl.relationship/resource-type
                            {:eacl.relationship/subject [:db/ident]}
@@ -222,13 +229,16 @@
                            {:eacl.relationship/resource [:db/ident]}] rel-eid)))))
 
     (testing "find-one-relationship-by-id throws if you pass missing subject or resource"
-      (is (thrown? Throwable (impl/find-one-relationship-id db {:subject  (->user "missing-user")
-                                                                :relation :owner
-                                                                :resource (->account "account-1")}))))
+      (is (thrown? Throwable (impl/find-relationship db {:subject  (->user "missing-user")
+                                                         :relation :owner
+                                                         :resource (->account "account-1")}))))
 
     (testing "read-relationships filters"
       ;(is (= [] (read-relationships db {})))
       ; need better tests here.
+      ; TODO: read-relationships broken because it tries to read old Relationship attrs, instead of enumerating tuples
+      ; Based on the filters, it will need to query the right indices, most likely :vaet, :avet, :eavt because
+      ; subject & resource types are encoded in the tuple and no longer stored as attrs of Relationships.
       (is (= #{:server} (set (map (comp :type :resource) (read-relationships db {:resource/type :server})))))
       (is (= #{:owner} (set (map :relation (read-relationships db {:resource/relation :owner})))))
       (is (= #{:account} (set (map :relation (read-relationships db {:resource/type     :server
@@ -356,7 +366,7 @@
               (set)))))
 
     (testing "Make user-1 a shared_admin of server-2"
-      (is @(d/transact *conn* [(Relationship (->user :test/user1) :shared_admin (->server :test/server2))]))) ; this shouldn't be working. no schema for it.
+      (is @(d/transact *conn* (Relationship db (->user :test/user1) :shared_admin (->server :test/server2))))) ; this shouldn't be working. no schema for it.
 
     (let [db (d/db *conn*)]
       (testing "As a :shared_admin, :test/user1 can also :server/delete server 2"
@@ -380,8 +390,11 @@
                                         :subject/type :user})
                 (paginated->spice-set db))))))
 
-    (testing "Now let's delete all :server/owner Relationships for :test/user2"
+    (testing "Now let's manually delete all :server/owner Relationships for :test/user2"
+      ; this is broken because we're deleting the wrong thing. should use the API.
       (let [db-for-delete (d/db *conn*)
+            ;rel-datoms (d/datoms db-for-delete
+            ;             :eavt :eacl.v7.relationship/subject-type+relation+resource-type+resource)
             rels          (d/q '[:find [(pull ?rel [* {:eacl/subject [*]}]) ...]
                                  :where
                                  [?rel :eacl.relationship/subject :test/user2]
@@ -389,7 +402,7 @@
                             db-for-delete)]
         (is @(d/transact *conn* (for [rel rels] [:db.fn/retractEntity (:db/id rel)])))))
 
-    (testing "Now only user-1 can :view all 3 servers, including those in account2."
+    (testing "Now only user-1 & super-user can :view all 3 servers, including those in account2."
       (let [db' (d/db *conn*)]
         (is (= [(spice-object :user "user-1")
                 (spice-object :user "super-user")]
@@ -469,12 +482,13 @@
 
     (testing "pagination: limit & offset are handled correctly for arrow permissions"
       (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
-        (is @(d/transact *conn* [{:db/id    "server3"
-                                  :db/ident :test/server3
-                                  :eacl/id  "server-3"}
-                                 (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))
-                                 ; We can use tempids in Relationship because it produces 's in same tx-data.
-                                 (Relationship (->user :user/super-user) :shared_admin (->server "server3"))])))
+        (is @(d/transact *conn* (into [{:db/id    "server3"
+                                        :db/ident :test/server3
+                                        :eacl/id  "server-3"}]
+                                  (concat
+                                    (Relationship db (->user :user/super-user) :shared_admin (->server :test/server1))
+                                    ; We can use tempids in Relationship because it produces 's in same tx-data.
+                                    (Relationship db (->user :user/super-user) :shared_admin (->server "server3")))))))
 
       (let [db' (d/db *conn*)]
         (testing "ensure user1 can only see servers from account1, so excludes server-3"
@@ -737,11 +751,11 @@
                 (is (empty? (paginated-data->spice db' page3-data))))
 
               (testing "lookup-resources returns cursor input when looking beyond any values"
-                (let [page3-empty (lookup-resources db'{:limit         100
-                                                        :cursor        page2-cursor
-                                                        :resource/type :account
-                                                        :permission    :view
-                                                        :subject       (->user super-user-eid)})]
+                (let [page3-empty (lookup-resources db' {:limit         100
+                                                         :cursor        page2-cursor
+                                                         :resource/type :account
+                                                         :permission    :view
+                                                         :subject       (->user super-user-eid)})]
                   (is (empty? (:data page3-empty)))
                   (is (= page2-cursor (:cursor page3-empty)))))
 
@@ -789,7 +803,14 @@
                       (testing "count-resources should respect limit & cursors"
                         (is (:resource page1-cursor))
                         (is (:resource page2-cursor))
+
                         (is (not= page1-cursor page2-cursor))
+
+                        (is (= :server (get-in page1-cursor [:resource :type])))
+                        (is (= :server (get-in page2-cursor [:resource :type])))
+
+                        (prn 'page1-cursor page1-cursor)
+                        (prn 'page2-cursor page2-cursor)
 
                         (is (= 2 (:count (count-resources db'
                                            {:resource/type :server
@@ -825,7 +846,7 @@
       (is (= {:eacl.relation/subject-type  :account
               :eacl.relation/resource-type :server
               :eacl.relation/relation-name :account}
-            (impl.indexed/find-relation-def db :server :account))))
+            (dissoc (impl.indexed/find-relation-def db :server :account) :db/id))))
 
     (testing "find-permission-defs"
       (is (pos? (count (impl.indexed/find-permission-defs db :server :view))))
@@ -833,10 +854,13 @@
 
 (deftest get-permission-paths-tests
   (let [db (d/db *conn*)]
+    ; we need better tests here.
     (testing "Direct permission paths"
       (let [paths (impl.indexed/get-permission-paths db :account :view)]
         ;; :account :view has both direct (owner) and arrow (platform->platform_admin) paths
         (is (= 2 (count paths)))
+        (prn 'paths paths)
+        ; TODO: add tests for :relation/id & permission/id (?).
         (is (some #(and (= (:type %) :relation)
                      (= (:name %) :owner)
                      (= (:subject-type %) :user))
@@ -865,6 +889,7 @@
 
     (testing "Arrow permission to permission"
       (let [paths (impl.indexed/get-permission-paths db :vpc :admin)]
+        (prn :vpc->admin 'paths paths)
         ;; Should have arrow to account->admin
         (is (some #(and (= (:type %) :arrow)
                      (= (:via %) :account)
@@ -974,7 +999,7 @@
   (let [db (d/db *conn*)]
     (testing "Merge handles duplicate resources from multiple paths"
       ;; Add a direct relation that overlaps with arrow permission
-      @(d/transact *conn* [(Relationship (->user :test/user1) :shared_admin (->server :test/server1))])
+      @(d/transact *conn* (Relationship db (->user :test/user1) :shared_admin (->server :test/server1)))
       (let [db'       (d/db *conn*)
             user1-eid (d/entid db' :test/user1)
             result    (impl.indexed/lookup-resources db' {:subject       (->user user1-eid)
@@ -1063,7 +1088,7 @@
 
     ;; 3. Create a relationship connecting a specific account and server.
     @(d/transact *conn*
-       [(Relationship (->server :test/server1) :primary-server (->account :test/account1))])
+       (Relationship (d/db *conn*) (->server :test/server1) :server-cycle (->account :test/account1)))
 
     (let [db' (d/db *conn*)]
       ;; This call will trigger the infinite recursion in get-permission-paths

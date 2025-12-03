@@ -19,7 +19,7 @@
 ;
 
 (deftest eacl-schema-stable-ident-tests
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "we can transact Realtions & Permissions twice without datom conflicts after introduction of :eacl/id for Relation & Permission."
       (is @(d/transact conn fixtures/relations+permissions))
       (is @(d/transact conn fixtures/relations+permissions))
@@ -49,7 +49,8 @@
 >>>>>>> Stashed changes
 
 (deftest eacl-datomic-schema-tests
-  (with-mem-conn [conn schema/v6-schema]
-    @(d/transact conn fixtures/base-fixtures)
-    (prn (schema/write-schema! conn fixtures/base-fixtures))))
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn fixtures/relations+permissions)
+    @(d/transact conn (fixtures/entities+relationships->txes (d/db conn)))
+    (prn (schema/write-schema! conn fixtures/relations+permissions))))
 
