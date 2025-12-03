@@ -356,22 +356,24 @@ Now let's create a Relationship between a `user` subject and an `account` resour
 
 ### Permission Checks 
 
-Now that we have created a Relationship between a user and an account, we can call `eacl/can?` to check if a given user has the `:update` permission on the ACME account, e.g. "can Alice :update the ACME account?"
+Now that we have created a Relationship between a user and an account, we call `eacl/can?` to check if a user has the `:update` permission on the ACME account, e.g. "can Alice `:update` the ACME account?"
 ```clojure
 (eacl/can? acl (->user "alice") :update (->account "acme"))
 => true
-Yes, she can, because Alice is the `:owner` of the account and the :update permission is granted to all :owner users.
 ```
-But can Bob `:update` the ACME account?
+
+Indeed, she can. Why? Because Alice is an `:owner` of the ACME account and the `:update` permission is granted to all users who are `:owner(s)`.
+
+Can Bob `:update` the ACME account?
 ```clojure
 (eacl/can? acl (->user "bob") :update (->account "acme"))
 => false
 ```
-No, he cannot, because he is not an `:owner` of the ACME account.
+No, he cannot, because Bob is not an `:owner` of the ACME account.
 
 ### Arrow Permissions
 
-Arrow permissions require a graph hop. Arrows are designated by `->`. Let's look at arrow permissions in the SpiceDB schema DSL:
+Arrow permissions impply a graph hop. Arrows are designated by `->`. Let's look at arrow permissions in the SpiceDB schema DSL:
 ```
 definition user {}
 
@@ -389,12 +391,10 @@ definition product {
 }
 ```
 
-Here, `permission edit = account->admin` states that subjects are granted the `edit` permission if, and only if they have the `admin` permission on the related account (for that product), and only account owners have the `admin` permission on the related account.
-
-So given that,
+Here, `permission edit = account->admin` states that subjects are granted the `edit` permission _if, and only if_ they have the `admin` permission on the related account for that product. Only account owners have the `admin` permission on the related account. So given that,
  1. `(->user "alice")` is the `:owner` of `(->account "acme")`, and
  2. `(->account "acme")` is the `:account` for `(->product "SKU-123")`,
- 3. EACL can traverse the permission graph from user -> account -> product to derive that Alice may indeed `edit` product `SKU-123`.
+ 3. EACL can traverse the permission graph from user -> account -> product to derive that Alice has the `:edit` permission on product `SKU-123`.
 
 Here is the equivalent schema in the current EACL syntax:
 ```clojure
