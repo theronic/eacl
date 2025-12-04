@@ -19,7 +19,7 @@ Yes.
   - `eacl/lookup-resources` to enumerate resources a given subject can access,
   - `eacl/lookup-subjects` to enumerate subjects that can access a given resource.
   - `eacl/write-relationships!` to create, update or delete relationships.
-- EACL implements efficient cursor-based permission graph traversal for enumeration via `lookup-resources` & `lookup-subjects`. Resources are returned in an order that matches Datomic eid.
+- EACL implements efficient cursor-based permission graph traversal for enumeration via `lookup-resources` & `lookup-subjects`. All results are returned in the order they are stored in at-rest (internal Datomic eids).
 - EACL has some limitations compared to SpiceDB: notably, EACL only support Union (`+`, i.e. OR-logic) permission logic. Negation can be emulated with multiple permission checks.
 - EACL is fast. Depending on the graph complexity of your permission schema, EACL should be good for at least 1M permissioned resources. There are low-hanging fruit to 10x performance even further, specifically via permission path caching and more sophisticated cursors.
 
