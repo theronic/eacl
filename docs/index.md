@@ -1,8 +1,10 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-[EACL](https://github.com/theronic/eacl) is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is open-source and used at [CloudAfrica](https://cloudafrica.net/).
+[EACL](https://github.com/theronic/eacl) is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
 
 _Situated_ here means that your permission data lives in Datomic with your permissioned entities.
+
+EACL is [open-source](https://github.com/theronic/eacl) and is used at [CloudAfrica](https://cloudafrica.net/).
 
 ## Is it any good?
 
@@ -25,10 +27,11 @@ Yes.
 
 I spent the better half of 2024 integrating [SpiceDB](https://authzed.com/spicedb) at [CloudAfrica](https://cloudafrica.net/).
 
-- It is non-trivial to continually keep permission data synced to an external authorization system, especially if there is an impedance mismatch between your data model and the SpiceDB model.
-- SpiceDB write operations return _ZedToken_ strings e.g. `WriteRelationships`, which you need to store on entities in your database to fully leverage the [SpiceDB cache](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) via `at_least_as_fresh` and `at_exact_snapshot` consistency semantics. If you need to hit the DB anyway, you might as well situate your permission data in Datomic and avoid an external network hop as well as complex diffing & syncing operations – this is the promise of EACL.
+- Keeping permission data synced to an external authorization system is non-trivial, especially if there is an impedance mismatch between your data model and SpiceDB's permission schema (3-tuple Relationships).
+- SpiceDB write operations return _ZedToken_ strings e.g. `WriteRelationships`, which you need to store on entities in your database to fully leverage the [SpiceDB cache](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) via `at_least_as_fresh` and `at_exact_snapshot` consistency semantics.
+- If you need to hit the DB (or cache) anyway to query Spice, you might as well situate your permission data in Datomic and avoid an external network hop as well as complex diffing & syncing operations – this is the promise of EACL.
 
-High load can be mitigated by scaling Datomic Peers horizontally and even EACL API to external consumers.
+Worried about load? You can horizontally scale Datomic Peers dedicated to authorization and even expose the EACL API to external consumers.
 
 # What is EACL good for?
 
