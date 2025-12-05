@@ -5,6 +5,7 @@
 
 ; These are helpers specific to CA (todo move out):
 (def ->user (partial spice-object :user))
+(def ->group (partial spice-object :group)) ; new: to test multi-type support on Permission.
 (def ->team (partial spice-object :team))
 (def ->server (partial spice-object :server))
 (def ->platform (partial spice-object :platform))
@@ -77,10 +78,11 @@
 
    ; Accounts:
    (Relation :account :owner :user)                         ; Account has an owner (a user)
+   (Relation :account :owner :group)                        ; to demonstrate multiple subject types permission.
    (Relation :account :platform :platform)
 
    ; definition account { permission admin = owner + platform->super_admin }
-   (Permission :account :admin {:relation :owner})          ; Owner of account gets admin on account
+   (Permission :account :admin {:relation :owner})          ; Owner of account gets admin on account (can be :user or :group)
    (Permission :account :admin {:arrow :platform :relation :super_admin})
 
    ; definition account { permission view = owner + platform->super_admin }
@@ -215,6 +217,11 @@
     :db/ident :test/user2
     :eacl/id  "user-2"}
 
+   ; Group 1 (to test multiple subject types for account :owner relation):
+   {:db/id    "group-1"
+    :db/ident :test/group1
+    :eacl/id  "group-1"}
+
    ; Super User can do all the things:
    {:db/id    "super-user"
     :db/ident :user/super-user
@@ -307,6 +314,8 @@
    (Relationship (->user "super-user") :super_admin (->platform "platform"))
 
    (Relationship (->user "user-2") :owner (->account "account-2"))
+
+   (Relationship (->group "group-1") :owner (->account "account-1")) ; new.
 
    (Relationship (->platform "platform") :platform (->account "account-1"))
    (Relationship (->platform "platform") :platform (->account "account-2"))
