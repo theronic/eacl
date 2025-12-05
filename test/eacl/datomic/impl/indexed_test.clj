@@ -1071,3 +1071,34 @@
               {:subject       (->user :test/user1)
                :permission    :view
                :resource/type :server}))))))
+
+(deftest permission-paths-caching-test
+  (let [db (d/db *conn*)]
+    (testing "Caching of permission paths"
+      (impl.indexed/evict-permission-paths-cache!)
+
+      (let [calc-calls (atom 0)
+            orig-calc  impl.indexed/calc-permission-paths]
+        (with-redefs [impl.indexed/calc-permission-paths (fn [& args]
+                                                           (swap! calc-calls inc)
+                                                           (apply orig-calc args))]
+          ;; First call - should compute
+          (let [paths1 (impl.indexed/get-permission-paths db :account :view)]
+            (is (pos? (count paths1)))
+            (is (pos? @calc-calls) "Should have called calc-permission-paths")
+
+            (reset! calc-calls 0)
+
+            ;; Second call - should be cached
+            (let [paths2 (impl.indexed/get-permission-paths db :account :view)]
+              (is (pos? (count paths2)))
+              (is (= paths1 paths2))
+              (is (zero? @calc-calls) "Should use cache, not call calc-permission-paths")
+
+              ;; Evict cache
+              (impl.indexed/evict-permission-paths-cache!)
+
+              ;; Third call - should recompute
+              (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
+                (is (pos? (count paths3)))
+                (is (pos? @calc-calls) "Should call calc-permission-paths after eviction")))))))))

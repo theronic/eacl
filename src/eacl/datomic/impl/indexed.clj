@@ -3,7 +3,8 @@
   (:require [datomic.api :as d]
             [eacl.lazy-merge-sort :as lazy-sort :refer [lazy-merge-dedupe-sort lazy-merge-dedupe-sort-by]]
             [eacl.core :refer [spice-object]]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log]
+            [clojure.core.cache :as cache]))
 
 (defn extract-resource-id-from-rel-tuple-datom [{:as _datom, v :v}]
   (let [[_subject-type _subject-eid _relation-name _resource-type resource-eid] v]
@@ -83,14 +84,20 @@
            :relation-name target-relation-name})
         []))))
 
-(defn get-permission-paths
+(def permission-paths-cache
+  (atom (cache/lru-cache-factory {} :threshold 1000)))
+
+(defn evict-permission-paths-cache! []
+  (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000)))
+
+(defn calc-permission-paths
   "Recursively builds paths granting permission-name on resource-type.
   Returns vector of path maps, where each path is:
   {:type :relation, :name keyword, :subject-type keyword, :relation-eid long} for direct path, or
   {:type :arrow, :via keyword, :target-type keyword, :sub-paths [paths], :via-relation-eid long} for arrows.
   Compatible with v6 (uses :subject-type kw) and v7 (uses :relation-eid)."
   ([db resource-type permission-name]
-   (get-permission-paths db resource-type permission-name #{}))
+   (calc-permission-paths db resource-type permission-name #{}))
   ([db resource-type permission-name visited-perms]
    (let [perm-defs       (find-permission-defs db resource-type permission-name)
          perm-eids       (map :db/id perm-defs)
@@ -122,7 +129,7 @@
                                          via-relation-eid  (:e datom)
                                          sub-paths         (case target-type
                                                              ;; Recursive permission call with cycle detection
-                                                             :permission (get-permission-paths db intermediate-type target-name updated-visited)
+                                                             :permission (calc-permission-paths db intermediate-type target-name updated-visited)
                                                              ;; Direct relation - build the path with proper type resolution
                                                              :relation (let [target-datoms (relation-datoms db intermediate-type target-name)]
                                                                          (if (seq target-datoms)
@@ -153,6 +160,21 @@
                               :via-relation-name source-relation-name})
                            [])))))))
        (vec)))))
+
+(defn get-permission-paths
+  "Recursively builds paths granting permission-name on resource-type.
+  Returns vector of path maps.
+  Cached."
+  [db resource-type permission-name]
+  (let [cache @permission-paths-cache
+        k     [resource-type permission-name]]
+    (if (cache/has? cache k)
+      (do
+        (swap! permission-paths-cache cache/hit k)
+        (cache/lookup cache k))
+      (let [res (calc-permission-paths db resource-type permission-name)]
+        (swap! permission-paths-cache cache/miss k res)
+        res))))
 
 (defn traverse-single-path
   "Recursively traverses a single path from a subject to find matching resources.
