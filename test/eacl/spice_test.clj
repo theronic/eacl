@@ -321,6 +321,23 @@
           (is (= (:id (last (:data page2)))
                  (get-in page2-cursor [:resource :id]))))))
 
+    (testing "count-resources returns cursor with correct type and coerced ID (issue #47)"
+      (let [{:keys [count cursor]} (eacl/count-resources *client
+                                                          {:subject       (->user "super-user")
+                                                           :permission    :view
+                                                           :resource/type :server
+                                                           :limit         2})]
+        (testing "count-resources returns a count"
+          (is (pos? count)))
+
+        (testing "cursor resource type should be a keyword, not clojure.core/type function"
+          (is (keyword? (get-in cursor [:resource :type]))
+              "Bug #47: cursor :type was clojure.core/type function instead of resource type keyword"))
+
+        (testing "cursor resource id should be coerced to external format (string), not internal eid (long)"
+          (is (string? (get-in cursor [:resource :id]))
+              "Bug #47: cursor :id was not coerced to external format"))))
+
     (testing "spice-read-relationships results are constrained by filters for resource type & ID"
       (testing "transact the test entities we are about to use"
         @(d/transact conn (for [object [(->account "test-account")
