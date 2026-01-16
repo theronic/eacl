@@ -683,12 +683,13 @@
   Pass :limit -1 for all results."
   [db {:as   query
        :keys [limit cursor]
+       resource-type :resource/type
        :or   {limit -1}}]
   (let [merged-results  (lazy-merged-lookup-resources db query)
         limited-results (if (>= limit 0)
                           (take limit merged-results)
                           merged-results)
-        resources       (map #(spice-object type %) limited-results)
+        resources       (map #(spice-object resource-type %) limited-results)
         last-resource   (last resources)
         next-cursor     {:resource (or last-resource (:resource cursor))}]
     {:count  (count limited-results)
