@@ -158,7 +158,8 @@
   [db
    {:as   opts
     :keys [spice-object->internal
-           spice-cursor->internal]}
+           spice-cursor->internal
+           internal-cursor->spice]}
    {:as query :keys [subject]}]
   (let [subject-ent (spice-object->internal db subject)]
     (assert (:id subject-ent) (str "subject passed to count-resources does not exist: " (pr-str subject)))
@@ -166,7 +167,8 @@
     (->> query
          (S/setval [:subject] subject-ent)
          (S/transform [:cursor] #(spice-cursor->internal db opts %))
-         (impl/count-resources db))))
+         (impl/count-resources db)
+         (S/transform [:cursor] #(internal-cursor->spice db opts %)))))
 
 (defn spiceomic-lookup-subjects
   [db
