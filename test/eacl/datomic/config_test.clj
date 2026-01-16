@@ -44,9 +44,9 @@
                                                                 :permission    :view
                                                                 :resource/type :server})))))
 
-          (is (= 2 (eacl/count-resources client {:subject       (->user :test/user1)
-                                                 :permission    :view
-                                                 :resource/type :server})))
+          (is (= 2 (:count (eacl/count-resources client {:subject       (->user :test/user1)
+                                                                :permission    :view
+                                                                :resource/type :server}))))
 
           (is (= 2 (count (:data (eacl/lookup-subjects client {:resource     (->server :test/server1)
                                                                :permission   :view
