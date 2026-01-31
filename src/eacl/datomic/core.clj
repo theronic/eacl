@@ -32,7 +32,7 @@
    {:as cursor :keys [_path-index _resource]}]
   (when (and cursor (:resource cursor))                     ; Fix: only transform when cursor has a valid resource
     (->> cursor
-         (S/transform [:resource :id] #(entid->object-id db %)))))
+      (S/transform [:resource :id] #(entid->object-id db %)))))
 
 (defn default-spice-cursor->internal
   [db
@@ -40,7 +40,7 @@
    {:as cursor :keys [_path-index _resource]}]
   (when cursor
     (->> cursor
-         (S/transform [:resource :id] #(object-id->entid db %)))))
+      (S/transform [:resource :id] #(object-id->entid db %)))))
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -77,7 +77,7 @@
                        subject-oid (assoc :subject/id subject-eid)
                        resource-oid (assoc :resource/id resource-eid))]
     (->> (impl/read-relationships db filters')
-         (map #(relationship->spice db opts %)))))
+      (map #(relationship->spice db opts %)))))
 
 (defn spice-relationship->internal
   [db
@@ -91,9 +91,9 @@
   [conn opts updates]
   (let [db      (d/db conn)                                 ; just to look up matching relationship. could be done in bulk.
         tx-data (->> updates
-                     (S/transform [S/ALL :relationship] #(spice-relationship->internal db opts %))
-                     (map #(impl/tx-update-relationship db %))
-                     (remove nil?))]                        ; :delete operation can be nil.
+                  (S/transform [S/ALL :relationship] #(spice-relationship->internal db opts %))
+                  (map #(impl/tx-update-relationship db %))
+                  (remove nil?))]                           ; :delete operation can be nil.
     ;(log/debug 'tx-data tx-data)
     (let [{:as   _tx-report
            :keys [db-after]} @(d/transact conn tx-data)
@@ -118,9 +118,9 @@
     (if-not (and subject-eid resource-eid)
       false                                                 ; should we throw on missing IDs?
       (impl/can? db
-                 (spice-object subject-type subject-eid)
-                 permission
-                 (spice-object resource-type resource-eid)))))
+        (spice-object subject-type subject-eid)
+        permission
+        (spice-object resource-type resource-eid)))))
 
 (defn spiceomic-lookup-resources
   [db
@@ -141,16 +141,16 @@
     (assert (:id internal-subject) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
     ;(assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
     (let [rx (->> query
-                  (S/setval [:subject] internal-subject)    ; do we need to coerce this subject?
-                  (S/transform [:cursor] (fn [external-cursor] (spice-cursor->internal db opts external-cursor)))
-                  (impl/lookup-resources db)
-                  (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
-                                               (spice-object type (entid->object-id db id))))
-                  (S/transform [:cursor] (fn [internal-cursor]
-                                           ;(prn 'coercing-internal-cursor internal-cursor)
-                                           (let [x (internal-cursor->spice db opts internal-cursor)]
-                                             ;(prn 'coerced-to x)
-                                             x))))]         ;; TODO FIX!
+               (S/setval [:subject] internal-subject)       ; do we need to coerce this subject?
+               (S/transform [:cursor] (fn [external-cursor] (spice-cursor->internal db opts external-cursor)))
+               (impl/lookup-resources db)
+               (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
+                                            (spice-object type (entid->object-id db id))))
+               (S/transform [:cursor] (fn [internal-cursor]
+                                        ;(prn 'coercing-internal-cursor internal-cursor)
+                                        (let [x (internal-cursor->spice db opts internal-cursor)]
+                                          ;(prn 'coerced-to x)
+                                          x))))]            ;; TODO FIX!
       ;(log/debug 'rx rx)
       rx)))
 
@@ -165,10 +165,10 @@
     (assert (:id subject-ent) (str "subject passed to count-resources does not exist: " (pr-str subject)))
     (assert (= (:type subject-ent) (:type subject)) (str "count-resources: subject type passed does not match entity: " (pr-str subject)))
     (->> query
-         (S/setval [:subject] subject-ent)
-         (S/transform [:cursor] #(spice-cursor->internal db opts %))
-         (impl/count-resources db)
-         (S/transform [:cursor] #(internal-cursor->spice db opts %)))))
+      (S/setval [:subject] subject-ent)
+      (S/transform [:cursor] #(spice-cursor->internal db opts %))
+      (impl/count-resources db)
+      (S/transform [:cursor] #(internal-cursor->spice db opts %)))))
 
 (defn spiceomic-lookup-subjects
   [db
@@ -177,11 +177,11 @@
            spice-object->internal]}
    query]
   (->> query
-       (S/transform [:resource] #(spice-object->internal db %))
-       ; todo cursor coercion.
-       (impl/lookup-subjects db)
-       (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
-                                    (spice-object type (entid->object-id db id))))))
+    (S/transform [:resource] #(spice-object->internal db %))
+    ; todo cursor coercion.
+    (impl/lookup-subjects db)
+    (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
+                                 (spice-object type (entid->object-id db id))))))
 
 (defrecord Spiceomic [conn opts]
   ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.
@@ -198,9 +198,8 @@
     (spiceomic-can? (d/db conn) opts subject permission resource consistency))
 
   (read-schema [this]
-    (let [db (d/db conn)
-          ent (d/entity db [:eacl/id "schema-string"])]
-      (:eacl/schema-string ent)))
+    ;; ADR 012: "eacl/read-schema should return a rich map of schema definitions"
+    (schema/read-schema (d/db conn)))
 
   (write-schema! [this schema-string]
     (schema/write-schema! conn schema-string))
@@ -213,8 +212,8 @@
 
   (create-relationships! [this relationships]
     (spiceomic-write-relationships! conn opts
-                                    (for [rel relationships]
-                                      (->RelationshipUpdate :create rel))))
+      (for [rel relationships]
+        (->RelationshipUpdate :create rel))))
 
   (create-relationship! [this relationship]
     (spiceomic-write-relationships! conn opts [(->RelationshipUpdate :create relationship)]))
@@ -225,8 +224,8 @@
   (delete-relationships! [this relationships]
     ; note: delete costs N to look up matching rel with ID.
     (spiceomic-write-relationships! conn opts
-                                    (for [rel relationships]
-                                      (->RelationshipUpdate :delete rel))))
+      (for [rel relationships]
+        (->RelationshipUpdate :delete rel))))
 
   (lookup-resources [this query]
     (spiceomic-lookup-resources (d/db conn) opts query))
@@ -305,5 +304,5 @@
 (comment
   (require '[eacl.datomic.datomic-helpers :refer [with-mem-conn]])
   (with-mem-conn [conn []]
-                 (let [client (make-client conn {:entity->object-id (fn [ent] (:db/id ent))
-                                                 :object-id->ident  (fn [obj-id] obj-id)})])))
+    (let [client (make-client conn {:entity->object-id (fn [ent] (:db/id ent))
+                                    :object-id->ident  (fn [obj-id] obj-id)})])))
