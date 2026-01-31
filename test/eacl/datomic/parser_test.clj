@@ -82,7 +82,7 @@
 
       (testing "we can coerce definitions to EACL schema maps"
         (let [eacl-schema (parser/->eacl-schema parse-tree)
-              relations (:relations eacl-schema)
+              relations   (:relations eacl-schema)
               permissions (:permissions eacl-schema)]
           (is (= 3 (count relations)))
           (is (some #(= (impl/Relation :platform :super_admin :user) %) relations))
@@ -90,7 +90,7 @@
           (is (some #(= (impl/Relation :account :owner :user) %) relations))
 
           (is (= 5 (count permissions)))
-           ;; Check a few permissions
+          ;; Check a few permissions
           (is (some #(= (impl/Permission :account :admin {:relation :owner}) %) permissions))
           (is (some #(= (impl/Permission :account :admin {:arrow :platform :relation :super_admin}) %) permissions))
           (is (some #(= (impl/Permission :account :view {:relation :owner}) %) permissions))
@@ -109,7 +109,7 @@
                   }"]
       ;; Grammar now parses it, but validation rejects it
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported operator: Exclusion"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "intersection operator (&) is rejected during validation"
     (let [schema "definition a {
@@ -118,7 +118,7 @@
                     permission p = b & c
                   }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported operator: Intersection"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "multi-level arrow is rejected during validation"
     ;; Grammar now parses multi-arrows, but validation rejects them
@@ -126,34 +126,34 @@
                   definition b { relation c: c }
                   definition c { permission p = b->c->x }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Multi-level arrows"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "wildcard relations are rejected during validation"
     (let [schema "definition doc { relation viewer: user:* }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Wildcard relation"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "subject relations are rejected during validation"
     (let [schema "definition doc { relation owner: group#member }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Subject relation"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "caveats are rejected during validation"
     (let [schema "definition doc { relation viewer: user with ip_check }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Caveat"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "nil keyword is rejected during validation"
     (let [schema "definition doc { permission p = nil }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'nil'"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "self keyword is rejected during validation"
     (let [schema "definition user { permission view = self }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'self'"
-                            (parser/->eacl-schema (parser/parse-schema schema))))))
+            (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing ".all() arrow function is rejected during validation"
     (let [schema "definition doc { relation group: group permission view = group.all(member) }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported function: \.all\(\)"
-                            (parser/->eacl-schema (parser/parse-schema schema)))))))
+            (parser/->eacl-schema (parser/parse-schema schema)))))))

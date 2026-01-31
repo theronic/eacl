@@ -37,162 +37,162 @@
 
 (def v6-schema
   [; :eacl/id is now optional.
-   {:db/ident :eacl/id ; todo: figure out how to support :id, :object/id or :spice/id of different types.
-    :db/doc "Unique String ID to match SpiceDB Object IDs."
-    :db/valueType :db.type/string
-    :db/unique :db.unique/identity
+   {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
+    :db/doc         "Unique String ID to match SpiceDB Object IDs."
+    :db/valueType   :db.type/string
+    :db/unique      :db.unique/identity
     :db/cardinality :db.cardinality/one}
 
-   {:db/ident :eacl/schema-string
-    :db/doc "Stores the SpiceDB schema string."
-    :db/valueType :db.type/string
+   {:db/ident       :eacl/schema-string
+    :db/doc         "Stores the SpiceDB schema string."
+    :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one}
 
    ;; Relations
-   {:db/ident :eacl.relation/resource-type
-    :db/doc "EACL Relation: Resource Type"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.relation/resource-type
+    :db/doc         "EACL Relation: Resource Type"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.relation/relation-name
-    :db/doc "EACL Relation Name (keyword)"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.relation/relation-name
+    :db/doc         "EACL Relation Name (keyword)"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.relation/subject-type
-    :db/doc "EACL Relation: Subject Type"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.relation/subject-type
+    :db/doc         "EACL Relation: Subject Type"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
    ; Relation Indices (these are cheap because Relations are sparse)
 
-   {:db/ident :eacl.relation/resource-type+relation-name+subject-type
-    :db/doc "EACL Relation: Unique identity tuple enforce uniqueness of Resource Type + Relation Name + Subject Type"
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relation/resource-type
-                    :eacl.relation/relation-name
-                    :eacl.relation/subject-type]
+   {:db/ident       :eacl.relation/resource-type+relation-name+subject-type
+    :db/doc         "EACL Relation: Unique identity tuple enforce uniqueness of Resource Type + Relation Name + Subject Type"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relation/resource-type
+                     :eacl.relation/relation-name
+                     :eacl.relation/subject-type]
     :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
+    :db/unique      :db.unique/identity}
 
    ;; Unified Permissions Schema
-   {:db/ident :eacl.permission/resource-type
-    :db/doc "EACL Permission: Resource Type"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.permission/resource-type
+    :db/doc         "EACL Permission: Resource Type"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.permission/permission-name
-    :db/doc "EACL Permission: Permission Name"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.permission/permission-name
+    :db/doc         "EACL Permission: Permission Name"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.permission/source-relation-name
-    :db/doc "EACL Permission: Source relation for arrow permissions (optional - not present for direct permissions)"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.permission/source-relation-name
+    :db/doc         "EACL Permission: Source relation for arrow permissions (optional - not present for direct permissions)"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.permission/target-type
-    :db/doc "EACL Permission: Target type (:relation or :permission)"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.permission/target-type
+    :db/doc         "EACL Permission: Target type (:relation or :permission)"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.permission/target-name
-    :db/doc "EACL Permission: Target name (relation name or permission name)"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.permission/target-name
+    :db/doc         "EACL Permission: Target name (relation name or permission name)"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
    ; Permission Indices
-   {:db/ident :eacl.permission/resource-type+permission-name
-    :db/doc "EACL Permission: Index for finding all permissions on a resource type"
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/permission-name]
+   {:db/ident       :eacl.permission/resource-type+permission-name
+    :db/doc         "EACL Permission: Index for finding all permissions on a resource type"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
    ;; Added: Enumeration indices for efficient arrow permission lookup
-   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+permission-name
-    :db/doc "EACL Permission: Index for enumerating permission-type arrows"
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/permission-name]
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+    :db/doc         "EACL Permission: Index for enumerating permission-type arrows"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name
-    :db/doc "EACL Permission: Index for enumerating relation-type arrows"
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/target-name]
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name
+    :db/doc         "EACL Permission: Index for enumerating relation-type arrows"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/target-name]
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
-    :db/doc "EACL Permission: Full unique identity tuple to prevent duplicate permissions."
+   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
+    :db/doc         "EACL Permission: Full unique identity tuple to prevent duplicate permissions."
     ; I suspect the tuple order can be improved for faster permission enumeration.
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/target-name
-                    :eacl.permission/permission-name]
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.permission/resource-type
+                     :eacl.permission/source-relation-name
+                     :eacl.permission/target-type
+                     :eacl.permission/target-name
+                     :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
+    :db/unique      :db.unique/identity}
 
    ;; Relationships [Subject Relation Resource]
-   {:db/ident :eacl.relationship/subject-type
-    :db/doc "EACL Relationship: Subject Type Keyword"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.relationship/subject-type
+    :db/doc         "EACL Relationship: Subject Type Keyword"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.relationship/subject
-    :db/doc "EACL Relationship: Ref to Subject"
-    :db/valueType :db.type/ref
-    :db/cardinality :db.cardinality/one ; This used to be many, but simpler if one.
-    :db/index true}
+   {:db/ident       :eacl.relationship/subject
+    :db/doc         "EACL Relationship: Ref to Subject"
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/one                     ; This used to be many, but simpler if one.
+    :db/index       true}
 
-   {:db/ident :eacl.relationship/relation-name
-    :db/doc "EACL Relationship: Relation Name (keyword)"
-    :db/valueType :db.type/keyword
-    :db/cardinality :db.cardinality/one ; was many
-    :db/index true}
+   {:db/ident       :eacl.relationship/relation-name
+    :db/doc         "EACL Relationship: Relation Name (keyword)"
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one                     ; was many
+    :db/index       true}
 
-   {:db/ident :eacl.relationship/resource-type
-    :db/doc "EACL: Resource Type Keyword"
-    :db/valueType :db.type/keyword
+   {:db/ident       :eacl.relationship/resource-type
+    :db/doc         "EACL: Resource Type Keyword"
+    :db/valueType   :db.type/keyword
     :db/cardinality :db.cardinality/one
-    :db/index true}
+    :db/index       true}
 
-   {:db/ident :eacl.relationship/resource
-    :db/doc "EACL Relationship: Ref to Resource"
-    :db/valueType :db.type/ref
-    :db/cardinality :db.cardinality/one ; was many
-    :db/index true}
+   {:db/ident       :eacl.relationship/resource
+    :db/doc         "EACL Relationship: Ref to Resource"
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/one                     ; was many
+    :db/index       true}
 
    ;; Relationship Indices (expensive)
-   {:db/ident :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-    :db/doc "EACL Relationship: Unique identity tuple for lookup-resources."
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/subject-type
-                    :eacl.relationship/subject
-                    :eacl.relationship/relation-name
-                    :eacl.relationship/resource-type
-                    :eacl.relationship/resource]
+   {:db/ident       :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+    :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relationship/subject-type
+                     :eacl.relationship/subject
+                     :eacl.relationship/relation-name
+                     :eacl.relationship/resource-type
+                     :eacl.relationship/resource]
     :db/cardinality :db.cardinality/one
-    :db/unique :db.unique/identity}
+    :db/unique      :db.unique/identity}
 
    ; This can go away as soon as `can?` uses direct index access. May still be needed, though.
    ;{:db/ident       :eacl.relationship/resource+subject
@@ -204,17 +204,17 @@
    ; :db/index       true}
 
    ;; Reverse tuple index for efficient reverse traversal
-   {:db/ident :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-    :db/doc "Reverse tuple index for efficient reverse traversal in can? and arrow permissions"
-    :db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/resource-type
-                    :eacl.relationship/resource
-                    :eacl.relationship/relation-name
-                    :eacl.relationship/subject-type
-                    :eacl.relationship/subject]
+   {:db/ident       :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+    :db/doc         "Reverse tuple index for efficient reverse traversal in can? and arrow permissions"
+    :db/valueType   :db.type/tuple
+    :db/tupleAttrs  [:eacl.relationship/resource-type
+                     :eacl.relationship/resource
+                     :eacl.relationship/relation-name
+                     :eacl.relationship/subject-type
+                     :eacl.relationship/subject]
     :db/cardinality :db.cardinality/one
-    :db/index true
-    :db/unique :db.unique/identity}])
+    :db/index       true
+    :db/unique      :db.unique/identity}])
 
 (defn count-relationships-using-relation
   "Counts how many Relationships are using the given Relation.
@@ -234,8 +234,8 @@
              [?relationship :eacl.relationship/resource-type ?resource-type]
              [?relationship :eacl.relationship/relation-name ?relation-name]
              [?relationship :eacl.relationship/subject-type ?subject-type]]
-           db resource-type relation-name subject-type)
-      0))
+        db resource-type relation-name subject-type)
+    0))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
@@ -246,7 +246,7 @@
                                  :eacl.relation/relation-name]) ...]
          :where
          [?relation :eacl.relation/relation-name ?relation-name]]
-       db))
+    db))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -259,13 +259,13 @@
                              :eacl.permission/target-name]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
-       db))
+    db))
 
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
-  {:relations (read-relations db)
+  {:relations   (read-relations db)
    :permissions (read-permissions db)})
 
 (defn validate-schema-references
@@ -281,30 +281,30 @@
    ADR 012 requires: 'Invalid schema should be rejected and no changes made.'"
   [{:keys [relations permissions]}]
   (let [;; Build lookups
-        relations-by-type (group-by :eacl.relation/resource-type relations)
+        relations-by-type   (group-by :eacl.relation/resource-type relations)
         permissions-by-type (group-by :eacl.permission/resource-type permissions)
 
         relation-names-by-type
-        (into {} (for [[rt rels] relations-by-type]
-                   [rt (set (map :eacl.relation/relation-name rels))]))
+                            (into {} (for [[rt rels] relations-by-type]
+                                       [rt (set (map :eacl.relation/relation-name rels))]))
 
         permission-names-by-type
-        (into {} (for [[rt perms] permissions-by-type]
-                   [rt (set (map :eacl.permission/permission-name perms))]))
+                            (into {} (for [[rt perms] permissions-by-type]
+                                       [rt (set (map :eacl.permission/permission-name perms))]))
 
         ;; Get subject types for each relation (for arrow target validation)
         relation-subject-types
-        (into {} (for [rel relations]
-                   [[(:eacl.relation/resource-type rel)
-                     (:eacl.relation/relation-name rel)]
-                    (:eacl.relation/subject-type rel)]))
+                            (into {} (for [rel relations]
+                                       [[(:eacl.relation/resource-type rel)
+                                         (:eacl.relation/relation-name rel)]
+                                        (:eacl.relation/subject-type rel)]))
 
-        errors (atom [])]
+        errors              (atom [])]
 
     (doseq [perm permissions]
-      (let [res-type (:eacl.permission/resource-type perm)
-            perm-name (:eacl.permission/permission-name perm)
-            source-rel (:eacl.permission/source-relation-name perm)
+      (let [res-type    (:eacl.permission/resource-type perm)
+            perm-name   (:eacl.permission/permission-name perm)
+            source-rel  (:eacl.permission/source-relation-name perm)
             target-type (:eacl.permission/target-type perm)
             target-name (:eacl.permission/target-name perm)]
 
@@ -314,30 +314,30 @@
             ;; Self -> relation: validate relation exists on this resource type
             (when-not (contains? (get relation-names-by-type res-type) target-name)
               (swap! errors conj
-                     {:type :invalid-self-relation
-                      :permission (str (name res-type) "/" (name perm-name))
-                      :target target-name
-                      :message (str "Permission " (name res-type) "/" (name perm-name)
-                                    " references non-existent relation: " (name target-name))}))
+                {:type       :invalid-self-relation
+                 :permission (str (name res-type) "/" (name perm-name))
+                 :target     target-name
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                             " references non-existent relation: " (name target-name))}))
             ;; Self -> permission: validate permission exists on this resource type
             (when-not (contains? (get permission-names-by-type res-type) target-name)
               (swap! errors conj
-                     {:type :invalid-self-permission
-                      :permission (str (name res-type) "/" (name perm-name))
-                      :target target-name
-                      :message (str "Permission " (name res-type) "/" (name perm-name)
-                                    " references non-existent permission: " (name target-name))})))
+                {:type       :invalid-self-permission
+                 :permission (str (name res-type) "/" (name perm-name))
+                 :target     target-name
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                             " references non-existent permission: " (name target-name))})))
 
           ;; For arrow permissions (source-rel != :self)
           (do
             ;; Validate source relation exists on this resource type
             (when-not (contains? (get relation-names-by-type res-type) source-rel)
               (swap! errors conj
-                     {:type :missing-source-relation
-                      :permission (str (name res-type) "/" (name perm-name))
-                      :relation source-rel
-                      :message (str "Permission " (name res-type) "/" (name perm-name)
-                                    " references non-existent relation: " (name source-rel))}))
+                {:type       :missing-source-relation
+                 :permission (str (name res-type) "/" (name perm-name))
+                 :relation   source-rel
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                             " references non-existent relation: " (name source-rel))}))
 
             ;; If source relation exists, validate target exists on target resource type
             (when (contains? (get relation-names-by-type res-type) source-rel)
@@ -347,30 +347,30 @@
                     ;; Arrow to relation: validate relation exists on target type
                     (when-not (contains? (get relation-names-by-type target-res-type) target-name)
                       (swap! errors conj
-                             {:type :invalid-arrow-target-relation
-                              :permission (str (name res-type) "/" (name perm-name))
-                              :arrow-via source-rel
-                              :target-type target-res-type
-                              :target target-name
-                              :message (str "Permission " (name res-type) "/" (name perm-name)
-                                            " arrow via " (name source-rel) "->" (name target-name)
-                                            " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
+                        {:type        :invalid-arrow-target-relation
+                         :permission  (str (name res-type) "/" (name perm-name))
+                         :arrow-via   source-rel
+                         :target-type target-res-type
+                         :target      target-name
+                         :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                       " arrow via " (name source-rel) "->" (name target-name)
+                                       " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
                     ;; Arrow to permission: validate permission exists on target type
                     (when-not (contains? (get permission-names-by-type target-res-type) target-name)
                       (swap! errors conj
-                             {:type :invalid-arrow-target-permission
-                              :permission (str (name res-type) "/" (name perm-name))
-                              :arrow-via source-rel
-                              :target-type target-res-type
-                              :target target-name
-                              :message (str "Permission " (name res-type) "/" (name perm-name)
-                                            " arrow via " (name source-rel) "->" (name target-name)
-                                            " - permission '" (name target-name) "' does not exist on " (name target-res-type))}))))))))))
+                        {:type        :invalid-arrow-target-permission
+                         :permission  (str (name res-type) "/" (name perm-name))
+                         :arrow-via   source-rel
+                         :target-type target-res-type
+                         :target      target-name
+                         :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                       " arrow via " (name source-rel) "->" (name target-name)
+                                       " - permission '" (name target-name) "' does not exist on " (name target-res-type))}))))))))))
 
     (when (seq @errors)
       (throw (ex-info "Invalid schema: reference validation failed"
-                      {:errors @errors
-                       :error-count (count @errors)})))
+               {:errors      @errors
+                :error-count (count @errors)})))
     nil))
 
 ; now we have to do a diff of relations and permissions
@@ -379,34 +379,34 @@
 ; can we use the existing read-relationships internals for this?
 
 (defn calc-set-deltas [before after]
-  {:additions (clojure.set/difference after before)
-   :unchanged (clojure.set/intersection before after)
+  {:additions   (clojure.set/difference after before)
+   :unchanged   (clojure.set/intersection before after)
    :retractions (clojure.set/difference before after)})
 
 (defn compare-schema
   "Compares before & after schema (without DB IDs) and returns a diff via clojure.set/difference."
-  [{:as before
-    before-relations :relations
+  [{:as                before
+    before-relations   :relations
     before-permissions :permissions}
-   {:as after
-    after-relations :relations
+   {:as               after
+    after-relations   :relations
     after-permissions :permissions}]
   ; how to get a nice left vs. right diff?
   ; when can we ditch the setval :db/id?
-  (let [before-relations-set (->> before-relations
-                               ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
-                                  (set))
-        after-relations-set (->> after-relations
-                               ;(S/setval [S/ALL :db/id] S/NONE)
-                                 (set))
+  (let [before-relations-set   (->> before-relations
+                                 ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
+                                   (set))
+        after-relations-set    (->> after-relations
+                                    ;(S/setval [S/ALL :db/id] S/NONE)
+                                    (set))
 
         before-permissions-set (->> before-permissions
                                  ;(S/setval [S/ALL :db/id] S/NONE)
-                                    (set))
-        after-permissions-set (->> after-permissions
-                                ;(S/setval [S/ALL :db/id] S/NONE)
-                                   (set))]
-    {:relations (calc-set-deltas before-relations-set after-relations-set)
+                                 (set))
+        after-permissions-set  (->> after-permissions
+                                 ;(S/setval [S/ALL :db/id] S/NONE)
+                                  (set))]
+    {:relations   (calc-set-deltas before-relations-set after-relations-set)
      :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
 
 (defn write-schema!
@@ -416,14 +416,14 @@
   
   Throws if schema is invalid (operator validation, reference validation, orphan check)."
   [conn schema-string]
-  (let [new-schema-map (parser/->eacl-schema (parser/parse-schema schema-string))
+  (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
         ;; Validate schema references before proceeding (ADR 012 requirement)
-        _ (validate-schema-references new-schema-map)
-        db (d/db conn)
-        existing-schema (read-schema db)
-        deltas (compare-schema existing-schema new-schema-map)
+        _                      (validate-schema-references new-schema-map)
+        db                     (d/db conn)
+        existing-schema        (read-schema db)
+        deltas                 (compare-schema existing-schema new-schema-map)
         {:keys [relations permissions]} deltas
-        relation-retractions (:retractions relations)
+        relation-retractions   (:retractions relations)
         permission-retractions (:retractions permissions)]
 
     ;; Check for orphaned relationships
@@ -431,21 +431,21 @@
       (let [cnt (count-relationships-using-relation db rel)]
         (when (pos? cnt)
           (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                               " because it is used by " cnt " relationships.")
-                          {:relation rel :count cnt})))))
+                            " because it is used by " cnt " relationships.")
+                   {:relation rel :count cnt})))))
 
     ;; Transact changes
     (let [tx-data (concat
                     ;; Additions
-                   (:additions relations)
-                   (:additions permissions)
-                    ;; Retractions
-                   (for [rel relation-retractions]
-                     [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
-                   (for [perm permission-retractions]
-                     [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
-                    ;; Store schema string
-                   [{:eacl/id "schema-string"
-                     :eacl/schema-string schema-string}])]
+                    (:additions relations)
+                    (:additions permissions)
+                     ;; Retractions
+                    (for [rel relation-retractions]
+                      [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
+                    (for [perm permission-retractions]
+                      [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
+                     ;; Store schema string
+                    [{:eacl/id            "schema-string"
+                      :eacl/schema-string schema-string}])]
       @(d/transact conn tx-data)
       deltas)))

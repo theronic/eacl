@@ -32,30 +32,30 @@
 (deftest eacl-schema-comparison-tests
   (testing "we can calculate additions & retractions"
     ; note we do not care about shape of set elements here.
-    (is (= {:additions #{:added}
-            :unchanged #{:retained}
+    (is (= {:additions   #{:added}
+            :unchanged   #{:retained}
             :retractions #{:deleted}}
-           (schema/calc-set-deltas
-            #{:deleted :retained}
-            #{:retained :added})))
+          (schema/calc-set-deltas
+           #{:deleted :retained}
+           #{:retained :added})))
 
-    (is (= {:relations {:additions #{:added}
-                        :unchanged #{:retained}
-                        :retractions #{:deleted}}
-            :permissions {:additions #{:added}
-                          :unchanged #{:retained}
+    (is (= {:relations   {:additions   #{:added}
+                          :unchanged   #{:retained}
+                          :retractions #{:deleted}}
+            :permissions {:additions   #{:added}
+                          :unchanged   #{:retained}
                           :retractions #{:deleted :also-deleted}}}
-           (schema/compare-schema
-            {:relations [:deleted :retained]
-             :permissions [:deleted :retained :also-deleted]}
-            {:relations [:retained :added]
-             :permissions [:retained :added]})))))
+          (schema/compare-schema
+           {:relations   [:deleted :retained]
+            :permissions [:deleted :retained :also-deleted]}
+           {:relations   [:retained :added]
+            :permissions [:retained :added]})))))
 
 (deftest write-schema-test
   (with-mem-conn [conn schema/v6-schema]
     (testing "Initial schema write"
       (let [deltas (schema/write-schema! conn example-schema-string)
-            db (d/db conn)
+            db     (d/db conn)
             schema (schema/read-schema db)]
         (is (= 3 (count (:relations schema))))
         (is (= 5 (count (:permissions schema))))
@@ -74,15 +74,15 @@
 
     (testing "Update schema (add relation)"
       (let [new-schema (str example-schema-string "\ndefinition new_res { relation new_rel: user }")
-            deltas (schema/write-schema! conn new-schema)
-            db (d/db conn)
-            schema (schema/read-schema db)]
+            deltas     (schema/write-schema! conn new-schema)
+            db         (d/db conn)
+            schema     (schema/read-schema db)]
         (is (= 4 (count (:relations schema))))
         (is (= 1 (count (:additions (:relations deltas)))))))
 
     (testing "Update schema (remove relation - safe)"
       (let [deltas (schema/write-schema! conn example-schema-string) ; revert to original
-            db (d/db conn)
+            db     (d/db conn)
             schema (schema/read-schema db)]
         (is (= 3 (count (:relations schema))))
         (is (= 1 (count (:retractions (:relations deltas)))))))
@@ -90,13 +90,13 @@
     (testing "Update schema (remove relation - unsafe)"
       ;; Create a relationship using a relation
       (let [user-id "user1"
-            acc-id "acc1"]
+            acc-id  "acc1"]
         @(d/transact conn [{:db/id user-id :eacl/id "user1"}
                            {:db/id acc-id :eacl/id "acc1"}
                            (impl/Relationship {:type :user :id user-id} :owner {:type :account :id acc-id})])
 
         ;; Verify relationship exists
-        (let [db (d/db conn)
+        (let [db      (d/db conn)
               rel-eid (d/q '[:find ?r .
                              :where [?r :eacl.relationship/relation-name :owner]] db)]
           (is rel-eid "Relationship should exist")))
@@ -106,7 +106,7 @@
                            definition platform { relation super_admin: user }
                            definition account { relation platform: platform }"] ; removed owner
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Cannot delete relation :owner because it is used by 1 relationships"
-                              (schema/write-schema! conn unsafe-schema)))))))
+              (schema/write-schema! conn unsafe-schema)))))))
 
 (deftest schema-validation-tests
   "Tests for ADR 012 requirement: 'Invalid schema should be rejected and no changes made.'"
@@ -118,7 +118,7 @@
                           permission admin = nonexistent_relation
                         }"]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-                              (schema/write-schema! conn bad-schema))))))
+              (schema/write-schema! conn bad-schema))))))
 
   (testing "arrow permission with invalid target is rejected"
     (with-mem-conn [conn schema/v6-schema]
@@ -129,7 +129,7 @@
                           permission view = account->nonexistent
                         }"]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-                              (schema/write-schema! conn bad-schema))))))
+              (schema/write-schema! conn bad-schema))))))
 
   (testing "self-permission referencing non-existent permission is rejected"
     (with-mem-conn [conn schema/v6-schema]
@@ -138,7 +138,7 @@
                           permission view = fake_permission
                         }"]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-                              (schema/write-schema! conn bad-schema))))))
+              (schema/write-schema! conn bad-schema))))))
 
   (testing "arrow permission with missing source relation is rejected"
     (with-mem-conn [conn schema/v6-schema]
@@ -149,7 +149,7 @@
                         }"]
         ;; Error comes from parser's resolve-component (validates during parse)
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown relation"
-                              (schema/write-schema! conn bad-schema))))))
+              (schema/write-schema! conn bad-schema))))))
 
   (testing "valid schema is accepted"
     (with-mem-conn [conn schema/v6-schema]
@@ -162,7 +162,7 @@
                            permission view = admin
                          }"]
         (is (schema/write-schema! conn good-schema))
-        (let [db (d/db conn)
+        (let [db     (d/db conn)
               schema (schema/read-schema db)]
           (is (= 3 (count (:relations schema))))
           (is (= 3 (count (:permissions schema)))))))))
@@ -172,17 +172,17 @@
    ADR 012 requirement: 'Rewrite the fixtures... to a new test/eacl/fixtures.schema file'"
   (with-mem-conn [conn schema/v6-schema]
     (let [schema-string (slurp "test/eacl/fixtures.schema")
-          _ (schema/write-schema! conn schema-string)
-          db (d/db conn)
-          schema (schema/read-schema db)
-          relations (:relations schema)
-          permissions (:permissions schema)]
+          _             (schema/write-schema! conn schema-string)
+          db            (d/db conn)
+          schema        (schema/read-schema db)
+          relations     (:relations schema)
+          permissions   (:permissions schema)]
 
       (testing "multi-type relations are expanded correctly"
         ;; account/owner should have both user and group subject types
         (let [account-owner-rels (filter #(and (= :account (:eacl.relation/resource-type %))
-                                               (= :owner (:eacl.relation/relation-name %)))
-                                         relations)]
+                                            (= :owner (:eacl.relation/relation-name %)))
+                                   relations)]
           (is (= #{:user :group} (set (map :eacl.relation/subject-type account-owner-rels))))))
 
       (testing "platform/super_admin relation exists"
@@ -197,31 +197,31 @@
       (testing "account/admin permission has correct definitions"
         ;; permission admin = owner + platform->super_admin
         (let [account-admin-perms (filter #(and (= :account (:eacl.permission/resource-type %))
-                                                (= :admin (:eacl.permission/permission-name %)))
-                                          permissions)]
+                                             (= :admin (:eacl.permission/permission-name %)))
+                                    permissions)]
           (is (= #{(impl/Permission :account :admin {:relation :owner})
                    (impl/Permission :account :admin {:arrow :platform :relation :super_admin})}
-                 (set account-admin-perms)))))
+                (set account-admin-perms)))))
 
       (testing "server/view permission has correct definitions"
         ;; permission view = admin + nic->view + shared_member + backup_creator
         (let [server-view-perms (filter #(and (= :server (:eacl.permission/resource-type %))
-                                              (= :view (:eacl.permission/permission-name %)))
-                                        permissions)]
+                                           (= :view (:eacl.permission/permission-name %)))
+                                  permissions)]
           (is (= #{(impl/Permission :server :view {:permission :admin})
                    (impl/Permission :server :view {:arrow :nic :permission :view})
                    (impl/Permission :server :view {:relation :shared_member})
                    (impl/Permission :server :view {:relation :backup_creator})}
-                 (set server-view-perms)))))
+                (set server-view-perms)))))
 
       (testing "vpc/admin permission has correct definitions"
         ;; permission admin = account->admin + shared_admin
         (let [vpc-admin-perms (filter #(and (= :vpc (:eacl.permission/resource-type %))
-                                            (= :admin (:eacl.permission/permission-name %)))
-                                      permissions)]
+                                         (= :admin (:eacl.permission/permission-name %)))
+                                permissions)]
           (is (= #{(impl/Permission :vpc :admin {:arrow :account :permission :admin})
                    (impl/Permission :vpc :admin {:relation :shared_admin})}
-                 (set vpc-admin-perms)))))
+                (set vpc-admin-perms)))))
 
       (testing "schema string is stored"
         (is (= schema-string (:eacl/schema-string (d/entity db [:eacl/id "schema-string"]))))))))

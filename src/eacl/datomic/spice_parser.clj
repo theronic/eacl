@@ -12,53 +12,53 @@
 ;; EACL-specific restrictions are enforced during validation, not parsing.
 (def spicedb-parser
   (insta/parser
-   "(* Top-level schema *)
-     schema = definition+
+    "(* Top-level schema *)
+      schema = definition+
 
-     (* Definition block *)
-     definition = <'definition'> type-path <'{'> definition-body <'}'>
-     definition-body = (relation | permission)*
+      (* Definition block *)
+      definition = <'definition'> type-path <'{'> definition-body <'}'>
+      definition-body = (relation | permission)*
 
-     (* Type paths support namespacing: docs/document *)
-     type-path = identifier (<'/'> identifier)*
+      (* Type paths support namespacing: docs/document *)
+      type-path = identifier (<'/'> identifier)*
 
-     (* Relations *)
-     relation = <'relation'> relation-name <':'> relation-type-expr
-     relation-name = identifier
-     
-     (* Relation type expression: user | group#member | doc:* with caveat *)
-     relation-type-expr = relation-type-ref (<'|'> relation-type-ref)*
-     relation-type-ref = type-path relation-modifier? caveat-ref?
-     relation-modifier = wildcard | subject-relation
-     wildcard = <':'> <'*'>
-     subject-relation = <'#'> identifier
-     caveat-ref = <'with'> identifier
+      (* Relations *)
+      relation = <'relation'> relation-name <':'> relation-type-expr
+      relation-name = identifier
 
-     (* Permissions *)
-     permission = <'permission'> permission-name <'='> permission-expr
-     <permission-name> = identifier
+      (* Relation type expression: user | group#member | doc:* with caveat *)
+      relation-type-expr = relation-type-ref (<'|'> relation-type-ref)*
+      relation-type-ref = type-path relation-modifier? caveat-ref?
+      relation-modifier = wildcard | subject-relation
+      wildcard = <':'> <'*'>
+      subject-relation = <'#'> identifier
+      caveat-ref = <'with'> identifier
 
-     (* Permission expressions with all operators *)
-     permission-expr = union-expr
-     union-expr = intersect-expr (<'+'> intersect-expr)*
-     intersect-expr = exclusion-expr (<'&'> exclusion-expr)*
-     exclusion-expr = arrow-expr (<'-'> arrow-expr)*
-     
-     (* Arrow expressions: rel->perm or rel.any(perm) or rel.all(perm) *)
-     arrow-expr = arrow-func-expr | simple-arrow-expr
-     simple-arrow-expr = base-expr (<'->'> base-expr)*
-     arrow-func-expr = identifier <'.'> arrow-func-name <'('> identifier <')'>
-     arrow-func-name = 'any' | 'all'
-     
-     (* Base expressions *)
-     base-expr = nil-expr | self-expr | paren-expr | identifier
-     nil-expr = <'nil'>
-     self-expr = <'self'>
-     paren-expr = <'('> permission-expr <')'>
+      (* Permissions *)
+      permission = <'permission'> permission-name <'='> permission-expr
+      <permission-name> = identifier
 
-     (* Identifiers - must not match keywords *)
-     identifier = !('nil' | 'self' | 'definition' | 'relation' | 'permission' | 'with' | 'any' | 'all') #'[a-zA-Z_][a-zA-Z0-9_]*'"
-   :auto-whitespace :standard))
+      (* Permission expressions with all operators *)
+      permission-expr = union-expr
+      union-expr = intersect-expr (<'+'> intersect-expr)*
+      intersect-expr = exclusion-expr (<'&'> exclusion-expr)*
+      exclusion-expr = arrow-expr (<'-'> arrow-expr)*
+
+      (* Arrow expressions: rel->perm or rel.any(perm) or rel.all(perm) *)
+      arrow-expr = arrow-func-expr | simple-arrow-expr
+      simple-arrow-expr = base-expr (<'->'> base-expr)*
+      arrow-func-expr = identifier <'.'> arrow-func-name <'('> identifier <')'>
+      arrow-func-name = 'any' | 'all'
+
+      (* Base expressions *)
+      base-expr = nil-expr | self-expr | paren-expr | identifier
+      nil-expr = <'nil'>
+      self-expr = <'self'>
+      paren-expr = <'('> permission-expr <')'>
+
+      (* Identifiers - must not match keywords *)
+      identifier = !('nil' | 'self' | 'definition' | 'relation' | 'permission' | 'with' | 'any' | 'all') #'[a-zA-Z_][a-zA-Z0-9_]*'"
+    :auto-whitespace :standard))
 
 ;; Example SpiceDB schema
 (def example-schema
@@ -100,23 +100,23 @@
   [node]
   (when (and (vector? node) (= :type-path (first node)))
     (->> (rest node)
-         (map extract-identifier)
-         (clojure.string/join "/"))))
+      (map extract-identifier)
+      (clojure.string/join "/"))))
 
 (defn- extract-relation-type-ref
   "Extracts a relation type reference with optional modifier and caveat.
    Returns {:type 'user', :wildcard? false, :subject-relation nil, :caveat nil}"
   [node]
   (when (and (vector? node) (= :relation-type-ref (first node)))
-    (let [children (rest node)
+    (let [children  (rest node)
           type-path (extract-type-path (first children))
-          modifier (some #(when (and (vector? %) (= :relation-modifier (first %))) %) children)
-          caveat (some #(when (and (vector? %) (= :caveat-ref (first %))) %) children)]
-      {:type type-path
-       :wildcard? (boolean (some #(and (vector? %) (= :wildcard (first %))) (rest modifier)))
+          modifier  (some #(when (and (vector? %) (= :relation-modifier (first %))) %) children)
+          caveat    (some #(when (and (vector? %) (= :caveat-ref (first %))) %) children)]
+      {:type             type-path
+       :wildcard?        (boolean (some #(and (vector? %) (= :wildcard (first %))) (rest modifier)))
        :subject-relation (when-let [sr (some #(when (and (vector? %) (= :subject-relation (first %))) %) (rest modifier))]
                            (extract-identifier (second sr)))
-       :caveat (when caveat (extract-identifier (second caveat)))})))
+       :caveat           (when caveat (extract-identifier (second caveat)))})))
 
 (defn- extract-relation-type-expr
   "Extracts all type refs from a relation-type-expr.
@@ -131,12 +131,12 @@
   [definition-body]
   (if (and (vector? definition-body) (= :definition-body (first definition-body)))
     (->> (rest definition-body)
-         (filter #(and (vector? %) (= :relation (first %))))
-         (map (fn [[_ rel-name-node type-expr-node]]
-                (let [rel-name (extract-identifier (second rel-name-node))
-                      type-refs (extract-relation-type-expr type-expr-node)]
-                  [rel-name type-refs])))
-         (into {}))
+      (filter #(and (vector? %) (= :relation (first %))))
+      (map (fn [[_ rel-name-node type-expr-node]]
+             (let [rel-name  (extract-identifier (second rel-name-node))
+                   type-refs (extract-relation-type-expr type-expr-node)]
+               [rel-name type-refs])))
+      (into {}))
     {}))
 
 (defn extract-permissions
@@ -145,10 +145,10 @@
   [definition-body]
   (if (and (vector? definition-body) (= :definition-body (first definition-body)))
     (->> (rest definition-body)
-         (filter #(and (vector? %) (= :permission (first %))))
-         (map (fn [[_ perm-name-node expr]]
-                {:name (extract-identifier perm-name-node)
-                 :expression expr})))
+      (filter #(and (vector? %) (= :permission (first %))))
+      (map (fn [[_ perm-name-node expr]]
+             {:name       (extract-identifier perm-name-node)
+              :expression expr})))
     []))
 
 (defn extract-definitions
@@ -156,13 +156,13 @@
    Returns map of {type-path {:relations {...}, :permissions [...]}}"
   [parse-tree]
   (->> parse-tree
-       (filter #(and (vector? %) (= :definition (first %))))
-       (map (fn [[_ type-path-node definition-body]]
-              (let [type-path (extract-type-path type-path-node)]
-                [type-path
-                 {:relations (extract-relations definition-body)
-                  :permissions (extract-permissions definition-body)}])))
-       (into {})))
+    (filter #(and (vector? %) (= :definition (first %))))
+    (map (fn [[_ type-path-node definition-body]]
+           (let [type-path (extract-type-path type-path-node)]
+             [type-path
+              {:relations   (extract-relations definition-body)
+               :permissions (extract-permissions definition-body)}])))
+    (into {})))
 
 (defn transform-schema
   "Transform parse tree to intermediate representation."
@@ -173,7 +173,7 @@
 ;; Helper to parse expressions
 (defn parse-permission-expression [expr-str]
   (let [full-schema (str "definition temp { permission test = " expr-str " }")
-        parsed (spicedb-parser full-schema)]
+        parsed      (spicedb-parser full-schema)]
     (if (insta/failure? parsed)
       (do
         (println "Failed to parse expression:" expr-str)
@@ -190,7 +190,7 @@
       :union-expr (let [operands (rest expr)]
                     (if (= 1 (count operands))
                       (transform-expression (first operands))
-                      {:type :union
+                      {:type     :union
                        :operands (map transform-expression operands)}))
       :arrow-expr (let [parts (rest expr)]
                     (if (= 1 (count parts))
@@ -204,7 +204,7 @@
                              operands (filter #(not= :permission-operator (first %)) children)]
                          (if (= 1 (count operands))
                            (transform-expression (first operands))
-                           {:type :union
+                           {:type     :union
                             :operands (map transform-expression operands)}))
       :direct-permission {:type :identifier :name (second expr)}
       :arrow-permission {:type :arrow
@@ -229,7 +229,7 @@
   (let [parsed (parse-schema schema-str)]
     (when-not (insta/failure? parsed)
       (let [definitions (extract-definitions (rest parsed))
-            target-def (first (filter #(= def-name (:name %)) definitions))]
+            target-def  (first (filter #(= def-name (:name %)) definitions))]
         (when target-def
           (println (str "Definition: " def-name))
           (println "Relations:")
@@ -238,7 +238,7 @@
           (println "Permissions:")
           (doseq [perm (:permissions target-def)]
             (println (str "  " (:name perm) " = "
-                          (format-expression (transform-expression (:expression perm))))))
+                       (format-expression (transform-expression (:expression perm))))))
           target-def)))))
 
 ;; Usage examples
@@ -256,8 +256,8 @@
         (let [transformed (transform-schema parsed)]
           (doseq [def (:definitions transformed)]
             (println (str "- " (:name def)
-                          " (" (count (:relations def)) " relations, "
-                          (count (:permissions def)) " permissions)"))))
+                       " (" (count (:relations def)) " relations, "
+                       (count (:permissions def)) " permissions)"))))
 
         (println "\n2. Detailed breakdown:")
         (doseq [def-name ["user" "platform" "account"]]
@@ -301,67 +301,67 @@
   [parse-tree]
   (let [issues (atom [])]
     (clojure.walk/postwalk
-     (fn [node]
-       (when (vector? node)
-         (case (first node)
-           ;; Check for intersection operator
-           :intersect-expr
-           (when (> (count (rest node)) 1)
-             (swap! issues conj
-                    {:type :unsupported-operator
-                     :operator "&"
-                     :message "Unsupported operator: Intersection (&). EACL only supports Union (+) at this time."}))
+      (fn [node]
+        (when (vector? node)
+          (case (first node)
+            ;; Check for intersection operator
+            :intersect-expr
+            (when (> (count (rest node)) 1)
+              (swap! issues conj
+                {:type     :unsupported-operator
+                 :operator "&"
+                 :message  "Unsupported operator: Intersection (&). EACL only supports Union (+) at this time."}))
 
-           ;; Check for exclusion operator  
-           :exclusion-expr
-           (when (> (count (rest node)) 1)
-             (swap! issues conj
-                    {:type :unsupported-operator
-                     :operator "-"
-                     :message "Unsupported operator: Exclusion (-). EACL only supports Union (+) at this time."}))
+            ;; Check for exclusion operator
+            :exclusion-expr
+            (when (> (count (rest node)) 1)
+              (swap! issues conj
+                {:type     :unsupported-operator
+                 :operator "-"
+                 :message  "Unsupported operator: Exclusion (-). EACL only supports Union (+) at this time."}))
 
-           ;; Check for multi-level arrows
-           :simple-arrow-expr
-           (when (> (count (filter #(and (vector? %) (= :base-expr (first %))) (rest node))) 2)
-             (swap! issues conj
-                    {:type :multi-level-arrow
-                     :message "Unsupported feature: Multi-level arrows (e.g., a->b->c). EACL only supports single-level arrows like rel->perm."}))
+            ;; Check for multi-level arrows
+            :simple-arrow-expr
+            (when (> (count (filter #(and (vector? %) (= :base-expr (first %))) (rest node))) 2)
+              (swap! issues conj
+                {:type    :multi-level-arrow
+                 :message "Unsupported feature: Multi-level arrows (e.g., a->b->c). EACL only supports single-level arrows like rel->perm."}))
 
-           ;; Check for .all() function (only .any() is implicitly supported via arrow)
-           :arrow-func-expr
-           (let [func-name-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) (rest node))
-                 func-name (second func-name-node)]
-             (when (= func-name "all")
-               (swap! issues conj
-                      {:type :unsupported-arrow-function
-                       :function "all"
-                       :message "Unsupported function: .all(). EACL only supports .any() (equivalent to -> arrow). Use rel->perm instead."})))
+            ;; Check for .all() function (only .any() is implicitly supported via arrow)
+            :arrow-func-expr
+            (let [func-name-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) (rest node))
+                  func-name      (second func-name-node)]
+              (when (= func-name "all")
+                (swap! issues conj
+                  {:type     :unsupported-arrow-function
+                   :function "all"
+                   :message  "Unsupported function: .all(). EACL only supports .any() (equivalent to -> arrow). Use rel->perm instead."})))
 
-           ;; Check for nil expression
-           :nil-expr
-           (swap! issues conj
-                  {:type :unsupported-keyword
-                   :keyword "nil"
-                   :message "Unsupported keyword: 'nil'. EACL does not support nil permissions."})
+            ;; Check for nil expression
+            :nil-expr
+            (swap! issues conj
+              {:type    :unsupported-keyword
+               :keyword "nil"
+               :message "Unsupported keyword: 'nil'. EACL does not support nil permissions."})
 
-           ;; Check for self expression (might be supportable in future)
-           :self-expr
-           (swap! issues conj
-                  {:type :unsupported-keyword
-                   :keyword "self"
-                   :message "Unsupported keyword: 'self'. EACL does not support self-referencing permissions."})
+            ;; Check for self expression (might be supportable in future)
+            :self-expr
+            (swap! issues conj
+              {:type    :unsupported-keyword
+               :keyword "self"
+               :message "Unsupported keyword: 'self'. EACL does not support self-referencing permissions."})
 
-           ;; Check for type paths with namespaces
-           :type-path
-           (when (> (count (rest node)) 1)
-             (swap! issues conj
-                    {:type :namespaced-type
-                     :message "Unsupported feature: Namespaced type paths (e.g., docs/document). Use simple type names like 'document'."}))
+            ;; Check for type paths with namespaces
+            :type-path
+            (when (> (count (rest node)) 1)
+              (swap! issues conj
+                {:type    :namespaced-type
+                 :message "Unsupported feature: Namespaced type paths (e.g., docs/document). Use simple type names like 'document'."}))
 
-           ;; Default: no issue for other node types
-           nil))
-       node)
-     parse-tree)
+            ;; Default: no issue for other node types
+            nil))
+        node)
+      parse-tree)
     @issues))
 
 (defn- collect-relation-issues
@@ -375,31 +375,31 @@
       ;; Check for wildcards
       (when (:wildcard? type-ref)
         (swap! issues conj
-               {:type :wildcard-relation
-                :resource-type res-type
-                :relation rel-name
-                :message (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
-                              res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
+          {:type          :wildcard-relation
+           :resource-type res-type
+           :relation      rel-name
+           :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
+                            res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
 
       ;; Check for subject relations
       (when (:subject-relation type-ref)
         (swap! issues conj
-               {:type :subject-relation
-                :resource-type res-type
-                :relation rel-name
-                :subject-relation (:subject-relation type-ref)
-                :message (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
-                              "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
+          {:type             :subject-relation
+           :resource-type    res-type
+           :relation         rel-name
+           :subject-relation (:subject-relation type-ref)
+           :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
+                               "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
 
       ;; Check for caveats
       (when (:caveat type-ref)
         (swap! issues conj
-               {:type :caveat
-                :resource-type res-type
-                :relation rel-name
-                :caveat (:caveat type-ref)
-                :message (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
-                              res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
+          {:type          :caveat
+           :resource-type res-type
+           :relation      rel-name
+           :caveat        (:caveat type-ref)
+           :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
+                            res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
     @issues))
 
 (defn validate-eacl-restrictions
@@ -419,18 +419,18 @@
    
    Returns nil if valid, throws ex-info with :issues vector if invalid."
   [parse-tree transformed-schema]
-  (let [parse-issues (collect-parse-tree-issues parse-tree)
+  (let [parse-issues    (collect-parse-tree-issues parse-tree)
         relation-issues (collect-relation-issues (:definitions transformed-schema))
-        all-issues (vec (concat parse-issues relation-issues))]
+        all-issues      (vec (concat parse-issues relation-issues))]
     (when (seq all-issues)
       (let [first-msg (:message (first all-issues))
-            total (count all-issues)
-            summary (if (= 1 total)
-                      first-msg
-                      (str first-msg " (and " (dec total) " more issue(s))"))]
+            total     (count all-issues)
+            summary   (if (= 1 total)
+                        first-msg
+                        (str first-msg " (and " (dec total) " more issue(s))"))]
         (throw (ex-info summary
-                        {:issues all-issues
-                         :issue-count total}))))
+                 {:issues      all-issues
+                  :issue-count total}))))
     nil))
 
 ;; Keep old function for backwards compatibility, but delegate to new validation
@@ -439,13 +439,13 @@
    Kept for backwards compatibility."
   [parse-tree]
   (let [issues (filter #(= :unsupported-operator (:type %))
-                       (collect-parse-tree-issues parse-tree))]
+                 (collect-parse-tree-issues parse-tree))]
     (when (seq issues)
       (throw (ex-info "Unsupported operator in schema"
-                      {:operators (set (map :operator issues))
-                       :message (str "EACL only supports union (+) operators. "
-                                     "Found unsupported operators. "
-                                     "Exclusion (-) and intersection (&) are not supported.")})))))
+               {:operators (set (map :operator issues))
+                :message   (str "EACL only supports union (+) operators. "
+                             "Found unsupported operators. "
+                             "Exclusion (-) and intersection (&) are not supported.")})))))
 
 ;; ============================================================================
 ;; Permission Expression Transformation
@@ -467,8 +467,8 @@
   (cond
     ;; Arrow function expression: rel.any(perm) or rel.all(perm)
     (and (vector? node) (= :arrow-func-expr (first node)))
-    (let [children (rest node)
-          base-id (extract-identifier (first children))
+    (let [children  (rest node)
+          base-id   (extract-identifier (first children))
           func-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) children)
           func-name (second func-node)
           target-id (extract-identifier (last children))]
@@ -478,7 +478,7 @@
     ;; Simple arrow expression: rel->perm or rel->perm->perm2
     (and (vector? node) (= :simple-arrow-expr (first node)))
     (let [base-exprs (filter #(and (vector? %) (= :base-expr (first %))) (rest node))
-          ids (map extract-base-expr-identifier base-exprs)]
+          ids        (map extract-base-expr-identifier base-exprs)]
       (if (= 1 (count ids))
         ;; Single identifier - direct permission/relation reference
         [{:type :identifier :name (first ids)}]
@@ -521,22 +521,22 @@
   "Build lookup tables from transformed schema for arrow resolution."
   [definitions]
   (reduce-kv
-   (fn [acc res-type {:keys [relations permissions]}]
-     (let [;; Get simple type names (first type ref for each relation)
-           relation-names (set (keys relations))
-           ;; Map relation name to target type (first type in list)
-           relation-types (into {}
-                                (for [[rel-name type-refs] relations
-                                      :let [first-ref (first type-refs)]
-                                      :when first-ref]
-                                  [rel-name (:type first-ref)]))]
-       (assoc acc res-type
-              {:relations relation-names
-               :relation-types relation-types
-               :relation-all-types relations
-               :permissions (set (map :name permissions))})))
-   {}
-   definitions))
+    (fn [acc res-type {:keys [relations permissions]}]
+      (let [;; Get simple type names (first type ref for each relation)
+            relation-names (set (keys relations))
+            ;; Map relation name to target type (first type in list)
+            relation-types (into {}
+                             (for [[rel-name type-refs] relations
+                                   :let [first-ref (first type-refs)]
+                                   :when first-ref]
+                               [rel-name (:type first-ref)]))]
+        (assoc acc res-type
+                   {:relations          relation-names
+                    :relation-types     relation-types
+                    :relation-all-types relations
+                    :permissions        (set (map :name permissions))})))
+    {}
+    definitions))
 
 ;; ============================================================================
 ;; Component Resolution
@@ -555,17 +555,17 @@
         {:permission (keyword name)}))
 
     :arrow
-    (let [base-name (-> component :base :name)
+    (let [base-name     (-> component :base :name)
           path-elements (:path component)
-          path (first path-elements)
-          info (get schema-info resource-type)
-          target-type (get-in info [:relation-types base-name])]
+          path          (first path-elements)
+          info          (get schema-info resource-type)
+          target-type   (get-in info [:relation-types base-name])]
       (if-not target-type
         (throw (ex-info (str "Unknown relation for arrow base: " base-name " on " resource-type)
-                        {:component component :resource-type resource-type}))
-        (let [target-info (get schema-info target-type)
+                 {:component component :resource-type resource-type}))
+        (let [target-info        (get schema-info target-type)
               target-is-relation (contains? (:relations target-info) path)]
-          {:arrow (keyword base-name)
+          {:arrow                                        (keyword base-name)
            (if target-is-relation :relation :permission) (keyword path)})))
 
     (throw (ex-info "Unsupported component type" {:component component}))))
@@ -592,28 +592,28 @@
           schema-info (collect-schema-info definitions)]
       {:relations
        (vec
-        ;; Expand multi-type relations into multiple Relation entities
-        (for [[res-type {:keys [relations]}] definitions
-              [rel-name type-refs] relations
-              type-ref type-refs
-              :let [subject-type (:type type-ref)]]
-          (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
+         ;; Expand multi-type relations into multiple Relation entities
+         (for [[res-type {:keys [relations]}] definitions
+               [rel-name type-refs] relations
+               type-ref type-refs
+               :let [subject-type (:type type-ref)]]
+           (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
 
        :permissions
        (vec
-        (apply concat
-               (for [[res-type {:keys [permissions]}] definitions
-                     {:keys [name expression]} permissions]
-                 (let [components (flatten-expression expression)]
-                   (for [comp components
-                         :when comp]
-                     (let [spec (resolve-component comp res-type schema-info)]
-                       (impl/Permission (keyword res-type) (keyword name) spec)))))))})))
+         (apply concat
+           (for [[res-type {:keys [permissions]}] definitions
+                 {:keys [name expression]} permissions]
+             (let [components (flatten-expression expression)]
+               (for [comp components
+                     :when comp]
+                 (let [spec (resolve-component comp res-type schema-info)]
+                   (impl/Permission (keyword res-type) (keyword name) spec)))))))})))
 
 (defn extract-expr [permission-exp]
   (-> permission-exp
-      (get 1)
-      (rest)))
+    (get 1)
+    (rest)))
 
 ;; Run the demo
 (comment
@@ -622,21 +622,21 @@
       (:definitions (transform-schema parse-tree))))
 
   (doall
-   (for [[resource-type spec :as definition] *defs]
-     (do
-       (prn 'definition definition)
-       (let [{:keys [relations permissions]} spec]
-         (concat
-          (for [{:as relation
-                 relation-name :name
-                 subject-type :type} relations]
-            (do
-              (prn 'relation relation)
-              (impl/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))))
-          (for [{:as permission
-                 permission-name :name
-                 expr :expression} permissions]
-            (extract-expr expr)))))))
+    (for [[resource-type spec :as definition] *defs]
+      (do
+        (prn 'definition definition)
+        (let [{:keys [relations permissions]} spec]
+          (concat
+            (for [{:as           relation
+                   relation-name :name
+                   subject-type  :type} relations]
+              (do
+                (prn 'relation relation)
+                (impl/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))))
+            (for [{:as             permission
+                   permission-name :name
+                   expr            :expression} permissions]
+              (extract-expr expr)))))))
 
   (demo)
   (analyze-definition example-schema "account"))
