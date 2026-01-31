@@ -1,7 +1,7 @@
 (ns eacl.datomic.fixtures
   (:require [datomic.api :as d]
             [eacl.core :refer [spice-object]]
-            [eacl.datomic.impl :as eacl :refer (Relation Relationship Permission)]))
+            [eacl.datomic.impl :refer [Relation Relationship Permission]]))
 
 ; These are helpers specific to CA (todo move out):
 (def ->user (partial spice-object :user))
