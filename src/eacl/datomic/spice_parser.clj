@@ -3,14 +3,13 @@
   (:require [instaparse.core :as insta]
             [clojure.pprint]
             [clojure.string]
-            [eacl.datomic.core]
             [eacl.datomic.impl :as impl]))
 
 ;      primary-expr = identifier | <'('> permission-expr <')'>
 ;; Define the SpiceDB grammar with auto-whitespace
 (def spicedb-parser
   (insta/parser
-    "schema = definition+
+   "schema = definition+
 
      definition = <'definition'> identifier <'{'> definition-body <'}'>
      definition-body = (relation | permission)*
@@ -37,7 +36,7 @@
      <direct-or-arrow> = direct-permission | arrow-permission
 
      <identifier> = #'[a-zA-Z_][a-zA-Z0-9_]*'"
-    :auto-whitespace :standard))
+   :auto-whitespace :standard))
 
 ;; Example SpiceDB schema
 (def example-schema
@@ -80,7 +79,7 @@
     (->> (rest definition-body)
          (filter #(and (vector? %) (= :permission (first %))))
          (map (fn [[_ perm-name expr]]
-                {:name       perm-name
+                {:name perm-name
                  :expression expr})))
     []))
 
@@ -90,7 +89,7 @@
        (filter #(and (vector? %) (= :definition (first %))))
        (map (fn [[_ name definition-body]]
               [name
-               {:relations   (extract-relations definition-body)
+               {:relations (extract-relations definition-body)
                 :permissions (extract-permissions definition-body)}]))
        (into {})))
 
@@ -195,7 +194,6 @@
           (analyze-definition example-schema def-name)
           (println)))))
 
-
   (rest (get (parse-permission-expression "owner + platform->super_admin") 1))
 
   ;; Parse individual expressions
@@ -229,13 +227,13 @@
 
 (defn- collect-schema-info [definitions]
   (reduce-kv
-    (fn [acc res-type {:keys [relations permissions]}]
-      (assoc acc res-type
-                 {:relations   (set (keys relations))
-                  :relation-types relations
-                  :permissions (set (map :name permissions))}))
-    {}
-    definitions))
+   (fn [acc res-type {:keys [relations permissions]}]
+     (assoc acc res-type
+            {:relations (set (keys relations))
+             :relation-types relations
+             :permissions (set (map :name permissions))}))
+   {}
+   definitions))
 
 (defn- resolve-component [component resource-type schema-info]
   (case (:type component)
@@ -256,7 +254,7 @@
                         {:component component :resource-type resource-type}))
         (let [target-info (get schema-info (name target-type))
               target-is-relation (contains? (:relations target-info) path)]
-          {:arrow      (keyword base-name)
+          {:arrow (keyword base-name)
            (if target-is-relation :relation :permission) (keyword path)})))
 
     (throw (ex-info "Unsupported component type" {:component component}))))
@@ -267,19 +265,19 @@
         schema-info (collect-schema-info definitions)]
     {:relations
      (vec
-       (for [[res-type {:keys [relations]}] definitions
-             [rel-name subject-type] relations]
-         (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
+      (for [[res-type {:keys [relations]}] definitions
+            [rel-name subject-type] relations]
+        (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
 
      :permissions
      (vec
-       (apply concat
-         (for [[res-type {:keys [permissions]}] definitions
-               {:keys [name expression]} permissions]
-           (let [components (flatten-expression expression)]
-             (for [comp components]
-               (let [spec (resolve-component comp res-type schema-info)]
-                 (impl/Permission (keyword res-type) (keyword name) spec)))))))
+      (apply concat
+             (for [[res-type {:keys [permissions]}] definitions
+                   {:keys [name expression]} permissions]
+               (let [components (flatten-expression expression)]
+                 (for [comp components]
+                   (let [spec (resolve-component comp res-type schema-info)]
+                     (impl/Permission (keyword res-type) (keyword name) spec)))))))
      :schema-string nil})) ; We can populate this later if needed
 
 (defn extract-expr [permission-exp]
@@ -294,21 +292,21 @@
       (:definitions (transform-schema parse-tree))))
 
   (doall
-    (for [[resource-type spec :as definition] *defs]
-      (do
-        (prn 'definition definition)
-        (let [{:keys [relations permissions]} spec]
-          (concat
-            (for [{:as           relation
-                   relation-name :name
-                   subject-type  :type} relations]
-              (do
-                (prn 'relation relation)
-                (impl/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))))
-            (for [{:as             permission
-                   permission-name :name
-                   expr            :expression} permissions]
-              (extract-expr expr)))))))
+   (for [[resource-type spec :as definition] *defs]
+     (do
+       (prn 'definition definition)
+       (let [{:keys [relations permissions]} spec]
+         (concat
+          (for [{:as relation
+                 relation-name :name
+                 subject-type :type} relations]
+            (do
+              (prn 'relation relation)
+              (impl/Relation (keyword resource-type) (keyword relation-name) (keyword subject-type))))
+          (for [{:as permission
+                 permission-name :name
+                 expr :expression} permissions]
+            (extract-expr expr)))))))
 
   (demo)
   (analyze-definition example-schema "account"))
