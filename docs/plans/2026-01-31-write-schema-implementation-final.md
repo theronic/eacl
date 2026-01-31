@@ -1,7 +1,7 @@
 # write-schema! Implementation Plan - Final
 
 **Date**: 2026-01-31
-**Status**: COMPLETED
+**Status**: IMPLEMENTED (with known gaps - see Outstanding Items)
 **Related ADR**: [012-spicedb-schema.md](../adr/012-spicedb-schema.md)
 **Review Document**: [2026-01-31-write-schema-review.md](../reports/2026-01-31-write-schema-review.md)
 **Earlier Plan**: [2026-01-31-spicedb-schema-plan.md](2026-01-31-spicedb-schema-plan.md)
@@ -97,10 +97,10 @@ This document describes the completed implementation of `eacl/write-schema!` add
 
 ```
 Indexed Tests:  16 tests, 209 assertions - PASSED
-Schema Tests:    5 tests,  34 assertions - PASSED
-Parser Tests:    2 tests,  20 assertions - PASSED
+Schema Tests:    5 tests,  35 assertions - PASSED
+Parser Tests:    2 tests,  29 assertions - PASSED
 
-Total: 23 tests, 263 assertions - ALL PASSED
+Total: 23 tests, 273 assertions - ALL PASSED
 ```
 
 ---
@@ -130,6 +130,42 @@ The EACL parser now supports the **full official SpiceDB grammar**. Parsing and 
 | Namespaced types (`docs/document`) | Yes | **No** |
 
 Unsupported features are rejected during validation with clear error messages.
+
+---
+
+## Outstanding Items / Future Work
+
+The following items are **not yet implemented** or may need attention:
+
+### P0 - Critical (Blocking Production Use)
+
+- [ ] **Comment Support**: The grammar does not support SpiceDB comments (`//`, `/* */`, `/** */`). Production schemas often have comments.
+
+### P1 - Important (Should Address)
+
+- [ ] **Expiration Traits**: SpiceDB supports `with expiration` on relations - not parsed or validated.
+- [ ] **Caveat Definitions**: `caveat` blocks are not parsed (only `with caveatname` references are parsed but rejected).
+
+### P2 - Nice to Have (Future Enhancement)
+
+- [ ] **`self` keyword support**: Could be useful for EACL - currently parsed but rejected.
+- [ ] **`.all()` function support**: Requires different semantics than `.any()`/`->`.
+- [ ] **Subject relations**: `group#member` syntax - would require schema changes.
+- [ ] **Wildcards**: `user:*` for public access - significant semantic addition.
+
+### Architecture Notes
+
+The current two-stage approach:
+1. **Parse**: `parse-schema` → full SpiceDB parse tree
+2. **Transform + Validate**: `->eacl-schema` → validates restrictions → EACL records
+
+Could be further separated into:
+1. **Parse**: SpiceDB DSL → SpiceDB AST (parse tree)
+2. **Transform**: SpiceDB AST → EACL-specific intermediate representation  
+3. **Validate**: Check EACL restrictions on intermediate representation
+4. **Convert**: Intermediate representation → Datomic entities
+
+This would make it easier to add SpiceDB features incrementally.
 
 ---
 
