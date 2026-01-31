@@ -16,6 +16,59 @@ The `write-schema!` implementation provides a functional foundation for parsing 
 
 ---
 
+## ADR Compliance Checklist
+
+This section systematically reviews each decision from [ADR 012](../adr/012-spicedb-schema.md).
+
+### Decisions Section
+
+| # | Decision | Status | Notes |
+|---|----------|--------|-------|
+| 1 | "Rewrite the fixtures from fixtures/relations+permissions to a new `test/eacl/fixtures.schema` file using the Spice DSL" | ❌ **NOT DONE** | No `fixtures.schema` file exists. Tests use a minimal 3-definition example instead of the full 17-relation, 50+ permission fixture set. |
+| 2 | "Implement parsing, validation & safe updating of the EACL AuthZ schema" | ⚠️ **PARTIAL** | Parsing: ✅ Done. Validation: ❌ Missing. Safe updating: ✅ Done (orphan check). |
+| 3 | "`eacl/read-schema` should return a rich map of schema definitions" | ❌ **NOT DONE** | `eacl.datomic.core/read-schema` returns the raw schema string, not a map. The `schema/read-schema` function returns the map, but the protocol implementation doesn't use it. |
+| 4 | "Spice schema DSL should be converted to an internal representation that is easy to query & compare" | ✅ **DONE** | `->eacl-schema` converts parse tree to `{:relations [...] :permissions [...]}` |
+| 5 | "Compares the new desired schema to existing schema to identify additions & retractions" | ✅ **DONE** | `compare-schema` correctly identifies additions, unchanged, and retractions |
+| 6 | "Build up a list of operations before calling d/transact" | ✅ **DONE** | `write-schema!` builds `tx-data` before transacting |
+| 7 | "Retracting a Relation should throw if deleting it would orphan any existing relationships" | ✅ **DONE** | `count-relationships-using-relation` is checked before retraction |
+| 8 | "Invalid schema should be rejected and no changes made" | ❌ **NOT DONE** | See breakdown below |
+| 9 | "Rejections due to orphaned relationships should be detailed in the error response" | ⚠️ **PARTIAL** | Error includes relation name and count, but not specific relationship details |
+| 10 | "Schema string should be stored in Datomic under :eacl/id 'schema-string'" | ✅ **DONE** | Stored correctly on successful write |
+
+### Decision 8 Breakdown - Invalid Schema Rejection
+
+The ADR lists specific validation requirements. Status of each:
+
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| "can't define permissions derived from missing relations" | ❌ **NOT VALIDATED** | `resolve-component` assumes permission if not relation, never validates |
+| "arrow permissions can't refer to wrong permissions or relations" | ❌ **NOT VALIDATED** | No cross-resource-type validation |
+| "can't use unsupported features" | ❌ **NOT VALIDATED** | `-` operator parsed but not rejected; multi-arrow silently truncated |
+| "Permissions must refer to valid relations" | ❌ **NOT VALIDATED** | No validation that target relations exist |
+| "Resource & subject types must be correct" | ❌ **NOT VALIDATED** | No type consistency checking |
+
+### Context Section Requirements
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| "EACL only supports Union (+) operators... should reject other operators as invalid" | ❌ **NOT DONE** | Grammar parses `-` but implementation doesn't reject it |
+| "EACL does not support Caveats" | ✅ **OK** | Grammar doesn't parse caveat syntax |
+| "EACL only supports one level of nested arrow permissions" | ❌ **NOT VALIDATED** | Multi-arrow silently truncated to single arrow at `spice_parser.clj:253` |
+
+### Process Requirements (Next Steps section)
+
+| # | Requirement | Status |
+|---|-------------|--------|
+| 1 | "Read the current EACL implementation" | ✅ Done |
+| 2 | "Write a detailed report to docs/reports/" | ✅ Done (`2026-01-31-eacl-status.md`) |
+| 3 | "Write a detailed plan to docs/plans/" | ✅ Done (`2026-01-31-spicedb-schema-plan.md`) |
+| 4 | "Submit your plan for approval" | ❓ Unknown |
+| 5 | "If anything is unclear, stop & ask for clarification" | ❓ Unknown |
+| 6 | "Run tests between logical changes" | ❓ Unknown |
+| 7 | "Write failing unit tests BEFORE writing any code first" | ❌ **NOT DONE** | Tests were written after implementation, not TDD style |
+
+---
+
 ## What Works Well
 
 1. **Parser Foundation**: The Instaparse grammar correctly parses the core SpiceDB schema constructs (definitions, relations, permissions with unions and arrows).
@@ -178,15 +231,44 @@ The function `count-relationships-using-relation` should validate that the relat
 
 ## Test Gaps
 
+### Missing Fixture File
+
+**ADR Requirement**: "Rewrite the fixtures from fixtures/relations+permissions to a new `test/eacl/fixtures.schema` file using the Spice DSL which will be used to test the implementation against"
+
+**Current State**: No `fixtures.schema` file exists. The tests use a minimal inline schema:
+```spice
+definition user {}
+definition platform { relation super_admin: user }
+definition account {
+    relation platform: platform
+    relation owner: user
+    permission admin = owner + platform->super_admin
+    permission view = owner + admin
+    permission update = admin
+}
+```
+
+**Required**: The full fixture set from `test/eacl/datomic/fixtures.clj` should be converted to SpiceDB DSL format. This includes:
+- 17+ relations across platform, server, network_interface, lease, network, vpc, account, team, backup_schedule, backup
+- 50+ permissions with complex arrow expressions
+- Multiple subject types per relation (e.g., `relation owner: user | group`)
+
+This is critical because:
+1. The implementation has never been tested against the real-world schema complexity
+2. Edge cases in the fixtures (like multi-type relations) may expose parser/validation bugs
+3. The round-trip test (parse fixtures.schema → compare to fixtures.clj output) would validate correctness
+
 ### Missing Test Cases
 
-1. **Invalid reference rejection**: Test that permissions referencing non-existent relations/permissions are rejected
+1. **Fixtures round-trip test**: Parse `fixtures.schema` and compare output to `fixtures/relations+permissions`
 
-2. **Exclusion operator rejection**: Test that `permission admin = owner - guest` throws an error
+2. **Invalid reference rejection**: Test that permissions referencing non-existent relations/permissions are rejected
 
-3. **Multi-arrow rejection**: Test that `permission view = account->team->member` throws an error
+3. **Exclusion operator rejection**: Test that `permission admin = owner - guest` throws an error
 
-4. **Arrow target validation**: Test that arrow permissions reference valid targets on the target type:
+4. **Multi-arrow rejection**: Test that `permission view = account->team->member` throws an error
+
+5. **Arrow target validation**: Test that arrow permissions reference valid targets on the target type:
    ```spice
    definition account {
        relation owner: user
@@ -197,7 +279,9 @@ The function `count-relationships-using-relation` should validate that the relat
    }
    ```
 
-5. **Caveats rejection**: Test that caveat syntax is rejected (if grammar can parse it)
+6. **Caveats rejection**: Test that caveat syntax is rejected (if grammar can parse it)
+
+7. **Multi-type relation support**: Test that `relation owner: user | group` parses correctly (current grammar may not support this)
 
 ---
 
@@ -207,9 +291,10 @@ The function `count-relationships-using-relation` should validate that the relat
 |----------|-------|--------|--------|
 | **P0** | Add schema reference validation | Medium | High - Prevents invalid state |
 | **P0** | Reject unsupported operators | Low | High - ADR requirement |
+| **P0** | Create `test/eacl/fixtures.schema` from fixtures.clj | Medium | High - ADR requirement, enables comprehensive testing |
 | **P1** | Fix `resolve-component` to validate existence | Low | Medium - Prevents silent failures |
 | **P1** | Add multi-arrow rejection | Low | Medium - ADR requirement |
-| **P2** | Clarify `read-schema` return type | Low | Low - API consistency |
+| **P1** | Fix `read-schema` to return rich map per ADR | Low | Medium - ADR requirement |
 | **P2** | Remove dead `:schema-string nil` code | Low | Low - Code hygiene |
 | **P3** | Implement TODO in `count-relationships-using-relation` | Low | Low - Edge case |
 
@@ -330,6 +415,25 @@ The function `count-relationships-using-relation` should validate that the relat
 
 ## Conclusion
 
-The `write-schema!` implementation provides a solid foundation but requires additional validation work to meet the ADR's requirements for rejecting invalid schemas. The most critical gap is the lack of reference validation, which could allow corrupted schemas to be persisted.
+The `write-schema!` implementation provides a functional foundation but has significant gaps against the ADR requirements:
 
-I recommend addressing P0 issues before using this in production, as they represent potential data integrity risks.
+**Summary of ADR Compliance:**
+- ✅ 5 of 10 decisions fully implemented
+- ⚠️ 2 partially implemented
+- ❌ 3 not implemented (including critical validation requirements)
+
+**Critical Gaps:**
+1. **No `fixtures.schema` file** - The implementation was never tested against the real fixture complexity
+2. **No schema validation** - Invalid schemas with broken references can be committed
+3. **Unsupported operators not rejected** - `-` operator silently treated as `+`
+4. **`read-schema` returns string not map** - Violates ADR specification
+
+**Risk Assessment:**
+The lack of validation represents a data integrity risk. Invalid schemas could be persisted, potentially causing runtime failures in `can?` checks when arrow permissions reference non-existent relations or permissions.
+
+**Recommendation:**
+Address all P0 issues before production use:
+1. Create `fixtures.schema` and add round-trip test
+2. Implement `validate-schema` function
+3. Add operator validation
+4. Fix `read-schema` return type
