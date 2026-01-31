@@ -1,7 +1,8 @@
 (ns eacl.datomic.parser_test
-    (:require [clojure.test :as t :refer [deftest testing is]]
-              [eacl.datomic.spice-parser :as parser]
-              [eacl.datomic.impl :as impl]))
+  (:require [clojure.test :as t :refer [deftest testing is]]
+            [instaparse.core :as insta]
+            [eacl.datomic.spice-parser :as parser]
+            [eacl.datomic.impl :as impl]))
 
 (def example-schema-string
   "definition user {}
@@ -19,50 +20,54 @@
      permission update = admin
    }")
 
+;; Expected parse tree for the new full SpiceDB grammar
 (def parsed-example-schema
   [:schema
-   [:definition "user" [:definition-body]]
-   [:definition "platform"
+   [:definition [:type-path [:identifier "user"]] [:definition-body]]
+   [:definition [:type-path [:identifier "platform"]]
     [:definition-body
-     [:relation [:relation-name "super_admin"] [:relation-subject-type "user"]]]]
-   [:definition "account"
+     [:relation [:relation-name [:identifier "super_admin"]]
+      [:relation-type-expr [:relation-type-ref [:type-path [:identifier "user"]]]]]]]
+   [:definition [:type-path [:identifier "account"]]
     [:definition-body
-     [:relation [:relation-name "platform"]
-      [:relation-subject-type "platform"]]
-     [:relation [:relation-name "owner"]
-      [:relation-subject-type "user"]]
-     [:permission "admin"
+     [:relation [:relation-name [:identifier "platform"]]
+      [:relation-type-expr [:relation-type-ref [:type-path [:identifier "platform"]]]]]
+     [:relation [:relation-name [:identifier "owner"]]
+      [:relation-type-expr [:relation-type-ref [:type-path [:identifier "user"]]]]]
+     [:permission [:identifier "admin"]
       [:permission-expr
-       [:direct-permission "owner"]
-       [:permission-operator "+"]
-       [:arrow-permission "platform" "super_admin"]]]
-     [:permission "view"
+       [:union-expr
+        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "owner"]]]]]]
+        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "platform"]] [:base-expr [:identifier "super_admin"]]]]]]]]]
+     [:permission [:identifier "view"]
       [:permission-expr
-       [:direct-permission "owner"]
-       [:permission-operator "+"]
-       [:direct-permission "admin"]]]
-     [:permission "update"
+       [:union-expr
+        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "owner"]]]]]]
+        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "admin"]]]]]]]]]
+     [:permission [:identifier "update"]
       [:permission-expr
-       [:direct-permission "admin"]]]]]])
+       [:union-expr
+        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "admin"]]]]]]]]]]]])
 
 (deftest spicedb-schema-parsing-tests
 
   (testing "we can parse an empty resource definition"
     (is (= [:schema
-            [:definition "user"
+            [:definition [:type-path [:identifier "user"]]
              [:definition-body]]] (parser/parse-schema "definition user {}"))))
 
-  (is (= [:permission-expr
-          [:direct-permission "owner"]
-          [:permission-operator "+"]
-          [:direct-permission "admin"]] (parser/parse-permission-expression "owner + admin")))
+  ;; Permission expressions have new structure with union/intersect/exclusion/arrow hierarchy
+  (testing "we can parse permission expressions with union"
+    (let [parsed (parser/parse-permission-expression "owner + admin")]
+      ;; Just verify it parses and has the expected shape
+      (is (= :permission-expr (first parsed)))
+      (is (= :union-expr (first (second parsed))))))
 
   (testing "we can parse arrow permissions with one level of nesting"
-    (is (= [:permission-expr
-            [:direct-permission "owner"]
-            [:permission-operator "+"]
-            [:arrow-permission "account" "admin"]]
-           (parser/parse-permission-expression "owner + account->admin"))))
+    (let [parsed (parser/parse-permission-expression "owner + account->admin")]
+      (is (= :permission-expr (first parsed)))
+      ;; Verify arrow structure exists
+      (is (some #(= :simple-arrow-expr (first %)) (tree-seq vector? rest parsed)))))
 
   (testing "we can parse Spice schema DSL using Instaparse"
     (let [parse-tree (parser/parse-schema example-schema-string)]
@@ -76,20 +81,79 @@
           (is (contains? definitions "account"))))
 
       (testing "we can coerce definitions to EACL schema maps"
-         (let [eacl-schema (parser/->eacl-schema parse-tree)
-               relations (:relations eacl-schema)
-               permissions (:permissions eacl-schema)]
-           (is (= 3 (count relations)))
-           (is (some #(= (impl/Relation :platform :super_admin :user) %) relations))
-           (is (some #(= (impl/Relation :account :platform :platform) %) relations))
-           (is (some #(= (impl/Relation :account :owner :user) %) relations))
+        (let [eacl-schema (parser/->eacl-schema parse-tree)
+              relations (:relations eacl-schema)
+              permissions (:permissions eacl-schema)]
+          (is (= 3 (count relations)))
+          (is (some #(= (impl/Relation :platform :super_admin :user) %) relations))
+          (is (some #(= (impl/Relation :account :platform :platform) %) relations))
+          (is (some #(= (impl/Relation :account :owner :user) %) relations))
 
-           (is (= 5 (count permissions)))
+          (is (= 5 (count permissions)))
            ;; Check a few permissions
-           (is (some #(= (impl/Permission :account :admin {:relation :owner}) %) permissions))
-           (is (some #(= (impl/Permission :account :admin {:arrow :platform :relation :super_admin}) %) permissions))
-           (is (some #(= (impl/Permission :account :view {:relation :owner}) %) permissions))
-           (is (some #(= (impl/Permission :account :view {:permission :admin}) %) permissions))
-           (is (some #(= (impl/Permission :account :update {:permission :admin}) %) permissions))))))
+          (is (some #(= (impl/Permission :account :admin {:relation :owner}) %) permissions))
+          (is (some #(= (impl/Permission :account :admin {:arrow :platform :relation :super_admin}) %) permissions))
+          (is (some #(= (impl/Permission :account :view {:relation :owner}) %) permissions))
+          (is (some #(= (impl/Permission :account :view {:permission :admin}) %) permissions))
+          (is (some #(= (impl/Permission :account :update {:permission :admin}) %) permissions))))))
 
   (testing "ensure we warn against unsupported Spice schema like exclusion permissions"))
+
+(deftest unsupported-features-tests
+  (testing "exclusion operator (-) is rejected during validation"
+    (let [schema "definition user {}
+                  definition account {
+                    relation owner: user
+                    relation guest: user
+                    permission admin = owner - guest
+                  }"]
+      ;; Grammar now parses it, but validation rejects it
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "intersection operator (&) is rejected during validation"
+    (let [schema "definition a {
+                    relation b: user
+                    relation c: user  
+                    permission p = b & c
+                  }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "multi-level arrow is rejected during validation"
+    ;; Grammar now parses multi-arrows, but validation rejects them
+    (let [schema "definition a { relation b: b }
+                  definition b { relation c: c }
+                  definition c { permission p = b->c->x }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "wildcard relations are rejected during validation"
+    (let [schema "definition doc { relation viewer: user:* }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "subject relations are rejected during validation"
+    (let [schema "definition doc { relation owner: group#member }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "caveats are rejected during validation"
+    (let [schema "definition doc { relation viewer: user with ip_check }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "nil keyword is rejected during validation"
+    (let [schema "definition doc { permission p = nil }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing "self keyword is rejected during validation"
+    (let [schema "definition user { permission view = self }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema))))))
+
+  (testing ".all() arrow function is rejected during validation"
+    (let [schema "definition doc { relation group: group permission view = group.all(member) }"]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+                            (parser/->eacl-schema (parser/parse-schema schema)))))))

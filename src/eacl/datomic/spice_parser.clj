@@ -3,39 +3,61 @@
   (:require [instaparse.core :as insta]
             [clojure.pprint]
             [clojure.string]
+            [clojure.walk]
             [eacl.datomic.impl :as impl]))
 
 ;      primary-expr = identifier | <'('> permission-expr <')'>
 ;; Define the SpiceDB grammar with auto-whitespace
+;; Full SpiceDB grammar - parses the complete official syntax.
+;; EACL-specific restrictions are enforced during validation, not parsing.
 (def spicedb-parser
   (insta/parser
-   "schema = definition+
+   "(* Top-level schema *)
+     schema = definition+
 
-     definition = <'definition'> identifier <'{'> definition-body <'}'>
+     (* Definition block *)
+     definition = <'definition'> type-path <'{'> definition-body <'}'>
      definition-body = (relation | permission)*
 
+     (* Type paths support namespacing: docs/document *)
+     type-path = identifier (<'/'> identifier)*
+
+     (* Relations *)
+     relation = <'relation'> relation-name <':'> relation-type-expr
      relation-name = identifier
-     relation-subject-type = identifier
-     relation = <'relation'> relation-name <':'> relation-subject-type
+     
+     (* Relation type expression: user | group#member | doc:* with caveat *)
+     relation-type-expr = relation-type-ref (<'|'> relation-type-ref)*
+     relation-type-ref = type-path relation-modifier? caveat-ref?
+     relation-modifier = wildcard | subject-relation
+     wildcard = <':'> <'*'>
+     subject-relation = <'#'> identifier
+     caveat-ref = <'with'> identifier
 
-     <permission-name> = identifier
+     (* Permissions *)
      permission = <'permission'> permission-name <'='> permission-expr
+     <permission-name> = identifier
 
-     permission-operator = '+' | '-'
+     (* Permission expressions with all operators *)
+     permission-expr = union-expr
+     union-expr = intersect-expr (<'+'> intersect-expr)*
+     intersect-expr = exclusion-expr (<'&'> exclusion-expr)*
+     exclusion-expr = arrow-expr (<'-'> arrow-expr)*
+     
+     (* Arrow expressions: rel->perm or rel.any(perm) or rel.all(perm) *)
+     arrow-expr = arrow-func-expr | simple-arrow-expr
+     simple-arrow-expr = base-expr (<'->'> base-expr)*
+     arrow-func-expr = identifier <'.'> arrow-func-name <'('> identifier <')'>
+     arrow-func-name = 'any' | 'all'
+     
+     (* Base expressions *)
+     base-expr = nil-expr | self-expr | paren-expr | identifier
+     nil-expr = <'nil'>
+     self-expr = <'self'>
+     paren-expr = <'('> permission-expr <')'>
 
-     permission-expr = direct-or-arrow (permission-operator direct-or-arrow)*
-
-     <permission-relation> = identifier
-
-     direct-permission = permission-relation
-
-     <arrow-via-permission> = identifier
-     <arrow-relation> = identifier
-     arrow-permission = arrow-relation <'->'> arrow-via-permission
-
-     <direct-or-arrow> = direct-permission | arrow-permission
-
-     <identifier> = #'[a-zA-Z_][a-zA-Z0-9_]*'"
+     (* Identifiers - must not match keywords *)
+     identifier = !('nil' | 'self' | 'definition' | 'relation' | 'permission' | 'with' | 'any' | 'all') #'[a-zA-Z_][a-zA-Z0-9_]*'"
    :auto-whitespace :standard))
 
 ;; Example SpiceDB schema
@@ -63,39 +85,87 @@
 (defn pretty-print-tree [tree]
   (clojure.pprint/pprint tree))
 
-;; Extract relations from definition body
-(defn extract-relations [definition-body]
+;; ============================================================================
+;; Parse Tree Extraction Functions (for new full SpiceDB grammar)
+;; ============================================================================
+
+(defn- extract-identifier
+  "Extracts the string value from an [:identifier 'name'] node."
+  [node]
+  (when (and (vector? node) (= :identifier (first node)))
+    (second node)))
+
+(defn- extract-type-path
+  "Extracts a type path string from [:type-path [:identifier 'a'] [:identifier 'b']] -> 'a/b'"
+  [node]
+  (when (and (vector? node) (= :type-path (first node)))
+    (->> (rest node)
+         (map extract-identifier)
+         (clojure.string/join "/"))))
+
+(defn- extract-relation-type-ref
+  "Extracts a relation type reference with optional modifier and caveat.
+   Returns {:type 'user', :wildcard? false, :subject-relation nil, :caveat nil}"
+  [node]
+  (when (and (vector? node) (= :relation-type-ref (first node)))
+    (let [children (rest node)
+          type-path (extract-type-path (first children))
+          modifier (some #(when (and (vector? %) (= :relation-modifier (first %))) %) children)
+          caveat (some #(when (and (vector? %) (= :caveat-ref (first %))) %) children)]
+      {:type type-path
+       :wildcard? (boolean (some #(and (vector? %) (= :wildcard (first %))) (rest modifier)))
+       :subject-relation (when-let [sr (some #(when (and (vector? %) (= :subject-relation (first %))) %) (rest modifier))]
+                           (extract-identifier (second sr)))
+       :caveat (when caveat (extract-identifier (second caveat)))})))
+
+(defn- extract-relation-type-expr
+  "Extracts all type refs from a relation-type-expr.
+   Returns vector of type ref maps."
+  [node]
+  (when (and (vector? node) (= :relation-type-expr (first node)))
+    (vec (map extract-relation-type-ref (rest node)))))
+
+(defn extract-relations
+  "Extract relations from definition body.
+   Returns a map where each key is a relation name and value is a vector of type refs."
+  [definition-body]
   (if (and (vector? definition-body) (= :definition-body (first definition-body)))
     (->> (rest definition-body)
          (filter #(and (vector? %) (= :relation (first %))))
-         (map (fn [[_ rel-name type-name]]
-                [(second rel-name) (keyword (second type-name))]))
+         (map (fn [[_ rel-name-node type-expr-node]]
+                (let [rel-name (extract-identifier (second rel-name-node))
+                      type-refs (extract-relation-type-expr type-expr-node)]
+                  [rel-name type-refs])))
          (into {}))
-    []))
+    {}))
 
-;; Extract permissions from definition body
-(defn extract-permissions [definition-body]
+(defn extract-permissions
+  "Extract permissions from definition body.
+   Returns a vector of {:name 'perm-name', :expression <parse-tree>}"
+  [definition-body]
   (if (and (vector? definition-body) (= :definition-body (first definition-body)))
     (->> (rest definition-body)
          (filter #(and (vector? %) (= :permission (first %))))
-         (map (fn [[_ perm-name expr]]
-                {:name perm-name
+         (map (fn [[_ perm-name-node expr]]
+                {:name (extract-identifier perm-name-node)
                  :expression expr})))
     []))
 
-;; Extract definitions from parse tree
-(defn extract-definitions [parse-tree]
+(defn extract-definitions
+  "Extract definitions from parse tree.
+   Returns map of {type-path {:relations {...}, :permissions [...]}}"
+  [parse-tree]
   (->> parse-tree
        (filter #(and (vector? %) (= :definition (first %))))
-       (map (fn [[_ name definition-body]]
-              [name
-               {:relations (extract-relations definition-body)
-                :permissions (extract-permissions definition-body)}]))
+       (map (fn [[_ type-path-node definition-body]]
+              (let [type-path (extract-type-path type-path-node)]
+                [type-path
+                 {:relations (extract-relations definition-body)
+                  :permissions (extract-permissions definition-body)}])))
        (into {})))
 
-;; Transform parse tree to more usable data structure
 (defn transform-schema
-  "This just calls extract-definitions."
+  "Transform parse tree to intermediate representation."
   [parse-tree]
   (when (and (vector? parse-tree) (= :schema (first parse-tree)))
     {:definitions (extract-definitions (rest parse-tree))}))
@@ -219,66 +289,324 @@
         (println "Parse error (expected):" (insta/get-failure result))
         (println "Unexpected success")))))
 
-(defn- flatten-expression [expr]
-  (let [transformed (transform-expression expr)]
-    (if (= :union (:type transformed))
-      (:operands transformed)
-      [transformed])))
+;; ============================================================================
+;; EACL Validation Functions
+;; Validates that parsed SpiceDB schemas conform to EACL restrictions.
+;; Parsing accepts full SpiceDB syntax; validation enforces EACL limits.
+;; ============================================================================
 
-(defn- collect-schema-info [definitions]
+(defn- collect-parse-tree-issues
+  "Walks parse tree and collects all EACL compatibility issues.
+   Returns a vector of issue maps."
+  [parse-tree]
+  (let [issues (atom [])]
+    (clojure.walk/postwalk
+     (fn [node]
+       (when (vector? node)
+         (case (first node)
+           ;; Check for intersection operator
+           :intersect-expr
+           (when (> (count (rest node)) 1)
+             (swap! issues conj
+                    {:type :unsupported-operator
+                     :operator "&"
+                     :message "EACL does not support intersection (&) operator"}))
+
+           ;; Check for exclusion operator  
+           :exclusion-expr
+           (when (> (count (rest node)) 1)
+             (swap! issues conj
+                    {:type :unsupported-operator
+                     :operator "-"
+                     :message "EACL does not support exclusion (-) operator"}))
+
+           ;; Check for multi-level arrows
+           :simple-arrow-expr
+           (when (> (count (filter #(and (vector? %) (= :base-expr (first %))) (rest node))) 2)
+             (swap! issues conj
+                    {:type :multi-level-arrow
+                     :message "EACL only supports single-level arrows (e.g., rel->perm). Multi-level arrows like a->b->c are not supported."}))
+
+           ;; Check for .all() function (only .any() is implicitly supported via arrow)
+           :arrow-func-expr
+           (let [func-name-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) (rest node))
+                 func-name (second func-name-node)]
+             (when (= func-name "all")
+               (swap! issues conj
+                      {:type :unsupported-arrow-function
+                       :function "all"
+                       :message "EACL does not support .all() arrow function. Use standard arrow (->) instead."})))
+
+           ;; Check for nil expression
+           :nil-expr
+           (swap! issues conj
+                  {:type :unsupported-keyword
+                   :keyword "nil"
+                   :message "EACL does not support 'nil' keyword in permissions"})
+
+           ;; Check for self expression (might be supportable in future)
+           :self-expr
+           (swap! issues conj
+                  {:type :unsupported-keyword
+                   :keyword "self"
+                   :message "EACL does not support 'self' keyword in permissions"})
+
+           ;; Check for type paths with namespaces
+           :type-path
+           (when (> (count (rest node)) 1)
+             (swap! issues conj
+                    {:type :namespaced-type
+                     :message "EACL does not support namespaced type paths (e.g., docs/document). Use simple type names."}))
+
+           ;; Default: no issue for other node types
+           nil))
+       node)
+     parse-tree)
+    @issues))
+
+(defn- collect-relation-issues
+  "Check relations for EACL compatibility issues.
+   Takes the transformed schema definitions map."
+  [definitions]
+  (let [issues (atom [])]
+    (doseq [[res-type {:keys [relations]}] definitions
+            [rel-name type-refs] relations
+            type-ref type-refs]
+      ;; Check for wildcards
+      (when (:wildcard? type-ref)
+        (swap! issues conj
+               {:type :wildcard-relation
+                :resource-type res-type
+                :relation rel-name
+                :message (str "EACL does not support wildcard relations (e.g., user:*). "
+                              "Found in " res-type "/" rel-name)}))
+
+      ;; Check for subject relations
+      (when (:subject-relation type-ref)
+        (swap! issues conj
+               {:type :subject-relation
+                :resource-type res-type
+                :relation rel-name
+                :subject-relation (:subject-relation type-ref)
+                :message (str "EACL does not support subject relations (e.g., group#member). "
+                              "Found in " res-type "/" rel-name ": " (:type type-ref) "#" (:subject-relation type-ref))}))
+
+      ;; Check for caveats
+      (when (:caveat type-ref)
+        (swap! issues conj
+               {:type :caveat
+                :resource-type res-type
+                :relation rel-name
+                :caveat (:caveat type-ref)
+                :message (str "EACL does not support caveats (e.g., 'with caveatname'). "
+                              "Found in " res-type "/" rel-name)})))
+    @issues))
+
+(defn validate-eacl-restrictions
+  "Validates that a parsed SpiceDB schema conforms to EACL restrictions.
+   Takes a parse tree and throws ex-info if any unsupported features are found.
+   
+   EACL restrictions:
+   - Only union (+) operator allowed (no intersection &, exclusion -)
+   - Only single-level arrows (no a->b->c)
+   - No .all() arrow function (only implicit .any() via arrow)
+   - No nil keyword
+   - No self keyword  
+   - No namespaced type paths (docs/document)
+   - No wildcards (user:*)
+   - No subject relations (group#member)
+   - No caveats (with caveatname)
+   
+   Returns nil if valid, throws ex-info with :issues vector if invalid."
+  [parse-tree transformed-schema]
+  (let [parse-issues (collect-parse-tree-issues parse-tree)
+        relation-issues (collect-relation-issues (:definitions transformed-schema))
+        all-issues (concat parse-issues relation-issues)]
+    (when (seq all-issues)
+      (throw (ex-info "Schema uses SpiceDB features not supported by EACL"
+                      {:issues (vec all-issues)
+                       :issue-count (count all-issues)
+                       :message (str "Found " (count all-issues) " unsupported feature(s). "
+                                     "EACL supports a subset of SpiceDB syntax. "
+                                     "See :issues for details.")})))
+    nil))
+
+;; Keep old function for backwards compatibility, but delegate to new validation
+(defn validate-operators
+  "DEPRECATED: Use validate-eacl-restrictions instead.
+   Kept for backwards compatibility."
+  [parse-tree]
+  (let [issues (filter #(= :unsupported-operator (:type %))
+                       (collect-parse-tree-issues parse-tree))]
+    (when (seq issues)
+      (throw (ex-info "Unsupported operator in schema"
+                      {:operators (set (map :operator issues))
+                       :message (str "EACL only supports union (+) operators. "
+                                     "Found unsupported operators. "
+                                     "Exclusion (-) and intersection (&) are not supported.")})))))
+
+;; ============================================================================
+;; Permission Expression Transformation
+;; Converts new grammar parse tree to component list for EACL
+;; ============================================================================
+
+(defn- extract-base-expr-identifier
+  "Extract identifier string from a base-expr node."
+  [node]
+  (when (and (vector? node) (= :base-expr (first node)))
+    (let [child (second node)]
+      (when (and (vector? child) (= :identifier (first child)))
+        (second child)))))
+
+(defn- transform-arrow-expr
+  "Transform an arrow expression to component maps.
+   Returns vector of {:type :identifier/:arrow, ...} maps."
+  [node]
+  (cond
+    ;; Arrow function expression: rel.any(perm) or rel.all(perm)
+    (and (vector? node) (= :arrow-func-expr (first node)))
+    (let [children (rest node)
+          base-id (extract-identifier (first children))
+          func-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) children)
+          func-name (second func-node)
+          target-id (extract-identifier (last children))]
+      ;; .any() is equivalent to arrow, .all() should have been rejected by validation
+      [{:type :arrow :base {:type :identifier :name base-id} :path [target-id]}])
+
+    ;; Simple arrow expression: rel->perm or rel->perm->perm2
+    (and (vector? node) (= :simple-arrow-expr (first node)))
+    (let [base-exprs (filter #(and (vector? %) (= :base-expr (first %))) (rest node))
+          ids (map extract-base-expr-identifier base-exprs)]
+      (if (= 1 (count ids))
+        ;; Single identifier - direct permission/relation reference
+        [{:type :identifier :name (first ids)}]
+        ;; Arrow expression
+        [{:type :arrow :base {:type :identifier :name (first ids)} :path (vec (rest ids))}]))
+
+    ;; Wrapped arrow expr
+    (and (vector? node) (= :arrow-expr (first node)))
+    (transform-arrow-expr (second node))
+
+    :else []))
+
+(defn- transform-exclusion-expr [node]
+  "Transform exclusion expression. After validation, this should only have one child."
+  (when (and (vector? node) (= :exclusion-expr (first node)))
+    (mapcat transform-arrow-expr (rest node))))
+
+(defn- transform-intersect-expr [node]
+  "Transform intersection expression. After validation, this should only have one child."
+  (when (and (vector? node) (= :intersect-expr (first node)))
+    (mapcat transform-exclusion-expr (rest node))))
+
+(defn- transform-union-expr [node]
+  "Transform union expression to flat list of components."
+  (when (and (vector? node) (= :union-expr (first node)))
+    (vec (mapcat transform-intersect-expr (rest node)))))
+
+(defn- flatten-expression
+  "Flatten a permission expression to a vector of component maps.
+   Each component is {:type :identifier/:arrow, ...}"
+  [expr]
+  (when (and (vector? expr) (= :permission-expr (first expr)))
+    (transform-union-expr (second expr))))
+
+;; ============================================================================
+;; Schema Info Collection
+;; ============================================================================
+
+(defn- collect-schema-info
+  "Build lookup tables from transformed schema for arrow resolution."
+  [definitions]
   (reduce-kv
    (fn [acc res-type {:keys [relations permissions]}]
-     (assoc acc res-type
-            {:relations (set (keys relations))
-             :relation-types relations
-             :permissions (set (map :name permissions))}))
+     (let [;; Get simple type names (first type ref for each relation)
+           relation-names (set (keys relations))
+           ;; Map relation name to target type (first type in list)
+           relation-types (into {}
+                                (for [[rel-name type-refs] relations
+                                      :let [first-ref (first type-refs)]
+                                      :when first-ref]
+                                  [rel-name (:type first-ref)]))]
+       (assoc acc res-type
+              {:relations relation-names
+               :relation-types relation-types
+               :relation-all-types relations
+               :permissions (set (map :name permissions))})))
    {}
    definitions))
 
-(defn- resolve-component [component resource-type schema-info]
+;; ============================================================================
+;; Component Resolution
+;; ============================================================================
+
+(defn- resolve-component
+  "Resolve a component map to EACL Permission spec.
+   component: {:type :identifier/:arrow, :name '...', :base {...}, :path [...]}"
+  [component resource-type schema-info]
   (case (:type component)
     :identifier
     (let [name (:name component)
           info (get schema-info resource-type)]
-      (cond
-        (contains? (:relations info) name) {:relation (keyword name)}
-        :else {:permission (keyword name)})) ; Assume permission if not relation
+      (if (contains? (:relations info) name)
+        {:relation (keyword name)}
+        {:permission (keyword name)}))
 
     :arrow
     (let [base-name (-> component :base :name)
-          path (first (:path component)) ; Only support 1 level for now
+          path-elements (:path component)
+          path (first path-elements)
           info (get schema-info resource-type)
           target-type (get-in info [:relation-types base-name])]
       (if-not target-type
         (throw (ex-info (str "Unknown relation for arrow base: " base-name " on " resource-type)
                         {:component component :resource-type resource-type}))
-        (let [target-info (get schema-info (name target-type))
+        (let [target-info (get schema-info target-type)
               target-is-relation (contains? (:relations target-info) path)]
           {:arrow (keyword base-name)
            (if target-is-relation :relation :permission) (keyword path)})))
 
     (throw (ex-info "Unsupported component type" {:component component}))))
 
-(defn ->eacl-schema [parse-tree]
-  (let [transformed (transform-schema parse-tree)
-        definitions (:definitions transformed)
-        schema-info (collect-schema-info definitions)]
-    {:relations
-     (vec
-      (for [[res-type {:keys [relations]}] definitions
-            [rel-name subject-type] relations]
-        (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
+;; ============================================================================
+;; Main Transformation Function
+;; ============================================================================
 
-     :permissions
-     (vec
-      (apply concat
-             (for [[res-type {:keys [permissions]}] definitions
-                   {:keys [name expression]} permissions]
-               (let [components (flatten-expression expression)]
-                 (for [comp components]
-                   (let [spec (resolve-component comp res-type schema-info)]
-                     (impl/Permission (keyword res-type) (keyword name) spec)))))))
-     :schema-string nil})) ; We can populate this later if needed
+(defn ->eacl-schema
+  "Convert parsed SpiceDB schema to EACL internal representation.
+   
+   Steps:
+   1. Transform parse tree to intermediate representation
+   2. Validate EACL restrictions (throws on unsupported features)
+   3. Convert to EACL Relations and Permissions
+   
+   Returns {:relations [...] :permissions [...]}"
+  [parse-tree]
+  (let [transformed (transform-schema parse-tree)]
+    ;; Validate EACL restrictions (parsing allows full SpiceDB, validation enforces limits)
+    (validate-eacl-restrictions parse-tree transformed)
+
+    (let [definitions (:definitions transformed)
+          schema-info (collect-schema-info definitions)]
+      {:relations
+       (vec
+        ;; Expand multi-type relations into multiple Relation entities
+        (for [[res-type {:keys [relations]}] definitions
+              [rel-name type-refs] relations
+              type-ref type-refs
+              :let [subject-type (:type type-ref)]]
+          (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
+
+       :permissions
+       (vec
+        (apply concat
+               (for [[res-type {:keys [permissions]}] definitions
+                     {:keys [name expression]} permissions]
+                 (let [components (flatten-expression expression)]
+                   (for [comp components
+                         :when comp]
+                     (let [spec (resolve-component comp res-type schema-info)]
+                       (impl/Permission (keyword res-type) (keyword name) spec)))))))})))
 
 (defn extract-expr [permission-exp]
   (-> permission-exp

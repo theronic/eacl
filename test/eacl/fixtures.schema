@@ -1,0 +1,93 @@
+definition user {}
+definition group {}
+
+definition platform {
+    relation super_admin: user
+}
+
+definition account {
+    relation owner: user | group
+    relation platform: platform
+
+    permission admin = owner + platform->super_admin
+    permission view = owner + platform->super_admin
+    permission view_via_arrow_relation = platform->super_admin
+}
+
+definition team {
+    relation account: account
+}
+
+definition vpc {
+    relation account: account
+    relation shared_admin: user
+    relation shared_member: user
+
+    permission admin = account->admin + shared_admin
+    permission view = account->admin + shared_admin + shared_member
+    permission rename = account->admin + shared_admin
+    permission share = account->admin + shared_admin
+    permission delete = account->admin + shared_admin
+    permission create_server = account->admin + shared_admin
+    permission restore_from_backup = account->admin + shared_admin
+}
+
+definition network {
+    relation vpc: vpc
+
+    permission view = vpc + vpc->view
+}
+
+definition lease {
+    relation network: network
+
+    permission view = network + network->view
+}
+
+definition network_interface {
+    relation lease: lease
+
+    permission view = lease + lease->view
+}
+
+definition server {
+    relation account: account
+    relation vpc: vpc
+    relation nic: network_interface
+    relation shared_admin: user
+    relation shared_member: user
+    relation backup_creator: user
+
+    permission admin = account->admin + vpc->admin + shared_admin
+    permission view = admin + nic->view + shared_member + backup_creator
+    permission edit = admin
+    permission start = account->admin + shared_admin
+    permission delete = account->admin + admin
+    permission reboot = account->admin + shared_admin
+    permission share = admin
+    permission via_self_admin = admin
+    permission restore_over = admin
+    permission take_backup = admin
+    permission create_backup_schedule = admin
+    permission view_server_via_arrow_relation = account->view_via_arrow_relation
+}
+
+definition backup_schedule {
+    relation server: server
+    relation viewer: user
+    relation shared_backup_viewer: user
+
+    permission view = server->admin + viewer
+    permission share = server->admin
+    permission delete = server->admin
+}
+
+definition backup {
+    relation server: server
+    relation account: account
+    relation vpc: vpc
+    relation schedule: backup_schedule
+
+    permission view = account->admin + vpc->admin + server->admin + schedule->view
+    permission delete = account->admin + vpc->admin + server->admin
+}
