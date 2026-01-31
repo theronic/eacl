@@ -75,27 +75,23 @@
 
       (testing "we can extract resource definitions w/relations + permissions"
         (let [definitions (parser/extract-definitions parse-tree)]
-          (is (= 3 (count definitions)))
-          (is (contains? definitions "user"))
-          (is (contains? definitions "platform"))
-          (is (contains? definitions "account"))))
+          (is (= #{"user" "platform" "account"} (set (keys definitions))))))
 
       (testing "we can coerce definitions to EACL schema maps"
         (let [eacl-schema (parser/->eacl-schema parse-tree)
               relations   (:relations eacl-schema)
               permissions (:permissions eacl-schema)]
-          (is (= 3 (count relations)))
-          (is (some #(= (impl/Relation :platform :super_admin :user) %) relations))
-          (is (some #(= (impl/Relation :account :platform :platform) %) relations))
-          (is (some #(= (impl/Relation :account :owner :user) %) relations))
+          (is (= #{(impl/Relation :platform :super_admin :user)
+                   (impl/Relation :account :platform :platform)
+                   (impl/Relation :account :owner :user)}
+                (set relations)))
 
-          (is (= 5 (count permissions)))
-          ;; Check a few permissions
-          (is (some #(= (impl/Permission :account :admin {:relation :owner}) %) permissions))
-          (is (some #(= (impl/Permission :account :admin {:arrow :platform :relation :super_admin}) %) permissions))
-          (is (some #(= (impl/Permission :account :view {:relation :owner}) %) permissions))
-          (is (some #(= (impl/Permission :account :view {:permission :admin}) %) permissions))
-          (is (some #(= (impl/Permission :account :update {:permission :admin}) %) permissions))))))
+          (is (= #{(impl/Permission :account :admin {:relation :owner})
+                   (impl/Permission :account :admin {:arrow :platform :relation :super_admin})
+                   (impl/Permission :account :view {:relation :owner})
+                   (impl/Permission :account :view {:permission :admin})
+                   (impl/Permission :account :update {:permission :admin})}
+                (set permissions)))))))
 
   (testing "ensure we warn against unsupported Spice schema like exclusion permissions"))
 
