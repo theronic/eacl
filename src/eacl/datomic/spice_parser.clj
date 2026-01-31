@@ -80,7 +80,7 @@
     (->> (rest definition-body)
          (filter #(and (vector? %) (= :permission (first %))))
          (map (fn [[_ perm-name expr]]
-                {:name       perm-name ; this was (second perm-name), why?
+                {:name       perm-name
                  :expression expr})))
     []))
 
@@ -89,9 +89,9 @@
   (->> parse-tree
        (filter #(and (vector? %) (= :definition (first %))))
        (map (fn [[_ name definition-body]]
-              ; why was this (second name)?
-              [name {:relations   (extract-relations definition-body)
-                     :permissions (extract-permissions definition-body)}]))
+              [name
+               {:relations   (extract-relations definition-body)
+                :permissions (extract-permissions definition-body)}]))
        (into {})))
 
 ;; Transform parse tree to more usable data structure
@@ -131,7 +131,16 @@
                        :path (map #(second %) (rest parts))}))
       :primary-expr (transform-expression (second expr))
       :identifier {:type :identifier :name (second expr)}
-      :permission-expr (transform-expression (second expr))
+      :permission-expr (let [children (rest expr)
+                             operands (filter #(not= :permission-operator (first %)) children)]
+                         (if (= 1 (count operands))
+                           (transform-expression (first operands))
+                           {:type :union
+                            :operands (map transform-expression operands)}))
+      :direct-permission {:type :identifier :name (second expr)}
+      :arrow-permission {:type :arrow
+                         :base {:type :identifier :name (second expr)}
+                         :path [(nth expr 2)]}
       expr)
     :else expr))
 
@@ -212,7 +221,66 @@
         (println "Parse error (expected):" (insta/get-failure result))
         (println "Unexpected success")))))
 
-(defn ->eacl-schema [parse-tree]) ; wip
+(defn- flatten-expression [expr]
+  (let [transformed (transform-expression expr)]
+    (if (= :union (:type transformed))
+      (:operands transformed)
+      [transformed])))
+
+(defn- collect-schema-info [definitions]
+  (reduce-kv
+    (fn [acc res-type {:keys [relations permissions]}]
+      (assoc acc res-type
+                 {:relations   (set (keys relations))
+                  :relation-types relations
+                  :permissions (set (map :name permissions))}))
+    {}
+    definitions))
+
+(defn- resolve-component [component resource-type schema-info]
+  (case (:type component)
+    :identifier
+    (let [name (:name component)
+          info (get schema-info resource-type)]
+      (cond
+        (contains? (:relations info) name) {:relation (keyword name)}
+        :else {:permission (keyword name)})) ; Assume permission if not relation
+
+    :arrow
+    (let [base-name (-> component :base :name)
+          path (first (:path component)) ; Only support 1 level for now
+          info (get schema-info resource-type)
+          target-type (get-in info [:relation-types base-name])]
+      (if-not target-type
+        (throw (ex-info (str "Unknown relation for arrow base: " base-name " on " resource-type)
+                        {:component component :resource-type resource-type}))
+        (let [target-info (get schema-info (name target-type))
+              target-is-relation (contains? (:relations target-info) path)]
+          {:arrow      (keyword base-name)
+           (if target-is-relation :relation :permission) (keyword path)})))
+
+    (throw (ex-info "Unsupported component type" {:component component}))))
+
+(defn ->eacl-schema [parse-tree]
+  (let [transformed (transform-schema parse-tree)
+        definitions (:definitions transformed)
+        schema-info (collect-schema-info definitions)]
+    {:relations
+     (vec
+       (for [[res-type {:keys [relations]}] definitions
+             [rel-name subject-type] relations]
+         (impl/Relation (keyword res-type) (keyword rel-name) (keyword subject-type))))
+
+     :permissions
+     (vec
+       (apply concat
+         (for [[res-type {:keys [permissions]}] definitions
+               {:keys [name expression]} permissions]
+           (let [components (flatten-expression expression)]
+             (for [comp components]
+               (let [spec (resolve-component comp res-type schema-info)]
+                 (impl/Permission (keyword res-type) (keyword name) spec)))))))
+     :schema-string nil})) ; We can populate this later if needed
 
 (defn extract-expr [permission-exp]
   (-> permission-exp

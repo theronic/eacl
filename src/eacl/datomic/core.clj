@@ -198,14 +198,12 @@
     (spiceomic-can? (d/db conn) opts subject permission resource consistency))
 
   (read-schema [this]
-    ; this can be read from DB.
-    (throw (Exception. "not impl.")))
+    (let [db (d/db conn)
+          ent (d/entity db [:eacl/id "schema-string"])]
+      (:eacl/schema-string ent)))
 
-  (write-schema! [this schema]
-    ; todo: potentially parse Spice schema.
-    ; we'll need to support
-    ; write-schema can take and validaet Relations.
-    (throw (Exception. "not impl.")))
+  (write-schema! [this schema-string]
+    (schema/write-schema! conn schema-string))
 
   (read-relationships [this filters]
     (spiceomic-read-relationships (d/db conn) opts filters))

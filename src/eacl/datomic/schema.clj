@@ -2,7 +2,8 @@
   (:require [clojure.set]
             [datomic.api :as d]
             [com.rpl.specter :as S]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [eacl.datomic.spice-parser :as parser]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -40,6 +41,11 @@
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
     :db/valueType   :db.type/string
     :db/unique      :db.unique/identity
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident       :eacl/schema-string
+    :db/doc         "Stores the SpiceDB schema string."
+    :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one}
 
    ;; Relations
@@ -232,7 +238,8 @@
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
   [db]
-  (d/q '[:find [(pull ?relation [:eacl.relation/subject-type
+  (d/q '[:find [(pull ?relation [:eacl/id
+                                 :eacl.relation/subject-type
                                  :eacl.relation/resource-type
                                  :eacl.relation/relation-name]) ...]
          :where
@@ -242,7 +249,8 @@
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
   [db]
-  (d/q '[:find [(pull ?perm [:eacl.permission/resource-type
+  (d/q '[:find [(pull ?perm [:eacl/id
+                             :eacl.permission/resource-type
                              :eacl.permission/permission-name
                              :eacl.permission/source-relation-name
                              :eacl.permission/target-type
@@ -298,34 +306,35 @@
   "Computes delta between existing schema and
   new schema, checks for any orphaned relationships on retracted schema,
   produces tx-ops and applies."
-  [conn {:as new-schema-map :keys [relations permissions]}]
-  ; what this needs to do:
-  ; - [ ] validate new schema
-  ; - [x] read current schema
-  ; - [ ] compare new vs old schema to get additions & retractions
-  ; - validate
-  ; - validate inputs for Relations & Permissions
-  ; - read current schema
-  ; - calculate delta (additions + retractions)
-  ; - check if retractions would orphan any relationships, i.e. used by any
-  ; - transact additions & retractions. it would still be convenient to
-  ; todo: potentially parse Spice schema.
-  ; we'll need to support
-  ; write-schema can take and validate Relations.
-  ;(validate-schema-map! schema-map) ; do we need to conform here?
-  (throw (Exception. "not impl WIP"))
-  (let [db              (d/db conn)
+  [conn schema-string]
+  (let [new-schema-map (parser/->eacl-schema (parser/parse-schema schema-string))
+        db (d/db conn)
         existing-schema (read-schema db)
-        {:as   schema-deltas
-         ; consider naming these deltas
-         relation-deltas :relations
-         permission-deltas :permissions} (compare-schema existing-schema new-schema-map)
-        {relation-additions :additions
-         relation-retractions :retractions} relation-deltas
-        orphaned-rels   (for [rel-retraction relation-retractions]
-                          [rel-retraction (count-relationships-using-relation db rel-retraction)])]
-    (doseq [[rel cnt] orphaned-rels]
-      (assert (zero? cnt) (str "Relation " rel " would orphan " cnt " relationships.")))
-    relation-deltas)
-  ; WIP.
-  #_(compare-schema existing-schema new-schema-map))
+        deltas (compare-schema existing-schema new-schema-map)
+        {:keys [relations permissions]} deltas
+        relation-retractions (:retractions relations)
+        permission-retractions (:retractions permissions)]
+
+    ;; Check for orphaned relationships
+    (doseq [rel relation-retractions]
+      (let [cnt (count-relationships-using-relation db rel)]
+        (when (pos? cnt)
+          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                               " because it is used by " cnt " relationships.")
+                          {:relation rel :count cnt})))))
+
+    ;; Transact changes
+    (let [tx-data (concat
+                    ;; Additions
+                    (:additions relations)
+                    (:additions permissions)
+                    ;; Retractions
+                    (for [rel relation-retractions]
+                      [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
+                    (for [perm permission-retractions]
+                      [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
+                    ;; Store schema string
+                    [{:eacl/id "schema-string"
+                      :eacl/schema-string schema-string}])]
+      @(d/transact conn tx-data)
+      deltas)))
