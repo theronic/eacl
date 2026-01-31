@@ -108,7 +108,7 @@
                     permission admin = owner - guest
                   }"]
       ;; Grammar now parses it, but validation rejects it
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported operator: Exclusion"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "intersection operator (&) is rejected during validation"
@@ -117,7 +117,7 @@
                     relation c: user  
                     permission p = b & c
                   }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported operator: Intersection"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "multi-level arrow is rejected during validation"
@@ -125,35 +125,35 @@
     (let [schema "definition a { relation b: b }
                   definition b { relation c: c }
                   definition c { permission p = b->c->x }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Multi-level arrows"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "wildcard relations are rejected during validation"
     (let [schema "definition doc { relation viewer: user:* }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Wildcard relation"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "subject relations are rejected during validation"
     (let [schema "definition doc { relation owner: group#member }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Subject relation"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "caveats are rejected during validation"
     (let [schema "definition doc { relation viewer: user with ip_check }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Caveat"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "nil keyword is rejected during validation"
     (let [schema "definition doc { permission p = nil }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'nil'"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "self keyword is rejected during validation"
     (let [schema "definition user { permission view = self }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'self'"
                             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing ".all() arrow function is rejected during validation"
     (let [schema "definition doc { relation group: group permission view = group.all(member) }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"not supported by EACL"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported function: \.all\(\)"
                             (parser/->eacl-schema (parser/parse-schema schema)))))))

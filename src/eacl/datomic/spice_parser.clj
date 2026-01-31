@@ -297,7 +297,7 @@
 
 (defn- collect-parse-tree-issues
   "Walks parse tree and collects all EACL compatibility issues.
-   Returns a vector of issue maps."
+   Returns a vector of issue maps with informative error messages."
   [parse-tree]
   (let [issues (atom [])]
     (clojure.walk/postwalk
@@ -310,7 +310,7 @@
              (swap! issues conj
                     {:type :unsupported-operator
                      :operator "&"
-                     :message "EACL does not support intersection (&) operator"}))
+                     :message "Unsupported operator: Intersection (&). EACL only supports Union (+) at this time."}))
 
            ;; Check for exclusion operator  
            :exclusion-expr
@@ -318,14 +318,14 @@
              (swap! issues conj
                     {:type :unsupported-operator
                      :operator "-"
-                     :message "EACL does not support exclusion (-) operator"}))
+                     :message "Unsupported operator: Exclusion (-). EACL only supports Union (+) at this time."}))
 
            ;; Check for multi-level arrows
            :simple-arrow-expr
            (when (> (count (filter #(and (vector? %) (= :base-expr (first %))) (rest node))) 2)
              (swap! issues conj
                     {:type :multi-level-arrow
-                     :message "EACL only supports single-level arrows (e.g., rel->perm). Multi-level arrows like a->b->c are not supported."}))
+                     :message "Unsupported feature: Multi-level arrows (e.g., a->b->c). EACL only supports single-level arrows like rel->perm."}))
 
            ;; Check for .all() function (only .any() is implicitly supported via arrow)
            :arrow-func-expr
@@ -335,28 +335,28 @@
                (swap! issues conj
                       {:type :unsupported-arrow-function
                        :function "all"
-                       :message "EACL does not support .all() arrow function. Use standard arrow (->) instead."})))
+                       :message "Unsupported function: .all(). EACL only supports .any() (equivalent to -> arrow). Use rel->perm instead."})))
 
            ;; Check for nil expression
            :nil-expr
            (swap! issues conj
                   {:type :unsupported-keyword
                    :keyword "nil"
-                   :message "EACL does not support 'nil' keyword in permissions"})
+                   :message "Unsupported keyword: 'nil'. EACL does not support nil permissions."})
 
            ;; Check for self expression (might be supportable in future)
            :self-expr
            (swap! issues conj
                   {:type :unsupported-keyword
                    :keyword "self"
-                   :message "EACL does not support 'self' keyword in permissions"})
+                   :message "Unsupported keyword: 'self'. EACL does not support self-referencing permissions."})
 
            ;; Check for type paths with namespaces
            :type-path
            (when (> (count (rest node)) 1)
              (swap! issues conj
                     {:type :namespaced-type
-                     :message "EACL does not support namespaced type paths (e.g., docs/document). Use simple type names."}))
+                     :message "Unsupported feature: Namespaced type paths (e.g., docs/document). Use simple type names like 'document'."}))
 
            ;; Default: no issue for other node types
            nil))
@@ -378,8 +378,8 @@
                {:type :wildcard-relation
                 :resource-type res-type
                 :relation rel-name
-                :message (str "EACL does not support wildcard relations (e.g., user:*). "
-                              "Found in " res-type "/" rel-name)}))
+                :message (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
+                              res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
 
       ;; Check for subject relations
       (when (:subject-relation type-ref)
@@ -388,8 +388,8 @@
                 :resource-type res-type
                 :relation rel-name
                 :subject-relation (:subject-relation type-ref)
-                :message (str "EACL does not support subject relations (e.g., group#member). "
-                              "Found in " res-type "/" rel-name ": " (:type type-ref) "#" (:subject-relation type-ref))}))
+                :message (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
+                              "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
 
       ;; Check for caveats
       (when (:caveat type-ref)
@@ -398,8 +398,8 @@
                 :resource-type res-type
                 :relation rel-name
                 :caveat (:caveat type-ref)
-                :message (str "EACL does not support caveats (e.g., 'with caveatname'). "
-                              "Found in " res-type "/" rel-name)})))
+                :message (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
+                              res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
     @issues))
 
 (defn validate-eacl-restrictions
@@ -421,14 +421,16 @@
   [parse-tree transformed-schema]
   (let [parse-issues (collect-parse-tree-issues parse-tree)
         relation-issues (collect-relation-issues (:definitions transformed-schema))
-        all-issues (concat parse-issues relation-issues)]
+        all-issues (vec (concat parse-issues relation-issues))]
     (when (seq all-issues)
-      (throw (ex-info "Schema uses SpiceDB features not supported by EACL"
-                      {:issues (vec all-issues)
-                       :issue-count (count all-issues)
-                       :message (str "Found " (count all-issues) " unsupported feature(s). "
-                                     "EACL supports a subset of SpiceDB syntax. "
-                                     "See :issues for details.")})))
+      (let [first-msg (:message (first all-issues))
+            total (count all-issues)
+            summary (if (= 1 total)
+                      first-msg
+                      (str first-msg " (and " (dec total) " more issue(s))"))]
+        (throw (ex-info summary
+                        {:issues all-issues
+                         :issue-count total}))))
     nil))
 
 ;; Keep old function for backwards compatibility, but delegate to new validation
