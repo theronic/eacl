@@ -110,15 +110,15 @@ This plan outlines the translation of EACL (Entity Access Control Library) from 
 ┌─────────────────────────────────────────────────────┐
 │         eacl.datascript.impl.indexed (NEW)          │
 │  - Permission path calculation (cached)             │
-│  - Custom index traversal (d/datoms + filtering)    │
-│  - Eager merge-sort (no lazy seqs in JS)            │
+│  - Index traversal (d/index-range works!)           │
+│  - Lazy merge-sort (lazy-seq works in CLJS)         │
 └─────────────────────────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────┐
 │             DataScript Database                     │
-│  - Standard AVET/EAVT indices                       │
-│  - Custom composite key attributes                  │
+│  - d/index-range for efficient range scans          │
+│  - Manually-computed composite key vectors          │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -126,26 +126,18 @@ This plan outlines the translation of EACL (Entity Access Control Library) from 
 
 ## 3. Key Technical Challenges
 
-### 3.1 `d/index-range` Not Available in DataScript
+### 3.1 `d/index-range` IS Supported ✅
 
-**Problem:** The Datomic implementation heavily relies on `d/index-range` for efficient tuple-based range scans. DataScript does not have this function.
-
-**Current Usage (indexed.clj:200)**:
-```clojure
-(d/index-range db tuple-attr start-tuple end-tuple)
-```
-
-**Solution:** Use `d/datoms` with `:avet` index and post-filter:
+**Good News:** DataScript supports `d/index-range` with the same API as Datomic:
 
 ```clojure
-;; DataScript equivalent
-(defn datascript-index-range [db attr start-val end-val]
-  (->> (d/datoms db :avet attr)
-       (drop-while #(neg? (compare (:v %) start-val)))
-       (take-while #(neg? (compare (:v %) end-val)))))
+(d/index-range db attr start end)
+;; Returns part of :avet index between [_ attr start] and [_ attr end]
 ```
 
-**Alternative:** Implement custom indexing data structures alongside DataScript.
+This means the core traversal logic in `indexed.clj` can be ported with minimal changes. The `d/index-range` calls will work directly.
+
+**Requirement:** The attribute must be marked as `:db/index true` (same as Datomic).
 
 ### 3.2 Tuple Attributes Not Supported
 
@@ -392,9 +384,9 @@ This plan outlines the translation of EACL (Entity Access Control Library) from 
    - Port relation/permission/relationship builders from `eacl.datomic.impl.base`
    - Adapt for composite key generation
 
-3. **Implement index helpers**
-   - `datascript-index-range` function
-   - Composite key lookup functions
+3. **Implement composite key helpers**
+   - `make-forward-key` / `make-reverse-key` functions
+   - Transaction builder that computes keys automatically
    - Test with sample data
 
 ### Phase 3: Permission Engine (Week 3)
@@ -409,7 +401,7 @@ This plan outlines the translation of EACL (Entity Access Control Library) from 
    - `traverse-single-path`
    - `traverse-permission-path-via-subject`
    - `traverse-permission-path-reverse`
-   - Replace `d/index-range` with DataScript equivalents
+   - Use `d/index-range` directly (it works in DataScript!)
 
 3. **Test permission calculations**
    - Verify path calculation matches Datomic
@@ -510,52 +502,55 @@ test/
 
 ## 8. Index Strategy for DataScript
 
-### 8.1 The Challenge
+### 8.1 Good News: `d/index-range` Works! ✅
 
-Datomic's `d/index-range` allows efficient range scans on composite tuple indices. DataScript's `d/datoms` only supports exact value matching or full index scans.
-
-### 8.2 Strategy: Sorted Vector Keys + Binary Search
-
-Store composite keys as sorted vectors and use binary search for range queries:
+DataScript supports `d/index-range` with the same API as Datomic:
 
 ```clojure
-(defn find-in-range
-  "Binary search equivalent for DataScript.
-   Returns datoms where (start <= key < end)."
-  [db attr start-key end-key]
-  (let [all-datoms (d/datoms db :avet attr)]
-    (->> all-datoms
-         (filter (fn [{:keys [v]}]
-                   (and (>= (compare v start-key) 0)
-                        (< (compare v end-key) 0)))))))
+(d/index-range db attr start end)
+;; Returns part of :avet index between [_ attr start] and [_ attr end]
 ```
 
-### 8.3 Strategy: Maintain Sorted Atom
+This means the core traversal logic can use `d/index-range` directly on indexed vector attributes.
 
-For hot paths, maintain a separate sorted index:
+### 8.2 The Real Challenge: No Tuple Attributes
+
+Datomic auto-computes tuple values from `:db/tupleAttrs`. DataScript doesn't support this, so we must:
+
+1. **Manually compute composite keys** when transacting
+2. **Store as indexed vector attributes** (vectors are comparable in CLJS)
 
 ```clojure
-(defonce relationship-forward-index
-  (atom (sorted-map)))  ;; {forward-key -> eid}
-
-;; Update on transaction
-(defn index-relationship! [forward-key eid]
-  (swap! relationship-forward-index assoc forward-key eid))
-
-;; Range query
-(defn range-query [start end]
-  (subseq @relationship-forward-index >= start < end))
+;; When creating a relationship, compute the composite key:
+{:eacl.relationship/subject-type :user
+ :eacl.relationship/subject 123
+ :eacl.relationship/relation-name :owner
+ :eacl.relationship/resource-type :account
+ :eacl.relationship/resource 456
+ ;; Manually computed composite key (Datomic does this automatically)
+ :eacl.relationship/forward-key [:user 123 :owner :account 456]}
 ```
 
-**Trade-off:** Extra memory, but O(log n) range queries.
+### 8.3 Using `d/index-range` with Vector Keys
+
+Since vectors are lexicographically comparable, `d/index-range` works naturally:
+
+```clojure
+;; Find all resources of type :account that user 123 owns
+(d/index-range db
+  :eacl.relationship/forward-key
+  [:user 123 :owner :account 0]           ;; start (0 = min eid)
+  [:user 123 :owner :account Long/MAX_VALUE]) ;; end
+```
+
+This is nearly identical to the Datomic code - just using our manually-computed key attribute.
 
 ### 8.4 Recommended Approach
 
-For initial implementation:
-1. Use DataScript's built-in indices where possible
-2. Store composite keys as vectors (they're comparable in CLJS)
-3. Use `d/datoms` with filtering for range-like behavior
-4. Profile and optimize with sorted-map indices if needed
+1. **Store composite keys as vectors** - computed on transaction
+2. **Use `d/index-range` directly** - it works!
+3. **Mark composite key attrs as `:db/index true`**
+4. **Consider `:db/unique :db.unique/identity`** for deduplication
 
 ---
 
