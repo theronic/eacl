@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EACL - Situated ReBAC Authorization for Datomic</title>
+  <meta name="description" content="EACL is a best-in-class Relationship-Based Access Control (ReBAC) library that lives next to your application data in Datomic.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-elevated: #1a1a24;
+      --accent-primary: #00d4ff;
+      --accent-secondary: #7c3aed;
+      --accent-tertiary: #f43f5e;
+      --accent-success: #10b981;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border-color: #2e2e3a;
+      --glow-primary: rgba(0, 212, 255, 0.4);
+      --glow-secondary: rgba(124, 58, 237, 0.4);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Animated background */
+    .bg-grid {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image:
+        linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .content-wrapper {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Navigation */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 1rem 2rem;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-color);
+      z-index: 1000;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.02em;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--accent-primary);
+    }
+
+    .nav-cta {
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      color: var(--bg-dark) !important;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    /* Hero Section */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 8rem 2rem 4rem;
+      position: relative;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 100px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-bottom: 2rem;
+    }
+
+    .hero-badge .dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-success);
+      border-radius: 50%;
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.2); }
+    }
+
+    .hero h1 {
+      font-size: clamp(3rem, 10vw, 6rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      margin-bottom: 1.5rem;
+      line-height: 1.1;
+    }
+
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 50%, var(--accent-tertiary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-subtitle {
+      font-size: 1.25rem;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin-bottom: 3rem;
+      line-height: 1.7;
+    }
+
+    .hero-subtitle strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.875rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      text-decoration: none;
+      transition: all 0.2s;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      color: var(--bg-dark);
+      box-shadow: 0 0 30px var(--glow-primary);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 50px var(--glow-primary);
+    }
+
+    .btn-secondary {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-card);
+      border-color: var(--accent-primary);
+    }
+
+    /* Graph Section */
+    .graph-section {
+      padding: 6rem 2rem;
+      position: relative;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 4rem;
+    }
+
+    .section-header h2 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .section-header p {
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .graph-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .graph-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem 1.5rem;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .graph-header .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .graph-header .dot-red { background: #ff5f56; }
+    .graph-header .dot-yellow { background: #ffbd2e; }
+    .graph-header .dot-green { background: #27ca3f; }
+
+    .graph-title {
+      margin-left: 1rem;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .graph-canvas {
+      height: 500px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #schema-graph {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* SVG Styles */
+    .node-group {
+      cursor: pointer;
+    }
+
+    .node {
+      transition: all 0.3s ease;
+    }
+
+    .node-user { fill: var(--accent-primary); }
+    .node-account { fill: var(--accent-secondary); }
+    .node-server { fill: var(--accent-tertiary); }
+    .node-vpc { fill: var(--accent-success); }
+    .node-platform { fill: #f59e0b; }
+
+    .node-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      fill: var(--text-primary);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .node-type {
+      font-family: 'Inter', sans-serif;
+      font-size: 10px;
+      fill: var(--text-muted);
+      text-anchor: middle;
+      pointer-events: none;
+    }
+
+    .edge {
+      stroke-width: 2;
+      fill: none;
+      opacity: 0.6;
+    }
+
+    .edge-relation {
+      stroke: var(--accent-primary);
+    }
+
+    .edge-permission {
+      stroke: var(--accent-secondary);
+      stroke-dasharray: 5, 5;
+    }
+
+    .edge-glow {
+      stroke-width: 6;
+      fill: none;
+      opacity: 0;
+      filter: blur(4px);
+    }
+
+    .pulse-particle {
+      fill: var(--accent-primary);
+      filter: drop-shadow(0 0 6px var(--accent-primary));
+    }
+
+    /* Features Grid */
+    .features {
+      padding: 6rem 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 2rem;
+      transition: all 0.3s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--accent-primary);
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+      font-size: 1.5rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.25rem;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+    }
+
+    .feature-card p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* Code Section */
+    .code-section {
+      padding: 6rem 2rem;
+      background: var(--bg-card);
+    }
+
+    .code-container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .code-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .code-tab {
+      padding: 0.5rem 1rem;
+      background: transparent;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .code-tab.active {
+      background: var(--accent-primary);
+      color: var(--bg-dark);
+      border-color: var(--accent-primary);
+    }
+
+    .code-block {
+      background: var(--bg-dark);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .code-block-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .code-block-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .copy-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      transition: all 0.2s;
+    }
+
+    .copy-btn:hover {
+      background: var(--border-color);
+      color: var(--text-primary);
+    }
+
+    pre {
+      padding: 1.5rem;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      line-height: 1.7;
+    }
+
+    .code-content {
+      display: none;
+    }
+
+    .code-content.active {
+      display: block;
+    }
+
+    /* Syntax highlighting */
+    .keyword { color: var(--accent-secondary); }
+    .function { color: var(--accent-primary); }
+    .string { color: var(--accent-success); }
+    .comment { color: var(--text-muted); font-style: italic; }
+    .symbol { color: var(--accent-tertiary); }
+    .number { color: #f59e0b; }
+
+    /* Comparison Section */
+    .comparison {
+      padding: 6rem 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-card);
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 1.25rem 1.5rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .comparison-table th {
+      background: var(--bg-elevated);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .comparison-table td {
+      color: var(--text-secondary);
+    }
+
+    .comparison-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .check {
+      color: var(--accent-success);
+      font-weight: bold;
+    }
+
+    .partial {
+      color: #f59e0b;
+    }
+
+    /* Getting Started */
+    .getting-started {
+      padding: 6rem 2rem;
+    }
+
+    .steps {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .step {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 3rem;
+    }
+
+    .step-number {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.25rem;
+      flex-shrink: 0;
+    }
+
+    .step-content h3 {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .step-content p {
+      color: var(--text-secondary);
+      margin-bottom: 1rem;
+    }
+
+    .step-code {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      overflow-x: auto;
+    }
+
+    /* CTA Section */
+    .cta {
+      padding: 8rem 2rem;
+      text-align: center;
+      background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-card) 100%);
+      position: relative;
+    }
+
+    .cta::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, var(--glow-primary) 0%, transparent 70%);
+      opacity: 0.3;
+      pointer-events: none;
+    }
+
+    .cta h2 {
+      font-size: 3rem;
+      margin-bottom: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      position: relative;
+    }
+
+    .cta p {
+      color: var(--text-secondary);
+      font-size: 1.25rem;
+      margin-bottom: 2rem;
+      position: relative;
+    }
+
+    /* Footer */
+    footer {
+      padding: 3rem 2rem;
+      border-top: 1px solid var(--border-color);
+      text-align: center;
+    }
+
+    .footer-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 2rem;
+    }
+
+    .footer-links a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--accent-primary);
+    }
+
+    .footer-credit {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    /* Legend */
+    .graph-legend {
+      display: flex;
+      gap: 1.5rem;
+      padding: 1rem 1.5rem;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border-color);
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .legend-line {
+      width: 24px;
+      height: 2px;
+    }
+
+    .legend-line-dashed {
+      background: repeating-linear-gradient(
+        90deg,
+        var(--accent-secondary),
+        var(--accent-secondary) 4px,
+        transparent 4px,
+        transparent 8px
+      );
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none;
+      }
+
+      .hero h1 {
+        font-size: 2.5rem;
+      }
+
+      .step {
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .footer-content {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .comparison-table {
+        font-size: 0.85rem;
+      }
+
+      .comparison-table th,
+      .comparison-table td {
+        padding: 0.75rem;
+      }
+    }
+
+    /* Animations */
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    @keyframes glow-pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 0.8; }
+    }
+
+    .floating {
+      animation: float 6s ease-in-out infinite;
+    }
+
+    /* Particle container */
+    #particles {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <canvas id="particles"></canvas>
+
+  <div class="content-wrapper">
+    <nav>
+      <div class="logo">EACL</div>
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#schema">Schema</a></li>
+        <li><a href="#code">Examples</a></li>
+        <li><a href="#start">Get Started</a></li>
+        <li><a href="https://github.com/theronic/eacl" class="nav-cta">GitHub</a></li>
+      </ul>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-badge">
+        <span class="dot"></span>
+        Production-ready ReBAC for Datomic
+      </div>
+      <h1>
+        <span class="gradient">Situated</span><br>
+        Authorization
+      </h1>
+      <p class="hero-subtitle">
+        EACL is a <strong>Relationship-Based Access Control</strong> library that lives
+        <strong>next to your data</strong> in Datomic. No network hops. Full consistency.
+        Blazing fast permission checks.
+      </p>
+      <div class="hero-actions">
+        <a href="#start" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          Get Started
+        </a>
+        <a href="https://github.com/theronic/eacl" class="btn btn-secondary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          View on GitHub
+        </a>
+      </div>
+    </section>
+
+    <section id="schema" class="graph-section">
+      <div class="section-header">
+        <h2>Visualize Your Permission Graph</h2>
+        <p>Watch relationships and permissions flow through your schema in real-time.
+           EACL traverses the graph to determine access.</p>
+      </div>
+      <div class="graph-container">
+        <div class="graph-header">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span class="graph-title">schema.edn - Permission Graph</span>
+        </div>
+        <div class="graph-canvas">
+          <svg id="schema-graph" viewBox="0 0 800 500">
+            <defs>
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+              <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="var(--accent-primary)" />
+              </marker>
+              <marker id="arrowhead-perm" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="var(--accent-secondary)" />
+              </marker>
+              <linearGradient id="edge-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:var(--accent-primary);stop-opacity:0.2" />
+                <stop offset="50%" style="stop-color:var(--accent-primary);stop-opacity:1" />
+                <stop offset="100%" style="stop-color:var(--accent-primary);stop-opacity:0.2" />
+              </linearGradient>
+            </defs>
+
+            <!-- Edges will be drawn by JS -->
+            <g id="edges"></g>
+
+            <!-- Nodes will be drawn by JS -->
+            <g id="nodes"></g>
+
+            <!-- Particles for animation -->
+            <g id="particles-svg"></g>
+          </svg>
+        </div>
+        <div class="graph-legend">
+          <div class="legend-item">
+            <span class="legend-dot" style="background: var(--accent-primary)"></span>
+            User
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: var(--accent-secondary)"></span>
+            Account
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: var(--accent-tertiary)"></span>
+            Server
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: var(--accent-success)"></span>
+            VPC
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #f59e0b"></span>
+            Platform
+          </div>
+          <div class="legend-item">
+            <span class="legend-line" style="background: var(--accent-primary)"></span>
+            Relation
+          </div>
+          <div class="legend-item">
+            <span class="legend-line legend-line-dashed"></span>
+            Permission
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="features">
+      <div class="section-header">
+        <h2>Why EACL?</h2>
+        <p>Built for production Datomic applications that need sophisticated access control</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" stroke-width="2">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          </div>
+          <h3>Situated Authorization</h3>
+          <p>Permission data lives next to your application data in Datomic. No network hops to external auth services. Query permissions with the same connection you use for everything else.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <h3>Full Consistency</h3>
+          <p>Unlike eventually consistent systems, EACL queries the same Datomic database as your application. Permission changes are immediately reflected. No sync delays or stale checks.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" stroke-width="2">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+              <polyline points="2 17 12 22 22 17"/>
+              <polyline points="2 12 12 17 22 12"/>
+            </svg>
+          </div>
+          <h3>Graph Traversal</h3>
+          <p>Define complex permission hierarchies with arrows. Users who own an account automatically get admin on all servers in that account. EACL traverses the graph for you.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="3" y1="9" x2="21" y2="9"/>
+              <line x1="9" y1="21" x2="9" y2="9"/>
+            </svg>
+          </div>
+          <h3>SpiceDB Compatible</h3>
+          <p>Familiar concepts if you've used Zanzibar, SpiceDB, or similar systems. Relations, permissions, and relationships work the same way. Easy migration path.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"/>
+              <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </div>
+          <h3>Pure Clojure</h3>
+          <p>No external dependencies. No gRPC. No protobuf. Just clean Clojure code that runs in your JVM. Easy to debug, easy to extend, easy to understand.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--bg-dark)" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <h3>Battle Tested</h3>
+          <p>Used in production at CloudAfrica. Handles real-world multi-tenant access control for cloud infrastructure. Proven at scale with complex permission hierarchies.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="code" class="code-section">
+      <div class="section-header">
+        <h2>Simple, Expressive API</h2>
+        <p>Define schemas and check permissions with clean Clojure code</p>
+      </div>
+      <div class="code-container">
+        <div class="code-tabs">
+          <button class="code-tab active" data-tab="schema">Schema</button>
+          <button class="code-tab" data-tab="relationships">Relationships</button>
+          <button class="code-tab" data-tab="queries">Queries</button>
+        </div>
+        <div class="code-block">
+          <div class="code-block-header">
+            <span class="code-block-title">eacl_example.clj</span>
+            <button class="copy-btn" onclick="copyCode()">Copy</button>
+          </div>
+          <div id="code-schema" class="code-content active">
+<pre><span class="comment">;; Define relations between resource types and subjects</span>
+(<span class="function">Relation</span> <span class="symbol">:account</span> <span class="symbol">:owner</span> <span class="symbol">:user</span>)
+(<span class="function">Relation</span> <span class="symbol">:account</span> <span class="symbol">:platform</span> <span class="symbol">:platform</span>)
+(<span class="function">Relation</span> <span class="symbol">:server</span> <span class="symbol">:account</span> <span class="symbol">:account</span>)
+(<span class="function">Relation</span> <span class="symbol">:vpc</span> <span class="symbol">:account</span> <span class="symbol">:account</span>)
+
+<span class="comment">;; Define permissions - direct from relations</span>
+(<span class="function">Permission</span> <span class="symbol">:account</span> <span class="symbol">:admin</span> {<span class="symbol">:relation</span> <span class="symbol">:owner</span>})
+
+<span class="comment">;; Permissions via arrows - traverse the graph!</span>
+(<span class="function">Permission</span> <span class="symbol">:server</span> <span class="symbol">:admin</span>
+  {<span class="symbol">:arrow</span> <span class="symbol">:account</span> <span class="symbol">:permission</span> <span class="symbol">:admin</span>})
+
+(<span class="function">Permission</span> <span class="symbol">:vpc</span> <span class="symbol">:admin</span>
+  {<span class="symbol">:arrow</span> <span class="symbol">:account</span> <span class="symbol">:permission</span> <span class="symbol">:admin</span>})
+
+<span class="comment">;; Chain permissions - :view implies :admin</span>
+(<span class="function">Permission</span> <span class="symbol">:server</span> <span class="symbol">:view</span> {<span class="symbol">:permission</span> <span class="symbol">:admin</span>})</pre>
+          </div>
+          <div id="code-relationships" class="code-content">
+<pre><span class="comment">;; Create relationships between entities</span>
+(<span class="function">eacl/create-relationships!</span> acl
+  [(<span class="function">->Relationship</span>
+     (<span class="function">->user</span> <span class="string">"alice"</span>)
+     <span class="symbol">:owner</span>
+     (<span class="function">->account</span> <span class="string">"acme-corp"</span>))
+
+   (<span class="function">->Relationship</span>
+     (<span class="function">->account</span> <span class="string">"acme-corp"</span>)
+     <span class="symbol">:account</span>
+     (<span class="function">->server</span> <span class="string">"prod-web-1"</span>))
+
+   (<span class="function">->Relationship</span>
+     (<span class="function">->account</span> <span class="string">"acme-corp"</span>)
+     <span class="symbol">:account</span>
+     (<span class="function">->vpc</span> <span class="string">"main-vpc"</span>))])
+
+<span class="comment">;; Now alice has :admin on acme-corp</span>
+<span class="comment">;; And :admin on prod-web-1 (via arrow)</span>
+<span class="comment">;; And :admin on main-vpc (via arrow)</span></pre>
+          </div>
+          <div id="code-queries" class="code-content">
+<pre><span class="comment">;; Check if a user has a permission</span>
+(<span class="function">eacl/can?</span> acl
+  (<span class="function">->user</span> <span class="string">"alice"</span>)
+  <span class="symbol">:admin</span>
+  (<span class="function">->server</span> <span class="string">"prod-web-1"</span>))
+<span class="comment">;; => true</span>
+
+<span class="comment">;; Find all resources a user can access</span>
+(<span class="function">eacl/lookup-resources</span> acl
+  {<span class="symbol">:subject</span>       (<span class="function">->user</span> <span class="string">"alice"</span>)
+   <span class="symbol">:permission</span>    <span class="symbol">:admin</span>
+   <span class="symbol">:resource/type</span> <span class="symbol">:server</span>
+   <span class="symbol">:limit</span>         <span class="number">100</span>})
+<span class="comment">;; => {:data [{:type :server :id "prod-web-1"}]</span>
+<span class="comment">;;     :cursor ...}</span>
+
+<span class="comment">;; Find all users who can access a resource</span>
+(<span class="function">eacl/lookup-subjects</span> acl
+  {<span class="symbol">:resource</span>     (<span class="function">->server</span> <span class="string">"prod-web-1"</span>)
+   <span class="symbol">:permission</span>   <span class="symbol">:admin</span>
+   <span class="symbol">:subject/type</span> <span class="symbol">:user</span>
+   <span class="symbol">:limit</span>        <span class="number">100</span>})
+<span class="comment">;; => {:data [{:type :user :id "alice"}]</span>
+<span class="comment">;;     :cursor ...}</span></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="comparison">
+      <div class="section-header">
+        <h2>EACL vs The Alternatives</h2>
+        <p>See how EACL compares to other authorization solutions</p>
+      </div>
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>EACL</th>
+            <th>SpiceDB</th>
+            <th>Custom SQL</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ReBAC Support</td>
+            <td class="check">Yes</td>
+            <td class="check">Yes</td>
+            <td class="partial">Manual</td>
+          </tr>
+          <tr>
+            <td>Full Consistency</td>
+            <td class="check">Yes</td>
+            <td class="partial">Optional</td>
+            <td class="check">Yes</td>
+          </tr>
+          <tr>
+            <td>No Network Hops</td>
+            <td class="check">Yes</td>
+            <td>No</td>
+            <td class="check">Yes</td>
+          </tr>
+          <tr>
+            <td>Graph Traversal</td>
+            <td class="check">Built-in</td>
+            <td class="check">Built-in</td>
+            <td>Complex JOINs</td>
+          </tr>
+          <tr>
+            <td>Datomic Integration</td>
+            <td class="check">Native</td>
+            <td>External</td>
+            <td>N/A</td>
+          </tr>
+          <tr>
+            <td>Setup Complexity</td>
+            <td class="check">Add dependency</td>
+            <td>Separate service</td>
+            <td>Build from scratch</td>
+          </tr>
+          <tr>
+            <td>Operational Overhead</td>
+            <td class="check">None</td>
+            <td>High</td>
+            <td>Medium</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="start" class="getting-started">
+      <div class="section-header">
+        <h2>Get Started in Minutes</h2>
+        <p>Add EACL to your Datomic project and start securing your resources</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3>Add the Dependency</h3>
+            <p>Add EACL to your deps.edn</p>
+            <div class="step-code">
+              <span class="symbol">io.github.theronic/eacl</span> {<span class="symbol">:git/sha</span> <span class="string">"LATEST"</span>}
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3>Install the Schema</h3>
+            <p>Transact the EACL schema into your Datomic database</p>
+            <div class="step-code">
+              (<span class="function">require</span> '[<span class="symbol">eacl.datomic.schema</span> <span class="symbol">:as</span> schema])<br>
+              @(<span class="function">d/transact</span> conn schema/v6-schema)
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h3>Create a Client</h3>
+            <p>Initialize the EACL client with your connection</p>
+            <div class="step-code">
+              (<span class="function">require</span> '[<span class="symbol">eacl.datomic.core</span>])<br>
+              (<span class="keyword">def</span> acl (<span class="function">eacl.datomic.core/make-client</span> conn {}))
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h3>Define & Check Permissions</h3>
+            <p>Create your schema, add relationships, and start checking permissions</p>
+            <div class="step-code">
+              (<span class="function">eacl/can?</span> acl subject permission resource)
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta">
+      <h2>Ready to Secure Your App?</h2>
+      <p>Join the growing community of developers using EACL for production authorization.</p>
+      <div class="hero-actions">
+        <a href="https://github.com/theronic/eacl" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          Star on GitHub
+        </a>
+        <a href="https://clojurians.slack.com" class="btn btn-secondary">
+          Join the Discussion
+        </a>
+      </div>
+    </section>
+
+    <footer>
+      <div class="footer-content">
+        <div class="footer-links">
+          <a href="https://github.com/theronic/eacl">GitHub</a>
+          <a href="https://github.com/theronic/eacl/issues">Issues</a>
+          <a href="https://cloudafrica.net">CloudAfrica</a>
+        </div>
+        <div class="footer-credit">
+          Built with love by <a href="https://cloudafrica.net" style="color: var(--accent-primary)">CloudAfrica</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // Schema Graph Visualization
+    const nodes = [
+      { id: 'user-1', type: 'user', label: 'alice', x: 100, y: 250 },
+      { id: 'platform', type: 'platform', label: 'platform', x: 250, y: 80 },
+      { id: 'account', type: 'account', label: 'acme-corp', x: 350, y: 250 },
+      { id: 'server-1', type: 'server', label: 'prod-web-1', x: 550, y: 150 },
+      { id: 'server-2', type: 'server', label: 'prod-db-1', x: 550, y: 350 },
+      { id: 'vpc', type: 'vpc', label: 'main-vpc', x: 700, y: 250 },
+    ];
+
+    const edges = [
+      { from: 'user-1', to: 'account', type: 'relation', label: 'owner' },
+      { from: 'platform', to: 'account', type: 'relation', label: 'platform' },
+      { from: 'account', to: 'server-1', type: 'relation', label: 'account' },
+      { from: 'account', to: 'server-2', type: 'relation', label: 'account' },
+      { from: 'account', to: 'vpc', type: 'relation', label: 'account' },
+      { from: 'server-1', to: 'vpc', type: 'relation', label: 'vpc' },
+      { from: 'server-2', to: 'vpc', type: 'relation', label: 'vpc' },
+      // Permission arrows (dashed)
+      { from: 'user-1', to: 'server-1', type: 'permission', label: 'admin→' },
+      { from: 'user-1', to: 'vpc', type: 'permission', label: 'admin→' },
+    ];
+
+    const nodeColors = {
+      user: '#00d4ff',
+      account: '#7c3aed',
+      server: '#f43f5e',
+      vpc: '#10b981',
+      platform: '#f59e0b'
+    };
+
+    function createGraph() {
+      const svg = document.getElementById('schema-graph');
+      const edgesGroup = document.getElementById('edges');
+      const nodesGroup = document.getElementById('nodes');
+      const particlesGroup = document.getElementById('particles-svg');
+
+      // Draw edges
+      edges.forEach((edge, i) => {
+        const from = nodes.find(n => n.id === edge.from);
+        const to = nodes.find(n => n.id === edge.to);
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const d = `M ${from.x} ${from.y} Q ${(from.x + to.x) / 2} ${(from.y + to.y) / 2 - 30} ${to.x} ${to.y}`;
+        path.setAttribute('d', d);
+        path.setAttribute('class', `edge edge-${edge.type}`);
+        path.setAttribute('marker-end', edge.type === 'permission' ? 'url(#arrowhead-perm)' : 'url(#arrowhead)');
+        path.setAttribute('id', `edge-${i}`);
+        edgesGroup.appendChild(path);
+
+        // Add glow effect path
+        const glowPath = path.cloneNode();
+        glowPath.setAttribute('class', `edge-glow edge-${edge.type}`);
+        glowPath.removeAttribute('marker-end');
+        glowPath.setAttribute('id', `edge-glow-${i}`);
+        edgesGroup.insertBefore(glowPath, edgesGroup.firstChild);
+      });
+
+      // Draw nodes
+      nodes.forEach(node => {
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'node-group');
+        group.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+
+        // Outer glow ring
+        const glowRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        glowRing.setAttribute('r', '35');
+        glowRing.setAttribute('fill', 'none');
+        glowRing.setAttribute('stroke', nodeColors[node.type]);
+        glowRing.setAttribute('stroke-width', '2');
+        glowRing.setAttribute('opacity', '0.3');
+        glowRing.setAttribute('class', 'glow-ring');
+        group.appendChild(glowRing);
+
+        // Main circle
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('r', '28');
+        circle.setAttribute('fill', nodeColors[node.type]);
+        circle.setAttribute('class', `node node-${node.type}`);
+        circle.setAttribute('filter', 'url(#glow)');
+        group.appendChild(circle);
+
+        // Inner circle
+        const innerCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        innerCircle.setAttribute('r', '20');
+        innerCircle.setAttribute('fill', 'rgba(0,0,0,0.3)');
+        group.appendChild(innerCircle);
+
+        // Type label
+        const typeLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        typeLabel.setAttribute('y', '-2');
+        typeLabel.setAttribute('class', 'node-type');
+        typeLabel.textContent = node.type;
+        group.appendChild(typeLabel);
+
+        // Name label
+        const nameLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        nameLabel.setAttribute('y', '10');
+        nameLabel.setAttribute('class', 'node-label');
+        nameLabel.textContent = node.label;
+        group.appendChild(nameLabel);
+
+        nodesGroup.appendChild(group);
+      });
+
+      // Animate particles along edges
+      animateParticles();
+    }
+
+    function animateParticles() {
+      const particlesGroup = document.getElementById('particles-svg');
+
+      edges.forEach((edge, i) => {
+        const path = document.getElementById(`edge-${i}`);
+        const glowPath = document.getElementById(`edge-glow-${i}`);
+
+        // Create particle
+        const particle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        particle.setAttribute('r', '4');
+        particle.setAttribute('class', 'pulse-particle');
+        particle.style.fill = edge.type === 'permission' ? '#7c3aed' : '#00d4ff';
+        particlesGroup.appendChild(particle);
+
+        // Animate particle along path
+        const pathLength = path.getTotalLength();
+        let progress = Math.random(); // Start at random position
+        const speed = 0.002 + Math.random() * 0.001;
+        const delay = Math.random() * 2000;
+
+        setTimeout(() => {
+          function animate() {
+            progress += speed;
+            if (progress > 1) progress = 0;
+
+            const point = path.getPointAtLength(progress * pathLength);
+            particle.setAttribute('cx', point.x);
+            particle.setAttribute('cy', point.y);
+
+            // Pulse the glow on the edge
+            const glowOpacity = Math.sin(progress * Math.PI) * 0.5;
+            glowPath.style.opacity = glowOpacity;
+
+            requestAnimationFrame(animate);
+          }
+          animate();
+        }, delay);
+      });
+
+      // Pulse the node glow rings
+      document.querySelectorAll('.glow-ring').forEach((ring, i) => {
+        let scale = 1;
+        let growing = true;
+        const speed = 0.005 + Math.random() * 0.005;
+
+        function pulseRing() {
+          if (growing) {
+            scale += speed;
+            if (scale > 1.2) growing = false;
+          } else {
+            scale -= speed;
+            if (scale < 1) growing = true;
+          }
+
+          ring.setAttribute('transform', `scale(${scale})`);
+          ring.style.opacity = 0.3 + (scale - 1) * 1.5;
+
+          requestAnimationFrame(pulseRing);
+        }
+
+        setTimeout(pulseRing, i * 200);
+      });
+    }
+
+    // Background particles
+    function initBackgroundParticles() {
+      const canvas = document.getElementById('particles');
+      const ctx = canvas.getContext('2d');
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      const particles = [];
+      const particleCount = 50;
+
+      for (let i = 0; i < particleCount; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          size: Math.random() * 2 + 1,
+          opacity: Math.random() * 0.5 + 0.1
+        });
+      }
+
+      function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach(p => {
+          p.x += p.vx;
+          p.y += p.vy;
+
+          if (p.x < 0) p.x = canvas.width;
+          if (p.x > canvas.width) p.x = 0;
+          if (p.y < 0) p.y = canvas.height;
+          if (p.y > canvas.height) p.y = 0;
+
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(0, 212, 255, ${p.opacity})`;
+          ctx.fill();
+        });
+
+        // Draw connections
+        particles.forEach((p1, i) => {
+          particles.slice(i + 1).forEach(p2 => {
+            const dx = p1.x - p2.x;
+            const dy = p1.y - p2.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 150) {
+              ctx.beginPath();
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.strokeStyle = `rgba(0, 212, 255, ${0.1 * (1 - dist / 150)})`;
+              ctx.stroke();
+            }
+          });
+        });
+
+        requestAnimationFrame(animate);
+      }
+      animate();
+    }
+
+    // Code tabs
+    document.querySelectorAll('.code-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.code-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.code-content').forEach(c => c.classList.remove('active'));
+
+        tab.classList.add('active');
+        document.getElementById(`code-${tab.dataset.tab}`).classList.add('active');
+      });
+    });
+
+    // Copy code
+    function copyCode() {
+      const activeCode = document.querySelector('.code-content.active pre');
+      navigator.clipboard.writeText(activeCode.textContent);
+
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    }
+
+    // Smooth scroll
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function(e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      createGraph();
+      initBackgroundParticles();
+    });
+  </script>
+</body>
+</html>
