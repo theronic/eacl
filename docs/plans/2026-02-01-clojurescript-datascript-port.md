@@ -118,7 +118,7 @@ This plan outlines the translation of EACL (Entity Access Control Library) from 
 ┌─────────────────────────────────────────────────────┐
 │             DataScript Database                     │
 │  - d/index-range for efficient range scans          │
-│  - Manually-computed composite key vectors          │
+│  - :db/tupleAttrs for auto-computed composites      │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -139,11 +139,23 @@ This means the core traversal logic in `indexed.clj` can be ported with minimal 
 
 **Requirement:** The attribute must be marked as `:db/index true` (same as Datomic).
 
-### 3.2 Tuple Attributes Not Supported
+### 3.2 Tuple Attributes ARE Supported ✅
 
-**Problem:** Datomic supports `:db.type/tuple` with `:db/tupleAttrs` for composite indices. DataScript does not.
+**Good News:** DataScript supports `:db/tupleAttrs` with the same syntax as Datomic!
 
-**Current Schema (schema.clj:180-189)**:
+```clojure
+;; This works in DataScript:
+{:a+b+c {:db/tupleAttrs [:a :b :c]}}
+```
+
+Key characteristics:
+- Tuples auto-populate when constituent attributes are transacted
+- **Tuples are indexed by default** in DataScript
+- Supports `:db/unique :db.unique/identity` for uniqueness enforcement
+
+**Impact:** The existing schema can be ported nearly verbatim. No manual composite key computation needed!
+
+**Datomic Schema (schema.clj:180-189)** - works in DataScript too:
 ```clojure
 {:db/ident :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
  :db/valueType :db.type/tuple
@@ -154,20 +166,17 @@ This means the core traversal logic in `indexed.clj` can be ported with minimal 
                  :eacl.relationship/resource]}
 ```
 
-**Solution:** Store composite keys as strings or vectors in a single attribute:
-
+**DataScript Translation:** Minor syntax difference only:
 ```clojure
-;; DataScript approach: composite key as vector
-{:db/ident :eacl.relationship/forward-key
- :db/valueType :db.type/ref  ; or use string encoding
- :db/index true}
-
-;; When creating relationships, compute:
-:eacl.relationship/forward-key
-  [subject-type subject-eid relation-name resource-type resource-eid]
+;; DataScript uses attribute name as key, not :db/ident
+{:eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+ {:db/tupleAttrs [:eacl.relationship/subject-type
+                  :eacl.relationship/subject
+                  :eacl.relationship/relation-name
+                  :eacl.relationship/resource-type
+                  :eacl.relationship/resource]
+  :db/unique :db.unique/identity}}  ;; Optional: for upsert behavior
 ```
-
-**Trade-off:** Vectors are comparable in ClojureScript, enabling sorted iteration. String encoding is simpler but less efficient.
 
 ### 3.3 Lazy Sequences in JavaScript
 
@@ -251,11 +260,14 @@ This means the core traversal logic in `indexed.clj` can be ported with minimal 
 | `:db.type/keyword` | `:db.type/keyword` | Direct mapping |
 | `:db.type/string` | `:db.type/string` | Direct mapping |
 | `:db.type/ref` | `:db.type/ref` | Works the same |
-| `:db.type/tuple` | N/A | Use string/vector encoding |
+| `:db.type/tuple` | `:db/tupleAttrs` | **Supported!** Different syntax |
 | `:db/unique :db.unique/identity` | `:db/unique :db.unique/identity` | Supported |
-| `:db/index true` | `:db/index true` | Supported |
+| `:db/index true` | `:db/index true` | Supported (tuples auto-indexed) |
 
 ### 4.2 Proposed DataScript Schema
+
+Since DataScript supports `:db/tupleAttrs`, the schema is nearly identical to Datomic.
+Main difference: DataScript uses attribute name as key instead of `:db/ident`.
 
 ```clojure
 (def datascript-schema
@@ -266,8 +278,12 @@ This means the core traversal logic in `indexed.clj` can be ported with minimal 
    :eacl.relation/resource-type {:db/index true}
    :eacl.relation/relation-name {:db/index true}
    :eacl.relation/subject-type {:db/index true}
-   ;; Composite key for uniqueness (as vector)
-   :eacl.relation/composite-key {:db/unique :db.unique/identity}
+   ;; Tuple auto-computes from constituent attrs
+   :eacl.relation/resource-type+relation-name+subject-type
+   {:db/tupleAttrs [:eacl.relation/resource-type
+                    :eacl.relation/relation-name
+                    :eacl.relation/subject-type]
+    :db/unique :db.unique/identity}
 
    ;; Permissions
    :eacl.permission/resource-type {:db/index true}
@@ -275,48 +291,62 @@ This means the core traversal logic in `indexed.clj` can be ported with minimal 
    :eacl.permission/source-relation-name {:db/index true}
    :eacl.permission/target-type {:db/index true}
    :eacl.permission/target-name {:db/index true}
-   ;; Composite key for fast lookup
-   :eacl.permission/lookup-key {:db/index true}  ;; [resource-type permission-name]
-   :eacl.permission/composite-key {:db/unique :db.unique/identity}
+   ;; Permission lookup tuple
+   :eacl.permission/resource-type+permission-name
+   {:db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/permission-name]
+    :db/index true}
+   ;; Full uniqueness tuple
+   :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
+   {:db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/target-name
+                    :eacl.permission/permission-name]
+    :db/unique :db.unique/identity}
 
    ;; Relationships
    :eacl.relationship/subject-type {:db/index true}
-   :eacl.relationship/subject {:db/type :db.type/ref :db/index true}
+   :eacl.relationship/subject {:db/valueType :db.type/ref :db/index true}
    :eacl.relationship/relation-name {:db/index true}
    :eacl.relationship/resource-type {:db/index true}
-   :eacl.relationship/resource {:db/type :db.type/ref :db/index true}
-   ;; Forward composite key for lookup-resources
-   :eacl.relationship/forward-key {:db/index true}  ;; [subj-type subj-eid rel-name res-type res-eid]
-   ;; Reverse composite key for lookup-subjects
-   :eacl.relationship/reverse-key {:db/index true}  ;; [res-type res-eid rel-name subj-type subj-eid]
-   :eacl.relationship/identity-key {:db/unique :db.unique/identity}})
+   :eacl.relationship/resource {:db/valueType :db.type/ref :db/index true}
+   ;; Forward tuple for lookup-resources (auto-computed!)
+   :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+   {:db/tupleAttrs [:eacl.relationship/subject-type
+                    :eacl.relationship/subject
+                    :eacl.relationship/relation-name
+                    :eacl.relationship/resource-type
+                    :eacl.relationship/resource]
+    :db/unique :db.unique/identity}
+   ;; Reverse tuple for lookup-subjects (auto-computed!)
+   :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
+   {:db/tupleAttrs [:eacl.relationship/resource-type
+                    :eacl.relationship/resource
+                    :eacl.relationship/relation-name
+                    :eacl.relationship/subject-type
+                    :eacl.relationship/subject]
+    :db/unique :db.unique/identity}})
 ```
 
-### 4.3 Composite Key Generation
+### 4.3 Schema Conversion Function
+
+A simple function can convert Datomic schema to DataScript format:
 
 ```clojure
-(defn make-forward-key [subject-type subject-eid relation-name resource-type resource-eid]
-  ;; Use vector - comparable and indexable
-  [subject-type subject-eid relation-name resource-type resource-eid])
-
-(defn make-reverse-key [resource-type resource-eid relation-name subject-type subject-eid]
-  [resource-type resource-eid relation-name subject-type subject-eid])
-
-;; When transacting a relationship:
-(defn relationship-tx [subject relation resource]
-  (let [subj-type (:type subject)
-        subj-eid (:id subject)
-        res-type (:type resource)
-        res-eid (:id resource)]
-    {:eacl.relationship/subject-type subj-type
-     :eacl.relationship/subject subj-eid
-     :eacl.relationship/relation-name relation
-     :eacl.relationship/resource-type res-type
-     :eacl.relationship/resource res-eid
-     :eacl.relationship/forward-key (make-forward-key subj-type subj-eid relation res-type res-eid)
-     :eacl.relationship/reverse-key (make-reverse-key res-type res-eid relation subj-type subj-eid)
-     :eacl.relationship/identity-key (make-forward-key subj-type subj-eid relation res-type res-eid)}))
+(defn datomic->datascript-schema [datomic-schema]
+  (->> datomic-schema
+       (map (fn [{:db/keys [ident valueType tupleAttrs unique index cardinality]}]
+              [ident (cond-> {}
+                       tupleAttrs (assoc :db/tupleAttrs tupleAttrs)
+                       unique     (assoc :db/unique unique)
+                       index      (assoc :db/index index)
+                       (= valueType :db.type/ref) (assoc :db/valueType :db.type/ref)
+                       (= cardinality :db.cardinality/many) (assoc :db/cardinality :db.cardinality/many))]))
+       (into {})))
 ```
+
+**No manual composite key computation needed - DataScript auto-computes tuples!**
 
 ---
 
@@ -382,12 +412,12 @@ This means the core traversal logic in `indexed.clj` can be ported with minimal 
 
 2. **Create `eacl.datascript.impl.base`**
    - Port relation/permission/relationship builders from `eacl.datomic.impl.base`
-   - Adapt for composite key generation
+   - Transaction builders work unchanged (tuples auto-compute!)
 
-3. **Implement composite key helpers**
-   - `make-forward-key` / `make-reverse-key` functions
-   - Transaction builder that computes keys automatically
-   - Test with sample data
+3. **Create schema conversion utility**
+   - `datomic->datascript-schema` function
+   - Test schema creation with existing v6-schema
+   - Verify tuple auto-computation works
 
 ### Phase 3: Permission Engine (Week 3)
 
@@ -502,55 +532,59 @@ test/
 
 ## 8. Index Strategy for DataScript
 
-### 8.1 Good News: `d/index-range` Works! ✅
+### 8.1 Great News: Direct Port Possible! ✅
 
-DataScript supports `d/index-range` with the same API as Datomic:
+DataScript supports both key features EACL relies on:
+
+1. **`d/index-range`** - Same API as Datomic
+2. **`:db/tupleAttrs`** - Auto-computed composite indices
 
 ```clojure
+;; Both work in DataScript:
 (d/index-range db attr start end)
-;; Returns part of :avet index between [_ attr start] and [_ attr end]
+
+{:my-tuple {:db/tupleAttrs [:a :b :c]}}
 ```
 
-This means the core traversal logic can use `d/index-range` directly on indexed vector attributes.
+### 8.2 Schema Translation
 
-### 8.2 The Real Challenge: No Tuple Attributes
-
-Datomic auto-computes tuple values from `:db/tupleAttrs`. DataScript doesn't support this, so we must:
-
-1. **Manually compute composite keys** when transacting
-2. **Store as indexed vector attributes** (vectors are comparable in CLJS)
+The Datomic schema can be translated with minimal changes:
 
 ```clojure
-;; When creating a relationship, compute the composite key:
-{:eacl.relationship/subject-type :user
- :eacl.relationship/subject 123
- :eacl.relationship/relation-name :owner
- :eacl.relationship/resource-type :account
- :eacl.relationship/resource 456
- ;; Manually computed composite key (Datomic does this automatically)
- :eacl.relationship/forward-key [:user 123 :owner :account 456]}
+;; Datomic format
+{:db/ident :eacl.relationship/forward-key
+ :db/valueType :db.type/tuple
+ :db/tupleAttrs [:eacl.relationship/subject-type ...]
+ :db/unique :db.unique/identity}
+
+;; DataScript format (attribute name as key)
+{:eacl.relationship/forward-key
+ {:db/tupleAttrs [:eacl.relationship/subject-type ...]
+  :db/unique :db.unique/identity}}
 ```
 
-### 8.3 Using `d/index-range` with Vector Keys
+### 8.3 Using `d/index-range` with Tuple Attrs
 
-Since vectors are lexicographically comparable, `d/index-range` works naturally:
+The existing traversal code works nearly unchanged:
 
 ```clojure
-;; Find all resources of type :account that user 123 owns
+;; This Datomic code works in DataScript too!
 (d/index-range db
-  :eacl.relationship/forward-key
-  [:user 123 :owner :account 0]           ;; start (0 = min eid)
-  [:user 123 :owner :account Long/MAX_VALUE]) ;; end
+  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
+  [subject-type subject-eid relation-name resource-type 0]
+  [subject-type subject-eid relation-name resource-type Long/MAX_VALUE])
 ```
 
-This is nearly identical to the Datomic code - just using our manually-computed key attribute.
+### 8.4 Summary
 
-### 8.4 Recommended Approach
+| Feature | Datomic | DataScript | Port Effort |
+|---------|---------|------------|-------------|
+| `d/index-range` | ✅ | ✅ | None |
+| `:db/tupleAttrs` | ✅ | ✅ | Minor syntax |
+| `:db/unique` | ✅ | ✅ | None |
+| Auto-indexing tuples | ✅ | ✅ | None |
 
-1. **Store composite keys as vectors** - computed on transaction
-2. **Use `d/index-range` directly** - it works!
-3. **Mark composite key attrs as `:db/index true`**
-4. **Consider `:db/unique :db.unique/identity`** for deduplication
+**The indexed.clj traversal logic can be ported with minimal changes.**
 
 ---
 
