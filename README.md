@@ -201,20 +201,26 @@ Add the EACL dependency to your `deps.edn` file:
 ; Install the latest EACL Datomic Schema:
 @(d/transact conn schema/v6-schema)
 
+;  Make an EACL client that satisfies the `IAuthorization` protocol:
+(def acl (eacl.datomic.core/make-client conn
+           ; optional config:
+           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
+            :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
+
 ; Write your permission schema using SpiceDB schema DSL:
 (eacl/write-schema! acl
   "definition user {}
-   
+
    definition account {
      relation owner: user
-     
+
      permission admin = owner
      permission update = admin
    }
-   
+
    definition product {
      relation account: account
-     
+
      permission edit = account->admin
    }")
 
@@ -222,17 +228,11 @@ Add the EACL dependency to your `deps.edn` file:
 @(d/transact conn
   [{:eacl/id "user-1"}
    {:eacl/id "user-2"}
-   
+
    {:eacl/id "account-1"}
-   
+
    {:eacl/id "product-1"}
    {:eacl/id "product-2"}])
-
-;  Make an EACL client that satisfies the `IAuthorization` protocol:
-(def acl (eacl.datomic.core/make-client conn
-           ; optional config:
-           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
-            :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
  
 ; Define some convenience methods over spice-object:
 ; `eacl.core/spice-object` is just a record helper that accepts `type`, `id` and optionally `subject_relation`, to return a SpiceObject of {:keys [type id]}. `subject-relation` is not currently supported in EACL.
@@ -513,7 +513,6 @@ This schema defines:
 - `platform` resources can have `super_admin` users
 - `account` resources can have a `platform` and `owner`, with `admin` permission granted to owners and platform super_admins
 - `server` resources belong to an `account` and can have `shared_admin` users, with `reboot` permission granted to account admins and shared_admins
-```
 
 Now you can transact relationships:
 

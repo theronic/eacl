@@ -173,6 +173,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
 - `(eacl/lookup-resources client filters) => {:data [resources...], :cursor 'next-cursor}`.
 - `(eacl/count-resources client filters) => {:keys [count limit cursor]}` supports limit & cursor for iterated counting. Use sparingly with `:limit -1` for all results.
+- `(eacl/count-subjects client filters) => {:keys [count limit cursor]}` supports limit & cursor for iterated counting. Use sparingly with `:limit -1` for all results.
 - `(eacl/read-relationships client filters) => [relationships...]`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
   - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:touch` or `:delete`.
@@ -404,7 +405,7 @@ We can create Relationships in EACL via `create-relationships!` or `write-relati
 
 ### Permission Checks 
 
-Now that we have a Relationship betweee a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account:
+Now that we have a Relationship between a user and an account, we can call `eacl/can?` to check if a user has the permission to update the ACME account:
 ```clojure
 (eacl/can? acl (->user "alice") :update (->account "acme"))
 => true
