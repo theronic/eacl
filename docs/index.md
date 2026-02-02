@@ -455,8 +455,6 @@ Now you can use `can?` to check those arrow permissions:
 
 Internally, EACL models Relations, Permissions and Relationships as Datomic entities, along with several tuple indices for efficient querying.
 
-We have an implementation for the gRPC API that is not open-sourced at this time.
-
 ## EACL ID Configuration
 
 SpiceDB uses strings for subject & resource IDs, whereas EACL internally uses Datomic entity IDs.
