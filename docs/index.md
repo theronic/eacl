@@ -3,7 +3,7 @@ layout: default
 title: EACL
 ---
 
-# **EACL**: Enterprise Access ControL
+# 🦅 **EACL**: Enterprise Access ControL
 
 [EACL](https://github.com/theronic/eacl) is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
 
