@@ -1,6 +1,34 @@
 # Plan: Make the Cursor Tree Implementation Beautiful
 
-> **STATUS: COMPLETE — all seven phases fully detailed with TDD tests, implementation steps, and verification.**
+> **STATUS: IMPLEMENTATION IN PROGRESS**
+>
+> **Phase 1: DONE** — `tracking-min` extracted, 4 inline patterns replaced. 29 tests, 283 assertions, 0 failures.
+> **Phase 2: IN PROGRESS** — `extract-cursor-eid` and `build-v2-cursor` helpers. Implementation started, test written but `when` guard makes it pass on existing code. Need to implement helpers and replace call sites, then fix `count-resources` to use `path-results` from `lazy-merged-lookup-resources`.
+> **Phases 3-7: NOT STARTED**
+>
+> ### Implementation Notes for Next Session
+>
+> #### What's been done (Phase 1):
+> - Added `tracking-min` private fn at line ~17 of `indexed.clj` (after extraction helpers)
+> - Replaced 4 inline `(map (fn [r] (vswap! !min-int ...) r))` blocks with `(tracking-min !min-int intermediate-eid)`
+> - Added `tracking-min-test` at end of `indexed_test.clj`
+> - Added `count-resources-propagates-volatile-state-test` at end of `indexed_test.clj`
+> - All 30 tests pass (29 indexed + 1 tracking-min, 286 assertions)
+>
+> #### Next steps (Phase 2):
+> 1. Add `extract-cursor-eid` and `build-v2-cursor` private fns to `indexed.clj`
+> 2. Replace cursor extraction at lines ~521, ~673 with `extract-cursor-eid`
+> 3. Replace cursor construction in `lookup-resources` (~553-561), `lookup-subjects` (~707-715) with `build-v2-cursor`
+> 4. **Fix `count-resources`** (~724-734): destructure `path-results` from `lazy-merged-lookup-resources`, use `build-v2-cursor` instead of pass-through `(or (:p cursor) {})`
+> 5. Run all tests
+>
+> #### nREPL port: 54056
+> #### Baseline: 30 tests (29 indexed + spice tests run separately), 0 failures
+>
+> #### Gotcha with clj-nrepl-eval and file editing:
+> - Appending to files with `cat >>` works but watch for extra closing parens
+> - The `Edit` tool sometimes fails on trailing bytes — use `cat >>` for appending tests
+> - Always reload both impl and test namespaces: `(require '[eacl.datomic.impl.indexed] :reload '[eacl.datomic.impl.indexed-test] :reload)`
 
 **Date:** 2026-02-14
 **Author:** Claude Opus 4.6

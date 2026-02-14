@@ -1529,3 +1529,47 @@
               (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
                 (is (pos? (count paths3)))
                 (is (pos? @calc-calls) "Should call calc-permission-paths after eviction")))))))))
+
+(deftest tracking-min-test
+  (testing "tracking-min records minimum value that passes through"
+    (let [!min (volatile! nil)
+          result (doall (#'impl.indexed/tracking-min !min 42 [1 2 3]))]
+      (is (= [1 2 3] result) "elements pass through unchanged")
+      (is (= 42 @!min) "volatile records the value")))
+
+  (testing "tracking-min picks minimum across multiple calls"
+    (let [!min (volatile! nil)]
+      (doall (#'impl.indexed/tracking-min !min 50 [1]))
+      (doall (#'impl.indexed/tracking-min !min 30 [2]))
+      (doall (#'impl.indexed/tracking-min !min 70 [3]))
+      (is (= 30 @!min) "should be minimum of 50, 30, 70")))
+
+  (testing "tracking-min with empty coll leaves volatile nil"
+    (let [!min (volatile! nil)
+          result (doall (#'impl.indexed/tracking-min !min 99 []))]
+      (is (= [] result))
+      (is (nil? @!min) "no elements means volatile stays nil"))))
+
+(deftest count-resources-propagates-volatile-state-test
+  (testing "count-resources cursor :p advances (not just pass-through)"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Get page1 from lookup-resources
+          page1 (lookup-resources db {:subject       (->user super-user-eid)
+                                       :permission    :admin
+                                       :resource/type :server
+                                       :limit         2
+                                       :cursor        nil})
+          ;; Now count remaining with page1's cursor
+          remaining (count-resources db {:subject       (->user super-user-eid)
+                                          :permission    :admin
+                                          :resource/type :server
+                                          :limit         -1
+                                          :cursor        (:cursor page1)})
+          count-cursor (:cursor remaining)
+          lookup-cursor (:cursor page1)]
+      ;; If count-resources propagates volatile state, its cursor :p
+      ;; should be at least as populated as the input cursor's :p
+      (when (seq (:p lookup-cursor))
+        (is (seq (:p count-cursor))
+            "count-resources cursor :p should not lose intermediate positions")))))

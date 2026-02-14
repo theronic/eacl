@@ -14,6 +14,15 @@
   (let [[_resource-type _resource-eid _relation-name _subject-type subject-eid] v]
     subject-eid))
 
+(defn- tracking-min
+  "Wraps coll in a lazy seq that tracks the minimum of `v` into volatile `!min`.
+  Elements pass through unchanged. Side-channel for cursor tree."
+  [!min v coll]
+  (map (fn [x]
+         (vswap! !min (fn [cur] (if cur (min cur v) v)))
+         x)
+    coll))
+
 ;(defn find-arrow-permissions
 ;  "Arrows permission means either,
 ;  permission thing = relation->relation | permission
@@ -465,11 +474,7 @@
                            (filter some?)
                            (filter (fn [resource-eid]
                                      (and resource-eid (> resource-eid (or cursor-eid 0)))))
-                           ;; Side-channel: track min contributing intermediate
-                           (map (fn [r]
-                                  (vswap! !min-int
-                                    (fn [cur] (if cur (min cur intermediate-eid) intermediate-eid)))
-                                  r)))))
+                           (tracking-min !min-int intermediate-eid))))
                   intermediate-eids)]
             {:results (if (seq resource-seqs)
                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity resource-seqs)
@@ -496,11 +501,7 @@
                            (map extract-resource-id-from-rel-tuple-datom)
                            (filter some?)
                            (filter (fn [resource-eid] (> resource-eid (or cursor-eid 0))))
-                           ;; Side-channel: track min contributing intermediate
-                           (map (fn [r]
-                                  (vswap! !min-int
-                                    (fn [cur] (if cur (min cur intermediate-eid) intermediate-eid)))
-                                  r)))))
+                           (tracking-min !min-int intermediate-eid))))
                   intermediate-eids)]
             {:results (if (seq resource-seqs)
                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity resource-seqs)
@@ -616,11 +617,7 @@
                          (->> (d/index-range db subject-tuple-attr subject-start subject-end)
                            (map extract-subject-id-from-reverse-rel-tuple-datom)
                            (filter #(> % (or cursor-eid 0)))
-                           ;; Side-channel: track min contributing intermediate
-                           (map (fn [s]
-                                  (vswap! !min-int
-                                    (fn [cur] (if cur (min cur intermediate-eid) intermediate-eid)))
-                                  s)))))
+                           (tracking-min !min-int intermediate-eid))))
                   intermediate-eids)]
             {:results (if (seq subject-seqs)
                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity subject-seqs)
@@ -648,11 +645,7 @@
                                       (->> (if (seq sub-seqs)
                                              (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity sub-seqs)
                                              [])
-                                        ;; Side-channel: track min contributing intermediate
-                                        (map (fn [s]
-                                               (vswap! !min-int
-                                                 (fn [cur] (if cur (min cur intermediate-eid) intermediate-eid)))
-                                               s)))))
+                                        (tracking-min !min-int intermediate-eid))))
                                intermediate-eids)]
             {:results (if (seq subject-seqs)
                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity subject-seqs)
