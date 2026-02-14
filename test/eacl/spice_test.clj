@@ -311,17 +311,17 @@
 
         (testing "page1 cursor should be non-nil"
           (is page1-cursor)
-          (is (get-in page1-cursor [:resource :id])))
+          (is (:e page1-cursor)))
 
-        (testing "page1-cursor should equal the last resource in its results" ; (may change in future to next value)
-          (is (= (get-in page1-cursor [:resource :id])
+        (testing "page1-cursor :e should equal the last resource ID in its results"
+          (is (= (:e page1-cursor)
                  (:id (last (:data page1))))))
 
-        (testing "page2-cursor is the last resource in its results"
+        (testing "page2-cursor :e is the last resource ID in its results"
           (is (= (:id (last (:data page2)))
-                 (get-in page2-cursor [:resource :id]))))))
+                 (:e page2-cursor))))))
 
-    (testing "count-resources returns cursor with correct type and coerced ID (issue #47)"
+    (testing "count-resources returns cursor with v2 format and coerced IDs"
       (let [{:keys [count cursor]} (eacl/count-resources *client
                                                           {:subject       (->user "super-user")
                                                            :permission    :view
@@ -330,13 +330,12 @@
         (testing "count-resources returns a count"
           (is (pos? count)))
 
-        (testing "cursor resource type should be a keyword, not clojure.core/type function"
-          (is (keyword? (get-in cursor [:resource :type]))
-              "Bug #47: cursor :type was clojure.core/type function instead of resource type keyword"))
+        (testing "cursor should be v2"
+          (is (= 2 (:v cursor))))
 
-        (testing "cursor resource id should be coerced to external format (string), not internal eid (long)"
-          (is (string? (get-in cursor [:resource :id]))
-              "Bug #47: cursor :id was not coerced to external format"))))
+        (testing "cursor :e should be coerced to external format (string)"
+          (is (string? (:e cursor))
+              "cursor :e should be coerced to external format"))))
 
     (testing "spice-read-relationships results are constrained by filters for resource type & ID"
       (testing "transact the test entities we are about to use"

@@ -3,7 +3,6 @@
   (:require [eacl.core :as eacl :refer [IAuthorization spice-object
                                         ->Relationship map->Relationship
                                         ->RelationshipUpdate]]
-            [eacl.datomic.impl.base :as base]               ; only for Cursor.
             [eacl.datomic.impl :as impl]
     ;[eacl.datomic.impl-fixed :as impl-fixed]        ; impl-fixed is an experimental implementation. avoid until correct.
             [eacl.spicedb.consistency :as consistency]
@@ -29,18 +28,34 @@
 (defn default-internal-cursor->spice
   [db
    {:as opts :keys [entid->object-id]}
-   {:as cursor :keys [_path-index _resource]}]
-  (when (and cursor (:resource cursor))                     ; Fix: only transform when cursor has a valid resource
-    (->> cursor
-      (S/transform [:resource :id] #(entid->object-id db %)))))
+   cursor]
+  (when cursor
+    (if (= 2 (:v cursor))
+      ;; v2 cursor: coerce :e and :p values from eids to external IDs
+      (cond-> cursor
+        (:e cursor) (update :e #(entid->object-id db %))
+        (:p cursor) (update :p (fn [p]
+                                 (into {} (map (fn [[k v]] [k (entid->object-id db v)])) p))))
+      ;; v1 fallback
+      (when (:resource cursor)
+        (->> cursor
+          (S/transform [:resource :id] #(entid->object-id db %)))))))
 
 (defn default-spice-cursor->internal
   [db
    {:as opts :keys [object-id->entid]}
-   {:as cursor :keys [_path-index _resource]}]
+   cursor]
   (when cursor
-    (->> cursor
-      (S/transform [:resource :id] #(object-id->entid db %)))))
+    (if (= 2 (:v cursor))
+      ;; v2 cursor: coerce :e and :p values from external IDs to eids
+      (cond-> cursor
+        (:e cursor) (update :e #(object-id->entid db %))
+        (:p cursor) (update :p (fn [p]
+                                 (into {} (map (fn [[k v]] [k (object-id->entid db v)])) p))))
+      ;; v1 fallback
+      (cond
+        (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
+        (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
 
 ; operation: :create, :touch, :delete unspecified
 
@@ -174,14 +189,17 @@
   [db
    {:as   opts
     :keys [entid->object-id
-           spice-object->internal]}
+           spice-object->internal
+           spice-cursor->internal
+           internal-cursor->spice]}
    query]
   (->> query
     (S/transform [:resource] #(spice-object->internal db %))
-    ; todo cursor coercion.
+    (S/transform [:cursor] #(spice-cursor->internal db opts %))
     (impl/lookup-subjects db)
     (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
-                                 (spice-object type (entid->object-id db id))))))
+                                 (spice-object type (entid->object-id db id))))
+    (S/transform [:cursor] #(internal-cursor->spice db opts %))))
 
 (defrecord Spiceomic [conn opts]
   ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.

@@ -292,10 +292,9 @@
                resources))
         (testing "cursor should be the last resource"
           (is page1-cursor)
-          (let [last-resource (:resource page1-cursor)
-                last-resource-ent (d/entity db (:id last-resource))
-                last-resource-internal (spice-object (:type last-resource) (:eacl/id last-resource-ent))]
-            (is (= (spice-object :server "account2-server1") last-resource-internal))))))
+          (is (:e page1-cursor))
+          (let [last-resource-ent (d/entity db (:e page1-cursor))]
+            (is (= "account2-server1" (:eacl/id last-resource-ent)))))))
 
     (testing "view_via_arrow_relation works"
       (is (= #{(spice-object :account "account-1")
@@ -612,15 +611,13 @@
 
             (testing "page1 cursor points to next page"
               (is page1-cursor)
-              (is (:resource page1-cursor)))
+              (is (:e page1-cursor)))
 
             (testing "page2 cursor points to next page"
               (is page2-cursor)
-              (is (:resource page2-cursor)))
+              (is (:e page2-cursor)))
 
             (testing "page3 cursor matches page 2 because we exhausted results on page 2"
-              ; TODO: figure out what this should return. The previous cursor?
-              ; we probably need a flag for empty, but empty :data implies that.
               (is (= page2-cursor page3-cursor)))
 
             (testing "limit 5 should include all 4 results, in sorted order" ; (depends on tuple index or costly sort)
@@ -721,15 +718,13 @@
 
               (testing "page1 cursor points to next page"
                 (is page1-cursor)
-                (is (:resource page1-cursor)))
+                (is (:e page1-cursor)))
 
               (testing "page2 cursor points to next page"
                 (is page2-cursor)
-                (is (:resource page2-cursor)))
+                (is (:e page2-cursor)))
 
               (testing "page3 cursor matches page 2 because we exhausted results on page 2"
-                ; TODO: figure out what this should return. The previous cursor?
-                ; we probably need a flag for empty, but empty :data implies that.
                 (is (= page2-cursor page3-cursor)))
 
               ;(prn 'both-pages both-pages)
@@ -782,7 +777,7 @@
                                                                       :resource/type :server
                                                                       :limit 2
                                                                       :cursor nil})]
-                    (is (:resource page1-cursor))
+                    (is (:e page1-cursor))
                     (is (= [(spice-object :server "account1-server1")
                             (spice-object :server "account1-server2")]
                            (paginated-data->spice db' page1-servers)))
@@ -793,15 +788,14 @@
                                                                         :resource/type :server
                                                                         :limit 2
                                                                         :cursor page1-cursor})]
-                      (is (:resource page2-cursor))
+                      (is (:e page2-cursor))
                       (is (= [(spice-object :server "account2-server1")
                               (spice-object :server "server-3")]
                              (paginated-data->spice db' page2-servers)))
 
-                      ; these are broken because we are passing account cursors in tests.
                       (testing "count-resources should respect limit & cursors"
-                        (is (:resource page1-cursor))
-                        (is (:resource page2-cursor))
+                        (is (:e page1-cursor))
+                        (is (:e page2-cursor))
                         (is (not= page1-cursor page2-cursor))
 
                         (is (= 2 (:count (count-resources db'
@@ -1322,6 +1316,188 @@
                            #{}
                            cursors)]
           (is (some? all-p-keys)))))))
+
+(deftest cursor-tree-subjects-pagination-correctness-test
+  (testing "paginating lookup-subjects with limit 1 yields same results as unpaginated"
+    (let [db (d/db *conn*)
+          server1-eid (d/entid db [:eacl/id "account1-server1"])
+          ;; Get all results in one shot
+          all-results (:data (lookup-subjects db {:resource      (->server server1-eid)
+                                                   :permission    :admin
+                                                   :subject/type  :user
+                                                   :limit         -1}))
+          ;; Paginate with limit 1
+          paginated (loop [cursor nil
+                           pages  []]
+                      (let [page (lookup-subjects db {:resource      (->server server1-eid)
+                                                      :permission    :admin
+                                                      :subject/type  :user
+                                                      :limit         1
+                                                      :cursor        cursor})]
+                        (if (empty? (:data page))
+                          pages
+                          (recur (:cursor page)
+                                 (into pages (:data page))))))]
+
+      (testing "paginated results match unpaginated"
+        (is (= (map :id all-results)
+               (map :id paginated))
+            "limit-1 pagination should yield identical subjects"))
+
+      (testing "no duplicates"
+        (is (= (count paginated)
+               (count (distinct (map :id paginated))))
+            "no duplicate subject eids across pages")))))
+
+(deftest cursor-tree-multi-path-test
+  (testing "cursor tree handles multiple arrow paths contributing to same result set"
+    ;; Set up: user-1 gets server.admin through BOTH account->admin AND vpc->admin
+    ;; plus shared_admin direct relation on another server
+    @(d/transact *conn* [;; vpc-1 already has account-1 via account relation
+                          ;; Add vpc relation to server1 so vpc->admin path contributes
+                          (Relationship (->vpc :test/vpc1) :vpc (->server :test/server1))
+                          ;; Make user-1 shared_admin of server2 (direct relation path)
+                          (Relationship (->user :test/user1) :shared_admin (->server :test/server2))])
+
+    (let [db (d/db *conn*)
+          user1-eid (d/entid db :test/user1)
+          ;; Get all results unpaginated
+          all-results (:data (lookup-resources db {:subject       (->user user1-eid)
+                                                    :permission    :admin
+                                                    :resource/type :server
+                                                    :limit         -1}))
+          ;; Paginate with limit 1
+          paginated (loop [cursor nil
+                           pages  []]
+                      (let [page (lookup-resources db {:subject       (->user user1-eid)
+                                                       :permission    :admin
+                                                       :resource/type :server
+                                                       :limit         1
+                                                       :cursor        cursor})]
+                        (if (empty? (:data page))
+                          pages
+                          (recur (:cursor page)
+                                 (into pages (:data page))))))]
+
+      (testing "paginated results match unpaginated (completeness)"
+        (is (= (map :id all-results)
+               (map :id paginated))
+            "limit-1 pagination should yield identical results across multi-path"))
+
+      (testing "no duplicates"
+        (is (= (count paginated)
+               (count (distinct (map :id paginated))))
+            "no duplicate eids across pages despite multiple contributing paths"))
+
+      (testing "all cursors are v2 with :p map"
+        ;; Re-paginate to check cursors
+        (let [page1 (lookup-resources db {:subject       (->user user1-eid)
+                                           :permission    :admin
+                                           :resource/type :server
+                                           :limit         1
+                                           :cursor        nil})]
+          (is (= 2 (get-in page1 [:cursor :v])))
+          (is (map? (get-in page1 [:cursor :p]))))))))
+
+(deftest cursor-tree-self-permission-test
+  (testing "cursor tree works through self-permission indirection (server.view = admin + ...)"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; server.view uses self-permission admin, plus nic->view, shared_member, backup_creator
+          ;; Get all results in one shot
+          all-results (:data (lookup-resources db {:subject       (->user super-user-eid)
+                                                    :permission    :view
+                                                    :resource/type :server
+                                                    :limit         -1}))
+          ;; Paginate with limit 1
+          paginated (loop [cursor nil
+                           pages  []]
+                      (let [page (lookup-resources db {:subject       (->user super-user-eid)
+                                                       :permission    :view
+                                                       :resource/type :server
+                                                       :limit         1
+                                                       :cursor        cursor})]
+                        (if (empty? (:data page))
+                          pages
+                          (recur (:cursor page)
+                                 (into pages (:data page))))))]
+
+      (testing "paginated results match unpaginated through self-permission"
+        (is (= (map :id all-results)
+               (map :id paginated))
+            "self-permission pagination should yield identical results"))
+
+      (testing "no duplicates"
+        (is (= (count paginated)
+               (count (distinct (map :id paginated))))
+            "no duplicate eids across pages with self-permission")))))
+
+(deftest cursor-tree-empty-idempotency-test
+  (testing "calling with exhausted cursor is idempotent"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Get all results paginated to find the final cursor
+          final-cursor (loop [cursor nil]
+                         (let [page (lookup-resources db {:subject       (->user super-user-eid)
+                                                          :permission    :admin
+                                                          :resource/type :server
+                                                          :limit         1
+                                                          :cursor        cursor})]
+                           (if (empty? (:data page))
+                             (:cursor page)
+                             (recur (:cursor page)))))
+          ;; Call twice more with the exhausted cursor
+          call1 (lookup-resources db {:subject       (->user super-user-eid)
+                                       :permission    :admin
+                                       :resource/type :server
+                                       :limit         10
+                                       :cursor        final-cursor})
+          call2 (lookup-resources db {:subject       (->user super-user-eid)
+                                       :permission    :admin
+                                       :resource/type :server
+                                       :limit         10
+                                       :cursor        final-cursor})]
+
+      (testing "both calls return empty data"
+        (is (empty? (:data call1)))
+        (is (empty? (:data call2))))
+
+      (testing "both calls return identical cursors"
+        (is (= (:cursor call1) (:cursor call2))))
+
+      (testing "cursor matches the exhausted cursor"
+        (is (= final-cursor (:cursor call1)))))))
+
+(deftest cursor-tree-count-with-v2-cursor-test
+  (testing "count-resources works correctly with v2 cursor from lookup-resources"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Get all results
+          total-count (:count (count-resources db {:subject       (->user super-user-eid)
+                                                    :permission    :admin
+                                                    :resource/type :server
+                                                    :limit         -1}))
+          ;; Get first page
+          page1 (lookup-resources db {:subject       (->user super-user-eid)
+                                       :permission    :admin
+                                       :resource/type :server
+                                       :limit         2
+                                       :cursor        nil})
+          page1-count (count (:data page1))
+          ;; Count remaining with v2 cursor from page1
+          remaining (count-resources db {:subject       (->user super-user-eid)
+                                          :permission    :admin
+                                          :resource/type :server
+                                          :limit         -1
+                                          :cursor        (:cursor page1)})]
+
+      (testing "count of remaining equals total minus page1"
+        (is (= (- total-count page1-count)
+               (:count remaining))
+            "remaining count should equal total - page1"))
+
+      (testing "remaining cursor is v2"
+        (is (= 2 (get-in remaining [:cursor :v])))))))
 
 (deftest permission-paths-caching-test
   (let [db (d/db *conn*)]

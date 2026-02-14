@@ -429,18 +429,72 @@ clj-nrepl-eval -p <port> "(require 'eacl.spice-test :reload) (clojure.test/run-t
   - `cursor-tree-lookup-subjects-test` — v2 cursor for reverse direction
   - `cursor-tree-exhausted-path-preservation-test` — `:p` entries carry forward
 
-### Next: Step 2 — Modify `traverse-permission-path-via-subject`
-- Add `intermediate-cursor-eid` parameter
-- Return `{:results, :!state}` instead of bare lazy seq
-- Arrow-to-relation: start index-range from `intermediate-cursor-eid`, track min via `volatile!`
-- Arrow-to-permission: `drop-while` on intermediate results, track min via `volatile!`
-- Relation and self-permission: return `{:results <same>, :!state nil}`
+### Steps 2-6: Implementation (2026-02-14) - DONE
+- **All 23 tests pass:** 252 assertions, 0 failures, 0 errors
+- **spice_test:** 2 tests, 51 assertions, all passing
+- **nREPL port:** 51470
 
-### Then: Steps 3-4 — Modify `lazy-merged-lookup-resources` and `lookup-resources`
-- Use `map-indexed` to pass per-path cursor from `:p`
-- Build v2 cursor with carry-forward: `(into (or (:p cursor) {}) ...)`
+Changes made:
+- **Step 2:** `traverse-permission-path-via-subject` — added `intermediate-cursor-eid` param, returns `{:results, :!state}`, arrow-to-relation starts index-range from `intermediate-cursor-eid`, arrow-to-permission uses `drop-while` on intermediates, `volatile!` tracks min contributing intermediate
+- **Step 3:** `lazy-merged-lookup-resources` — extracts cursor-eid for v1/v2, uses `map-indexed` to pass per-path cursor from `:p`, returns `{:results, :path-results}`
+- **Step 4:** `lookup-resources` — builds v2 cursor `{:v 2 :e eid :p {...}}` with carry-forward via `(into (or (:p cursor) {}) ...)`
+- **Step 5:** `count-resources` — adapted to new return shape from `lazy-merged-lookup-resources`, returns v2 cursor
+- **Step 6:** Reverse traversal mirrored — `traverse-permission-path-reverse` (added `intermediate-cursor-eid`, volatile tracking), `lazy-merged-lookup-subjects`, `lookup-subjects` all produce v2 cursors
+- **Step 7 (partial):** v2 cursor coercion in `core.clj` — `default-internal-cursor->spice` and `default-spice-cursor->internal` handle v2, cursor coercion added to `spiceomic-lookup-subjects`
+- **Test updates:** Existing tests updated to check `(:e cursor)` instead of `(:resource cursor)`, spice_test updated for v2 cursor format
 
-**IMPORTANT: Failing tests must be written BEFORE any implementation code. All TDD tests for Step 1 are complete. Implementation begins at Step 2.**
+### Remaining: Steps 7 (opaque token) and 8 (cleanup)
+
+**Step 7 (opaque token):** `cursor->token`/`token->cursor` not yet implemented — callers currently see v2 cursor maps, not opaque strings. The plan for this is in the "External (API boundary)" section above. The code to add is:
+- `cursor->token` and `token->cursor` functions in `src/eacl/datomic/core.clj`
+- Wire into `spiceomic-lookup-resources` and `spiceomic-lookup-subjects`: on input `(or (token->cursor %) %)`, on output `cursor->token`
+- Add tests for token round-trip, expiry, and backward compat (accept either token string or map)
+
+**Step 8 (cleanup):**
+- Remove unused `(defrecord Cursor [path-index resource])` from `src/eacl/datomic/impl/base.clj` (line 4)
+- Remove `[eacl.datomic.impl.base :as base]` import from `src/eacl/datomic/core.clj` (line 6, comment says "only for Cursor")
+
+**IMPORTANT: Failing tests must be written BEFORE any implementation code. All TDD tests for Step 1 are complete.**
+
+## Notes for Next Agent
+
+### Files to Read (in this order)
+1. **This plan** — `docs/plans/2026-02-14-cursor-tree-plan.md` — full context
+2. **`src/eacl/datomic/impl/indexed.clj`** (~710 lines) — the core implementation. Key functions: `traverse-permission-path-via-subject` (line ~416), `lazy-merged-lookup-resources` (line ~510), `lookup-resources` (line ~536), and their reverse counterparts for subjects
+3. **`src/eacl/datomic/core.clj`** — Spiceomic coercion layer. `default-internal-cursor->spice`, `default-spice-cursor->internal`, `spiceomic-lookup-resources`, `spiceomic-lookup-subjects`
+4. **`test/eacl/datomic/impl/indexed_test.clj`** — 23 tests including 7 cursor-tree TDD tests (search for `;;; Cursor Tree Tests`)
+5. **`test/eacl/spice_test.clj`** — 2 spiceomic-layer tests (pagination + cursor coercion)
+6. **`src/eacl/datomic/impl/base.clj`** — contains unused `Cursor` defrecord to remove
+7. **`README.md`** — overall project context, schema DSL, API overview
+8. **`test/eacl/datomic/fixtures.clj`** + **`test/eacl/fixtures.schema`** — test data
+
+### Running Tests
+**Always use nREPL, NEVER `clojure -M:test`** (JVM startup is too slow).
+
+```bash
+# Start nREPL if none running:
+cd /Users/petrus/Code/eacl-cursor-tree && clojure -M:nrepl &
+
+# Discover port:
+clj-nrepl-eval --discover-ports
+
+# Run indexed tests:
+clj-nrepl-eval -p <port> --timeout 60000 "(require '[clojure.test :refer [run-tests]] '[eacl.datomic.impl.indexed-test] :reload) (run-tests 'eacl.datomic.impl.indexed-test)"
+
+# Run spice tests:
+clj-nrepl-eval -p <port> --timeout 60000 "(require '[clojure.test :refer [run-tests]] '[eacl.spice-test] :reload) (run-tests 'eacl.spice-test)"
+```
+
+**IMPORTANT**: Use double quotes for `clj-nrepl-eval` code, never single quotes (bash strips `!` from `swap!`, `reset!`, etc.).
+
+### SpiceDB References
+The opaque cursor token design was inspired by SpiceDB's cursor format:
+- **SpiceDB Cursor protobuf**: https://buf.build/authzed/api/file/main:authzed/api/v1/core.proto — `message Cursor { string token = 1; }` — opaque string, max 100KB
+- **SpiceDB Go implementation**: https://github.com/authzed/spicedb — cursors are opaque tokens that encode internal state, callers never parse them
+
+### Current Test Results (verified on fresh JVM)
+- **indexed_test:** 23 tests, 252 assertions, 0 failures, 0 errors
+- **spice_test:** 2 tests, 51 assertions, 0 failures, 0 errors
 
 ## Future Work
 
