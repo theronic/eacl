@@ -10,6 +10,27 @@
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
+(deftest opaque-cursor-token-test
+  (testing "cursor->token round-trip preserves cursor"
+    (let [cursor {:v 2 :e "some-id" :p {0 "intermediate-id"}}
+          token  (spiceomic/cursor->token cursor)
+          decoded (spiceomic/token->cursor token)]
+      (is (string? token))
+      (is (.startsWith ^String token "eacl1_"))
+      (is (= cursor decoded))))
+
+  (testing "nil cursor produces nil token"
+    (is (nil? (spiceomic/cursor->token nil))))
+
+  (testing "nil or invalid input returns nil cursor"
+    (is (nil? (spiceomic/token->cursor nil)))
+    (is (nil? (spiceomic/token->cursor "garbage")))
+    (is (nil? (spiceomic/token->cursor "eacl1_not-valid-base64!!!"))))
+
+  (testing "backward compat: raw cursor map passes through token->cursor"
+    (let [cursor {:v 2 :e 12345 :p {0 67890}}]
+      (is (= cursor (spiceomic/token->cursor cursor))))))
+
 (deftest spicedb-helper-tests
   (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
     (is (= #eacl.core.SpiceObject{:type :user, :id "my-user", :relation nil}
@@ -309,17 +330,18 @@
                 my-server]
                page2-data))
 
-        (testing "page1 cursor should be non-nil"
+        (testing "page1 cursor should be an opaque token"
           (is page1-cursor)
-          (is (:e page1-cursor)))
+          (is (string? page1-cursor))
+          (is (.startsWith ^String page1-cursor "eacl1_")))
 
-        (testing "page1-cursor :e should equal the last resource ID in its results"
-          (is (= (:e page1-cursor)
-                 (:id (last (:data page1))))))
+        (testing "page1-cursor round-trips and :e equals the last resource ID"
+          (let [decoded (spiceomic/token->cursor page1-cursor)]
+            (is (= (:e decoded) (:id (last (:data page1)))))))
 
-        (testing "page2-cursor :e is the last resource ID in its results"
-          (is (= (:id (last (:data page2)))
-                 (:e page2-cursor))))))
+        (testing "page2-cursor round-trips and :e equals the last resource ID"
+          (let [decoded (spiceomic/token->cursor page2-cursor)]
+            (is (= (:id (last (:data page2))) (:e decoded)))))))
 
     (testing "count-resources returns cursor with v2 format and coerced IDs"
       (let [{:keys [count cursor]} (eacl/count-resources *client
@@ -330,12 +352,15 @@
         (testing "count-resources returns a count"
           (is (pos? count)))
 
-        (testing "cursor should be v2"
-          (is (= 2 (:v cursor))))
+        (testing "cursor should be an opaque token"
+          (is (string? cursor))
+          (is (.startsWith ^String cursor "eacl1_")))
 
-        (testing "cursor :e should be coerced to external format (string)"
-          (is (string? (:e cursor))
-              "cursor :e should be coerced to external format"))))
+        (testing "cursor round-trips to v2 with string :e"
+          (let [decoded (spiceomic/token->cursor cursor)]
+            (is (= 2 (:v decoded)))
+            (is (string? (:e decoded))
+                "cursor :e should be coerced to external format")))))
 
     (testing "spice-read-relationships results are constrained by filters for resource type & ID"
       (testing "transact the test entities we are about to use"

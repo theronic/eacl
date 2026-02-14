@@ -10,7 +10,8 @@
             [com.rpl.specter :as S]
             [malli.core :as m]
             [eacl.datomic.schema :as schema]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log]
+            [clojure.edn :as edn]))
 
 ;; How to Configure Spice Object ID Coercion
 
@@ -24,6 +25,34 @@
 (comment
   (eacl.datomic.core/make-client conn {:entity->object-id (fn [ent] (:db/id ent))
                                        :object-id->ident  (fn [obj-id] obj-id)})) ;; passthrough.
+
+(defn cursor->token
+  "Serializes an internal cursor map to an opaque string token with TTL.
+  Returns nil if cursor is nil."
+  [cursor & [{:keys [ttl-seconds] :or {ttl-seconds 300}}]]
+  (when cursor
+    (let [with-expiry (assoc cursor :t (+ (quot (System/currentTimeMillis) 1000) ttl-seconds))]
+      (str "eacl1_" (.encodeToString (java.util.Base64/getEncoder)
+                      (.getBytes (pr-str with-expiry) "UTF-8"))))))
+
+(defn token->cursor
+  "Deserializes an opaque token string to a cursor map. Returns nil if expired or invalid.
+  Also accepts raw cursor maps for backward compatibility."
+  [token-or-cursor]
+  (cond
+    (nil? token-or-cursor) nil
+    (map? token-or-cursor) token-or-cursor
+    (and (string? token-or-cursor)
+         (.startsWith ^String token-or-cursor "eacl1_"))
+    (try
+      (let [cursor (edn/read-string
+                     (String. (.decode (java.util.Base64/getDecoder)
+                                (.getBytes (subs token-or-cursor 6) "UTF-8")) "UTF-8"))
+            now    (quot (System/currentTimeMillis) 1000)]
+        (when (> (:t cursor now) now)
+          (dissoc cursor :t)))
+      (catch Exception _ nil))
+    :else nil))
 
 (defn default-internal-cursor->spice
   [db
@@ -156,17 +185,16 @@
     (assert (:id internal-subject) (str "subject " (pr-str subject) " passed to lookup-resources does not exist with ident " (object-id->ident (:id subject))))
     ;(assert (= (:type subject-ent) (:type subject)) (str "lookup-resources: subject type passed does not match entity: " (pr-str subject)))
     (let [rx (->> query
-               (S/setval [:subject] internal-subject)       ; do we need to coerce this subject?
-               (S/transform [:cursor] (fn [external-cursor] (spice-cursor->internal db opts external-cursor)))
+               (S/setval [:subject] internal-subject)
+               (S/transform [:cursor] (fn [token-or-cursor]
+                                        (some->> (token->cursor token-or-cursor)
+                                          (spice-cursor->internal db opts))))
                (impl/lookup-resources db)
                (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
                                             (spice-object type (entid->object-id db id))))
                (S/transform [:cursor] (fn [internal-cursor]
-                                        ;(prn 'coercing-internal-cursor internal-cursor)
-                                        (let [x (internal-cursor->spice db opts internal-cursor)]
-                                          ;(prn 'coerced-to x)
-                                          x))))]            ;; TODO FIX!
-      ;(log/debug 'rx rx)
+                                        (some->> (internal-cursor->spice db opts internal-cursor)
+                                          cursor->token))))]
       rx)))
 
 (defn spiceomic-count-resources
@@ -181,9 +209,13 @@
     (assert (= (:type subject-ent) (:type subject)) (str "count-resources: subject type passed does not match entity: " (pr-str subject)))
     (->> query
       (S/setval [:subject] subject-ent)
-      (S/transform [:cursor] #(spice-cursor->internal db opts %))
+      (S/transform [:cursor] (fn [token-or-cursor]
+                                (some->> (token->cursor token-or-cursor)
+                                  (spice-cursor->internal db opts))))
       (impl/count-resources db)
-      (S/transform [:cursor] #(internal-cursor->spice db opts %)))))
+      (S/transform [:cursor] (fn [internal-cursor]
+                                (some->> (internal-cursor->spice db opts internal-cursor)
+                                  cursor->token))))))
 
 (defn spiceomic-lookup-subjects
   [db
@@ -195,11 +227,15 @@
    query]
   (->> query
     (S/transform [:resource] #(spice-object->internal db %))
-    (S/transform [:cursor] #(spice-cursor->internal db opts %))
+    (S/transform [:cursor] (fn [token-or-cursor]
+                              (some->> (token->cursor token-or-cursor)
+                                (spice-cursor->internal db opts))))
     (impl/lookup-subjects db)
     (S/transform [:data S/ALL] (fn [{:as obj :keys [type id]}]
                                  (spice-object type (entid->object-id db id))))
-    (S/transform [:cursor] #(internal-cursor->spice db opts %))))
+    (S/transform [:cursor] (fn [internal-cursor]
+                              (some->> (internal-cursor->spice db opts internal-cursor)
+                                cursor->token)))))
 
 (defrecord Spiceomic [conn opts]
   ; where object-id is a fn that takes [db object] and returns a Datomic ident or eid.

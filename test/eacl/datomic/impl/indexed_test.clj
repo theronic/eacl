@@ -883,6 +883,64 @@
     (testing "Empty paths for non-existent permission"
       (is (empty? (impl.indexed/get-permission-paths db :server :nonexistent))))))
 
+(deftest arrow-via-intermediates-test
+  (testing "arrow-via-intermediates merges results from multiple intermediates and tracks min"
+    (let [{:keys [results !state]}
+          (#'impl.indexed/arrow-via-intermediates
+            [10 20 30]
+            (fn [int-eid]
+              (case (long int-eid)
+                10 [100 200]
+                20 [150]
+                30 [250 300])))]
+      (is (= [100 150 200 250 300] (vec results))
+          "results should be merged and sorted")
+      (is (= 10 @!state)
+          "volatile should track the minimum contributing intermediate")))
+
+  (testing "empty intermediates returns empty results"
+    (let [{:keys [results !state]}
+          (#'impl.indexed/arrow-via-intermediates [] (fn [_] [1 2]))]
+      (is (empty? results))
+      (is (nil? @!state))))
+
+  (testing "only intermediates that actually contribute results are tracked"
+    (let [{:keys [results !state]}
+          (#'impl.indexed/arrow-via-intermediates
+            [10 20 30]
+            (fn [int-eid]
+              (case (long int-eid)
+                10 []
+                20 [150]
+                30 [250])))]
+      (is (= [150 250] (vec results)))
+      (is (= 20 @!state)
+          "minimum of contributing intermediates (20, 30) is 20"))))
+
+(deftest traverse-permission-path-via-subject-visited-paths-test
+  (testing "traverse-permission-path-via-subject accepts visited-paths for cycle detection"
+    (let [db (d/db *conn*)
+          user1-eid (d/entid db :test/user1)
+          ;; server.view has a self-permission path (admin)
+          paths (impl.indexed/get-permission-paths db :server :view)
+          self-perm-path (first (filter #(= :self-permission (:type %)) paths))]
+      (is self-perm-path "server.view should have a self-permission path (admin)")
+      ;; Call traverse-permission-path-via-subject with visited-paths
+      (let [{:keys [results]}
+            (impl.indexed/traverse-permission-path-via-subject
+              db :user user1-eid self-perm-path :server nil nil #{})]
+        (is (seq results) "should find servers through self-permission")
+        (is (every? integer? results) "results should be bare eids")))))
+
+(deftest traverse-permission-path-returns-bare-eids-test
+  (testing "traverse-permission-path returns bare eids, not [eid path] tuples"
+    (let [db (d/db *conn*)
+          user1-eid (d/entid db :test/user1)
+          results (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)]
+      (is (seq results) "should have results")
+      (is (every? integer? results)
+          "every element should be a bare eid (integer), not a tuple"))))
+
 (deftest traverse-paths-tests
   (let [db (d/db *conn*)]
     (testing "Direct path traversal"
@@ -890,37 +948,35 @@
             resources (impl.indexed/traverse-permission-path db :user user1-eid :view :account nil)]
         ;; User1 should be able to view account1
         (is (seq resources))
-        (is (some #(= (d/entid db :test/account1) (first %)) resources))))
+        (is (some #(= (d/entid db :test/account1) %) resources))))
 
     (testing "Arrow path traversal"
       (let [user1-eid (d/entid db :test/user1)
             resources (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)]
         ;; User1 should be able to view servers in account1
         (is (seq resources))
-        (is (= [(->server "account1-server1")
-                (->server "account1-server2")])
-            resources)))
+        (is (every? integer? resources))))
 
     (testing "Complex nested path traversal"
       (let [vpc1-eid (d/entid db :test/vpc1)
             resources (impl.indexed/traverse-permission-path db :vpc vpc1-eid :view :server nil)]
         ;; VPC1 should be able to view servers through the network chain
         (is (= [(d/entid db :test/server1)]
-               (map first resources))))) ; hard to understand destructuring here.
+               (vec resources)))))
 
     (testing "Cursor pagination"
       (let [user1-eid (d/entid db :test/user1)
             ;; Get first result
             first-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)
-            first-eid (ffirst first-batch)
+            first-eid (first first-batch)
             ;; Get next result after cursor
             second-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server first-eid)]
         (is (= ["account1-server1"
                 "account1-server2"
-                "account3-server3.1"] (map (comp :eacl/id #(d/entity db %) first) first-batch)))
+                "account3-server3.1"] (map (comp :eacl/id #(d/entity db %)) first-batch)))
         (is (= ["account1-server2"
-                "account3-server3.1"] (map (comp :eacl/id #(d/entity db %) first) second-batch)))
-        (is (not= (ffirst first-batch) (ffirst second-batch)))))))
+                "account3-server3.1"] (map (comp :eacl/id #(d/entity db %)) second-batch)))
+        (is (not= (first first-batch) (first second-batch)))))))
 
 (deftest lookup-resources-optimized-tests
   (let [db (d/db *conn*)]
@@ -1573,3 +1629,22 @@
       (when (seq (:p lookup-cursor))
         (is (seq (:p count-cursor))
             "count-resources cursor :p should not lose intermediate positions")))))
+
+(deftest unified-lookup-parity-test
+  (testing "forward and reverse lookups produce consistent results"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Forward: super-user -> :admin -> :server
+          forward-results (lookup-resources db {:subject       (->user super-user-eid)
+                                                :permission    :admin
+                                                :resource/type :server
+                                                :limit         -1})
+          server-eids (map :id (:data forward-results))]
+      (doseq [server-eid server-eids]
+        (let [reverse-results (lookup-subjects db {:resource      (->server server-eid)
+                                                    :permission    :admin
+                                                    :subject/type  :user
+                                                    :limit         -1})
+              subject-eids (set (map :id (:data reverse-results)))]
+          (is (contains? subject-eids super-user-eid)
+              (str "reverse lookup for server " server-eid " should find super-user")))))))

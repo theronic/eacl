@@ -1,46 +1,16 @@
 # Plan: Make the Cursor Tree Implementation Beautiful
 
-> **STATUS: IMPLEMENTATION IN PROGRESS**
+> **STATUS: ALL 7 PHASES COMPLETE**
 >
-> **Phase 1: DONE** (commit `b46ecc3`) — `tracking-min` extracted, 4 inline patterns replaced.
-> **Phase 2: PARTIALLY DONE** — `extract-cursor-eid` + `build-v2-cursor` helpers WRITTEN but call sites NOT YET replaced. `count-resources-propagates-volatile-state-test` written.
-> **Phases 3-7: NOT STARTED**
+> **Phase 1: DONE** — `tracking-min` extracted, 4 inline patterns replaced.
+> **Phase 2: DONE** — `extract-cursor-eid` + `build-v2-cursor` wired into all 5 call sites. `count-resources` volatile propagation bug fixed.
+> **Phase 3: DONE** — `traverse-permission-path` returns bare eids. `[eid path]` tuples eliminated. Tests updated.
+> **Phase 4: DONE** — `arrow-via-intermediates` extracted. All 4 arrow branches (2 forward + 2 reverse) unified.
+> **Phase 5: DONE** — `traverse-permission-path` reduced from ~100 lines to ~15-line thin wrapper. `visited-paths` propagates through recursion. Mutual recursion via `(declare traverse-permission-path)`.
+> **Phase 6: DONE** — Opaque tokens `"eacl1_<base64(edn)>"` with TTL in `core.clj`. Wired into all spiceomic functions.
+> **Phase 7: DONE** — Direction maps (`forward-direction`, `reverse-direction`). Unified `lazy-merged-lookup` and `lookup`. `visited-paths` added to `traverse-permission-path-reverse`.
 >
-> ### Implementation Notes for Next Session
->
-> #### Files to read for full context:
-> 1. **This plan** — `docs/plans/2026-02-14-cursor-tree-beauty-plan.md` (phases 1-7 fully detailed below)
-> 2. **Beauty proposals** — `docs/reports/2026-02-14-cursor-tree-beauty-proposals.md` (7 proposals with rationale)
-> 3. **`src/eacl/datomic/impl/indexed.clj`** (~740 lines) — primary implementation, has Phase 1 done + Phase 2 helpers added but NOT wired in
-> 4. **`test/eacl/datomic/impl/indexed_test.clj`** — 30 tests (28 original + tracking-min + count-propagation)
-> 5. **`src/eacl/datomic/core.clj`** — spiceomic coercion layer (Phase 6 target)
-> 6. **`test/eacl/spice_test.clj`** — 2 spiceomic tests (Phase 6 target)
-> 7. **`docs/reports/2026-02-14-cursor-tree-critique.md`** — original critique
->
-> #### What's been done:
-> - **Phase 1 complete**: `tracking-min` fn at line ~17, replaces 4 inline vswap blocks
-> - **Phase 2 partial**: `extract-cursor-eid` and `build-v2-cursor` fns added at lines ~26-44 of indexed.clj
->   - BUT call sites NOT YET replaced — still using inline patterns
->   - `count-resources-propagates-volatile-state-test` added to test file
->
-> #### Immediate next steps (finish Phase 2):
-> 1. Replace `(if (= 2 (:v cursor)) (:e cursor) (get-in cursor [:resource :id]))` in `lazy-merged-lookup-resources` with `(extract-cursor-eid cursor :resource)`
-> 2. Replace same pattern in `lazy-merged-lookup-subjects` with `(extract-cursor-eid cursor :subject)`
-> 3. Replace cursor construction block in `lookup-resources` with `(build-v2-cursor cursor last-eid path-results :resource)`
-> 4. Replace cursor construction block in `lookup-subjects` with `(build-v2-cursor cursor last-eid path-results :subject)`
-> 5. **Fix `count-resources`**: destructure `path-results` from `lazy-merged-lookup-resources`, use `(build-v2-cursor cursor last-eid path-results :resource)` — this is the bug fix
-> 6. Run all 30 indexed tests + 2 spice tests
->
-> #### Testing:
-> - nREPL: `clj-nrepl-eval --discover-ports` then use port in current directory
-> - Run indexed: `clj-nrepl-eval -p <port> --timeout 60000 "(require '[clojure.test :refer [run-tests]] '[eacl.datomic.impl.indexed] :reload '[eacl.datomic.impl.indexed-test] :reload) (run-tests 'eacl.datomic.impl.indexed-test)"`
-> - Run spice: `clj-nrepl-eval -p <port> --timeout 60000 "(require '[eacl.spice-test] :reload '[clojure.test :refer [run-tests]]) (run-tests 'eacl.spice-test)"`
-> - Baseline: 30 indexed tests (286 assertions) + 2 spice tests (51 assertions) = 0 failures
->
-> #### Key gotchas:
-> - Use `cat >>` for appending tests to files (Edit tool struggles with trailing bytes)
-> - Always use double quotes with clj-nrepl-eval (bash strips `!` from single-quoted `swap!`, `vswap!`)
-> - Always reload BOTH impl and test namespaces when testing changes
+> **Final metrics:** `indexed.clj` reduced from ~740 to 616 lines (17% reduction). 34 indexed tests (308 assertions) + 3 spice tests (62 assertions) = 0 failures.
 
 **Date:** 2026-02-14
 **Author:** Claude Opus 4.6
