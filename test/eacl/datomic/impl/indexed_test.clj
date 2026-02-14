@@ -12,7 +12,8 @@
                      can?
                      read-relationships]]
     ;[eacl.datomic.impl.datalog :as impl.datalog :refer [lookup-subjects]]
-            [eacl.datomic.impl.indexed :as impl.indexed :refer [count-resources lookup-resources lookup-subjects]]))
+            [eacl.datomic.impl.indexed :as impl.indexed :refer [count-resources lookup-resources lookup-subjects]]
+            [clojure.set]))
 
 ; Test grouping & cleanup is in progress.
 
@@ -1078,6 +1079,249 @@
                               {:subject (->user :test/user1)
                                :permission :view
                                :resource/type :server}))))))
+
+;;; ============================================================
+;;; Cursor Tree Tests (Issue #43)
+;;; These tests are written BEFORE implementation (TDD).
+;;; They should FAIL until the cursor tree is implemented.
+;;; ============================================================
+
+(deftest cursor-tree-structure-test
+  (testing "lookup-resources returns v2 cursor with :v, :e, and :p keys"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          result (lookup-resources db {:subject      (->user super-user-eid)
+                                       :permission   :admin
+                                       :resource/type :server
+                                       :limit        2})]
+      (is (= 2 (get-in result [:cursor :v])) "cursor should have :v 2")
+      (is (some? (get-in result [:cursor :e])) "cursor should have :e (last result eid)")
+      (is (map? (get-in result [:cursor :p])) "cursor should have :p map")
+
+      (testing ":p keys are integers (path indices)"
+        (let [p (:p (:cursor result))]
+          (when (seq p)
+            (is (every? integer? (keys p)) ":p keys should be path indices (integers)")
+            (is (every? integer? (vals p)) ":p values should be intermediate-cursor-eids (integers)")))))))
+
+(deftest cursor-tree-intermediate-advancement-test
+  (testing "intermediate-cursor-eid advances as intermediates are consumed"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; super-user -> platform -> super_admin -> accounts -> servers
+          ;; With 3 accounts (account-1, account-2, account-3), each with servers.
+          ;; Paginating with small limit should advance intermediate-cursor-eid.
+          page1 (lookup-resources db {:subject       (->user super-user-eid)
+                                      :permission    :admin
+                                      :resource/type :server
+                                      :limit         2
+                                      :cursor        nil})
+          page1-cursor (:cursor page1)
+
+          page2 (lookup-resources db {:subject       (->user super-user-eid)
+                                      :permission    :admin
+                                      :resource/type :server
+                                      :limit         2
+                                      :cursor        page1-cursor})]
+
+      (testing "page1 cursor is v2"
+        (is (= 2 (:v page1-cursor))))
+
+      (testing "page1 :p has at least one arrow path entry"
+        (is (seq (:p page1-cursor)) ":p should have entries for arrow paths"))
+
+      (testing "page2 results have no overlap with page1"
+        (let [page1-eids (set (map :id (:data page1)))
+              page2-eids (set (map :id (:data page2)))]
+          (is (empty? (clojure.set/intersection page1-eids page2-eids))
+              "no duplicate results between pages")))
+
+      (testing "page2 results are strictly greater than page1 cursor :e"
+        (when-let [cursor-eid (:e page1-cursor)]
+          (doseq [item (:data page2)]
+            (is (> (:id item) cursor-eid) "page2 results should be > cursor eid")))))))
+
+(deftest cursor-tree-backward-compat-test
+  (testing "v1 cursor (no :v key) still works correctly"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Get first page to find a valid eid for cursor
+          page1 (lookup-resources db {:subject       (->user super-user-eid)
+                                      :permission    :admin
+                                      :resource/type :server
+                                      :limit         1
+                                      :cursor        nil})
+          first-eid (:id (first (:data page1)))
+          ;; Use old-style v1 cursor
+          v1-cursor {:resource {:type :server :id first-eid}}
+          page2-v1 (lookup-resources db {:subject       (->user super-user-eid)
+                                         :permission    :admin
+                                         :resource/type :server
+                                         :limit         10
+                                         :cursor        v1-cursor})]
+
+      (testing "v1 cursor returns results after the cursor eid"
+        (is (seq (:data page2-v1)) "should have results after first server")
+        (doseq [item (:data page2-v1)]
+          (is (> (:id item) first-eid) "all results should be > v1 cursor eid")))
+
+      (testing "v1 cursor result also returns v2 cursor"
+        (is (= 2 (get-in page2-v1 [:cursor :v])) "output cursor should be v2 even with v1 input")))))
+
+(deftest cursor-tree-pagination-correctness-test
+  (testing "paginating with limit 1 yields same results as unpaginated"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Get all results in one shot
+          all-results (:data (lookup-resources db {:subject       (->user super-user-eid)
+                                                   :permission    :admin
+                                                   :resource/type :server
+                                                   :limit         -1}))
+          ;; Paginate with limit 1
+          paginated (loop [cursor nil
+                           pages  []]
+                      (let [page (lookup-resources db {:subject       (->user super-user-eid)
+                                                       :permission    :admin
+                                                       :resource/type :server
+                                                       :limit         1
+                                                       :cursor        cursor})]
+                        (if (empty? (:data page))
+                          pages
+                          (recur (:cursor page)
+                                 (into pages (:data page))))))]
+
+      (testing "paginated results match unpaginated"
+        (is (= (map :id all-results)
+               (map :id paginated))
+            "limit-1 pagination should yield identical results"))
+
+      (testing "no duplicates"
+        (is (= (count paginated)
+               (count (distinct (map :id paginated))))
+            "no duplicate eids across pages")))))
+
+(deftest cursor-tree-performance-test
+  (testing "later pages make fewer index-range calls than page 1"
+    (let [;; Create many accounts with servers to stress intermediate scanning.
+          ;; We already have 3 accounts from fixtures. Add 10 more, each with 2 servers.
+          ;; Entities and relationships must be in the SAME transaction for tempid resolution.
+          extra-tx (vec (apply concat
+                    (for [i (range 10)]
+                      [{:db/id    (str "perf-account-" i)
+                        :eacl/id  (str "perf-account-" i)}
+                       {:db/id    (str "perf-server-" i "-a")
+                        :eacl/id  (str "perf-server-" i "-a")}
+                       {:db/id    (str "perf-server-" i "-b")
+                        :eacl/id  (str "perf-server-" i "-b")}
+                       (Relationship (->account (str "perf-account-" i)) :account (->server (str "perf-server-" i "-a")))
+                       (Relationship (->account (str "perf-account-" i)) :account (->server (str "perf-server-" i "-b")))
+                       (Relationship (->user :user/super-user) :owner (->account (str "perf-account-" i)))
+                       (Relationship (fixtures/->platform :test/platform) :platform (->account (str "perf-account-" i)))])))]
+      @(d/transact *conn* extra-tx)
+
+      (let [db (d/db *conn*)
+            super-user-eid (d/entid db :user/super-user)
+            call-count (atom 0)
+            orig-index-range d/index-range]
+
+        ;; Page 1 (no cursor) — count index-range calls
+        (reset! call-count 0)
+        (let [page1 (with-redefs [d/index-range (fn [& args]
+                                                   (swap! call-count inc)
+                                                   (apply orig-index-range args))]
+                      (lookup-resources db {:subject       (->user super-user-eid)
+                                            :permission    :admin
+                                            :resource/type :server
+                                            :limit         4
+                                            :cursor        nil}))
+              page1-calls @call-count
+
+              ;; Page 3 (with cursor) — should skip exhausted intermediates
+              _ (reset! call-count 0)
+              page2 (lookup-resources db {:subject       (->user super-user-eid)
+                                          :permission    :admin
+                                          :resource/type :server
+                                          :limit         4
+                                          :cursor        (:cursor page1)})
+              _ (reset! call-count 0)
+              page3 (with-redefs [d/index-range (fn [& args]
+                                                   (swap! call-count inc)
+                                                   (apply orig-index-range args))]
+                      (lookup-resources db {:subject       (->user super-user-eid)
+                                            :permission    :admin
+                                            :resource/type :server
+                                            :limit         4
+                                            :cursor        (:cursor page2)}))
+              page3-calls @call-count]
+
+          (testing "page3 makes fewer index-range calls than page1"
+            (is (< page3-calls page1-calls)
+                (str "page3 (" page3-calls " calls) should be < page1 (" page1-calls " calls)"))))))))
+
+(deftest cursor-tree-lookup-subjects-test
+  (testing "lookup-subjects returns v2 cursor with intermediate advancement"
+    (let [db (d/db *conn*)
+          ;; server account1-server1 -> account-1 -> owner -> user-1
+          ;; server account1-server1 -> account-1 -> platform -> platform -> super_admin -> super-user
+          page1 (lookup-subjects db {:resource      (->server (d/entid db [:eacl/id "account1-server1"]))
+                                     :permission    :admin
+                                     :subject/type  :user
+                                     :limit         1
+                                     :cursor        nil})
+          page1-cursor (:cursor page1)]
+
+      (testing "cursor is v2"
+        (is (= 2 (:v page1-cursor)) "subjects cursor should be v2"))
+
+      (testing "cursor has :e and :p"
+        (is (some? (:e page1-cursor)) "cursor should have :e")
+        (is (map? (:p page1-cursor)) "cursor should have :p"))
+
+      (testing "page 2 with cursor returns remaining subjects without duplicates"
+        (let [page2 (lookup-subjects db {:resource      (->server (d/entid db [:eacl/id "account1-server1"]))
+                                         :permission    :admin
+                                         :subject/type  :user
+                                         :limit         10
+                                         :cursor        page1-cursor})
+              page1-eids (set (map :id (:data page1)))
+              page2-eids (set (map :id (:data page2)))]
+          (is (empty? (clojure.set/intersection page1-eids page2-eids))
+              "no duplicate subjects between pages"))))))
+
+(deftest cursor-tree-exhausted-path-preservation-test
+  (testing "cursor :p entries are preserved even when a path is exhausted"
+    (let [db (d/db *conn*)
+          super-user-eid (d/entid db :user/super-user)
+          ;; Get all pages with limit 1
+          pages (loop [cursor nil
+                       ps     []]
+                  (let [page (lookup-resources db {:subject       (->user super-user-eid)
+                                                   :permission    :admin
+                                                   :resource/type :server
+                                                   :limit         1
+                                                   :cursor        cursor})]
+                    (if (empty? (:data page))
+                      (conj ps page) ; include the final empty page
+                      (recur (:cursor page)
+                             (conj ps page)))))]
+
+      (testing "all cursors are v2"
+        (doseq [page pages]
+          (is (= 2 (get-in page [:cursor :v])))))
+
+      (testing "cursor :p entries never disappear once set"
+        ;; Once a path index appears in :p, it should remain in subsequent pages
+        (let [cursors (map :cursor pages)
+              all-p-keys (reduce (fn [seen cursor]
+                                   (let [current-keys (set (keys (:p cursor)))]
+                                     ;; Every key we've seen before should still be present
+                                     (when (seq seen)
+                                       (is (clojure.set/subset? seen current-keys)
+                                           (str "cursor :p lost keys: had " seen " but now " current-keys)))
+                                     (clojure.set/union seen current-keys)))
+                           #{}
+                           cursors)]
+          (is (some? all-p-keys)))))))
 
 (deftest permission-paths-caching-test
   (let [db (d/db *conn*)]
