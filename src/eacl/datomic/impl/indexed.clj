@@ -23,6 +23,26 @@
          x)
     coll))
 
+(defn- extract-cursor-eid
+  "Extracts the entity eid from a v1 or v2 cursor.
+  v1-key is :resource for forward lookups, :subject for reverse."
+  [cursor v1-key]
+  (if (= 2 (:v cursor))
+    (:e cursor)
+    (get-in cursor [v1-key :id])))
+
+(defn- build-v2-cursor
+  "Builds a v2 cursor with carry-forward semantics.
+  Preserves previous :p entries, overwrites with new volatile state from path-results."
+  [cursor last-eid path-results v1-key]
+  {:v 2
+   :e (or last-eid (:e cursor) (get-in cursor [v1-key :id]))
+   :p (into (or (:p cursor) {})
+        (keep (fn [{:keys [idx !state]}]
+                (when-let [v (and !state @!state)]
+                  [idx v])))
+        path-results)})
+
 ;(defn find-arrow-permissions
 ;  "Arrows permission means either,
 ;  permission thing = relation->relation | permission
