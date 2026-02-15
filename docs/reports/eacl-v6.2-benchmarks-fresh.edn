@@ -1,0 +1,53 @@
+{:version "v6.2 (cursor-tree) - fresh DB"
+ :dep "/Users/petrus/code/eacl-cursor-tree"
+ :branch "feature/cursor-tree"
+ :db-servers 373037
+ :timestamp "2026-02-15"
+
+ :can? {:median-ms 0.018 :min-ms 0.013 :max-ms 1.957 :avg-ms 0.027 :n 500 :warmup 100}
+
+ :lookup-resources-by-limit
+ [{:limit 10    :n 30  :median-ms 8.341   :min-ms 6.236  :max-ms 61.120  :avg-ms 10.444}
+  {:limit 50    :n 30  :median-ms 8.272   :min-ms 6.444  :max-ms 21.309  :avg-ms 9.382}
+  {:limit 100   :n 30  :median-ms 9.682   :min-ms 6.975  :max-ms 22.593  :avg-ms 10.742}
+  {:limit 500   :n 20  :median-ms 10.391  :min-ms 7.741  :max-ms 53.947  :avg-ms 14.626}
+  {:limit 1000  :n 15  :median-ms 20.151  :min-ms 9.181  :max-ms 69.335  :avg-ms 23.044}
+  {:limit 5000  :n 10  :median-ms 23.569  :min-ms 17.451 :max-ms 43.381  :avg-ms 24.050}]
+
+ :cursor-pagination-500-pages
+ {:limit-per-page 50
+  :total-pages 500
+  :total-items 25000
+  :page-0-ms 8.829
+  :avg-ms 10.833
+  :avg-excl-cold-ms 10.837
+  :min-ms 4.548
+  :max-ms 243.294
+  :sampled
+  [{:page 0   :ms 8.829}
+   {:page 25  :ms 10.131}
+   {:page 50  :ms 9.385}
+   {:page 75  :ms 11.032}
+   {:page 100 :ms 13.778}
+   {:page 125 :ms 7.079}
+   {:page 150 :ms 9.394}
+   {:page 175 :ms 7.357}
+   {:page 200 :ms 5.859}
+   {:page 225 :ms 6.978}
+   {:page 250 :ms 9.630}
+   {:page 275 :ms 8.732}
+   {:page 300 :ms 7.174}
+   {:page 325 :ms 9.894}
+   {:page 350 :ms 16.972}
+   {:page 375 :ms 12.476}
+   {:page 400 :ms 13.299}
+   {:page 425 :ms 7.975}
+   {:page 450 :ms 7.560}
+   {:page 475 :ms 10.048}]
+  :page-499-ms 8.904}
+
+ :user-1-lookup-resources
+ {:median-ms 0.041 :min-ms 0.030 :max-ms 1.460 :avg-ms 0.083 :n 100 :warmup 50}
+
+ :lookup-subjects
+ {:median-ms 0.041 :min-ms 0.037 :max-ms 0.068 :avg-ms 0.042 :n 100 :warmup 50}}

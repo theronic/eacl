@@ -14,15 +14,6 @@
   (let [[_resource-type _resource-eid _relation-name _subject-type subject-eid] v]
     subject-eid))
 
-(defn- tracking-min
-  "Wraps coll in a lazy seq that tracks the minimum of `v` into volatile `!min`.
-  Elements pass through unchanged. Side-channel for cursor tree."
-  [!min v coll]
-  (map (fn [x]
-         (vswap! !min (fn [cur] (if cur (min cur v) v)))
-         x)
-    coll))
-
 (defn- extract-cursor-eid
   "Extracts the entity eid from a v1 or v2 cursor.
   v1-key is :resource for forward lookups, :subject for reverse."
@@ -33,19 +24,22 @@
 
 (defn- arrow-via-intermediates
   "For each intermediate eid, calls result-fn to get a lazy seq of result eids.
-  Wraps each per-intermediate seq with tracking-min to record the minimum
-  contributing intermediate into a volatile. Merges all result sequences.
-  Returns {:results <lazy-merged-seq>, :!state <volatile>}."
+  Merges all result sequences. Determines the minimum contributing intermediate
+  from the first non-empty sub-sequence (intermediates are scanned in ascending
+  EID order, so the first with results is always the minimum).
+  Returns {:results <lazy-merged-seq>, :!state <volatile-or-nil>}."
   [intermediate-eids result-fn]
-  (let [!min-int    (volatile! nil)
-        result-seqs (map (fn [intermediate-eid]
-                           (->> (result-fn intermediate-eid)
-                             (tracking-min !min-int intermediate-eid)))
-                      intermediate-eids)]
+  (let [pairs       (keep (fn [int-eid]
+                            (let [rs (result-fn int-eid)]
+                              (when (seq rs)
+                                {:int-eid int-eid :results rs})))
+                      intermediate-eids)
+        min-int     (:int-eid (first pairs))
+        result-seqs (map :results pairs)]
     {:results (if (seq result-seqs)
                (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity result-seqs)
                [])
-     :!state !min-int}))
+     :!state (when min-int (volatile! min-int))}))
 
 (defn- build-v2-cursor
   "Builds a v2 cursor with carry-forward semantics.

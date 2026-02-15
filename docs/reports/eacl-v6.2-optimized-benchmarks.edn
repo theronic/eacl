@@ -1,0 +1,18 @@
+{:note "v6.2 post-optimization: tracking-min removed, pre-computed min intermediate"
+ :date "2026-02-15"
+ :schema "simple 2-hop (account->server via account relation)"
+ :lookup-by-limit
+ [{:limit 10, :median-ms 12.14, :min-ms 9.23, :max-ms 40.43}
+  {:limit 50, :median-ms 13.16, :min-ms 9.49, :max-ms 17.18}
+  {:limit 100, :median-ms 9.76, :min-ms 8.02, :max-ms 22.19}
+  {:limit 500, :median-ms 15.07, :min-ms 10.76, :max-ms 20.81}
+  {:limit 1000, :median-ms 14.96, :min-ms 11.14, :max-ms 35.61}
+  {:limit 5000, :median-ms 45.88, :min-ms 18.70, :max-ms 88.93}]
+ :deep-pagination
+ {:total-pages 500
+  :page-0-ms 7.43
+  :avg-excl-cold 10.82
+  :median-excl-cold 9.69
+  :min-excl-cold 6.40
+  :max-excl-cold 114.49
+  :p99-excl-cold 31.43}}
