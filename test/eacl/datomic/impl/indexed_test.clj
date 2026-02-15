@@ -1555,6 +1555,122 @@
       (testing "remaining cursor is v2"
         (is (= 2 (get-in remaining [:cursor :v])))))))
 
+(deftest arrow-to-permission-seek-efficiency-test
+  (testing "arrow-to-permission uses B-tree seek, not linear scan, for intermediates"
+    ;; Setup: 10 accounts owned by user1, each with 1 server.
+    ;; Paginate server.admin with limit 1.
+    ;; Count d/index-range calls on page 1 vs page 5 vs page 10.
+    ;; After cursor threading: later pages should NOT make more index-range calls
+    ;; because the cursor is threaded through the recursive traverse-permission-path call.
+    (let [extra-tx (vec (apply concat
+                          (for [i (range 10)]
+                            [{:db/id   (str "seek-account-" i)
+                              :eacl/id (str "seek-account-" i)}
+                             {:db/id   (str "seek-server-" i)
+                              :eacl/id (str "seek-server-" i)}
+                             (Relationship (->account (str "seek-account-" i)) :account (->server (str "seek-server-" i)))
+                             (Relationship (->user :test/user1) :owner (->account (str "seek-account-" i)))])))]
+      @(d/transact *conn* extra-tx)
+
+      (let [db               (d/db *conn*)
+            user1-eid        (d/entid db :test/user1)
+            call-count       (atom 0)
+            orig-index-range d/index-range
+
+            ;; Page 1 (no cursor) — count index-range calls
+            _                (reset! call-count 0)
+            page1            (with-redefs [d/index-range (fn [& args]
+                                                           (swap! call-count inc)
+                                                           (apply orig-index-range args))]
+                               (lookup-resources db {:subject       (->user user1-eid)
+                                                      :permission    :admin
+                                                      :resource/type :server
+                                                      :limit         1
+                                                      :cursor        nil}))
+            page1-calls      @call-count
+
+            ;; Page through to page 5
+            pages            (loop [cursor (:cursor page1) pages [page1] n 0]
+                               (if (or (>= n 8) (empty? (:data (last pages))))
+                                 pages
+                                 (let [page (lookup-resources db {:subject       (->user user1-eid)
+                                                                   :permission    :admin
+                                                                   :resource/type :server
+                                                                   :limit         1
+                                                                   :cursor        cursor})]
+                                   (recur (:cursor page) (conj pages page) (inc n)))))
+
+            ;; Count calls for a late page (page after the collected ones)
+            last-cursor      (:cursor (last (butlast pages)))
+            _                (reset! call-count 0)
+            late-page        (when last-cursor
+                               (with-redefs [d/index-range (fn [& args]
+                                                              (swap! call-count inc)
+                                                              (apply orig-index-range args))]
+                                 (lookup-resources db {:subject       (->user user1-eid)
+                                                        :permission    :admin
+                                                        :resource/type :server
+                                                        :limit         1
+                                                        :cursor        last-cursor})))
+            late-page-calls  @call-count]
+
+        (testing "page 1 returns results"
+          (is (seq (:data page1))))
+
+        (testing "late page does not make more index-range calls than page 1"
+          (is (<= late-page-calls page1-calls)
+            (str "late page (" late-page-calls " calls) should be <= page1 (" page1-calls " calls)")))))))
+
+(deftest arrow-to-permission-inclusive-boundary-test
+  (testing "intermediate-cursor-eid equal to an intermediate eid includes it"
+    ;; Verify that when cursor stores exactly an intermediate eid X,
+    ;; the next page includes results from X if X has unconsumed resources.
+    (let [extra-tx [{:db/id   "boundary-account"
+                     :eacl/id "boundary-account"}
+                    {:db/id   "boundary-server-a"
+                     :eacl/id "boundary-server-a"}
+                    {:db/id   "boundary-server-b"
+                     :eacl/id "boundary-server-b"}
+                    (Relationship (->account "boundary-account") :account (->server "boundary-server-a"))
+                    (Relationship (->account "boundary-account") :account (->server "boundary-server-b"))
+                    (Relationship (->user :test/user2) :owner (->account "boundary-account"))]]
+      @(d/transact *conn* extra-tx)
+
+      (let [db        (d/db *conn*)
+            user2-eid (d/entid db :test/user2)
+
+            ;; user2 owns account2 (from fixtures) + boundary-account.
+            ;; Get all results unpaginated
+            all       (lookup-resources db {:subject       (->user user2-eid)
+                                             :permission    :admin
+                                             :resource/type :server
+                                             :limit         -1
+                                             :cursor        nil})
+
+            ;; Paginate with limit 1
+            pages     (loop [cursor nil pages [] n 0]
+                        (if (>= n 10)
+                          pages
+                          (let [page (lookup-resources db {:subject       (->user user2-eid)
+                                                            :permission    :admin
+                                                            :resource/type :server
+                                                            :limit         1
+                                                            :cursor        cursor})]
+                            (if (empty? (:data page))
+                              pages
+                              (recur (:cursor page) (conj pages page) (inc n))))))
+
+            paginated-eids (mapcat (fn [p] (map :id (:data p))) pages)
+            all-eids       (map :id (:data all))]
+
+        (testing "paginated results match unpaginated"
+          (is (= (vec all-eids) (vec paginated-eids))
+            "all results should appear in paginated output"))
+
+        (testing "no duplicates in paginated results"
+          (is (= (count paginated-eids) (count (distinct paginated-eids)))
+            "no duplicate eids across pages"))))))
+
 (deftest permission-paths-caching-test
   (let [db (d/db *conn*)]
     (testing "Caching of permission paths"

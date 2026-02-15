@@ -404,10 +404,13 @@
                   (filter #(> % (or cursor-eid 0))))))))
         ;; Arrow to permission
         (let [target-permission    (:target-permission path)
-              intermediate-eids    (->> (traverse-permission-path db subject-type subject-eid
-                                          target-permission intermediate-type nil
-                                          (or visited-paths #{}))
-                                     (drop-while #(< % (or intermediate-cursor-eid 0))))]
+              ;; Thread intermediate-cursor-eid through the recursive call as cursor-eid.
+              ;; (dec X) converts the inner exclusive > filter to inclusive >= semantics:
+              ;; inner :relation does (> eid cursor-eid), so (> eid (dec X)) ≡ (>= eid X).
+              inner-cursor-eid     (when intermediate-cursor-eid (dec intermediate-cursor-eid))
+              intermediate-eids    (traverse-permission-path db subject-type subject-eid
+                                     target-permission intermediate-type inner-cursor-eid
+                                     (or visited-paths #{}))]
           (arrow-via-intermediates intermediate-eids
             (fn [intermediate-eid]
               (let [start [intermediate-type intermediate-eid via-relation resource-type (or cursor-eid 0)]
