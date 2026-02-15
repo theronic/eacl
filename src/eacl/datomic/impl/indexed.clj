@@ -1,7 +1,7 @@
 (ns eacl.datomic.impl.indexed
   ;; Indexed implementation of EACL
   (:require [datomic.api :as d]
-            [eacl.lazy-merge-sort :as lazy-sort :refer [lazy-merge-dedupe-sort lazy-merge-dedupe-sort-by]]
+            [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.core :refer [spice-object]]
             [clojure.tools.logging :as log]
             [clojure.core.cache :as cache]))

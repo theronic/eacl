@@ -6,7 +6,7 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->group ->server ->account ->vpc ->nic ->network ->lease ->backup ->backup-schedule]]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
-            [eacl.lazy-merge-sort :refer [lazy-merge-dedupe-sort]]
+            [eacl.legacy.lazy-merge-sort :refer [lazy-merge-dedupe-sort]]
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
                      can?
