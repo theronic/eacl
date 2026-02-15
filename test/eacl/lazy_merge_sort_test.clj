@@ -3,7 +3,7 @@
    Tests the production function against a known-correct oracle (Gen 1 linear scan)."
   (:require [clojure.test :as t :refer [deftest testing is]]
             [eacl.lazy-merge-sort :as lazy-sort]
-            [eacl.lazy-merge-sort.legacy :as legacy]))
+            [eacl.legacy.lazy-merge-sort :as legacy]))
 
 ;; ========== Test Data Generators ==========
 
