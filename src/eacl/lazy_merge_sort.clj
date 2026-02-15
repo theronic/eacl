@@ -1,5 +1,9 @@
 (ns eacl.lazy-merge-sort)
 
+;; ========== Gen 1: Linear scan merge (O(k) per element) ==========
+;; Retained for backward compatibility with existing tests.
+;; See eacl.lazy-merge-sort.legacy for the oracle copy.
+
 (defn lazy-merge-dedupe-sort
   "Lazily merges multiple _sorted_ sequences, deduplicating values.
    Takes an optional initial lowest value (default: 0) and a collection of sorted sequences.
@@ -11,43 +15,34 @@
      (when-let [non-empty-seqs (seq (filter seq lazy-colls))]
        (let [heads         (map first non-empty-seqs)
              min-val       (apply min heads)
-             ;; Advance sequences that have the minimum value at their head
              advanced-seqs (map (fn [s]
                                   (if (and (seq s) (<= (first s) min-val))
                                     (rest s)
                                     s))
                                 lazy-colls)]
          (if (> min-val lowest)
-           ;; Yield the value and continue with new lowest
            (cons min-val (lazy-merge-dedupe-sort min-val advanced-seqs))
-           ;; Skip the value (deduplicate) and continue
            (lazy-merge-dedupe-sort lowest advanced-seqs)))))))
 
 (defn lazy-parallel-merge-dedupe-sort
-  "Same as lazy-merge-dedupe-sort but uses pmap instead of map. Need to benchmark first."
+  "Same as lazy-merge-dedupe-sort but uses pmap instead of map."
   ([lazy-colls] (lazy-parallel-merge-dedupe-sort 0 lazy-colls))
   ([lowest lazy-colls]
    (lazy-seq
      (when-let [non-empty-seqs (seq (filter seq lazy-colls))]
        (let [heads         (pmap first non-empty-seqs)
              min-val       (apply min heads)
-             ;; Advance sequences that have the minimum value at their head
              advanced-seqs (map (fn [s]
                                   (if (and (seq s) (<= (first s) min-val))
                                     (rest s)
                                     s))
                                 lazy-colls)]
          (if (> min-val lowest)
-           ;; Yield the value and continue with new lowest
            (cons min-val (lazy-parallel-merge-dedupe-sort min-val advanced-seqs))
-           ;; Skip the value (deduplicate) and continue
            (lazy-parallel-merge-dedupe-sort lowest advanced-seqs)))))))
 
 (defn lazy-merge-dedupe-sort-by
-  "Lazily merges multiple _sorted_ sequences, deduplicating based on pred values.
-   Takes a predicate function, an optional initial lowest pred value, and a collection of sorted sequences.
-   Returns a lazy sequence of deduplicated, sorted values (original values, not pred results).
-   If a sequence is not sorted by pred, any value with pred result less than prior lowest will be discarded."
+  "Lazily merges multiple _sorted_ sequences, deduplicating based on pred values."
   ([pred lazy-colls] (lazy-merge-dedupe-sort-by pred 0 lazy-colls))
   ([pred lowest lazy-colls]
    (lazy-seq
@@ -55,22 +50,18 @@
        (let [heads         (map first non-empty-seqs)
              pred-vals     (map pred heads)
              min-pred-val  (apply min pred-vals)
-             ;; Find the first value with the minimum pred value
-             min-val       (first (filter #(= (pred %) min-pred-val) heads)) ; this can be optimized.
-             ;; Advance sequences that have pred values <= minimum pred value
+             min-val       (first (filter #(= (pred %) min-pred-val) heads))
              advanced-seqs (map (fn [s]
                                   (if (and (seq s) (<= (pred (first s)) min-pred-val))
                                     (rest s)
                                     s))
                                 lazy-colls)]
          (if (> min-pred-val lowest)
-           ;; Yield the value and continue with new lowest
            (cons min-val (lazy-merge-dedupe-sort-by pred min-pred-val advanced-seqs))
-           ;; Skip the value (deduplicate) and continue
            (lazy-merge-dedupe-sort-by pred lowest advanced-seqs)))))))
 
 (defn lazy-parallel-merge-dedupe-sort-by
-  "Like lazy-merge-dedupe-sort-by but calls pmap instead of map. Need to benchmark."
+  "Like lazy-merge-dedupe-sort-by but calls pmap instead of map."
   ([pred lazy-colls] (lazy-parallel-merge-dedupe-sort-by pred 0 lazy-colls))
   ([pred lowest lazy-colls]
    (lazy-seq
@@ -78,37 +69,17 @@
        (let [heads         (pmap first non-empty-seqs)
              pred-vals     (map pred heads)
              min-pred-val  (apply min pred-vals)
-             ;; Find the first value with the minimum pred value
-             min-val       (first (filter #(= (pred %) min-pred-val) heads)) ; this can be optimized.
-             ;; Advance sequences that have pred values <= minimum pred value
+             min-val       (first (filter #(= (pred %) min-pred-val) heads))
              advanced-seqs (map (fn [s]
                                   (if (and (seq s) (<= (pred (first s)) min-pred-val))
                                     (rest s)
                                     s))
                                 lazy-colls)]
          (if (> min-pred-val lowest)
-           ;; Yield the value and continue with new lowest
            (cons min-val (lazy-parallel-merge-dedupe-sort-by pred min-pred-val advanced-seqs))
-           ;; Skip the value (deduplicate) and continue
            (lazy-parallel-merge-dedupe-sort-by pred lowest advanced-seqs)))))))
 
-
-; Example:
-(comment
-  (let [seq1 [1 3 5 7 9]
-        seq2 [2 3 6 -1 8 9 10]                              ; note unsorted -1 will be skipped because not sorted (undefined behaviour)
-        seq3 [1 4 5 6 11]]
-    (take 20 (lazy-merge-dedupe-sort [seq1 seq2 seq3])))
-  ; => (1 2 3 4 5 6 7 8 9 10 11)
-
-  (let [seq1 [[1 :a1] [3 :c1] [5 :e1] [7 :g1] [9 :i1]]
-        seq2 [[2 :b2] [3 :c3] [6 :f1] [-1 :bad2] [8 :h2] [9 :i2] [10 :j2]] ; note unsorted -1 will be skipped because not sorted (undefined behaviour)
-        seq3 [[1 :a3] [4 :d3] [5 :e3] [6 :f3] [11 :k3]]]
-    (take 20 (lazy-merge-dedupe-sort-by first [seq1 seq2 seq3])))
-  => ([1 :a1] [2 :b2] [3 :c1] [4 :d3] [5 :e1] [6 :f1] [7 :g1] [8 :h2] [9 :i1] [10 :j2] [11 :k3])
-  #_nil)
-
-; Experimenting with answers from https://stackoverflow.com/questions/62806958/fast-sorting-algorithm-for-multiple-ordered-arrays
+;; ========== Gen 2: Pairwise merge (no dedup) ==========
 
 (defn lazy-merge2
   "Lazily merges two sorted sequences using a comparison function.
@@ -126,42 +97,34 @@
           (cons yf (lazy-merge2 cmp x yn)))))))
 
 (defn lazy-merge-all
-  "Lazily merges a collection of sorted sequences.
-   Returns empty seq if input is empty."
+  "Lazily merges a collection of sorted sequences."
   [cmp seqs]
   (lazy-seq
     (let [non-empty (seq (filter seq seqs))]
       (when non-empty
         (if-let [[y] (next non-empty)]
-          ;; Two or more sequences
           (lazy-merge2 cmp (first non-empty) y)
-          ;; Only one sequence left
           (first non-empty))))))
 
 (defn fold2
   "Repeatedly applies function f to pairs of elements until one remains.
-   Uses a tournament-style folding approach."
+   Uses a tournament-style folding approach. Eager tree construction."
   [f s]
-  (loop [s s]
-    (if (next (next s)) ; if more than 2 elements
-      (recur (map f (partition-all 2 s)))
-      (f s))))
+  (loop [s (vec s)]
+    (case (count s)
+      0 (f s)
+      1 (f s)
+      2 (f s)
+      (recur (mapv f (partition-all 2 s))))))
 
 (defn lazy-fold2-merge-sorted
-  "Merges multiple sorted sequences using lazy fold2 algorithm.
-   Sequences should already be sorted according to cmp.
-   cmp is a comparison function that returns true if first arg < second arg."
+  "Merges multiple sorted sequences using lazy fold2 algorithm."
   [cmp seqs]
-  (prn 'lazy-fold2-merge-sorted cmp seqs)
   (fold2 (partial lazy-merge-all cmp) seqs))
 
 (defn lazy-fold2-merge-sorted-by
   "Merges multiple sorted sequences using lazy fold2 algorithm.
-   keyfn extracts the comparison key from each element.
-   Sequences should already be sorted according to (keyfn element).
-
-   Example:
-   (lazy-fold2-merge-sorted-by identity [[1 3 5] [2 4 6] [0 7 8]])"
+   keyfn extracts the comparison key from each element."
   [keyfn seqs]
   (lazy-fold2-merge-sorted #(< (keyfn %1) (keyfn %2)) seqs))
 
@@ -184,112 +147,177 @@
               (rf result input))))))))
   ([f coll] (sequence (dedupe-by f) coll)))
 
-(comment
-  (dedupe-by first [[:a 1] [:a 2] [:b 1]]))
+;; ========== Gen 3: Optimized pairwise merge with dedup ==========
 
-;; Example usage:
-(comment
+;; --- Specialized fast path for identity keyfn (bare longs) ---
 
-  (lazy-fold2-merge-sorted-by identity
-    '((17592186045501 17592186045502 17592186045503) (17592186045501) ()))
+(defn- lazy-merge2-dedupe-longs
+  "Specialized 2-way merge-dedup for sorted sequences of longs.
+   Uses primitive long comparison to avoid boxing overhead.
+   No keyfn indirection — assumes elements are comparable longs."
+  ([x y] (lazy-merge2-dedupe-longs Long/MIN_VALUE x y))
+  ([^long last-key x y]
+   (lazy-seq
+     (let [sx (seq x)
+           sy (seq y)]
+       (cond
+         (nil? sx)
+         (when sy
+           (if (= last-key Long/MIN_VALUE)
+             sy
+             (drop-while #(= (long %) last-key) y)))
 
-  ;; Merge sorted sequences of numbers
-  (lazy-fold2-merge-sorted-by identity
-    [[1 3 5 7]
-     [1 2 4 6 8]
-     [0 9 10]])
-  ;; => (0 1 2 3 4 5 6 7 8 9 10)
+         (nil? sy)
+         (if (= last-key Long/MIN_VALUE)
+           sx
+           (drop-while #(= (long %) last-key) x))
 
-  ;; Merge sorted sequences by custom key
-  (lazy-fold2-merge-sorted-by :priority
-    [{:priority 1 :name "low"}
-     {:priority 5 :name "high"}]
-    [{:priority 2 :name "medium"}
-     {:priority 3 :name "mid"}])
+         :else
+         (let [xf (long (first sx))
+               yf (long (first sy))]
+           (cond
+             ;; Both have same value
+             (== xf yf)
+             (if (== xf last-key)
+               (lazy-merge2-dedupe-longs last-key (rest x) (rest y))
+               (cons (first sx) (lazy-merge2-dedupe-longs xf (rest x) (rest y))))
 
-  ;; Works lazily - doesn't realize entire sequence at once
-  (take 5
-    (lazy-fold2-merge-sorted-by identity
-      [(range 0 1000 2)
-       (range 1 1000 2)
-       (range 0 1000 3)])))
-;; => (0 0 1 2 2)
+             ;; x comes first
+             (< xf yf)
+             (if (== xf last-key)
+               (lazy-merge2-dedupe-longs last-key (rest x) y)
+               (cons (first sx) (lazy-merge2-dedupe-longs xf (rest x) y)))
 
-;; AI Work:
+             ;; y comes first
+             :else
+             (if (== yf last-key)
+               (lazy-merge2-dedupe-longs last-key x (rest y))
+               (cons (first sy) (lazy-merge2-dedupe-longs yf x (rest y)))))))))))
 
-(defn lazy-merge2-dedupe-by
+(defn- fold2-merge-dedupe-longs
+  "Tournament-style fold2 merge with dedup, specialized for long sequences."
+  [seqs]
+  (let [non-empty (vec (filter seq seqs))]
+    (case (count non-empty)
+      0 ()
+      1 (first non-empty)
+      2 (lazy-merge2-dedupe-longs (first non-empty) (second non-empty))
+      (recur (mapv (fn [pair]
+                     (if (next pair)
+                       (lazy-merge2-dedupe-longs (first pair) (second pair))
+                       (first pair)))
+                   (partition-all 2 non-empty))))))
+
+;; --- General path for arbitrary keyfn ---
+
+(defn- lazy-merge2-dedupe-by
   "Lazily merges two already-deduplicated sorted sequences, maintaining deduplication.
    keyfn extracts the comparison/deduplication key from each element.
-   cmp compares two elements and returns true if first should come before second.
-   Assumes both input sequences are already deduplicated."
-  ([keyfn cmp x y]
-   (lazy-merge2-dedupe-by keyfn cmp nil x y))
-  ([keyfn cmp last-key x y]
+   key-cmp compares two extracted keys (not elements) — returns true if first < second."
+  ([keyfn key-cmp x y]
+   (lazy-merge2-dedupe-by keyfn key-cmp nil x y))
+  ([keyfn key-cmp last-key x y]
    (lazy-seq
-     (cond
-       (empty? x)
-       ;; Skip any remaining duplicates in y and return rest
-       (when-let [s (seq (drop-while #(= (keyfn %) last-key) y))]
-         s)
+     (let [sx (seq x)
+           sy (seq y)]
+       (cond
+         (nil? sx)
+         (when sy
+           (if (nil? last-key)
+             sy
+             (drop-while #(= (keyfn %) last-key) y)))
 
-       (empty? y)
-       ;; Skip any remaining duplicates in x and return rest
-       (when-let [s (seq (drop-while #(= (keyfn %) last-key) x))]
-         s)
+         (nil? sy)
+         (if (nil? last-key)
+           sx
+           (drop-while #(= (keyfn %) last-key) x))
 
-       :else
-       (let [xf (first x)
-             yf (first y)
-             xk (keyfn xf)
-             yk (keyfn yf)]
-         (cond
-           ;; Both sequences have elements with the same key
-           (= xk yk)
-           (if (= xk last-key)
-             ;; Duplicate of last emitted - skip both
-             (lazy-merge2-dedupe-by keyfn cmp last-key (rest x) (rest y))
-             ;; New value - emit first one, advance both
-             (cons xf (lazy-merge2-dedupe-by keyfn cmp xk (rest x) (rest y))))
+         :else
+         (let [xf (first sx)
+               yf (first sy)
+               xk (keyfn xf)
+               yk (keyfn yf)]
+           (cond
+             ;; Both have same key
+             (= xk yk)
+             (if (= xk last-key)
+               (lazy-merge2-dedupe-by keyfn key-cmp last-key (rest x) (rest y))
+               (cons xf (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) (rest y))))
 
-           ;; x element comes first
-           (cmp xf yf)
-           (if (= xk last-key)
-             ;; Duplicate of last emitted - skip x
-             (lazy-merge2-dedupe-by keyfn cmp last-key (rest x) y)
-             ;; New value - emit x
-             (cons xf (lazy-merge2-dedupe-by keyfn cmp xk (rest x) y)))
+             ;; x key comes first
+             (key-cmp xk yk)
+             (if (= xk last-key)
+               (lazy-merge2-dedupe-by keyfn key-cmp last-key (rest x) y)
+               (cons xf (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) y)))
 
-           ;; y element comes first
-           :else
-           (if (= yk last-key)
-             ;; Duplicate of last emitted - skip y
-             (lazy-merge2-dedupe-by keyfn cmp last-key x (rest y))
-             ;; New value - emit y
-             (cons yf (lazy-merge2-dedupe-by keyfn cmp yk x (rest y))))))))))
+             ;; y key comes first
+             :else
+             (if (= yk last-key)
+               (lazy-merge2-dedupe-by keyfn key-cmp last-key x (rest y))
+               (cons yf (lazy-merge2-dedupe-by keyfn key-cmp yk x (rest y)))))))))))
 
-(defn lazy-merge-all-dedupe-by
-  "Lazily merges a collection of sorted, deduplicated sequences while maintaining deduplication.
-   keyfn extracts the comparison key.
-   cmp is a comparison function.
-   Returns empty seq if input is empty."
-  [keyfn cmp seqs]
-  (lazy-seq
-    (let [non-empty (seq (filter seq seqs))]
-      (when non-empty
-        (if-let [[y] (next non-empty)]
-          ;; Two or more sequences - merge first two with dedup
-          (lazy-merge2-dedupe-by keyfn cmp (first non-empty) y)
-          ;; Only one sequence left - return it as-is
-          (first non-empty))))))
+(defn- fold2-merge-dedupe-generic
+  "Tournament-style fold2 merge with dedup, general keyfn."
+  [keyfn seqs]
+  (let [key-cmp (fn [a b] (< (compare a b) 0))
+        merge2 (fn [x y] (lazy-merge2-dedupe-by keyfn key-cmp x y))
+        non-empty (vec (filter seq seqs))]
+    (case (count non-empty)
+      0 ()
+      1 (first non-empty)
+      2 (merge2 (first non-empty) (second non-empty))
+      (recur keyfn (mapv (fn [pair]
+                           (if (next pair)
+                             (merge2 (first pair) (second pair))
+                             (first pair)))
+                         (partition-all 2 non-empty))))))
+
+;; --- Heap-based k-way merge with dedup for longs ---
+
+(defn- heap-merge-dedupe-longs
+  "k-way merge using java.util.PriorityQueue with integrated dedup.
+   O(log k) per element. Falls back to fold2 for k<=2."
+  [seqs]
+  (let [non-empty (vec (filter seq seqs))
+        k (count non-empty)]
+    (case k
+      0 ()
+      1 (first non-empty)
+      2 (lazy-merge2-dedupe-longs (first non-empty) (second non-empty))
+      ;; k > 2: use heap
+      (let [^java.util.PriorityQueue heap
+            (java.util.PriorityQueue. (int k)
+              (reify java.util.Comparator
+                (compare [_ a b]
+                  (Long/compare (long (first (aget ^objects a 0)))
+                                (long (first (aget ^objects b 0)))))))]
+        (doseq [s non-empty]
+          (.offer heap (doto (object-array 1) (aset 0 (seq s)))))
+        ((fn step [^long last-key]
+           (lazy-seq
+             (loop []
+               (when-let [^objects entry (.poll heap)]
+                 (let [s (aget entry 0)
+                       v (first s)
+                       vl (long v)
+                       rst (next s)]
+                   (when rst
+                     (aset entry 0 rst)
+                     (.offer heap entry))
+                   (if (== vl last-key)
+                     (recur)
+                     (cons v (step vl))))))))
+         Long/MIN_VALUE)))))
+
+;; ========== Public API ==========
 
 (defn lazy-fold2-merge-dedupe-sorted-by
   "Merges multiple sorted, deduplicated sequences using tournament-style folding with deduplication.
    keyfn extracts the comparison key from each element.
    Sequences should already be sorted and deduplicated according to (keyfn element).
 
-   This combines the performance of lazy-fold2-merge-sorted-by with the deduplication
-   of lazy-merge-dedupe-sort-by. Deduplication happens at each merge level in the
-   tournament tree, which is much more efficient than deduplicating after merging all sequences.
+   When keyfn is identity, uses a specialized fast path with primitive long comparison.
+   For k > 2 with identity keyfn, uses a PriorityQueue-based k-way merge.
 
    Example:
    (lazy-fold2-merge-dedupe-sorted-by identity
@@ -298,9 +326,9 @@
       [0 5 9 10]])
    => (0 1 2 3 4 5 6 7 8 9 10)"
   [keyfn seqs]
-  (fold2
-    (partial lazy-merge-all-dedupe-by keyfn #(< (keyfn %1) (keyfn %2)))
-    seqs))
+  (if (identical? keyfn identity)
+    (fold2-merge-dedupe-longs seqs)
+    (fold2-merge-dedupe-generic keyfn seqs)))
 
 ;; Example usage:
 (comment
@@ -338,4 +366,3 @@
     (lazy-fold2-merge-dedupe-sorted-by identity
       (map #(range % 1000 %) (range 1 20)))))
   ;; Returns deduplicated merge of all ranges
-
