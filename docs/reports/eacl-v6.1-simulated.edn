@@ -1,0 +1,11 @@
+{:note "Simulated v6.1 behavior using v6.2 code but without cursor carry-forward"
+ :approach "Each 'page' fetches from beginning with limit = page*50, simulating no cursor state"
+ :data
+ [{:page 1   :limit 50    :median-ms 8.505   :min-ms 8.312  :max-ms 96.260}
+  {:page 2   :limit 100   :median-ms 14.917  :min-ms 9.435  :max-ms 21.853}
+  {:page 5   :limit 250   :median-ms 6.829   :min-ms 6.726  :max-ms 7.127}
+  {:page 10  :limit 500   :median-ms 8.262   :min-ms 7.256  :max-ms 30.639}
+  {:page 20  :limit 1000  :median-ms 8.808   :min-ms 8.519  :max-ms 8.939}
+  {:page 50  :limit 2500  :median-ms 20.140  :min-ms 13.622 :max-ms 29.934}
+  {:page 100 :limit 5000  :median-ms 132.306 :min-ms 66.331 :max-ms 205.158}
+  {:page 200 :limit 10000 :median-ms 208.343 :min-ms 129.609 :max-ms 226.206}]}

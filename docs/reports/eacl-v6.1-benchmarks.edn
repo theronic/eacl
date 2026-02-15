@@ -1,0 +1,85 @@
+{:version "v6.1 (no cursor-tree)"
+ :dep "/Users/petrus/code/eacl"
+ :branch "feature/write-schema-dsl"
+ :db-servers 372715
+ :timestamp "2026-02-15"
+
+ :can? {:median-ms 0.018375 :min-ms 0.012625 :max-ms 0.667958 :avg-ms 0.030 :n 500 :warmup 100}
+
+ :lookup-resources-by-limit
+ [{:limit 10    :n 30  :median-ms 9.008   :min-ms 6.882  :max-ms 15.010  :avg-ms 9.423}
+  {:limit 50    :n 30  :median-ms 12.681  :min-ms 7.231  :max-ms 45.184  :avg-ms 13.744}
+  {:limit 100   :n 30  :median-ms 9.038   :min-ms 7.021  :max-ms 12.496  :avg-ms 9.128}
+  {:limit 500   :n 20  :median-ms 9.205   :min-ms 7.657  :max-ms 14.909  :avg-ms 9.809}
+  {:limit 1000  :n 15  :median-ms 10.183  :min-ms 8.617  :max-ms 16.790  :avg-ms 10.918}
+  {:limit 5000  :n 10  :median-ms 19.734  :min-ms 16.724 :max-ms 28.227  :avg-ms 20.770}]
+
+ :cursor-pagination-200-pages
+ {:limit-per-page 50
+  :total-pages 200
+  :total-items 10000
+  :page-0-ms 253.227  ;cold
+  :avg-ms 9.077
+  :min-ms 4.223
+  :max-ms 253.227
+  :first-5-avg-ms 59.594
+  :last-5-avg-ms 8.584
+  :sampled
+  [{:page 0   :ms 253.227}
+   {:page 10  :ms 6.274}
+   {:page 20  :ms 8.331}
+   {:page 30  :ms 6.488}
+   {:page 40  :ms 7.820}
+   {:page 50  :ms 8.088}
+   {:page 60  :ms 8.172}
+   {:page 70  :ms 7.341}
+   {:page 80  :ms 6.436}
+   {:page 90  :ms 5.492}
+   {:page 100 :ms 8.777}
+   {:page 110 :ms 8.573}
+   {:page 120 :ms 7.797}
+   {:page 130 :ms 6.926}
+   {:page 140 :ms 6.723}
+   {:page 150 :ms 6.513}
+   {:page 160 :ms 6.903}
+   {:page 170 :ms 7.291}
+   {:page 180 :ms 10.046}
+   {:page 190 :ms 9.620}]}
+
+ :cursor-pagination-500-pages
+ {:limit-per-page 50
+  :total-pages 500
+  :total-items 25000
+  :page-0-ms 94.616
+  :avg-ms 10.116
+  :avg-excl-cold-ms 9.946
+  :min-ms 6.146
+  :max-ms 124.496
+  :sampled
+  [{:page 0   :ms 94.616}
+   {:page 25  :ms 30.078}
+   {:page 50  :ms 9.597}
+   {:page 75  :ms 8.810}
+   {:page 100 :ms 7.912}
+   {:page 125 :ms 7.743}
+   {:page 150 :ms 9.536}
+   {:page 175 :ms 9.060}
+   {:page 200 :ms 7.130}
+   {:page 225 :ms 9.292}
+   {:page 250 :ms 12.592}
+   {:page 275 :ms 7.587}
+   {:page 300 :ms 9.258}
+   {:page 325 :ms 7.290}
+   {:page 350 :ms 9.665}
+   {:page 375 :ms 6.986}
+   {:page 400 :ms 7.219}
+   {:page 425 :ms 10.953}
+   {:page 450 :ms 7.157}
+   {:page 475 :ms 11.871}]
+  :page-499-ms 18.573}
+
+ :user-1-lookup-resources
+ {:median-ms 0.023 :min-ms 0.021 :max-ms 0.155 :avg-ms 0.027 :n 100 :warmup 50}
+
+ :lookup-subjects
+ {:median-ms 0.026 :min-ms 0.024 :max-ms 0.050 :avg-ms 0.027 :n 100 :warmup 50}}
