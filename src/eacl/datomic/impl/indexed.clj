@@ -234,14 +234,10 @@
     ;; Only proceed if the subject-type matches the expected type for this relation
     (if (= subject-type path-subject-type)
       (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-            start-tuple [subject-type subject-eid path-name resource-type cursor-eid] ; cursor-eid can be nil.
+            start-tuple [subject-type subject-eid path-name resource-type (if cursor-eid (inc cursor-eid) 0)]
             end-tuple   [subject-type subject-eid path-name resource-type Long/MAX_VALUE]]
         (->> (d/index-range db tuple-attr start-tuple end-tuple)
-          (map extract-resource-id-from-rel-tuple-datom)
-          (filter (fn [resource-eid]
-                    (if cursor-eid
-                      (> resource-eid cursor-eid)
-                      true)))))
+          (keep extract-resource-id-from-rel-tuple-datom)))
       [])                                                   ; Return empty if subject type doesn't match
 
     :arrow
@@ -249,14 +245,10 @@
     (let [;; First find intermediate resources via the :via relation
           intermediate-tuple-attr :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
           ;; Note that target-type during intermediate paths is the intermediate type.
-          intermediate-start      [subject-type subject-eid path-via target-relation-name cursor-eid] ; cursor-eid can be nil
+          intermediate-start      [subject-type subject-eid path-via target-relation-name (if cursor-eid (inc cursor-eid) 0)]
           intermediate-end        [subject-type subject-eid path-via target-relation-name Long/MAX_VALUE]
           intermediate-eids       (->> (d/index-range db intermediate-tuple-attr intermediate-start intermediate-end)
-                                    (map extract-resource-id-from-rel-tuple-datom)
-                                    (filter (fn [resource-eid]
-                                              (if cursor-eid
-                                                (> resource-eid cursor-eid)
-                                                true))))]
+                                    (keep extract-resource-id-from-rel-tuple-datom))]
 
       ;; For each intermediate-eid, recursively traverse its sub-paths
       (->> intermediate-eids
@@ -360,23 +352,23 @@
   (case (:type path)
     :relation
     ;; Direct relation - forward traversal. No intermediates.
+    ;; d/index-range is inclusive on start. Using (inc cursor-eid) makes it exclusive,
+    ;; eliminating the need for a post-filter. (inc 0) = 1 is safe — Datomic eids >> 1.
     {:results (when (= subject-type (:subject-type path))
                (let [tuple-attr  :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-                     start-tuple [subject-type subject-eid (:name path) resource-type (or cursor-eid 0)]
+                     start-tuple [subject-type subject-eid (:name path) resource-type (if cursor-eid (inc cursor-eid) 0)]
                      end-tuple   [subject-type subject-eid (:name path) resource-type Long/MAX_VALUE]]
                  (->> (d/index-range db tuple-attr start-tuple end-tuple)
-                   (map extract-resource-id-from-rel-tuple-datom)
-                   (filter (fn [resource-eid]
-                             (and resource-eid (> resource-eid (or cursor-eid 0))))))))
+                   (keep extract-resource-id-from-rel-tuple-datom))))
      :!state nil}
 
     :self-permission
     ;; Self-permission: recursively get resources where subject has target permission. No intermediates at this level.
+    ;; No filter needed: traverse-permission-path passes cursor-eid through to leaf d/index-range calls,
+    ;; which already exclude results <= cursor-eid via the (inc cursor-eid) start tuple.
     {:results (let [target-permission (:target-permission path)]
-               (->> (traverse-permission-path db subject-type subject-eid target-permission resource-type cursor-eid
-                      (or visited-paths #{}))
-                 (filter (fn [resource-eid]
-                           (and resource-eid (> resource-eid (or cursor-eid 0)))))))
+               (traverse-permission-path db subject-type subject-eid target-permission resource-type cursor-eid
+                 (or visited-paths #{})))
      :!state nil}
 
     :arrow
@@ -391,17 +383,14 @@
                                        (or intermediate-cursor-eid 0)]
               intermediate-end        [subject-type subject-eid target-relation intermediate-type Long/MAX_VALUE]
               intermediate-eids       (->> (d/index-range db intermediate-tuple-attr intermediate-start intermediate-end)
-                                        (map extract-resource-id-from-rel-tuple-datom)
-                                        (filter some?))]
+                                        (keep extract-resource-id-from-rel-tuple-datom))]
           (arrow-via-intermediates intermediate-eids
             (fn [intermediate-eid]
-              (let [start [intermediate-type intermediate-eid via-relation resource-type (or cursor-eid 0)]
+              (let [start [intermediate-type intermediate-eid via-relation resource-type (if cursor-eid (inc cursor-eid) 0)]
                     end   [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                 (->> (d/index-range db :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
                        start end)
-                  (map extract-resource-id-from-rel-tuple-datom)
-                  (filter some?)
-                  (filter #(> % (or cursor-eid 0))))))))
+                  (keep extract-resource-id-from-rel-tuple-datom))))))
         ;; Arrow to permission
         (let [target-permission    (:target-permission path)
               ;; Thread intermediate-cursor-eid through the recursive call as cursor-eid.
@@ -413,13 +402,12 @@
                                      (or visited-paths #{}))]
           (arrow-via-intermediates intermediate-eids
             (fn [intermediate-eid]
-              (let [start [intermediate-type intermediate-eid via-relation resource-type (or cursor-eid 0)]
+              (let [start [intermediate-type intermediate-eid via-relation resource-type (if cursor-eid (inc cursor-eid) 0)]
                     end   [intermediate-type intermediate-eid via-relation resource-type Long/MAX_VALUE]]
                 (->> (d/index-range db :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
                        start end)
-                  (map extract-resource-id-from-rel-tuple-datom)
-                  (filter some?)
-                  (filter #(> % (or cursor-eid 0))))))))))))
+                  (keep extract-resource-id-from-rel-tuple-datom))))))))))
+
 
 (defn traverse-permission-path
   "Returns lazy sorted seq of resource eids where subject has permission.
@@ -453,14 +441,13 @@
   (case (:type path)
     :relation
     ;; Direct relation - reverse traversal from resource to subjects. No intermediates.
+    ;; Use (inc cursor-eid) for exclusive start, avoiding O(k) linear scan past cursor.
     {:results (when (= subject-type (:subject-type path))
                (let [reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-                     start-tuple        [resource-type resource-eid (:name path) subject-type 0]
+                     start-tuple        [resource-type resource-eid (:name path) subject-type (if cursor-eid (inc cursor-eid) 0)]
                      end-tuple          [resource-type resource-eid (:name path) subject-type Long/MAX_VALUE]]
                  (->> (d/index-range db reverse-tuple-attr start-tuple end-tuple)
-                   (map extract-subject-id-from-reverse-rel-tuple-datom)
-                   (filter (fn [subject-eid]
-                             (and subject-eid (> subject-eid (or cursor-eid 0))))))))
+                   (keep extract-subject-id-from-reverse-rel-tuple-datom))))
      :!state nil}
 
     :self-permission
@@ -496,11 +483,10 @@
                                    (map extract-subject-id-from-reverse-rel-tuple-datom))]
           (arrow-via-intermediates intermediate-eids
             (fn [intermediate-eid]
-              (let [start [intermediate-type intermediate-eid target-relation subject-type 0]
+              (let [start [intermediate-type intermediate-eid target-relation subject-type (if cursor-eid (inc cursor-eid) 0)]
                     end   [intermediate-type intermediate-eid target-relation subject-type Long/MAX_VALUE]]
                 (->> (d/index-range db reverse-tuple-attr start end)
-                  (map extract-subject-id-from-reverse-rel-tuple-datom)
-                  (filter #(> % (or cursor-eid 0))))))))
+                  (keep extract-subject-id-from-reverse-rel-tuple-datom))))))
         ;; Arrow to permission (reverse)
         (let [target-permission  (:target-permission path)
               reverse-tuple-attr :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
