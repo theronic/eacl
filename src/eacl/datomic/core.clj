@@ -194,8 +194,8 @@
     (spiceomic-can? (d/db conn) opts subject permission resource consistency))
 
   (can? [this {:as demand :keys [subject permission resource consistency]}]
-    (assert (= consistency))
-    (spiceomic-can? (d/db conn) opts subject permission resource consistency))
+    (spiceomic-can? (d/db conn) opts subject permission resource
+      (or consistency consistency/fully-consistent)))
 
   (read-schema [this]
     ;; ADR 012: "eacl/read-schema should return a rich map of schema definitions"
