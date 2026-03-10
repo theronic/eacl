@@ -1,6 +1,6 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
 
 _Situated_ here means that your permission data lives _next to_ your application data in Datomic, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
@@ -50,7 +50,7 @@ Situated AuthZ offers some advantages for typical use-cases:
 ## Project Status
 
 > [!WARNING]
-> Even though EACL is used in production at CloudAfrica, it is under *active* development.
+> EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
 
@@ -191,8 +191,8 @@ The following example is contained in [eacl-example](https://github.com/theronic
 Add the EACL dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {cloudafrica/eacl {:git/url "git@github.com:cloudafrica/eacl.git" 
-                          :git/sha "884a1d0e08049cbf55fd59e9f235945fc6f732e4"}}}
+{:deps {theronic/eacl {:git/url "git@github.com:theronic/eacl.git" 
+                       :git/sha "f8c3c1cf67646236ca538942120a03edde40fee7"}}}
 ```
 
 ```clojure
@@ -626,7 +626,7 @@ clojure -M:test -v my.namespace/test-name
 
 ## Funding
 
-This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+Some of this open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/).
 
 # Licence
 
