@@ -2,7 +2,8 @@
   (:require [clojure.set]
             [datomic.api :as d]
             [com.rpl.specter :as S]
-            [malli.core :as m]))
+            [malli.core :as m]
+            [eacl.spicedb.parser :as parser]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -40,6 +41,11 @@
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
     :db/valueType   :db.type/string
     :db/unique      :db.unique/identity
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident       :eacl/schema-string
+    :db/doc         "Stores the SpiceDB schema string."
+    :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one}
 
    ;; Relations
@@ -214,12 +220,14 @@
   "Counts how many Relationships are using the given Relation.
   The search attrs are indexed, but this can be way faster in v7 using references types,
   or adding a tuple index like :eacl.relationship/resource-type+relation-name+subject-type,
-  but that would increase storage & write costs."
+  but that would increase storage & write costs.
+  
+  Note: Schema validation (ensuring relations exist) is now done at write-schema! time
+  via validate-schema-references, so invalid relations are rejected before they can be used."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   {:pre [(keyword? resource-type)
          (keyword? relation-name)
          (keyword? subject-type)]}
-  ; TODO: throw for invalid Relation not present in schema.
   (or (d/q '[:find (count ?relationship) .
              :in $ ?resource-type ?relation-name ?subject-type
              :where
@@ -232,24 +240,26 @@
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
   [db]
-  (d/q '[:find [(pull ?relation [:eacl.relation/subject-type
+  (d/q '[:find [(pull ?relation [:eacl/id
+                                 :eacl.relation/subject-type
                                  :eacl.relation/resource-type
                                  :eacl.relation/relation-name]) ...]
          :where
          [?relation :eacl.relation/relation-name ?relation-name]]
-       db))
+    db))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
   [db]
-  (d/q '[:find [(pull ?perm [:eacl.permission/resource-type
+  (d/q '[:find [(pull ?perm [:eacl/id
+                             :eacl.permission/resource-type
                              :eacl.permission/permission-name
                              :eacl.permission/source-relation-name
                              :eacl.permission/target-type
                              :eacl.permission/target-name]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
-       db))
+    db))
 
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -257,6 +267,111 @@
   [db & [_format]]
   {:relations   (read-relations db)
    :permissions (read-permissions db)})
+
+(defn validate-schema-references
+  "Validates that all permission references are valid.
+   Returns nil if valid, throws ex-info with :errors vector if invalid.
+   
+   Validates:
+   - Direct permissions reference existing relations on same resource type
+   - Arrow permissions reference valid source relations on same resource type
+   - Arrow targets (permission or relation) exist on target resource type
+   - Self-referencing permissions reference existing permissions on same type
+   
+   ADR 012 requires: 'Invalid schema should be rejected and no changes made.'"
+  [{:keys [relations permissions]}]
+  (let [;; Build lookups
+        relations-by-type   (group-by :eacl.relation/resource-type relations)
+        permissions-by-type (group-by :eacl.permission/resource-type permissions)
+
+        relation-names-by-type
+                            (into {} (for [[rt rels] relations-by-type]
+                                       [rt (set (map :eacl.relation/relation-name rels))]))
+
+        permission-names-by-type
+                            (into {} (for [[rt perms] permissions-by-type]
+                                       [rt (set (map :eacl.permission/permission-name perms))]))
+
+        ;; Get subject types for each relation (for arrow target validation)
+        relation-subject-types
+                            (into {} (for [rel relations]
+                                       [[(:eacl.relation/resource-type rel)
+                                         (:eacl.relation/relation-name rel)]
+                                        (:eacl.relation/subject-type rel)]))
+
+        errors              (atom [])]
+
+    (doseq [perm permissions]
+      (let [res-type    (:eacl.permission/resource-type perm)
+            perm-name   (:eacl.permission/permission-name perm)
+            source-rel  (:eacl.permission/source-relation-name perm)
+            target-type (:eacl.permission/target-type perm)
+            target-name (:eacl.permission/target-name perm)]
+
+        ;; For self permissions (source-rel = :self), validate target exists on same resource
+        (if (= source-rel :self)
+          (if (= target-type :relation)
+            ;; Self -> relation: validate relation exists on this resource type
+            (when-not (contains? (get relation-names-by-type res-type) target-name)
+              (swap! errors conj
+                {:type       :invalid-self-relation
+                 :permission (str (name res-type) "/" (name perm-name))
+                 :target     target-name
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                             " references non-existent relation: " (name target-name))}))
+            ;; Self -> permission: validate permission exists on this resource type
+            (when-not (contains? (get permission-names-by-type res-type) target-name)
+              (swap! errors conj
+                {:type       :invalid-self-permission
+                 :permission (str (name res-type) "/" (name perm-name))
+                 :target     target-name
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                             " references non-existent permission: " (name target-name))})))
+
+          ;; For arrow permissions (source-rel != :self)
+          (do
+            ;; Validate source relation exists on this resource type
+            (when-not (contains? (get relation-names-by-type res-type) source-rel)
+              (swap! errors conj
+                {:type       :missing-source-relation
+                 :permission (str (name res-type) "/" (name perm-name))
+                 :relation   source-rel
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                             " references non-existent relation: " (name source-rel))}))
+
+            ;; If source relation exists, validate target exists on target resource type
+            (when (contains? (get relation-names-by-type res-type) source-rel)
+              (let [target-res-type (get relation-subject-types [res-type source-rel])]
+                (when target-res-type
+                  (if (= target-type :relation)
+                    ;; Arrow to relation: validate relation exists on target type
+                    (when-not (contains? (get relation-names-by-type target-res-type) target-name)
+                      (swap! errors conj
+                        {:type        :invalid-arrow-target-relation
+                         :permission  (str (name res-type) "/" (name perm-name))
+                         :arrow-via   source-rel
+                         :target-type target-res-type
+                         :target      target-name
+                         :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                       " arrow via " (name source-rel) "->" (name target-name)
+                                       " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
+                    ;; Arrow to permission: validate permission exists on target type
+                    (when-not (contains? (get permission-names-by-type target-res-type) target-name)
+                      (swap! errors conj
+                        {:type        :invalid-arrow-target-permission
+                         :permission  (str (name res-type) "/" (name perm-name))
+                         :arrow-via   source-rel
+                         :target-type target-res-type
+                         :target      target-name
+                         :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                       " arrow via " (name source-rel) "->" (name target-name)
+                                       " - permission '" (name target-name) "' does not exist on " (name target-res-type))}))))))))))
+
+    (when (seq @errors)
+      (throw (ex-info "Invalid schema: reference validation failed"
+               {:errors      @errors
+                :error-count (count @errors)})))
+    nil))
 
 ; now we have to do a diff of relations and permissions
 ; we can safely delete permissions because will simply resolve
@@ -278,54 +393,59 @@
     after-permissions :permissions}]
   ; how to get a nice left vs. right diff?
   ; when can we ditch the setval :db/id?
-  (let [before-relations-set (->> before-relations
-                               ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
-                               (set))
-        after-relations-set  (->> after-relations
-                               ;(S/setval [S/ALL :db/id] S/NONE)
-                               (set))
+  (let [before-relations-set   (->> before-relations
+                                 ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
+                                   (set))
+        after-relations-set    (->> after-relations
+                                    ;(S/setval [S/ALL :db/id] S/NONE)
+                                    (set))
 
         before-permissions-set (->> before-permissions
                                  ;(S/setval [S/ALL :db/id] S/NONE)
                                  (set))
-        after-permissions-set (->> after-permissions
-                                ;(S/setval [S/ALL :db/id] S/NONE)
-                                (set))]
+        after-permissions-set  (->> after-permissions
+                                 ;(S/setval [S/ALL :db/id] S/NONE)
+                                  (set))]
     {:relations   (calc-set-deltas before-relations-set after-relations-set)
      :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
 
 (defn write-schema!
   "Computes delta between existing schema and
   new schema, checks for any orphaned relationships on retracted schema,
-  produces tx-ops and applies."
-  [conn {:as new-schema-map :keys [relations permissions]}]
-  ; what this needs to do:
-  ; - [ ] validate new schema
-  ; - [x] read current schema
-  ; - [ ] compare new vs old schema to get additions & retractions
-  ; - validate
-  ; - validate inputs for Relations & Permissions
-  ; - read current schema
-  ; - calculate delta (additions + retractions)
-  ; - check if retractions would orphan any relationships, i.e. used by any
-  ; - transact additions & retractions. it would still be convenient to
-  ; todo: potentially parse Spice schema.
-  ; we'll need to support
-  ; write-schema can take and validate Relations.
-  ;(validate-schema-map! schema-map) ; do we need to conform here?
-  (throw (Exception. "not impl WIP"))
-  (let [db              (d/db conn)
-        existing-schema (read-schema db)
-        {:as   schema-deltas
-         ; consider naming these deltas
-         relation-deltas :relations
-         permission-deltas :permissions} (compare-schema existing-schema new-schema-map)
-        {relation-additions :additions
-         relation-retractions :retractions} relation-deltas
-        orphaned-rels   (for [rel-retraction relation-retractions]
-                          [rel-retraction (count-relationships-using-relation db rel-retraction)])]
-    (doseq [[rel cnt] orphaned-rels]
-      (assert (zero? cnt) (str "Relation " rel " would orphan " cnt " relationships.")))
-    relation-deltas)
-  ; WIP.
-  #_(compare-schema existing-schema new-schema-map))
+  produces tx-ops and applies.
+  
+  Throws if schema is invalid (operator validation, reference validation, orphan check)."
+  [conn schema-string]
+  (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
+        ;; Validate schema references before proceeding (ADR 012 requirement)
+        _                      (validate-schema-references new-schema-map)
+        db                     (d/db conn)
+        existing-schema        (read-schema db)
+        deltas                 (compare-schema existing-schema new-schema-map)
+        {:keys [relations permissions]} deltas
+        relation-retractions   (:retractions relations)
+        permission-retractions (:retractions permissions)]
+
+    ;; Check for orphaned relationships
+    (doseq [rel relation-retractions]
+      (let [cnt (count-relationships-using-relation db rel)]
+        (when (pos? cnt)
+          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                            " because it is used by " cnt " relationships.")
+                   {:relation rel :count cnt})))))
+
+    ;; Transact changes
+    (let [tx-data (concat
+                    ;; Additions
+                    (:additions relations)
+                    (:additions permissions)
+                     ;; Retractions
+                    (for [rel relation-retractions]
+                      [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
+                    (for [perm permission-retractions]
+                      [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
+                     ;; Store schema string
+                    [{:eacl/id            "schema-string"
+                      :eacl/schema-string schema-string}])]
+      @(d/transact conn tx-data)
+      deltas)))

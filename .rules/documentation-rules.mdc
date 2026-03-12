@@ -1,0 +1,53 @@
+---
+description: Documentation
+globs: 
+alwaysApply: false
+---
+## Generation
+1. Balance detail with readability
+2. Match existing style
+3. Document alongside code
+4. Include diagrams for complex systems
+5. Explain "why" over "what"
+
+## API Documentation
+1. Comprehensive docs for public interfaces
+2. Include request/response examples
+3. Document all error responses
+4. Document auth requirements
+5. Keep docs in sync with code
+6. Generate OpenAPI/Swagger specs
+
+## Code Documentation
+1. Comment complex logic/business rules
+2. Document intent over implementation
+3. Document public methods/functions
+4. Document assumptions/preconditions
+5. Update docs with code changes
+
+## Operational Docs
+1. Clear setup instructions
+2. Document config options
+3. Include troubleshooting guides
+4. Document maintenance procedures
+5. Include performance/scaling guidance
+
+## African Market Context
+1. Document regional considerations
+2. Include regulatory notes
+3. Document connectivity optimizations
+4. Cover multi-currency specifics
+5. Document mobile implementation details
+
+## Standards
+1. Maintain consistent terminology
+2. Structure with clear hierarchy
+3. Include table of contents
+4. Keep docs current
+
+## Escalation
+1. Flag gaps requiring domain expertise
+2. Seek clarification for ambiguity
+3. Suggest doc improvements
+4. Highlight outdated documentation
+5. Recommend appropriate tools
