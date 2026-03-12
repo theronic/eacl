@@ -16,6 +16,7 @@ definition account {
 
 definition team {
     relation account: account
+    relation member: user
 }
 
 definition vpc {

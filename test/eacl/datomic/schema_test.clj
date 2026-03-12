@@ -92,14 +92,17 @@
       (let [user-id "user1"
             acc-id  "acc1"]
         @(d/transact conn [{:db/id user-id :eacl/id "user1"}
-                           {:db/id acc-id :eacl/id "acc1"}
-                           (impl/Relationship {:type :user :id user-id} :owner {:type :account :id acc-id})])
+                           {:db/id acc-id :eacl/id "acc1"}])
+        @(d/transact conn (impl/tx-relationship (d/db conn)
+                           (impl/Relationship {:type :user :id user-id} :owner {:type :account :id acc-id})))
 
         ;; Verify relationship exists
-        (let [db      (d/db conn)
-              rel-eid (d/q '[:find ?r .
-                             :where [?r :eacl.relationship/relation-name :owner]] db)]
-          (is rel-eid "Relationship should exist")))
+        (let [db  (d/db conn)
+              rel (impl/find-one-relationship-id db
+                    {:subject {:type :user :id user-id}
+                     :relation :owner
+                     :resource {:type :account :id acc-id}})]
+          (is rel "Relationship should exist")))
 
       ;; Try to remove 'relation owner: user' from account
       (let [unsafe-schema "definition user {}

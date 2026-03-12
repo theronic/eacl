@@ -60,6 +60,10 @@
    {:db/ident :team/name, :db/cardinality :db.cardinality/one, :db/valueType :db.type/string, :db/index true}
    {:db/ident :vpc/name, :db/cardinality :db.cardinality/one, :db/valueType :db.type/string, :db/index true}])
 
+(defn- tx-relationships
+  [db relationships]
+  (mapcat #(impl/tx-relationship db %) relationships))
+
 ;; --- Seeding ---
 
 (defn seed-multipath!
@@ -72,10 +76,13 @@
     (eacl/write-schema! acl multipath-schema-dsl)
 
     ;; Platform + super-user + test user
-    @(d/transact conn [{:db/id "platform", :db/ident :test/platform, :eacl/id "platform"}
-                        {:db/id "super-user", :db/ident :user/super-user, :eacl/id "super-user"}
-                        {:db/id "user-1", :db/ident :test/user1, :eacl/id "user-1"}
-                        (Relationship (->user "super-user") :super_admin (->platform "platform"))])
+    @(d/transact conn
+       (concat
+        [{:db/id "platform", :db/ident :test/platform, :eacl/id "platform"}
+         {:db/id "super-user", :db/ident :user/super-user, :eacl/id "super-user"}
+         {:db/id "user-1", :db/ident :test/user1, :eacl/id "user-1"}]
+        (tx-relationships (d/db conn)
+          [(Relationship (->user "super-user") :super_admin (->platform "platform"))])))
 
     ;; Seed accounts with teams, vpcs, servers
     (let [account-uuids (repeatedly num-accounts d/squuid)]
@@ -87,34 +94,42 @@
                           (let [team-tempid   (d/tempid :db.part/user)
                                 leader-tempid (d/tempid :db.part/user)]
                             {:team-tempid team-tempid
-                             :txes [{:db/id team-tempid, :eacl/id (str (d/squuid)), :team/name (str "Team " t)}
-                                    {:db/id leader-tempid, :eacl/id (str (d/squuid))}
-                                    (Relationship (->account account-tempid) :account (->team team-tempid))
-                                    (Relationship (->user leader-tempid) :leader (->team team-tempid))]}))
+                             :txes (concat
+                                    [{:db/id team-tempid, :eacl/id (str (d/squuid)), :team/name (str "Team " t)}
+                                     {:db/id leader-tempid, :eacl/id (str (d/squuid))}]
+                                    (tx-relationships (d/db conn)
+                                      [(Relationship (->account account-tempid) :account (->team team-tempid))
+                                       (Relationship (->user leader-tempid) :leader (->team team-tempid))]))}))
 
               vpc-data (for [v (range vpcs-per-acct)]
                          (let [vpc-tempid (d/tempid :db.part/user)
                                sa-tempid  (d/tempid :db.part/user)]
                            {:vpc-tempid vpc-tempid
-                            :txes [{:db/id vpc-tempid, :eacl/id (str (d/squuid)), :vpc/name (str "VPC " v)}
-                                   {:db/id sa-tempid, :eacl/id (str (d/squuid))}
-                                   (Relationship (->account account-tempid) :account (->vpc vpc-tempid))
-                                   (Relationship (->user sa-tempid) :shared_admin (->vpc vpc-tempid))]}))
+                            :txes (concat
+                                   [{:db/id vpc-tempid, :eacl/id (str (d/squuid)), :vpc/name (str "VPC " v)}
+                                    {:db/id sa-tempid, :eacl/id (str (d/squuid))}]
+                                   (tx-relationships (d/db conn)
+                                     [(Relationship (->account account-tempid) :account (->vpc vpc-tempid))
+                                      (Relationship (->user sa-tempid) :shared_admin (->vpc vpc-tempid))]))}))
 
               team-tempids (mapv :team-tempid team-data)
               vpc-tempids  (mapv :vpc-tempid vpc-data)
 
               server-txes (for [s (range servers-per-acct)]
                             (let [server-tempid (d/tempid :db.part/user)]
-                              [{:db/id server-tempid, :server/name (str "Server " (d/squuid)), :eacl/id (str (d/squuid))}
-                               (Relationship (->account account-tempid) :account (->server server-tempid))
-                               (Relationship (->team (nth team-tempids (mod s teams-per-acct))) :team (->server server-tempid))
-                               (Relationship (->vpc (nth vpc-tempids (mod s vpcs-per-acct))) :vpc (->server server-tempid))]))
+                              (concat
+                               [{:db/id server-tempid, :server/name (str "Server " (d/squuid)), :eacl/id (str (d/squuid))}]
+                               (tx-relationships (d/db conn)
+                                 [(Relationship (->account account-tempid) :account (->server server-tempid))
+                                  (Relationship (->team (nth team-tempids (mod s teams-per-acct))) :team (->server server-tempid))
+                                  (Relationship (->vpc (nth vpc-tempids (mod s vpcs-per-acct))) :vpc (->server server-tempid))]))))
 
-              account-txes [{:db/id account-tempid, :eacl/id (str account-uuid)}
-                            {:db/id owner-tempid, :eacl/id (str (d/squuid))}
-                            (Relationship (->platform :test/platform) :platform (->account account-tempid))
-                            (Relationship (->user owner-tempid) :owner (->account account-tempid))]
+              account-txes (concat
+                            [{:db/id account-tempid, :eacl/id (str account-uuid)}
+                             {:db/id owner-tempid, :eacl/id (str (d/squuid))}]
+                            (tx-relationships (d/db conn)
+                              [(Relationship (->platform :test/platform) :platform (->account account-tempid))
+                               (Relationship (->user owner-tempid) :owner (->account account-tempid))]))
 
               all-txes (concat account-txes
                          (mapcat :txes team-data)
@@ -130,7 +145,9 @@
                            sort
                            (take 2))]
       (doseq [aid first-accounts]
-        @(d/transact conn [(Relationship (->user :test/user1) :owner (->account [:eacl/id aid]))])))
+        @(d/transact conn
+           (tx-relationships (d/db conn)
+             [(Relationship (->user :test/user1) :owner (->account [:eacl/id aid]))]))))
 
     acl))
 

@@ -3,7 +3,8 @@
             [datomic.api :as d]
             [com.rpl.specter :as S]
             [malli.core :as m]
-            [eacl.spicedb.parser :as parser]))
+            [eacl.spicedb.parser :as parser]
+            [eacl.datomic.impl.indexed :as impl.indexed]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -35,7 +36,7 @@
 ;(def Permission
 ;  [:or DirectPermission ArrowPermission])
 
-(def v6-schema
+(def v7-schema
   [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
@@ -151,91 +152,47 @@
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
 
-   ;; Relationships [Subject Relation Resource]
-   {:db/ident       :eacl.relationship/subject-type
-    :db/doc         "EACL Relationship: Subject Type Keyword"
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/subject
-    :db/doc         "EACL Relationship: Ref to Subject"
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one                     ; This used to be many, but simpler if one.
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/relation-name
-    :db/doc         "EACL Relationship: Relation Name (keyword)"
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one                     ; was many
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/resource-type
-    :db/doc         "EACL: Resource Type Keyword"
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/resource
-    :db/doc         "EACL Relationship: Ref to Resource"
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one                     ; was many
-    :db/index       true}
-
-   ;; Relationship Indices (expensive)
-   {:db/ident       :eacl.relationship/subject-type+subject+relation-name+resource-type+resource
-    :db/doc         "EACL Relationship: Unique identity tuple for lookup-resources."
+   ;; v7 Relationships: forward and reverse tuple indexes only.
+   {:db/ident       :eacl.v7.relationship/subject-type+relation+resource-type+resource
+    :db/doc         "EACL v7 relationship tuple from subject to resource."
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/subject
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/resource-type
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
+    :db/tupleTypes  [:db.type/keyword
+                     :db.type/ref
+                     :db.type/keyword
+                     :db.type/ref]
+    :db/cardinality :db.cardinality/many
+    :db/index       true}
 
-   ; This can go away as soon as `can?` uses direct index access. May still be needed, though.
-   ;{:db/ident       :eacl.relationship/resource+subject
-   ; :db/doc         "EACL Relationship Index: for check-permission reachable? hop. Will go away once can? uses direct index."
-   ; :db/valueType   :db.type/tuple
-   ; :db/tupleAttrs  [:eacl.relationship/resource
-   ;                  :eacl.relationship/subject]
-   ; :db/cardinality :db.cardinality/one
-   ; :db/index       true}
-
-   ;; Reverse tuple index for efficient reverse traversal
-   {:db/ident       :eacl.relationship/resource-type+resource+relation-name+subject-type+subject
-    :db/doc         "Reverse tuple index for efficient reverse traversal in can? and arrow permissions"
+   {:db/ident       :eacl.v7.relationship/resource-type+relation+subject-type+subject
+    :db/doc         "EACL v7 reverse relationship tuple from resource to subject."
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource-type
-                     :eacl.relationship/resource
-                     :eacl.relationship/relation-name
-                     :eacl.relationship/subject-type
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/index       true
-    :db/unique      :db.unique/identity}])
+    :db/tupleTypes  [:db.type/keyword
+                     :db.type/ref
+                     :db.type/keyword
+                     :db.type/ref]
+    :db/cardinality :db.cardinality/many
+    :db/index       true}])
+
+(def v6-schema
+  "Compatibility alias while tests and callers move to the v7 name."
+  v7-schema)
 
 (defn count-relationships-using-relation
-  "Counts how many Relationships are using the given Relation.
-  The search attrs are indexed, but this can be way faster in v7 using references types,
-  or adding a tuple index like :eacl.relationship/resource-type+relation-name+subject-type,
-  but that would increase storage & write costs.
-  
-  Note: Schema validation (ensuring relations exist) is now done at write-schema! time
-  via validate-schema-references, so invalid relations are rejected before they can be used."
+  "Counts v7 forward relationship tuples that reference the given relation."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   {:pre [(keyword? resource-type)
          (keyword? relation-name)
          (keyword? subject-type)]}
-  (or (d/q '[:find (count ?relationship) .
-             :in $ ?resource-type ?relation-name ?subject-type
-             :where
-             [?relationship :eacl.relationship/resource-type ?resource-type]
-             [?relationship :eacl.relationship/relation-name ?relation-name]
-             [?relationship :eacl.relationship/subject-type ?subject-type]]
-        db resource-type relation-name subject-type)
-    0))
+  (let [relation-id  (str "eacl.relation:" resource-type ":" relation-name ":" subject-type)
+        relation-eid (d/entid db [:eacl/id relation-id])]
+    (if-not relation-eid
+      0
+      (reduce (fn [n _] (inc n))
+        0
+        (d/index-range db
+          :eacl.v7.relationship/subject-type+relation+resource-type+resource
+          [subject-type relation-eid resource-type 0]
+          [subject-type relation-eid resource-type Long/MAX_VALUE])))))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
@@ -448,4 +405,5 @@
                     [{:eacl/id            "schema-string"
                       :eacl/schema-string schema-string}])]
       @(d/transact conn tx-data)
+      (impl.indexed/evict-permission-paths-cache!)
       deltas)))
