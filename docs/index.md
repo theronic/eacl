@@ -9,7 +9,7 @@ title: EACL
 
 Situated here means that your permission data lives next to your Datomic entities. This has several benefits which are described below.
 
-EACL is [open-source](https://github.com/theronic/eacl) and is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is [open-source](https://github.com/theronic/eacl).
 
 ## Is it any good?
 
@@ -46,7 +46,7 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 - EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 
 > [!WARNING]
-> Even though EACL is used in production at CloudAfrica, it is under *active* development.
+> EACL is used in production, but is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
 
