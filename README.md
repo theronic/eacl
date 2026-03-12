@@ -1,8 +1,8 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure with a backend-neutral core plus Datomic and DataScript adapters. EACL is used at [CloudAfrica](https://cloudafrica.net/).
 
-_Situated_ here means that your permission data lives _next to_ your application data in Datomic, which has some benefits:
+_Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
 2. One less external dependency to deploy & sync relationships.
 3. Fully consistent queries – an external authz system necessitates eventual consistency.
@@ -53,6 +53,49 @@ Situated AuthZ offers some advantages for typical use-cases:
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+
+## Modules
+
+The repository is now a workspace-style monorepo with three publishable modules:
+
+- `cloudafrica/eacl`
+  - backend-neutral protocol, public records, schema IR, parser, cursor helpers, and the shared authorization engine.
+- `cloudafrica/eacl-datomic`
+  - Datomic adapter preserving the existing `eacl.datomic.*` public namespace surface.
+- `cloudafrica/eacl-datascript`
+  - DataScript adapter for CLJ and CLJS.
+
+The root `deps.edn` is a development workspace only. Build and install the modules independently with:
+
+```clojure
+clojure -T:build-eacl install
+clojure -T:build-eacl-datomic install
+clojure -T:build-eacl-datascript install
+```
+
+EACL no longer ships a logging backend. Applications should choose their own SLF4J/logback backend if they want one.
+
+## Dependency Selection
+
+Choose only the adapter you need:
+
+```clojure
+{:deps
+ {cloudafrica/eacl {:git/url "git@github.com:cloudafrica/eacl.git"
+                    :git/sha "REPLACE_WITH_SHA"}
+
+  cloudafrica/eacl-datomic {:git/url "git@github.com:cloudafrica/eacl.git"
+                            :deps/root "modules/eacl-datomic"
+                            :git/sha "REPLACE_WITH_SHA"}
+
+  cloudafrica/eacl-datascript {:git/url "git@github.com:cloudafrica/eacl.git"
+                               :deps/root "modules/eacl-datascript"
+                               :git/sha "REPLACE_WITH_SHA"}}}
+```
+
+- Datomic consumers need `cloudafrica/eacl-datomic` and keep the same public `require` forms.
+- DataScript consumers need `cloudafrica/eacl-datascript`.
+- Core-only consumers can depend on `cloudafrica/eacl`.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -107,7 +150,7 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 
 ## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
+The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/src/eacl/core.cljc) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 ### Queries
 
@@ -173,15 +216,17 @@ To query the next page, simply pass the `cursor` from page1 into the next query:
 
 The return order of resources from `lookup-resources` is stable and sorted by internal resource ID.
 
-## Quickstart
+## Datomic Quickstart
 
 The following example is contained in [eacl-example](https://github.com/theronic/eacl-example).
 
-Add the EACL dependency to your `deps.edn` file:
+Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {cloudafrica/eacl {:git/url "git@github.com:cloudafrica/eacl.git" 
-                          :git/sha "884a1d0e08049cbf55fd59e9f235945fc6f732e4"}}}
+{:deps
+ {cloudafrica/eacl-datomic {:git/url "git@github.com:cloudafrica/eacl.git"
+                            :deps/root "modules/eacl-datomic"
+                            :git/sha "REPLACE_WITH_SHA"}}}
 ```
 
 ```clojure
@@ -267,6 +312,56 @@ Add the EACL dependency to your `deps.edn` file:
 ; => {:data [{:type :product, :id "product-1"}]
 ;     :cursor 'cursor}
 ```
+
+## DataScript Quickstart
+
+For server-side or browser demos, use the DataScript adapter:
+
+```clojure
+(ns my-eacl-datascript-demo
+  (:require [datascript.core :as ds]
+            [eacl.core :as eacl]
+            [eacl.datascript.core :as eacl.datascript]))
+
+(def conn (eacl.datascript/create-conn))
+(def acl (eacl.datascript/make-client conn {}))
+
+(ds/transact! conn
+  [{:db/id -1 :eacl/id "user-1"}
+   {:db/id -2 :eacl/id "account-1"}])
+
+(eacl/write-schema! acl
+  "definition user {}
+
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }")
+
+(eacl/create-relationship! acl
+  (eacl/spice-object :user "user-1")
+  :owner
+  (eacl/spice-object :account "account-1"))
+
+(eacl/can? acl
+  (eacl/spice-object :user "user-1")
+  :admin
+  (eacl/spice-object :account "account-1"))
+; => true
+```
+
+Run the shared CLJS contract suite with:
+
+```clojure
+clojure -M:datascript-cljs-test
+```
+
+## Migration Notes
+
+- Existing Datomic `require` forms remain valid: `eacl.datomic.core`, `eacl.datomic.impl`, and `eacl.datomic.schema`.
+- `count-subjects` is now part of the public `IAuthorization` protocol and is implemented by both adapters.
+- `Relation` and `Permission` now live in the backend-neutral schema model, with Datomic compatibility re-exports still available.
+- The repository root is a development workspace now. Consumers should depend on the module they actually need.
 
 ## EACL Schema
 
