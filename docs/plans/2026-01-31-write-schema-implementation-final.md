@@ -84,7 +84,7 @@ This document describes the completed implementation of `eacl/write-schema!` add
 
 | File | Changes |
 |------|--------|
-| `src/eacl/datomic/spice_parser.clj` | Added `validate-operators`, multi-arrow validation, multi-type grammar support, removed dead code |
+| `src/eacl/spicedb/parser.clj` | Added `validate-operators`, multi-arrow validation, multi-type grammar support, removed dead code |
 | `src/eacl/datomic/schema.clj` | Added `validate-schema-references`, integrated validation into `write-schema!`, updated docstrings |
 | `src/eacl/datomic/core.clj` | Changed `read-schema` to return rich map |
 | `test/eacl/datomic/parser_test.clj` | Added `unsupported-features-tests`, updated expected parse tree structure |

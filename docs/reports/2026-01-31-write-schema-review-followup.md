@@ -98,7 +98,7 @@ The grammar now parses the complete SpiceDB syntax. EACL restrictions are enforc
 
 #### 1. No Comment Support
 
-**Location**: `src/eacl/datomic/spice_parser.clj:13-61` (grammar definition)
+**Location**: `src/eacl/spicedb/parser.clj:13-61` (grammar definition)
 
 **Problem**: The grammar does not support SpiceDB comments (`//`, `/* */`, `/** */`). Production schemas commonly include documentation comments.
 
@@ -167,7 +167,7 @@ However, the `self` keyword is rejected by `validate-eacl-restrictions` before t
 
 #### 4. `resolve-component` Still Has Unsafe Fallback
 
-**Location**: `src/eacl/datomic/spice_parser.clj:549-555`
+**Location**: `src/eacl/spicedb/parser.clj:549-555`
 
 ```clojure
 (if (contains? (:relations info) name)

@@ -10,7 +10,7 @@ Implement `eacl/write-schema!` to support SpiceDB schema DSL strings, enabling s
 ## Steps
 
 ### 1. Parser Implementation
-- [x] Update `src/eacl/datomic/spice_parser.clj`:
+- [x] Update `src/eacl/spicedb/parser.clj`:
     - [x] Implement `->eacl-schema` to transform the parse tree into a map of `{:relations [...] :permissions [...]}`.
     - [x] Ensure the output format matches what `eacl.datomic.schema/read-schema` produces (or is compatible for comparison).
     - [x] Handle all supported SpiceDB constructs (definitions, relations, direct permissions, arrow permissions, unions).
@@ -26,7 +26,7 @@ Implement `eacl/write-schema!` to support SpiceDB schema DSL strings, enabling s
 
 ### 3. Write Schema Implementation
 - [x] Implement `eacl.datomic.schema/write-schema!`:
-    - [x] Parse the input string using `spice-parser/parse-schema` and `spice-parser/->eacl-schema`.
+    - [x] Parse the input string using `parser/parse-schema` and `parser/->eacl-schema`.
     - [x] Read existing schema using `read-schema`.
     - [x] Compute deltas using `compare-schema`.
     - [x] Perform validation (orphans, valid references).

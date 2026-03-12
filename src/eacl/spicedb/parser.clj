@@ -1,5 +1,5 @@
-(ns eacl.datomic.spice-parser
-  "WIP."
+(ns eacl.spicedb.parser
+  "SpiceDB schema DSL parser for EACL."
   (:require [instaparse.core :as insta]
             [clojure.pprint]
             [clojure.string]
@@ -405,18 +405,18 @@
 (defn validate-eacl-restrictions
   "Validates that a parsed SpiceDB schema conforms to EACL restrictions.
    Takes a parse tree and throws ex-info if any unsupported features are found.
-   
+
    EACL restrictions:
    - Only union (+) operator allowed (no intersection &, exclusion -)
    - Only single-level arrows (no a->b->c)
    - No .all() arrow function (only implicit .any() via arrow)
    - No nil keyword
-   - No self keyword  
+   - No self keyword
    - No namespaced type paths (docs/document)
    - No wildcards (user:*)
    - No subject relations (group#member)
    - No caveats (with caveatname)
-   
+
    Returns nil if valid, throws ex-info with :issues vector if invalid."
   [parse-tree transformed-schema]
   (let [parse-issues    (collect-parse-tree-issues parse-tree)
@@ -576,12 +576,12 @@
 
 (defn ->eacl-schema
   "Convert parsed SpiceDB schema to EACL internal representation.
-   
+
    Steps:
    1. Transform parse tree to intermediate representation
    2. Validate EACL restrictions (throws on unsupported features)
    3. Convert to EACL Relations and Permissions
-   
+
    Returns {:relations [...] :permissions [...]}"
   [parse-tree]
   (let [transformed (transform-schema parse-tree)]

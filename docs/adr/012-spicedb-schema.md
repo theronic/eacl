@@ -20,7 +20,7 @@ This requires creating & updating [schema](https://authzed.com/docs/spicedb/conc
 
 The SpiceDB Golang implementation is included at ~/spicedb of this repo for reference with schema DSL parser implementation at ~/spicedb/pkg/schemadsl with parser_test.go. Use this to inform your implementation. Note that they wrote their own schema parser & schema compiler, but we can probably use Instaparse.
 
-Some initial work was done in `src/eacl/datomic/spice_parser.clj` & `test/eacl/datomic/parser_test.clj` to parse the SpiceDB schema DSL.
+Some initial work was done in `src/eacl/spicedb/parser.clj` & `test/eacl/datomic/parser_test.clj` to parse the SpiceDB schema DSL.
 
 - EACL constructs a unique :eacl/id for each Relation & Permission to avoid duplicate transactions that is derived from the the Relation or Permission spec.
 - EACL only supports Union (+) operators for permissions at this time, so should reject other operators as invalid. Operator rejection should not be too tightly coupled because support may be added in future.
@@ -57,6 +57,7 @@ You can manage your own nREPL connections using the clojure-mcp tools.
 - Write failing unit tests BEFORE writing any code first.
 - Use only clojure-mcp tools to read, edit or write Clojure code.
 - When you write or edit a new function, evaluate it in the REPL after defining it to test your assumptions.
+- Use Malli for validating the structure of maps, ala "poor man's types."
 
 ## Validating Assumptions against SpiceDB
 
@@ -69,6 +70,7 @@ Remember to stop it when you're done if it's running in background. You can add 
 
 ## Next Steps
 
+0. Ensure you can connect to (or start) an nREPL and run a simple clojure-eval to ensure it's working.
 1. Read the current EACL implementation (it's small and will fit in context) and gather all information you need.
 2. Write a detailed report to `docs/reports/` (prefix with date) about the current state of EACL to inform a future plan for getting to where we need. Note any implementation issues or bugs you spot in the code in your report, which may require attention first.
 3. Based on your report, write a detailed plan to `docs/plans/` (prefix with date) that even a retarded junior engineer could follow without making any mistakes. Track progress in the plan with `[ ]` checkboxes. Link from report to plan file and back to report from plan file.

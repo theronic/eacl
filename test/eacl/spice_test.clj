@@ -364,7 +364,7 @@
                 :relation :owner
                 :subjects [{:object   (->user "ben")
                             :relation nil}]}
-               [{:object   (->platform "cloudafrica")
+               [{:object   (->platform "sample-platform")
                  :relation :super_admin
                  :subjects [{:object   (->user "andre")
                              :relation nil}]}]]]
@@ -386,7 +386,7 @@
     (is (= [[[[{:object   (->account "acme")
                 :subjects [{:object joe's-user :relation nil}],
                 :relation :owner}
-               [{:object   (->platform "cloudafrica"),
+               [{:object   (->platform "sample-platform"),
                  :subjects [{:object (->user "andre"), :relation nil}],
                  :relation :super_admin}]]]
              []

@@ -1,7 +1,7 @@
 (ns eacl.datomic.parser_test
   (:require [clojure.test :as t :refer [deftest testing is]]
             [instaparse.core :as insta]
-            [eacl.datomic.spice-parser :as parser]
+            [eacl.spicedb.parser :as parser]
             [eacl.datomic.impl :as impl]))
 
 (def example-schema-string

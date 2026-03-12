@@ -3,7 +3,7 @@
             [datomic.api :as d]
             [com.rpl.specter :as S]
             [malli.core :as m]
-            [eacl.datomic.spice-parser :as parser]))
+            [eacl.spicedb.parser :as parser]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.

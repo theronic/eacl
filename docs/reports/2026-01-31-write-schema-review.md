@@ -53,7 +53,7 @@ The ADR lists specific validation requirements. Status of each:
 |-------------|--------|-------|
 | "EACL only supports Union (+) operators... should reject other operators as invalid" | ❌ **NOT DONE** | Grammar parses `-` but implementation doesn't reject it |
 | "EACL does not support Caveats" | ✅ **OK** | Grammar doesn't parse caveat syntax |
-| "EACL only supports one level of nested arrow permissions" | ❌ **NOT VALIDATED** | Multi-arrow silently truncated to single arrow at `spice_parser.clj:253` |
+| "EACL only supports one level of nested arrow permissions" | ❌ **NOT VALIDATED** | Multi-arrow silently truncated to single arrow at `parser.clj:253` |
 
 ### Process Requirements (Next Steps section)
 
@@ -114,7 +114,7 @@ definition account {
 
 ### 2. Unsupported Operators Not Rejected
 
-**Location**: `src/eacl/datomic/spice_parser.clj:26-27`
+**Location**: `src/eacl/spicedb/parser.clj:26-27`
 
 **Problem**: The grammar parses both `+` and `-` operators:
 ```clojure
@@ -136,7 +136,7 @@ The `-` (exclusion/intersection) operator is parsed but silently treated as unio
 
 ### 3. Incomplete Permission Resolution Logic
 
-**Location**: `src/eacl/datomic/spice_parser.clj:240-262` (`resolve-component`)
+**Location**: `src/eacl/spicedb/parser.clj:240-262` (`resolve-component`)
 
 **Problem**: The function makes a dangerous assumption:
 ```clojure
@@ -175,7 +175,7 @@ This is inconsistent with the `schema/read-schema` function which returns `{:rel
 
 ### 5. Parser Returns Nil Schema-String
 
-**Location**: `src/eacl/datomic/spice_parser.clj:283`
+**Location**: `src/eacl/spicedb/parser.clj:283`
 
 ```clojure
 {:relations [...] :permissions [...] :schema-string nil}
@@ -204,7 +204,7 @@ While Datomic transactions are atomic and order within a transaction doesn't mat
 
 ### 7. No Multi-Arrow Validation
 
-**Location**: `src/eacl/datomic/spice_parser.clj:253`
+**Location**: `src/eacl/spicedb/parser.clj:253`
 
 The ADR mentions: "EACL only supports one level of nested arrow permissions at this time."
 
@@ -390,7 +390,7 @@ This is critical because:
 ### Operator Validation
 
 ```clojure
-;; In spice_parser.clj, add after parsing:
+;; In parser.clj, add after parsing:
 
 (defn validate-operators
   "Ensures only union (+) operators are used."
