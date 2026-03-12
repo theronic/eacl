@@ -11,7 +11,8 @@
 (deftest eacl-config-tests
   (testing ""
     (with-mem-conn [conn schema/v6-schema]
-      @(d/transact conn fixtures/base-fixtures)
+      @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+      @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
       ;@(d/transact conn [{:db/ident :my/id
       ;                    :db/doc "Your custom ID here, e.g. UUID in this case."
       ;                    :db/valueType :db.type/uuid
@@ -51,4 +52,3 @@
           (is (= 2 (count (:data (eacl/lookup-subjects client {:resource     (->server :test/server1)
                                                                :permission   :view
                                                                :subject/type :user}))))))))))
-

@@ -1,0 +1,88 @@
+definition user {}
+
+definition platform {
+  relation super_admin: user
+}
+
+definition account {
+  relation platform: platform
+  relation owner: user
+
+  permission admin = owner + platform->super_admin
+  permission view = owner + admin
+
+  permission update = admin
+
+  permission create_vpc = admin
+  permission create_server = admin
+  permission restore_from_backup = admin
+}
+
+definition vpc {
+  relation account: account
+
+  relation shared_admin: user
+  relation shared_member: user
+
+  permission admin = account->admin + shared_admin
+
+  permission view = admin + shared_member
+  permission rename = admin
+  permission delete = admin
+  permission share = admin
+
+  permission create_server = admin
+  permission restore_from_backup = admin
+}
+
+definition server {
+  relation account: account
+  relation vpc: vpc
+
+  relation shared_admin: user
+  relation shared_member: user
+
+  permission admin = account->admin + vpc->admin + shared_admin
+
+  permission view = admin + shared_member
+  permission start = admin
+  permission stop = admin
+  permission reboot = admin + shared_member
+
+  permission view_console = admin + shared_member
+
+  permission delete = admin
+  permission rename = admin
+
+  permission share = admin
+
+  permission view_firewall_rule = admin
+  permission create_firewall_rule = admin
+  permission delete_firewall_rule = admin
+
+  permission add_ssh_key = admin
+  permission delete_ssh_key = admin
+
+  permission take_backup = admin
+  permission restore_over = admin
+
+  permission create_schedule = admin
+  permission delete_schedule = admin
+}
+
+definition backup {
+  relation server: server
+  relation account: account
+  relation vpc: vpc
+
+  permission delete = account->admin + vpc->admin + server->admin
+  permission view = account->admin + vpc->admin + server->admin
+}
+
+definition host {
+  relation reader: user
+  relation writer: user
+  
+  permission view = reader + writer
+  permission write = writer
+}
