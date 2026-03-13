@@ -1,0 +1,30 @@
+{:version "v6.1"
+ :date "2026-02-15"
+ :schema "multi-path: server.view = account->admin + team->admin + vpc->admin + shared_admin"
+ :dataset {:accounts 500 :teams 2000 :vpcs 1000 :servers 375100 :shared-admin-servers 100}
+ :lookup-by-limit
+ [{:limit 10, :median-ms 140.18, :min-ms 93.0, :max-ms 913.14}
+  {:limit 50, :median-ms 139.93, :min-ms 87.34, :max-ms 324.92}
+  {:limit 100, :median-ms 161.35, :min-ms 111.66, :max-ms 664.53}
+  {:limit 500, :median-ms 135.03, :min-ms 92.22, :max-ms 289.23}
+  {:limit 1000, :median-ms 219.01, :min-ms 104.13, :max-ms 1050.83}
+  {:limit 5000, :median-ms 213.10, :min-ms 138.03, :max-ms 675.21}]
+ :deep-pagination-500
+ {:total-pages 500
+  :page-0-ms 79.18
+  :avg-excl-cold 89.86
+  :median-excl-cold 81.27
+  :min-excl-cold 60.65
+  :max-excl-cold 459.22
+  :p99-excl-cold 264.78}
+ :sampled-deep-pages
+ [{:page 0 :ms 443.02}
+  {:page 1 :ms 96.55}
+  {:page 10 :ms 72.92}
+  {:page 50 :ms 70.32}
+  {:page 100 :ms 78.06}
+  {:page 200 :ms 72.00}
+  {:page 500 :ms 154.20}
+  {:page 1000 :ms 854.57}
+  {:page 1500 :ms 67.34}
+  {:page 1999 :ms 55.79}]}

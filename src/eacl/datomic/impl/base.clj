@@ -1,8 +1,6 @@
 (ns eacl.datomic.impl.base
   "EACL: Enterprise Access Control. Spice-compatible authorization system in Datomic.")
 
-(defrecord Cursor [path-index resource])
-
 (defn ->relation-id
   "Uses (str kw) instead of (name kw) to retain namespaces. Leading colons are expected."
   [resource-type relation-name subject-type]
