@@ -1,5 +1,6 @@
 (ns eacl.schema.model
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [clojure.string :as str]))
 
 (defn ->relation-id
   "Uses (str kw) instead of (name kw) to retain namespaces. Leading colons are expected."
@@ -136,9 +137,16 @@
                                                 " arrow via " (name source-rel) "->" (name target-name)
                                                 " - permission '" (name target-name) "' does not exist on " (name target-res-type))}))))))))))
     (when (seq @errors)
-      (throw (ex-info "Invalid schema: reference validation failed"
-                      {:errors      @errors
-                       :error-count (count @errors)})))
+      (let [messages (->> @errors
+                          (map :message)
+                          distinct
+                          vec)
+            summary  (str "Invalid schema: reference validation failed. "
+                          (str/join "; " messages))]
+        (throw (ex-info summary
+                        {:errors      @errors
+                         :messages    messages
+                         :error-count (count @errors)}))))
     nil))
 
 (defn calc-set-deltas [before after]

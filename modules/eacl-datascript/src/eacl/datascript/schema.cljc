@@ -16,6 +16,20 @@
   #?(:clj Long/MAX_VALUE
      :cljs js/Number.MAX_SAFE_INTEGER))
 
+(def schema-change-attrs
+  #{:eacl.relation/resource-type
+    :eacl.relation/relation-name
+    :eacl.relation/subject-type
+    :eacl.relation/resource-type+relation-name+subject-type
+    :eacl.permission/resource-type
+    :eacl.permission/permission-name
+    :eacl.permission/source-relation-name
+    :eacl.permission/target-type
+    :eacl.permission/target-name
+    :eacl.permission/resource-type+permission-name
+    :eacl.permission/full-key
+    :eacl/schema-string})
+
 (def datascript-schema
   {:eacl/id {:db/unique :db.unique/identity}
    :eacl.relation/resource-type {:db/index true}
@@ -150,10 +164,14 @@
       (concat
        (:additions relations)
        (:additions permissions)
-       (for [rel relation-retractions]
-         [:db/retractEntity [:eacl/id (:eacl/id rel)]])
-       (for [perm permission-retractions]
-         [:db/retractEntity [:eacl/id (:eacl/id perm)]])
+       (for [rel relation-retractions
+             :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
+             :when eid]
+         [:db/retractEntity eid])
+       (for [perm permission-retractions
+             :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
+             :when eid]
+         [:db/retractEntity eid])
        [{:eacl/id "schema-string"
          :eacl/schema-string schema-string}]))
     deltas))

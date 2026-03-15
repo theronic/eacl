@@ -57,13 +57,24 @@
 
 (defn datascript-read-relationships
   [db {:keys [object-id->entid] :as opts} filters]
-  (let [subject-id  (:subject/id filters)
-        resource-id (:resource/id filters)
-        subject-eid (when subject-id (object-id->entid db subject-id))
+  (let [subject-id   (:subject/id filters)
+        resource-id  (:resource/id filters)
+        cursor-id    (:cursor filters)
+        subject-eid  (when subject-id (object-id->entid db subject-id))
         resource-eid (when resource-id (object-id->entid db resource-id))
+        cursor-eid   (cond
+                       (and cursor-id subject-id (nil? resource-id))
+                       (object-id->entid db cursor-id)
+
+                       (and cursor-id resource-id (nil? subject-id))
+                       (object-id->entid db cursor-id)
+
+                       :else
+                       cursor-id)
         filters'    (cond-> filters
                       subject-id (assoc :subject/id subject-eid)
-                      resource-id (assoc :resource/id resource-eid))]
+                      resource-id (assoc :resource/id resource-eid)
+                      cursor-id (assoc :cursor cursor-eid))]
     (->> (impl/read-relationships db filters')
       (map #(relationship->spice db opts %)))))
 
@@ -76,7 +87,7 @@
 (defn datascript-write-relationships!
   [conn opts updates]
   (let [db      (ds/db conn)
-        stamp   (:stamp opts)
+        tx-stamp (:tx-stamp opts)
         tx-data (->> updates
                   (S/transform [S/ALL :relationship]
                     #(spice-relationship->internal db opts %))
@@ -84,10 +95,10 @@
                   (remove nil?))]
     (when (seq tx-data)
       (ds/transact! conn tx-data))
-    {:zed/token (str @stamp)}))
+    {:zed/token (str @tx-stamp)}))
 
 (defn datascript-can?
-  [db {:keys [object->entid cache-stamp]} subject permission resource consistency]
+  [db {:keys [object->entid] :as opts} subject permission resource consistency]
   (assert (= consistency/fully-consistent consistency)
     "EACL only supports consistency/fully-consistent at this time.")
   (let [subject-type (:type subject)
@@ -97,7 +108,7 @@
     (if-not (and subject-id resource-id)
       false
       (impl/can? db
-        cache-stamp
+        opts
         (spice-object subject-type subject-id)
         permission
         (spice-object resource-type resource-id)))))
@@ -106,7 +117,6 @@
   [db
    {:as opts
     :keys [spice-object->internal
-           cache-stamp
            entid->object-id
            object-id->lookup-ref
            internal-cursor->spice
@@ -123,7 +133,7 @@
         (fn [token-or-cursor]
           (some->> (token->cursor token-or-cursor)
             (spice-cursor->internal db opts))))
-      (impl/lookup-resources db cache-stamp)
+      (impl/lookup-resources db opts)
       (S/transform [:data S/ALL]
         (fn [{:keys [type id]}]
           (spice-object type (entid->object-id db id))))
@@ -136,7 +146,6 @@
   [db
    {:as opts
     :keys [spice-object->internal
-           cache-stamp
            spice-cursor->internal
            internal-cursor->spice]}
    {:as query :keys [subject]}]
@@ -147,7 +156,7 @@
         (fn [token-or-cursor]
           (some->> (token->cursor token-or-cursor)
             (spice-cursor->internal db opts))))
-      (impl/count-resources db cache-stamp)
+      (impl/count-resources db opts)
       (S/transform [:cursor]
         (fn [internal-cursor]
           (some->> (internal-cursor->spice db opts internal-cursor)
@@ -157,7 +166,6 @@
   [db
    {:as opts
     :keys [entid->object-id
-           cache-stamp
            spice-object->internal
            spice-cursor->internal
            internal-cursor->spice]}
@@ -168,7 +176,7 @@
       (fn [token-or-cursor]
         (some->> (token->cursor token-or-cursor)
           (spice-cursor->internal db opts))))
-    (impl/lookup-subjects db cache-stamp)
+    (impl/lookup-subjects db opts)
     (S/transform [:data S/ALL]
       (fn [{:keys [type id]}]
         (spice-object type (entid->object-id db id))))
@@ -181,7 +189,6 @@
   [db
    {:as opts
     :keys [spice-object->internal
-           cache-stamp
            spice-cursor->internal
            internal-cursor->spice]}
    query]
@@ -191,7 +198,7 @@
       (fn [token-or-cursor]
         (some->> (token->cursor token-or-cursor)
           (spice-cursor->internal db opts))))
-    (impl/count-subjects db cache-stamp)
+    (impl/count-subjects db opts)
     (S/transform [:cursor]
       (fn [internal-cursor]
         (some->> (internal-cursor->spice db opts internal-cursor)
@@ -210,9 +217,7 @@
   (read-schema [_]
     (schema/read-schema (ds/db conn)))
   (write-schema! [_ schema-string]
-    (let [result (schema/write-schema! conn schema-string)]
-      (impl/evict-permission-paths-cache!)
-      result))
+    (schema/write-schema! conn schema-string))
 
   (read-relationships [_ filters]
     (datascript-read-relationships (ds/db conn) opts filters))
@@ -261,20 +266,55 @@
   (expand-permission-tree [_ _]
     (throw (ex-info "not impl." {}))))
 
-(defonce stamp-registry (atom {}))
+(defonce runtime-state-registry (atom {}))
 
-(defn ensure-stamp!
+(defn- schema-transaction?
+  [tx-report]
+  (boolean
+   (some (fn [{:keys [a]}]
+           (contains? schema/schema-change-attrs a))
+         (:tx-data tx-report))))
+
+(defn- reset-schema-derived-state!
+  [state]
+  (swap! (:schema-stamp state) inc)
+  (reset! (:permission-paths-cache state) {})
+  (reset! (:schema-catalog state) nil))
+
+(defn ensure-runtime-state!
   [conn]
-  (if-let [state (get @stamp-registry conn)]
+  (if-let [state (get @runtime-state-registry conn)]
     state
-    (let [state {:stamp (atom 0)
+    (let [state {:conn-id (random-uuid)
+                 :tx-stamp (atom 0)
+                 :schema-stamp (atom 0)
+                 :permission-paths-cache (atom {})
+                 :schema-catalog (atom nil)
                  :listener-key (keyword (str "eacl-stamp-" (random-uuid)))}]
       (ds/listen! conn
         (:listener-key state)
-        (fn [_] (swap! (:stamp state) inc)))
-      (get (swap! stamp-registry
+        (fn [tx-report]
+          (swap! (:tx-stamp state) inc)
+          (when (schema-transaction? tx-report)
+            (reset-schema-derived-state! state))))
+      (get (swap! runtime-state-registry
              #(if (contains? % conn) % (assoc % conn state)))
         conn))))
+
+(defn- ensure-schema-catalog!
+  [state db]
+  (let [schema-stamp @(:schema-stamp state)
+        cached       @(:schema-catalog state)]
+    (if (= schema-stamp (:schema-stamp cached))
+      (:catalog cached)
+      (let [catalog (impl/build-schema-catalog db)]
+        (-> (swap! (:schema-catalog state)
+                   (fn [entry]
+                     (if (= schema-stamp (:schema-stamp entry))
+                       entry
+                       {:schema-stamp schema-stamp
+                        :catalog      catalog})))
+            :catalog)))))
 
 (defn make-client
   [conn
@@ -286,14 +326,19 @@
            object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
-  (let [{:keys [stamp]} (ensure-stamp! conn)
+  (let [runtime-state   (ensure-runtime-state! conn)
         object-id->entid (fn [db object-id]
                            (ds/entid db (object-id->lookup-ref object-id)))
         entid->object-id (fn [db eid]
                            (entity->object-id (ds/entity db eid)))
         opts             {:object-id->lookup-ref object-id->lookup-ref
-                          :cache-stamp (fn [] @stamp)
-                          :stamp stamp
+                          :cache-stamp (fn []
+                                         [(:conn-id runtime-state)
+                                          @(:schema-stamp runtime-state)])
+                          :tx-stamp (:tx-stamp runtime-state)
+                          :permission-paths-cache (:permission-paths-cache runtime-state)
+                          :schema-catalog (fn [db]
+                                            (ensure-schema-catalog! runtime-state db))
                           :entid->object-id entid->object-id
                           :entity->object-id entity->object-id
                           :object-id->entid object-id->entid
