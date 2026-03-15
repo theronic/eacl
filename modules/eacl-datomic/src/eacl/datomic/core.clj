@@ -20,7 +20,13 @@
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
-    (if (= 2 (:v cursor))
+    (cond
+      (= 3 (:v cursor))
+      (cond-> cursor
+        (:subject cursor) (update :subject #(entid->object-id db %))
+        (:resource cursor) (update :resource #(entid->object-id db %)))
+
+      (= 2 (:v cursor))
       (cond-> cursor
         (:e cursor) (update :e #(entid->object-id db %))
         (:p cursor) (update :p
@@ -28,6 +34,7 @@
                          (into {}
                            (map (fn [[k v]] [k (entid->object-id db v)]))
                            p))))
+      :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(entid->object-id db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(entid->object-id db %) cursor)))))
@@ -35,7 +42,13 @@
 (defn default-spice-cursor->internal
   [db {:keys [object-id->entid]} cursor]
   (when cursor
-    (if (= 2 (:v cursor))
+    (cond
+      (= 3 (:v cursor))
+      (cond-> cursor
+        (:subject cursor) (update :subject #(object-id->entid db %))
+        (:resource cursor) (update :resource #(object-id->entid db %)))
+
+      (= 2 (:v cursor))
       (cond-> cursor
         (:e cursor) (update :e #(object-id->entid db %))
         (:p cursor) (update :p
@@ -43,6 +56,7 @@
                          (into {}
                            (map (fn [[k v]] [k (object-id->entid db v)]))
                            p))))
+      :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
@@ -60,17 +74,39 @@
 
 (defn spiceomic-read-relationships
   [db
-   {:keys [object-id->entid] :as opts}
+   {:as opts
+    :keys [object-id->entid
+           internal-cursor->spice
+           spice-cursor->internal]}
    filters]
   (let [subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
         subject-eid  (when subject-id (object-id->entid db subject-id))
         resource-eid (when resource-id (object-id->entid db resource-id))
-        filters'     (cond-> filters
+        missing-id?  (or (and subject-id (nil? subject-eid))
+                         (and resource-id (nil? resource-eid)))]
+    (if missing-id?
+      {:data [] :cursor nil}
+      (let [filters' (cond-> filters
                        subject-id (assoc :subject/id subject-eid)
-                       resource-id (assoc :resource/id resource-eid))]
-    (->> (impl/read-relationships db filters')
-      (map #(relationship->spice db opts %)))))
+                       resource-id (assoc :resource/id resource-eid))
+            filters'' (S/transform [:cursor]
+                        (fn [token-or-cursor]
+                          (some->> (token->cursor token-or-cursor)
+                                   (spice-cursor->internal db opts)))
+                        filters')
+            result    (impl/read-relationships db filters'')]
+        (-> result
+            ((fn [page]
+               (S/transform [:data S/ALL]
+                 #(relationship->spice db opts %)
+                 page)))
+            ((fn [page]
+               (S/transform [:cursor]
+                 (fn [internal-cursor]
+                   (some->> (internal-cursor->spice db opts internal-cursor)
+                            cursor->token))
+                 page))))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -89,6 +125,12 @@
         {:keys [db-after]} @(d/transact conn tx-data)
         basis (d/basis-t db-after)]
     {:zed/token (str basis)}))
+
+(defn- relationship-seq
+  [relationships]
+  (if (map? relationships)
+    (:data relationships)
+    relationships))
 
 (defn spiceomic-can?
   [db {:keys [object->entid]} subject permission resource consistency]
@@ -251,7 +293,7 @@
 
   (delete-relationships! [_ relationships]
     (spiceomic-write-relationships! conn opts
-      (for [rel relationships]
+      (for [rel (relationship-seq relationships)]
         (->RelationshipUpdate :delete rel))))
 
   (delete-relationship! [_ {:as relationship :keys [subject relation resource]}]

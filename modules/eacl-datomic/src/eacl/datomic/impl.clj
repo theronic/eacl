@@ -3,6 +3,7 @@
   (:require
    [datomic.api :as d]
    [eacl.core :as eacl :refer [spice-object]]
+   [eacl.engine.relationships :as relationship-engine]
    [eacl.datomic.impl.base :as base]
    [eacl.datomic.impl.indexed :as impl.indexed]))
 
@@ -40,6 +41,11 @@
     (number? object-id) object-id
     (string? object-id) (or (d/entid db [:eacl/id object-id]) object-id)
     :else (or (d/entid db object-id) object-id)))
+
+(defn- internal-id
+  [db value]
+  (when value
+    (d/entid db value)))
 
 (defn- find-relation-eid
   [db resource-type relation-name subject-type]
@@ -141,6 +147,15 @@
                      (or (nil? subject-type)
                          (= subject-type (:eacl.relation/subject-type relation)))))))))
 
+(defn- all-relation-defs
+  [db]
+  (mapv (fn [{:keys [e v]}]
+          {:relation-id e
+           :resource-type (nth v 0)
+           :relation-name (nth v 1)
+           :subject-type (nth v 2)})
+        (d/datoms db :avet :eacl.relation/resource-type+relation-name+subject-type)))
+
 (defn- decode-forward-datom
   [db relation-by-eid subject-eid [_subject-type relation-eid resource-type resource-eid]]
   (let [relation-name (or (get relation-by-eid relation-eid)
@@ -208,32 +223,100 @@
 
 (defn read-relationships
   [db filters]
-  (let [relations    (find-relations db filters)
-        subject-id    (:subject/id filters)
-        resource-id   (:resource/id filters)
-        subject-eid  (when subject-id (d/entid db subject-id))
-        resource-eid (when resource-id (d/entid db resource-id))
-        normalized-filters (cond-> filters
-                             subject-eid (assoc :subject/id subject-eid)
-                             resource-eid (assoc :resource/id resource-eid))]
-    (->> (cond
-           (and subject-id (nil? subject-eid))
-           (throw (ex-info "read-relationships is missing a valid :subject/id."
-                    {:subject/id subject-id}))
-
-           (and resource-id (nil? resource-eid))
-           (throw (ex-info "read-relationships is missing a valid :resource/id."
-                    {:resource/id resource-id}))
-
-           subject-eid
-           (scan-subject-relationships db relations subject-eid)
-
-           resource-eid
-           (scan-resource-relationships db relations resource-eid)
-
-           :else
-           (scan-global-relationships db relations))
-      (filter #(relationship-matches-filters? normalized-filters %)))))
+  (let [subject-id'  (when (contains? filters :subject/id)
+                       (internal-id db (:subject/id filters)))
+        resource-id' (when (contains? filters :resource/id)
+                       (internal-id db (:resource/id filters)))
+        filters'     (cond-> filters
+                       (contains? filters :subject/id) (assoc :subject/id subject-id')
+                       (contains? filters :resource/id) (assoc :resource/id resource-id'))]
+    (if (or (and (contains? filters :subject/id) (nil? subject-id'))
+            (and (contains? filters :resource/id) (nil? resource-id')))
+      {:data [] :cursor nil}
+      (letfn [(relationship-row [spec subject-eid resource-eid]
+            {:spec-idx    (:idx spec)
+             :subject-id  subject-eid
+             :resource-id resource-eid
+             :relationship
+             (eacl/->Relationship
+              (spice-object (:subject-type spec) subject-eid)
+              (:relation-name spec)
+              (spice-object (:resource-type spec) resource-eid))})
+          (drop-until-after-cursor [spec cursor rows]
+            (drop-while #(not (relationship-engine/after-cursor? (:scan-kind spec) cursor %))
+                        rows))
+          (exact-match-row [spec cursor]
+            (let [row (when (and (:subject-id spec) (:resource-id spec))
+                        (when (seq (d/datoms db
+                                       :eavt
+                                       (:subject-id spec)
+                                       forward-relationship-attr
+                                       [(:subject-type spec)
+                                        (:relation-id spec)
+                                        (:resource-type spec)
+                                        (:resource-id spec)]))
+                          (relationship-row spec (:subject-id spec) (:resource-id spec))))]
+              (if row
+                (drop-until-after-cursor spec cursor [row])
+                [])))
+          (scan-forward-anchored [spec cursor]
+            (if (:resource-id spec)
+              (exact-match-row spec cursor)
+              (->> (impl.indexed/subject->resources db
+                                                    (:subject-type spec)
+                                                    (:subject-id spec)
+                                                    (:relation-id spec)
+                                                    (:resource-type spec)
+                                                    (:resource cursor))
+                   (map #(relationship-row spec (:subject-id spec) %)))))
+          (scan-reverse-anchored [spec cursor]
+            (if (:subject-id spec)
+              (exact-match-row spec cursor)
+              (->> (impl.indexed/resource->subjects db
+                                                    (:resource-type spec)
+                                                    (:resource-id spec)
+                                                    (:relation-id spec)
+                                                    (:subject-type spec)
+                                                    (:subject cursor))
+                   (map #(relationship-row spec % (:resource-id spec))))))
+          (scan-forward-partial [spec cursor]
+            (->> (d/index-range db
+                                forward-relationship-attr
+                                [(:subject-type spec)
+                                 (:relation-id spec)
+                                 (:resource-type spec)
+                                 (or (:resource cursor) 0)]
+                                [(:subject-type spec)
+                                 (:relation-id spec)
+                                 (:resource-type spec)
+                                 Long/MAX_VALUE])
+                 (map (fn [datom]
+                        (relationship-row spec (:e datom) (nth (:v datom) 3))))
+                 (drop-until-after-cursor spec cursor)))
+          (scan-reverse-partial [spec cursor]
+            (->> (d/index-range db
+                                reverse-relationship-attr
+                                [(:resource-type spec)
+                                 (:relation-id spec)
+                                 (:subject-type spec)
+                                 (or (:subject cursor) 0)]
+                                [(:resource-type spec)
+                                 (:relation-id spec)
+                                 (:subject-type spec)
+                                 Long/MAX_VALUE])
+                 (map (fn [datom]
+                        (relationship-row spec (nth (:v datom) 3) (:e datom))))
+                 (drop-until-after-cursor spec cursor)))
+          (scan-spec [spec cursor]
+            (case (:scan-kind spec)
+              :forward-anchored (scan-forward-anchored spec cursor)
+              :reverse-anchored (scan-reverse-anchored spec cursor)
+              :forward-partial (scan-forward-partial spec cursor)
+              (scan-reverse-partial spec cursor)))]
+        (relationship-engine/execute-plan
+         (relationship-engine/plan-scans (all-relation-defs db) filters')
+         filters'
+         scan-spec)))))
 
 (defn tx-relationship
   "Translate relationship data into v7 tuple writes."

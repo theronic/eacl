@@ -9,12 +9,32 @@
 (def reverse-relationship-attr
   :eacl.v7.relationship/resource-type+resource+relation+subject-type+subject)
 
+(def forward-partial-relationship-attr
+  :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject)
+
+(def reverse-partial-relationship-attr
+  :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource)
+
 (def relationship-full-key-attr
   :eacl.relationship/full-key)
 
 (def max-entid
   #?(:clj Long/MAX_VALUE
      :cljs js/Number.MAX_SAFE_INTEGER))
+
+(def schema-change-attrs
+  #{:eacl.relation/resource-type
+    :eacl.relation/relation-name
+    :eacl.relation/subject-type
+    :eacl.relation/resource-type+relation-name+subject-type
+    :eacl.permission/resource-type
+    :eacl.permission/permission-name
+    :eacl.permission/source-relation-name
+    :eacl.permission/target-type
+    :eacl.permission/target-name
+    :eacl.permission/resource-type+permission-name
+    :eacl.permission/full-key
+    :eacl/schema-string})
 
 (def datascript-schema
   {:eacl/id {:db/unique :db.unique/identity}
@@ -75,6 +95,22 @@
                     :eacl.relationship/relation
                     :eacl.relationship/subject-type
                     :eacl.relationship/subject]
+    :db/index true}
+   :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject
+   {:db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.relationship/subject-type
+                    :eacl.relationship/relation
+                    :eacl.relationship/resource-type
+                    :eacl.relationship/resource
+                    :eacl.relationship/subject]
+    :db/index true}
+   :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource
+   {:db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.relationship/resource-type
+                    :eacl.relationship/relation
+                    :eacl.relationship/subject-type
+                    :eacl.relationship/subject
+                    :eacl.relationship/resource]
     :db/index true}})
 
 (defn merge-schema
@@ -150,10 +186,14 @@
       (concat
        (:additions relations)
        (:additions permissions)
-       (for [rel relation-retractions]
-         [:db/retractEntity [:eacl/id (:eacl/id rel)]])
-       (for [perm permission-retractions]
-         [:db/retractEntity [:eacl/id (:eacl/id perm)]])
+       (for [rel relation-retractions
+             :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
+             :when eid]
+         [:db/retractEntity eid])
+       (for [perm permission-retractions
+             :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
+             :when eid]
+         [:db/retractEntity eid])
        [{:eacl/id "schema-string"
          :eacl/schema-string schema-string}]))
     deltas))
