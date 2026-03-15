@@ -2,6 +2,7 @@
   (:require [datascript.core :as ds]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.engine.indexed :as engine]
+            [eacl.engine.relationships :as relationship-engine]
             [eacl.schema.model :as model]
             [eacl.datascript.schema :as schema]))
 
@@ -57,6 +58,15 @@
        (map :e)
        (map #(ds/pull db permission-def-pull %))
        vec))
+
+(defn all-relation-defs
+  [db]
+  (mapv (fn [{:keys [e v]}]
+          {:relation-id e
+           :resource-type (nth v 0)
+           :relation-name (nth v 1)
+           :subject-type (nth v 2)})
+        (ds/datoms db :avet :eacl.relation/resource-type+relation-name+subject-type)))
 
 (defn- exclusive-start-id
   [cursor-id]
@@ -199,83 +209,118 @@
 
 (defn read-relationships
   [db filters]
-  (let [subject-type      (:subject/type filters)
-        subject-id        (:subject/id filters)
-        resource-type     (:resource/type filters)
-        resource-id       (:resource/id filters)
-        resource-relation (:resource/relation filters)
-        cursor            (:cursor filters)
-        limit             (:limit filters)
-        take-limit (fn [xs]
-                     (if (and (number? limit) (<= 0 limit))
-                       (take limit xs)
-                       xs))
-        forward-results
-        (when (and subject-type subject-id resource-type resource-relation)
-          (when-let [relation-eid (ds/entid db (relation-id resource-type resource-relation subject-type))]
+  (let [subject-id'  (when (contains? filters :subject/id)
+                       (internal-id db (:subject/id filters)))
+        resource-id' (when (contains? filters :resource/id)
+                       (internal-id db (:resource/id filters)))
+        filters'     (cond-> filters
+                       (contains? filters :subject/id) (assoc :subject/id subject-id')
+                       (contains? filters :resource/id) (assoc :resource/id resource-id'))]
+    (if (or (and (contains? filters :subject/id) (nil? subject-id'))
+            (and (contains? filters :resource/id) (nil? resource-id')))
+      {:data [] :cursor nil}
+      (letfn [(relationship-row [spec subject-id resource-id]
+            {:spec-idx    (:idx spec)
+             :subject-id  subject-id
+             :resource-id resource-id
+             :relationship
+             (eacl/->Relationship
+              (spice-object (:subject-type spec) subject-id)
+              (:relation-name spec)
+              (spice-object (:resource-type spec) resource-id))})
+          (drop-until-after-cursor [spec cursor rows]
+            (drop-while #(not (relationship-engine/after-cursor? (:scan-kind spec) cursor %))
+                        rows))
+          (exact-match-row [spec cursor]
+            (let [row (when (and (:subject-id spec) (:resource-id spec))
+                        (when (ds/entid db [schema/relationship-full-key-attr
+                                           [(:subject-type spec)
+                                            (:subject-id spec)
+                                            (:relation-id spec)
+                                            (:resource-type spec)
+                                            (:resource-id spec)]])
+                          (relationship-row spec (:subject-id spec) (:resource-id spec))))]
+              (if row
+                (drop-until-after-cursor spec cursor [row])
+                [])))
+          (scan-forward-anchored [spec cursor]
+            (if (:resource-id spec)
+              (exact-match-row spec cursor)
+              (->> (ds/index-range db
+                                   schema/forward-relationship-attr
+                                   [(:subject-type spec)
+                                    (:subject-id spec)
+                                    (:relation-id spec)
+                                    (:resource-type spec)
+                                    (or (:resource cursor) 0)]
+                                   [(:subject-type spec)
+                                    (:subject-id spec)
+                                    (:relation-id spec)
+                                    (:resource-type spec)
+                                    max-entid])
+                   (map (fn [{:keys [v]}]
+                          (relationship-row spec (nth v 1) (nth v 4))))
+                   (drop-until-after-cursor spec cursor))))
+          (scan-reverse-anchored [spec cursor]
+            (if (:subject-id spec)
+              (exact-match-row spec cursor)
+              (->> (ds/index-range db
+                                   schema/reverse-relationship-attr
+                                   [(:resource-type spec)
+                                    (:resource-id spec)
+                                    (:relation-id spec)
+                                    (:subject-type spec)
+                                    (or (:subject cursor) 0)]
+                                   [(:resource-type spec)
+                                    (:resource-id spec)
+                                    (:relation-id spec)
+                                    (:subject-type spec)
+                                    max-entid])
+                   (map (fn [{:keys [v]}]
+                          (relationship-row spec (nth v 4) (nth v 1))))
+                   (drop-until-after-cursor spec cursor))))
+          (scan-forward-partial [spec cursor]
             (->> (ds/index-range db
-                                 schema/forward-relationship-attr
-                                 [subject-type
-                                  subject-id
-                                  relation-eid
-                                  resource-type
-                                  (if cursor (inc cursor) 0)]
-                                 [subject-type
-                                  subject-id
-                                  relation-eid
-                                  resource-type
+                                 schema/forward-partial-relationship-attr
+                                 [(:subject-type spec)
+                                  (:relation-id spec)
+                                  (:resource-type spec)
+                                  (or (:resource cursor) 0)
+                                  0]
+                                 [(:subject-type spec)
+                                  (:relation-id spec)
+                                  (:resource-type spec)
+                                  max-entid
                                   max-entid])
-                 take-limit
                  (map (fn [{:keys [v]}]
-                        (let [[subject-type subject-id _ resource-type resource-id] v]
-                          (eacl/->Relationship
-                           (spice-object subject-type subject-id)
-                           resource-relation
-                           (spice-object resource-type resource-id))))))))
-        reverse-results
-        (when (and resource-type resource-id subject-type resource-relation)
-          (when-let [relation-eid (ds/entid db (relation-id resource-type resource-relation subject-type))]
+                        (relationship-row spec (nth v 4) (nth v 3))))
+                 (drop-until-after-cursor spec cursor)))
+          (scan-reverse-partial [spec cursor]
             (->> (ds/index-range db
-                                 schema/reverse-relationship-attr
-                                 [resource-type
-                                  resource-id
-                                  relation-eid
-                                  subject-type
-                                  (if cursor (inc cursor) 0)]
-                                 [resource-type
-                                  resource-id
-                                  relation-eid
-                                  subject-type
+                                 schema/reverse-partial-relationship-attr
+                                 [(:resource-type spec)
+                                  (:relation-id spec)
+                                  (:subject-type spec)
+                                  (or (:subject cursor) 0)
+                                  0]
+                                 [(:resource-type spec)
+                                  (:relation-id spec)
+                                  (:subject-type spec)
+                                  max-entid
                                   max-entid])
-                 take-limit
                  (map (fn [{:keys [v]}]
-                        (let [[resource-type resource-id _ subject-type subject-id] v]
-                          (eacl/->Relationship
-                           (spice-object subject-type subject-id)
-                           resource-relation
-                           (spice-object resource-type resource-id))))))))]
-    (or forward-results
-        reverse-results
-        (->> (ds/datoms db :avet schema/forward-relationship-attr)
-             (map (fn [{:keys [v]}]
-                    (let [[subject-type subject-id relation-id resource-type resource-id] v
-                          rel-ent (ds/entity db relation-id)]
-                      (eacl/->Relationship
-                       (spice-object subject-type subject-id)
-                       (:eacl.relation/relation-name rel-ent)
-                       (spice-object resource-type resource-id)))))
-             (filter (fn [{:keys [subject relation resource]}]
-                       (and (or (nil? (:subject/type filters))
-                                (= (:subject/type filters) (:type subject)))
-                            (or (nil? (:subject/id filters))
-                                (= (:subject/id filters) (:id subject)))
-                            (or (nil? (:resource/type filters))
-                                (= (:resource/type filters) (:type resource)))
-                            (or (nil? (:resource/id filters))
-                                (= (:resource/id filters) (:id resource)))
-                            (or (nil? (:resource/relation filters))
-                                (= (:resource/relation filters) relation)))))
-             take-limit))))
+                        (relationship-row spec (nth v 3) (nth v 4))))
+                 (drop-until-after-cursor spec cursor)))
+          (scan-spec [spec cursor]
+            (case (:scan-kind spec)
+              :forward-anchored (scan-forward-anchored spec cursor)
+              :reverse-anchored (scan-reverse-anchored spec cursor)
+              :forward-partial (scan-forward-partial spec cursor)
+              (scan-reverse-partial spec cursor)))]
+        (relationship-engine/execute-plan
+         (relationship-engine/plan-scans (all-relation-defs db) filters')
+         filters'
+         scan-spec)))))
 
 (defn- normalize-backend-options
   [cache-stamp-or-opts]

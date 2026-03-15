@@ -10,6 +10,10 @@
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
+(defn- read-relationships-data
+  [client query]
+  (:data (eacl/read-relationships client query)))
+
 (deftest opaque-cursor-token-test
   (testing "cursor->token round-trip preserves cursor"
     (let [cursor  {:v 2 :e "some-id" :p {0 "intermediate-id"}}
@@ -266,14 +270,14 @@
       ; fixtures a bit confusing atm.
       (is (= #{(->Relationship super-user :super_admin ca-platform)
                (->Relationship (->user "super-user") :super_admin ca-platform)}
-             (set (eacl/read-relationships *client {:resource/type :platform})))))
+             (set (read-relationships-data *client {:resource/type :platform})))))
 
     (testing "We can enumerate account owners:"
       (is (= #{(->Relationship my-user :owner my-account)
                (->Relationship joe's-user :owner acme-account)
                (->Relationship (->user "user-1") :owner (->account "account-1"))
                (->Relationship (->user "user-2") :owner (->account "account-2"))}
-             (set (eacl/read-relationships *client {:resource/type :account
+             (set (read-relationships-data *client {:resource/type :account
                                                     :subject/type  :user})))))
 
     (testing "read-relationships supports various filters:"
@@ -282,7 +286,7 @@
                  (->Relationship ca-platform :platform (->account "account-1"))
                  (->Relationship ca-platform :platform (->account "account-2"))
                  (->Relationship ca-platform :platform my-account)}
-               (set (eacl/read-relationships *client {:resource/type     :account
+               (set (read-relationships-data *client {:resource/type     :account
                                                       :subject/type      :platform
                                                       :resource/relation :platform})))))
 
@@ -291,7 +295,7 @@
                  (->Relationship ca-platform :platform (->account "account-1"))
                  (->Relationship ca-platform :platform (->account "account-2"))
                  (->Relationship ca-platform :platform my-account)}
-               (set (eacl/read-relationships *client {:resource/type :account
+               (set (read-relationships-data *client {:resource/type :account
                                                       :subject/type  :platform}))))))
 
     (testing "lookup-resources pagination tests"
@@ -394,12 +398,15 @@
                                       [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
                                        (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
                                        (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
-      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
-             (eacl/read-relationships *client {:resource/type     :vpc
-                                               :resource/id       "my-vpc"
-                                               :resource/relation :account
-                                               :subject/type      :account
-                                               :subject/id        "test-account"}))))))
+      (let [{:keys [data cursor]}
+            (eacl/read-relationships *client {:resource/type     :vpc
+                                              :resource/id       "my-vpc"
+                                              :resource/relation :account
+                                              :subject/type      :account
+                                              :subject/id        "test-account"})]
+        (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
+               data))
+        (is (string? cursor))))))
 
 ; expand-permission-tree not impl. yet.
 ;; FIXME: These tests fail because expand-permission-tree is not implemented yet

@@ -9,6 +9,12 @@
 (def reverse-relationship-attr
   :eacl.v7.relationship/resource-type+resource+relation+subject-type+subject)
 
+(def forward-partial-relationship-attr
+  :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject)
+
+(def reverse-partial-relationship-attr
+  :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource)
+
 (def relationship-full-key-attr
   :eacl.relationship/full-key)
 
@@ -89,6 +95,22 @@
                     :eacl.relationship/relation
                     :eacl.relationship/subject-type
                     :eacl.relationship/subject]
+    :db/index true}
+   :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject
+   {:db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.relationship/subject-type
+                    :eacl.relationship/relation
+                    :eacl.relationship/resource-type
+                    :eacl.relationship/resource
+                    :eacl.relationship/subject]
+    :db/index true}
+   :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource
+   {:db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.relationship/resource-type
+                    :eacl.relationship/relation
+                    :eacl.relationship/subject-type
+                    :eacl.relationship/subject
+                    :eacl.relationship/resource]
     :db/index true}})
 
 (defn merge-schema

@@ -17,7 +17,13 @@
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
-    (if (= 2 (:v cursor))
+    (cond
+      (= 3 (:v cursor))
+      (cond-> cursor
+        (:subject cursor) (update :subject #(entid->object-id db %))
+        (:resource cursor) (update :resource #(entid->object-id db %)))
+
+      (= 2 (:v cursor))
       (cond-> cursor
         (:e cursor) (update :e #(entid->object-id db %))
         (:p cursor) (update :p
@@ -25,6 +31,7 @@
                          (into {}
                            (map (fn [[k v]] [k (entid->object-id db v)]))
                            p))))
+      :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(entid->object-id db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(entid->object-id db %) cursor)))))
@@ -32,7 +39,13 @@
 (defn default-spice-cursor->internal
   [db {:keys [object-id->entid]} cursor]
   (when cursor
-    (if (= 2 (:v cursor))
+    (cond
+      (= 3 (:v cursor))
+      (cond-> cursor
+        (:subject cursor) (update :subject #(object-id->entid db %))
+        (:resource cursor) (update :resource #(object-id->entid db %)))
+
+      (= 2 (:v cursor))
       (cond-> cursor
         (:e cursor) (update :e #(object-id->entid db %))
         (:p cursor) (update :p
@@ -40,6 +53,7 @@
                          (into {}
                            (map (fn [[k v]] [k (object-id->entid db v)]))
                            p))))
+      :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
@@ -56,27 +70,40 @@
     :resource (object->spice db opts resource)}))
 
 (defn datascript-read-relationships
-  [db {:keys [object-id->entid] :as opts} filters]
+  [db
+   {:as opts
+    :keys [object-id->entid
+           internal-cursor->spice
+           spice-cursor->internal]}
+   filters]
   (let [subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
-        cursor-id    (:cursor filters)
         subject-eid  (when subject-id (object-id->entid db subject-id))
         resource-eid (when resource-id (object-id->entid db resource-id))
-        cursor-eid   (cond
-                       (and cursor-id subject-id (nil? resource-id))
-                       (object-id->entid db cursor-id)
-
-                       (and cursor-id resource-id (nil? subject-id))
-                       (object-id->entid db cursor-id)
-
-                       :else
-                       cursor-id)
-        filters'    (cond-> filters
-                      subject-id (assoc :subject/id subject-eid)
-                      resource-id (assoc :resource/id resource-eid)
-                      cursor-id (assoc :cursor cursor-eid))]
-    (->> (impl/read-relationships db filters')
-      (map #(relationship->spice db opts %)))))
+        missing-id?  (or (and subject-id (nil? subject-eid))
+                         (and resource-id (nil? resource-eid)))]
+    (if missing-id?
+      {:data [] :cursor nil}
+      (let [filters' (cond-> filters
+                       subject-id (assoc :subject/id subject-eid)
+                       resource-id (assoc :resource/id resource-eid))
+            filters'' (S/transform [:cursor]
+                        (fn [token-or-cursor]
+                          (some->> (token->cursor token-or-cursor)
+                                   (spice-cursor->internal db opts)))
+                        filters')
+            result    (impl/read-relationships db filters'')]
+        (-> result
+            ((fn [page]
+               (S/transform [:data S/ALL]
+                 #(relationship->spice db opts %)
+                 page)))
+            ((fn [page]
+               (S/transform [:cursor]
+                 (fn [internal-cursor]
+                   (some->> (internal-cursor->spice db opts internal-cursor)
+                            cursor->token))
+                 page))))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -96,6 +123,12 @@
     (when (seq tx-data)
       (ds/transact! conn tx-data))
     {:zed/token (str @tx-stamp)}))
+
+(defn- relationship-seq
+  [relationships]
+  (if (map? relationships)
+    (:data relationships)
+    relationships))
 
 (defn datascript-can?
   [db {:keys [object->entid] :as opts} subject permission resource consistency]
@@ -243,7 +276,7 @@
       [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
   (delete-relationships! [_ relationships]
     (datascript-write-relationships! conn opts
-      (for [rel relationships]
+      (for [rel (relationship-seq relationships)]
         (->RelationshipUpdate :delete rel))))
   (delete-relationship! [_ {:as relationship :keys [subject relation resource]}]
     (datascript-write-relationships! conn opts

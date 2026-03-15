@@ -45,6 +45,10 @@
    (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
 
+(defn- read-relationships-data
+  [client query]
+  (:data (eacl/read-relationships client query)))
+
 (defn assert-seeded-contracts!
   [client]
   (testing "schema round-trips through the logical representation"
@@ -97,13 +101,48 @@
       (is (string? cursor))))
 
   (testing "relationship writes and reads remain part of the contract"
-    (is (= [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))]
-           (eacl/read-relationships client {:resource/type     :account
-                                            :resource/id       "account-1"
-                                            :resource/relation :owner
-                                            :subject/type      :user
-                                            :subject/id        "user-1"})))
+    (let [{initial-data :data initial-cursor :cursor}
+          (eacl/read-relationships client {:resource/type     :account
+                                           :resource/id       "account-1"
+                                           :resource/relation :owner
+                                           :subject/type      :user
+                                           :subject/id        "user-1"})]
+      (is (= [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))]
+             initial-data))
+      (is (string? initial-cursor)))
+
+    (let [{page-1-data :data page-1-cursor :cursor}
+          (eacl/read-relationships client {:subject/type      :account
+                                           :subject/id        "account-1"
+                                           :resource/type     :server
+                                           :resource/relation :account
+                                           :limit             1})
+          {page-2-data :data}
+          (eacl/read-relationships client {:subject/type      :account
+                                           :subject/id        "account-1"
+                                           :resource/type     :server
+                                           :resource/relation :account
+                                           :limit             1
+                                           :cursor            page-1-cursor})]
+      (is (= [(eacl/->Relationship (->account "account-1") :account (->server "server-1"))]
+             page-1-data))
+      (is (= [(eacl/->Relationship (->account "account-1") :account (->server "server-2"))]
+             page-2-data))
+      (is (string? page-1-cursor)))
+
     (eacl/create-relationship! client (->user "user-2") :owner (->account "account-1"))
     (is (true? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))
-    (eacl/delete-relationship! client (->user "user-2") :owner (->account "account-1"))
+    (let [read-result (eacl/read-relationships client {:resource/type     :account
+                                                       :resource/id       "account-1"
+                                                       :resource/relation :owner
+                                                       :subject/type      :user
+                                                       :subject/id        "user-2"})]
+      (is (= [(eacl/->Relationship (->user "user-2") :owner (->account "account-1"))]
+             (:data read-result)))
+      (eacl/delete-relationships! client read-result))
+    (is (= [] (read-relationships-data client {:resource/type     :account
+                                               :resource/id       "account-1"
+                                               :resource/relation :owner
+                                               :subject/type      :user
+                                               :subject/id        "user-2"})))
     (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))

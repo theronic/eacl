@@ -86,6 +86,10 @@
   [db {:as page :keys [data cursor]}]
   (set (paginated->spice db page)))
 
+(defn read-relationships-data
+  [db query]
+  (:data (read-relationships db query)))
+
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
     (is (= #:eacl.permission{:eacl/id "eacl:permission::server::admin::self::relation::owner"
@@ -238,10 +242,39 @@
     (testing "read-relationships filters"
       ;(is (= [] (read-relationships db {})))
       ; need better tests here.
-      (is (= #{:server} (set (map (comp :type :resource) (read-relationships db {:resource/type :server})))))
-      (is (= #{:owner} (set (map :relation (read-relationships db {:resource/relation :owner})))))
-      (is (= #{:account} (set (map :relation (read-relationships db {:resource/type :server
-                                                                     :resource/relation :account}))))))))
+      (is (= #{:server} (set (map (comp :type :resource) (read-relationships-data db {:resource/type :server})))))
+      (is (= #{:owner} (set (map :relation (read-relationships-data db {:resource/relation :owner})))))
+      (is (= #{:account} (set (map :relation (read-relationships-data db {:resource/type :server
+                                                                          :resource/relation :account}))))))))
+
+(deftest read-relationships-default-limit-test
+  (let [db         (d/db *conn*)
+        bulk-ids   (mapv #(str "bulk-user-" %) (range 1005))
+        tx-data    (concat
+                    (map (fn [id]
+                           {:db/id id
+                            :eacl/id id})
+                         bulk-ids)
+                    (mapcat (fn [id]
+                              (impl/tx-relationship db
+                                (Relationship (->user id) :owner (->account :test/account1))))
+                            bulk-ids))
+        db'        (:db-after (d/with db tx-data))
+        {page-1 :data cursor :cursor}
+        (read-relationships db' {:resource/type     :account
+                                 :resource/id       :test/account1
+                                 :resource/relation :owner
+                                 :subject/type      :user})
+        {page-2 :data}
+        (read-relationships db' {:resource/type     :account
+                                 :resource/id       :test/account1
+                                 :resource/relation :owner
+                                 :subject/type      :user
+                                 :cursor            cursor})]
+    (is (= 1000 (count page-1)))
+    (is (= 6 (count page-2)))
+    (is (= 3 (:v cursor)))
+    (is (number? (:subject cursor)))))
 
 (deftest lookup-subjects-tests
   (let [db (d/db *conn*)]
@@ -397,12 +430,12 @@
 
     (testing "Now let's delete all :server/owner Relationships for :test/user2"
       (let [db-for-delete (d/db *conn*)
-            rels (impl/read-relationships db-for-delete {:subject/id :test/user2
-                                                         :resource/relation :owner})
+            rels (:data (impl/read-relationships db-for-delete {:subject/id :test/user2
+                                                                :resource/relation :owner}))
             txes (mapcat #(impl/tx-update-relationship db-for-delete
                              {:operation :delete
                               :relationship %})
-                   rels)]
+                         rels)]
         (is @(d/transact *conn* txes))))
 
     (testing "Now only user-1 can :view all 3 servers, including those in account2."
