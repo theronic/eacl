@@ -11,6 +11,15 @@ Situated here means that your permission data lives next to your Datomic entitie
 
 EACL is [open-source](https://github.com/theronic/eacl).
 
+<div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin:1.25rem 0 1.75rem;">
+  <a href="https://github.com/theronic/eacl" style="display:inline-flex; align-items:center; padding:0.7rem 1rem; border:1px solid #d0d7de; border-radius:999px; text-decoration:none; font-weight:600;">
+    GitHub
+  </a>
+  <a href="https://explorer.eacl.dev" style="display:inline-flex; align-items:center; padding:0.7rem 1rem; border:1px solid #0d8f73; border-radius:999px; text-decoration:none; font-weight:600; background:#0d8f73; color:#fff;">
+    Demo
+  </a>
+</div>
+
 ## Is it any good?
 
 Yes.
