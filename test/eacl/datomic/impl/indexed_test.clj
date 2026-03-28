@@ -86,6 +86,43 @@
   [db {:as page :keys [data cursor]}]
   (set (paginated->spice db page)))
 
+(def recursive-parent-schema-string
+  "definition user {}
+
+   definition account {
+     relation parent: account
+     relation reader: user
+
+     permission read = reader + parent->read
+   }")
+
+(defn- load-recursive-parent-db!
+  [conn]
+  (schema/write-schema! conn recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1"
+                      :eacl/id "user-1"}
+                     {:db/id "root"
+                      :eacl/id "root"}
+                     {:db/id "child"
+                      :eacl/id "child"}
+                     {:db/id "grandchild"
+                      :eacl/id "grandchild"}])
+  @(d/transact conn
+     (into []
+           (mapcat #(impl/tx-relationship (d/db conn) %))
+           [(Relationship (spice-object :account "root") :parent (spice-object :account "child"))
+            (Relationship (spice-object :account "child") :parent (spice-object :account "grandchild"))
+            (Relationship (spice-object :user "user-1") :reader (spice-object :account "root"))]))
+  (d/db conn))
+
+(defn- recursive-user-ref
+  [eacl-id]
+  (spice-object :user [:eacl/id eacl-id]))
+
+(defn- recursive-account-ref
+  [eacl-id]
+  (spice-object :account [:eacl/id eacl-id]))
+
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
     (is (= #:eacl.permission{:eacl/id "eacl:permission::server::admin::self::relation::owner"
@@ -879,12 +916,11 @@
         (is (some #(and (= (:type %) :arrow)
                         (= (:via %) :account)
                         (= (:target-type %) :account)
-                        (> (count (:sub-paths %)) 0))
+                        (= (:target-permission %) :admin))
                   paths))
-        ;; The sub-paths should eventually lead to relations
+        ;; Permission edges stay symbolic and are evaluated at runtime.
         (let [arrow-path (first (filter #(= (:via %) :account) paths))]
-          (is (vector? (:sub-paths arrow-path)))
-          (is (pos? (count (:sub-paths arrow-path)))))))
+          (is (= :admin (:target-permission arrow-path))))))
 
     (testing "Complex nested paths"
       (let [paths (impl.indexed/get-permission-paths db :server :view)]
@@ -892,8 +928,8 @@
         (let [nic-path (first (filter #(= (:via %) :nic) paths))]
           (is nic-path)
           (is (= :network_interface (:target-type nic-path)))
-          ;; The sub-paths should show NIC->view paths
-          (is (pos? (count (:sub-paths nic-path)))))))
+          ;; Nested permission edges stay symbolic and resolve against concrete resources at runtime.
+          (is (= :view (:target-permission nic-path))))))
 
     (testing "Empty paths for non-existent permission"
       (is (empty? (impl.indexed/get-permission-paths db :server :nonexistent))))))
@@ -1054,6 +1090,79 @@
       ;; VPC can view server through network chain
       (is (impl.indexed/can? db (->vpc :test/vpc1) :view (->server :test/server1)))
       (is (not (impl.indexed/can? db (->vpc :test/vpc2) :view (->server :test/server1)))))))
+
+(deftest recursive-arrow-permission-path-tests
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db    (load-recursive-parent-db! conn)
+          paths (impl.indexed/get-permission-paths db :account :read)]
+      (testing "recursive parent->permission should retain the arrow path on an acyclic tree"
+        (is (= 2 (count paths)))
+        (is (some #(= :relation (:type %)) paths))
+        (is (some #(and (= :arrow (:type %))
+                        (= :parent (:via %))
+                        (= :account (:target-type %))
+                        (= :read (:target-permission %)))
+                  paths))))))
+
+(deftest recursive-arrow-permission-can-and-lookup-subjects-tests
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db   (load-recursive-parent-db! conn)
+          user (recursive-user-ref "user-1")]
+      (testing "can? should climb an acyclic parent tree"
+        (is (can? db user :read (recursive-account-ref "root")))
+        (is (can? db user :read (recursive-account-ref "child")))
+        (is (can? db user :read (recursive-account-ref "grandchild"))))
+
+      (testing "lookup-subjects should include inherited readers on descendants"
+        (is (= #{(spice-object :user "user-1")}
+              (paginated->spice-set db
+                (lookup-subjects db {:resource     (recursive-account-ref "child")
+                                     :permission   :read
+                                     :subject/type :user
+                                     :limit        100}))))
+        (is (= #{(spice-object :user "user-1")}
+              (paginated->spice-set db
+                (lookup-subjects db {:resource     (recursive-account-ref "grandchild")
+                                     :permission   :read
+                                     :subject/type :user
+                                     :limit        100}))))))))
+
+(deftest recursive-arrow-permission-lookup-resources-visited-state-test
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db                  (load-recursive-parent-db! conn)
+          user                (recursive-user-ref "user-1")
+          reader-relation-eid (:db/id (impl.indexed/find-relation-def db :account :reader))
+          parent-relation-eid (:db/id (impl.indexed/find-relation-def db :account :parent))
+          reader-path         {:type :relation
+                               :name :reader
+                               :subject-type :user
+                               :relation-eid reader-relation-eid}
+          recursive-paths     [reader-path
+                               {:type :arrow
+                                :via :parent
+                                :target-type :account
+                                :via-relation-eid parent-relation-eid
+                                :target-permission :read
+                                :sub-paths [reader-path]}]]
+      (testing "lookup-resources should not stop recursion only because the permission name repeats on a different resource"
+        (with-redefs [impl.indexed/get-permission-paths
+                      (fn [_db resource-type permission-name]
+                        (if (and (= :account resource-type)
+                                 (= :read permission-name))
+                          recursive-paths
+                          []))]
+          (is (= #{(spice-object :account "root")
+                   (spice-object :account "child")
+                   (spice-object :account "grandchild")}
+                (paginated->spice-set db
+                  (lookup-resources db {:subject       user
+                                        :permission    :read
+                                        :resource/type :account
+                                        :limit         100}))))
+          (is (= 3 (:count (count-resources db {:subject       user
+                                                :permission    :read
+                                                :resource/type :account
+                                                :limit         100})))))))))
 
 ; uncommented because server :owner relation went away.
 ;(testing "Performance - early termination"

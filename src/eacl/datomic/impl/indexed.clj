@@ -109,74 +109,59 @@
   [(.id db) resource-type permission-name])
 
 (defn calc-permission-paths
-  "Returns path maps with resolved relation eids, expanding multi-subject
-  relation definitions into distinct path variants."
-  ([db resource-type permission-name]
-   (calc-permission-paths db resource-type permission-name #{}))
-  ([db resource-type permission-name visited-perms]
-   (let [perm-defs       (find-permission-defs db resource-type permission-name)
-         perm-eids       (map :db/id perm-defs)
-         updated-visited (reduce conj visited-perms perm-eids)]
-     (->> perm-defs
-          (mapcat
-           (fn [{:as                   perm-def
-                 perm-eid              :db/id
-                 :eacl.permission/keys [source-relation-name
-                                        target-type
-                                        target-name]}]
-             (assert resource-type "resource-type missing")
-             (assert source-relation-name "source-relation-name missing")
-             (if (contains? visited-perms perm-eid)
-               (do
-                 (log/warn "Cycle detected in permission graph"
-                           {:permission perm-def
-                            :visited visited-perms})
-                 [])
-               (if (= :self source-relation-name)
-                 (case target-type
-                   :relation (resolve-self-relation db resource-type target-name)
-                   :permission [{:type :self-permission
-                                 :target-permission target-name
-                                 :resource-type resource-type}])
-                 (let [datoms (relation-datoms db resource-type source-relation-name)]
-                   (if (seq datoms)
-                     (mapcat
-                      (fn [datom]
-                        (let [intermediate-type (nth (:v datom) 2)
-                              via-relation-eid (:e datom)
-                              sub-paths (case target-type
-                                          :permission (calc-permission-paths
-                                                       db intermediate-type target-name updated-visited)
-                                          :relation (let [target-datoms
-                                                          (relation-datoms db intermediate-type target-name)]
-                                                      (if (seq target-datoms)
-                                                        (map (fn [target-datom]
-                                                               {:type :relation
-                                                                :name target-name
-                                                                :subject-type (nth (:v target-datom) 2)
-                                                                :relation-eid (:e target-datom)})
-                                                             target-datoms)
-                                                        (do
-                                                          (log/warn "Missing target relation definition"
-                                                                    {:intermediate-type intermediate-type
-                                                                     :target-relation-name target-name})
-                                                          []))))]
-                          (if (seq sub-paths)
-                            [{:type :arrow
-                              :via source-relation-name
-                              :target-type intermediate-type
-                              :via-relation-eid via-relation-eid
-                              :target-permission (when (= target-type :permission) target-name)
-                              :target-relation (when (= target-type :relation) target-name)
-                              :sub-paths sub-paths}]
-                            [])))
-                      datoms)
-                     (do
-                       (log/warn "Missing source relation definition"
-                                 {:resource-type resource-type
-                                  :via-relation-name source-relation-name})
-                       [])))))))
-          vec))))
+  "Returns path maps with resolved relation eids.
+  Permission edges remain symbolic and are evaluated against concrete resources at runtime."
+  [db resource-type permission-name]
+  (->> (find-permission-defs db resource-type permission-name)
+       (mapcat
+        (fn [{:eacl.permission/keys [source-relation-name
+                                     target-type
+                                     target-name]}]
+          (assert resource-type "resource-type missing")
+          (assert source-relation-name "source-relation-name missing")
+          (if (= :self source-relation-name)
+            (case target-type
+              :relation (resolve-self-relation db resource-type target-name)
+              :permission [{:type :self-permission
+                            :target-permission target-name
+                            :resource-type resource-type}])
+            (let [datoms (relation-datoms db resource-type source-relation-name)]
+              (if (seq datoms)
+                (mapcat
+                 (fn [datom]
+                   (let [intermediate-type (nth (:v datom) 2)
+                         via-relation-eid (:e datom)]
+                     (case target-type
+                       :permission [{:type :arrow
+                                     :via source-relation-name
+                                     :target-type intermediate-type
+                                     :via-relation-eid via-relation-eid
+                                     :target-permission target-name}]
+                       :relation (let [target-datoms (relation-datoms db intermediate-type target-name)]
+                                   (if (seq target-datoms)
+                                     [{:type :arrow
+                                       :via source-relation-name
+                                       :target-type intermediate-type
+                                       :via-relation-eid via-relation-eid
+                                       :target-relation target-name
+                                       :sub-paths (mapv (fn [target-datom]
+                                                          {:type :relation
+                                                           :name target-name
+                                                           :subject-type (nth (:v target-datom) 2)
+                                                           :relation-eid (:e target-datom)})
+                                                        target-datoms)}]
+                                     (do
+                                       (log/warn "Missing target relation definition"
+                                                 {:intermediate-type intermediate-type
+                                                  :target-relation-name target-name})
+                                       []))))))
+                 datoms)
+                (do
+                  (log/warn "Missing source relation definition"
+                            {:resource-type resource-type
+                             :via-relation-name source-relation-name})
+                  []))))))
+       vec))
 
 (defn get-permission-paths
   [db resource-type permission-name]
@@ -189,6 +174,55 @@
       (let [paths (calc-permission-paths db resource-type permission-name)]
         (swap! permission-paths-cache cache/miss cache-key paths)
         paths))))
+
+(defn- permission-query-node
+  [resource-type permission-name]
+  [resource-type permission-name])
+
+(defn- permission-query-dependencies
+  [db [resource-type permission-name]]
+  (->> (get-permission-paths db resource-type permission-name)
+       (keep (fn [path]
+               (case (:type path)
+                 :self-permission (permission-query-node resource-type (:target-permission path))
+                 :arrow (when-let [target-permission (:target-permission path)]
+                          (permission-query-node (:target-type path) target-permission))
+                 nil)))
+       distinct
+       vec))
+
+(defn- recursive-permission-query?
+  [db resource-type permission-name]
+  (let [root (permission-query-node resource-type permission-name)]
+    (loop [stack [{:node root
+                   :deps (seq (permission-query-dependencies db root))}]
+           visited #{}]
+      (if-let [{:keys [node deps]} (peek stack)]
+        (if-let [dep (first deps)]
+          (cond
+            (= dep node) true
+            (some #(= dep (:node %)) stack) true
+            (contains? visited dep) (recur (conj (pop stack) {:node node
+                                                              :deps (next deps)})
+                                           visited)
+            :else (recur (conj (conj (pop stack) {:node node
+                                                  :deps (next deps)})
+                               {:node dep
+                                :deps (seq (permission-query-dependencies db dep))})
+                         visited))
+          (recur (pop stack) (conj visited node)))
+        false))))
+
+(defn- reachable-permission-query-nodes
+  [db root-node]
+  (loop [stack [root-node]
+         seen  #{}]
+    (if-let [node (peek stack)]
+      (if (contains? seen node)
+        (recur (pop stack) seen)
+        (recur (into (pop stack) (permission-query-dependencies db node))
+               (conj seen node)))
+      (vec seen))))
 
 (defn- extract-cursor-eid
   [cursor v1-key]
@@ -235,7 +269,109 @@
                 (= subject-type (:subject-type %)))
           sub-paths))
 
-(declare traverse-permission-path)
+(defn- collect-subject-resources
+  [db subject-type subject-eid relation-eid resource-type]
+  (into #{} (subject->resources db
+                                subject-type
+                                subject-eid
+                                relation-eid
+                                resource-type
+                                nil)))
+
+(defn- collect-resources-via-intermediates
+  [db intermediate-type intermediate-eids via-relation-eid resource-type]
+  (reduce (fn [acc intermediate-eid]
+            (into acc (subject->resources db
+                                          intermediate-type
+                                          intermediate-eid
+                                          via-relation-eid
+                                          resource-type
+                                          nil)))
+          #{}
+          intermediate-eids))
+
+(defn- eval-recursive-permission-node
+  [db subject-type subject-eid [resource-type permission-name] current-results]
+  (reduce
+   (fn [acc path]
+     (case (:type path)
+       :relation
+       (if (= subject-type (:subject-type path))
+         (into acc (collect-subject-resources db
+                                              subject-type
+                                              subject-eid
+                                              (:relation-eid path)
+                                              resource-type))
+         acc)
+
+       :self-permission
+       (into acc (get current-results
+                      (permission-query-node resource-type (:target-permission path))
+                      #{}))
+
+       :arrow
+       (let [intermediate-type (:target-type path)
+             intermediate-eids (if (:target-relation path)
+                                 (reduce (fn [intermediate-acc sub-path]
+                                           (into intermediate-acc
+                                                 (subject->resources db
+                                                                     subject-type
+                                                                     subject-eid
+                                                                     (:relation-eid sub-path)
+                                                                     intermediate-type
+                                                                     nil)))
+                                         #{}
+                                         (matching-relation-sub-paths (:sub-paths path) subject-type))
+                                 (get current-results
+                                      (permission-query-node intermediate-type (:target-permission path))
+                                      #{}))]
+         (into acc (collect-resources-via-intermediates db
+                                                        intermediate-type
+                                                        intermediate-eids
+                                                        (:via-relation-eid path)
+                                                        resource-type)))
+
+       acc))
+   #{}
+   (get-permission-paths db resource-type permission-name)))
+
+(defn- solve-recursive-permission-results
+  [db subject-type subject-eid root-node]
+  (let [nodes   (reachable-permission-query-nodes db root-node)
+        initial (zipmap nodes (repeat #{}))]
+    (loop [results initial]
+      (let [next-results (reduce (fn [acc node]
+                                   (assoc acc node
+                                          (eval-recursive-permission-node db
+                                                                          subject-type
+                                                                          subject-eid
+                                                                          node
+                                                                          results)))
+                                 {}
+                                 nodes)]
+        (if (= results next-results)
+          next-results
+          (recur next-results))))))
+
+(defn- recursive-resource-eids
+  [db subject-type subject-eid permission resource-type]
+  (get (solve-recursive-permission-results db
+                                           subject-type
+                                           subject-eid
+                                           (permission-query-node resource-type permission))
+       (permission-query-node resource-type permission)
+       #{}))
+
+(defn- slice-sorted-results
+  [sorted-eids cursor-eid limit]
+  (let [after-cursor (if cursor-eid
+                       (drop-while #(<= % cursor-eid) sorted-eids)
+                       sorted-eids)]
+    (if (>= limit 0)
+      (take limit after-cursor)
+      after-cursor)))
+
+(declare traverse-permission-path lookup-subject-eids* can*)
 
 (defn traverse-permission-path-via-subject
   [db subject-type subject-eid path resource-type cursor-eid intermediate-cursor-eid visited-paths]
@@ -344,22 +480,13 @@
      :!state nil}
 
     :self-permission
-    {:results (let [target-paths (get-permission-paths db resource-type (:target-permission path))
-                    path-seqs (->> target-paths
-                                   (map (fn [target-path]
-                                          (:results
-                                           (traverse-permission-path-reverse db
-                                                                             resource-type
-                                                                             resource-eid
-                                                                             target-path
-                                                                             subject-type
-                                                                             cursor-eid
-                                                                             nil
-                                                                             (or visited-paths #{})))))
-                                   (filter seq))]
-                (if (seq path-seqs)
-                  (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
-                  []))
+    {:results (lookup-subject-eids* db
+                                    resource-type
+                                    resource-eid
+                                    (:target-permission path)
+                                    subject-type
+                                    cursor-eid
+                                    (or visited-paths #{}))
      :!state nil}
 
     :arrow
@@ -391,77 +518,110 @@
         (let [target-permission (:target-permission path)]
           (arrow-via-intermediates intermediate-eids
                                    (fn [intermediate-eid]
-                                     (let [paths (get-permission-paths db intermediate-type target-permission)
-                                           subject-seqs (->> paths
-                                                             (map (fn [sub-path]
-                                                                    (:results
-                                                                     (traverse-permission-path-reverse db
-                                                                                                       intermediate-type
-                                                                                                       intermediate-eid
-                                                                                                       sub-path
-                                                                                                       subject-type
-                                                                                                       cursor-eid
-                                                                                                       nil
-                                                                                                       (or visited-paths #{})))))
-                                                             (filter seq))]
-                                       (if (seq subject-seqs)
-                                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity subject-seqs)
-                                         [])))))))))
+                                     (lookup-subject-eids* db
+                                                           intermediate-type
+                                                           intermediate-eid
+                                                           target-permission
+                                                           subject-type
+                                                           cursor-eid
+                                                           (or visited-paths #{})))))))))
+
+(defn- lookup-subject-eids*
+  [db resource-type resource-eid permission-name subject-type cursor-eid visited-states]
+  (let [state [resource-type resource-eid permission-name subject-type]]
+    (if (contains? visited-states state)
+      []
+      (let [next-visited (conj visited-states state)
+            paths (get-permission-paths db resource-type permission-name)
+            path-seqs (->> paths
+                           (map (fn [path]
+                                  (:results
+                                   (traverse-permission-path-reverse db
+                                                                     resource-type
+                                                                     resource-eid
+                                                                     path
+                                                                     subject-type
+                                                                     cursor-eid
+                                                                     nil
+                                                                     next-visited))))
+                           (filter seq))]
+        (if (seq path-seqs)
+          (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
+          [])))))
+
+(defn- can*
+  [db subject-type subject-eid permission resource-type resource-eid visited-states]
+  (let [state [subject-type subject-eid permission resource-type resource-eid]
+        paths (get-permission-paths db resource-type permission)]
+    (if (contains? visited-states state)
+      false
+      (let [next-visited (conj visited-states state)]
+        (boolean
+         (some
+          (fn [path]
+            (case (:type path)
+              :relation
+              (when (= subject-type (:subject-type path))
+                (seq
+                 (direct-match-datoms-in-relationship-index db
+                                                            subject-type
+                                                            subject-eid
+                                                            (:relation-eid path)
+                                                            resource-type
+                                                            resource-eid)))
+
+              :self-permission
+              (can* db
+                    subject-type
+                    subject-eid
+                    (:target-permission path)
+                    resource-type
+                    resource-eid
+                    next-visited)
+
+              :arrow
+              (let [intermediate-type (:target-type path)
+                    via-relation-eid (:via-relation-eid path)
+                    intermediate-eids (resource->subjects db
+                                                          resource-type
+                                                          resource-eid
+                                                          via-relation-eid
+                                                          intermediate-type
+                                                          nil)]
+                (if (:target-relation path)
+                  (let [matching-sub-paths
+                        (matching-relation-sub-paths (:sub-paths path) subject-type)]
+                    (some (fn [intermediate-eid]
+                            (some (fn [sub-path]
+                                    (seq
+                                     (direct-match-datoms-in-relationship-index db
+                                                                                subject-type
+                                                                                subject-eid
+                                                                                (:relation-eid sub-path)
+                                                                                intermediate-type
+                                                                                intermediate-eid)))
+                                  matching-sub-paths))
+                          intermediate-eids))
+                  (some (fn [intermediate-eid]
+                          (can* db
+                                subject-type
+                                subject-eid
+                                (:target-permission path)
+                                intermediate-type
+                                intermediate-eid
+                                next-visited))
+                        intermediate-eids)))))
+          paths))))))
 
 (defn can?
   [db subject permission resource]
-  (let [subject-type (:type subject)
-        subject-eid  (d/entid db (:id subject))
+  (let [subject-type  (:type subject)
+        subject-eid   (d/entid db (:id subject))
         resource-type (:type resource)
-        resource-eid  (d/entid db (:id resource))
-        paths         (get-permission-paths db resource-type permission)]
+        resource-eid  (d/entid db (:id resource))]
     (if (or (nil? subject-eid) (nil? resource-eid))
       false
-      (boolean
-       (some
-        (fn [path]
-          (case (:type path)
-            :relation
-            (when (= subject-type (:subject-type path))
-              (seq
-               (direct-match-datoms-in-relationship-index db
-                                                          subject-type
-                                                          subject-eid
-                                                          (:relation-eid path)
-                                                          resource-type
-                                                          resource-eid)))
-
-            :self-permission
-            (can? db subject (:target-permission path) resource)
-
-            :arrow
-            (let [intermediate-type (:target-type path)
-                  via-relation-eid (:via-relation-eid path)
-                  intermediate-eids (resource->subjects db
-                                                        resource-type
-                                                        resource-eid
-                                                        via-relation-eid
-                                                        intermediate-type
-                                                        nil)]
-              (if (:target-relation path)
-                (let [matching-sub-paths
-                      (matching-relation-sub-paths (:sub-paths path) subject-type)]
-                  (some (fn [intermediate-eid]
-                          (some (fn [sub-path]
-                                  (seq
-                                   (direct-match-datoms-in-relationship-index db
-                                                                              subject-type
-                                                                              subject-eid
-                                                                              (:relation-eid sub-path)
-                                                                              intermediate-type
-                                                                              intermediate-eid)))
-                                matching-sub-paths))
-                        intermediate-eids))
-                (some (fn [intermediate-eid]
-                        (can? db subject (:target-permission path)
-                              (spice-object intermediate-type intermediate-eid)))
-                      intermediate-eids)))))
-        paths)))))
+      (can* db subject-type subject-eid permission resource-type resource-eid #{}))))
 
 (def ^:private forward-direction
   {:anchor-key :subject
@@ -515,6 +675,50 @@
                 [])
      :path-results path-results}))
 
+(defn- recursive-forward-lookup
+  [db query]
+  (let [{:keys [subject permission cursor limit] :or {limit 1000}} query
+        subject-type  (:type subject)
+        subject-eid   (d/entid db (:id subject))
+        resource-type (:resource/type query)
+        cursor-eid    (extract-cursor-eid cursor :resource)]
+    (if subject-eid
+      (let [sorted-eids   (sort (recursive-resource-eids db
+                                                         subject-type
+                                                         subject-eid
+                                                         permission
+                                                         resource-type))
+            limited-eids  (doall (slice-sorted-results sorted-eids cursor-eid limit))
+            items         (mapv #(spice-object resource-type %) limited-eids)
+            last-eid      (:id (last items))]
+        {:data items
+         :cursor (build-v2-cursor cursor last-eid [] :resource)})
+      {:data []
+       :cursor (build-v2-cursor cursor nil [] :resource)})))
+
+(defn- recursive-forward-count
+  [db {:as query :keys [limit cursor] :or {limit -1}}]
+  (let [subject       (:subject query)
+        subject-type  (:type subject)
+        subject-eid   (d/entid db (:id subject))
+        resource-type (:resource/type query)
+        permission    (:permission query)
+        cursor-eid    (extract-cursor-eid cursor :resource)]
+    (if subject-eid
+      (let [sorted-eids  (sort (recursive-resource-eids db
+                                                        subject-type
+                                                        subject-eid
+                                                        permission
+                                                        resource-type))
+            counted-eids (doall (slice-sorted-results sorted-eids cursor-eid limit))
+            last-eid     (last counted-eids)]
+        {:count (count counted-eids)
+         :limit limit
+         :cursor (build-v2-cursor cursor last-eid [] :resource)})
+      {:count 0
+       :limit limit
+       :cursor (build-v2-cursor cursor nil [] :resource)})))
+
 (defn- lookup
   [db direction query]
   (let [{:keys [result-type-fn v1-cursor-key]} direction
@@ -531,7 +735,9 @@
 
 (defn lookup-resources
   [db query]
-  (lookup db forward-direction query))
+  (if (recursive-permission-query? db (:resource/type query) (:permission query))
+    (recursive-forward-lookup db query)
+    (lookup db forward-direction query)))
 
 (defn lookup-subjects
   [db query]
@@ -540,15 +746,17 @@
 
 (defn count-resources
   [db {:as query :keys [limit cursor] :or {limit -1}}]
-  (let [{:keys [results path-results]} (lazy-merged-lookup db forward-direction query)
-        limited-results (if (>= limit 0)
-                          (take limit results)
-                          results)
-        counted (doall limited-results)
-        last-eid (last counted)]
-    {:count (count counted)
-     :limit limit
-     :cursor (build-v2-cursor cursor last-eid path-results :resource)}))
+  (if (recursive-permission-query? db (:resource/type query) (:permission query))
+    (recursive-forward-count db query)
+    (let [{:keys [results path-results]} (lazy-merged-lookup db forward-direction query)
+          limited-results (if (>= limit 0)
+                            (take limit results)
+                            results)
+          counted (doall limited-results)
+          last-eid (last counted)]
+      {:count (count counted)
+       :limit limit
+       :cursor (build-v2-cursor cursor last-eid path-results :resource)})))
 
 (defn count-subjects
   [db {:as query :keys [limit cursor] :or {limit -1}}]
