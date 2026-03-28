@@ -86,6 +86,18 @@
   [db {:as page :keys [data cursor]}]
   (set (paginated->spice db page)))
 
+(defn collect-paginated-spice
+  [db lookup-fn query]
+  (loop [cursor nil
+         acc    []]
+    (let [page      (lookup-fn db (cond-> query cursor (assoc :cursor cursor)))
+          data      (paginated->spice db page)
+          acc'      (into acc data)
+          next-cur  (:cursor page)]
+      (if (and next-cur (seq data))
+        (recur next-cur acc')
+        acc'))))
+
 (def recursive-parent-schema-string
   "definition user {}
 
@@ -122,6 +134,80 @@
 (defn- recursive-account-ref
   [eacl-id]
   (spice-object :account [:eacl/id eacl-id]))
+
+(def duplicate-recursive-parent-schema-string
+  "definition user {}
+
+   definition account {
+     relation parent: account
+     relation reader: user
+
+     permission read = reader + parent->read
+   }")
+
+(defn- load-duplicate-parent-db!
+  [conn]
+  (schema/write-schema! conn duplicate-recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1" :eacl/id "user-1"}
+                     {:db/id "a" :eacl/id "a"}
+                     {:db/id "b" :eacl/id "b"}
+                     {:db/id "c" :eacl/id "c"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :user "user-1") :reader (spice-object :account "a"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :account "b"))
+                      (Relationship (spice-object :account "a") :parent (spice-object :account "c"))
+                      (Relationship (spice-object :account "b") :parent (spice-object :account "c"))]))
+  (d/db conn))
+
+(defn- load-direct-plus-recursive-duplicate-db!
+  [conn]
+  (schema/write-schema! conn duplicate-recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1" :eacl/id "user-1"}
+                     {:db/id "a" :eacl/id "a"}
+                     {:db/id "b" :eacl/id "b"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :user "user-1") :reader (spice-object :account "a"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :account "b"))
+                      (Relationship (spice-object :account "a") :parent (spice-object :account "b"))]))
+  (d/db conn))
+
+(defn- load-cycle-parent-db!
+  [conn]
+  (schema/write-schema! conn duplicate-recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1" :eacl/id "user-1"}
+                     {:db/id "a1" :eacl/id "a1"}
+                     {:db/id "a2" :eacl/id "a2"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :user "user-1") :reader (spice-object :account "a1"))
+                      (Relationship (spice-object :account "a1") :parent (spice-object :account "a2"))
+                      (Relationship (spice-object :account "a2") :parent (spice-object :account "a1"))]))
+  (d/db conn))
+
+(defn- load-deep-recursive-parent-db!
+  [conn depth]
+  (schema/write-schema! conn recursive-parent-schema-string)
+  @(d/transact conn
+               (into [{:db/id "user-1" :eacl/id "user-1"}]
+                     (map (fn [i]
+                            {:db/id (str "acc-" i)
+                             :eacl/id (str "acc-" i)}))
+                     (range depth)))
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     (concat
+                      [(Relationship (spice-object :user "user-1") :reader (spice-object :account "acc-0"))]
+                      (for [i (range (dec depth))]
+                        (Relationship (spice-object :account (str "acc-" i))
+                                      :parent
+                                      (spice-object :account (str "acc-" (inc i))))))))
+  (d/db conn))
 
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
@@ -1163,6 +1249,124 @@
                                                 :permission    :read
                                                 :resource/type :account
                                                 :limit         100})))))))))
+
+(deftest recursive-arrow-permission-pagination-stability-test
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db          (load-recursive-parent-db! conn)
+          user        (recursive-user-ref "user-1")
+          paged-query {:subject       user
+                       :permission    :read
+                       :resource/type :account
+                       :limit         2}
+          full-query  (assoc paged-query :limit 100)
+          page-order  (collect-paginated-spice db lookup-resources paged-query)
+          full-order  (paginated->spice db (lookup-resources db full-query))]
+      (testing "recursive pagination should equal the large-limit query in order and membership"
+        (is (= full-order page-order)))
+      (testing "recursive pagination should be stable across repeated runs on the same db basis"
+        (is (= page-order
+               (collect-paginated-spice db lookup-resources paged-query))))
+      (testing "recursive pagination should not emit duplicates across pages"
+        (is (= (count page-order)
+               (count (distinct page-order))))))))
+
+(deftest recursive-arrow-permission-deduplication-tests
+  (testing "direct and recursive duplicates are emitted once"
+    (with-mem-conn [conn schema/v6-schema]
+      (let [db      (load-direct-plus-recursive-duplicate-db! conn)
+            user    (recursive-user-ref "user-1")
+            results (collect-paginated-spice db lookup-resources
+                                             {:subject       user
+                                              :permission    :read
+                                              :resource/type :account
+                                              :limit         1})]
+        (is (= #{(spice-object :account "a")
+                 (spice-object :account "b")}
+               (set results)))
+        (is (= (count results) (count (distinct results)))))))
+
+  (testing "two recursive branches yielding the same descendant are emitted once"
+    (with-mem-conn [conn schema/v6-schema]
+      (let [db      (load-duplicate-parent-db! conn)
+            user    (recursive-user-ref "user-1")
+            results (collect-paginated-spice db lookup-resources
+                                             {:subject       user
+                                              :permission    :read
+                                              :resource/type :account
+                                              :limit         1})]
+        (is (= #{(spice-object :account "a")
+                 (spice-object :account "b")
+                 (spice-object :account "c")}
+               (set results)))
+        (is (= (count results) (count (distinct results))))))))
+
+(deftest recursive-arrow-permission-data-cycle-test
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db      (load-cycle-parent-db! conn)
+          user    (recursive-user-ref "user-1")
+          results (collect-paginated-spice db lookup-resources
+                                           {:subject       user
+                                            :permission    :read
+                                            :resource/type :account
+                                            :limit         1})]
+      (testing "real data loops terminate and return the reachable set once"
+        (is (= #{(spice-object :account "a1")
+                 (spice-object :account "a2")}
+               (set results)))
+        (is (= (count results) (count (distinct results)))))
+      (testing "count-resources agrees with paginated lookup on a data cycle"
+        (is (= 2
+               (:count (count-resources db {:subject       user
+                                            :permission    :read
+                                            :resource/type :account
+                                            :limit         10}))))))))
+
+(deftest recursive-arrow-permission-max-depth-test
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db   (load-deep-recursive-parent-db! conn 52)
+          user (recursive-user-ref "user-1")
+          leaf (recursive-account-ref "acc-51")]
+      (testing "default max-depth 50 fails on a deeper chain"
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"max depth"
+             (lookup-resources db {:subject       user
+                                   :permission    :read
+                                   :resource/type :account
+                                   :limit         100}))))
+      (testing "explicitly larger max-depth allows the same query"
+        (is (= 52
+               (count (paginated->spice db
+                                        (lookup-resources db {:subject       user
+                                                              :permission    :read
+                                                              :resource/type :account
+                                                              :limit         100
+                                                              :max-depth     60}))))))
+      (testing "can? and lookup-subjects use the same max-depth contract"
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"max depth"
+             (can? db {:subject    user
+                       :permission :read
+                       :resource   leaf})))
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo
+             #"max depth"
+             (lookup-subjects db {:resource     leaf
+                                  :permission   :read
+                                  :subject/type :user
+                                  :limit        100})))
+        (is (true? (can? db {:subject    user
+                             :permission :read
+                             :resource   leaf
+                             :max-depth  60})))
+        (is (= #{(spice-object :user "user-1")}
+               (paginated->spice-set db
+                 (lookup-subjects db {:resource     leaf
+                                      :permission   :read
+                                      :subject/type :user
+                                      :limit        100
+                                      :max-depth    60}))))))))
 
 ; uncommented because server :owner relation went away.
 ;(testing "Performance - early termination"

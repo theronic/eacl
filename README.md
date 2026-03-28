@@ -36,8 +36,9 @@ Situated AuthZ offers some advantages for typical use-cases:
 
 ## Performance
 
-- EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are _always_ returned in the order they stored in at-rest, which are internal Datomic eids.
-  - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
+- EACL traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources without materializing the full reachable closure.
+  - Non-recursive lookups retain the existing at-rest terminal-index ordering.
+  - Recursive `lookup-resources` uses a stable deterministic discovery order with exact deduplication across pages. It does not guarantee global eid ordering.
 - EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
@@ -112,6 +113,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 ### Queries
 
 - `(eacl/can? acl subject permission resource) => true | false`
+- Query maps may include `:max-depth`, which defaults to `50` for recursive permission evaluation.
 - `(eacl/lookup-subjects acl filters) => {:data [subjects...], cursor 'next-cursor}`
 - `(eacl/lookup-resources acl filters) => {:data [resources...], :cursor 'next-cursor}`.
 - `(eacl/count-resources acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterative counting. Use sparingly with `:limit -1` for all results.
@@ -171,7 +173,11 @@ To query the next page, simply pass the `cursor` from page1 into the next query:
            {:type :server :id "server-5"}]}
 ```
 
-The return order of resources from `lookup-resources` is stable and sorted by internal resource ID.
+The return order of `lookup-resources` is stable for a fixed DB basis and cursor.
+
+- Non-recursive lookups are typically returned in internal resource ID order because that is the order of the terminal tuple indices.
+- Recursive lookups are returned in stable deterministic discovery order with exact deduplication across pages.
+- Recursive queries can supply `:max-depth`; exceeding that depth raises a typed runtime error instead of silently truncating results.
 
 ## Quickstart
 

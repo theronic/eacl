@@ -48,7 +48,8 @@
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
-    (if (= 2 (:v cursor))
+    (cond
+      (= 2 (:v cursor))
       (cond-> cursor
         (:e cursor) (update :e #(entid->object-id db %))
         (:p cursor) (update :p
@@ -56,6 +57,11 @@
                          (into {}
                            (map (fn [[k v]] [k (entid->object-id db v)]))
                            p))))
+
+      (= 3 (:v cursor))
+      cursor
+
+      :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(entid->object-id db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(entid->object-id db %) cursor)))))
@@ -63,7 +69,8 @@
 (defn default-spice-cursor->internal
   [db {:keys [object-id->entid]} cursor]
   (when cursor
-    (if (= 2 (:v cursor))
+    (cond
+      (= 2 (:v cursor))
       (cond-> cursor
         (:e cursor) (update :e #(object-id->entid db %))
         (:p cursor) (update :p
@@ -71,6 +78,11 @@
                          (into {}
                            (map (fn [[k v]] [k (object-id->entid db v)]))
                            p))))
+
+      (= 3 (:v cursor))
+      cursor
+
+      :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
@@ -119,7 +131,7 @@
     {:zed/token (str basis)}))
 
 (defn spiceomic-can?
-  [db {:keys [object->entid]} subject permission resource consistency]
+  [db {:keys [object->entid]} subject permission resource consistency max-depth]
   (assert (= consistency/fully-consistent consistency)
     "EACL only supports consistency/fully-consistent at this time.")
   (let [subject-type (:type subject)
@@ -128,10 +140,10 @@
         resource-eid  (object->entid db resource)]
     (if-not (and subject-eid resource-eid)
       false
-      (impl/can? db
-        (spice-object subject-type subject-eid)
-        permission
-        (spice-object resource-type resource-eid)))))
+      (impl/can? db {:subject (spice-object subject-type subject-eid)
+                     :permission permission
+                     :resource (spice-object resource-type resource-eid)
+                     :max-depth max-depth}))))
 
 (defn spiceomic-lookup-resources
   [db
@@ -214,14 +226,15 @@
 (defrecord Spiceomic [conn opts]
   IAuthorization
   (can? [_ subject permission resource]
-    (spiceomic-can? (d/db conn) opts subject permission resource consistency/fully-consistent))
+    (spiceomic-can? (d/db conn) opts subject permission resource consistency/fully-consistent nil))
 
   (can? [_ subject permission resource consistency]
-    (spiceomic-can? (d/db conn) opts subject permission resource consistency))
+    (spiceomic-can? (d/db conn) opts subject permission resource consistency nil))
 
-  (can? [_ {:keys [subject permission resource consistency]}]
+  (can? [_ {:keys [subject permission resource consistency max-depth]}]
     (spiceomic-can? (d/db conn) opts subject permission resource
-      (or consistency consistency/fully-consistent)))
+      (or consistency consistency/fully-consistent)
+      max-depth))
 
   (read-schema [_]
     (schema/read-schema (d/db conn)))

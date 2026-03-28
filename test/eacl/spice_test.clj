@@ -29,7 +29,24 @@
 
   (testing "backward compat: raw cursor map passes through token->cursor"
     (let [cursor {:v 2 :e 12345 :p {0 67890}}]
-      (is (= cursor (spiceomic/token->cursor cursor))))))
+      (is (= cursor (spiceomic/token->cursor cursor)))))
+
+  (testing "v3 recursive cursor round-trips without coercion"
+    (let [cursor {:v 3
+                  :mode :recursive-forward
+                  :max-depth 50
+                  :stack [{:kind :direct-stream
+                           :node [:account :read]
+                           :relation-eid 42
+                           :cursor 1001
+                           :depth 50}]
+                  :best-depth {[:account :read] {1001 50}}
+                  :emitted #{1001}
+                  :last 1001}
+          token  (spiceomic/cursor->token cursor)]
+      (is (= cursor (spiceomic/token->cursor token)))
+      (is (= cursor (spiceomic/default-internal-cursor->spice nil {} cursor)))
+      (is (= cursor (spiceomic/default-spice-cursor->internal nil {} cursor))))))
 
 (deftest spicedb-helper-tests
   (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
