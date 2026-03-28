@@ -15,10 +15,23 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
-(def can? impl.indexed/can?)
-(def lookup-subjects impl.indexed/lookup-subjects)
-(def lookup-resources impl.indexed/lookup-resources)
-(def count-resources impl.indexed/count-resources)
+(defn can?
+  ([db subject permission resource]
+   (impl.indexed/can? db subject permission resource))
+  ([db demand]
+   (impl.indexed/can? db demand)))
+
+(defn lookup-subjects
+  [db query]
+  (impl.indexed/lookup-subjects db query))
+
+(defn lookup-resources
+  [db query]
+  (impl.indexed/lookup-resources db query))
+
+(defn count-resources
+  [db query]
+  (impl.indexed/count-resources db query))
 
 (def ^:private forward-relationship-attr
   :eacl.v7.relationship/subject-type+relation+resource-type+resource)
