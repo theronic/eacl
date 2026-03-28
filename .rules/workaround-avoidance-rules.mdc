@@ -1,0 +1,53 @@
+---
+description: Workaround Avoidance
+globs: 
+alwaysApply: false
+---
+## Recognition
+1. Identify workarounds vs. proper fixes
+2. Spot symptoms of deeper issues
+3. Distinguish temporary solutions from improper workarounds
+4. Flag convenience over correctness
+5. Identify abstraction bypasses
+
+## Root Cause Analysis
+1. Address root causes, not symptoms
+2. Investigate issues before proposing solutions
+3. Consider full context before changes
+4. Identify patterns in recurring issues
+5. Question assumptions leading to workarounds
+
+## Sustainable Solutions
+1. Solve fundamental problems
+2. Prioritize maintainability over quick fixes
+3. Avoid technical debt accumulation
+4. Refactor properly instead of patching
+5. Consider scaling implications
+
+## Necessary Compromises
+1. Document necessary workarounds clearly
+2. Justify any workaround explicitly
+3. Add TODO/FIXME with remediation plans
+4. Specify timeline for proper solutions
+5. Prevent workarounds from becoming permanent
+
+## Patterns to Avoid
+1. No code duplication instead of abstraction
+2. No bypassing established patterns
+3. No hardcoded values that should be configurable
+4. No ignoring errors instead of handling them
+5. No special cases instead of general solutions
+
+## Escalation
+1. Flag solutions requiring extensive changes
+2. Seek guidance for architectural modifications
+3. Clarify when requirements seem to need workarounds
+4. Suggest improvements to eliminate workaround needs
+5. Propose phased replacement approaches
+
+## Documentation
+1. Document workaround scope and nature
+2. Explain why proper solution wasn't implemented
+3. List risks and limitations
+4. Define criteria for revisiting
+5. Track workarounds centrally 

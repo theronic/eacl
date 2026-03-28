@@ -1,0 +1,45 @@
+---
+description: Coding Standards
+globs: 
+alwaysApply: false
+---
+## General Principles
+1. Human-readable first, machine-readable second
+2. Maintain consistent style with existing code
+3. Optimize for maintainability over cleverness
+4. Use explicit logic over implicit
+5. Comment complex logic and business rules
+
+## Generation Boundaries
+1. Generate complete functional units only
+2. State assumptions explicitly
+3. No placeholder code
+4. No credentials or hardcoded secrets
+5. Include comprehensive error handling
+
+## Modification Guidelines
+1. Preserve existing patterns and architecture
+2. Maintain or improve test coverage
+3. Minimize public interface changes
+4. Explain refactoring tradeoffs
+5. Preserve meaningful comments
+
+## Technology Selection
+1. Default to established tech stack
+2. New dependencies only with substantial value
+3. Respect existing framework choices
+4. Justify alternatives with migration path
+
+## Quality Standards
+1. Tests with implementation
+2. Handle edge cases appropriately
+3. Consider performance implications
+4. Validate all external inputs
+5. Generate actionable error messages
+
+## Escalation Criteria
+1. Escalate significant architectural decisions
+2. Seek clarification for ambiguity
+3. Flag security concerns for review
+4. Request input on complex optimizations
+5. Suggest but don't implement major architectural changes

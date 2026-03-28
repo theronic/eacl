@@ -1,0 +1,53 @@
+---
+description: Security
+globs: 
+alwaysApply: false
+---
+## Awareness
+1. Identify security implications in all code
+2. Stay current on vulnerabilities
+3. Default to secure patterns
+4. Consider security from the start
+5. Highlight non-obvious security concerns
+
+## Code Generation
+1. No credentials in source code
+2. Validate all external inputs
+3. Apply proper output encoding
+4. Follow principle of least privilege
+5. Error handling without info leakage
+
+## Authentication & Authorization
+1. Preserve existing auth mechanisms
+2. Include proper authorization checks
+3. Never bypass security controls
+4. Suggest auth flow improvements
+5. Follow established token patterns
+
+## Data Protection
+1. Encrypt sensitive data
+2. Minimize sensitive data storage
+3. Recommend anonymization/tokenization
+4. Sanitize data before storage/display
+5. Align with compliance requirements
+
+## Infrastructure Security
+1. Recommend secure configurations
+2. Suggest appropriate network segregation
+3. Highlight infrastructure security implications
+4. Consider container security
+5. Suggest security monitoring
+
+## Assessment
+1. Flag potential vulnerabilities
+2. Explain risks and mitigations
+3. Recommend security testing
+4. Apply financial services threat models
+5. Prioritize fixes by risk
+
+## Escalation
+1. Escalate security vulnerabilities
+2. Highlight security/usability tradeoffs
+3. Request review of security-critical code
+4. Justify security improvements
+5. Provide secure alternatives 

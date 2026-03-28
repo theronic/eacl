@@ -78,43 +78,32 @@ EACL models two core concepts to model the permission graph: Schema & Relationsh
 
 ### Schema & Relationships
 
-To create a Relationship, first define valid `Relations` to describe how subjects & resources can be related, e.g.
+To create a Relationship, first define your schema using `eacl/write-schema!`:
 
 ```clojure
-; definition account {
-;   relation owner: user
-;   relation viewer: user
-; }
-(Relation :account :owner :user)      ; an :account can have :owner(s) of type :user
-(Relation :account :viewer :user)     ; an :account can have :viewer(s) of type :user
-
-; definition product {
-;   relation account: account
-; }
-(Relation :product :account :account) ; a :product has an :account of type :account.
+(eacl/write-schema! acl
+  "definition user {}
+  
+   definition account {
+     relation owner: user
+     relation viewer: user
+     
+     permission admin = owner
+   }
+   
+   definition product {
+     relation account: account
+     
+     permission edit = account->admin
+     permission view = account->admin + account->viewer
+   }")
 ```
 
-Given that an `<account>` has an `:owner`, and a `<product>` can have an `:account`, we can now define a permission schema that grants the `:edit` permission to all owners of the account, and the `:view` permission to all viewers of the account:
+This schema defines:
+- An `account` can have `owner` and `viewer` users, with `admin` permission granted to owners
+- A `product` belongs to an `account`, with `edit` permission for account admins and `view` permission for account admins and viewers
 
-```clojure
-; definition account {
-;   permission admin = owner
-; }
-(Permission :account :admin {:relation :owner})
-
-; definition account {
-;   permission edit = account->admin
-; }
-(Permission :account :edit {:arrow :account :permission :admin})
-
-; definition  product {
-;   permission view = admin + account->viewer
-; }
-(Permission :product :view {:arrow :account :permission :admin})
-(Permission :product :view {:arrow :account :relation :viewer})
-```
-
-In EACL, multiple permission definitions with the same resource_type & name, but different permission spec, imply Unification or OR-logic. EACL does not support negation yet, only Unification.
+In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negation (`-`) or intersection (`&`) yet.
 
 ## EACL API
 
@@ -138,8 +127,8 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 
 ### Schema Maintenance
 
-- `(eacl/write-schema! acl schema-string)` is not implemented yet because schema lives in Datomic. Use `d/transact` to write schema for now. This is a high priority to suport.
-- `(eacl/read-schema acl) => "schema-string"` is not implemented because schema lives in Datomic. This is a high priority to support.
+- `(eacl/write-schema! acl schema-string)` parses a SpiceDB schema DSL string, validates it, computes deltas against existing schema, checks for orphaned relationships, and transacts changes atomically.
+- `(eacl/read-schema acl)` returns the current schema as a map of `{:relations [...] :permissions [...]}`.
 - `(eacl/expand-permission-tree acl filters)` is not impl. yet. It is a low priority to implement.
 
 ### Example Queries
@@ -200,8 +189,7 @@ Add the EACL dependency to your `deps.edn` file:
   (:require [datomic.api :as d]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.core]
-            [eacl.datomic.schema :as schema]
-            [eacl.datomic.impl :refer [Relation Permission]]))
+            [eacl.datomic.schema :as schema]))
 
 ; Create an in-memory Datomic database:
 (def datomic-uri "datomic:mem://eacl")
@@ -213,24 +201,22 @@ Add the EACL dependency to your `deps.edn` file:
 ; Install the latest EACL Datomic Schema:
 @(d/transact conn schema/v6-schema)
 
-; Transact your permission schema (details below).
-@(d/transact conn
-  [; Account:
-    ; account { relation owner: user }
-    (Relation :account :owner :user)
-    
-    ; account {
-    ;   permission admin = owner
-    ;   permission update = admin
-    ; }
-    (Permission :account :admin {:relation :owner})
-    (Permission :account :update {:permission :admin})
+; Write your permission schema using SpiceDB schema DSL:
+(eacl/write-schema! acl
+  "definition user {}
    
-    ; product { relation account: account }
-    (Relation :product :account :account)
-
-    ; product { permission edit = account->admin }
-    (Permission :product :edit {:arrow :account :permission :admin})])
+   definition account {
+     relation owner: user
+     
+     permission admin = owner
+     permission update = admin
+   }
+   
+   definition product {
+     relation account: account
+     
+     permission edit = account->admin
+   }")
 
 ; Transact some Datomic entities with a unique ID, e.g. `:eacl/id`:
 @(d/transact conn
@@ -284,6 +270,41 @@ Add the EACL dependency to your `deps.edn` file:
 
 ## EACL Schema
 
+EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/write-schema!` to parse, validate, and transact your schema:
+
+```clojure
+(eacl/write-schema! acl
+  "definition user {}
+
+   definition account {
+     relation owner: user
+     
+     permission admin = owner
+     permission update = admin
+   }
+   
+   definition product {
+     relation account: account
+     
+     permission edit = account->admin
+   }")
+```
+
+### Schema Validation
+
+`write-schema!` validates your schema and provides informative error messages:
+- **Reference validation**: Ensures all relations and permissions reference valid definitions
+- **Orphan protection**: Prevents deleting relations that have existing relationships
+- **Unsupported feature detection**: Rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+
+### Schema Updates
+
+When you call `write-schema!` with a modified schema, EACL:
+1. Parses the new schema
+2. Computes deltas (additions/retractions) against existing schema  
+3. Validates retractions won't orphan existing relationships
+4. Transacts changes atomically
+
 ### Modelling Relations
 
 Let's model the following SpiceDB schema in EACL:
@@ -298,38 +319,26 @@ definition account {
 
 We define two resource types, `user` & `account`, where any `user` subject can be the `:owner` of an `account` resource. 
 
-In EACL we use:
+A Relationship is just a 3-tuple of `[subject relation resource]`:
+```clojure
+(eacl/->Relationship (->user "alice") :owner (->account "acme"))
 ```
- (Relation resource-type relation-name subject-type)
-```
-e.g.
-```
-(Relation :account :owner :user)
-```
-
-This means a `user` subject can have  an `:owner` relation to an `account`, via a Relationship:
-```
-(Relationship (->user 123) :owner (->account 456))
-```
-
-A Relationship is just a 3-tuple of `[subject relation resource]`.
 
 ### Permission Schema: Direct Relations
 
 Let's add a direct permission to the schema for `account` resources:
 
-```
-definition user {}
+```clojure
+(eacl/write-schema! acl
+  "definition user {}
 
-definition account {
-  relation owner: user
-  permission update = owner
-}
+   definition account {
+     relation owner: user
+     permission update = owner
+   }")
 ```
 
-In EACL, **Direct Permissions** use `(Permission resource-type permission {:relation relation_name)`,
- - e.g. `(Permission :account :update {:relation :owner})`
- - This means any `<user>` who is an `:owner` of an `<account>`, will have the `update` permission for that account.
+Here, `permission update = owner` means any user who is an `:owner` of an account will have the `update` permission for that account.
 
 At this point, all permissions checks via `eacl/can?` will return `false`, because there are no Relationships defined:
 
@@ -373,58 +382,30 @@ No, he cannot, because Bob is not an `:owner` of the ACME account.
 
 ### Arrow Permissions
 
-Arrow permissions impply a graph hop. Arrows are designated by `->`. Let's look at arrow permissions in the SpiceDB schema DSL:
+Arrow permissions imply a graph hop. Arrows are designated by `->` in the SpiceDB schema DSL:
+
+```clojure
+(eacl/write-schema! acl
+  "definition user {}
+
+   definition account {
+     relation owner: user
+     
+     permission admin = owner
+     permission update = admin
+   }
+
+   definition product {
+     relation account: account
+     
+     permission edit = account->admin
+   }")
 ```
-definition user {}
 
-definition account {
-  relation owner: user
-  
-  permission admin = owner
-  permission update = owner
-}
-
-definition product {
-  relation account: account
-  
-  permission edit = account->admin  ; (this is an arrow permission)
-}
-```
-
-Here, `permission edit = account->admin` states that subjects are granted the `edit` permission _if, and only if_ they have the `admin` permission on the related account for that product. Only account owners have the `admin` permission on the related account. So given that,
+Here, `permission edit = account->admin` states that subjects are granted the `edit` permission _if, and only if_ they have the `admin` permission on the related account for that product. Only account owners have the `admin` permission on the related account. So given that:
  1. `(->user "alice")` is the `:owner` of `(->account "acme")`, and
  2. `(->account "acme")` is the `:account` for `(->product "SKU-123")`,
  3. EACL can traverse the permission graph from user -> account -> product to derive that Alice has the `:edit` permission on product `SKU-123`.
-
-Here is the equivalent schema in the current EACL syntax:
-```clojure
-(require '[eacl.datomic.impl :refer [Relation Permission]])
-
-[; Account:
- ; definition account {
- ;   relation owner: user
- ; 
- ;   permission admin = owner
- ;   permission update = admin
- ; } 
-
- ; account { relation owner: user }
- (Relation :account :owner :user)
-
- ; account { permission admin = owner }
- (Permission :account :admin {:relation :owner})
- ; account { permission update = owner }
- (Permission :account :update {:permission :admin})
-
- ; Product with an arrow permission:
- ; definition product {
- ;   relation account: account
- ;   permission edit = account->admin
- ; }
- (Relation :product :account :account)
- (Permission :product :edit {:arrow :account :permission :admin})
-]
-```
 
 Now you can use `can?` to check those arrow permissions:
 ```clojure
@@ -464,102 +445,74 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 ## Schema Syntax
 
-Your EACL schema lives in Datomic. The following functions correspond to SpiceDB schema and return Datomic entity maps:
-
-- `(Relation resource-type relation-name subject-type)`
-- `(Permission resource-type permission-to-grant spec)`, where spec has  `{:keys [arrow relation permission]}`.
-- `(Relationship user1 relation-name server1)` confers `permission` to subject `user1` on server1.
-
-`Permission` supports the following syntax: 
-- `(Permission resource-type permission {:relation some_relation})` ; the missing `:arrow` implies `:self`.
-- `(Permission resource-type permission {:permisison some_permission})` ; the missing `:arrow` implies `:self`.
-- `(Permission resource-type permission {:arrow source :permission via_permission})`
-- `(Permission resource-type permission {:arrow source :relation via_relation})`
-
-Internally everything is an arrow permission, but omitted `:arrow` means `:self` (reserved word). 
-
-e.g.
-```
-(Permission :server :admin {:arrow :account :relation :owner})
-```
-
-Which you can read as follows:
-
-```
-definition account {
-  relation owner: user
-  permission admin = owner
-}
-
-definition server {
-  relation account: account
-  permission admin = account->admin
-}
-
-```
-
-## Example Schema Translation
-
-Given the following SpiceDB schema,
-
-```
-definition user {}
-
-definition platform {
-  relation super_admin: user
-}
-
-definition account {
-  relation platform: platform
-  relation owner: user
-  
-  permission admin = owner + platform->super_admin
-}
-
-definition server {
-  relation account: account
-  relation shared_admin: user
-  
-  permission reboot = account->admin + shared_admin
-}
-```
-
-How to model this in EACL?
+EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema:
 
 ```clojure
-(require '[datomic.api :as d])
-(require '[eacl.datomic.impl :as impl :refer [Relation Permission Relationship]])
+(eacl/write-schema! acl
+  "definition user {}
+   
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }
+   
+   definition server {
+     relation account: account
+     permission admin = account->admin
+   }")
+```
+
+### Advanced: Programmatic Schema (Optional)
+
+For advanced use cases, you can also define schema programmatically using the internal `Relation` and `Permission` functions:
+
+```clojure
+(require '[eacl.datomic.impl :refer [Relation Permission]])
 
 @(d/transact conn
-             [; definition platform {
-              ;   relation super_admin: user
-              ; } 
-              (Relation :platform :super_admin :user)
-              
-              ; definition account {
-              ;   relation platform: platform
-              ;   relation owner: user
-              ; }
-              (Relation :account :platform :platform)
-              (Relation :account :owner :user)
-              
-              ; definition account {
-              ;   permission admin = owner + platform->super_admin
-              ; }
-              (Permission :account :admin {:relation :owner})
-              (Permission :account :admin {:arrow :platform :relation :super_admin})
-              
-              ; definition server {
-              ;   relation account: account
-              ;   relation shared_admin: user
-              ; 
-              ;   permission reboot = account->admin + shared_admin
-              ; }
-              (Relation :server :account :account)
-              (Relation :server :shared_admin :user)
-              
-              (Permission :server :reboot {:arrow :account :permission :admin})
-              (Permission :server :reboot {:relation :shared_admin})])
+  [(Relation :account :owner :user)
+   (Permission :account :admin {:relation :owner})
+   (Relation :server :account :account)
+   (Permission :server :admin {:arrow :account :permission :admin})])
+```
+
+`Permission` supports the following spec syntax:
+- `{:relation some_relation}` - direct permission via relation
+- `{:permission some_permission}` - permission via another permission  
+- `{:arrow source :permission via_permission}` - arrow to permission
+- `{:arrow source :relation via_relation}` - arrow to relation
+
+## Example Schema
+
+Here's a complete example of defining a schema with `eacl/write-schema!`:
+
+```clojure
+(eacl/write-schema! acl
+  "definition user {}
+
+   definition platform {
+     relation super_admin: user
+   }
+
+   definition account {
+     relation platform: platform
+     relation owner: user
+     
+     permission admin = owner + platform->super_admin
+   }
+
+   definition server {
+     relation account: account
+     relation shared_admin: user
+     
+     permission reboot = account->admin + shared_admin
+   }")
+```
+
+This schema defines:
+- `platform` resources can have `super_admin` users
+- `account` resources can have a `platform` and `owner`, with `admin` permission granted to owners and platform super_admins
+- `server` resources belong to an `account` and can have `shared_admin` users, with `reboot` permission granted to account admins and shared_admins
 ```
 
 Now you can transact relationships:
@@ -595,7 +548,6 @@ Now you can transact relationships:
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- `read-schema` & `write-schema!` are not supported yet because schema lives in Datomic, but this is high priority to validate schema changes.
 - *No cache:* EACL does not presently have a cache, because Datomic Peers cache datoms aggressively and queries so far are fast enough. A cache is planned.
 - *Return order:* Unlike SpiceDB, EACL enumerates subjects & resources in the order they are stored in at-rest, which is always by Datomic eid (note: not external ID). SpiceDB returns results in order of discovery or schema order. SpiceDB guarantees stable order, but the order is non-deterministic. You should not rely on this order when using EACL or SpiceDB.
 

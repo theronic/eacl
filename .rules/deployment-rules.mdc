@@ -1,0 +1,55 @@
+---
+description: Deployment
+globs: 
+alwaysApply: false
+---
+Deployment
+
+## Preparation
+1. Match established deployment patterns
+2. Document environment variables
+3. Follow dependency management approach
+4. Consider infrastructure requirements
+5. Include health checks and readiness probes
+
+## Infrastructure as Code
+1. Follow established patterns
+2. Maintain consistency
+3. Consider scaling requirements
+4. Highlight cost implications
+5. Define appropriate resource limits
+
+## CI/CD Integration
+1. Ensure compatibility with existing pipelines
+2. Configure build/test automation
+3. Optimize build time
+4. Suggest versioning strategies
+5. Implement appropriate feature flags
+
+## Strategies
+1. Match risk to deployment approach
+2. Prioritize zero-downtime deployment
+3. Use canary/blue-green for high-risk changes
+4. Include rollback mechanisms
+5. Identify service dependencies
+
+## Observability
+1. Include appropriate logging
+2. Add metrics for critical operations
+3. Suggest alert thresholds
+4. Consider distributed tracing needs
+5. Identify observability gaps
+
+## Regional Considerations
+1. Address data sovereignty
+2. Configure for specific regions
+3. Consider multi-region latency
+4. Highlight compliance impacts
+5. Account for infrastructure limitations
+
+## Escalation
+1. Highlight deployment risks
+2. Clarify ambiguous requirements
+3. Escalate production impact decisions
+4. Recommend but don't implement architecture changes
+5. Justify improvement suggestions 

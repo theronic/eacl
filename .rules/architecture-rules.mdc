@@ -1,0 +1,54 @@
+---
+description: Architecture
+globs: 
+alwaysApply: false
+---
+## Understanding
+1. Build context before changes
+2. Respect service boundaries
+3. Maintain architectural consistency
+4. Preserve data ownership boundaries
+5. Consider full architectural impact
+
+## Service Boundaries
+1. No merging services without justification
+2. Avoid shared databases
+3. Preserve API contracts
+4. Prevent tight coupling
+5. Respect service responsibilities
+6. Decompose when complexity increases
+
+## API Design
+1. Follow existing patterns
+2. Preserve backward compatibility
+3. Match platform error standards
+4. Version breaking changes appropriately
+5. Maintain consistent auth patterns
+
+## Event-Driven Architecture
+1. Follow existing event schemas
+2. Ensure new events follow conventions
+3. Maintain consumer idempotency
+4. Use appropriate event patterns
+5. Preserve event flow guarantees
+
+## Datastore Guidelines
+1. Respect established database technologies
+2. Maintain consistent data access patterns
+3. Suggest appropriate indexes
+4. Preserve multi-tenancy patterns
+5. Maintain transaction boundaries
+
+## African Market Optimizations
+1. Optimize for low bandwidth
+2. Design for network instability
+3. Consider data sovereignty requirements
+4. Support multi-currency capabilities
+5. Prioritize mobile-first approaches
+
+## Escalation
+1. Seek guidance for fundamental changes
+2. Highlight architectural inconsistencies
+3. Justify improvement suggestions
+4. Present alternatives with tradeoffs
+5. Escalate requirements conflicts

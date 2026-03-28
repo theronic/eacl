@@ -1,0 +1,51 @@
+---
+description: Verification
+globs: 
+alwaysApply: false
+---
+## First Principles
+1. Never implement unverifiable changes
+2. Identify verification methods beforehand
+3. Prefer solutions with clear verification paths
+4. Communicate verification strategy with changes
+
+## Methods
+1. Prefer automated testing
+2. Use observability as supplementary verification
+3. Add validation hooks for complex logic
+4. Implement appropriate assertions
+5. Verify at multiple levels (unit, integration, system)
+
+## Test-Driven Development
+1. Write tests before implementation for critical features
+2. Design for testability
+3. Avoid patterns that hinder testing
+4. Break changes into verifiable increments
+5. Use appropriate mocking strategies
+
+## Coverage Requirements
+1. Verify functional and non-functional requirements
+2. Test edge cases explicitly
+3. Verify error handling paths
+4. Include performance verification for critical paths
+5. Verify security implications
+
+## African Context
+1. Test low-connectivity scenarios
+2. Verify multi-currency operations
+3. Include regional regulatory verification
+4. Test mobile-specific functionality
+5. Verify network instability resilience
+
+## Handling Gaps
+1. Flag unverifiable functionality
+2. Suggest risk mitigation for verification gaps
+3. Recommend phased rollouts when needed
+4. Specify manual verification when automation is impractical
+5. Use feature flags for partially verifiable features
+
+## Escalation
+1. Seek guidance for unclear verification requirements
+2. Highlight verification challenges requiring architectural changes
+3. Request clarification for ambiguous expectations
+4. Suggest verification improvements 
