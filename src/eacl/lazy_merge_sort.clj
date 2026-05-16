@@ -31,19 +31,19 @@
             (if (== xf last-key)
               (lazy-merge2-dedupe-longs last-key (rest x) (rest y))
               (cons (first sx)
-                (lazy-merge2-dedupe-longs xf (rest x) (rest y))))
+                    (lazy-merge2-dedupe-longs xf (rest x) (rest y))))
 
             (< xf yf)
             (if (== xf last-key)
               (lazy-merge2-dedupe-longs last-key (rest x) y)
               (cons (first sx)
-                (lazy-merge2-dedupe-longs xf (rest x) y)))
+                    (lazy-merge2-dedupe-longs xf (rest x) y)))
 
             :else
             (if (== yf last-key)
               (lazy-merge2-dedupe-longs last-key x (rest y))
               (cons (first sy)
-                (lazy-merge2-dedupe-longs yf x (rest y)))))))))))
+                    (lazy-merge2-dedupe-longs yf x (rest y)))))))))))
 
 (defn- fold2-merge-dedupe-longs
   [seqs]
@@ -57,7 +57,61 @@
                (if (next pair)
                  (lazy-merge2-dedupe-longs (first pair) (second pair))
                  (first pair)))
-         (partition-all 2 non-empty))))))
+             (partition-all 2 non-empty))))))
+
+(defn- lazy-merge2-dedupe-longs-desc
+  ([x y] (lazy-merge2-dedupe-longs-desc Long/MAX_VALUE x y))
+  ([^long last-key x y]
+   (lazy-seq
+    (let [sx (seq x)
+          sy (seq y)]
+      (cond
+        (nil? sx)
+        (when sy
+          (if (== last-key Long/MAX_VALUE)
+            sy
+            (drop-while #(== (long %) last-key) y)))
+
+        (nil? sy)
+        (if (== last-key Long/MAX_VALUE)
+          sx
+          (drop-while #(== (long %) last-key) x))
+
+        :else
+        (let [xf (long (first sx))
+              yf (long (first sy))]
+          (cond
+            (== xf yf)
+            (if (== xf last-key)
+              (lazy-merge2-dedupe-longs-desc last-key (rest x) (rest y))
+              (cons (first sx)
+                    (lazy-merge2-dedupe-longs-desc xf (rest x) (rest y))))
+
+            (> xf yf)
+            (if (== xf last-key)
+              (lazy-merge2-dedupe-longs-desc last-key (rest x) y)
+              (cons (first sx)
+                    (lazy-merge2-dedupe-longs-desc xf (rest x) y)))
+
+            :else
+            (if (== yf last-key)
+              (lazy-merge2-dedupe-longs-desc last-key x (rest y))
+              (cons (first sy)
+                    (lazy-merge2-dedupe-longs-desc yf x (rest y)))))))))))
+
+(defn- fold2-merge-dedupe-longs-desc
+  [seqs]
+  (let [non-empty (vec (filter seq seqs))]
+    (case (count non-empty)
+      0 ()
+      1 (first non-empty)
+      2 (lazy-merge2-dedupe-longs-desc (first non-empty) (second non-empty))
+      (recur
+       (mapv (fn [pair]
+               (if (next pair)
+                 (lazy-merge2-dedupe-longs-desc (first pair) (second pair))
+                 (first pair)))
+             (partition-all 2 non-empty))))))
 
 (defn- lazy-merge2-dedupe-by
   ([keyfn key-cmp x y]
@@ -88,19 +142,19 @@
             (if (= xk last-key)
               (lazy-merge2-dedupe-by keyfn key-cmp last-key (rest x) (rest y))
               (cons xf
-                (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) (rest y))))
+                    (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) (rest y))))
 
             (key-cmp xk yk)
             (if (= xk last-key)
               (lazy-merge2-dedupe-by keyfn key-cmp last-key (rest x) y)
               (cons xf
-                (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) y)))
+                    (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) y)))
 
             :else
             (if (= yk last-key)
               (lazy-merge2-dedupe-by keyfn key-cmp last-key x (rest y))
               (cons yf
-                (lazy-merge2-dedupe-by keyfn key-cmp yk x (rest y)))))))))))
+                    (lazy-merge2-dedupe-by keyfn key-cmp yk x (rest y)))))))))))
 
 (defn- fold2-merge-dedupe-generic
   [keyfn seqs]
@@ -117,13 +171,31 @@
                (if (next pair)
                  (merge2 (first pair) (second pair))
                  (first pair)))
-         (partition-all 2 non-empty))))))
+             (partition-all 2 non-empty))))))
 
 (defn lazy-fold2-merge-dedupe-sorted-by
   [keyfn seqs]
   (if (identical? keyfn identity)
     (fold2-merge-dedupe-longs seqs)
     (fold2-merge-dedupe-generic keyfn seqs)))
+
+(defn lazy-fold2-merge-dedupe-sorted-by-desc
+  [keyfn seqs]
+  (if (identical? keyfn identity)
+    (fold2-merge-dedupe-longs-desc seqs)
+    (let [key-cmp (fn [a b] (> (compare a b) 0))
+          merge2 (fn [x y] (lazy-merge2-dedupe-by keyfn key-cmp x y))]
+      (loop [non-empty (vec (filter seq seqs))]
+        (case (count non-empty)
+          0 ()
+          1 (first non-empty)
+          2 (merge2 (first non-empty) (second non-empty))
+          (recur
+           (mapv (fn [pair]
+                   (if (next pair)
+                     (merge2 (first pair) (second pair))
+                     (first pair)))
+                 (partition-all 2 non-empty))))))))
 
 (defn lazy-merge-dedupe-sort
   [seqs]
