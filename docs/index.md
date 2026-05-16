@@ -170,10 +170,10 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resource) => true | false`
-- `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
-- `(eacl/lookup-resources client filters) => {:data [resources...], :cursor 'next-cursor}`.
-- `(eacl/count-resources client filters) => {:keys [count limit cursor]}` supports limit & cursor for iterated counting. Use sparingly with `:limit -1` for all results.
-- `(eacl/read-relationships client filters) => [relationships...]`
+- `(eacl/lookup-subjects client filters) => {:data [subjects...] :page-info {...}}`
+- `(eacl/lookup-resources client filters) => {:data [resources...] :page-info {...}}`
+- `(eacl/count-resources client filters) => {:keys [count limit]}` counts the full result set.
+- `(eacl/read-relationships client filters) => {:data [relationships...] :page-info {...}}`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
   - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! client relationships)` simply calls write-relationships! with `:create` operation.
@@ -193,32 +193,39 @@ The other primary API call is `lookup-resources`, e.g.
 
 ```clojure
 (def page1
-  (eacl/lookup-resources client
-    {:subject       (->user "alice")
-     :permission    :view
-     :resource/type :server
-     :limit         2 ; defaults to 1000.
-     :cursor        nil})) ; pass nil for 1st page.
-page1
-=> {:cursor 'next-cursor
-    :data [{:type :server :id "server-1"}
-           {:type :server :id "server-2"}]}
+	  (eacl/lookup-resources client
+	    {:subject       (->user "alice")
+	     :permission    :view
+	     :resource/type :server
+	     :first         2})) ; defaults to 1000.
+	page1
+	=> {:data [{:type :server :id "server-1"}
+	           {:type :server :id "server-2"}]
+	    :page-info {:start-cursor "eacl3_..."
+	                :end-cursor "eacl3_..."
+	                :has-next-page? true
+	                :has-previous-page? false}}
 ```
 
-To query the next page, simply pass the cursor from page1 into the next query:  
+To query the next page, pass the `:end-cursor` from page1 as `:after`:
 
 ```clojure
 (eacl/lookup-resources client
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :server
-   :limit         3
-   :cursor        (:cursor page1)}) ; pass nil for 1st page.
-=> {:cursor 'next-cursor
-    :data [{:type :server :id "server-3"}
+   :first         3
+   :after         (get-in page1 [:page-info :end-cursor])})
+=> {:data [{:type :server :id "server-3"}
            {:type :server :id "server-4"}
-           {:type :server :id "server-5"}]}
+           {:type :server :id "server-5"}]
+    :page-info {:start-cursor "eacl3_..."
+                :end-cursor "eacl3_..."
+                :has-next-page? true
+                :has-previous-page? true}}
 ```
+
+To go back from page2, pass its `:start-cursor` as `:before` with `:last`.
 
 The return order of resources from `lookup-resources` is stable and sorted by internal resource ID. Future enhancements may enable a sort key.
 
@@ -309,10 +316,12 @@ Add the EACL dependency to your `deps.edn` file:
   {:subject       (->user "user-1")
    :permission    :edit
    :resource/type :product
-   :limit         1000
-   :cursor        nil})
+   :first         1000})
 ; => {:data [{:type :product, :id "product-1"}]
-;     :cursor 'cursor}
+;     :page-info {:start-cursor "eacl3_..."
+;                 :end-cursor "eacl3_..."
+;                 :has-next-page? false
+;                 :has-previous-page? false}}
 ```
 
 ## Data Structures
