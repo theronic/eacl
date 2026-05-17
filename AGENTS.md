@@ -51,17 +51,17 @@ Run a single test namespace:
 clj-nrepl-eval -p <port> "(require 'some.test-ns :reload) (clojure.test/run-tests 'some.test-ns)"
 ```
 
-Run all engine tests:
+Run all EACL tests:
 ```
-clj-nrepl-eval -p <port> "(require 'netcel.test-runner :reload) (netcel.test-runner/run-all!)"
+clj-nrepl-eval -p <port> "(do (require 'eacl.datomic.impl.indexed-test :reload) (require 'eacl.spice-test :reload) (require 'eacl.datomic.schema-test :reload) (require 'eacl.datomic.config-test :reload) (require 'eacl.datomic.parser-test :reload) (clojure.test/run-tests 'eacl.datomic.impl.indexed-test 'eacl.spice-test 'eacl.datomic.schema-test 'eacl.datomic.config-test 'eacl.datomic.parser-test))"
 ```
 
 Run heavy benchmark/load tests (not part of regular suite):
 ```
-clj-nrepl-eval -p <port> "(require 'netcel.bench-test-runner :reload) (netcel.bench-test-runner/run-all!)"
+clj-nrepl-eval -p <port> "(do (require 'eacl.bench.pagination-test :reload) (clojure.test/run-tests 'eacl.bench.pagination-test))"
 ```
 
-Benchmark tests live under `test/bench/` and should be run only when explicitly validating performance/load behavior.
+Benchmark tests live under `test/eacl/bench/` and should be run only when explicitly validating performance/load behavior.
 
 If you hit `Alias ... already exists` in an nREPL session, run `ns-unalias` on that alias before re-requiring the namespace.
 
