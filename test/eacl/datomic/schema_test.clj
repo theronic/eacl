@@ -23,7 +23,7 @@
    }")
 
 (deftest eacl-schema-stable-ident-tests
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "we can transact Realtions & Permissions twice without datom conflicts after introduction of :eacl/id for Relation & Permission."
       (is @(d/transact conn fixtures/relations+permissions))
       (is @(d/transact conn fixtures/relations+permissions))
@@ -59,7 +59,7 @@
             :permissions [:retained :added]})))))
 
 (deftest write-schema-test
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "Initial schema write"
       (let [deltas (schema/write-schema! conn example-schema-string)
             db     (d/db conn)
@@ -122,7 +122,7 @@
   "Tests for ADR 012 requirement: 'Invalid schema should be rejected and no changes made.'"
 
   (testing "permission referencing non-existent relation is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition account {
                           permission admin = nonexistent_relation
@@ -131,7 +131,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "arrow permission with invalid target is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition account { relation owner: user }
                         definition server {
@@ -142,7 +142,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "self-permission referencing non-existent permission is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition server {
                           permission view = fake_permission
@@ -151,7 +151,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "arrow permission with missing source relation is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition account { relation owner: user }
                         definition server {
@@ -162,7 +162,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "valid schema is accepted"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [good-schema "definition user {}
                          definition platform { relation super_admin: user }
                          definition account {
@@ -180,7 +180,7 @@
 (deftest fixtures-schema-round-trip-test
   "Tests that fixtures.schema can be written and read back correctly.
    ADR 012 requirement: 'Rewrite the fixtures... to a new test/eacl/fixtures.schema file'"
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (let [schema-string (slurp "test/eacl/fixtures.schema")
           _             (schema/write-schema! conn schema-string)
           db            (d/db conn)

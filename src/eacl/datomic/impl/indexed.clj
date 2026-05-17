@@ -1475,24 +1475,6 @@
                 [])
      :path-results path-results}))
 
-(defn- lookup-eids-page
-  [result-type page-req eids-in-scan-order]
-  (let [{:keys [direction size bound]} page-req
-        realized (doall (take (inc size) eids-in-scan-order))
-        has-sentinel? (> (count realized) size)
-        page-results-in-scan-order (take size realized)
-        page-results (case direction
-                       :asc page-results-in-scan-order
-                       :desc (reverse page-results-in-scan-order))
-        items (lookup-items result-type page-results)]
-    (page-response {:items items
-                    :has-next? (case direction
-                                 :asc has-sentinel?
-                                 :desc (boolean bound))
-                    :has-previous? (case direction
-                                     :asc (boolean bound)
-                                     :desc has-sentinel?)})))
-
 (defn- lookup
   [db direction query]
   (let [{:keys [result-type-fn]} direction

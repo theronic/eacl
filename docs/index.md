@@ -255,7 +255,7 @@ Add the EACL dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install the latest EACL Datomic Schema:
-@(d/transact conn schema/v6-schema)
+@(d/transact conn schema/v7-schema)
 
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn

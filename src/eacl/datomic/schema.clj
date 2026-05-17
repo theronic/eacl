@@ -171,13 +171,7 @@
                      :db.type/keyword
                      :db.type/ref]
     :db/cardinality :db.cardinality/many
-    :db/index       true}
-
-   ])
-
-(def v6-schema
-  "Compatibility alias while tests and callers move to the v7 name."
-  v7-schema)
+    :db/index       true}])
 
 (defn count-relationships-using-relation
   "Counts v7 forward relationship tuples that reference the given relation."
