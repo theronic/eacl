@@ -27,7 +27,7 @@ Initial validation run on 2026-05-15 through project nREPL:
 - On an in-memory Datomic db, `d/entid` against `(d/as-of live-db old-basis-t)` can resolve an entity whose unique identity attribute was later retracted, while the live db returns nil. This confirms that stable pagination must coerce public ids against the token's `as-of` db.
 - In the same check, `(d/basis-t as-of-db)` returned the live db basis, not the historical `old-basis-t` used to construct the `as-of` db. Page-token creation must carry the decoded `page-basis-t` explicitly and must not recompute it from the `as-of` db value.
 - `(.id live-db)` and `(.id as-of-db)` were equal. Cache keys based only on database id cannot distinguish historical schema states; the schema fingerprint requirement is necessary.
-- `AGENTS.md` currently mentions `netcel.test-runner` and `netcel.bench-test-runner`, but Netcel is not part of this EACL repo. Treat those lines as stale/cross-project instructions for this work. EACL validation should use EACL namespaces only. The available focused suites load and pass through nREPL: `eacl.datomic.impl.indexed-test` ran 20 tests / 227 assertions, and `eacl.spice-test` ran 3 tests / 62 assertions.
+- `AGENTS.md` should use EACL test namespaces only. EACL validation should run through nREPL with `eacl.datomic.impl.indexed-test`, `eacl.spice-test`, `eacl.datomic.schema-test`, `eacl.datomic.config-test`, `eacl.datomic.parser-test`, and focused benchmark namespace `eacl.bench.pagination-test`.
 
 Post-upgrade validation on branch `eacl/reverse-pagination`:
 
@@ -758,7 +758,7 @@ This mirrors lookup pagination: correctness comes from the canonical merged orde
 (clojure.test/run-tests 'eacl.bench.pagination-test)
 ```
 
-- [ ] Do not use `netcel.*` runners for EACL. Netcel is a separate consumer/project and may have its own integration suite, but it is not the verification harness for this library.
+- [x] Use EACL nREPL test namespaces for this library; the benchmark harness is `eacl.bench.pagination-test`.
 - [ ] Update `test/eacl/bench/pagination_test.clj` to include backward pagination.
 - [ ] Add a benchmark that jumps backward from a deep page and verifies it does not re-scan from the beginning.
 - [x] Confirm no implementation path calls `sort` or eager `dedupe` on relationship index results.

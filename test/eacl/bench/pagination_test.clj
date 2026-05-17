@@ -12,6 +12,7 @@
             [eacl.core :as eacl]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.impl :as impl :refer [Relationship]]
+            [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :refer [->user ->account ->server ->team ->vpc ->platform]]))
@@ -54,6 +55,16 @@
 
      permission view = account->admin + team->admin + vpc->admin + shared_admin
      permission admin = account->admin + shared_admin
+   }")
+
+(def recursive-chain-schema-dsl
+  "definition user {}
+
+   definition account {
+     relation parent: account
+     relation reader: user
+
+     permission read = reader + parent->read
    }")
 
 (def basic-attrs
@@ -150,6 +161,33 @@
                      (tx-relationships (d/db conn)
                                        [(Relationship (->user :test/user1) :owner (->account [:eacl/id aid]))]))))
 
+    acl))
+
+(defn seed-recursive-chain!
+  [conn {:keys [chain-length unrelated-count]}]
+  (let [acl (spiceomic/make-client conn {:entity->object-id (fn [ent] (:eacl/id ent))
+                                         :object-id->ident  (fn [obj-id] [:eacl/id obj-id])})]
+    @(d/transact conn schema/v7-schema)
+    (eacl/write-schema! acl recursive-chain-schema-dsl)
+    @(d/transact conn
+                 (concat
+                  [{:db/id "user-1" :eacl/id "user-1"}]
+                  (for [n (range chain-length)]
+                    {:db/id (str "node-" n)
+                     :eacl/id (str "node-" n)})
+                  (for [n (range unrelated-count)]
+                    {:db/id (str "unrelated-" n)
+                     :eacl/id (str "unrelated-" n)})))
+    @(d/transact conn
+                 (concat
+                  (tx-relationships (d/db conn)
+                                    [(Relationship (->user "user-1") :reader (->account "node-0"))])
+                  (mapcat (fn [n]
+                            (tx-relationships (d/db conn)
+                                              [(Relationship (->account (str "node-" n))
+                                                             :parent
+                                                             (->account (str "node-" (inc n))))]))
+                          (range (dec chain-length)))))
     acl))
 
 ;; --- Timing utilities ---
@@ -383,3 +421,37 @@
                   ids2 (set (map :id (:data previous-page)))]
               (is (empty? (set/intersection ids1 ids2))
                   "Reverse pages should not have overlapping results"))))))))
+
+(deftest ^:benchmark recursive-traversal-prefix-benchmark
+  (testing "Recursive traversal pagination does reachable-prefix work, not candidate-universe work"
+    (with-mem-conn [conn []]
+      (let [acl (seed-recursive-chain! conn {:chain-length 250
+                                             :unrelated-count 2000})
+            base-query {:subject       (->user "user-1")
+                        :permission    :read
+                        :resource/type :account
+                        :first         25}
+            stats1 (atom {})
+            page1 (binding [impl.indexed/*recursive-traversal-stats* stats1]
+                    (with-redefs [impl.indexed/can? (fn [& _]
+                                                      (throw (ex-info "can? should not be called by recursive pagination" {})))]
+                      (eacl/lookup-resources acl base-query)))
+            stats2 (atom {})
+            page2 (binding [impl.indexed/*recursive-traversal-stats* stats2]
+                    (eacl/lookup-resources acl (assoc base-query
+                                                      :after (get-in page1 [:page-info :end-cursor]))))
+            previous (eacl/lookup-resources acl (-> base-query
+                                                    (dissoc :first :after)
+                                                    (assoc :last 25
+                                                           :before (get-in page2 [:page-info :start-cursor]))))]
+        (is (= 25 (count (:data page1))))
+        (is (= 25 (count (:data page2))))
+        (is (= (:data page1) (:data previous)))
+        (is (<= (:emitted-results @stats1) 26))
+        (is (< (:advanced-stream-datoms @stats1) 100)
+            "first page should not scan the unrelated candidate universe")
+        (is (> (:advanced-stream-datoms @stats2)
+               (:advanced-stream-datoms @stats1))
+            "second page replays a deeper traversal prefix")
+        (is (< (:advanced-stream-datoms @stats2) 200)
+            "second page work should still be bounded by the reachable prefix")))))

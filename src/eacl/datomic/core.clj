@@ -21,7 +21,7 @@
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
 (def ^:private page-token-prefix "eacl3_")
-(def ^:private page-token-version 3)
+(def ^:private page-token-version 4)
 (def ^:private default-page-token-ttl-seconds 300)
 (def ^:private secure-random (SecureRandom.))
 
@@ -252,11 +252,7 @@
                        :actual (:query-shape decoded)})))
     (when-not (= :stable (:basis decoded))
       (throw (ex-info "Unsupported page token basis." {:basis (:basis decoded)})))
-    (when-not (= (case op
-                   :read-relationships [:relationship-datom :asc]
-                   [:eid :asc])
-                 (:order decoded))
-      (throw (ex-info "Unsupported page token order." {:order (:order decoded)})))))
+    true))
 
 (defn- internal-page-query
   [query page-req decoded]
@@ -271,9 +267,6 @@
     (page-token opts
                 (cond-> {:op op
                          :query-shape query-shape
-                         :order (case op
-                                  :read-relationships [:relationship-datom :asc]
-                                  [:eid :asc])
                          :basis-t basis-t
                          :basis :stable
                          :edge edge}

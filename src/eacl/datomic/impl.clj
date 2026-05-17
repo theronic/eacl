@@ -175,41 +175,67 @@
        (or (nil? (:resource/relation filters))
            (= (:resource/relation filters) relation))))
 
+(defn- single-relation-hint
+  [relations]
+  (when (= 1 (count relations))
+    (let [relation (first relations)]
+      {:relation-eid (:db/id relation)
+       :subject-type (:eacl.relation/subject-type relation)
+       :resource-type (:eacl.relation/resource-type relation)})))
+
+(defn- forward-tuple-prefix
+  [filters relation-hint]
+  (let [subject-type (or (:subject/type filters) (:subject-type relation-hint))
+        relation-eid (:relation-eid relation-hint)
+        resource-type (or (:resource/type filters) (:resource-type relation-hint))]
+    (cond-> []
+      subject-type (conj subject-type)
+      (and subject-type relation-eid) (conj relation-eid)
+      (and subject-type relation-eid resource-type) (conj resource-type))))
+
+(defn- reverse-tuple-prefix
+  [filters relation-hint]
+  (let [resource-type (or (:resource/type filters) (:resource-type relation-hint))
+        relation-eid (:relation-eid relation-hint)
+        subject-type (or (:subject/type filters) (:subject-type relation-hint))]
+    (cond-> []
+      resource-type (conj resource-type)
+      (and resource-type relation-eid) (conj relation-eid)
+      (and resource-type relation-eid subject-type) (conj subject-type))))
+
 (defn- scan-plan
-  [db filters subject-eid resource-eid]
-  (cond
-    subject-eid
-    {:key :subject-forward
-     :index :eavt
-     :attr-eid (d/entid db forward-relationship-attr)
-     :fixed-eid subject-eid
-     :tuple-prefix (when-let [subject-type (:subject/type filters)]
-                     [subject-type])
-     :decode decode-forward-datom}
+  [db filters subject-eid resource-eid relations]
+  (let [relation-hint (single-relation-hint relations)]
+    (cond
+      subject-eid
+      {:key :subject-forward
+       :index :eavt
+       :attr-eid (d/entid db forward-relationship-attr)
+       :fixed-eid subject-eid
+       :tuple-prefix (not-empty (forward-tuple-prefix filters relation-hint))
+       :decode decode-forward-datom}
 
-    resource-eid
-    {:key :resource-reverse
-     :index :eavt
-     :attr-eid (d/entid db reverse-relationship-attr)
-     :fixed-eid resource-eid
-     :tuple-prefix (when-let [resource-type (:resource/type filters)]
-                     [resource-type])
-     :decode decode-reverse-datom}
+      resource-eid
+      {:key :resource-reverse
+       :index :eavt
+       :attr-eid (d/entid db reverse-relationship-attr)
+       :fixed-eid resource-eid
+       :tuple-prefix (not-empty (reverse-tuple-prefix filters relation-hint))
+       :decode decode-reverse-datom}
 
-    (:subject/type filters)
-    {:key :global-forward
-     :index :avet
-     :attr-eid (d/entid db forward-relationship-attr)
-     :tuple-prefix [(:subject/type filters)]
-     :decode decode-forward-datom}
+      (seq (forward-tuple-prefix filters relation-hint))
+      {:key :global-forward
+       :index :avet
+       :attr-eid (d/entid db forward-relationship-attr)
+       :tuple-prefix (forward-tuple-prefix filters relation-hint)
+       :decode decode-forward-datom}
 
-    :else
-    {:key :global-reverse
-     :index :avet
-     :attr-eid (d/entid db reverse-relationship-attr)
-     :tuple-prefix (when-let [resource-type (:resource/type filters)]
-                     [resource-type])
-     :decode decode-reverse-datom}))
+      :else
+      {:key :global-reverse
+       :index :avet
+       :attr-eid (d/entid db reverse-relationship-attr)
+       :tuple-prefix (not-empty (reverse-tuple-prefix filters relation-hint))
+       :decode decode-reverse-datom})))
 
 (defn- relationship-edge
   [scan-key datom]
@@ -304,7 +330,7 @@
 (defn- relationship-page
   [db relations filters subject-eid resource-eid]
   (let [{:keys [direction size bound]} (impl.indexed/normalize-page-request filters)
-        plan (scan-plan db filters subject-eid resource-eid)
+        plan (scan-plan db filters subject-eid resource-eid relations)
         relation-by-eid (into {}
                               (map (juxt :db/id :eacl.relation/relation-name))
                               relations)
