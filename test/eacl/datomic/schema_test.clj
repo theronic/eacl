@@ -29,6 +29,13 @@
       (is @(d/transact conn fixtures/relations+permissions))
       (is (schema/read-schema (d/db conn))))))
 
+(deftest schema-does-not-include-persisted-grants-test
+  (testing "recursive traversal does not require persisted effective grant attrs"
+    (let [idents (set (map :db/ident schema/v7-schema))]
+      (is (not (contains? idents :eacl.v7.grant/subject-type+permission+resource-type+resource)))
+      (is (not (contains? idents :eacl.v7.grant/resource-type+permission+subject-type+subject)))
+      (is (not (contains? idents :eacl.grant/indexed-node))))))
+
 (deftest eacl-schema-comparison-tests
   (testing "we can calculate additions & retractions"
     ; note we do not care about shape of set elements here.

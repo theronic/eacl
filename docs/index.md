@@ -21,7 +21,7 @@ Yes.
   - `eacl/write-relationships!` to create, update or delete relationships.
   - `eacl/write-schema!` to define your authorization schema using SpiceDB's schema DSL.
   - `eacl/read-schema` to retrieve the current schema.
-- EACL implements efficient cursor-based permission graph traversal for enumeration via `lookup-resources` & `lookup-subjects`. All results are returned in the order they are stored in at-rest (internal Datomic eids).
+- EACL implements efficient cursor-based enumeration via direct Datomic index traversal for acyclic permissions and deterministic traversal-order worklists for recursive permission closures. Acyclic lookup results use Datomic eid order; recursive lookup results use traversal order.
 - EACL has some limitations compared to SpiceDB: notably, EACL only support Union (`+`, i.e. OR-logic) permission logic. Negation can be emulated with multiple permission checks.
 - EACL is fast. Depending on the graph complexity of your permission schema, EACL should be good for at least 1M permissioned resources. There are low-hanging fruit to 10x performance even further, specifically via permission path caching and more sophisticated cursors.
 
@@ -38,14 +38,14 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 # What is EACL good for?
 
 - EACL is suitable for Clojure & Datomic Pro and Datomic Cloud applications.
-- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range` & `d/seek-datoms` to yield sub-millisecond results with cursor-based pagination.
+- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range`, `d/seek-datoms`, and `d/rseek-datoms` for acyclic paths, while recursive permission pagination uses deterministic traversal order with request-local dedupe instead of persisted grant caches.
 - EACL performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
 - EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> v7.1 is the current development version of EACL. Releases are not tagged yet, so pin the Git SHA.
 
 # What is SpiceDB?
 

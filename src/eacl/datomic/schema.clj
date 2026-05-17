@@ -171,7 +171,9 @@
                      :db.type/keyword
                      :db.type/ref]
     :db/cardinality :db.cardinality/many
-    :db/index       true}])
+    :db/index       true}
+
+   ])
 
 (def v6-schema
   "Compatibility alias while tests and callers move to the v7 name."
@@ -404,6 +406,7 @@
                      ;; Store schema string
                     [{:eacl/id            "schema-string"
                       :eacl/schema-string schema-string}])]
+      (impl.indexed/evict-permission-paths-cache!)
       @(d/transact conn tx-data)
       (impl.indexed/evict-permission-paths-cache!)
       deltas)))

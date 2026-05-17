@@ -24,25 +24,23 @@
     (testing "page-token round-trip preserves the encrypted pagination payload"
       (let [payload {:op :lookup-resources
                      :query-shape "shape"
-                     :order [:eid :asc]
                      :basis :stable
                      :basis-t 42
-                     :edge {:kind :lookup :result-eid 123}
+                     :edge {:kind :lookup-eid :result-eid 123}
                      :ttl-seconds 60}
             token (spiceomic/page-token opts payload)
             decoded (spiceomic/token->page-bound opts token)]
         (is (string? token))
         (is (.startsWith ^String token "eacl3_"))
         (is (= (dissoc payload :ttl-seconds)
-               (select-keys decoded [:op :query-shape :order :basis :basis-t :edge])))))
+               (select-keys decoded [:op :query-shape :basis :basis-t :edge])))))
 
     (testing "tokens use a fresh nonce for the same payload"
       (let [payload {:op :lookup-resources
                      :query-shape "shape"
-                     :order [:eid :asc]
                      :basis :stable
                      :basis-t 42
-                     :edge {:kind :lookup :result-eid 123}
+                     :edge {:kind :lookup-eid :result-eid 123}
                      :ttl-seconds 60}]
         (is (not= (spiceomic/page-token opts payload)
                   (spiceomic/page-token opts payload)))))
@@ -57,10 +55,9 @@
                            :page-token-keyring {:new (.getBytes "new-new-new-new-new-new-new-new-" "UTF-8")}}
             payload {:op :lookup-resources
                      :query-shape "shape"
-                     :order [:eid :asc]
                      :basis :stable
                      :basis-t 42
-                     :edge {:kind :lookup :result-eid 123}
+                     :edge {:kind :lookup-eid :result-eid 123}
                      :ttl-seconds 60}
             old-token (spiceomic/page-token old-opts payload)]
         (is (= (:edge payload)

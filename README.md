@@ -36,14 +36,14 @@ Situated AuthZ offers some advantages for typical use-cases:
 
 ## Performance
 
-- EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range`, `d/seek-datoms` & `d/rseek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are _always_ returned in the order they are stored at-rest, which is by internal Datomic eid.
+- EACL traverses acyclic ReBAC paths via low-level Datomic `d/index-range`, `d/seek-datoms` & `d/rseek-datoms` calls. Recursive permission closures use deterministic traversal order with request-local dedupe, avoiding both Datomic recursive Datalog materialization and persisted grant caches. Acyclic lookup results are returned in Datomic eid order; recursive lookup results are returned in traversal order.
   - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
 - EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - Presently, EACL has _no cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
-- Performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Parallel paths through the graph that return the same resources will slow EACL down, because these resources need to be deduplicated in stable order. In a simple graph, performance should approach `O(logN)` for N permissioned resources. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 *Note* that EACL v7.1 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
 
@@ -52,7 +52,7 @@ Situated AuthZ offers some advantages for typical use-cases:
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v7.1 is the current development version of EACL. It introduces the minor breaking pagination API change from `:cursor/:limit` to `:first/:after` and `:last/:before`. Releases are not tagged yet, so pin the Git SHA.
+> v7.1 is the current development version of EACL. It introduces the minor breaking pagination API change from `:cursor/:limit` to `:first/:after` and `:last/:before`. Recursive lookup pagination uses deterministic traversal order instead of global eid order. Releases are not tagged yet, so pin the Git SHA.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -130,6 +130,7 @@ All list APIs use the v7.1 pagination contract:
 - Backward: pass `:last` and optionally `:before`.
 - Responses include `:page-info` with `:start-cursor`, `:end-cursor`, `:has-next-page?`, and `:has-previous-page?`.
 - `:cursor` and `:limit` are no longer supported for list pagination.
+- Acyclic lookup cursors paginate in Datomic eid order. Recursive lookup cursors paginate in deterministic traversal order.
 
 ### Schema Maintenance
 
@@ -193,7 +194,7 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
    :before        (get-in page2 [:page-info :start-cursor])})
 ```
 
-Forward and backward pages return results in the same at-rest order. Backward pagination returns the previous window; it does not reverse the result order.
+Forward and backward pages return results in the same order for the query. Acyclic lookup uses Datomic eid order; recursive lookup uses deterministic traversal order. Backward pagination returns the previous window; it does not reverse the result order. Bare `:last` without `:before` is not supported for recursive lookup because it requires traversing the full closure.
 
 ## Quickstart
 
@@ -581,7 +582,7 @@ Now you can transact relationships:
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
 - *No cache:* EACL does not presently have a cache, because Datomic Peers cache datoms aggressively and queries so far are fast enough. A cache is planned.
-- *Return order:* Unlike SpiceDB, EACL enumerates subjects, resources and relationships in the order they are stored in at-rest, which is always by Datomic eid or relationship tuple order (note: not external ID). SpiceDB returns results in order of discovery or schema order. SpiceDB guarantees stable order, but the order is non-deterministic. You should not rely on this order when using EACL or SpiceDB.
+- *Return order:* Acyclic EACL lookups enumerate in Datomic eid order and relationship reads enumerate in tuple-index order. Recursive lookups enumerate in deterministic traversal order. SpiceDB returns results in discovery or schema order. You should not rely on either system's order as a domain sort order.
 
 ## How to Run All Tests
 

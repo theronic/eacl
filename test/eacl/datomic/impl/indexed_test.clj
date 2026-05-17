@@ -95,7 +95,7 @@
 
 (defn lookup-cursor
   [db eacl-id]
-  {:kind :lookup
+  {:kind :lookup-eid
    :result-eid (d/entid db [:eacl/id eacl-id])})
 
 (def ^:private forward-relationship-attr
@@ -117,6 +117,23 @@
      relation reader: user
 
      permission read = reader + parent->read
+   }")
+
+(def recursive-document-schema-string
+  "definition user {}
+
+   definition folder {
+     relation parent: folder
+     relation reader: user
+
+     permission read = reader + parent->read
+   }
+
+   definition document {
+     relation folder: folder
+     relation viewer: user
+
+     permission view = viewer + folder->read
    }")
 
 (defn- load-recursive-parent-db!
@@ -145,6 +162,52 @@
 (defn- recursive-account-ref
   [eacl-id]
   (spice-object :account [:eacl/id eacl-id]))
+
+(defn- load-recursive-document-db!
+  [conn]
+  (schema/write-schema! conn recursive-document-schema-string)
+  @(d/transact conn [{:db/id "user-1"
+                      :eacl/id "user-1"}
+                     {:db/id "root-folder"
+                      :eacl/id "root-folder"}
+                     {:db/id "child-folder"
+                      :eacl/id "child-folder"}
+                     {:db/id "doc-1"
+                      :eacl/id "doc-1"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :folder "root-folder") :parent (spice-object :folder "child-folder"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :folder "root-folder"))
+                      (Relationship (spice-object :folder "child-folder") :folder (spice-object :document "doc-1"))]))
+  (d/db conn))
+
+(defn- load-recursive-out-of-eid-order-db!
+  [conn]
+  (schema/write-schema! conn recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1"
+                      :eacl/id "user-1"}
+                     {:db/id "child"
+                      :eacl/id "child"}
+                     {:db/id "grandchild"
+                      :eacl/id "grandchild"}
+                     {:db/id "root"
+                      :eacl/id "root"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :account "root") :parent (spice-object :account "child"))
+                      (Relationship (spice-object :account "child") :parent (spice-object :account "grandchild"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :account "root"))]))
+  (d/db conn))
+
+(defn- thrown-ex-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo e
+      (ex-data e))))
 
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
@@ -1011,7 +1074,32 @@
                                      (lookup-subjects db {:resource     (recursive-account-ref "grandchild")
                                                           :permission   :read
                                                           :subject/type :user
-                                                          :first        100}))))))))
+                                                          :first        100})))))
+
+      (testing "recursive lookup-resources should page in deterministic traversal order"
+        (is (impl.indexed/traversal-permission? db :account :read))
+        (let [page1 (lookup-resources db {:subject       user
+                                          :permission    :read
+                                          :resource/type :account
+                                          :first         2})
+              page2 (lookup-resources db {:subject       user
+                                          :permission    :read
+                                          :resource/type :account
+                                          :first         2
+                                          :after         (page-end-cursor page1)})
+              previous (lookup-resources db {:subject       user
+                                             :permission    :read
+                                             :resource/type :account
+                                             :last          2
+                                             :before        (page-start-cursor page2)})]
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")]
+                 (paginated->spice db page1)))
+          (is (= [(spice-object :account "grandchild")]
+                 (paginated->spice db page2)))
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")]
+                 (paginated->spice db previous))))))))
 
 (deftest recursive-arrow-permission-lookup-resources-visited-state-test
   (with-mem-conn [conn schema/v6-schema]
@@ -1049,6 +1137,92 @@
                                                 :permission    :read
                                                 :resource/type :account})))))))))
 
+(deftest recursive-dependency-closure-traversal-tests
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db   (load-recursive-document-db! conn)
+          user (spice-object :user [:eacl/id "user-1"])]
+      (testing "acyclic roots that depend on recursive permissions should use traversal"
+        (is (impl.indexed/traversal-permission? db :folder :read))
+        (is (impl.indexed/traversal-permission? db :document :view))
+        (is (can? db user :view (spice-object :document [:eacl/id "doc-1"])))
+        (is (= [(spice-object :document "doc-1")]
+               (paginated->spice db
+                                 (lookup-resources db {:subject       user
+                                                       :permission    :view
+                                                       :resource/type :document
+                                                       :first         10}))))
+        (is (= 1 (:count (count-resources db {:subject       user
+                                              :permission    :view
+                                              :resource/type :document}))))))))
+
+(deftest recursive-traversal-pagination-contract-tests
+  (with-mem-conn [conn schema/v6-schema]
+    (let [db   (load-recursive-out-of-eid-order-db! conn)
+          user (recursive-user-ref "user-1")]
+      (testing "recursive lookup-resources uses traversal order, not global eid order"
+        (let [page (lookup-resources db {:subject       user
+                                         :permission    :read
+                                         :resource/type :account
+                                         :first         10})
+              eids (map :id (:data page))]
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")
+                  (spice-object :account "grandchild")]
+                 (paginated->spice db page)))
+          (is (not= (sort eids) eids))
+          (is (= :recursive-traversal (get-in page [:page-info :start-cursor :kind])))
+          (is (= 0 (get-in page [:page-info :start-cursor :ordinal])))))
+
+      (testing "recursive lookup does not call public can? while paging"
+        (with-redefs [impl.indexed/can? (fn [& _]
+                                          (throw (ex-info "can? should not be called by pagination" {})))]
+          (is (= 2 (count (:data (lookup-resources db {:subject       user
+                                                       :permission    :read
+                                                       :resource/type :account
+                                                       :first         2})))))))
+
+      (testing "bare recursive :last is rejected because it requires full traversal"
+        (is (= :eacl.pagination/unsupported-recursive-last
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-resources db {:subject       user
+                                        :permission    :read
+                                        :resource/type :account
+                                        :last          2}))))))
+
+      (testing "wrong cursor kind is rejected by recursive lookup"
+        (is (= :eacl.pagination/wrong-cursor-kind
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-resources db {:subject       user
+                                        :permission    :read
+                                        :resource/type :account
+                                        :first         2
+                                        :after         {:kind :lookup-eid
+                                                        :result-eid (d/entid db [:eacl/id "root"])}}))))))
+
+      (testing "recursive traversal guardrails throw typed errors"
+        (binding [impl.indexed/*recursive-traversal-limits* {:max-derived-grants 1
+                                                            :max-advanced-datoms 100
+                                                            :max-queued-work 100}]
+          (is (= :eacl.recursive-traversal/limit-exceeded
+                 (:eacl/error
+                  (thrown-ex-data
+                   #(lookup-resources db {:subject       user
+                                          :permission    :read
+                                          :resource/type :account
+                                          :first         10})))))))
+
+      (testing "recursive lookup-subjects rejects unsupported subject relation filters"
+        (is (= :eacl.pagination/unsupported-filter
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-subjects db {:resource         (recursive-account-ref "child")
+                                       :permission       :read
+                                       :subject/type     :user
+                                       :subject/relation :member
+                                       :first            10})))))))))
+
 ; uncommented because server :owner relation went away.
 ;(testing "Performance - early termination"
 ;  ;; Add multiple paths that grant the same permission
@@ -1071,7 +1245,6 @@
     @(d/transact *conn*
                  (impl/tx-relationship (d/db *conn*)
                                        (Relationship (->server :test/server1) :server-cycle (->account :test/account1))))
-
     (let [db' (d/db *conn*)]
       ;; This call will trigger the infinite recursion in get-permission-paths
       ;; when checking for :view on a :server. The expected behavior is an exception,
