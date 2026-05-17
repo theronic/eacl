@@ -45,14 +45,14 @@ Situated AuthZ offers some advantages for typical use-cases:
 - Presently, EACL has _no cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-*Note* that EACL v7.1 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
+*Note* that EACL v7.2 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
 
 ## Project Status
 
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v7.1 is the current development version of EACL. It introduces the minor breaking pagination API change from `:cursor/:limit` to `:first/:after` and `:last/:before`. Recursive lookup pagination uses deterministic traversal order instead of global eid order. Releases are not tagged yet, so pin the Git SHA.
+> v7.2 is the current development version of EACL. It includes the minor breaking pagination API change from `:cursor/:limit` to `:first/:after` and `:last/:before`, and introduces the recursive traversal engine. Recursive lookup pagination uses deterministic traversal order instead of global eid order. Releases are not tagged yet, so pin the Git SHA.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -124,7 +124,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
 
-All list APIs use the v7.1 pagination contract:
+All list APIs use the v7.2 pagination contract:
 
 - Forward: pass `:first` and optionally `:after`.
 - Backward: pass `:last` and optionally `:before`.

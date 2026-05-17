@@ -45,7 +45,7 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v7.1 is the current development version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> v7.2 is the current development version of EACL. It includes bidirectional cursor pagination and the recursive traversal engine. Releases are not tagged yet, so pin the Git SHA.
 
 # What is SpiceDB?
 
