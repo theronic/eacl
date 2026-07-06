@@ -36,13 +36,16 @@ Situated AuthZ offers some advantages for typical use-cases:
 
 ## Performance
 
-- EACL recursively traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources in the order they are stored at-rest. Results are _always_ returned in the order they stored in at-rest, which are internal Datomic eids.
-  - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
+- EACL traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources without materializing the full reachable closure.
+  - Non-recursive lookups retain the existing at-rest terminal-index ordering.
+  - Recursive `lookup-resources` uses a stable deterministic discovery order with exact deduplication across pages. It does not guarantee global eid ordering.
 - EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- Presently, EACL has _no cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
+- Presently, EACL has _no result cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
+- EACL does cache resolved *permission paths and query plans*. Invalidation is fully automatic for **all** schema writes — `write-schema!`, programmatic transactions, retractions, even excision — on every peer and for `d/as-of` views: cache keys carry a digest of the schema's history read from the db value being queried, so no writer-side signal or eviction call is required. The digest scan is O(all-time schema edits) once per db value (identity-memoized); if you continuously churn schema at high volume (an ops smell), expect that scan to grow linearly.
+- Recursive `lookup-resources` cursors carry the recursion state and grow ~48 bytes per emitted resource, because exact cross-page deduplication requires the emitted set. Prefer bounded pagination sessions on recursive schemas; a cursor-state redesign is planned.
 - Performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Parallel paths through the graph that return the same resources will slow EACL down, because these resources need to be deduplicated in stable order. In a simple graph, performance should approach `O(logN)` for N permissioned resources. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 *Note* that to retain future compatibility with the SpiceDB gRPC, the EACL Datomic client calls `(d/db conn)` on each API call, which means that if your DB changes inbetween EACL queries, you may see inconsistent results when cursor paginating. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
@@ -96,6 +99,19 @@ Choose only the adapter you need:
 - Datomic consumers need `cloudafrica/eacl-datomic` and keep the same public `require` forms.
 - DataScript consumers need `cloudafrica/eacl-datascript`.
 - Core-only consumers can depend on `cloudafrica/eacl`.
+
+### Breaking behavior changes (2026-07, audit root-cause fixes)
+
+All of these convert silent failures into correct behavior or loud, typed errors. Storage and token formats are unchanged; valid configurations and schemas work unmodified. Full details in [docs/reports/2026-07-06-eacl-full-source-audit.md](docs/reports/2026-07-06-eacl-full-source-audit.md).
+
+- `write-schema!` now **throws** on unparseable schema strings (previously a parse failure silently retracted the entire stored schema), on duplicate `definition`/relation declarations, and when replacing a non-empty schema with zero definitions (opt out with `{:allow-empty-schema? true}`). `//` and `/* */` comments are now supported.
+- Arrow targets are validated against **all** subject types of the source relation (previously order-dependent: only the last-declared type was checked).
+- Reads with unknown object IDs return **empty results** (previously `read-relationships` returned *all* relationships — a data leak — and lookups threw `AssertionError`s); writes throw `{:type :eacl/unknown-object}`.
+- `make-client` throws `{:type :eacl/invalid-config}` on unknown option keys (previously silently ignored, so a typo'd ID-coercion config silently fell back to `:eacl/id`).
+- Expired/corrupt cursor tokens throw `{:type :eacl/invalid-cursor}` (previously decoded to nil and silently restarted pagination at page one). Tokens no longer expire by default; opt in with `:cursor-ttl-seconds`. Cursors detect mid-pagination schema changes with `{:type :eacl/stale-cursor}`.
+- `impl/tx-relationship` requires `{:allow-tempids? true}` to treat unresolvable string IDs as tempids (previously a typo'd ID silently created a ghost entity).
+- Dead v6-era namespaces were removed (`eacl.datomic.rules*`, `eacl.datomic.impl.datalog`, and `eacl.datomic.impl.base/Relationship`, which emitted attributes absent from the v7 schema).
+
 
 ## ReBAC: Relationship-based Access Control
 
@@ -155,6 +171,7 @@ The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/
 ### Queries
 
 - `(eacl/can? acl subject permission resource) => true | false`
+- Query maps may include `:max-depth`, which defaults to `50` for recursive permission evaluation.
 - `(eacl/lookup-subjects acl filters) => {:data [subjects...], cursor 'next-cursor}`
 - `(eacl/lookup-resources acl filters) => {:data [resources...], :cursor 'next-cursor}`.
 - `(eacl/count-resources acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterative counting. Use sparingly with `:limit -1` for all results.
@@ -214,7 +231,11 @@ To query the next page, simply pass the `cursor` from page1 into the next query:
            {:type :server :id "server-5"}]}
 ```
 
-The return order of resources from `lookup-resources` is stable and sorted by internal resource ID.
+The return order of `lookup-resources` is stable for a fixed DB basis and cursor.
+
+- Non-recursive lookups are typically returned in internal resource ID order because that is the order of the terminal tuple indices.
+- Recursive lookups are returned in stable deterministic discovery order with exact deduplication across pages.
+- Recursive queries can supply `:max-depth`; exceeding that depth raises a typed runtime error instead of silently truncating results.
 
 ## Datomic Quickstart
 
@@ -538,6 +559,15 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
             :object-id->ident (fn [obj-id] obj-id)}))
 ```
 
+`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` instead of being silently ignored (a silently dropped ID-coercion key means silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) remains supported as a deprecated alias for `:entid->object-id`; supplying both throws. You can also pass `:cursor-ttl-seconds` to give pagination cursor tokens an expiry — by default tokens never expire, and an expired or corrupt token throws `{:type :eacl/invalid-cursor}` rather than silently restarting from page one.
+
+### Unknown object IDs
+
+EACL follows SpiceDB semantics for object IDs that don't resolve to an entity:
+
+- **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups return empty pages, `read-relationships` returns `[]`.
+- **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
+
 ## Schema Syntax
 
 EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema:
@@ -610,24 +640,24 @@ This schema defines:
 - `server` resources belong to an `account` and can have `shared_admin` users, with `reboot` permission granted to account admins and shared_admins
 ```
 
-Now you can transact relationships:
+Now you can transact relationships. The usual way is `eacl/create-relationships!` against existing entities (see Quickstart). To create entities and relationships **in the same transaction**, use `eacl.datomic.impl/tx-relationship` with `{:allow-tempids? true}` — tempid pass-through is opt-in because a typo'd ID would otherwise silently create a ghost entity:
 
 ```clojure
-@(d/transact conn
-  [{:db/id     "platform-tempid"
-    :eacl/id   "my-platform"}
-   
-   {:db/id     "user1-tempid"
-    :eacl/id   "user1"}
+(require '[eacl.datomic.impl :as impl])
 
-   {:db/id     "account1-tempid"
-    :eacl/id   "account1"}
+(let [db (d/db conn)]
+  @(d/transact conn
+    (concat
+      [{:db/id   "user1-tempid"
+        :eacl/id "user1"}
 
-   (Relationship "platform-tempid" :platform "account1-tempid")
-   (Relationship "user1-tempid" :owner "account1-tempid")])
+       {:db/id   "account1-tempid"
+        :eacl/id "account1"}]
+
+      (impl/tx-relationship db
+        (impl/Relationship (spice-object :user "user1-tempid") :owner (spice-object :account "account1-tempid"))
+        {:allow-tempids? true}))))
 ```
-
-(I'm using tempids in example because entities are defined in same tx as relationships)
 
 ## Limitations, Deficiencies & Gotchas:
 

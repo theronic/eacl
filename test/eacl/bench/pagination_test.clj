@@ -62,7 +62,8 @@
 
 (defn- tx-relationships
   [db relationships]
-  (mapcat #(impl/tx-relationship db %) relationships))
+  ; :allow-tempids? because entities are created in the same transaction.
+  (mapcat #(impl/tx-relationship db % {:allow-tempids? true}) relationships))
 
 ;; --- Seeding ---
 
