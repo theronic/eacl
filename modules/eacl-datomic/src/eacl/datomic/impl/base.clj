@@ -9,17 +9,8 @@
 (def ->permission-id model/->permission-id)
 (def Permission model/Permission)
 
-(defn Relationship
-  "A Relationship between a subject and a resource via Relation. Copied from core2."
-  [subject relation-name resource]
-  ; :pre can be expensive.
-  {:pre [(:id subject)
-         (:type subject)
-         (keyword? relation-name)
-         (:id resource)
-         (:type resource)]}
-  {:eacl.relationship/resource-type (:type resource)
-   :eacl.relationship/resource      (:id resource)
-   :eacl.relationship/relation-name relation-name
-   :eacl.relationship/subject-type  (:type subject)
-   :eacl.relationship/subject       (:id subject)})
+;; NOTE: the v6-era `Relationship` fn (emitting :eacl.relationship/* entity
+;; attrs) was removed: those attributes do not exist in the v7 Datomic schema,
+;; so any transact of its output failed with :db.error/not-an-entity. Use
+;; eacl.datomic.impl/Relationship (data) + eacl.datomic.impl/tx-relationship
+;; (tx-data) instead.

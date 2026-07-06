@@ -2,7 +2,9 @@
   (:require [eacl.backend.spi :as spi]
             [eacl.core :refer [spice-object]]
             [eacl.lazy-merge-sort :as lazy-sort]
-            #?@(:clj [[clojure.tools.logging :as log]])))
+            #?@(:clj [[clojure.tools.logging :as log]]
+                :cljs [[goog.crypt :as gcrypt]]))
+  #?(:cljs (:import [goog.crypt Sha256])))
 
 (defn- warn
   [message data]
@@ -19,6 +21,44 @@
 (defn permission-paths-cache-key
   [backend resource-type permission-name]
   [(spi/cache-stamp backend) resource-type permission-name])
+
+(defn fingerprint-digest
+  "128-bit hex digest of a value's printed representation. Used for cursor
+  fingerprints; compared only within a single runtime."
+  [x]
+  #?(:clj
+     (let [md (java.security.MessageDigest/getInstance "SHA-256")]
+       (.update md (.getBytes ^String (pr-str x) "UTF-8"))
+       (format "%032x" (java.math.BigInteger. 1 (java.util.Arrays/copyOf (.digest md) 16))))
+     :cljs
+     (let [sha (Sha256.)]
+       (.update sha (gcrypt/stringToUtf8ByteArray (pr-str x)))
+       (gcrypt/byteArrayToHex (.slice (.digest sha) 0 16)))))
+
+(defn cursor-fingerprint
+  "Two-part cursor fingerprint: :s is the backend's cache stamp at mint time
+  (the schema-basis analog), :p digests this query's resolved paths."
+  [backend paths]
+  {:s (spi/cache-stamp backend)
+   :p (fingerprint-digest paths)})
+
+(defn check-cursor-fingerprint!
+  "Guards cursor resumption against schema changes. An equal cache stamp means
+  the schema (as the backend tracks it) is unchanged, so the cursor resumes on
+  the fast path. A differing/absent stamp falls back to comparing this query's
+  resolved paths: equal means the change did not affect this query; different
+  throws :eacl/stale-cursor instead of silently mis-skipping via reordered :p
+  path indices. Cursors minted before fingerprints existed are accepted with
+  a warning."
+  [backend cursor paths]
+  (when (map? cursor)
+    (if-let [f (:f cursor)]
+      (let [current-s (spi/cache-stamp backend)]
+        (when-not (and (some? (:s f)) (= (:s f) current-s))
+          (when-not (= (:p f) (fingerprint-digest paths))
+            (throw (ex-info "Stale cursor: the permission paths for this query changed since the cursor was minted. Restart pagination."
+                     {:type :eacl/stale-cursor})))))
+      (warn "Cursor without a schema fingerprint accepted (minted before fingerprints existed)." {}))))
 
 (defn evict-permission-paths-cache!
   [cache-atom]
@@ -445,8 +485,10 @@
 
 (defn lookup
   [backend direction get-permission-paths-fn query]
-  (let [{:keys [result-type-fn v1-cursor-key]} direction
+  (let [{:keys [result-type-fn v1-cursor-key perm-type-fn]} direction
         {:keys [limit cursor] :or {limit 1000}} query
+        paths       (get-permission-paths-fn backend (perm-type-fn query) (:permission query))
+        _           (check-cursor-fingerprint! backend cursor paths)
         {:keys [results path-results]} (lazy-merged-lookup backend direction get-permission-paths-fn query)
         limited-results (if (>= limit 0)
                           (take limit results)
@@ -455,11 +497,15 @@
         items       (doall (map #(spice-object result-type %) limited-results))
         last-id     (:id (last items))]
     {:data items
-     :cursor (build-v2-cursor cursor last-id path-results v1-cursor-key)}))
+     :cursor (assoc (build-v2-cursor cursor last-id path-results v1-cursor-key)
+                    :f (cursor-fingerprint backend paths))}))
 
 (defn count-results
   [backend direction get-permission-paths-fn query default-v1-key]
   (let [{:keys [limit cursor] :or {limit -1}} query
+        perm-type-fn (:perm-type-fn direction)
+        paths   (get-permission-paths-fn backend (perm-type-fn query) (:permission query))
+        _       (check-cursor-fingerprint! backend cursor paths)
         {:keys [results path-results]} (lazy-merged-lookup backend direction get-permission-paths-fn query)
         limited-results (if (>= limit 0)
                           (take limit results)
@@ -468,4 +514,5 @@
         last-id (last counted)]
     {:count (count counted)
      :limit limit
-     :cursor (build-v2-cursor cursor last-id path-results default-v1-key)}))
+     :cursor (assoc (build-v2-cursor cursor last-id path-results default-v1-key)
+                    :f (cursor-fingerprint backend paths))}))

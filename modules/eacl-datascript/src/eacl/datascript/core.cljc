@@ -27,10 +27,10 @@
       (cond-> cursor
         (:e cursor) (update :e #(entid->object-id db %))
         (:p cursor) (update :p
-                       (fn [p]
-                         (into {}
-                           (map (fn [[k v]] [k (entid->object-id db v)]))
-                           p))))
+                            (fn [p]
+                              (into {}
+                                    (map (fn [[k v]] [k (entid->object-id db v)]))
+                                    p))))
       :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(entid->object-id db %) cursor)
@@ -49,10 +49,10 @@
       (cond-> cursor
         (:e cursor) (update :e #(object-id->entid db %))
         (:p cursor) (update :p
-                       (fn [p]
-                         (into {}
-                           (map (fn [[k v]] [k (object-id->entid db v)]))
-                           p))))
+                            (fn [p]
+                              (into {}
+                                    (map (fn [[k v]] [k (object-id->entid db v)]))
+                                    p))))
       :else
       (cond
         (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
@@ -88,22 +88,22 @@
                        subject-id (assoc :subject/id subject-eid)
                        resource-id (assoc :resource/id resource-eid))
             filters'' (S/transform [:cursor]
-                        (fn [token-or-cursor]
-                          (some->> (token->cursor token-or-cursor)
-                                   (spice-cursor->internal db opts)))
-                        filters')
+                                   (fn [token-or-cursor]
+                                     (some->> (token->cursor token-or-cursor opts)
+                                              (spice-cursor->internal db opts)))
+                                   filters')
             result    (impl/read-relationships db filters'')]
         (-> result
             ((fn [page]
                (S/transform [:data S/ALL]
-                 #(relationship->spice db opts %)
-                 page)))
+                            #(relationship->spice db opts %)
+                            page)))
             ((fn [page]
                (S/transform [:cursor]
-                 (fn [internal-cursor]
-                   (some->> (internal-cursor->spice db opts internal-cursor)
-                            cursor->token))
-                 page))))))))
+                            (fn [internal-cursor]
+                              (some-> (internal-cursor->spice db opts internal-cursor)
+                                      (cursor->token opts)))
+                            page))))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -116,10 +116,10 @@
   (let [db      (ds/db conn)
         tx-stamp (:tx-stamp opts)
         tx-data (->> updates
-                  (S/transform [S/ALL :relationship]
-                    #(spice-relationship->internal db opts %))
-                  (mapcat #(impl/tx-update-relationship db %))
-                  (remove nil?))]
+                     (S/transform [S/ALL :relationship]
+                                  #(spice-relationship->internal db opts %))
+                     (mapcat #(impl/tx-update-relationship db %))
+                     (remove nil?))]
     (when (seq tx-data)
       (ds/transact! conn tx-data))
     {:zed/token (str @tx-stamp)}))
@@ -132,8 +132,10 @@
 
 (defn datascript-can?
   [db {:keys [object->entid] :as opts} subject permission resource consistency]
-  (assert (= consistency/fully-consistent consistency)
-    "EACL only supports consistency/fully-consistent at this time.")
+  (when-not (= consistency/fully-consistent consistency)
+    (throw (ex-info "EACL only supports consistency/fully-consistent at this time."
+                    {:type :eacl/unsupported-consistency
+                     :consistency consistency})))
   (let [subject-type (:type subject)
         subject-id   (object->entid db subject)
         resource-type (:type resource)
@@ -141,10 +143,10 @@
     (if-not (and subject-id resource-id)
       false
       (impl/can? db
-        opts
-        (spice-object subject-type subject-id)
-        permission
-        (spice-object resource-type resource-id)))))
+                 opts
+                 (spice-object subject-type subject-id)
+                 permission
+                 (spice-object resource-type resource-id)))))
 
 (defn datascript-lookup-resources
   [db
@@ -156,24 +158,23 @@
            spice-cursor->internal]}
    {:as query :keys [subject]}]
   (let [internal-subject (spice-object->internal db subject)]
-    (assert (:id internal-subject)
-      (str "subject " (pr-str subject)
-           " passed to lookup-resources does not exist with lookup ref "
-           (object-id->lookup-ref (:id subject))))
-    (->> query
-      (S/setval [:subject] internal-subject)
-      (S/transform [:cursor]
-        (fn [token-or-cursor]
-          (some->> (token->cursor token-or-cursor)
-            (spice-cursor->internal db opts))))
-      (impl/lookup-resources db opts)
-      (S/transform [:data S/ALL]
-        (fn [{:keys [type id]}]
-          (spice-object type (entid->object-id db id))))
-      (S/transform [:cursor]
-        (fn [internal-cursor]
-          (some->> (internal-cursor->spice db opts internal-cursor)
-            cursor->token))))))
+    (if (nil? (:id internal-subject))
+      ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
+      {:data [] :cursor nil}
+      (->> query
+           (S/setval [:subject] internal-subject)
+           (S/transform [:cursor]
+                        (fn [token-or-cursor]
+                          (some->> (token->cursor token-or-cursor opts)
+                                   (spice-cursor->internal db opts))))
+           (impl/lookup-resources db opts)
+           (S/transform [:data S/ALL]
+                        (fn [{:keys [type id]}]
+                          (spice-object type (entid->object-id db id))))
+           (S/transform [:cursor]
+                        (fn [internal-cursor]
+                          (some-> (internal-cursor->spice db opts internal-cursor)
+                                  (cursor->token opts))))))))
 
 (defn datascript-count-resources
   [db
@@ -184,16 +185,16 @@
    {:as query :keys [subject]}]
   (let [subject-ent (spice-object->internal db subject)]
     (->> query
-      (S/setval [:subject] subject-ent)
-      (S/transform [:cursor]
-        (fn [token-or-cursor]
-          (some->> (token->cursor token-or-cursor)
-            (spice-cursor->internal db opts))))
-      (impl/count-resources db opts)
-      (S/transform [:cursor]
-        (fn [internal-cursor]
-          (some->> (internal-cursor->spice db opts internal-cursor)
-            cursor->token))))))
+         (S/setval [:subject] subject-ent)
+         (S/transform [:cursor]
+                      (fn [token-or-cursor]
+                        (some->> (token->cursor token-or-cursor opts)
+                                 (spice-cursor->internal db opts))))
+         (impl/count-resources db opts)
+         (S/transform [:cursor]
+                      (fn [internal-cursor]
+                        (some-> (internal-cursor->spice db opts internal-cursor)
+                                (cursor->token opts)))))))
 
 (defn datascript-lookup-subjects
   [db
@@ -204,19 +205,19 @@
            internal-cursor->spice]}
    query]
   (->> query
-    (S/transform [:resource] #(spice-object->internal db %))
-    (S/transform [:cursor]
-      (fn [token-or-cursor]
-        (some->> (token->cursor token-or-cursor)
-          (spice-cursor->internal db opts))))
-    (impl/lookup-subjects db opts)
-    (S/transform [:data S/ALL]
-      (fn [{:keys [type id]}]
-        (spice-object type (entid->object-id db id))))
-    (S/transform [:cursor]
-      (fn [internal-cursor]
-        (some->> (internal-cursor->spice db opts internal-cursor)
-          cursor->token)))))
+       (S/transform [:resource] #(spice-object->internal db %))
+       (S/transform [:cursor]
+                    (fn [token-or-cursor]
+                      (some->> (token->cursor token-or-cursor opts)
+                               (spice-cursor->internal db opts))))
+       (impl/lookup-subjects db opts)
+       (S/transform [:data S/ALL]
+                    (fn [{:keys [type id]}]
+                      (spice-object type (entid->object-id db id))))
+       (S/transform [:cursor]
+                    (fn [internal-cursor]
+                      (some-> (internal-cursor->spice db opts internal-cursor)
+                              (cursor->token opts))))))
 
 (defn datascript-count-subjects
   [db
@@ -226,16 +227,16 @@
            internal-cursor->spice]}
    query]
   (->> query
-    (S/transform [:resource] #(spice-object->internal db %))
-    (S/transform [:cursor]
-      (fn [token-or-cursor]
-        (some->> (token->cursor token-or-cursor)
-          (spice-cursor->internal db opts))))
-    (impl/count-subjects db opts)
-    (S/transform [:cursor]
-      (fn [internal-cursor]
-        (some->> (internal-cursor->spice db opts internal-cursor)
-          cursor->token)))))
+       (S/transform [:resource] #(spice-object->internal db %))
+       (S/transform [:cursor]
+                    (fn [token-or-cursor]
+                      (some->> (token->cursor token-or-cursor opts)
+                               (spice-cursor->internal db opts))))
+       (impl/count-subjects db opts)
+       (S/transform [:cursor]
+                    (fn [internal-cursor]
+                      (some-> (internal-cursor->spice db opts internal-cursor)
+                              (cursor->token opts))))))
 
 (defrecord DataScriptAuthorization [conn opts]
   IAuthorization
@@ -245,7 +246,7 @@
     (datascript-can? (ds/db conn) opts subject permission resource consistency))
   (can? [_ {:keys [subject permission resource consistency]}]
     (datascript-can? (ds/db conn) opts subject permission resource
-      (or consistency consistency/fully-consistent)))
+                     (or consistency consistency/fully-consistent)))
 
   (read-schema [_]
     (schema/read-schema (ds/db conn)))
@@ -258,34 +259,34 @@
     (datascript-write-relationships! conn opts updates))
   (write-relationship! [_ operation subject relation resource]
     (datascript-write-relationships! conn opts
-      [(->RelationshipUpdate operation
-         (->Relationship subject relation resource))]))
+                                     [(->RelationshipUpdate operation
+                                                            (->Relationship subject relation resource))]))
   (write-relationship! [_ {:as demand :keys [operation subject relation resource]}]
     (datascript-write-relationships! conn opts
-      [(->RelationshipUpdate operation
-         (->Relationship subject relation resource))]))
+                                     [(->RelationshipUpdate operation
+                                                            (->Relationship subject relation resource))]))
   (create-relationships! [_ relationships]
     (datascript-write-relationships! conn opts
-      (for [rel relationships]
-        (->RelationshipUpdate :create rel))))
+                                     (for [rel relationships]
+                                       (->RelationshipUpdate :create rel))))
   (create-relationship! [_ relationship]
     (datascript-write-relationships! conn opts
-      [(->RelationshipUpdate :create relationship)]))
+                                     [(->RelationshipUpdate :create relationship)]))
   (create-relationship! [_ subject relation resource]
     (datascript-write-relationships! conn opts
-      [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
+                                     [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
   (delete-relationships! [_ relationships]
     (datascript-write-relationships! conn opts
-      (for [rel (relationship-seq relationships)]
-        (->RelationshipUpdate :delete rel))))
+                                     (for [rel (relationship-seq relationships)]
+                                       (->RelationshipUpdate :delete rel))))
   (delete-relationship! [_ {:as relationship :keys [subject relation resource]}]
     (datascript-write-relationships! conn opts
-      [(->RelationshipUpdate :delete
-         (->Relationship subject relation resource))]))
+                                     [(->RelationshipUpdate :delete
+                                                            (->Relationship subject relation resource))]))
   (delete-relationship! [_ subject relation resource]
     (datascript-write-relationships! conn opts
-      [(->RelationshipUpdate :delete
-         (->Relationship subject relation resource))]))
+                                     [(->RelationshipUpdate :delete
+                                                            (->Relationship subject relation resource))]))
 
   (lookup-resources [_ query]
     (datascript-lookup-resources (ds/db conn) opts query))
@@ -297,7 +298,9 @@
     (datascript-count-subjects (ds/db conn) opts query))
 
   (expand-permission-tree [_ _]
-    (throw (ex-info "not impl." {}))))
+    (throw (ex-info "expand-permission-tree is not implemented yet."
+                    {:type :eacl/not-implemented
+                     :method (quote expand-permission-tree)}))))
 
 (defonce runtime-state-registry (atom {}))
 
@@ -325,14 +328,14 @@
                  :schema-catalog (atom nil)
                  :listener-key (keyword (str "eacl-stamp-" (random-uuid)))}]
       (ds/listen! conn
-        (:listener-key state)
-        (fn [tx-report]
-          (swap! (:tx-stamp state) inc)
-          (when (schema-transaction? tx-report)
-            (reset-schema-derived-state! state))))
+                  (:listener-key state)
+                  (fn [tx-report]
+                    (swap! (:tx-stamp state) inc)
+                    (when (schema-transaction? tx-report)
+                      (reset-schema-derived-state! state))))
       (get (swap! runtime-state-registry
-             #(if (contains? % conn) % (assoc % conn state)))
-        conn))))
+                  #(if (contains? % conn) % (assoc % conn state)))
+           conn))))
 
 (defn- ensure-schema-catalog!
   [state db]
@@ -349,21 +352,52 @@
                         :catalog      catalog})))
             :catalog)))))
 
+(def ^:private known-client-opt-keys
+  #{:entid->object-id
+    :entity->object-id
+    :object-id->lookup-ref
+    :internal-cursor->spice
+    :spice-cursor->internal
+    :cursor-ttl-seconds})
+
 (defn make-client
+  "Builds an IAuthorization client over a DataScript conn.
+
+  Options (unknown keys throw :eacl/invalid-config - a silently ignored key
+  means silently wrong ID coercion, audit 5):
+  - :entid->object-id  (fn [db eid] external-id) - canonical.
+  - :entity->object-id (fn [entity] external-id) - deprecated alias; do not combine.
+  - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
+  - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
+  - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn
-   {:keys [entity->object-id
+   {:as   config-opts
+    :keys [entid->object-id
+           entity->object-id
            object-id->lookup-ref
            internal-cursor->spice
-           spice-cursor->internal]
-    :or   {entity->object-id      (fn [ent] (:eacl/id ent))
-           object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
+           spice-cursor->internal
+           cursor-ttl-seconds]
+    :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
+  (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
+    (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
+                         ". Known options: " (pr-str (vec (sort known-client-opt-keys))) ".")
+                    {:type :eacl/invalid-config
+                     :unknown-keys (vec unknown-keys)
+                     :known-keys known-client-opt-keys})))
+  (when (and entid->object-id entity->object-id)
+    (throw (ex-info "EACL Config Error: supply only one of :entid->object-id (canonical) or :entity->object-id (deprecated alias)."
+                    {:type :eacl/invalid-config
+                     :conflicting-keys [:entid->object-id :entity->object-id]})))
   (let [runtime-state   (ensure-runtime-state! conn)
         object-id->entid (fn [db object-id]
                            (ds/entid db (object-id->lookup-ref object-id)))
-        entid->object-id (fn [db eid]
-                           (entity->object-id (ds/entity db eid)))
+        entid->object-id (or entid->object-id
+                             (when entity->object-id
+                               (fn [db eid] (entity->object-id (ds/entity db eid))))
+                             (fn [db eid] (:eacl/id (ds/entity db eid))))
         opts             {:object-id->lookup-ref object-id->lookup-ref
                           :cache-stamp (fn []
                                          [(:conn-id runtime-state)
@@ -373,8 +407,8 @@
                           :schema-catalog (fn [db]
                                             (ensure-schema-catalog! runtime-state db))
                           :entid->object-id entid->object-id
-                          :entity->object-id entity->object-id
                           :object-id->entid object-id->entid
+                          :cursor-ttl-seconds cursor-ttl-seconds
                           :object->entid (fn [db {:keys [id]}]
                                            (object-id->entid db id))
                           :internal-object->spice (fn [db {:keys [type id]}]

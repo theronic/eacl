@@ -131,7 +131,7 @@
                                   :eacl.relation/relation-name]) ...]
           :where
           [?relation :eacl.relation/relation-name]]
-    db))
+        db))
 
 (defn read-permissions
   [db]
@@ -143,7 +143,7 @@
                               :eacl.permission/target-name]) ...]
           :where
           [?perm :eacl.permission/permission-name]]
-    db))
+        db))
 
 (defn read-schema
   [db & [_format]]
@@ -155,45 +155,70 @@
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
+  "Counts relationships that reference the given relation, exactly.
+  Scans the forward-partial index whose leading components are
+  [subject-type relation]; a range over the forward index with varying middle
+  components would span other relations of the same subject-type and overcount."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   (let [relation-id  (str "eacl.relation:" resource-type ":" relation-name ":" subject-type)
         relation-eid (ds/entid db [:eacl/id relation-id])]
     (if-not relation-eid
       0
-      (count
-       (ds/index-range db
-         forward-relationship-attr
-         [subject-type 0 relation-eid resource-type 0]
-         [subject-type max-entid relation-eid resource-type max-entid])))))
+      ;; nil-padded to full tuple arity: DataScript sorts vectors length-first.
+      (->> (ds/seek-datoms db :avet
+                           forward-partial-relationship-attr
+                           [subject-type relation-eid nil nil nil])
+           (take-while (fn [datom]
+                         (and (= forward-partial-relationship-attr (:a datom))
+                              (let [v (:v datom)]
+                                (and (= subject-type (nth v 0))
+                                     (= relation-eid (nth v 1)))))))
+           (count)))))
 
 (defn write-schema!
-  [conn schema-string]
-  (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
-        _               (validate-schema-references new-schema-map)
-        db              (ds/db conn)
-        existing-schema (read-schema db)
-        deltas          (compare-schema existing-schema new-schema-map)
-        {:keys [relations permissions]} deltas
-        relation-retractions   (:retractions relations)
-        permission-retractions (:retractions permissions)]
-    (doseq [rel relation-retractions]
-      (let [cnt (count-relationships-using-relation db rel)]
-        (when (pos? cnt)
-          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                            " because it is used by " cnt " relationships.")
-                   {:relation rel :count cnt})))))
-    (ds/transact! conn
-      (concat
-       (:additions relations)
-       (:additions permissions)
-       (for [rel relation-retractions
-             :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
-             :when eid]
-         [:db/retractEntity eid])
-       (for [perm permission-retractions
-             :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
-             :when eid]
-         [:db/retractEntity eid])
-       [{:eacl/id "schema-string"
-         :eacl/schema-string schema-string}]))
-    deltas))
+  "Parses, validates, diffs and transacts a SpiceDB schema string.
+  Throws :eacl.schema/parse-error on unparseable input (a failed parse must
+  never retract the stored schema) and :eacl.schema/empty-schema-guard when the
+  new schema has zero definitions while a non-empty schema is stored; pass
+  {:allow-empty-schema? true} to wipe intentionally."
+  ([conn schema-string]
+   (write-schema! conn schema-string {}))
+  ([conn schema-string {:keys [allow-empty-schema?]}]
+   (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
+         _               (validate-schema-references new-schema-map)
+         db              (ds/db conn)
+         existing-schema (read-schema db)
+         _               (when (and (empty? (:definitions new-schema-map))
+                                    (not allow-empty-schema?)
+                                    (or (seq (:relations existing-schema))
+                                        (seq (:permissions existing-schema))))
+                           (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
+                                                " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+                                           {:type :eacl.schema/empty-schema-guard
+                                            :existing {:relations (count (:relations existing-schema))
+                                                       :permissions (count (:permissions existing-schema))}})))
+         deltas          (compare-schema existing-schema new-schema-map)
+         {:keys [relations permissions]} deltas
+         relation-retractions   (:retractions relations)
+         permission-retractions (:retractions permissions)]
+     (doseq [rel relation-retractions]
+       (let [cnt (count-relationships-using-relation db rel)]
+         (when (pos? cnt)
+           (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                                " because it is used by " cnt " relationships.")
+                           {:relation rel :count cnt})))))
+     (ds/transact! conn
+                   (concat
+                    (:additions relations)
+                    (:additions permissions)
+                    (for [rel relation-retractions
+                          :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
+                          :when eid]
+                      [:db/retractEntity eid])
+                    (for [perm permission-retractions
+                          :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
+                          :when eid]
+                      [:db/retractEntity eid])
+                    [{:eacl/id "schema-string"
+                      :eacl/schema-string schema-string}]))
+     deltas)))

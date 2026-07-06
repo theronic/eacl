@@ -76,11 +76,17 @@
         permission-names-by-type (into {}
                                        (for [[rt perms] permissions-by-type]
                                          [rt (set (map :eacl.permission/permission-name perms))]))
-        relation-subject-types   (into {}
-                                       (for [rel relations]
-                                         [[(:eacl.relation/resource-type rel)
-                                           (:eacl.relation/relation-name rel)]
-                                          (:eacl.relation/subject-type rel)]))
+        ;; Subject types per relation as full SETS: multi-type relations
+        ;; (relation owner: user | group) expand to one entry per type, and
+        ;; validation must be independent of declaration order.
+        relation-subject-types   (reduce (fn [acc rel]
+                                           (update acc
+                                                   [(:eacl.relation/resource-type rel)
+                                                    (:eacl.relation/relation-name rel)]
+                                                   (fnil conj #{})
+                                                   (:eacl.relation/subject-type rel)))
+                                         {}
+                                         relations)
         errors                   (atom [])]
     (doseq [perm permissions]
       (let [res-type    (:eacl.permission/resource-type perm)
@@ -113,8 +119,8 @@
                       :message    (str "Permission " (name res-type) "/" (name perm-name)
                                        " references non-existent relation: " (name source-rel))}))
             (when (contains? (get relation-names-by-type res-type) source-rel)
-              (let [target-res-type (get relation-subject-types [res-type source-rel])]
-                (when target-res-type
+              (doseq [target-res-type (get relation-subject-types [res-type source-rel])]
+                (do
                   (if (= target-type :relation)
                     (when-not (contains? (get relation-names-by-type target-res-type) target-name)
                       (swap! errors conj
