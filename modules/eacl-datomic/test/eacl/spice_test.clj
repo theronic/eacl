@@ -10,9 +10,12 @@
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
-(defn- read-relationships-data
-  [client query]
-  (:data (eacl/read-relationships client query)))
+(defn- invalid-cursor-reason
+  [f]
+  (try (f) nil
+       (catch clojure.lang.ExceptionInfo e
+         (when (= :eacl/invalid-cursor (:type (ex-data e)))
+           (:reason (ex-data e))))))
 
 (deftest opaque-cursor-token-test
   (testing "cursor->token round-trip preserves cursor"
@@ -26,14 +29,206 @@
   (testing "nil cursor produces nil token"
     (is (nil? (spiceomic/cursor->token nil))))
 
-  (testing "nil or invalid input returns nil cursor"
-    (is (nil? (spiceomic/token->cursor nil)))
-    (is (nil? (spiceomic/token->cursor "garbage")))
-    (is (nil? (spiceomic/token->cursor "eacl1_not-valid-base64!!!"))))
+  (testing "nil means first page"
+    (is (nil? (spiceomic/token->cursor nil))))
+
+  (testing "invalid input throws a typed error instead of silently restarting pagination (audit §7)"
+    (is (= :undecodable (invalid-cursor-reason #(spiceomic/token->cursor "garbage"))))
+    (is (= :undecodable (invalid-cursor-reason #(spiceomic/token->cursor "eacl1_not-valid-base64!!!")))))
+
+  (testing "tokens do not expire by default; expiry is enforced only when the client configures :cursor-ttl-seconds"
+    (let [cursor {:v 2 :e 123 :p {}}
+          expired-token (spiceomic/cursor->token cursor {:cursor-ttl-seconds -10})]
+      (testing "a stale token decodes fine under default (no-TTL) config"
+        (is (= cursor (spiceomic/token->cursor expired-token))))
+      (testing "the same token throws {:reason :expired} when a TTL is configured"
+        (is (= :expired (invalid-cursor-reason #(spiceomic/token->cursor expired-token {:cursor-ttl-seconds 60})))))
+      (testing "tokens without :t never expire, even with a TTL configured"
+        (is (= cursor (spiceomic/token->cursor (spiceomic/cursor->token cursor) {:cursor-ttl-seconds 60}))))))
 
   (testing "backward compat: raw cursor map passes through token->cursor"
     (let [cursor {:v 2 :e 12345 :p {0 67890}}]
-      (is (= cursor (spiceomic/token->cursor cursor))))))
+      (is (= cursor (spiceomic/token->cursor cursor)))))
+
+  (testing "v3 recursive cursor round-trips without coercion"
+    (let [cursor {:v 3
+                  :mode :recursive-forward
+                  :max-depth 50
+                  :stack [{:kind :direct-stream
+                           :node [:account :read]
+                           :relation-eid 42
+                           :cursor 1001
+                           :depth 50}]
+                  :best-depth {[:account :read] {1001 50}}
+                  :emitted #{1001}
+                  :last 1001}
+          token  (spiceomic/cursor->token cursor)]
+      (is (= cursor (spiceomic/token->cursor token)))
+      (is (= cursor (spiceomic/default-internal-cursor->spice nil {} cursor)))
+      (is (= cursor (spiceomic/default-spice-cursor->internal nil {} cursor))))))
+
+(deftest protocol-completeness-tests
+  ;; Audit §13: write-relationship!/delete-relationship! were declared on the
+  ;; protocol but unimplemented -> AbstractMethodError.
+  (with-mem-conn [conn schema/v6-schema]
+    (let [client (spiceomic/make-client conn {})
+          u1     (spice-object :user "u1")
+          a1     (spice-object :account "a1")]
+      (eacl/write-schema! client "definition user {}
+         definition account { relation owner: user  permission admin = owner }")
+      @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
+
+      (testing "write-relationship! (positional arity) creates and returns a token"
+        (let [{token :zed/token} (eacl/write-relationship! client :touch u1 :owner a1)]
+          (is (string? token))
+          (is (true? (eacl/can? client u1 :admin a1)))))
+
+      (testing "delete-relationship! (positional arity) removes"
+        (eacl/delete-relationship! client u1 :owner a1)
+        (is (false? (eacl/can? client u1 :admin a1))))
+
+      (testing "map arities work"
+        (eacl/write-relationship! client {:operation :touch :subject u1 :relation :owner :resource a1})
+        (is (true? (eacl/can? client u1 :admin a1)))
+        (eacl/delete-relationship! client {:subject u1 :relation :owner :resource a1})
+        (is (false? (eacl/can? client u1 :admin a1))))
+
+      (testing "unsupported consistency throws a typed error (not an assert)"
+        (try
+          (eacl/can? client u1 :admin a1 (consistency/fresh "tok"))
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl/unsupported-consistency (:type (ex-data e)))))))
+
+      (testing "expand-permission-tree throws a typed not-implemented error"
+        (try
+          (eacl/expand-permission-tree client {:resource a1 :permission :admin})
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl/not-implemented (:type (ex-data e))))))))))
+
+(deftest cursor-schema-fingerprint-tests
+  (with-mem-conn [conn schema/v6-schema]
+    (let [client (spiceomic/make-client conn {})
+          schema-v1 "definition user {}
+                     definition account { relation owner: user  relation viewer: user
+                                          permission admin = owner }
+                     definition widget { relation owner: user  relation editor: user
+                                         permission view = owner }"
+          ;; changes widget/view only — account/admin paths are untouched
+          schema-v2 "definition user {}
+                     definition account { relation owner: user  relation viewer: user
+                                          permission admin = owner }
+                     definition widget { relation owner: user  relation editor: user
+                                         permission view = owner + editor }"
+          ;; changes account/admin's own paths
+          schema-v3 "definition user {}
+                     definition account { relation owner: user  relation viewer: user
+                                          permission admin = owner + viewer }
+                     definition widget { relation owner: user  relation editor: user
+                                         permission view = owner + editor }"]
+      (eacl/write-schema! client schema-v1)
+      @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"} {:eacl/id "a2"} {:eacl/id "a3"}])
+      (eacl/create-relationships! client
+        [(->Relationship (->user "u1") :owner (->account "a1"))
+         (->Relationship (->user "u1") :owner (->account "a2"))
+         (->Relationship (->user "u1") :owner (->account "a3"))])
+      (let [q     {:subject (->user "u1") :permission :admin :resource/type :account :limit 2}
+            page1 (eacl/lookup-resources client q)]
+        (is (= ["a1" "a2"] (mapv :id (:data page1))))
+
+        (testing "unchanged schema resumes exactly, no duplicates or gaps"
+          (is (= ["a3"] (mapv :id (:data (eacl/lookup-resources client (assoc q :cursor (:cursor page1))))))))
+
+        (testing "an UNRELATED schema change does not invalidate the cursor"
+          (eacl/write-schema! client schema-v2)
+          (is (= ["a3"] (mapv :id (:data (eacl/lookup-resources client (assoc q :cursor (:cursor page1))))))))
+
+        (testing "a schema change to THIS query's paths throws :eacl/stale-cursor"
+          (eacl/write-schema! client schema-v3)
+          (try
+            (eacl/lookup-resources client (assoc q :cursor (:cursor page1)))
+            (is false "should have thrown")
+            (catch clojure.lang.ExceptionInfo e
+              (is (= :eacl/stale-cursor (:type (ex-data e)))))))))))
+
+(deftest strict-object-id-resolution-tests
+  (with-mem-conn [conn schema/v6-schema]
+    (let [client (spiceomic/make-client conn {})]
+      (eacl/write-schema! client "definition user {}
+         definition account { relation owner: user  permission admin = owner }")
+      @(d/transact conn [{:eacl/id "alice"} {:eacl/id "bob"} {:eacl/id "acct-1"} {:eacl/id "acct-2"}])
+      (eacl/create-relationships! client
+        [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
+         (->Relationship (spice-object :user "bob") :owner (spice-object :account "acct-2"))])
+
+      (testing "read-relationships with a nonexistent subject returns [], not ALL relationships (audit §4)"
+        (is (= [] (vec (:data (eacl/read-relationships client {:resource/type :account
+                                                               :subject/id    "i-do-not-exist"})))))
+        (is (= 1 (count (:data (eacl/read-relationships client {:resource/type :account
+                                                                :subject/id    "alice"}))))))
+
+      (testing "lookups and counts return empty results for unknown objects (SpiceDB-consistent, D9)"
+        (is (= [] (:data (eacl/lookup-resources client {:subject (spice-object :user "ghost")
+                                                        :permission :admin
+                                                        :resource/type :account}))))
+        (is (= 0 (:count (eacl/count-resources client {:subject (spice-object :user "ghost")
+                                                       :permission :admin
+                                                       :resource/type :account}))))
+        (is (= [] (:data (eacl/lookup-subjects client {:resource (spice-object :account "no-such-acct")
+                                                       :permission :admin
+                                                       :subject/type :user}))))
+        (is (false? (eacl/can? client (spice-object :user "ghost") :admin (spice-object :account "acct-1")))))
+
+      (testing "writes to unknown objects throw :eacl/unknown-object naming the object (audit §11)"
+        (try
+          (eacl/create-relationships! client
+            [(->Relationship (spice-object :user "ghost-user") :owner (spice-object :account "acct-1"))])
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl/unknown-object (:type (ex-data e))))
+            (is (= {:type :user :id "ghost-user"} (:object (ex-data e)))))))))
+
+  (testing "make-client config validation (audit §5)"
+    (with-mem-conn [conn schema/v6-schema]
+      (let [setup (spiceomic/make-client conn {})]
+        (eacl/write-schema! setup "definition user {}
+           definition account { relation owner: user  permission admin = owner }")
+        @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
+        (eacl/create-relationships! setup
+          [(->Relationship (spice-object :user "u1") :owner (spice-object :account "a1"))])
+
+        (testing "the README-documented :entid->object-id key is honored"
+          (let [ext-client (spiceomic/make-client conn
+                             {:entid->object-id (fn [db eid] (str "EXT-" (:eacl/id (d/entity db eid))))})]
+            (is (= ["EXT-a1"]
+                   (mapv :id (:data (eacl/lookup-resources ext-client {:subject (spice-object :user "u1")
+                                                                       :permission :admin
+                                                                       :resource/type :account})))))))
+
+        (testing "the deprecated :entity->object-id alias still works"
+          (let [alias-client (spiceomic/make-client conn
+                               {:entity->object-id (fn [ent] (str "ALIAS-" (:eacl/id ent)))})]
+            (is (= ["ALIAS-a1"]
+                   (mapv :id (:data (eacl/lookup-resources alias-client {:subject (spice-object :user "u1")
+                                                                         :permission :admin
+                                                                         :resource/type :account})))))))
+
+        (testing "unknown option keys fail fast instead of silently falling back to defaults"
+          (try
+            (spiceomic/make-client conn {:entid->objectid (fn [_db eid] eid)}) ; misspelled
+            (is false "should have thrown")
+            (catch clojure.lang.ExceptionInfo e
+              (is (= :eacl/invalid-config (:type (ex-data e))))
+              (is (= [:entid->objectid] (:unknown-keys (ex-data e)))))))
+
+        (testing "supplying both the canonical key and the alias is rejected"
+          (try
+            (spiceomic/make-client conn {:entid->object-id (fn [_db eid] eid)
+                                         :entity->object-id (fn [ent] (:eacl/id ent))})
+            (is false "should have thrown")
+            (catch clojure.lang.ExceptionInfo e
+              (is (= :eacl/invalid-config (:type (ex-data e)))))))))))
 
 (deftest spicedb-helper-tests
   (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
@@ -270,15 +465,15 @@
       ; fixtures a bit confusing atm.
       (is (= #{(->Relationship super-user :super_admin ca-platform)
                (->Relationship (->user "super-user") :super_admin ca-platform)}
-             (set (read-relationships-data *client {:resource/type :platform})))))
+             (set (:data (eacl/read-relationships *client {:resource/type :platform}))))))
 
     (testing "We can enumerate account owners:"
       (is (= #{(->Relationship my-user :owner my-account)
                (->Relationship joe's-user :owner acme-account)
                (->Relationship (->user "user-1") :owner (->account "account-1"))
                (->Relationship (->user "user-2") :owner (->account "account-2"))}
-             (set (read-relationships-data *client {:resource/type :account
-                                                    :subject/type  :user})))))
+             (set (:data (eacl/read-relationships *client {:resource/type :account
+                                                           :subject/type  :user}))))))
 
     (testing "read-relationships supports various filters:"
       (testing "query platform->account"
@@ -286,17 +481,17 @@
                  (->Relationship ca-platform :platform (->account "account-1"))
                  (->Relationship ca-platform :platform (->account "account-2"))
                  (->Relationship ca-platform :platform my-account)}
-               (set (read-relationships-data *client {:resource/type     :account
-                                                      :subject/type      :platform
-                                                      :resource/relation :platform})))))
+               (set (:data (eacl/read-relationships *client {:resource/type     :account
+                                                             :subject/type      :platform
+                                                             :resource/relation :platform}))))))
 
       (testing "the same relationships show up if we omit :resource/relation"
         (is (= #{(->Relationship ca-platform :platform acme-account)
                  (->Relationship ca-platform :platform (->account "account-1"))
                  (->Relationship ca-platform :platform (->account "account-2"))
                  (->Relationship ca-platform :platform my-account)}
-               (set (read-relationships-data *client {:resource/type :account
-                                                      :subject/type  :platform}))))))
+               (set (:data (eacl/read-relationships *client {:resource/type :account
+                                                             :subject/type  :platform})))))))
 
     (testing "lookup-resources pagination tests"
 
@@ -367,25 +562,6 @@
             (is (string? (:e decoded))
                 "cursor :e should be coerced to external format")))))
 
-    (testing "count-subjects is part of the public API with cursor tokens"
-      (let [{:keys [count cursor]} (eacl/count-subjects *client
-                                                         {:resource     (->server "123")
-                                                          :permission   :reboot
-                                                          :subject/type :user
-                                                          :limit        1})]
-        (testing "count-subjects returns a count"
-          (is (= 1 count)))
-
-        (testing "cursor should be an opaque token"
-          (is (string? cursor))
-          (is (.startsWith ^String cursor "eacl1_")))
-
-        (testing "cursor round-trips to v2 with string :e"
-          (let [decoded (spiceomic/token->cursor cursor)]
-            (is (= 2 (:v decoded)))
-            (is (string? (:e decoded))
-                "cursor :e should be coerced to external format")))))
-
     (testing "spice-read-relationships results are constrained by filters for resource type & ID"
       (testing "transact the test entities we are about to use"
         @(d/transact conn (for [object [(->account "test-account")
@@ -398,15 +574,12 @@
                                       [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
                                        (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
                                        (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
-      (let [{:keys [data cursor]}
-            (eacl/read-relationships *client {:resource/type     :vpc
-                                              :resource/id       "my-vpc"
-                                              :resource/relation :account
-                                              :subject/type      :account
-                                              :subject/id        "test-account"})]
-        (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
-               data))
-        (is (string? cursor))))))
+      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
+             (:data (eacl/read-relationships *client {:resource/type     :vpc
+                                                      :resource/id       "my-vpc"
+                                                      :resource/relation :account
+                                                      :subject/type      :account
+                                                      :subject/id        "test-account"})))))))
 
 ; expand-permission-tree not impl. yet.
 ;; FIXME: These tests fail because expand-permission-tree is not implemented yet

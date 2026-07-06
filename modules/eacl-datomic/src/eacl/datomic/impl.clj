@@ -35,12 +35,42 @@
     true
     (throw (Exception. "Unauthorized"))))
 
+(defn- unknown-object!
+  [object-id]
+  (throw (ex-info (str "Unknown object: " (pr-str object-id) " does not resolve to an existing entity."
+                       " Pass {:allow-tempids? true} to tx-relationship for same-transaction tempids.")
+           {:type :eacl/unknown-object
+            :object-id object-id})))
+
 (defn- object-id->eid-or-tempid
-  [db object-id]
+  "Resolves an object id to an existing eid. Unresolvable ids throw
+  :eacl/unknown-object unless :allow-tempids? is set, in which case strings,
+  negative longs and datomic.db.DbId values pass through as tempids for
+  same-transaction entity+relationship creation. Silent tempid pass-through
+  minted ghost entities on typo'd ids (audit 12). Positive numeric eids are
+  verified via datom presence."
+  [db object-id {:keys [allow-tempids?]}]
   (cond
-    (number? object-id) object-id
-    (string? object-id) (or (d/entid db [:eacl/id object-id]) object-id)
-    :else (or (d/entid db object-id) object-id)))
+    (number? object-id)
+    (cond
+      (seq (d/datoms db :eavt object-id)) object-id
+      (and allow-tempids? (neg? object-id)) object-id
+      :else (unknown-object! object-id))
+
+    (string? object-id)
+    (or (d/entid db [:eacl/id object-id])
+        (if allow-tempids?
+          object-id
+          (unknown-object! object-id)))
+
+    (instance? datomic.db.DbId object-id)
+    (if allow-tempids?
+      object-id
+      (unknown-object! object-id))
+
+    :else
+    (or (d/entid db object-id)
+        (unknown-object! object-id))))
 
 (defn- internal-id
   [db value]
@@ -58,11 +88,11 @@
        db resource-type relation-name subject-type))
 
 (defn- resolve-relationship
-  [db {:keys [subject relation resource]}]
+  [db {:keys [subject relation resource]} opts]
   (let [subject-type (:type subject)
-        subject-eid  (object-id->eid-or-tempid db (:id subject))
+        subject-eid  (object-id->eid-or-tempid db (:id subject) opts)
         resource-type (:type resource)
-        resource-eid  (object-id->eid-or-tempid db (:id resource))
+        resource-eid  (object-id->eid-or-tempid db (:id resource) opts)
         relation-eid  (find-relation-eid db resource-type relation subject-type)]
     (when-not relation-eid
       (throw
@@ -123,8 +153,12 @@
 (defn find-one-relationship-id
   "Returns the resolved tuple identity for an existing relationship, or nil."
   [db relationship]
-  (let [resolved (resolve-relationship db relationship)]
-    (when (relationship-exists? db resolved)
+  (let [resolved (try
+                   (resolve-relationship db relationship {})
+                   (catch clojure.lang.ExceptionInfo e
+                     (when-not (= :eacl/unknown-object (:type (ex-data e)))
+                       (throw e))))]
+    (when (and resolved (relationship-exists? db resolved))
       resolved)))
 
 (defn- find-relations
@@ -323,13 +357,15 @@
   ([db subject relation resource]
    (tx-relationship db (eacl/->Relationship subject relation resource)))
   ([db relationship]
-   (add-relationship-txes (resolve-relationship db relationship))))
+   (tx-relationship db relationship {}))
+  ([db relationship opts]
+   (add-relationship-txes (resolve-relationship db relationship opts))))
 
 (defn tx-update-relationship
   "Relationship writes are implemented against v7 forward/reverse tuple indexes.
   :touch is idempotent."
   [db {:keys [operation relationship]}]
-  (let [resolved (resolve-relationship db relationship)
+  (let [resolved (resolve-relationship db relationship {})
         exists?  (relationship-exists? db resolved)]
     (case operation
       :touch

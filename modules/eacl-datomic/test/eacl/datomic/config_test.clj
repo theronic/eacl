@@ -28,13 +28,13 @@
 
           ; todo: also test read/write-relationships, and count-resources.
 
-          (testing "lookup-resources throws for missing subject ident with some detail"
-            (is (thrown? Throwable (eacl/lookup-resources client
-                                                          {:subject       (->user :missing-ident)
-                                                           :permission    :view
-                                                           :resource/type :server
-                                                           :limit         1000
-                                                           :cursor        nil}))))
+          (testing "lookup-resources returns an empty page for a missing subject ident (SpiceDB-consistent, audit D9)"
+            (is (= [] (:data (eacl/lookup-resources client
+                                                    {:subject       (->user :missing-ident)
+                                                     :permission    :view
+                                                     :resource/type :server
+                                                     :limit         1000
+                                                     :cursor        nil})))))
 
           (testing "basic can? works when passing :db/ident"
             (is (true? (eacl/can? client (->user :test/user1) :view (->server :test/server1))))

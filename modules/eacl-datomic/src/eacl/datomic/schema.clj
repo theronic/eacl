@@ -188,11 +188,11 @@
     (if-not relation-eid
       0
       (reduce (fn [n _] (inc n))
-        0
-        (d/index-range db
-          :eacl.v7.relationship/subject-type+relation+resource-type+resource
-          [subject-type relation-eid resource-type 0]
-          [subject-type relation-eid resource-type Long/MAX_VALUE])))))
+              0
+              (d/index-range db
+                             :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                             [subject-type relation-eid resource-type 0]
+                             [subject-type relation-eid resource-type Long/MAX_VALUE])))))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
@@ -203,7 +203,7 @@
                                  :eacl.relation/relation-name]) ...]
          :where
          [?relation :eacl.relation/relation-name ?relation-name]]
-    db))
+       db))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -216,7 +216,7 @@
                              :eacl.permission/target-name]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
-    db))
+       db))
 
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -241,28 +241,43 @@
   new schema, checks for any orphaned relationships on retracted schema,
   produces tx-ops and applies.
   
-  Throws if schema is invalid (operator validation, reference validation, orphan check)."
-  [conn schema-string]
-  (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
+  Throws if schema is invalid (parse failure, operator validation, reference
+  validation, orphan check), or if the new schema contains zero definitions
+  while a non-empty schema is stored (belt-and-braces against parser gaps -
+  a malformed input must never be able to retract the whole schema). Pass
+  {:allow-empty-schema? true} to explicitly wipe the stored schema."
+  ([conn schema-string]
+   (write-schema! conn schema-string {}))
+  ([conn schema-string {:keys [allow-empty-schema?]}]
+   (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
         ;; Validate schema references before proceeding (ADR 012 requirement)
-        _                      (validate-schema-references new-schema-map)
-        db                     (d/db conn)
-        existing-schema        (read-schema db)
-        deltas                 (compare-schema existing-schema new-schema-map)
-        {:keys [relations permissions]} deltas
-        relation-retractions   (:retractions relations)
-        permission-retractions (:retractions permissions)]
+         _                      (validate-schema-references new-schema-map)
+         db                     (d/db conn)
+         existing-schema        (read-schema db)
+         _                      (when (and (empty? (:definitions new-schema-map))
+                                           (not allow-empty-schema?)
+                                           (or (seq (:relations existing-schema))
+                                               (seq (:permissions existing-schema))))
+                                  (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
+                                                       " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+                                                  {:type :eacl.schema/empty-schema-guard
+                                                   :existing {:relations (count (:relations existing-schema))
+                                                              :permissions (count (:permissions existing-schema))}})))
+         deltas                 (compare-schema existing-schema new-schema-map)
+         {:keys [relations permissions]} deltas
+         relation-retractions   (:retractions relations)
+         permission-retractions (:retractions permissions)]
 
     ;; Check for orphaned relationships
-    (doseq [rel relation-retractions]
-      (let [cnt (count-relationships-using-relation db rel)]
-        (when (pos? cnt)
-          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                            " because it is used by " cnt " relationships.")
-                   {:relation rel :count cnt})))))
+     (doseq [rel relation-retractions]
+       (let [cnt (count-relationships-using-relation db rel)]
+         (when (pos? cnt)
+           (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                                " because it is used by " cnt " relationships.")
+                           {:relation rel :count cnt})))))
 
     ;; Transact changes
-    (let [tx-data (concat
+     (let [tx-data (concat
                     ;; Additions
                     (:additions relations)
                     (:additions permissions)
@@ -274,6 +289,6 @@
                      ;; Store schema string
                     [{:eacl/id            "schema-string"
                       :eacl/schema-string schema-string}])]
-      @(d/transact conn tx-data)
-      (impl.indexed/evict-permission-paths-cache!)
-      deltas)))
+       @(d/transact conn tx-data)
+       (impl.indexed/evict-permission-paths-cache!)
+       deltas))))

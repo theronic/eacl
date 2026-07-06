@@ -36,8 +36,16 @@
                                 "modules/eacl-datascript/test"]
                   :extra-deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                                criterium/criterium {:mvn/version "0.4.6"}}
-                  :main-opts ["-m" "cognitect.test-runner"]
-                  :exec-fn cognitect.test-runner.api/test}
+                  :main-opts ["-m" "cognitect.test-runner"
+                              "-d" "modules/eacl/test"
+                              "-d" "modules/eacl-datomic/test"
+                              "-d" "modules/eacl-datascript/test"]
+                  :exec-fn cognitect.test-runner.api/test
+                  ;; scan module test dirs only - the legacy top-level test/ tree
+                  ;; is retained for history but is not on this branch's classpath.
+                  :exec-args {:dirs ["modules/eacl/test"
+                                     "modules/eacl-datomic/test"
+                                     "modules/eacl-datascript/test"]}}
            :nrepl {:extra-paths ["modules/eacl/test"
                                  "modules/eacl-datomic/test"
                                  "modules/eacl-datascript/test"]

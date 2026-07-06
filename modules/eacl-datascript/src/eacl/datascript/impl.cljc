@@ -34,12 +34,25 @@
    (engine/evict-permission-paths-cache! cache-atom)))
 
 (defn relation-datoms
+  "Returns relation datoms for the exact resource/relation name pair, for ANY
+  subject-type keyword. Implemented as a seek + prefix take-while rather than a
+  bounded index-range: a keyword-sentinel range like [.. :a]..[.. :z] silently
+  misses subject types that collate outside it (uppercase-initial, z-prefixed,
+  and namespaced keywords), making those relations invisible to permission
+  evaluation (audit 2)."
   [db resource-type relation-name]
   (if (and resource-type relation-name)
-    (ds/index-range db
-                    :eacl.relation/resource-type+relation-name+subject-type
-                    [resource-type relation-name :a]
-                    [resource-type relation-name :z])
+    ;; DataScript sorts vectors by LENGTH FIRST, so a short seek-start would
+    ;; land at the head of the whole attribute; pad to full tuple arity with
+    ;; nil (nil sorts lowest) to position at the exact prefix.
+    (->> (ds/seek-datoms db :avet
+                         :eacl.relation/resource-type+relation-name+subject-type
+                         [resource-type relation-name nil])
+         (take-while (fn [datom]
+                       (and (= :eacl.relation/resource-type+relation-name+subject-type (:a datom))
+                            (let [v (:v datom)]
+                              (and (= resource-type (nth v 0))
+                                   (= relation-name (nth v 1))))))))
     []))
 
 (defn find-relation-def
@@ -132,6 +145,19 @@
   (when value
     (ds/entid db value)))
 
+(defn- existing-internal-id
+  "Resolves to an eid and verifies the entity exists (datom presence - entid
+  passes unallocated numeric ids through unchanged). Throws :eacl/unknown-object
+  otherwise: nil ids reaching tx-data raised raw transact errors, and silent
+  no-ops hid typos (audit 11/12)."
+  [db {:keys [type id]}]
+  (let [eid (internal-id db id)]
+    (if (and eid (seq (ds/datoms db :eavt eid)))
+      eid
+      (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
+               {:type :eacl/unknown-object
+                :object {:type type :id id}})))))
+
 (defn- relation-id
   [resource-type relation-name subject-type]
   [:eacl/id (model/->relation-id resource-type relation-name subject-type)])
@@ -139,9 +165,9 @@
 (defn- resolve-relationship
   [db {:keys [subject relation resource]}]
   (let [subject-type  (:type subject)
-        subject-id    (internal-id db (:id subject))
+        subject-id    (existing-internal-id db subject)
         resource-type (:type resource)
-        resource-id   (internal-id db (:id resource))
+        resource-id   (existing-internal-id db resource)
         relation-eid  (ds/entid db (relation-id resource-type relation subject-type))]
     (when-not relation-eid
       (throw
@@ -162,10 +188,17 @@
      :resource-id resource-id}))
 
 (defn find-one-relationship-id
+  "Returns the resolved tuple identity for an existing relationship, or nil.
+  A read: unresolvable endpoints mean no such relationship can exist -> nil."
   [db relationship]
-  (let [resolved (resolve-relationship db relationship)
-        existing (ds/entid db [schema/relationship-full-key-attr
-                               (relationship-tuple resolved)])]
+  (let [resolved (try
+                   (resolve-relationship db relationship)
+                   (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
+                     (when-not (= :eacl/unknown-object (:type (ex-data e)))
+                       (throw e))))
+        existing (when resolved
+                   (ds/entid db [schema/relationship-full-key-attr
+                                 (relationship-tuple resolved)]))]
     (when existing
       resolved)))
 
