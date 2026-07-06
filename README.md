@@ -630,4 +630,5 @@ Some of this open-source work was generously funded by my former employer, [Clou
 
 # Licence
 
-- EACL switched from BSL to an Affero GPL licence on 2025-05-27. However, we are considering re-licensing under a more permissive open-source license.
+- EACL is licensed under the Eclipse Public License v2.0 since 2026-03-05.
+- EACL was initially licensed under BSL and later Affero GPL (on 2025-05-27), but is now licensed under EPL 2.0.
