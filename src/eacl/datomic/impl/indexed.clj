@@ -51,15 +51,26 @@
          (map (fn [[_ _ v]] (nth v 3))))))
 
 (defn relation-datoms
-  "Returns relation datoms for the exact resource/relation name pair."
+  "Returns relation datoms for the exact resource/relation name pair,
+  for ANY subject-type keyword.
+
+  Implemented as a seek + prefix take-while rather than a bounded
+  d/index-range: a keyword-sentinel range like [.. :a]..[.. :z] silently
+  misses subject types that collate outside it (uppercase-initial,
+  z-prefixed, and all namespaced keywords), which made those relations
+  invisible to permission evaluation. The attr-eid guard is mandatory —
+  seek-datoms iterates past the end of the attribute's index segment."
   [db resource-type relation-name]
   (if (and resource-type relation-name)
-    (let [start-tuple [resource-type relation-name :a]
-          end-tuple   [resource-type relation-name :z]]
-      (d/index-range db
-                     :eacl.relation/resource-type+relation-name+subject-type
-                     start-tuple
-                     end-tuple))
+    (let [attr-eid (d/entid db :eacl.relation/resource-type+relation-name+subject-type)]
+      (->> (d/seek-datoms db :avet
+                          :eacl.relation/resource-type+relation-name+subject-type
+                          [resource-type relation-name])
+           (take-while (fn [datom]
+                         (and (= attr-eid (:a datom))
+                              (let [v (:v datom)]
+                                (and (= resource-type (nth v 0))
+                                     (= relation-name (nth v 1)))))))))
     []))
 
 (defn find-relation-def
@@ -104,17 +115,138 @@
 (def recursive-query-plan-cache
   (atom (cache/lru-cache-factory {} :threshold 256)))
 
-(defn evict-permission-paths-cache! []
+(defn evict-permission-paths-cache!
+  "Manual override that clears both the permission-path and query-plan caches.
+  No longer required for correctness (cache keys carry a schema-history digest),
+  but retained for immediate local effect and belt-and-braces."
+  []
   (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000))
   (reset! recursive-query-plan-cache (cache/lru-cache-factory {} :threshold 256)))
 
+;; --- Schema-history digest cache scope -------------------------------------
+;;
+;; Coverage invariant: every attribute that permission-path / query-plan
+;; computation reads MUST be a component of one of the composite tuples
+;; digested below. Datomic rewrites a composite tuple datom in the same
+;; transaction as ANY component change, and retractEntity retracts it, so the
+;; tuple histories are a complete record of path-relevant schema mutations.
+;; If you add a new path-relevant attribute outside these tuples, add its
+;; history to the digest or caches will serve stale paths.
+
+(def ^:private schema-digest-attrs
+  [:eacl.relation/resource-type+relation-name+subject-type
+   :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name])
+
+(defonce ^:private schema-scope-memo
+  ;; Keyed by the db value itself: Datomic Db equality is value- and
+  ;; content-based (pinned by tests), so this can only unify db values whose
+  ;; visible histories — and therefore digests — are identical. Weak keys
+  ;; release with the db value. Sentinel (uncached) scopes are never stored.
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(def ^:private uncached-scope [::uncached])
+
+(defn- classified-view
+  "Positively classifies a db value: :plain, :as-of, or nil for anything the
+  digest must not be shared for. d/filter views are excluded because their
+  predicates are arbitrary functions (possibly impure or time-dependent), so
+  a digest of their filtered history is not trustworthy as a shared cache key;
+  d/since views hide old schema and are pointless to cache; history views are
+  not queryable schema states."
+  [db]
+  (cond
+    (d/is-history db)      nil
+    (d/is-filtered db)     nil
+    (some? (d/since-t db)) nil
+    (some? (d/as-of-t db)) :as-of
+    :else                  :plain))
+
+(defn- schema-history-digest
+  "128-bit hex digest (SHA-256 truncated; FIPS-safe) folded in index order over
+  the history datoms of the schema composite tuple attrs, filtered to the
+  db's visible basis. Content-derived: any schema mutation — write-schema!,
+  programmatic transaction, retraction, or excision — changes it, on every peer,
+  with no writer-side signal."
+  [db]
+  (let [md      (java.security.MessageDigest/getInstance "SHA-256")
+        ;; d/basis-t of an as-of view returns the UNDERLYING basis (REPL-verified),
+        ;; so the visibility filter must prefer d/as-of-t.
+        limit-t (or (d/as-of-t db) (d/basis-t db))
+        hist    (d/history db)]
+    (doseq [attr schema-digest-attrs
+            datom (d/datoms hist :aevt attr)
+            :let [t (d/tx->t (:tx datom))]
+            :when (<= t limit-t)]
+      (.update md (.getBytes (pr-str [(:e datom) (:v datom) t (:added datom)]) "UTF-8")))
+    (format "%032x" (java.math.BigInteger. 1 (java.util.Arrays/copyOf (.digest md) 16)))))
+
+(defn- schema-cache-scope
+  "Returns [database-id schema-history-digest] for positively classified
+  plain/as-of db values, or a sentinel scope for anything else (filter, since,
+  history, unrecognized views) and for ANY failure. Sentinel scopes bypass the
+  caches entirely: every failure mode degrades to recomputation from the
+  queried db value — never to serving a stale entry."
+  [db]
+  (or (.get ^java.util.Map schema-scope-memo db)
+      (let [scope (try
+                    (when (classified-view db)
+                      [(str (.id db)) (schema-history-digest db)])
+                    (catch Throwable _ nil))]
+        (if scope
+          (do (.put ^java.util.Map schema-scope-memo db scope)
+              scope)
+          uncached-scope))))
+
+(defn- uncached-scope? [scope]
+  (identical? uncached-scope scope))
+
+(defn schema-basis-digest
+  "The schema-history digest for this db value, or nil when the view cannot be
+  cached (see schema-cache-scope). Used for cursor fingerprints."
+  [db]
+  (let [scope (schema-cache-scope db)]
+    (when-not (uncached-scope? scope)
+      (second scope))))
+
+(defn- fingerprint-digest
+  "128-bit hex digest of a value's printed representation (SHA-256 truncated)."
+  [x]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
+    (.update md (.getBytes (pr-str x) "UTF-8"))
+    (format "%032x" (java.math.BigInteger. 1 (java.util.Arrays/copyOf (.digest md) 16)))))
+
+(defn- cursor-fingerprint
+  "Two-part cursor fingerprint: :s is the schema-history digest at mint time
+  (nil on unclassifiable views), :p digests this query's resolved paths/plan."
+  [db paths-or-plan]
+  {:s (schema-basis-digest db)
+   :p (fingerprint-digest paths-or-plan)})
+
+(defn- check-cursor-fingerprint!
+  "Guards cursor resumption against schema changes. Equal schema digests prove
+  identical schema history, so the cursor resumes on the fast path. A differing
+  (or unavailable) schema digest falls back to comparing this query's resolved
+  paths/plan: equal means the schema change did not affect this query; different
+  throws :eacl/stale-cursor instead of silently mis-skipping via reordered :p
+  path indices or replaying a stale v3 :stack. Cursors minted before
+  fingerprints existed are accepted with a warning."
+  [db cursor paths-or-plan]
+  (when (map? cursor)
+    (if-let [f (:f cursor)]
+      (let [current-s (schema-basis-digest db)]
+        (when-not (and (:s f) current-s (= (:s f) current-s))
+          (when-not (= (:p f) (fingerprint-digest paths-or-plan))
+            (throw (ex-info "Stale cursor: the permission paths for this query changed since the cursor was minted. Restart pagination."
+                     {:type :eacl/stale-cursor})))))
+      (log/warn "Cursor without a schema fingerprint accepted (minted before fingerprints existed)."))))
+
 (defn- permission-paths-cache-key
-  [db resource-type permission-name]
-  [(.id db) resource-type permission-name])
+  [scope resource-type permission-name]
+  (conj scope resource-type permission-name))
 
 (defn- recursive-query-plan-cache-key
-  [db root-node]
-  [(.id db) root-node])
+  [scope root-node]
+  (conj scope root-node))
 
 (def ^:private default-max-depth 50)
 
@@ -175,15 +307,20 @@
 
 (defn get-permission-paths
   [db resource-type permission-name]
-  (let [cache @permission-paths-cache
-        cache-key (permission-paths-cache-key db resource-type permission-name)]
-    (if (cache/has? cache cache-key)
-      (do
-        (swap! permission-paths-cache cache/hit cache-key)
-        (cache/lookup cache cache-key))
-      (let [paths (calc-permission-paths db resource-type permission-name)]
-        (swap! permission-paths-cache cache/miss cache-key paths)
-        paths))))
+  (let [scope (schema-cache-scope db)]
+    (if (uncached-scope? scope)
+      ;; Unclassifiable view (filter/since/history) or digest failure:
+      ;; compute fresh from this db value; never share cache entries.
+      (calc-permission-paths db resource-type permission-name)
+      (let [cache @permission-paths-cache
+            cache-key (permission-paths-cache-key scope resource-type permission-name)]
+        (if (cache/has? cache cache-key)
+          (do
+            (swap! permission-paths-cache cache/hit cache-key)
+            (cache/lookup cache cache-key))
+          (let [paths (calc-permission-paths db resource-type permission-name)]
+            (swap! permission-paths-cache cache/miss cache-key paths)
+            paths))))))
 
 (defn- permission-query-node
   [resource-type permission-name]
@@ -280,15 +417,18 @@
 
 (defn- recursive-query-plan
   [db root-node]
-  (let [cache-key (recursive-query-plan-cache-key db root-node)
-        cache     @recursive-query-plan-cache]
-    (if (cache/has? cache cache-key)
-      (do
-        (swap! recursive-query-plan-cache cache/hit cache-key)
-        (cache/lookup cache cache-key))
-      (let [plan (build-recursive-query-plan db root-node)]
-        (swap! recursive-query-plan-cache cache/miss cache-key plan)
-        plan))))
+  (let [scope (schema-cache-scope db)]
+    (if (uncached-scope? scope)
+      (build-recursive-query-plan db root-node)
+      (let [cache-key (recursive-query-plan-cache-key scope root-node)
+            cache     @recursive-query-plan-cache]
+        (if (cache/has? cache cache-key)
+          (do
+            (swap! recursive-query-plan-cache cache/hit cache-key)
+            (cache/lookup cache cache-key))
+          (let [plan (build-recursive-query-plan db root-node)]
+            (swap! recursive-query-plan-cache cache/miss cache-key plan)
+            plan))))))
 
 (defn- recursive-permission-query?
   [db resource-type permission-name]
@@ -837,9 +977,9 @@
              :resource resource}))
   ([db {:keys [subject permission resource max-depth]}]
    (let [subject-type  (:type subject)
-         subject-eid   (d/entid db (:id subject))
+         subject-eid   (when (some? (:id subject)) (d/entid db (:id subject)))
          resource-type (:type resource)
-         resource-eid  (d/entid db (:id resource))
+         resource-eid  (when (some? (:id resource)) (d/entid db (:id resource)))
          max-depth     (or max-depth default-max-depth)]
      (if (or (nil? subject-eid) (nil? resource-eid))
        false
@@ -864,7 +1004,7 @@
   (let [{:keys [anchor-key traverse-fn v1-cursor-key perm-type-fn]} direction
         anchor      (get query anchor-key)
         anchor-type (:type anchor)
-        anchor-eid  (d/entid db (:id anchor))
+        anchor-eid  (when (some? (:id anchor)) (d/entid db (:id anchor)))
         cursor      (:cursor query)
         cursor-eid  (extract-cursor-eid cursor v1-cursor-key)
         max-depth   (query-max-depth query)
@@ -903,41 +1043,45 @@
 (defn- recursive-forward-lookup
   [db {:as query :keys [subject permission limit] :or {limit 1000}}]
   (let [subject-type  (:type subject)
-        subject-eid   (d/entid db (:id subject))
+        subject-eid   (when (some? (:id subject)) (d/entid db (:id subject)))
         resource-type (:resource/type query)
         root-node     (permission-query-node resource-type permission)
         plan          (recursive-query-plan db root-node)
+        _             (check-cursor-fingerprint! db (:cursor query) plan)
         state         (recursive-state-for-query plan query)]
     (if subject-eid
       (let [{:keys [state results]}
             (recursive-page db plan subject-type subject-eid state limit)]
         {:data (mapv #(spice-object resource-type %) results)
-         :cursor state})
+         :cursor (assoc state :f (cursor-fingerprint db plan))})
       {:data []
-       :cursor state})))
+       :cursor (assoc state :f (cursor-fingerprint db plan))})))
 
 (defn- recursive-forward-count
   [db {:as query :keys [limit subject permission] :or {limit -1}}]
   (let [subject-type  (:type subject)
-        subject-eid   (d/entid db (:id subject))
+        subject-eid   (when (some? (:id subject)) (d/entid db (:id subject)))
         resource-type (:resource/type query)
         root-node     (permission-query-node resource-type permission)
         plan          (recursive-query-plan db root-node)
+        _             (check-cursor-fingerprint! db (:cursor query) plan)
         state         (recursive-state-for-query plan query)]
     (if subject-eid
       (let [{:keys [state results]}
             (recursive-page db plan subject-type subject-eid state limit)]
         {:count (count results)
          :limit limit
-         :cursor state})
+         :cursor (assoc state :f (cursor-fingerprint db plan))})
       {:count 0
        :limit limit
-       :cursor state})))
+       :cursor (assoc state :f (cursor-fingerprint db plan))})))
 
 (defn- lookup
   [db direction query]
-  (let [{:keys [result-type-fn v1-cursor-key]} direction
+  (let [{:keys [result-type-fn v1-cursor-key perm-type-fn]} direction
         {:keys [limit cursor] :or {limit 1000}} query
+        paths       (get-permission-paths db (perm-type-fn query) (:permission query))
+        _           (check-cursor-fingerprint! db cursor paths)
         {:keys [results path-results]} (lazy-merged-lookup db direction query)
         limited-results (if (>= limit 0)
                           (take limit results)
@@ -946,24 +1090,37 @@
         items       (doall (map #(spice-object result-type %) limited-results))
         last-eid    (:id (last items))]
     {:data items
-     :cursor (build-v2-cursor cursor last-eid path-results v1-cursor-key)}))
+     :cursor (assoc (build-v2-cursor cursor last-eid path-results v1-cursor-key)
+                    :f (cursor-fingerprint db paths))}))
 
 (defn lookup-resources
+  "Enumerates resources of :resource/type that :subject holds :permission on.
+
+  Non-recursive schemas return in ascending internal-eid order with v2 cursors.
+  Recursive schemas use a stable-discovery-order engine whose v3 cursor IS the
+  recursion state: it grows O(results-emitted-so-far) (~48 bytes/resource) and
+  embeds internal state, because exact cross-page deduplication requires the
+  emitted set. Known limitation (audit §6) pending a cursor-state redesign —
+  prefer bounded pagination sessions on recursive schemas."
   [db query]
   (if (recursive-permission-query? db (:resource/type query) (:permission query))
     (recursive-forward-lookup db query)
     (lookup db forward-direction query)))
 
 (defn lookup-subjects
+  "Unknown/missing resources return an empty page (SpiceDB-consistent),
+  matching can? -> false; assertion-based rejection disappears under
+  *assert* false and crashed with an untyped AssertionError."
   [db query]
-  {:pre [(:type (:resource query)) (:id (:resource query))]}
   (lookup db reverse-direction query))
 
 (defn count-resources
   [db {:as query :keys [limit cursor] :or {limit -1}}]
   (if (recursive-permission-query? db (:resource/type query) (:permission query))
     (recursive-forward-count db query)
-    (let [{:keys [results path-results]} (lazy-merged-lookup db forward-direction query)
+    (let [paths (get-permission-paths db (:resource/type query) (:permission query))
+          _     (check-cursor-fingerprint! db cursor paths)
+          {:keys [results path-results]} (lazy-merged-lookup db forward-direction query)
           limited-results (if (>= limit 0)
                             (take limit results)
                             results)
@@ -971,11 +1128,14 @@
           last-eid (last counted)]
       {:count (count counted)
        :limit limit
-       :cursor (build-v2-cursor cursor last-eid path-results :resource)})))
+       :cursor (assoc (build-v2-cursor cursor last-eid path-results :resource)
+                      :f (cursor-fingerprint db paths))})))
 
 (defn count-subjects
   [db {:as query :keys [limit cursor] :or {limit -1}}]
-  (let [{:keys [results path-results]} (lazy-merged-lookup db reverse-direction query)
+  (let [paths (get-permission-paths db (:type (:resource query)) (:permission query))
+        _     (check-cursor-fingerprint! db cursor paths)
+        {:keys [results path-results]} (lazy-merged-lookup db reverse-direction query)
         limited-results (if (>= limit 0)
                           (take limit results)
                           results)
@@ -983,4 +1143,5 @@
         last-eid (last counted)]
     {:count (count counted)
      :limit limit
-     :cursor (build-v2-cursor cursor last-eid path-results :subject)}))
+     :cursor (assoc (build-v2-cursor cursor last-eid path-results :subject)
+                    :f (cursor-fingerprint db paths))}))

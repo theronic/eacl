@@ -1,8 +1,14 @@
-(ns eacl.datomic.parser_test
+(ns eacl.datomic.parser-test
+  ;; ns renamed from eacl.datomic.parser_test: the cognitect test-runner default
+  ;; pattern #".*-test$" did not match the underscore name, so these tests were
+  ;; silently excluded from `clj -X:test` runs.
   (:require [clojure.test :as t :refer [deftest testing is]]
             [instaparse.core :as insta]
             [eacl.spicedb.parser :as parser]
             [eacl.datomic.impl :as impl]))
+
+(defn- ex-type [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
 
 (def example-schema-string
   "definition user {}
@@ -153,3 +159,100 @@
     (let [schema "definition doc { relation group: group permission view = group.all(member) }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported function: \.all\(\)"
             (parser/->eacl-schema (parser/parse-schema schema)))))))
+
+(deftest parse-failure-safety-tests
+  (testing "a failed parse throws a typed error and never coerces to an empty schema"
+    (is (= :eacl.schema/parse-error
+           (ex-type #(parser/->eacl-schema (parser/parse-schema "definition user {")))))
+    (testing "the error carries instaparse failure detail (line/column)"
+      (try
+        (parser/->eacl-schema (parser/parse-schema "definition user { relation owner user }"))
+        (is false "should have thrown")
+        (catch clojure.lang.ExceptionInfo e
+          (is (= :eacl.schema/parse-error (:type (ex-data e))))
+          (is (:failure (ex-data e)))))))
+
+  (testing "transform-schema throws on non-schema input instead of returning nil"
+    (is (= :eacl.schema/parse-error
+           (ex-type #(parser/transform-schema (parser/parse-schema "definition user {")))))))
+
+(deftest comment-support-tests
+  (testing "// line comments and /* */ block comments are whitespace"
+    (let [commented "// leading comment
+                     definition user {}
+                     /* block
+                        comment */
+                     definition account {
+                       relation owner: user // trailing comment
+                       permission admin = owner /* inline */ + owner
+                     }"
+          plain     "definition user {}
+                     definition account {
+                       relation owner: user
+                       permission admin = owner + owner
+                     }"
+          parse     #(parser/->eacl-schema (parser/parse-schema %))]
+      (is (= (parse plain) (parse commented)))))
+
+  (testing "comment-only input is still a parse error (a schema needs definitions)"
+    (is (= :eacl.schema/parse-error
+           (ex-type #(parser/->eacl-schema (parser/parse-schema "// nothing here")))))))
+
+(deftest duplicate-declaration-tests
+  (testing "duplicate definition blocks are rejected, not silently last-won"
+    (is (= :eacl.schema/duplicate-definition
+           (ex-type #(parser/->eacl-schema
+                       (parser/parse-schema "definition user {}
+                                             definition account { relation owner: user }
+                                             definition account { relation viewer: user }"))))))
+
+  (testing "duplicate relation declarations within a definition are rejected"
+    (is (= :eacl.schema/duplicate-relation
+           (ex-type #(parser/->eacl-schema
+                       (parser/parse-schema "definition user {}
+                                             definition doc { relation owner: user relation owner: user }"))))))
+
+  (testing "a multi-type relation declared once with | is not a duplicate"
+    (is (= 2 (count (:relations (parser/->eacl-schema
+                                  (parser/parse-schema "definition user {}
+                                                        definition group {}
+                                                        definition doc { relation owner: user | group }")))))))
+
+  (testing "a permission sharing a name with a relation on the same definition is rejected"
+    (is (= :eacl.schema/name-collision
+           (ex-type #(parser/->eacl-schema
+                       (parser/parse-schema "definition user {}
+                                             definition doc { relation x: user permission x = x }")))))))
+
+(deftest paren-expression-tests
+  (testing "parenthesized union operands flatten to their components"
+    (let [parse #(parser/->eacl-schema (parser/parse-schema %))
+          paren (parse "definition user {}
+                        definition d { relation owner: user relation editor: user
+                                       permission manage = (owner + editor) }")
+          plain (parse "definition user {}
+                        definition d { relation owner: user relation editor: user
+                                       permission manage = owner + editor }")]
+      (is (= (set (:permissions plain)) (set (:permissions paren))))
+      (testing "nested parens and mixed operands also flatten"
+        (is (= (set (:permissions plain))
+               (set (:permissions (parse "definition user {}
+                                          definition d { relation owner: user relation editor: user
+                                                         permission manage = ((owner)) + (editor) }"))))))))
+
+  (testing "parenthesized arrow bases are rejected with a clear validation error, not an AssertionError"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Parenthesized expressions"
+          (parser/->eacl-schema
+            (parser/parse-schema "definition user {}
+                                  definition d { relation a: user relation b: user
+                                                 permission p = (a + b)->c }"))))))
+
+(deftest arrow-target-kind-tests
+  (testing "arrow target resolving to mixed kinds across subject types is rejected"
+    ;; mgmt is a RELATION on user but a PERMISSION on group.
+    (is (= :eacl.schema/mixed-arrow-target
+           (ex-type #(parser/->eacl-schema
+                       (parser/parse-schema "definition user { relation mgmt: user }
+                                             definition group { relation lead: user permission mgmt = lead }
+                                             definition account { relation owner: user | group
+                                                                  permission admin = owner->mgmt }")))))))

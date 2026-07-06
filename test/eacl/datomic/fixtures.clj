@@ -352,7 +352,8 @@
 
 (defn relationship-fixtures
   [db]
-  (mapcat #(impl/tx-relationship db %) relationship-fixture-data))
+  ; :allow-tempids? because entity fixtures land in the same transaction.
+  (mapcat #(impl/tx-relationship db % {:allow-tempids? true}) relationship-fixture-data))
 
 (defn base-fixtures
   [db]
@@ -372,7 +373,7 @@
     {:db/id    "account-3"
      :db/ident :test/account3
      :eacl/id  "account-3"}]
-   (mapcat #(impl/tx-relationship db %)
+   (mapcat #(impl/tx-relationship db % {:allow-tempids? true})
      [(Relationship (->account "account-3") :account (->server "account3-server3.1"))
       (Relationship (->user :test/user1) :owner (->account "account-3"))])))
 
