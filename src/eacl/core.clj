@@ -24,12 +24,12 @@
   (write-schema! [this schema])
 
   ;; Relationships
-  (read-relationships [this query])
-  ; where query is a map with the following keys (defprotocol does not support multiple :namespaced/keys):
-  ; {:as            query
-  ;  :keys          [limit cursor]
-  ;  :subject/keys  [type id relation]
-  ;  :resource/keys [type id id-prefix relation]}
+	  (read-relationships [this query])
+	  ; where query is a map with the following keys (defprotocol does not support multiple :namespaced/keys):
+	  ; {:as            query
+	  ;  :keys          [first last after before]
+	  ;  :subject/keys  [type id relation]
+	  ;  :resource/keys [type id id-prefix relation]}
   ;
   ; one of :resource/type, :subject/type or :resource/relation is required.
   ;
@@ -61,22 +61,25 @@
 
   ;; Subject & Resource & Enumeration
   (lookup-resources [this {:as query :keys [consistency]}])
-  ; lookup-resources (formerly 'what-can?') accepts:
-  ; - :resource/type – keyword, required.
-  ; - :permission - keyword, required.
-  ; - :subject has {:keys [type id]}. Required.
-  ; - limit - optional number.
-  ; - offset - optional number.
+	  ; lookup-resources (formerly 'what-can?') accepts:
+	  ; - :resource/type – keyword, required.
+	  ; - :permission - keyword, required.
+	  ; - :subject has {:keys [type id]}. Required.
+	  ; - :first with optional :after for forward pagination.
+	  ; - :last with optional :before for backward pagination.
+	  ; Returns {:data [...] :page-info {:start-cursor ... :end-cursor ...
+	  ;                                  :has-next-page? ... :has-previous-page? ...}}.
 
   (count-resources [this {:as query :keys [consistency]}])
-  ; counting can be slow because it enumerates lookup-resources from cursor
+  ; counting can be slow because it enumerates the full lookup-resources result set
 
   (lookup-subjects [this {:as query :keys [consistency]}])
-  ; lookup-subjects (formerly 'who-can?') accepts:
-  ; - :resource has {:keys [type id]}. Required.
-  ; - :permission (keyword) required.
-  ; - :subject/type (keyword) required.
-  ; - :subject/relation (keyword) optional, e.g. :member.
+	  ; lookup-subjects (formerly 'who-can?') accepts:
+	  ; - :resource has {:keys [type id]}. Required.
+	  ; - :permission (keyword) required.
+	  ; - :subject/type (keyword) required.
+	  ; - :subject/relation (keyword) optional, e.g. :member.
+	  ; - :first/:after or :last/:before pagination, as above.
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
 
