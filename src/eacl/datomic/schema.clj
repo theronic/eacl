@@ -173,10 +173,6 @@
     :db/cardinality :db.cardinality/many
     :db/index       true}])
 
-(def v6-schema
-  "Compatibility alias while tests and callers move to the v7 name."
-  v7-schema)
-
 (defn count-relationships-using-relation
   "Counts v7 forward relationship tuples that reference the given relation."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
@@ -404,6 +400,7 @@
                      ;; Store schema string
                     [{:eacl/id            "schema-string"
                       :eacl/schema-string schema-string}])]
+      (impl.indexed/evict-permission-paths-cache!)
       @(d/transact conn tx-data)
       (impl.indexed/evict-permission-paths-cache!)
       deltas)))
