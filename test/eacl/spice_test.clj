@@ -10,6 +10,68 @@
             [clojure.tools.logging :as log]
             [eacl.spicedb.consistency :as consistency :refer [fully-consistent]]))
 
+(defn page-start-cursor
+  [page]
+  (get-in page [:page-info :start-cursor]))
+
+(defn page-end-cursor
+  [page]
+  (get-in page [:page-info :end-cursor]))
+
+(deftest opaque-page-token-test
+  (let [opts {:page-token-current-kid :test
+              :page-token-keyring {:test (.getBytes "01234567890123456789012345678901" "UTF-8")}}]
+    (testing "page-token round-trip preserves the encrypted pagination payload"
+      (let [payload {:op :lookup-resources
+                     :query-shape "shape"
+                     :basis :stable
+                     :basis-t 42
+                     :edge {:kind :lookup-eid :result-eid 123}
+                     :ttl-seconds 60}
+            token (spiceomic/page-token opts payload)
+            decoded (spiceomic/token->page-bound opts token)]
+        (is (string? token))
+        (is (.startsWith ^String token "eacl3_"))
+        (is (= (dissoc payload :ttl-seconds)
+               (select-keys decoded [:op :query-shape :basis :basis-t :edge])))))
+
+    (testing "tokens use a fresh nonce for the same payload"
+      (let [payload {:op :lookup-resources
+                     :query-shape "shape"
+                     :basis :stable
+                     :basis-t 42
+                     :edge {:kind :lookup-eid :result-eid 123}
+                     :ttl-seconds 60}]
+        (is (not= (spiceomic/page-token opts payload)
+                  (spiceomic/page-token opts payload)))))
+
+    (testing "keyring rotation accepts configured old keys and rejects missing keys"
+      (let [old-opts {:page-token-current-kid :old
+                      :page-token-keyring {:old (.getBytes "old-old-old-old-old-old-old-old-" "UTF-8")}}
+            rotated-opts {:page-token-current-kid :new
+                          :page-token-keyring {:old (.getBytes "old-old-old-old-old-old-old-old-" "UTF-8")
+                                               :new (.getBytes "new-new-new-new-new-new-new-new-" "UTF-8")}}
+            new-only-opts {:page-token-current-kid :new
+                           :page-token-keyring {:new (.getBytes "new-new-new-new-new-new-new-new-" "UTF-8")}}
+            payload {:op :lookup-resources
+                     :query-shape "shape"
+                     :basis :stable
+                     :basis-t 42
+                     :edge {:kind :lookup-eid :result-eid 123}
+                     :ttl-seconds 60}
+            old-token (spiceomic/page-token old-opts payload)]
+        (is (= (:edge payload)
+               (:edge (spiceomic/token->page-bound rotated-opts old-token))))
+        (is (thrown? Throwable
+                     (spiceomic/token->page-bound new-only-opts old-token)))))
+
+    (testing "nil token decodes to nil"
+      (is (nil? (spiceomic/token->page-bound opts nil))))
+
+    (testing "invalid input is rejected"
+      (is (thrown? Throwable (spiceomic/token->page-bound opts "garbage")))
+      (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl3_not-valid-base64!!!"))))))
+
 (deftest spicedb-helper-tests
   (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
     (is (= #eacl.core.SpiceObject{:type :user, :id "my-user", :relation nil}
@@ -18,7 +80,7 @@
            (spice-object :team "dev-team" :member)))))
 
 (deftest spicedb-tests
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "->user means (partial spice-object :user). Creates a SpiceObject record with {:keys [type id relation]}"
       (def my-user (->user "ben"))
       (def joe's-user (->user "joe"))
@@ -59,7 +121,8 @@
         ; def *client REPL testing convenience and fewer parens.
         (def *client client)))
 
-    @(d/transact conn fixtures/base-fixtures)               ; temp until write-relationships
+    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    @(d/transact conn (fixtures/relationship-fixtures (d/db conn))) ; temp until write-relationships
 
     ;(is (= [] (eacl/read-relationships *client {:resource/type :vpc})))
     ;(is (= [] (eacl/read-relationships *client {:resource/type :account})))
@@ -182,14 +245,12 @@
                                                      {:subject       my-user
                                                       :permission    :reboot
                                                       :resource/type :server
-                                                      :cursor        nil
                                                       :consistency   fully-consistent})
                               (:data))))
 
       (is (= [joe's-server] (->> (eacl/lookup-resources *client
                                                         {:resource/type :server
                                                          :permission    :reboot
-                                                         :cursor        nil
                                                          :subject       joe's-user
                                                          :consistency   fully-consistent})
                                  (:data)))))
@@ -241,18 +302,18 @@
         (is (false? (eacl/can? *client joe's-user :reboot my-server fully-consistent)))))
 
     (testing "We can enumerate the platform administrators with read-relationships:"
-      ; fixtures a bit confusing atm.
+	      ; fixtures a bit confusing atm.
       (is (= #{(->Relationship super-user :super_admin ca-platform)
                (->Relationship (->user "super-user") :super_admin ca-platform)}
-             (set (eacl/read-relationships *client {:resource/type :platform})))))
+             (set (:data (eacl/read-relationships *client {:resource/type :platform}))))))
 
     (testing "We can enumerate account owners:"
       (is (= #{(->Relationship my-user :owner my-account)
                (->Relationship joe's-user :owner acme-account)
                (->Relationship (->user "user-1") :owner (->account "account-1"))
                (->Relationship (->user "user-2") :owner (->account "account-2"))}
-             (set (eacl/read-relationships *client {:resource/type :account
-                                                    :subject/type  :user})))))
+             (set (:data (eacl/read-relationships *client {:resource/type :account
+                                                           :subject/type  :user}))))))
 
     (testing "read-relationships supports various filters:"
       (testing "query platform->account"
@@ -260,47 +321,58 @@
                  (->Relationship ca-platform :platform (->account "account-1"))
                  (->Relationship ca-platform :platform (->account "account-2"))
                  (->Relationship ca-platform :platform my-account)}
-               (set (eacl/read-relationships *client {:resource/type     :account
-                                                      :subject/type      :platform
-                                                      :resource/relation :platform})))))
+               (set (:data (eacl/read-relationships *client {:resource/type     :account
+                                                             :subject/type      :platform
+                                                             :resource/relation :platform}))))))
 
       (testing "the same relationships show up if we omit :resource/relation"
         (is (= #{(->Relationship ca-platform :platform acme-account)
                  (->Relationship ca-platform :platform (->account "account-1"))
                  (->Relationship ca-platform :platform (->account "account-2"))
                  (->Relationship ca-platform :platform my-account)}
-               (set (eacl/read-relationships *client {:resource/type :account
-                                                      :subject/type  :platform}))))))
+               (set (:data (eacl/read-relationships *client {:resource/type :account
+                                                             :subject/type  :platform})))))))
+
+    (testing "read-relationships supports forward and backward page cursors"
+      (let [base-query {:resource/type :account
+                        :subject/type :platform
+                        :resource/relation :platform}
+            all-page (eacl/read-relationships *client (assoc base-query :first 10))
+            [page1-expected page2-expected] (partition-all 2 (:data all-page))
+            page1 (eacl/read-relationships *client (assoc base-query :first 2))
+            page2 (eacl/read-relationships *client
+                                           (assoc base-query
+                                                  :first 2
+                                                  :after (page-end-cursor page1)))
+            previous-page (eacl/read-relationships *client
+                                                   (assoc base-query
+                                                          :last 2
+                                                          :before (page-start-cursor page2)))]
+        (is (= page1-expected (:data page1)))
+        (is (= page2-expected (:data page2)))
+        (is (= (:data page1) (:data previous-page)))
+        (is (string? (page-start-cursor page1)))
+        (is (string? (page-end-cursor page1)))
+        (is (.startsWith ^String (page-end-cursor page1) "eacl3_"))
+        (is (true? (get-in page1 [:page-info :has-next-page?])))
+        (is (false? (get-in page1 [:page-info :has-previous-page?])))
+        (is (true? (get-in previous-page [:page-info :has-next-page?])))))
 
     (testing "lookup-resources pagination tests"
-
-      ;(prn 'debug 'all-results (eacl/lookup-resources *client {:limit         100
-      ;                                                         :cursor        nil ; no cursor means page 1.
-      ;                                                         :resource/type :server
-      ;                                                         :permission    :view
-      ;                                                         :subject       (->user "super-user")}))
-
-      (let [{:as          page1
-             page1-data   :data
-             page1-cursor :cursor} (->> (eacl/lookup-resources *client {:limit         2
-                                                                        :cursor        nil ; no cursor means page 1.
-                                                                        :resource/type :server
-                                                                        :permission    :view
-                                                                        :subject       (->user "super-user")}))
-            ;_ (prn 'page1 page1)
-            ;_ (prn 'page1 'cursor (:cursor page1))
-            {:as          page2
-             page2-data   :data
-             page2-cursor :cursor} (->> (eacl/lookup-resources *client {:limit         2
-                                                                        :cursor        (:cursor page1)
-                                                                        :resource/type :server
-                                                                        :permission    :view
-                                                                        :subject       (->user "super-user")}))]
-
-        ;_ (prn 'page2 'cursor (:cursor page2))
-
-        ; these are currently failing. suspect order is fixed now, which is why showin gup.
-        ; tbh not sure how they were ever passing given the base-fixtures.
+      (let [base-query {:first 2
+                        :resource/type :server
+                        :permission :view
+                        :subject (->user "super-user")}
+            page1 (eacl/lookup-resources *client base-query)
+            page1-data (:data page1)
+            page1-end-cursor (page-end-cursor page1)
+            page2 (eacl/lookup-resources *client (assoc base-query :after page1-end-cursor))
+            page2-data (:data page2)
+            previous-page (eacl/lookup-resources *client
+                                                 (-> base-query
+                                                     (dissoc :first :after)
+                                                     (assoc :last 2
+                                                            :before (page-start-cursor page2))))]
         (is (= [(spice-object :server "account1-server1")
                 (spice-object :server "account1-server2")]
                page1-data))
@@ -309,53 +381,101 @@
                 my-server]
                page2-data))
 
-        (testing "page1 cursor should be non-nil"
-          (is page1-cursor)
-          (is (get-in page1-cursor [:resource :id])))
+        (testing "page-info contains opaque eacl3 tokens and no legacy top-level cursor"
+          (is (nil? (:cursor page1)))
+          (is (string? (page-start-cursor page1)))
+          (is (string? page1-end-cursor))
+          (is (.startsWith ^String page1-end-cursor "eacl3_")))
 
-        (testing "page1-cursor should equal the last resource in its results" ; (may change in future to next value)
-          (is (= (get-in page1-cursor [:resource :id])
-                 (:id (last (:data page1))))))
+        (testing "reverse pagination can get the previous page without a cursor stack"
+          (is (= page1-data (:data previous-page)))
+          (is (true? (get-in previous-page [:page-info :has-next-page?])))
+          (is (false? (get-in previous-page [:page-info :has-previous-page?]))))
 
-        (testing "page2-cursor is the last resource in its results"
-          (is (= (:id (last (:data page2)))
-                 (get-in page2-cursor [:resource :id]))))))
+        (testing "page tokens are bound to the original query shape and protected against tampering"
+          (is (thrown? Throwable
+                       (eacl/lookup-resources *client
+                                              {:first 2
+                                               :after page1-end-cursor
+                                               :resource/type :account
+                                               :permission :view
+                                               :subject (->user "super-user")})))
+	          (is (thrown? Throwable
+	                       (eacl/lookup-resources *client
+	                                              (assoc base-query :after (str page1-end-cursor "x"))))))))
 
-    (testing "count-resources returns cursor with correct type and coerced ID (issue #47)"
-      (let [{:keys [count cursor]} (eacl/count-resources *client
-                                                          {:subject       (->user "super-user")
-                                                           :permission    :view
-                                                           :resource/type :server
-                                                           :limit         2})]
-        (testing "count-resources returns a count"
-          (is (pos? count)))
+	    (testing "count-resources returns a full count and rejects list pagination keys"
+	      (let [{:keys [count limit]} (eacl/count-resources *client
+	                                                        {:subject       (->user "super-user")
+	                                                         :permission    :view
+	                                                         :resource/type :server})]
+	        (is (pos? count))
+	        (is (= -1 limit)))
+	      (is (thrown? Throwable
+	                   (eacl/count-resources *client
+	                                         {:subject       (->user "super-user")
+	                                          :permission    :view
+	                                          :resource/type :server
+	                                          :first         2}))))
 
-        (testing "cursor resource type should be a keyword, not clojure.core/type function"
-          (is (keyword? (get-in cursor [:resource :type]))
-              "Bug #47: cursor :type was clojure.core/type function instead of resource type keyword"))
+	    (testing "stable page tokens keep using the page basis after live changes"
+	      (let [base-query {:resource/type :server
+	                        :permission :view
+	                        :subject (->user "super-user")}
+	            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
+	            page1-end-cursor (page-end-cursor page1)
+	            stable-rest-before-insert (:data (eacl/lookup-resources *client
+	                                                                    (assoc base-query
+	                                                                           :first 100
+	                                                                           :after page1-end-cursor)))
+	            new-server (->server "stable-new-server")]
+	        @(d/transact conn [{:eacl/id (:id new-server)}])
+	        (is (eacl/create-relationship! *client my-account :account new-server))
+	        (is (= stable-rest-before-insert
+	               (:data (eacl/lookup-resources *client
+	                                            (assoc base-query
+	                                                   :first 100
+	                                                   :after page1-end-cursor)))))
+	        (is (not-any? #{new-server}
+	                      (:data (eacl/lookup-resources *client
+	                                                   (assoc base-query
+	                                                          :first 100
+	                                                          :after page1-end-cursor))))))
+	      (let [base-query {:resource/type :server
+	                        :permission :view
+	                        :subject (->user "super-user")}
+	            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
+	            page1-end-cursor (page-end-cursor page1)
+	            expected-page2 (eacl/lookup-resources *client
+	                                                  (assoc base-query
+	                                                         :first 2
+	                                                         :after page1-end-cursor))
+	            victim (first (:data expected-page2))]
+	        @(d/transact conn [[:db/retract [:eacl/id (:id victim)] :eacl/id (:id victim)]])
+	        (is (= (:data expected-page2)
+	               (:data (eacl/lookup-resources *client
+	                                            (assoc base-query
+	                                                   :first 2
+	                                                   :after page1-end-cursor)))))))
 
-        (testing "cursor resource id should be coerced to external format (string), not internal eid (long)"
-          (is (string? (get-in cursor [:resource :id]))
-              "Bug #47: cursor :id was not coerced to external format"))))
+	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
+	      (testing "transact the test entities we are about to use"
+	        @(d/transact conn (for [object [(->account "test-account")
+	                                        (->account "other-account")
+	                                        (->vpc "my-vpc")
+	                                        (->vpc "other-vpc")]]
+	                            {:eacl/id (:id object)})))
 
-    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
-      (testing "transact the test entities we are about to use"
-        @(d/transact conn (for [object [(->account "test-account")
-                                        (->account "other-account")
-                                        (->vpc "my-vpc")
-                                        (->vpc "other-vpc")]]
-                            {:eacl/id (:id object)})))
-
-      (is (eacl/create-relationships! *client
-                                      [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
-                                       (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
-                                       (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
-      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
-             (eacl/read-relationships *client {:resource/type     :vpc
-                                               :resource/id       "my-vpc"
-                                               :resource/relation :account
-                                               :subject/type      :account
-                                               :subject/id        "test-account"}))))))
+	      (is (eacl/create-relationships! *client
+	                                      [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))
+	                                       (->Relationship (->account "test-account") :account (->vpc "other-vpc"))
+	                                       (->Relationship (->account "other-account") :account (->vpc "other-vpc"))]))
+	      (is (= [(->Relationship (->account "test-account") :account (->vpc "my-vpc"))]
+	             (:data (eacl/read-relationships *client {:resource/type     :vpc
+	                                                      :resource/id       "my-vpc"
+	                                                      :resource/relation :account
+	                                                      :subject/type      :account
+	                                                      :subject/id        "test-account"})))))))
 
 ; expand-permission-tree not impl. yet.
 ;; FIXME: These tests fail because expand-permission-tree is not implemented yet
@@ -364,7 +484,7 @@
                 :relation :owner
                 :subjects [{:object   (->user "ben")
                             :relation nil}]}
-               [{:object   (->platform "cloudafrica")
+               [{:object   (->platform "sample-platform")
                  :relation :super_admin
                  :subjects [{:object   (->user "andre")
                              :relation nil}]}]]]
@@ -386,7 +506,7 @@
     (is (= [[[[{:object   (->account "acme")
                 :subjects [{:object joe's-user :relation nil}],
                 :relation :owner}
-               [{:object   (->platform "cloudafrica"),
+               [{:object   (->platform "sample-platform"),
                  :subjects [{:object (->user "andre"), :relation nil}],
                  :relation :super_admin}]]]
              []

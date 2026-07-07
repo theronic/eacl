@@ -1,7 +1,7 @@
 (ns eacl.datomic.fixtures
   (:require [datomic.api :as d]
             [eacl.core :refer [spice-object]]
-            [eacl.datomic.impl :as eacl :refer (Relation Relationship Permission)]))
+            [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]))
 
 ; These are helpers specific to CA (todo move out):
 (def ->user (partial spice-object :user))
@@ -95,6 +95,7 @@
 
    ; Teams:
    (Relation :team :account :account)
+   (Relation :team :member :user)
 
    ;; Servers:
    (Relation :server :account :account)
@@ -306,7 +307,7 @@
     :db/ident :test/backup2
     :eacl/id  "backup-2"}])
 
-(def relationship-fixtures
+(def relationship-fixture-data
   [; we need to specify types for indices, but id can be tempid here.
    (Relationship (->user "user-1") :member (->team "team-1")) ; User 1 is on Team 1
    (Relationship (->user "user-1") :owner (->account "account-1"))
@@ -349,26 +350,31 @@
    (Relationship (->account "account-1") :account (->backup "backup-1"))
    (Relationship (->server "account1-server1") :server (->backup "backup-1"))])
 
-(def base-fixtures
+(defn relationship-fixtures
+  [db]
+  (mapcat #(impl/tx-relationship db %) relationship-fixture-data))
+
+(defn base-fixtures
+  [db]
   (concat
-    relations+permissions
-    entity-fixtures
-    relationship-fixtures))
+   relations+permissions
+   entity-fixtures
+   (relationship-fixtures db)))
 
-(def txes-additional-account3+server
+(defn txes-additional-account3+server
   "To test accounts & servers with higher eids."
-  [{:db/id    "account3-server3.1"
-    :db/ident :test/account3-server1
-    :eacl/id  "account3-server3.1"}
+  [db]
+  (concat
+   [{:db/id    "account3-server3.1"
+     :db/ident :test/account3-server1
+     :eacl/id  "account3-server3.1"}
 
-   {:db/id    "account-3"
-    :db/ident :test/account3
-    :eacl/id  "account-3"}
-
-   (Relationship (->account "account-3") :account (->server "account3-server3.1"))
-   (Relationship (->user :test/user1) :owner (->account "account-3"))])
+    {:db/id    "account-3"
+     :db/ident :test/account3
+     :eacl/id  "account-3"}]
+   (mapcat #(impl/tx-relationship db %)
+     [(Relationship (->account "account-3") :account (->server "account3-server3.1"))
+      (Relationship (->user :test/user1) :owner (->account "account-3"))])))
 
 ;; (For Later) Team Membership:
 ;(Relationship "user-2" :team/member "team-2")
-
-

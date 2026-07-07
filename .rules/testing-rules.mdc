@@ -1,0 +1,54 @@
+---
+description: Testing
+globs: 
+alwaysApply: false
+---
+## Generation Principles
+1. Generate tests with implementation
+2. Test behavior, not implementation
+3. Create deterministic tests
+4. Balance coverage vs. maintainability
+5. Test happy and error paths
+
+## Test Types
+1. Unit tests for isolated functionality
+2. Integration tests for component interactions
+3. E2E tests for critical flows
+4. Edge case testing
+5. Performance tests for bottlenecks
+6. Security tests for sensitive operations
+
+## Quality Guidelines
+1. Write readable, maintainable tests
+2. Name tests descriptively
+3. Use Arrange-Act-Assert pattern
+4. Create appropriate mocks
+5. Avoid test interdependencies
+
+## Modifications
+1. Update tests when changing functionality
+2. Maintain coverage during refactoring
+3. Improve brittle/unclear tests
+4. Flag implementation-dependent tests
+5. Fill coverage gaps
+
+## African Context
+1. Test low-connectivity scenarios
+2. Test multi-currency operations
+3. Include regulatory compliance testing
+4. Test mobile-specific scenarios
+5. Test network instability handling
+
+## Decision Guidance
+1. Follow existing test frameworks
+2. Suggest strategies for complex functionality
+3. Identify property-based testing opportunities
+4. Recommend test data approaches
+5. Escalate unclear test requirements
+
+## CI/CD Integration
+1. Consider test execution time
+2. Categorize tests appropriately
+3. Suggest parallel execution strategies
+4. Recommend reporting approaches
+5. Consider test stability in CI 
