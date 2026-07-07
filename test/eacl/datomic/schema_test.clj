@@ -4,7 +4,8 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.fixtures :as fixtures]
-            [eacl.datomic.impl :as impl]))
+            [eacl.datomic.impl :as impl]
+            [eacl.spicedb.parser]))
 
 (def example-schema-string
   "definition user {}
@@ -169,6 +170,70 @@
               schema (schema/read-schema db)]
           (is (= 3 (count (:relations schema))))
           (is (= 3 (count (:permissions schema)))))))))
+
+(deftest write-schema-parse-failure-test
+  (testing "a malformed schema string throws a typed error and leaves the stored schema untouched"
+    (with-mem-conn [conn schema/v6-schema]
+      (schema/write-schema! conn example-schema-string)
+      (let [before (schema/read-schema (d/db conn))]
+        (try
+          ;; missing closing brace — pre-fix this silently retracted the ENTIRE schema
+          (schema/write-schema! conn "definition user {}
+             definition account {
+               relation owner: user
+               permission admin = owner")
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl.schema/parse-error (:type (ex-data e))))))
+        (is (= before (schema/read-schema (d/db conn)))
+            "schema must be unchanged after a failed write"))))
+
+  (testing "a schema containing comments (e.g. pasted from the SpiceDB playground) writes cleanly"
+    (with-mem-conn [conn schema/v6-schema]
+      (is (schema/write-schema! conn "// users of the system
+         definition user {}
+         /* accounts own things */
+         definition account {
+           relation owner: user // the owner
+           permission admin = owner
+         }"))
+      (is (= 1 (count (:relations (schema/read-schema (d/db conn)))))))))
+
+(deftest write-schema-empty-guard-test
+  (testing "zero-definition output cannot wipe a non-empty schema (parser-gap belt-and-braces)"
+    (with-mem-conn [conn schema/v6-schema]
+      (schema/write-schema! conn example-schema-string)
+      (with-redefs [eacl.spicedb.parser/->eacl-schema (fn [_] {:definitions [] :relations [] :permissions []})]
+        (try
+          (schema/write-schema! conn "anything")
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl.schema/empty-schema-guard (:type (ex-data e))))))
+        (testing "explicit opt-in allows the wipe when nothing would be orphaned"
+          (is (schema/write-schema! conn "anything" {:allow-empty-schema? true}))
+          (is (= {:relations [] :permissions []} (schema/read-schema (d/db conn)))))))))
+
+(deftest arrow-validation-order-independence-test
+  (let [schema-with-owner-types (fn [types]
+                                  (str "definition user { relation boss: user  permission mgmt = boss }
+                                        definition group {}
+                                        definition account { relation owner: " types "
+                                          permission admin = owner->mgmt }"))]
+    (testing "arrow targets are validated against ALL subject types, regardless of declaration order"
+      ;; mgmt exists on user but not group: both orders must be rejected identically.
+      (doseq [types ["user | group" "group | user"]]
+        (with-mem-conn [conn schema/v6-schema]
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
+                (schema/write-schema! conn (schema-with-owner-types types)))
+              (str "owner: " types " should be rejected — mgmt missing on group")))))
+
+    (testing "accepted when the target exists on every subject type"
+      (with-mem-conn [conn schema/v6-schema]
+        (is (schema/write-schema! conn
+              "definition user { relation boss: user  permission mgmt = boss }
+               definition group { relation lead: user  permission mgmt = lead }
+               definition account { relation owner: user | group
+                                    permission admin = owner->mgmt }"))))))
 
 (deftest fixtures-schema-round-trip-test
   "Tests that fixtures.schema can be written and read back correctly.
