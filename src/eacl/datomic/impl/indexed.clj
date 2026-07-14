@@ -117,42 +117,58 @@
 
 (defn evict-permission-paths-cache!
   "Manual override that clears both the permission-path and query-plan caches.
-  No longer required for correctness (cache keys carry a schema-history digest),
-  but retained for immediate local effect and belt-and-braces."
+  write-schema! calls it for immediate local hygiene; cross-peer and as-of
+  correctness rely on the :eacl/schema-version cache key, not on this. It is
+  also the recovery hatch after unsupported programmatic schema edits."
   []
   (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000))
   (reset! recursive-query-plan-cache (cache/lru-cache-factory {} :threshold 256)))
 
-;; --- Schema-history digest cache scope -------------------------------------
+;; --- Schema-version cache scope (issue #74) ---------------------------------
 ;;
-;; Coverage invariant: every attribute that permission-path / query-plan
-;; computation reads MUST be a component of one of the composite tuples
-;; digested below. Datomic rewrites a composite tuple datom in the same
-;; transaction as ANY component change, and retractEntity retracts it, so the
-;; tuple histories are a complete record of path-relevant schema mutations.
-;; If you add a new path-relevant attribute outside these tuples, add its
-;; history to the digest or caches will serve stale paths.
+;; The path/plan caches are invalidated ONLY by eacl.datomic.schema/write-schema!,
+;; which asserts a fresh :eacl/schema-version squuid on the schema singleton in
+;; the same transaction as any definition change. Reading the stamp is a single
+;; AVET lookup — O(log N), no history scans — and unrelated d/transact calls
+;; leave it (and therefore every cache key) untouched, so relationship write
+;; load can never evict or recompute paths. (The previous design derived a
+;; digest from schema history per db basis, i.e. recomputed after every
+;; transact — issue #74.)
+;;
+;; Contract: permission schema mutations MUST go through write-schema!.
+;; Programmatic edits of relation/permission datoms (raw d/transact, d/with,
+;; excision) do not bump the version, so caches and cursors may serve paths
+;; computed from the pre-edit schema until the next write-schema! or a manual
+;; evict-permission-paths-cache!. That trade-off is by design.
+;;
+;; The stamp lives in the database, not in peer memory, so:
+;;  - write-schema! on any peer invalidates every peer (the stored value changes);
+;;  - d/as-of views read the version that was current at that basis, giving
+;;    historic views their own cache slots (audit §3 fix, preserved);
+;;  - a squuid can never be re-asserted to an unchanged value by a concurrent
+;;    writer (no counter-elision race);
+;;  - cursor fingerprints survive process restarts.
 
-(def ^:private schema-digest-attrs
-  [:eacl.relation/resource-type+relation-name+subject-type
-   :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name])
+(def schema-version-attr
+  "Installed by eacl.datomic.schema/v7-schema; asserted by write-schema!."
+  :eacl/schema-version)
 
-(defonce ^:private schema-scope-memo
-  ;; Keyed by the db value itself: Datomic Db equality is value- and
-  ;; content-based (pinned by tests), so this can only unify db values whose
-  ;; visible histories — and therefore digests — are identical. Weak keys
-  ;; release with the db value. Sentinel (uncached) scopes are never stored.
-  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+(defn schema-version
+  "The schema-version squuid asserted by the most recent write-schema! visible
+  in this db value, or nil for databases that predate versioned schema writes.
+  A single AVET lookup on a one-datom attribute."
+  [db]
+  (when (d/entid db schema-version-attr)
+    (:v (first (d/datoms db :avet schema-version-attr)))))
 
 (def ^:private uncached-scope [::uncached])
 
 (defn- classified-view
-  "Positively classifies a db value: :plain, :as-of, or nil for anything the
-  digest must not be shared for. d/filter views are excluded because their
-  predicates are arbitrary functions (possibly impure or time-dependent), so
-  a digest of their filtered history is not trustworthy as a shared cache key;
-  d/since views hide old schema and are pointless to cache; history views are
-  not queryable schema states."
+  "Positively classifies a db value: :plain, :as-of, or nil for any view the
+  version stamp cannot be trusted on. d/filter views are excluded because their
+  predicates are arbitrary functions that may hide definition datoms without
+  hiding the version datom; d/since views hide old schema and are pointless to
+  cache; history views are not queryable schema states."
   [db]
   (cond
     (d/is-history db)      nil
@@ -161,48 +177,26 @@
     (some? (d/as-of-t db)) :as-of
     :else                  :plain))
 
-(defn- schema-history-digest
-  "128-bit hex digest (SHA-256 truncated; FIPS-safe) folded in index order over
-  the history datoms of the schema composite tuple attrs, filtered to the
-  db's visible basis. Content-derived: any schema mutation — write-schema!,
-  programmatic transaction, retraction, or excision — changes it, on every peer,
-  with no writer-side signal."
-  [db]
-  (let [md      (java.security.MessageDigest/getInstance "SHA-256")
-        ;; d/basis-t of an as-of view returns the UNDERLYING basis (REPL-verified),
-        ;; so the visibility filter must prefer d/as-of-t.
-        limit-t (or (d/as-of-t db) (d/basis-t db))
-        hist    (d/history db)]
-    (doseq [attr schema-digest-attrs
-            datom (d/datoms hist :aevt attr)
-            :let [t (d/tx->t (:tx datom))]
-            :when (<= t limit-t)]
-      (.update md (.getBytes (pr-str [(:e datom) (:v datom) t (:added datom)]) "UTF-8")))
-    (format "%032x" (java.math.BigInteger. 1 (java.util.Arrays/copyOf (.digest md) 16)))))
-
 (defn- schema-cache-scope
-  "Returns [database-id schema-history-digest] for positively classified
+  "Returns [database-id schema-version-string] for positively classified
   plain/as-of db values, or a sentinel scope for anything else (filter, since,
   history, unrecognized views) and for ANY failure. Sentinel scopes bypass the
   caches entirely: every failure mode degrades to recomputation from the
   queried db value — never to serving a stale entry."
   [db]
-  (or (.get ^java.util.Map schema-scope-memo db)
-      (let [scope (try
-                    (when (classified-view db)
-                      [(str (.id db)) (schema-history-digest db)])
-                    (catch Throwable _ nil))]
-        (if scope
-          (do (.put ^java.util.Map schema-scope-memo db scope)
-              scope)
-          uncached-scope))))
+  (or (try
+        (when (classified-view db)
+          [(str (.id db)) (some-> (schema-version db) str)])
+        (catch Throwable _ nil))
+      uncached-scope))
 
 (defn- uncached-scope? [scope]
   (identical? uncached-scope scope))
 
-(defn schema-basis-digest
-  "The schema-history digest for this db value, or nil when the view cannot be
-  cached (see schema-cache-scope). Used for cursor fingerprints."
+(defn schema-version-stamp
+  "String form of the schema version for this db value, or nil when no version
+  has been written yet or the view cannot be classified (see schema-cache-scope).
+  Used for cursor fingerprints; nil forces the :p paths-digest comparison."
   [db]
   (let [scope (schema-cache-scope db)]
     (when-not (uncached-scope? scope)
@@ -216,24 +210,27 @@
     (format "%032x" (java.math.BigInteger. 1 (java.util.Arrays/copyOf (.digest md) 16)))))
 
 (defn- cursor-fingerprint
-  "Two-part cursor fingerprint: :s is the schema-history digest at mint time
-  (nil on unclassifiable views), :p digests this query's resolved paths/plan."
+  "Two-part cursor fingerprint: :s is the schema-version stamp at mint time
+  (nil on unclassifiable views or pre-version databases), :p digests this
+  query's resolved paths/plan."
   [db paths-or-plan]
-  {:s (schema-basis-digest db)
+  {:s (schema-version-stamp db)
    :p (fingerprint-digest paths-or-plan)})
 
 (defn- check-cursor-fingerprint!
-  "Guards cursor resumption against schema changes. Equal schema digests prove
-  identical schema history, so the cursor resumes on the fast path. A differing
-  (or unavailable) schema digest falls back to comparing this query's resolved
-  paths/plan: equal means the schema change did not affect this query; different
-  throws :eacl/stale-cursor instead of silently mis-skipping via reordered :p
-  path indices or replaying a stale v3 :stack. Cursors minted before
-  fingerprints existed are accepted with a warning."
+  "Guards cursor resumption against schema changes. An equal schema-version
+  stamp means no write-schema! ran between mint and resume (programmatic datom
+  edits bypass the stamp — see the schema-version contract above), so the
+  cursor resumes on the fast path. A differing (or unavailable) stamp falls
+  back to comparing this query's resolved paths/plan: equal means the schema
+  change did not affect this query; different throws :eacl/stale-cursor instead
+  of silently mis-skipping via reordered :p path indices or replaying a stale
+  v3 :stack. Cursors minted before fingerprints existed are accepted with a
+  warning."
   [db cursor paths-or-plan]
   (when (map? cursor)
     (if-let [f (:f cursor)]
-      (let [current-s (schema-basis-digest db)]
+      (let [current-s (schema-version-stamp db)]
         (when-not (and (:s f) current-s (= (:s f) current-s))
           (when-not (= (:p f) (fingerprint-digest paths-or-plan))
             (throw (ex-info "Stale cursor: the permission paths for this query changed since the cursor was minted. Restart pagination."
