@@ -36,6 +36,19 @@
 ;(def Permission
 ;  [:or DirectPermission ArrowPermission])
 
+(def schema-version-attr-definition
+  "Cache-invalidation stamp. write-schema! asserts a fresh squuid here in the
+  same transaction as any definition change; EACL's permission-path caches and
+  cursor fingerprints key on it, so ONLY write-schema! invalidates them (#74).
+  A squuid (not a counter) so two concurrent writers can never assert the same
+  value and elide each other's invalidation. Do not edit EACL definitions
+  outside write-schema! — the stamp will not change and caches will be stale."
+  {:db/ident       :eacl/schema-version
+   :db/doc         "Squuid bumped by write-schema! whenever definitions change. Path caches and cursor fingerprints key on it."
+   :db/valueType   :db.type/uuid
+   :db/cardinality :db.cardinality/one
+   :db/index       true})
+
 (def v7-schema
   [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
@@ -48,6 +61,8 @@
     :db/doc         "Stores the SpiceDB schema string."
     :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one}
+
+   schema-version-attr-definition
 
    ;; Relations
    {:db/ident       :eacl.relation/resource-type
@@ -249,6 +264,9 @@
   ([conn schema-string]
    (write-schema! conn schema-string {}))
   ([conn schema-string {:keys [allow-empty-schema?]}]
+   ;; Upgrade path: databases installed before :eacl/schema-version existed.
+   (when-not (d/entid (d/db conn) :eacl/schema-version)
+     @(d/transact conn [schema-version-attr-definition]))
    (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
         ;; Validate schema references before proceeding (ADR 012 requirement)
          _                      (validate-schema-references new-schema-map)
@@ -277,7 +295,11 @@
                            {:relation rel :count cnt})))))
 
     ;; Transact changes
-     (let [tx-data (concat
+     (let [schema-changed? (boolean (or (seq (:additions relations))
+                                        (seq relation-retractions)
+                                        (seq (:additions permissions))
+                                        (seq permission-retractions)))
+           tx-data (concat
                     ;; Additions
                     (:additions relations)
                     (:additions permissions)
@@ -286,9 +308,13 @@
                       [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
                     (for [perm permission-retractions]
                       [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
-                     ;; Store schema string
-                    [{:eacl/id            "schema-string"
-                      :eacl/schema-string schema-string}])]
+                     ;; Store schema string + bump the version stamp when
+                     ;; definitions changed. The stamp is what invalidates the
+                     ;; path caches and cursor fingerprints — on every peer,
+                     ;; and correctly for d/as-of views (issue #74).
+                    [(cond-> {:eacl/id            "schema-string"
+                              :eacl/schema-string schema-string}
+                       schema-changed? (assoc :eacl/schema-version (d/squuid)))])]
        @(d/transact conn tx-data)
        (impl.indexed/evict-permission-paths-cache!)
        deltas))))
