@@ -44,7 +44,7 @@ Situated AuthZ offers some advantages for typical use-cases:
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - Presently, EACL has _no result cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
-- EACL does cache resolved *permission paths and query plans*. Invalidation is fully automatic for **all** schema writes — `write-schema!`, programmatic transactions, retractions, even excision — on every peer and for `d/as-of` views: cache keys carry a digest of the schema's history read from the db value being queried, so no writer-side signal or eviction call is required. The digest scan is O(all-time schema edits) once per db value (identity-memoized); if you continuously churn schema at high volume (an ops smell), expect that scan to grow linearly.
+- EACL does cache resolved *permission paths and query plans*. The cache is invalidated **only by `eacl/write-schema!`**, which bumps a schema-version stamp (`:eacl/schema-version`) stored in the database in the same transaction as the definition change — so invalidation reaches every peer, `d/as-of` views resolve the paths of their own era, and unrelated `d/transact` calls never touch a cache key (zero per-transaction overhead — issue #74). Editing relation/permission datoms outside `write-schema!` is not detected by design; if you must, call `eacl.datomic.impl.indexed/evict-permission-paths-cache!` on every peer afterwards.
 - Recursive `lookup-resources` cursors carry the recursion state and grow ~48 bytes per emitted resource, because exact cross-page deduplication requires the emitted set. Prefer bounded pagination sessions on recursive schemas; a cursor-state redesign is planned.
 - Performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Parallel paths through the graph that return the same resources will slow EACL down, because these resources need to be deduplicated in stable order. In a simple graph, performance should approach `O(logN)` for N permissioned resources. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
@@ -590,6 +590,8 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
 ### Advanced: Programmatic Schema (Optional)
 
 For advanced use cases, you can also define schema programmatically using the internal `Relation` and `Permission` functions:
+
+> **Cache caveat:** transacting `Relation`/`Permission` datoms directly bypasses `write-schema!`'s cache invalidation (see the caching note above). After a programmatic schema change, call `(eacl.datomic.impl.indexed/evict-permission-paths-cache!)` on every peer — or prefer `write-schema!`, which handles this for you.
 
 ```clojure
 (require '[eacl.datomic.impl :refer [Relation Permission]])
