@@ -382,7 +382,21 @@
   (let [db    (d/db conn)
         stamp (stamped-storage-version db)]
     (cond
-      (and stamp (>= stamp storage-version))
+      ;; A stamp from a FUTURE storage model means this build predates the
+      ;; data's migration. Accepting it would be the silent-empty failure this
+      ;; guard exists to prevent, one major version later.
+      (and stamp (> stamp storage-version))
+      (throw
+        (ex-info
+          (str "EACL storage-version mismatch: this database is stamped with storage-version " stamp
+               ", newer than the version this EACL build reads (" storage-version "). "
+               "Upgrade EACL instead of running an older build against migrated-forward data.")
+          {:type             :eacl/storage-version
+           :detected         (detect-storage-version db)
+           :stamped-version  stamp
+           :required-version storage-version}))
+
+      (= stamp storage-version)
       :ok
 
       (empty? (take 1 (v6-relationship-eids db)))

@@ -3,7 +3,10 @@
             [clojure.tools.logging :as log]
             [datomic.api :as d]
             [eacl.core :refer [spice-object]]
-            [eacl.lazy-merge-sort :as lazy-sort]))
+            [eacl.lazy-merge-sort :as lazy-sort])
+  (:import [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.util Base64]))
 
 (def ^:private forward-relationship-attr
   :eacl.v7.relationship/subject-type+relation+resource-type+resource)
@@ -13,6 +16,21 @@
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
+(def ^:private lookup-frontier-version 1)
+
+(defn- object-eid
+  "Resolves an object id to an eid for read paths. String ids resolve via the
+  canonical [:eacl/id ...] identity — d/entid on a bare string throws a raw
+  IllegalArgumentException, which leaked out of can?/lookups for raw-impl
+  callers. Anything else passes to d/entid unchanged (eids, lookup refs,
+  idents). Returns nil when the id does not resolve; callers treat that as an
+  unknown object (can? => false, lookups => empty page)."
+  [db id]
+  (cond
+    (nil? id) nil
+    (string? id) (when (d/entid db :eacl/id)
+                   (d/entid db [:eacl/id id]))
+    :else (d/entid db id)))
 
 (defn- page-error!
   [message data]
@@ -68,9 +86,11 @@
   (if (and (map? cursor-or-opts)
            (contains? cursor-or-opts :direction))
     {:direction (:direction cursor-or-opts)
-     :bound-eid (:bound-eid cursor-or-opts)}
+     :bound-eid (:bound-eid cursor-or-opts)
+     :inclusive-bound? (boolean (:inclusive-bound? cursor-or-opts))}
     {:direction :asc
-     :bound-eid cursor-or-opts}))
+     :bound-eid cursor-or-opts
+     :inclusive-bound? false}))
 
 (defn- merge-eid-seqs
   [direction seqs]
@@ -78,10 +98,51 @@
     :asc (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity seqs)
     :desc (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc identity seqs)))
 
+(defn- path-frontier-identity
+  "Stable, semantic identity for a permission path.
+
+  Cursor state must not depend on the incidental ordering of keys in a path
+  map. Relation eids make the identity specific to the schema visible at the
+  token's pinned Datomic basis."
+  [path]
+  (case (:type path)
+    :relation
+    [:relation
+     (:subject-type path)
+     (:relation-eid path)]
+
+    :self-permission
+    [:self-permission
+     (:resource-type path)
+     (:target-permission path)]
+
+    :arrow
+    [:arrow
+     (:via-relation-eid path)
+     (:target-type path)
+     (:target-relation path)
+     (:target-permission path)
+     (mapv path-frontier-identity (:sub-paths path))]
+
+    [:unknown (pr-str path)]))
+
+(defn- path-frontier-key
+  [path]
+  (let [bytes (.getBytes (pr-str (path-frontier-identity path))
+                         StandardCharsets/UTF_8)
+        digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
+    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) digest)))
+
 (defn- lookup-edge
-  [eid]
-  {:kind :lookup-eid
-   :result-eid eid})
+  ([eid]
+   (lookup-edge eid nil nil))
+  ([eid frontier-direction path-frontiers]
+   (cond-> {:kind :lookup-eid
+            :result-eid eid}
+     (seq path-frontiers)
+     (assoc :frontier-version lookup-frontier-version
+            :frontier-direction frontier-direction
+            :path-frontiers path-frontiers))))
 
 (defn- page-info
   [{:keys [items has-next? has-previous?]}]
@@ -98,16 +159,16 @@
                           :has-previous? has-previous?})})
 
 (defn- lookup-items
-  [result-type eids]
+  [result-type eids frontier-direction path-frontiers]
   (mapv (fn [eid]
           {:node (spice-object result-type eid)
-           :cursor (lookup-edge eid)})
+           :cursor (lookup-edge eid frontier-direction path-frontiers)})
         eids))
 
 (defn subject->resources
   [db subject-type subject-eid relation-eid resource-type cursor-or-opts]
   {:pre [subject-type subject-eid relation-eid resource-type]}
-  (let [{:keys [direction bound-eid]} (scan-opts cursor-or-opts)
+  (let [{:keys [direction bound-eid inclusive-bound?]} (scan-opts cursor-or-opts)
         attr-eid    (d/entid db forward-relationship-attr)
         prefix      [subject-type relation-eid resource-type]
         start-tuple (conj prefix
@@ -124,13 +185,15 @@
               (and (== subject-eid (:e datom))
                    (== attr-eid (:a datom))
                    (= prefix (subvec (vec v) 0 3))))))
-         (drop-while #(and bound-eid (= bound-eid (nth (:v %) 3))))
+         (drop-while #(and bound-eid
+                           (not inclusive-bound?)
+                           (= bound-eid (nth (:v %) 3))))
          (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn resource->subjects
   [db resource-type resource-eid relation-eid subject-type cursor-or-opts]
   {:pre [resource-type resource-eid relation-eid subject-type]}
-  (let [{:keys [direction bound-eid]} (scan-opts cursor-or-opts)
+  (let [{:keys [direction bound-eid inclusive-bound?]} (scan-opts cursor-or-opts)
         attr-eid    (d/entid db reverse-relationship-attr)
         prefix      [resource-type relation-eid subject-type]
         start-tuple (conj prefix
@@ -147,7 +210,9 @@
               (and (== resource-eid (:e datom))
                    (== attr-eid (:a datom))
                    (= prefix (subvec (vec v) 0 3))))))
-         (drop-while #(and bound-eid (= bound-eid (nth (:v %) 3))))
+         (drop-while #(and bound-eid
+                           (not inclusive-bound?)
+                           (= bound-eid (nth (:v %) 3))))
          (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn relation-datoms
@@ -371,6 +436,25 @@
             (swap! permission-paths-cache cache/miss cache-key paths)
             paths))))))
 
+(defn- frontier-permission-paths
+  "Expands same-resource permission aliases into independently resumable paths.
+
+  A self-permission has no intermediate frontier of its own. Keeping it as a
+  top-level lookup path would discard the frontiers of any arrow paths below
+  it, forcing every page to replay those intermediates."
+  [db resource-type permission-name]
+  (letfn [(expand [permission-name visited-nodes]
+            (let [node [resource-type permission-name]]
+              (if (contains? visited-nodes node)
+                []
+                (let [visited-nodes' (conj visited-nodes node)]
+                  (mapcat (fn [path]
+                            (if (= :self-permission (:type path))
+                              (expand (:target-permission path) visited-nodes')
+                              [path]))
+                          (get-permission-paths db resource-type permission-name))))))]
+    (vec (expand permission-name #{}))))
+
 (defn- permission-query-node
   [resource-type permission-name]
   [resource-type permission-name])
@@ -430,12 +514,18 @@
                            {:int-eid intermediate-eid
                             :results results})))
                      intermediate-eids)
-         min-int (:int-eid (first pairs))
+         first-pair (first pairs)
          result-seqs (map :results pairs)]
      {:results (if (seq result-seqs)
                  (merge-eid-seqs direction result-seqs)
                  [])
-      :!state (when min-int (volatile! min-int))})))
+      ;; Inclusive frontier: the next page rechecks the first intermediate that
+      ;; can still contribute above/below the current global result boundary.
+      ;; If none can contribute, later pages in the same direction can skip the
+      ;; path permanently.
+      :frontier (if first-pair
+                  (:int-eid first-pair)
+                  :exhausted)})))
 
 (defn direct-match-datoms-in-relationship-index
   [db subject-type subject-eid relation-eid resource-type resource-eid]
@@ -587,8 +677,8 @@
                      :intermediate-type (:target-type path)
                      :target-node [(:target-type path) target-permission]}]
                    (mapv (fn [sub-path]
-                           {:id (rule-id node :arrow-relation path [(:subject-type sub-path
-                                                                                   (:relation-eid sub-path))])
+                           {:id (rule-id node :arrow-relation path [(:subject-type sub-path)
+                                                                    (:relation-eid sub-path)])
                             :rule :arrow-relation
                             :node node
                             :resource-type resource-type
@@ -647,13 +737,43 @@
        (= (get-in bound [:result :eid])
           (get-in item [:cursor :result :eid]))))
 
+(defn- valid-cursor-eid?
+  [eid]
+  (and (instance? Long eid)
+       (pos? eid)))
+
 (defn- validate-lookup-eid-bound!
   [bound]
-  (when (and bound (not= :lookup-eid (:kind bound)))
-    (page-error! "Lookup page cursor has the wrong kind."
-                 {:eacl/error :eacl.pagination/wrong-cursor-kind
-                  :expected :lookup-eid
-                  :actual (:kind bound)})))
+  (when bound
+    (when-not (= :lookup-eid (:kind bound))
+      (page-error! "Lookup page cursor has the wrong kind."
+                   {:eacl/error :eacl.pagination/wrong-cursor-kind
+                    :expected :lookup-eid
+                    :actual (:kind bound)}))
+    (when-not (valid-cursor-eid? (:result-eid bound))
+      (page-error! "Lookup page cursor has an invalid result boundary."
+                   {:eacl/error :eacl.pagination/invalid-cursor
+                    :result-eid (:result-eid bound)}))
+    (when-let [frontiers (:path-frontiers bound)]
+      (when-not (map? frontiers)
+        (page-error! "Lookup page cursor has invalid path frontiers."
+                     {:eacl/error :eacl.pagination/invalid-cursor}))
+      (when-not (= lookup-frontier-version (:frontier-version bound))
+        (page-error! "Lookup page cursor has an unsupported frontier version."
+                     {:eacl/error :eacl.pagination/invalid-cursor
+                      :expected lookup-frontier-version
+                      :actual (:frontier-version bound)}))
+      (when-not (#{:asc :desc} (:frontier-direction bound))
+        (page-error! "Lookup page cursor has an invalid frontier direction."
+                     {:eacl/error :eacl.pagination/invalid-cursor
+                      :frontier-direction (:frontier-direction bound)}))
+      (when-not (every? (fn [[path-key frontier]]
+                          (and (string? path-key)
+                               (or (= :exhausted frontier)
+                                   (valid-cursor-eid? frontier))))
+                        frontiers)
+        (page-error! "Lookup page cursor contains an invalid path frontier."
+                     {:eacl/error :eacl.pagination/invalid-cursor})))))
 
 (defn- stream-work
   [eids on-eid]
@@ -914,7 +1034,7 @@
                           :reason :requires-full-traversal}))
         {:keys [subject permission]} query
         subject-type (:type subject)
-        subject-eid (d/entid db (:id subject))
+        subject-eid (object-eid db (:id subject))
         result-type (:resource/type query)
         root-node (permission-query-node result-type permission)
         state (when subject-eid
@@ -1223,7 +1343,7 @@
                           :reason :requires-full-traversal}))
         {:keys [resource permission]} query
         resource-type (:type resource)
-        resource-eid (d/entid db (:id resource))
+        resource-eid (object-eid db (:id resource))
         subject-type (:subject/type query)
         root-node (permission-query-node resource-type permission)
         state (when resource-eid
@@ -1250,9 +1370,11 @@
 (declare traverse-permission-path lookup-subject-eids* can*)
 
 (defn traverse-permission-path-via-subject
-  [db subject-type subject-eid path resource-type page-opts _intermediate-cursor-eid visited-paths]
+  [db subject-type subject-eid path resource-type page-opts intermediate-cursor-eid visited-paths]
   (let [{:keys [direction]} (scan-opts page-opts)
-        unbounded-opts {:direction direction}]
+        intermediate-opts {:direction direction
+                           :bound-eid intermediate-cursor-eid
+                           :inclusive-bound? true}]
     (case (:type path)
       :relation
       {:results (when (= subject-type (:subject-type path))
@@ -1262,7 +1384,7 @@
                                       (:relation-eid path)
                                       resource-type
                                       page-opts))
-       :!state nil}
+       :frontier nil}
 
       :self-permission
       {:results (traverse-permission-path db
@@ -1272,7 +1394,7 @@
                                           resource-type
                                           page-opts
                                           (or visited-paths #{}))
-       :!state nil}
+       :frontier nil}
 
       :arrow
       (let [intermediate-type (:target-type path)
@@ -1286,7 +1408,7 @@
                                                 subject-eid
                                                 (:relation-eid sub-path)
                                                 intermediate-type
-                                                unbounded-opts)))
+                                                intermediate-opts)))
                      (filter seq))
                 intermediate-eids (if (seq intermediate-seqs)
                                     (merge-eid-seqs direction intermediate-seqs)
@@ -1305,7 +1427,7 @@
                                                             subject-eid
                                                             target-permission
                                                             intermediate-type
-                                                            unbounded-opts
+                                                            intermediate-opts
                                                             (or visited-paths #{}))]
             (arrow-via-intermediates direction intermediate-eids
                                      (fn [intermediate-eid]
@@ -1328,8 +1450,8 @@
              next-visited (conj visited-paths path-key)
              path-seqs (->> paths
                             (map (fn [path]
-                                   (:results
-                                    (traverse-permission-path-via-subject db
+                                    (:results
+                                     (traverse-permission-path-via-subject db
                                                                           subject-type
                                                                           subject-eid
                                                                           path
@@ -1343,9 +1465,11 @@
            []))))))
 
 (defn traverse-permission-path-reverse
-  [db resource-type resource-eid path subject-type page-opts _intermediate-cursor-eid visited-paths]
+  [db resource-type resource-eid path subject-type page-opts intermediate-cursor-eid visited-paths]
   (let [{:keys [direction]} (scan-opts page-opts)
-        unbounded-opts {:direction direction}]
+        intermediate-opts {:direction direction
+                           :bound-eid intermediate-cursor-eid
+                           :inclusive-bound? true}]
     (case (:type path)
       :relation
       {:results (when (= subject-type (:subject-type path))
@@ -1355,7 +1479,7 @@
                                       (:relation-eid path)
                                       subject-type
                                       page-opts))
-       :!state nil}
+       :frontier nil}
 
       :self-permission
       {:results (lookup-subject-eids* db
@@ -1365,7 +1489,7 @@
                                       subject-type
                                       page-opts
                                       (or visited-paths #{}))
-       :!state nil}
+       :frontier nil}
 
       :arrow
       (let [intermediate-type (:target-type path)
@@ -1375,7 +1499,7 @@
                                                   resource-eid
                                                   via-relation-eid
                                                   intermediate-type
-                                                  unbounded-opts)]
+                                                  intermediate-opts)]
         (if (:target-relation path)
           (let [matching-sub-paths (matching-relation-sub-paths (:sub-paths path) subject-type)]
             (arrow-via-intermediates direction intermediate-eids
@@ -1494,9 +1618,9 @@
 (defn can?
   [db subject permission resource]
   (let [subject-type  (:type subject)
-        subject-eid   (d/entid db (:id subject))
+        subject-eid   (object-eid db (:id subject))
         resource-type (:type resource)
-        resource-eid  (d/entid db (:id resource))]
+        resource-eid  (object-eid db (:id resource))]
     (if (or (nil? subject-eid) (nil? resource-eid))
       false
       (can* db subject-type subject-eid permission resource-type resource-eid #{}))))
@@ -1520,36 +1644,56 @@
   (let [{:keys [anchor-key traverse-fn perm-type-fn]} direction
         anchor      (get query anchor-key)
         anchor-type (:type anchor)
-        anchor-eid  (d/entid db (:id anchor))
+        anchor-eid  (object-eid db (:id anchor))
         permission  (:permission query)
         perm-type   (perm-type-fn query)
         result-type-key (if (= anchor-key :subject) :resource/type :subject/type)
         result-type (get query result-type-key)
         page-opts   {:direction (:direction page-req)
                      :bound-eid (get-in page-req [:bound :result-eid])}
-        paths       (get-permission-paths db perm-type permission)
+        reusable-frontiers (when (and (= lookup-frontier-version
+                                         (get-in page-req [:bound :frontier-version]))
+                                      (= (:direction page-req)
+                                         (get-in page-req [:bound :frontier-direction])))
+                             (get-in page-req [:bound :path-frontiers]))
+        paths       (frontier-permission-paths db perm-type permission)
         path-results (vec
                       (->> paths
-                           (map-indexed
-                            (fn [idx path]
-                              (let [{:keys [results !state]}
-                                    (if anchor-eid
+                           (map
+                            (fn [path]
+                              (let [path-key (path-frontier-key path)
+                                    prior-frontier (get reusable-frontiers path-key)
+                                    {:keys [results frontier]}
+                                    (cond
+                                      (= :exhausted prior-frontier)
+                                      {:results []
+                                       :frontier :exhausted}
+
+                                      anchor-eid
                                       (traverse-fn db
                                                    anchor-type
                                                    anchor-eid
                                                    path
                                                    result-type
                                                    page-opts
-                                                   nil
+                                                   prior-frontier
                                                    #{})
-                                      {:results [] :!state nil})]
-                                {:idx idx
+
+                                      :else
+                                      {:results []
+                                       :frontier nil})]
+                                {:path-key path-key
                                  :results results
-                                 :!state !state})))
-                           (filter (comp seq :results))))]
-    {:results (if (seq path-results)
-                (merge-eid-seqs (:direction page-req) (map :results path-results))
-                [])
+                                 :frontier frontier})))))]
+    {:results (let [result-seqs (filter seq (map :results path-results))]
+                (if (seq result-seqs)
+                  (merge-eid-seqs (:direction page-req) result-seqs)
+                  []))
+     :path-frontiers (into {}
+                           (keep (fn [{:keys [path-key frontier]}]
+                                   (when frontier
+                                     [path-key frontier])))
+                           path-results)
      :path-results path-results}))
 
 (defn- lookup
@@ -1558,7 +1702,7 @@
         page-req (normalize-page-request query)
         {:keys [size bound]} page-req
         _ (validate-lookup-eid-bound! bound)
-        {:keys [results]} (lazy-merged-lookup db direction query page-req)
+        {:keys [results path-frontiers]} (lazy-merged-lookup db direction query page-req)
         realized (doall (take (inc size) results))
         has-sentinel? (> (count realized) size)
         page-results-in-scan-order (take size realized)
@@ -1566,7 +1710,10 @@
                        :asc page-results-in-scan-order
                        :desc (reverse page-results-in-scan-order))
         result-type (result-type-fn query)
-        items       (lookup-items result-type page-results)]
+        items       (lookup-items result-type
+                                  page-results
+                                  (:direction page-req)
+                                  path-frontiers)]
     (page-response {:items items
                     :has-next? (case (:direction page-req)
                                  :asc has-sentinel?
@@ -1576,14 +1723,26 @@
                                      :desc has-sentinel?)})))
 
 (defn lookup-resources
+  "Cursor maps returned in :page-info embed per-path frontiers (including
+  :exhausted markers) that are only valid against the db basis that minted
+  them. The public token layer pins d/as-of for you; raw-impl callers must
+  hold ONE db value for a whole paginated walk — reusing a cursor against a
+  newer db can silently skip results written since."
   [db query]
   (if (traversal-permission? db (:resource/type query) (:permission query))
     (recursive-forward-page db query)
     (lookup db forward-direction query)))
 
 (defn lookup-subjects
+  "See lookup-resources: cursors are only valid against the minting db basis."
   [db query]
   {:pre [(:type (:resource query)) (:id (:resource query))]}
+  (when (:subject/relation query)
+    ;; The recursive path has rejected this since v7.2; the non-recursive path
+    ;; silently ignored it, returning subjects the caller did not filter for.
+    (page-error! ":subject/relation is not supported by lookup-subjects."
+                 {:eacl/error :eacl.pagination/unsupported-filter
+                  :filter :subject/relation}))
   (if (traversal-permission? db (:type (:resource query)) (:permission query))
     (recursive-reverse-page db query)
     (lookup db reverse-direction query)))

@@ -26,7 +26,12 @@
                      :query-shape "shape"
                      :basis :stable
                      :basis-t 42
-                     :edge {:kind :lookup-eid :result-eid 123}
+                     :edge {:kind :lookup-eid
+                            :result-eid 123
+                            :frontier-version 1
+                            :frontier-direction :asc
+                            :path-frontiers {"path-a" 99
+                                             "path-b" :exhausted}}
                      :ttl-seconds 60}
             token (spiceomic/page-token opts payload)
             decoded (spiceomic/token->page-bound opts token)]
@@ -637,3 +642,39 @@
                                                                               :permission :reboot}))))
 
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
+
+(deftest consistency-validation-tests
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (spiceomic/make-client conn {})]
+      (eacl/write-schema! client "definition user {}
+         definition account { relation owner: user  permission admin = owner }")
+      @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"} {:eacl/id "acct-2"} {:eacl/id "acct-3"}])
+      (eacl/create-relationships! client
+        [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
+         (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-2"))
+         (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-3"))])
+      (let [q {:subject (spice-object :user "alice") :permission :admin :resource/type :account :first 2}]
+
+        (testing "list & read APIs reject non-fully-consistent requests like can? does (previously silently ignored)"
+          (doseq [call [#(eacl/lookup-resources client (assoc q :consistency (consistency/fresh "tok")))
+                        #(eacl/lookup-subjects client {:resource (spice-object :account "acct-1")
+                                                       :permission :admin :subject/type :user
+                                                       :consistency :minimize-latency})
+                        #(eacl/read-relationships client {:resource/type :account
+                                                          :consistency :minimize-latency})
+                        #(eacl/count-resources client {:subject (spice-object :user "alice")
+                                                       :permission :admin :resource/type :account
+                                                       :consistency :minimize-latency})]]
+            (try
+              (call)
+              (is false "should have thrown :eacl/unsupported-consistency")
+              (catch clojure.lang.ExceptionInfo e
+                (is (= :eacl/unsupported-consistency (:type (ex-data e))))))))
+
+        (testing "explicit fully-consistent is accepted and does not perturb page tokens"
+          (let [page1 (eacl/lookup-resources client (assoc q :consistency fully-consistent))
+                token (page-end-cursor page1)
+                ;; page 2 omits :consistency; the token query-shape must not care.
+                page2 (eacl/lookup-resources client (assoc q :after token))]
+            (is (= ["acct-1" "acct-2"] (mapv :id (:data page1))))
+            (is (= ["acct-3"] (mapv :id (:data page2))))))))))

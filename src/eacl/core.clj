@@ -28,12 +28,15 @@
 	  ; where query is a map with the following keys (defprotocol does not support multiple :namespaced/keys):
 	  ; {:as            query
 	  ;  :keys          [first last after before]
-	  ;  :subject/keys  [type id relation]
-	  ;  :resource/keys [type id id-prefix relation]}
+	  ;  :subject/keys  [type id]
+	  ;  :resource/keys [type id relation]}
   ;
-  ; one of :resource/type, :subject/type or :resource/relation is required.
+  ; at least one anchor filter is required: :resource/type, :subject/type,
+  ; :resource/relation, :subject/id or :resource/id. Unknown filter keys are
+  ; rejected (a silently dropped filter would broaden the result set).
   ;
-  ; :subject/relation is not supported by EACL. (future: when filtering by :subject/relation, subject schema must have the given relation.)
+  ; :subject/relation and :resource/id-prefix are not supported and throw
+  ; :eacl.pagination/unsupported-filter.
 
   (write-relationships! [this updates])
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
@@ -78,7 +81,7 @@
 	  ; - :resource has {:keys [type id]}. Required.
 	  ; - :permission (keyword) required.
 	  ; - :subject/type (keyword) required.
-	  ; - :subject/relation (keyword) optional, e.g. :member.
+	  ; - :subject/relation is NOT supported and throws :eacl.pagination/unsupported-filter.
 	  ; - :first/:after or :last/:before pagination, as above.
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))

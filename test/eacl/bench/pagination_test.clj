@@ -350,6 +350,40 @@
         (format "REGRESSION: %s late-page median %.2fms exceeds allowed %.2fms; pagination may be re-scanning or ignoring cursors"
                 label last-median allowed-late))))
 
+(defn- deep-page-work-samples
+  "Walks a complete forward result set and records traversal calls at selected
+  depths. Counting index traversal entry points is deterministic and catches
+  frontier regressions without relying on noisy wall-clock thresholds."
+  [acl base-query page-count sample-pages]
+  (let [calls (atom 0)
+        original-subject->resources impl.indexed/subject->resources]
+    (with-redefs [impl.indexed/subject->resources
+                  (fn [& args]
+                    (swap! calls inc)
+                    (apply original-subject->resources args))]
+      (loop [page-index 0
+             boundary nil
+             seen-ids #{}
+             samples {}]
+        (reset! calls 0)
+        (let [page (eacl/lookup-resources acl
+                                          (cond-> base-query
+                                            boundary (assoc :after boundary)))
+              next-boundary (get-in page [:page-info :end-cursor])
+              seen-ids' (into seen-ids (map :id (:data page)))
+              samples' (cond-> samples
+                         (contains? sample-pages page-index)
+                         (assoc page-index {:boundary boundary
+                                            :calls @calls}))]
+          (if (= page-count (inc page-index))
+            {:seen-ids seen-ids'
+             :samples samples'
+             :last-page page}
+            (recur (inc page-index)
+                   next-boundary
+                   seen-ids'
+                   samples')))))))
+
 ;; --- Tests ---
 
 (deftest ^:benchmark multipath-pagination-benchmark
@@ -421,7 +455,40 @@
             (let [ids1 (set (map :id (:data last-page)))
                   ids2 (set (map :id (:data previous-page)))]
               (is (empty? (set/intersection ids1 ids2))
-                  "Reverse pages should not have overlapping results"))))))))
+                  "Reverse pages should not have overlapping results"))))
+
+        (testing "cursor frontiers reduce deterministic traversal work on deep pages"
+          (let [page-count (quot total-servers page-size)
+                sample-pages #{0 (quot page-count 2) (dec page-count)}
+                {:keys [seen-ids samples last-page]}
+                (deep-page-work-samples acl base-query page-count sample-pages)
+                first-page-calls (get-in samples [0 :calls])
+                middle-page-calls (get-in samples [(quot page-count 2) :calls])
+                last-page-calls (get-in samples [(dec page-count) :calls])
+                page-medians (into {}
+                                   (map (fn [[page-index {:keys [boundary]}]]
+                                          [page-index
+                                           (median
+                                            (run-timed 20
+                                                       #(eacl/lookup-resources
+                                                         acl
+                                                         (cond-> base-query
+                                                           boundary (assoc :after boundary)))))]))
+                                   samples)]
+            (println (format "Traversal calls by depth: first=%d, middle=%d, last=%d"
+                             first-page-calls middle-page-calls last-page-calls))
+            (println (format "Deep-page medians: first=%.2fms, middle=%.2fms, last=%.2fms"
+                             (get page-medians 0)
+                             (get page-medians (quot page-count 2))
+                             (get page-medians (dec page-count))))
+            (is (= total-servers (count seen-ids))
+                "A complete frontier-paginated walk must return every server exactly once")
+            (is (= sample-pages (set (keys samples))))
+            (is (< middle-page-calls first-page-calls)
+                "Intermediate frontiers should reduce traversal work by the middle page")
+            (is (< last-page-calls middle-page-calls)
+                "Exhausted path markers should reduce traversal work further near exhaustion")
+            (is (false? (get-in last-page [:page-info :has-next-page?])))))))))
 
 (deftest ^:benchmark recursive-traversal-prefix-benchmark
   (testing "Recursive traversal pagination does reachable-prefix work, not candidate-universe work"

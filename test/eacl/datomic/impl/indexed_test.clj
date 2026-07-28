@@ -819,7 +819,146 @@
             (is (= [(spice-object :account "account-2")]
                    (paginated->spice db' page2)))
             (is (= [(spice-object :account "account-1")]
-                   (paginated->spice db' previous-page)))))))))
+                   (paginated->spice db' previous-page)))
+
+            (testing "cursor-tree state is versioned, stable per path, and scoped to its scan direction"
+              (let [forward-edge (page-end-cursor page1)
+                    next-forward-edge (page-end-cursor page2)
+                    reverse-edge (page-start-cursor previous-page)]
+                (is (= 1 (:frontier-version forward-edge)))
+                (is (= :asc (:frontier-direction forward-edge)))
+                (is (seq (:path-frontiers forward-edge)))
+                (is (= (set (keys (:path-frontiers forward-edge)))
+                       (set (keys (:path-frontiers next-forward-edge)))))
+                ;; page2's ascending frontier must be ignored when it is used
+                ;; as a descending :before boundary; the result assertion above
+                ;; proves that switching direction remains correct.
+                (is (= :desc (:frontier-direction reverse-edge)))
+                (is (seq (:path-frontiers reverse-edge)))))
+
+            (testing "malformed frontier state is rejected"
+              (is (= :eacl.pagination/invalid-cursor
+                     (:eacl/error
+                      (thrown-ex-data
+                       #(lookup-resources
+                         db'
+                         {:first 1
+                          :after {:kind :lookup-eid
+                                  :result-eid (d/entid db' [:eacl/id "account-1"])
+                                  :frontier-version 1
+                                  :frontier-direction :asc
+                                  :path-frontiers {"path" {:not "an eid"}}}
+                          :resource/type :account
+                          :permission :view
+                          :subject (->user super-user-eid)}))))))))))))
+
+(deftest aliased-permission-cursor-frontier-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema!
+     conn
+     "definition user {}
+
+      definition account {
+        relation owner: user
+        permission admin = owner
+      }
+
+      definition server {
+        relation account: account
+        permission admin = account->admin
+        permission view = admin
+      }")
+    @(d/transact conn
+                 (concat [{:db/id "user" :eacl/id "user"}]
+                         (mapcat (fn [n]
+                                   [{:db/id (str "account-" n)
+                                     :eacl/id (str "account-" n)}
+                                    {:db/id (str "server-" n)
+                                     :eacl/id (str "server-" n)}])
+                                 (range 8))))
+    (let [db-before-relationships (d/db conn)
+          relationships (mapcat
+                         (fn [n]
+                           [(Relationship (spice-object :user "user")
+                                          :owner
+                                          (spice-object :account (str "account-" n)))
+                            (Relationship (spice-object :account (str "account-" n))
+                                          :account
+                                          (spice-object :server (str "server-" n)))])
+                         (range 8))]
+      @(d/transact conn
+                   (into []
+                         (mapcat #(impl/tx-relationship db-before-relationships %))
+                         relationships)))
+    (let [db (d/db conn)
+          user-eid (d/entid db [:eacl/id "user"])
+          original-subject->resources impl.indexed/subject->resources
+          {:keys [result-eids calls-by-page frontier-counts]}
+          (loop [after nil
+                 result-eids []
+                 calls-by-page []
+                 frontier-counts []]
+            (let [calls (atom 0)
+                  page (with-redefs [impl.indexed/subject->resources
+                                    (fn [& args]
+                                      (swap! calls inc)
+                                      (apply original-subject->resources args))]
+                         (lookup-resources
+                          db
+                          (cond-> {:subject (spice-object :user user-eid)
+                                   :permission :view
+                                   :resource/type :server
+                                   :first 1}
+                            after (assoc :after after))))
+                  end-cursor (page-end-cursor page)
+                  result-eids' (into result-eids (map :id (:data page)))
+                  calls-by-page' (conj calls-by-page @calls)
+                  frontier-counts' (conj frontier-counts
+                                         (count (:path-frontiers end-cursor)))]
+              (if (get-in page [:page-info :has-next-page?])
+                (recur end-cursor
+                       result-eids'
+                       calls-by-page'
+                       frontier-counts')
+                {:result-eids result-eids'
+                 :calls-by-page calls-by-page'
+                 :frontier-counts frontier-counts'})))
+          reverse-page (lookup-subjects
+                        db
+                        {:resource (spice-object
+                                    :server
+                                    (d/entid db [:eacl/id "server-0"]))
+                         :permission :view
+                         :subject/type :user
+                         :first 1})]
+      (testing "self-permission aliases retain nested arrow frontiers"
+        (is (= 8 (count result-eids)))
+        (is (= 8 (count (distinct result-eids))))
+        (is (every? pos? frontier-counts))
+        (is (< (last calls-by-page) (first calls-by-page))))
+      (testing "reverse lookup aliases retain nested arrow frontiers"
+        (is (seq (:path-frontiers (page-end-cursor reverse-page))))))))
+
+(deftest lookup-cursor-eid-validation-test
+  (let [db (d/db *conn*)
+        subject (->user (d/entid db :user/super-user))
+        valid-result-eid (d/entid db [:eacl/id "account-1"])
+        invalid-eid 999999999999999999999999N
+        query {:resource/type :account
+               :permission :view
+               :subject subject
+               :first 1}]
+    (doseq [cursor [{:kind :lookup-eid
+                     :result-eid invalid-eid}
+                    {:kind :lookup-eid
+                     :result-eid valid-result-eid
+                     :frontier-version 1
+                     :frontier-direction :asc
+                     :path-frontiers {"path" invalid-eid}}]]
+      (is (= :eacl.pagination/invalid-cursor
+             (:eacl/error
+              (thrown-ex-data
+               #(lookup-resources db (assoc query :after cursor)))))))))
 
 (deftest tx-relationship-strictness-test
   ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.
@@ -1385,3 +1524,57 @@
         (is (= before-paths historical-paths))
         (is (= 2 (count @impl.indexed/permission-paths-cache))
             "each schema-version era gets its own cache slot; an older db value must not see live-schema paths")))))
+
+(deftest string-object-id-resolution-test
+  ;; d/entid on a bare string throws a raw IllegalArgumentException, which
+  ;; leaked out of impl-level reads. Strings now resolve via the canonical
+  ;; [:eacl/id ...] identity; unresolvable ids read as unknown objects.
+  (let [db (d/db *conn*)]
+    (testing "string ids resolve via :eacl/id on impl-level reads"
+      (is (true? (can? db (->user "super-user") :view (->account "account-1"))))
+      (is (= (mapv :id (:data (lookup-resources db {:subject (->user (d/entid db :user/super-user))
+                                                    :permission :view
+                                                    :resource/type :account
+                                                    :first 100})))
+             (mapv :id (:data (lookup-resources db {:subject (->user "super-user")
+                                                    :permission :view
+                                                    :resource/type :account
+                                                    :first 100}))))))
+    (testing "unknown string ids read as unknown objects, not raw Datomic errors"
+      (is (false? (can? db (->user "no-such-user") :view (->account "account-1"))))
+      (is (= [] (:data (lookup-resources db {:subject (->user "no-such-user")
+                                             :permission :view
+                                             :resource/type :account
+                                             :first 10})))))))
+
+(deftest lookup-subjects-rejects-subject-relation-test
+  ;; The recursive path has rejected :subject/relation since v7.2; the
+  ;; non-recursive path silently ignored the filter and returned subjects the
+  ;; caller did not ask for.
+  (let [db (d/db *conn*)]
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (thrown-ex-data
+             #(lookup-subjects db {:resource (->account (d/entid db [:eacl/id "account-1"]))
+                                   :permission :view
+                                   :subject/type :user
+                                   :subject/relation :member
+                                   :first 5})))))))
+
+(deftest read-relationships-filter-validation-test
+  (let [db (d/db *conn*)]
+    (testing "an empty filter map is rejected instead of scanning the entire index"
+      (is (= :eacl.filters/missing-anchor
+             (:eacl/error (thrown-ex-data #(read-relationships db {}))))))
+    (testing "misspelled filter keys are rejected instead of broadening the scan"
+      (is (= :eacl.filters/unknown-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:subject-type :user}))))))
+    (testing "documented-but-unsupported filters throw typed errors"
+      (is (= :eacl.pagination/unsupported-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:resource/type :account
+                                                                   :resource/id-prefix "acc"})))))
+      (is (= :eacl.pagination/unsupported-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:resource/type :account
+                                                                   :subject/relation :member}))))))
+    (testing "anchored filters still work"
+      (is (seq (:data (read-relationships db {:resource/type :account})))))))
