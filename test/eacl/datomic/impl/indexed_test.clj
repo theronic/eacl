@@ -1524,3 +1524,57 @@
         (is (= before-paths historical-paths))
         (is (= 2 (count @impl.indexed/permission-paths-cache))
             "each schema-version era gets its own cache slot; an older db value must not see live-schema paths")))))
+
+(deftest string-object-id-resolution-test
+  ;; d/entid on a bare string throws a raw IllegalArgumentException, which
+  ;; leaked out of impl-level reads. Strings now resolve via the canonical
+  ;; [:eacl/id ...] identity; unresolvable ids read as unknown objects.
+  (let [db (d/db *conn*)]
+    (testing "string ids resolve via :eacl/id on impl-level reads"
+      (is (true? (can? db (->user "super-user") :view (->account "account-1"))))
+      (is (= (mapv :id (:data (lookup-resources db {:subject (->user (d/entid db :user/super-user))
+                                                    :permission :view
+                                                    :resource/type :account
+                                                    :first 100})))
+             (mapv :id (:data (lookup-resources db {:subject (->user "super-user")
+                                                    :permission :view
+                                                    :resource/type :account
+                                                    :first 100}))))))
+    (testing "unknown string ids read as unknown objects, not raw Datomic errors"
+      (is (false? (can? db (->user "no-such-user") :view (->account "account-1"))))
+      (is (= [] (:data (lookup-resources db {:subject (->user "no-such-user")
+                                             :permission :view
+                                             :resource/type :account
+                                             :first 10})))))))
+
+(deftest lookup-subjects-rejects-subject-relation-test
+  ;; The recursive path has rejected :subject/relation since v7.2; the
+  ;; non-recursive path silently ignored the filter and returned subjects the
+  ;; caller did not ask for.
+  (let [db (d/db *conn*)]
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (thrown-ex-data
+             #(lookup-subjects db {:resource (->account (d/entid db [:eacl/id "account-1"]))
+                                   :permission :view
+                                   :subject/type :user
+                                   :subject/relation :member
+                                   :first 5})))))))
+
+(deftest read-relationships-filter-validation-test
+  (let [db (d/db *conn*)]
+    (testing "an empty filter map is rejected instead of scanning the entire index"
+      (is (= :eacl.filters/missing-anchor
+             (:eacl/error (thrown-ex-data #(read-relationships db {}))))))
+    (testing "misspelled filter keys are rejected instead of broadening the scan"
+      (is (= :eacl.filters/unknown-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:subject-type :user}))))))
+    (testing "documented-but-unsupported filters throw typed errors"
+      (is (= :eacl.pagination/unsupported-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:resource/type :account
+                                                                   :resource/id-prefix "acc"})))))
+      (is (= :eacl.pagination/unsupported-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:resource/type :account
+                                                                   :subject/relation :member}))))))
+    (testing "anchored filters still work"
+      (is (seq (:data (read-relationships db {:resource/type :account})))))))

@@ -165,35 +165,10 @@
   [opts token]
   (decrypt-page-token opts token))
 
-(defn default-internal-cursor->spice
-  [db {:keys [entid->object-id]} cursor]
-  (when cursor
-    (if (= 2 (:v cursor))
-      (cond-> cursor
-        (:e cursor) (update :e #(entid->object-id db %))
-        (:p cursor) (update :p
-                            (fn [p]
-                              (into {}
-                                    (map (fn [[k v]] [k (entid->object-id db v)]))
-                                    p))))
-      (cond
-        (:resource cursor) (S/transform [:resource :id] #(entid->object-id db %) cursor)
-        (:subject cursor) (S/transform [:subject :id] #(entid->object-id db %) cursor)))))
-
-(defn default-spice-cursor->internal
-  [db {:keys [object-id->entid]} cursor]
-  (when cursor
-    (if (= 2 (:v cursor))
-      (cond-> cursor
-        (:e cursor) (update :e #(object-id->entid db %))
-        (:p cursor) (update :p
-                            (fn [p]
-                              (into {}
-                                    (map (fn [[k v]] [k (object-id->entid db v)]))
-                                    p))))
-      (cond
-        (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
-        (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
+;; NOTE: the v2-era default-internal-cursor->spice / default-spice-cursor->internal
+;; coercers were removed: cursors never leave the peer decrypted in the token
+;; design, so nothing called them and their {:v 2 :e ... :p ...} shape no longer
+;; exists anywhere.
 
 (defn object->spice
   [db {:keys [entid->object-id]} object]
@@ -232,13 +207,29 @@
      :db pagination-db
      :basis-t basis-t}))
 
+(defn- validate-consistency!
+  "EACL is always fully consistent. can? has thrown on any other requested
+  consistency since v6, but the list/read APIs silently ignored the key, so a
+  caller asking for e.g. :minimize-latency got no signal. nil means default,
+  which is fully-consistent."
+  [{:keys [consistency]}]
+  (when (and (some? consistency)
+             (not= consistency/fully-consistent consistency))
+    (throw (ex-info "EACL only supports consistency/fully-consistent at this time."
+             {:type :eacl/unsupported-consistency
+              :consistency consistency}))))
+
 (defn- list-query-shape
   [op query]
+  ;; :consistency is excluded from the shape: it is validated (only
+  ;; fully-consistent is accepted), so it cannot change what a token may
+  ;; resume, and including it made page 2 fail when a caller passed it on
+  ;; page 1 but not page 2.
   (stable-hash {:op op
                 :basis :stable
                 :query (dissoc query
                                :first :last :after :before
-                               :cursor :limit :page/basis)}))
+                               :cursor :limit :page/basis :consistency)}))
 
 (defn- validate-page-token!
   [op query-shape decoded]
@@ -314,6 +305,7 @@
   [conn
    {:keys [object-id->entid] :as opts}
    filters]
+  (validate-consistency! filters)
   (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts filters)
         subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
@@ -393,6 +385,7 @@
            object-id->ident]}
    {:as query :keys [subject]}]
   (log/debug 'spiceomic-lookup-resources 'query query)
+  (validate-consistency! query)
   (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts query)
         internal-subject (spice-object->internal db subject)]
     (if (nil? (:id internal-subject))
@@ -410,6 +403,7 @@
    {:as opts
     :keys [spice-object->internal]}
    {:as query :keys [subject]}]
+  (validate-consistency! query)
   (let [subject-ent (spice-object->internal db subject)]
     (if (nil? (:id subject-ent))
       ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
@@ -424,6 +418,7 @@
     :keys [entid->object-id
            spice-object->internal]}
    query]
+  (validate-consistency! query)
   (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts query)
         internal-resource (spice-object->internal db (:resource query))]
     (if (nil? (:id internal-resource))

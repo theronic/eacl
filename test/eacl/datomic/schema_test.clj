@@ -300,3 +300,29 @@
 
       (testing "schema string is stored"
         (is (= schema-string (:eacl/schema-string (d/entity db [:eacl/id "schema-string"]))))))))
+
+(deftest validation-error-map-tests
+  (testing "reference-validation errors carry complete messages and keyword-only keys"
+    ;; A misplaced paren truncated :message and injected the message tail as a
+    ;; stray string key in 3 of the 5 error constructors.
+    (doseq [[permissions expected-type expected-message]
+            [[[#:eacl.permission{:resource-type :doc :permission-name :view
+                                 :source-relation-name :self :target-type :relation :target-name :owner}]
+              :invalid-self-relation
+              "Permission doc/view references non-existent relation: owner"]
+             [[#:eacl.permission{:resource-type :doc :permission-name :view
+                                 :source-relation-name :self :target-type :permission :target-name :admin}]
+              :invalid-self-permission
+              "Permission doc/view references non-existent permission: admin"]
+             [[#:eacl.permission{:resource-type :doc :permission-name :view
+                                 :source-relation-name :owner :target-type :relation :target-name :member}]
+              :missing-source-relation
+              "Permission doc/view references non-existent relation: owner"]]]
+      (let [error (try
+                    (schema/validate-schema-references {:relations [] :permissions permissions})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e
+                      (first (:errors (ex-data e)))))]
+        (is (= expected-type (:type error)))
+        (is (= expected-message (:message error)))
+        (is (every? keyword? (keys error)))))))

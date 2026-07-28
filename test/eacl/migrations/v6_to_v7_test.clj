@@ -231,3 +231,15 @@
                   (catch clojure.lang.ExceptionInfo e e))]
       (is (some? ex))
       (is (= :eacl/invalid-config (:type (ex-data ex)))))))
+
+(deftest future-storage-version-refused-test
+  ;; A stamp from a future storage model means this build predates the data's
+  ;; migration; running anyway would silently answer false/empty.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn [{:eacl/id "schema-string"
+                        :eacl/storage-version (inc mig/storage-version)}])
+    (let [ex (try (mig/assert-storage-compatible! conn {}) nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (= :eacl/storage-version (:type (ex-data ex))))
+      (is (= (inc mig/storage-version) (:stamped-version (ex-data ex)))))))

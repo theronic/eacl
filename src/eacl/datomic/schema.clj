@@ -297,16 +297,16 @@
                 {:type       :invalid-self-relation
                  :permission (str (name res-type) "/" (name perm-name))
                  :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name))
-                             " references non-existent relation: " (name target-name)}))
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                              " references non-existent relation: " (name target-name))}))
             ;; Self -> permission: validate permission exists on this resource type
             (when-not (contains? (get permission-names-by-type res-type) target-name)
               (swap! errors conj
                 {:type       :invalid-self-permission
                  :permission (str (name res-type) "/" (name perm-name))
                  :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name))
-                             " references non-existent permission: " (name target-name)})))
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                              " references non-existent permission: " (name target-name))})))
 
           ;; For arrow permissions (source-rel != :self)
           (do
@@ -316,8 +316,8 @@
                 {:type       :missing-source-relation
                  :permission (str (name res-type) "/" (name perm-name))
                  :relation   source-rel
-                 :message    (str "Permission " (name res-type) "/" (name perm-name))
-                             " references non-existent relation: " (name source-rel)}))
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                              " references non-existent relation: " (name source-rel))}))
 
             ;; If source relation exists, validate the target exists on EVERY subject
             ;; type of the source relation. Anything else is declaration-order-dependent,

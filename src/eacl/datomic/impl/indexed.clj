@@ -18,6 +18,20 @@
 (def ^:private max-page-size 10000)
 (def ^:private lookup-frontier-version 1)
 
+(defn- object-eid
+  "Resolves an object id to an eid for read paths. String ids resolve via the
+  canonical [:eacl/id ...] identity — d/entid on a bare string throws a raw
+  IllegalArgumentException, which leaked out of can?/lookups for raw-impl
+  callers. Anything else passes to d/entid unchanged (eids, lookup refs,
+  idents). Returns nil when the id does not resolve; callers treat that as an
+  unknown object (can? => false, lookups => empty page)."
+  [db id]
+  (cond
+    (nil? id) nil
+    (string? id) (when (d/entid db :eacl/id)
+                   (d/entid db [:eacl/id id]))
+    :else (d/entid db id)))
+
 (defn- page-error!
   [message data]
   (throw (ex-info message data)))
@@ -663,8 +677,8 @@
                      :intermediate-type (:target-type path)
                      :target-node [(:target-type path) target-permission]}]
                    (mapv (fn [sub-path]
-                           {:id (rule-id node :arrow-relation path [(:subject-type sub-path
-                                                                                   (:relation-eid sub-path))])
+                           {:id (rule-id node :arrow-relation path [(:subject-type sub-path)
+                                                                    (:relation-eid sub-path)])
                             :rule :arrow-relation
                             :node node
                             :resource-type resource-type
@@ -1020,7 +1034,7 @@
                           :reason :requires-full-traversal}))
         {:keys [subject permission]} query
         subject-type (:type subject)
-        subject-eid (d/entid db (:id subject))
+        subject-eid (object-eid db (:id subject))
         result-type (:resource/type query)
         root-node (permission-query-node result-type permission)
         state (when subject-eid
@@ -1329,7 +1343,7 @@
                           :reason :requires-full-traversal}))
         {:keys [resource permission]} query
         resource-type (:type resource)
-        resource-eid (d/entid db (:id resource))
+        resource-eid (object-eid db (:id resource))
         subject-type (:subject/type query)
         root-node (permission-query-node resource-type permission)
         state (when resource-eid
@@ -1604,9 +1618,9 @@
 (defn can?
   [db subject permission resource]
   (let [subject-type  (:type subject)
-        subject-eid   (d/entid db (:id subject))
+        subject-eid   (object-eid db (:id subject))
         resource-type (:type resource)
-        resource-eid  (d/entid db (:id resource))]
+        resource-eid  (object-eid db (:id resource))]
     (if (or (nil? subject-eid) (nil? resource-eid))
       false
       (can* db subject-type subject-eid permission resource-type resource-eid #{}))))
@@ -1630,7 +1644,7 @@
   (let [{:keys [anchor-key traverse-fn perm-type-fn]} direction
         anchor      (get query anchor-key)
         anchor-type (:type anchor)
-        anchor-eid  (d/entid db (:id anchor))
+        anchor-eid  (object-eid db (:id anchor))
         permission  (:permission query)
         perm-type   (perm-type-fn query)
         result-type-key (if (= anchor-key :subject) :resource/type :subject/type)
@@ -1709,14 +1723,26 @@
                                      :desc has-sentinel?)})))
 
 (defn lookup-resources
+  "Cursor maps returned in :page-info embed per-path frontiers (including
+  :exhausted markers) that are only valid against the db basis that minted
+  them. The public token layer pins d/as-of for you; raw-impl callers must
+  hold ONE db value for a whole paginated walk — reusing a cursor against a
+  newer db can silently skip results written since."
   [db query]
   (if (traversal-permission? db (:resource/type query) (:permission query))
     (recursive-forward-page db query)
     (lookup db forward-direction query)))
 
 (defn lookup-subjects
+  "See lookup-resources: cursors are only valid against the minting db basis."
   [db query]
   {:pre [(:type (:resource query)) (:id (:resource query))]}
+  (when (:subject/relation query)
+    ;; The recursive path has rejected this since v7.2; the non-recursive path
+    ;; silently ignored it, returning subjects the caller did not filter for.
+    (page-error! ":subject/relation is not supported by lookup-subjects."
+                 {:eacl/error :eacl.pagination/unsupported-filter
+                  :filter :subject/relation}))
   (if (traversal-permission? db (:type (:resource query)) (:permission query))
     (recursive-reverse-page db query)
     (lookup db reverse-direction query)))
