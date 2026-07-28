@@ -64,6 +64,12 @@
 
    schema-version-attr-definition
 
+   {:db/ident       :eacl/storage-version
+    :db/doc         "EACL relationship storage-model major version (7 = tuple relationships). Stamped by eacl.migrations.v6-to-v7 on completed migration; eacl.datomic.core/make-client refuses to start against unmigrated v6 relationship data without it."
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
    ;; Relations
    {:db/ident       :eacl.relation/resource-type
     :db/doc         "EACL Relation: Resource Type"

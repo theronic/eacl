@@ -55,7 +55,8 @@ Situated AuthZ offers some advantages for typical use-cases:
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> v7 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ### Breaking behavior changes (2026-07, audit root-cause fixes)
 
@@ -606,6 +607,27 @@ Note difference between `-M` & `-X` switches.
 ```bash
 clojure -M:test -v my.namespace/test-name
 ```
+
+## Upgrading
+
+### v6 → v7
+
+v7 changed how Relationships are stored in Datomic (one entity per relationship → two tuple datoms on your subject & resource entities). The public API is unchanged, but stored relationship data must be migrated once. To protect you, `eacl.datomic.core/make-client` checks the storage version recorded in Datomic and **refuses to start against unmigrated v6 data** with `{:type :eacl/storage-version}` — v7 code reading a v6 database would otherwise silently answer every permission check with `false`/empty.
+
+Migrate with the batteries-included, idempotent [`eacl.migrations.v6-to-v7`](src/eacl/migrations/v6_to_v7.clj) namespace:
+
+```clojure
+(require '[eacl.migrations.v6-to-v7 :as migrations])
+(migrations/migrate! conn {:schema "definition user {} ..."})  ; re-asserts your schema via write-schema!
+```
+
+or opt into automatic migration at client construction:
+
+```clojure
+(eacl.datomic.core/make-client conn {:auto-migrate-v6 {:schema "definition user {} ..."}})
+```
+
+The migration is additive and rollback-friendly (v6 data is kept until you explicitly retract it) and end-to-end tested in [test/eacl/migrations/v6_to_v7_test.clj](test/eacl/migrations/v6_to_v7_test.clj). For the full sequence — write-pause window, verification, soak, cleanup, rollback — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## Funding
 

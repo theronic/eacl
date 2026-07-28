@@ -11,6 +11,7 @@
                                         map->Relationship]]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.schema :as schema]
+            [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.spicedb.consistency :as consistency]
             [malli.core :as m]))
 
@@ -361,7 +362,8 @@
     :object-id->ident
     :internal-cursor->spice
     :spice-cursor->internal
-    :cursor-ttl-seconds})
+    :cursor-ttl-seconds
+    :auto-migrate-v6})
 
 (defn make-client
   "Builds an IAuthorization client over a Datomic conn.
@@ -372,7 +374,12 @@
   - :entity->object-id (fn [entity] external-id) — deprecated alias; do not combine with the above.
   - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
   - :cursor-ttl-seconds — optional cursor token expiry; default nil (tokens never expire).
-  - :internal-cursor->spice / :spice-cursor->internal — advanced cursor coercion overrides."
+  - :internal-cursor->spice / :spice-cursor->internal — advanced cursor coercion overrides.
+  - :auto-migrate-v6 — opt-in automatic v6->v7 storage migration at startup.
+    Construction fails with {:type :eacl/storage-version} when the database
+    holds unmigrated v6 relationship entities (v7 would silently answer false/
+    empty against them). Pass true (default options) or an eacl.migrations.v6-to-v7/migrate!
+    options map, e.g. {:schema \"definition user {} ...\"} — see docs/migration-v6-to-v7.md."
   [conn
    {:as   config-opts
     :keys [entid->object-id
@@ -380,7 +387,8 @@
            object-id->ident
            internal-cursor->spice
            spice-cursor->internal
-           cursor-ttl-seconds]
+           cursor-ttl-seconds
+           auto-migrate-v6]
     :or   {object-id->ident       (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -398,6 +406,10 @@
     (throw (ex-info "EACL Config Error: object-id->ident must be a fn that coerces a Spice Object ID to a Datomic ident resolvable by d/entid."
              {:type :eacl/invalid-config
               :key :object-id->ident})))
+  ;; Refuse to run v7 code against unmigrated v6 relationship data — it would
+  ;; silently answer every check with false/empty. Throws :eacl/storage-version
+  ;; unless the DB is v7/fresh/stamped, or :auto-migrate-v6 opts into migration.
+  (migrations/assert-storage-compatible! conn {:auto-migrate-v6 auto-migrate-v6})
   (let [entid->object-id (or entid->object-id
                              (when entity->object-id
                                (fn [db eid] (entity->object-id (d/entity db eid))))

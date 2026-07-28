@@ -45,7 +45,8 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> v7 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](migration-v6-to-v7.md).
 
 # What is SpiceDB?
 
