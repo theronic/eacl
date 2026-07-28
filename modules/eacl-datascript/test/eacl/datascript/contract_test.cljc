@@ -108,6 +108,21 @@
                               :subject/type :user
                               :subject/relation :member}))))))))
 
+(deftest v7-3-empty-first-page-test
+  (let [conn   (datascript/create-conn)
+        client (datascript/make-client conn {})
+        query  {:subject (contract/->user "user-1")
+                :permission :view
+                :resource/type :server
+                :limit 100}]
+    (eacl/write-schema! client contract/smoke-schema)
+    (seed-objects! conn)
+    (testing "an empty first page does not mint a boundary-less cursor"
+      (is (= {:data [] :cursor nil}
+             (eacl/lookup-resources client query)))
+      (is (= {:count 0 :limit 100 :cursor nil}
+             (eacl/count-resources client query))))))
+
 (deftest v7-3-direction-scoped-frontier-test
   (let [client (seeded-client)
         query {:subject (contract/->user "user-1")

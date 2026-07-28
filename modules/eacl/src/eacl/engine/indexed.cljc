@@ -633,10 +633,11 @@
         items       (doall (map #(spice-object result-type %) limited-results))
         last-id     (:id (last items))]
     {:data items
-     ;; The legacy limit/cursor API signals exhaustion by returning the input
-     ;; cursor unchanged for an empty page. Preserve that contract while
-     ;; carrying v7.3 frontier state on every non-empty page.
-     :cursor (if (and cursor (empty? items))
+     ;; The legacy limit/cursor API signals exhaustion with no cursor on an
+     ;; empty first page, or by returning the input cursor unchanged on a later
+     ;; empty page. Preserve that contract while carrying v7.3 frontier state
+     ;; on every non-empty page.
+     :cursor (if (empty? items)
                cursor
                (assoc (build-v2-cursor cursor
                                        last-id
@@ -665,7 +666,7 @@
         last-id (last counted)]
     {:count (count counted)
      :limit limit
-     :cursor (if (and cursor (empty? counted))
+     :cursor (if (empty? counted)
                cursor
                (assoc (build-v2-cursor cursor
                                        last-id
