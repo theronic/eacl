@@ -422,6 +422,25 @@
             (swap! permission-paths-cache cache/miss cache-key paths)
             paths))))))
 
+(defn- frontier-permission-paths
+  "Expands same-resource permission aliases into independently resumable paths.
+
+  A self-permission has no intermediate frontier of its own. Keeping it as a
+  top-level lookup path would discard the frontiers of any arrow paths below
+  it, forcing every page to replay those intermediates."
+  [db resource-type permission-name]
+  (letfn [(expand [permission-name visited-nodes]
+            (let [node [resource-type permission-name]]
+              (if (contains? visited-nodes node)
+                []
+                (let [visited-nodes' (conj visited-nodes node)]
+                  (mapcat (fn [path]
+                            (if (= :self-permission (:type path))
+                              (expand (:target-permission path) visited-nodes')
+                              [path]))
+                          (get-permission-paths db resource-type permission-name))))))]
+    (vec (expand permission-name #{}))))
+
 (defn- permission-query-node
   [resource-type permission-name]
   [resource-type permission-name])
@@ -704,6 +723,11 @@
        (= (get-in bound [:result :eid])
           (get-in item [:cursor :result :eid]))))
 
+(defn- valid-cursor-eid?
+  [eid]
+  (and (instance? Long eid)
+       (pos? eid)))
+
 (defn- validate-lookup-eid-bound!
   [bound]
   (when bound
@@ -712,8 +736,7 @@
                    {:eacl/error :eacl.pagination/wrong-cursor-kind
                     :expected :lookup-eid
                     :actual (:kind bound)}))
-    (when-not (and (integer? (:result-eid bound))
-                   (pos? (:result-eid bound)))
+    (when-not (valid-cursor-eid? (:result-eid bound))
       (page-error! "Lookup page cursor has an invalid result boundary."
                    {:eacl/error :eacl.pagination/invalid-cursor
                     :result-eid (:result-eid bound)}))
@@ -733,8 +756,7 @@
       (when-not (every? (fn [[path-key frontier]]
                           (and (string? path-key)
                                (or (= :exhausted frontier)
-                                   (and (integer? frontier)
-                                        (pos? frontier)))))
+                                   (valid-cursor-eid? frontier))))
                         frontiers)
         (page-error! "Lookup page cursor contains an invalid path frontier."
                      {:eacl/error :eacl.pagination/invalid-cursor})))))
@@ -1620,7 +1642,7 @@
                                       (= (:direction page-req)
                                          (get-in page-req [:bound :frontier-direction])))
                              (get-in page-req [:bound :path-frontiers]))
-        paths       (get-permission-paths db perm-type permission)
+        paths       (frontier-permission-paths db perm-type permission)
         path-results (vec
                       (->> paths
                            (map

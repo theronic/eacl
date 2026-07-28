@@ -852,6 +852,114 @@
                           :permission :view
                           :subject (->user super-user-eid)}))))))))))))
 
+(deftest aliased-permission-cursor-frontier-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema!
+     conn
+     "definition user {}
+
+      definition account {
+        relation owner: user
+        permission admin = owner
+      }
+
+      definition server {
+        relation account: account
+        permission admin = account->admin
+        permission view = admin
+      }")
+    @(d/transact conn
+                 (concat [{:db/id "user" :eacl/id "user"}]
+                         (mapcat (fn [n]
+                                   [{:db/id (str "account-" n)
+                                     :eacl/id (str "account-" n)}
+                                    {:db/id (str "server-" n)
+                                     :eacl/id (str "server-" n)}])
+                                 (range 8))))
+    (let [db-before-relationships (d/db conn)
+          relationships (mapcat
+                         (fn [n]
+                           [(Relationship (spice-object :user "user")
+                                          :owner
+                                          (spice-object :account (str "account-" n)))
+                            (Relationship (spice-object :account (str "account-" n))
+                                          :account
+                                          (spice-object :server (str "server-" n)))])
+                         (range 8))]
+      @(d/transact conn
+                   (into []
+                         (mapcat #(impl/tx-relationship db-before-relationships %))
+                         relationships)))
+    (let [db (d/db conn)
+          user-eid (d/entid db [:eacl/id "user"])
+          original-subject->resources impl.indexed/subject->resources
+          {:keys [result-eids calls-by-page frontier-counts]}
+          (loop [after nil
+                 result-eids []
+                 calls-by-page []
+                 frontier-counts []]
+            (let [calls (atom 0)
+                  page (with-redefs [impl.indexed/subject->resources
+                                    (fn [& args]
+                                      (swap! calls inc)
+                                      (apply original-subject->resources args))]
+                         (lookup-resources
+                          db
+                          (cond-> {:subject (spice-object :user user-eid)
+                                   :permission :view
+                                   :resource/type :server
+                                   :first 1}
+                            after (assoc :after after))))
+                  end-cursor (page-end-cursor page)
+                  result-eids' (into result-eids (map :id (:data page)))
+                  calls-by-page' (conj calls-by-page @calls)
+                  frontier-counts' (conj frontier-counts
+                                         (count (:path-frontiers end-cursor)))]
+              (if (get-in page [:page-info :has-next-page?])
+                (recur end-cursor
+                       result-eids'
+                       calls-by-page'
+                       frontier-counts')
+                {:result-eids result-eids'
+                 :calls-by-page calls-by-page'
+                 :frontier-counts frontier-counts'})))
+          reverse-page (lookup-subjects
+                        db
+                        {:resource (spice-object
+                                    :server
+                                    (d/entid db [:eacl/id "server-0"]))
+                         :permission :view
+                         :subject/type :user
+                         :first 1})]
+      (testing "self-permission aliases retain nested arrow frontiers"
+        (is (= 8 (count result-eids)))
+        (is (= 8 (count (distinct result-eids))))
+        (is (every? pos? frontier-counts))
+        (is (< (last calls-by-page) (first calls-by-page))))
+      (testing "reverse lookup aliases retain nested arrow frontiers"
+        (is (seq (:path-frontiers (page-end-cursor reverse-page))))))))
+
+(deftest lookup-cursor-eid-validation-test
+  (let [db (d/db *conn*)
+        subject (->user (d/entid db :user/super-user))
+        valid-result-eid (d/entid db [:eacl/id "account-1"])
+        invalid-eid 999999999999999999999999N
+        query {:resource/type :account
+               :permission :view
+               :subject subject
+               :first 1}]
+    (doseq [cursor [{:kind :lookup-eid
+                     :result-eid invalid-eid}
+                    {:kind :lookup-eid
+                     :result-eid valid-result-eid
+                     :frontier-version 1
+                     :frontier-direction :asc
+                     :path-frontiers {"path" invalid-eid}}]]
+      (is (= :eacl.pagination/invalid-cursor
+             (:eacl/error
+              (thrown-ex-data
+               #(lookup-resources db (assoc query :after cursor)))))))))
+
 (deftest tx-relationship-strictness-test
   ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.
   (with-mem-conn [conn schema/v7-schema]
