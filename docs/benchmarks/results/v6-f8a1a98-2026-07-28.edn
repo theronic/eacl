@@ -1,0 +1,34 @@
+{:recorded-at "2026-07-28"
+ :implementation :v6-cursor-tree
+ :baseline-ref "f8a1a98"
+ :environment {:os "Darwin arm64"
+               :cpu "Apple M3 Pro"
+               :memory-bytes 19327352832
+               :java "Temurin OpenJDK 24.0.1"}
+ :methodology {:fresh-jvm true
+               :debug-logging :warn
+               :seeding-excluded true
+               :warmup-iterations 20
+               :walk-iterations 3
+               :sample-iterations 31}
+ :graph {:accounts 300
+         :teams-per-account 4
+         :vpcs-per-account 2
+         :servers-per-account 500
+         :intermediate-resources 2100
+         :terminal-resources 150000
+         :permission-paths 4}
+ :pagination {:page-size 50
+              :page-count 3000
+              :result-count 150000
+              :unique-result-count 150000}
+ :full-walk-samples-ms [43718.521477
+                        41041.253639
+                        40359.743025]
+ :full-walk-median-ms 41041.253639
+ :pages-per-second 73.097182
+ :sample-page-medians-ms {1 25.631750
+                          500 21.491541
+                          1000 17.478584
+                          2000 8.924250
+                          3000 1.126584}}
