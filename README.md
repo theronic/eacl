@@ -58,18 +58,6 @@ Situated AuthZ offers some advantages for typical use-cases:
 > v7 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
-### Breaking behavior changes (2026-07, audit root-cause fixes)
-
-All of these convert silent failures into correct behavior or loud, typed errors. Storage and token formats are unchanged; valid configurations and schemas work unmodified. Full details in [docs/reports/2026-07-06-eacl-full-source-audit.md](docs/reports/2026-07-06-eacl-full-source-audit.md).
-
-- `write-schema!` now **throws** on unparseable schema strings (previously a parse failure silently retracted the entire stored schema), on duplicate `definition`/relation declarations, and when replacing a non-empty schema with zero definitions (opt out with `{:allow-empty-schema? true}`). `//` and `/* */` comments are now supported.
-- Arrow targets are validated against **all** subject types of the source relation (previously order-dependent: only the last-declared type was checked).
-- Reads with unknown object IDs return **empty results** (previously `read-relationships` returned *all* relationships — a data leak — and lookups threw `AssertionError`s); writes throw `{:type :eacl/unknown-object}`.
-- `make-client` throws `{:type :eacl/invalid-config}` on unknown option keys (previously silently ignored, so a typo'd ID-coercion config silently fell back to `:eacl/id`).
-- Expired/corrupt cursor tokens throw `{:type :eacl/invalid-cursor}` (previously decoded to nil and silently restarted pagination at page one). Tokens no longer expire by default; opt in with `:cursor-ttl-seconds`. Cursors detect mid-pagination schema changes with `{:type :eacl/stale-cursor}`.
-- `impl/tx-relationship` requires `{:allow-tempids? true}` to treat unresolvable string IDs as tempids (previously a typo'd ID silently created a ghost entity).
-- Dead v6-era namespaces were removed (`eacl.datomic.rules*`, `eacl.datomic.impl.datalog`, and `eacl.datomic.impl.base/Relationship`, which emitted attributes absent from the v7 schema).
-
 ## ReBAC: Relationship-based Access Control
 
 In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, objects (_Subjects_ & _Resources_) are related via _Relationships_.
@@ -313,10 +301,12 @@ EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/w
 
 ### Schema Validation
 
-`write-schema!` validates your schema and provides informative error messages:
-- **Reference validation**: Ensures all relations and permissions reference valid definitions
-- **Orphan protection**: Prevents deleting relations that have existing relationships
-- **Unsupported feature detection**: Rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+`write-schema!` validates your schema and provides informative error messages. An invalid schema throws and nothing is transacted:
+- **Parse validation**: unparseable schema strings and duplicate `definition`/relation declarations throw. `//` and `/* */` comments are supported.
+- **Reference validation**: all relations and permissions must reference valid definitions. Arrow targets must exist on **every** subject type of the source relation.
+- **Orphan protection**: relations with existing relationships cannot be deleted.
+- **Empty-schema guard**: replacing a non-empty schema with zero definitions throws unless you pass `{:allow-empty-schema? true}`.
+- **Unsupported feature detection**: rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
 
 ### Schema Updates
 
@@ -464,7 +454,7 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
             :object-id->ident (fn [obj-id] obj-id)}))
 ```
 
-`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` instead of being silently ignored (a silently dropped ID-coercion key means silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) remains supported as a deprecated alias for `:entid->object-id`; supplying both throws. You can also pass `:cursor-ttl-seconds` to give pagination cursor tokens an expiry — by default tokens never expire, and an expired or corrupt token throws `{:type :eacl/invalid-cursor}` rather than silently restarting from page one.
+`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` (a silently dropped ID-coercion key would mean silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) is a deprecated alias for `:entid->object-id`; supplying both throws. You can also pass `:cursor-ttl-seconds` to give pagination cursor tokens an expiry — by default tokens never expire. An expired or corrupt token throws `{:type :eacl/invalid-cursor}`.
 
 ### Unknown object IDs
 
@@ -631,7 +621,7 @@ The migration is additive and rollback-friendly (v6 data is kept until you expli
 
 ## Funding
 
-This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+This open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
 
 # Licence
 

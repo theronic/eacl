@@ -105,7 +105,15 @@ Before/after for the common fixtures pattern (creating entities and relationship
 
 ### Behavior changes you inherit on the way
 
-Upgrading from v6 also jumps over the 2026-07 audit fixes, which convert silent failures into typed errors: `write-schema!` throws on unparseable schema; reads with unknown object IDs return empty instead of leaking or asserting; writes with unknown object IDs throw `{:type :eacl/unknown-object}`; expired/corrupt cursors throw `{:type :eacl/invalid-cursor}`. Review the **“Breaking behavior changes”** section of the [README](../README.md) and the [full audit report](reports/2026-07-06-eacl-full-source-audit.md) — if your error handling assumed v6's silent behaviors, update it now.
+Upgrading from v6 also jumps over the 2026-07 audit root-cause fixes. All of them convert silent failures into correct behavior or loud, typed errors; storage and token formats are unchanged, and valid configurations and schemas work unmodified. If your error handling assumed v6's silent behaviors, update it now. Full details in the [full source audit report](reports/2026-07-06-eacl-full-source-audit.md).
+
+- `write-schema!` **throws** on unparseable schema strings (v6 silently retracted the entire stored schema on a parse failure), on duplicate `definition`/relation declarations, and when replacing a non-empty schema with zero definitions (opt out with `{:allow-empty-schema? true}`). `//` and `/* */` comments are supported.
+- Arrow targets are validated against **all** subject types of the source relation (v6 was declaration-order-dependent: only the last-declared type was checked).
+- Reads with unknown object IDs return **empty results** (v6's `read-relationships` returned *all* relationships — a data leak — and lookups threw `AssertionError`s); writes throw `{:type :eacl/unknown-object}`.
+- `make-client` throws `{:type :eacl/invalid-config}` on unknown option keys (v6 silently ignored them, so a typo'd ID-coercion config silently fell back to `:eacl/id`).
+- Expired/corrupt cursor tokens throw `{:type :eacl/invalid-cursor}` (v6 decoded them to nil and silently restarted pagination at page one). Tokens do not expire by default; opt in with `:cursor-ttl-seconds`. Cursors detect mid-pagination schema changes with `{:type :eacl/stale-cursor}`.
+- `impl/tx-relationship` requires `{:allow-tempids? true}` to treat unresolvable string IDs as tempids (a typo'd ID in v6 silently created a ghost entity).
+- Dead v6-era namespaces were removed: `eacl.datomic.rules*`, `eacl.datomic.impl.datalog`, and `eacl.datomic.impl.base/Relationship` (see the internals table above).
 
 ---
 

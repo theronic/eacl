@@ -600,7 +600,7 @@ clojure -M:test -v my.namespace/test-name
 
 ## Funding
 
-This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+This open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
 
 # Licence
 
