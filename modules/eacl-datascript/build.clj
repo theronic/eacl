@@ -7,7 +7,7 @@
 (def class-dir (str module-dir "/target/classes"))
 (def jar-file (format "%s/target/%s-%s.jar" module-dir (name lib) version))
 (def pom-basis
-  {:libs {'org.clojure/clojure {:mvn/version "1.12.0-alpha5"}
+  {:libs {'org.clojure/clojure {:mvn/version "1.11.4"}
           'cloudafrica/eacl {:mvn/version version}
           'datascript/datascript {:mvn/version "1.7.8"}
           'org.clojure/tools.logging {:mvn/version "1.3.0"}}})

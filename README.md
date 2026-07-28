@@ -1,6 +1,6 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure with a backend-neutral core plus Datomic and DataScript adapters. EACL is used at [CloudAfrica](https://cloudafrica.net/).
+EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
 
 _Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
@@ -32,85 +32,32 @@ Situated AuthZ offers some advantages for typical use-cases:
 2. Storing permission data directly in Datomic avoids network I/O to an external AuthZ system, reducing latency.
 3. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
 4. Queries are fully consistent. If you need consistency semantics like `at_least_as_fresh`, use SpiceDB.
-5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but you will find the eager Datalog engine too slow and unable to handle all the grounding cases. The first version of EACL was implemented with Datalog rules, but it was simply too slow and materialized all intermediate results. Correct cursor-pagination is also non-trivial, because parallel paths through the permission graph can yield duplicate resources. EACL does this for you with good performance.
+5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but you will find the eager Datalog engine too slow and unable to handle all the grounding cases. The first version of EACL was implemented with Datalog rules, but it was simply too slow and materialized all intermediate results. Correct bidirectional cursor-pagination is also non-trivial, because parallel paths through the permission graph can yield duplicate resources. EACL does this for you with good performance.
 
 ## Performance
 
-- EACL traverses the ReBAC permission graph via low-level Datomic `d/index-range` & `d/seek-datoms` calls to efficiently yield cursor-paginated resources without materializing the full reachable closure.
-  - Non-recursive lookups retain the existing at-rest terminal-index ordering.
-  - Recursive `lookup-resources` uses a stable deterministic discovery order with exact deduplication across pages. It does not guarantee global eid ordering.
+- EACL traverses acyclic ReBAC paths via low-level Datomic `d/index-range`, `d/seek-datoms` & `d/rseek-datoms` calls. Recursive permission closures use deterministic traversal order with request-local dedupe, avoiding both Datomic recursive Datalog materialization and persisted grant caches. Acyclic lookup results are returned in Datomic eid order; recursive lookup results are returned in traversal order.
+  - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
 - EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - Presently, EACL has _no result cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
-- EACL does cache resolved *permission paths and query plans*. The cache is invalidated **only by `eacl/write-schema!`**, which bumps a schema-version stamp (`:eacl/schema-version`) stored in the database in the same transaction as the definition change — so invalidation reaches every peer, `d/as-of` views resolve the paths of their own era, and unrelated `d/transact` calls never touch a cache key (zero per-transaction overhead — issue #74). Editing relation/permission datoms outside `write-schema!` is not detected by design; if you must, call `eacl.datomic.impl.indexed/evict-permission-paths-cache!` on every peer afterwards.
-- Recursive `lookup-resources` cursors carry the recursion state and grow ~48 bytes per emitted resource, because exact cross-page deduplication requires the emitted set. Prefer bounded pagination sessions on recursive schemas; a cursor-state redesign is planned.
-- Performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Parallel paths through the graph that return the same resources will slow EACL down, because these resources need to be deduplicated in stable order. In a simple graph, performance should approach `O(logN)` for N permissioned resources. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- EACL does cache resolved *permission paths*. The cache is invalidated **only by `eacl/write-schema!`**, which bumps a schema-version stamp (`:eacl/schema-version`) stored in the database in the same transaction as the definition change — so invalidation reaches every peer, `d/as-of` views resolve the paths of their own era, and unrelated `d/transact` calls never touch a cache key (zero per-transaction overhead — issue #74). Editing relation/permission datoms outside `write-schema!` is not detected by design; if you must, call `eacl.datomic.impl.indexed/evict-permission-paths-cache!` on every peer afterwards.
+- Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
+- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-*Note* that to retain future compatibility with the SpiceDB gRPC, the EACL Datomic client calls `(d/db conn)` on each API call, which means that if your DB changes inbetween EACL queries, you may see inconsistent results when cursor paginating. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
+*Note* that EACL v7.3 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself, and you must hold **one** `db` value for the whole paginated walk: internal cursor maps embed per-path frontiers (including `:exhausted` markers) that are only valid against the basis that minted them. Reusing a cursor against a newer `(d/db conn)` can silently skip results written after the first page — the token layer prevents this by pinning `d/as-of` for you.
+
+Public `eacl3_` cursors are string-safe AES-GCM envelopes. Authentication is required so a caller cannot alter a result boundary, query binding, basis, or per-path frontier. Encryption is not required for pagination correctness, but it prevents internal Datomic eids and basis metadata from leaking through an otherwise merely Base64-encoded token. Token cryptography runs once when a page cursor is encoded or decoded; it is not part of each relationship-index traversal.
 
 ## Project Status
 
 > [!WARNING]
-> Even though EACL is used in production at CloudAfrica, it is under *active* development.
+> EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
-
-## Modules
-
-The repository is now a workspace-style monorepo with three publishable modules:
-
-- `cloudafrica/eacl`
-  - backend-neutral protocol, public records, schema IR, parser, cursor helpers, and the shared authorization engine.
-- `cloudafrica/eacl-datomic`
-  - Datomic adapter preserving the existing `eacl.datomic.*` public namespace surface.
-- `cloudafrica/eacl-datascript`
-  - DataScript adapter for CLJ and CLJS.
-
-The root `deps.edn` is a development workspace only. Build and install the modules independently with:
-
-```clojure
-clojure -T:build-eacl install
-clojure -T:build-eacl-datomic install
-clojure -T:build-eacl-datascript install
-```
-
-EACL no longer ships a logging backend. Applications should choose their own SLF4J/logback backend if they want one.
-
-## Dependency Selection
-
-Choose only the adapter you need:
-
-```clojure
-{:deps
- {cloudafrica/eacl {:git/url "git@github.com:cloudafrica/eacl.git"
-                    :git/sha "REPLACE_WITH_SHA"}
-
-  cloudafrica/eacl-datomic {:git/url "git@github.com:cloudafrica/eacl.git"
-                            :deps/root "modules/eacl-datomic"
-                            :git/sha "REPLACE_WITH_SHA"}
-
-  cloudafrica/eacl-datascript {:git/url "git@github.com:cloudafrica/eacl.git"
-                               :deps/root "modules/eacl-datascript"
-                               :git/sha "REPLACE_WITH_SHA"}}}
-```
-
-- Datomic consumers need `cloudafrica/eacl-datomic` and keep the same public `require` forms.
-- DataScript consumers need `cloudafrica/eacl-datascript`.
-- Core-only consumers can depend on `cloudafrica/eacl`.
-
-### Breaking behavior changes (2026-07, audit root-cause fixes)
-
-All of these convert silent failures into correct behavior or loud, typed errors. Storage and token formats are unchanged; valid configurations and schemas work unmodified. Full details in [docs/reports/2026-07-06-eacl-full-source-audit.md](docs/reports/2026-07-06-eacl-full-source-audit.md).
-
-- `write-schema!` now **throws** on unparseable schema strings (previously a parse failure silently retracted the entire stored schema), on duplicate `definition`/relation declarations, and when replacing a non-empty schema with zero definitions (opt out with `{:allow-empty-schema? true}`). `//` and `/* */` comments are now supported.
-- Arrow targets are validated against **all** subject types of the source relation (previously order-dependent: only the last-declared type was checked).
-- Reads with unknown object IDs return **empty results** (previously `read-relationships` returned *all* relationships — a data leak — and lookups threw `AssertionError`s); writes throw `{:type :eacl/unknown-object}`.
-- `make-client` throws `{:type :eacl/invalid-config}` on unknown option keys (previously silently ignored, so a typo'd ID-coercion config silently fell back to `:eacl/id`).
-- Expired/corrupt cursor tokens throw `{:type :eacl/invalid-cursor}` (previously decoded to nil and silently restarted pagination at page one). Tokens no longer expire by default; opt in with `:cursor-ttl-seconds`. Cursors detect mid-pagination schema changes with `{:type :eacl/stale-cursor}`.
-- `impl/tx-relationship` requires `{:allow-tempids? true}` to treat unresolvable string IDs as tempids (previously a typo'd ID silently created a ghost entity).
-- Dead v6-era namespaces were removed (`eacl.datomic.rules*`, `eacl.datomic.impl.datalog`, and `eacl.datomic.impl.base/Relationship`, which emitted attributes absent from the v7 schema).
+> v7.3 is the current development version of EACL. It retains the v7.2 pagination API and recursive traversal engine, and adds direction-scoped cursor frontiers for deep acyclic lookup pages. Releases are not tagged yet, so pin the Git SHA.
+> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 
 ## ReBAC: Relationship-based Access Control
@@ -171,19 +118,25 @@ The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/
 ### Queries
 
 - `(eacl/can? acl subject permission resource) => true | false`
-- Query maps may include `:max-depth`, which defaults to `50` for recursive permission evaluation.
-- `(eacl/lookup-subjects acl filters) => {:data [subjects...], cursor 'next-cursor}`
-- `(eacl/lookup-resources acl filters) => {:data [resources...], :cursor 'next-cursor}`.
-- `(eacl/count-resources acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterative counting. Use sparingly with `:limit -1` for all results.
-- `(eacl/count-subjects acl filters) => {:keys [count limit cursor]}` supports limit & cursor for iterative counting. Use sparingly with `:limit -1` for all results.
+- `(eacl/lookup-subjects acl filters) => {:data [subjects...] :page-info {...}}`
+- `(eacl/lookup-resources acl filters) => {:data [resources...] :page-info {...}}`
+- `(eacl/count-resources acl filters) => {:keys [count limit]}` counts the full result set.
 
 ### Relationship Maintenance
 
-- `(eacl/read-relationships acl filters) => [relationships...]`
+- `(eacl/read-relationships acl filters) => {:data [relationships...] :page-info {...}}`
 - `(eacl/write-relationships! acl updates) => {:zed/token 'db-basis}`,
   - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
+
+All list APIs use the v7.3 pagination contract:
+
+- Forward: pass `:first` and optionally `:after`.
+- Backward: pass `:last` and optionally `:before`.
+- Responses include `:page-info` with `:start-cursor`, `:end-cursor`, `:has-next-page?`, and `:has-previous-page?`.
+- `:cursor` and `:limit` are no longer supported for list pagination.
+- Acyclic lookup cursors paginate in Datomic eid order. Recursive lookup cursors paginate in deterministic traversal order.
 
 ### Schema Maintenance
 
@@ -208,34 +161,46 @@ The other primary API call is `lookup-resources`, e.g.
     {:subject       (->user "alice")
      :permission    :view
      :resource/type :server
-     :limit         2 ; defaults to 1000.
-     :cursor        nil})) ; pass nil for 1st page.
+     :first         2})) ; defaults to 1000.
 page1
-=> {:cursor 'next-cursor
-    :data [{:type :server :id "server-1"}
-           {:type :server :id "server-2"}]}
+=> {:data [{:type :server :id "server-1"}
+           {:type :server :id "server-2"}]
+    :page-info {:start-cursor "eacl3_..."
+                :end-cursor "eacl3_..."
+                :has-next-page? true
+                :has-previous-page? false}}
 ```
 
-To query the next page, simply pass the `cursor` from page1 into the next query:  
+To query the next page, pass the `:end-cursor` from page1 as `:after`:
 
 ```clojure
 (eacl/lookup-resources acl
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :server
-   :limit         3
-   :cursor        (:cursor page1)})
-=> {:cursor 'next-cursor
-    :data [{:type :server :id "server-3"}
+   :first         3
+   :after         (get-in page1 [:page-info :end-cursor])})
+=> {:data [{:type :server :id "server-3"}
            {:type :server :id "server-4"}
-           {:type :server :id "server-5"}]}
+           {:type :server :id "server-5"}]
+    :page-info {:start-cursor "eacl3_..."
+                :end-cursor "eacl3_..."
+                :has-next-page? true
+                :has-previous-page? true}}
 ```
 
-The return order of `lookup-resources` is stable for a fixed DB basis and cursor.
+To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
 
-- Non-recursive lookups are typically returned in internal resource ID order because that is the order of the terminal tuple indices.
-- Recursive lookups are returned in stable deterministic discovery order with exact deduplication across pages.
-- Recursive queries can supply `:max-depth`; exceeding that depth raises a typed runtime error instead of silently truncating results.
+```clojure
+(eacl/lookup-resources acl
+  {:subject       (->user "alice")
+   :permission    :view
+   :resource/type :server
+   :last          2
+   :before        (get-in page2 [:page-info :start-cursor])})
+```
+
+Forward and backward pages return results in the same order for the query. Acyclic lookup uses Datomic eid order; recursive lookup uses deterministic traversal order. Backward pagination returns the previous window; it does not reverse the result order. Bare `:last` without `:before` is not supported for recursive lookup because it requires traversing the full closure.
 
 ## Datomic Quickstart
 
@@ -244,10 +209,8 @@ The following example is contained in [eacl-example](https://github.com/theronic
 Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps
- {cloudafrica/eacl-datomic {:git/url "git@github.com:cloudafrica/eacl.git"
-                            :deps/root "modules/eacl-datomic"
-                            :git/sha "REPLACE_WITH_SHA"}}}
+{:deps {theronic/eacl {:git/url "git@github.com:theronic/eacl.git" 
+                       :git/sha "f8c3c1cf67646236ca538942120a03edde40fee7"}}}
 ```
 
 ```clojure
@@ -265,7 +228,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install the latest EACL Datomic Schema:
-@(d/transact conn schema/v6-schema)
+@(d/transact conn schema/v7-schema)
 
 ; Write your permission schema using SpiceDB schema DSL:
 (eacl/write-schema! acl
@@ -298,7 +261,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def acl (eacl.datomic.core/make-client conn
            ; optional config:
            {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
-            :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))})) ; optional. to internal IDs to your external IDs.
+            :entity->object-id (fn [ent] (:eacl/id ent))})) ; optional. to internal entities to your external IDs.
  
 ; Define some convenience methods over spice-object:
 ; `eacl.core/spice-object` is just a record helper that accepts `type`, `id` and optionally `subject_relation`, to return a SpiceObject of {:keys [type id]}. `subject-relation` is not currently supported in EACL.
@@ -328,10 +291,12 @@ Add the Datomic adapter dependency to your `deps.edn` file:
   {:subject       (->user "user-1")
    :permission    :edit
    :resource/type :product
-   :limit         1000
-   :cursor        nil})
+   :first         1000})
 ; => {:data [{:type :product, :id "product-1"}]
-;     :cursor 'cursor}
+;     :page-info {:start-cursor "eacl3_..."
+;                 :end-cursor "eacl3_..."
+;                 :has-next-page? false
+;                 :has-previous-page? false}}
 ```
 
 ## DataScript Quickstart
@@ -408,10 +373,12 @@ EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/w
 
 ### Schema Validation
 
-`write-schema!` validates your schema and provides informative error messages:
-- **Reference validation**: Ensures all relations and permissions reference valid definitions
-- **Orphan protection**: Prevents deleting relations that have existing relationships
-- **Unsupported feature detection**: Rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+`write-schema!` validates your schema and provides informative error messages. An invalid schema throws and nothing is transacted:
+- **Parse validation**: unparseable schema strings and duplicate `definition`/relation declarations throw. `//` and `/* */` comments are supported.
+- **Reference validation**: all relations and permissions must reference valid definitions. Arrow targets must exist on **every** subject type of the source relation.
+- **Orphan protection**: relations with existing relationships cannot be deleted.
+- **Empty-schema guard**: replacing a non-empty schema with zero definitions throws unless you pass `{:allow-empty-schema? true}`.
+- **Unsupported feature detection**: rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
 
 ### Schema Updates
 
@@ -540,13 +507,13 @@ SpiceDB uses strings for all external subject & resource IDs, whereas EACL uses 
 
 *Note*: internal Datomic eids should not be exposed to consumers, because those eids are not guaranteed to be stable after a DB rebuild.
 
-`eacl.datomic.core/make-client` accepts a Datomic conn and a config map of `{:keys [entid->object-id object-id->ident]}`, which are functions to convert between internal to/from external IDs.
+`eacl.datomic.core/make-client` accepts a Datomic conn and a config map of `{:keys [entity->object-id object-id->ident]}`, which are functions to convert between internal to/from external IDs.
 
 It is common to attach a unique UUID to permissioned entities for exposing them externally, or you can convert external->internal at your call sites. Here is how you can configure EACL to convert to/from a unique attribute named `:your/id`:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
+           {:entity->object-id (fn [ent] (:your/id ent))
             :object-id->ident (fn [obj-id] [:your/id obj-id])}))
 ```
 
@@ -555,17 +522,25 @@ Note that this attribute should have property `:db/unique :db.unique/identity`.
 The default options are to use the built-in EACL string attr `:eacl/id`, but you can use the internal Datomic eids with the following "identity" functions:
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:entid->object-id (fn [_db eid] eid)
+           {:entity->object-id (fn [ent] (:db/id ent))
             :object-id->ident (fn [obj-id] obj-id)}))
 ```
 
-`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` instead of being silently ignored (a silently dropped ID-coercion key means silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) remains supported as a deprecated alias for `:entid->object-id`; supplying both throws. You can also pass `:cursor-ttl-seconds` to give pagination cursor tokens an expiry — by default tokens never expire, and an expired or corrupt token throws `{:type :eacl/invalid-cursor}` rather than silently restarting from page one.
+`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` (a silently dropped ID-coercion key would mean silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) is a deprecated alias for `:entid->object-id`; supplying both throws. Page tokens expire after 5 minutes by default; tune with `:page-token-ttl-seconds`.
+
+For multi-peer deployments, configure a shared page-token key so `eacl3_...` cursors survive restarts and can be decoded by every peer:
+
+```clojure
+(def acl (eacl.datomic.core/make-client conn
+           {:page-token-key "32+ bytes of shared secret key material"
+            :page-token-kid :prod-2026-05}))
+```
 
 ### Unknown object IDs
 
 EACL follows SpiceDB semantics for object IDs that don't resolve to an entity:
 
-- **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups return empty pages, `read-relationships` returns `[]`.
+- **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
 - **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
 
 ## Schema Syntax
@@ -676,7 +651,7 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
 - *No cache:* EACL does not presently have a cache, because Datomic Peers cache datoms aggressively and queries so far are fast enough. A cache is planned.
-- *Return order:* Unlike SpiceDB, EACL enumerates subjects & resources in the order they are stored in at-rest, which is always by Datomic eid (note: not external ID). SpiceDB returns results in order of discovery or schema order. SpiceDB guarantees stable order, but the order is non-deterministic. You should not rely on this order when using EACL or SpiceDB.
+- *Return order:* Acyclic EACL lookups enumerate in Datomic eid order and relationship reads enumerate in tuple-index order. Recursive lookups enumerate in deterministic traversal order. SpiceDB returns results in discovery or schema order. You should not rely on either system's order as a domain sort order.
 
 ## How to Run All Tests
 
@@ -703,10 +678,32 @@ Note difference between `-M` & `-X` switches.
 clojure -M:test -v my.namespace/test-name
 ```
 
+## Upgrading
+
+### v6 → v7
+
+v7 changed how Relationships are stored in Datomic (one entity per relationship → two tuple datoms on your subject & resource entities). The public API is unchanged, but stored relationship data must be migrated once. To protect you, `eacl.datomic.core/make-client` checks the storage version recorded in Datomic and **refuses to start against unmigrated v6 data** with `{:type :eacl/storage-version}` — v7 code reading a v6 database would otherwise silently answer every permission check with `false`/empty.
+
+Migrate with the batteries-included, idempotent [`eacl.migrations.v6-to-v7`](src/eacl/migrations/v6_to_v7.clj) namespace:
+
+```clojure
+(require '[eacl.migrations.v6-to-v7 :as migrations])
+(migrations/migrate! conn {:schema "definition user {} ..."})  ; re-asserts your schema via write-schema!
+```
+
+or opt into automatic migration at client construction:
+
+```clojure
+(eacl.datomic.core/make-client conn {:auto-migrate-v6 {:schema "definition user {} ..."}})
+```
+
+The migration is additive and rollback-friendly (v6 data is kept until you explicitly retract it) and end-to-end tested in [test/eacl/migrations/v6_to_v7_test.clj](test/eacl/migrations/v6_to_v7_test.clj). For the full sequence — write-pause window, verification, soak, cleanup, rollback — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
+
 ## Funding
 
-This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+Some of this open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/).
 
 # Licence
 
-- EACL switched from BSL to an Affero GPL licence on 2025-05-27. However, we are considering re-licensing under a more permissive open-source license.
+- EACL is licensed under the Eclipse Public License v2.0 since 2026-03-05.
+- EACL was initially licensed under BSL and later Affero GPL (on 2025-05-27), but is now licensed under EPL 2.0.

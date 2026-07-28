@@ -64,6 +64,12 @@
 
    schema-version-attr-definition
 
+   {:db/ident       :eacl/storage-version
+    :db/doc         "EACL relationship storage-model major version (7 = tuple relationships). Stamped by eacl.migrations.v6-to-v7 on completed migration; eacl.datomic.core/make-client refuses to start against unmigrated v6 relationship data without it."
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
    ;; Relations
    {:db/ident       :eacl.relation/resource-type
     :db/doc         "EACL Relation: Resource Type"
@@ -188,10 +194,6 @@
     :db/cardinality :db.cardinality/many
     :db/index       true}])
 
-(def v6-schema
-  "Compatibility alias while tests and callers move to the v7 name."
-  v7-schema)
-
 (defn count-relationships-using-relation
   "Counts v7 forward relationship tuples that reference the given relation."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
@@ -295,16 +297,16 @@
                 {:type       :invalid-self-relation
                  :permission (str (name res-type) "/" (name perm-name))
                  :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name))
-                             " references non-existent relation: " (name target-name)}))
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                              " references non-existent relation: " (name target-name))}))
             ;; Self -> permission: validate permission exists on this resource type
             (when-not (contains? (get permission-names-by-type res-type) target-name)
               (swap! errors conj
                 {:type       :invalid-self-permission
                  :permission (str (name res-type) "/" (name perm-name))
                  :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name))
-                             " references non-existent permission: " (name target-name)})))
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                              " references non-existent permission: " (name target-name))})))
 
           ;; For arrow permissions (source-rel != :self)
           (do
@@ -314,8 +316,8 @@
                 {:type       :missing-source-relation
                  :permission (str (name res-type) "/" (name perm-name))
                  :relation   source-rel
-                 :message    (str "Permission " (name res-type) "/" (name perm-name))
-                             " references non-existent relation: " (name source-rel)}))
+                 :message    (str "Permission " (name res-type) "/" (name perm-name)
+                              " references non-existent relation: " (name source-rel))}))
 
             ;; If source relation exists, validate the target exists on EVERY subject
             ;; type of the source relation. Anything else is declaration-order-dependent,

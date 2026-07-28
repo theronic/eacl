@@ -7,10 +7,10 @@
 (def class-dir (str module-dir "/target/classes"))
 (def jar-file (format "%s/target/%s-%s.jar" module-dir (name lib) version))
 (def pom-basis
-  {:libs {'org.clojure/clojure {:mvn/version "1.12.0-alpha5"}
+  {:libs {'org.clojure/clojure {:mvn/version "1.11.4"}
           'cloudafrica/eacl {:mvn/version version}
           'com.rpl/specter {:mvn/version "1.1.4"}
-          'com.datomic/peer {:mvn/version "1.0.6733"}
+          'com.datomic/peer {:mvn/version "1.0.7622"}
           'org.clojure/tools.logging {:mvn/version "1.3.0"}}})
 
 (defn clean [_]

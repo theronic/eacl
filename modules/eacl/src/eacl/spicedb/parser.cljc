@@ -74,8 +74,11 @@
       self-expr = <'self'>
       paren-expr = <'('> permission-expr <')'>
 
-      (* Identifiers - must not match keywords *)
-      identifier = !('nil' | 'self' | 'definition' | 'relation' | 'permission' | 'with' | 'any' | 'all') #'[a-zA-Z_][a-zA-Z0-9_]*'"
+      (* Identifiers - must not match keywords. The keyword guard requires a
+         word boundary: a bare prefix lookahead like !('all' ...) also rejected
+         legal identifiers that merely START with a keyword ('allowed',
+         'allocation', 'relationship', 'anytime', ...), which SpiceDB accepts. *)
+      identifier = #'(?!(?:nil|self|definition|relation|permission|with|any|all)(?![a-zA-Z0-9_]))[a-zA-Z_][a-zA-Z0-9_]*'"
     :auto-whitespace whitespace-or-comments))
 
 ;; Example SpiceDB schema
@@ -167,14 +170,26 @@
 
 (defn extract-permissions
   "Extract permissions from definition body.
-   Returns a vector of {:name 'perm-name', :expression <parse-tree>}"
+   Returns a vector of {:name 'perm-name', :expression <parse-tree>}.
+   Throws on duplicate permission declarations: EACL evaluates every stored
+   permission row with a matching name as a union, so a silently accepted
+   duplicate broadens access (SpiceDB rejects duplicates at compile time)."
   [definition-body]
   (if (and (vector? definition-body) (= :definition-body (first definition-body)))
     (->> (rest definition-body)
       (filter #(and (vector? %) (= :permission (first %))))
       (map (fn [[_ perm-name-node expr]]
              {:name       (extract-identifier perm-name-node)
-              :expression expr})))
+              :expression expr}))
+      (reduce (fn [acc {perm-name :name :as permission}]
+                (if (some #(= perm-name (:name %)) acc)
+                  (throw (ex-info (str "Duplicate permission declaration: '" perm-name "'."
+                                       " Combine the branches into one union,"
+                                       " e.g. `permission " perm-name " = a + b`.")
+                           {:type :eacl.schema/duplicate-permission
+                            :permission perm-name}))
+                  (conj acc permission)))
+              []))
     []))
 
 (defn extract-definitions
@@ -274,13 +289,16 @@
 (defn analyze-definition [schema-str def-name]
   (let [parsed (parse-schema schema-str)]
     (when-not (insta/failure? parsed)
+      ;; extract-definitions returns a map of type-path -> spec; the previous
+      ;; filter over map entries could never match :name.
       (let [definitions (extract-definitions (rest parsed))
-            target-def  (first (filter #(= def-name (:name %)) definitions))]
+            target-def  (get definitions def-name)]
         (when target-def
           (println (str "Definition: " def-name))
           (println "Relations:")
-          (doseq [rel (:relations target-def)]
-            (println (str "  " (:name rel) " : " (:type rel))))
+          (doseq [[rel-name type-refs] (:relations target-def)]
+            (println (str "  " rel-name " : "
+                       (str/join " | " (map :type type-refs)))))
           (println "Permissions:")
           (doseq [perm (:permissions target-def)]
             (println (str "  " (:name perm) " = "

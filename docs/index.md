@@ -21,7 +21,7 @@ Yes.
   - `eacl/write-relationships!` to create, update or delete relationships.
   - `eacl/write-schema!` to define your authorization schema using SpiceDB's schema DSL.
   - `eacl/read-schema` to retrieve the current schema.
-- EACL implements efficient cursor-based permission graph traversal for enumeration via `lookup-resources` & `lookup-subjects`. All results are returned in the order they are stored in at-rest (internal Datomic eids).
+- EACL implements efficient cursor-based enumeration via direct Datomic index traversal for acyclic permissions and deterministic traversal-order worklists for recursive permission closures. Acyclic lookup results use Datomic eid order; recursive lookup results use traversal order.
 - EACL has some limitations compared to SpiceDB: notably, EACL only support Union (`+`, i.e. OR-logic) permission logic. Negation can be emulated with multiple permission checks.
 - EACL is fast. Depending on the graph complexity of your permission schema, EACL should be good for at least 1M permissioned resources. There are low-hanging fruit to 10x performance even further, specifically via permission path caching and more sophisticated cursors.
 
@@ -38,14 +38,15 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 # What is EACL good for?
 
 - EACL is suitable for Clojure & Datomic Pro and Datomic Cloud applications.
-- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range` & `d/seek-datoms` to yield sub-millisecond results with cursor-based pagination.
+- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range`, `d/seek-datoms`, and `d/rseek-datoms` for acyclic paths, while recursive permission pagination uses deterministic traversal order with request-local dedupe instead of persisted grant caches.
 - EACL performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
 - EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v6 is the current version of EACL. Releases are not tagged yet, so pin the Git SHA.
+> v7.3 is the current development version of EACL. It includes bidirectional cursor pagination, the recursive traversal engine, and direction-scoped cursor frontiers for deep acyclic lookup pages. Releases are not tagged yet, so pin the Git SHA.
+> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](migration-v6-to-v7.md).
 
 # What is SpiceDB?
 
@@ -170,10 +171,10 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resource) => true | false`
-- `(eacl/lookup-subjects client filters) => {:data [subjects...], cursor 'next-cursor}`
-- `(eacl/lookup-resources client filters) => {:data [resources...], :cursor 'next-cursor}`.
-- `(eacl/count-resources client filters) => {:keys [count limit cursor]}` supports limit & cursor for iterated counting. Use sparingly with `:limit -1` for all results.
-- `(eacl/read-relationships client filters) => [relationships...]`
+- `(eacl/lookup-subjects client filters) => {:data [subjects...] :page-info {...}}`
+- `(eacl/lookup-resources client filters) => {:data [resources...] :page-info {...}}`
+- `(eacl/count-resources client filters) => {:keys [count limit]}` counts the full result set.
+- `(eacl/read-relationships client filters) => {:data [relationships...] :page-info {...}}`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
   - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! client relationships)` simply calls write-relationships! with `:create` operation.
@@ -193,32 +194,39 @@ The other primary API call is `lookup-resources`, e.g.
 
 ```clojure
 (def page1
-  (eacl/lookup-resources client
-    {:subject       (->user "alice")
-     :permission    :view
-     :resource/type :server
-     :limit         2 ; defaults to 1000.
-     :cursor        nil})) ; pass nil for 1st page.
-page1
-=> {:cursor 'next-cursor
-    :data [{:type :server :id "server-1"}
-           {:type :server :id "server-2"}]}
+	  (eacl/lookup-resources client
+	    {:subject       (->user "alice")
+	     :permission    :view
+	     :resource/type :server
+	     :first         2})) ; defaults to 1000.
+	page1
+	=> {:data [{:type :server :id "server-1"}
+	           {:type :server :id "server-2"}]
+	    :page-info {:start-cursor "eacl3_..."
+	                :end-cursor "eacl3_..."
+	                :has-next-page? true
+	                :has-previous-page? false}}
 ```
 
-To query the next page, simply pass the cursor from page1 into the next query:  
+To query the next page, pass the `:end-cursor` from page1 as `:after`:
 
 ```clojure
 (eacl/lookup-resources client
   {:subject       (->user "alice")
    :permission    :view
    :resource/type :server
-   :limit         3
-   :cursor        (:cursor page1)}) ; pass nil for 1st page.
-=> {:cursor 'next-cursor
-    :data [{:type :server :id "server-3"}
+   :first         3
+   :after         (get-in page1 [:page-info :end-cursor])})
+=> {:data [{:type :server :id "server-3"}
            {:type :server :id "server-4"}
-           {:type :server :id "server-5"}]}
+           {:type :server :id "server-5"}]
+    :page-info {:start-cursor "eacl3_..."
+                :end-cursor "eacl3_..."
+                :has-next-page? true
+                :has-previous-page? true}}
 ```
+
+To go back from page2, pass its `:start-cursor` as `:before` with `:last`.
 
 The return order of resources from `lookup-resources` is stable and sorted by internal resource ID. Future enhancements may enable a sort key.
 
@@ -248,7 +256,7 @@ Add the EACL dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install the latest EACL Datomic Schema:
-@(d/transact conn schema/v6-schema)
+@(d/transact conn schema/v7-schema)
 
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn
@@ -309,10 +317,12 @@ Add the EACL dependency to your `deps.edn` file:
   {:subject       (->user "user-1")
    :permission    :edit
    :resource/type :product
-   :limit         1000
-   :cursor        nil})
+   :first         1000})
 ; => {:data [{:type :product, :id "product-1"}]
-;     :cursor 'cursor}
+;     :page-info {:start-cursor "eacl3_..."
+;                 :end-cursor "eacl3_..."
+;                 :has-next-page? false
+;                 :has-previous-page? false}}
 ```
 
 ## Data Structures
@@ -599,7 +609,7 @@ clojure -M:test -v my.namespace/test-name
 
 ## Funding
 
-This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+This open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
 
 # Licence
 

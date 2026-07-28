@@ -14,6 +14,12 @@
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
 
+(defn- transform-frontier
+  [f frontier]
+  (if (= :exhausted frontier)
+    frontier
+    (f frontier)))
+
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
@@ -29,7 +35,10 @@
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
-                                    (map (fn [[k v]] [k (entid->object-id db v)]))
+                                    (map (fn [[k v]]
+                                           [k (transform-frontier
+                                               #(entid->object-id db %)
+                                               v)]))
                                     p))))
       :else
       (cond
@@ -51,7 +60,10 @@
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
-                                    (map (fn [[k v]] [k (object-id->entid db v)]))
+                                    (map (fn [[k v]]
+                                           [k (transform-frontier
+                                               #(object-id->entid db %)
+                                               v)]))
                                     p))))
       :else
       (cond
@@ -69,6 +81,16 @@
     :relation relation
     :resource (object->spice db opts resource)}))
 
+(defn- validate-consistency!
+  "EACL is always fully consistent. nil means the default, which is
+  fully-consistent; every other value must be rejected instead of ignored."
+  [{:keys [consistency]}]
+  (when (and (some? consistency)
+             (not= consistency/fully-consistent consistency))
+    (throw (ex-info "EACL only supports consistency/fully-consistent at this time."
+             {:type :eacl/unsupported-consistency
+              :consistency consistency}))))
+
 (defn datascript-read-relationships
   [db
    {:as opts
@@ -76,6 +98,8 @@
            internal-cursor->spice
            spice-cursor->internal]}
    filters]
+  (validate-consistency! filters)
+  (impl/validate-relationship-filters! filters)
   (let [subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
         subject-eid  (when subject-id (object-id->entid db subject-id))
@@ -157,6 +181,7 @@
            internal-cursor->spice
            spice-cursor->internal]}
    {:as query :keys [subject]}]
+  (validate-consistency! query)
   (let [internal-subject (spice-object->internal db subject)]
     (if (nil? (:id internal-subject))
       ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
@@ -183,6 +208,7 @@
            spice-cursor->internal
            internal-cursor->spice]}
    {:as query :keys [subject]}]
+  (validate-consistency! query)
   (let [subject-ent (spice-object->internal db subject)]
     (->> query
          (S/setval [:subject] subject-ent)
@@ -204,6 +230,11 @@
            spice-cursor->internal
            internal-cursor->spice]}
    query]
+  (validate-consistency! query)
+  (when (contains? query :subject/relation)
+    (throw (ex-info ":subject/relation is not supported by lookup-subjects."
+             {:eacl/error :eacl.pagination/unsupported-filter
+              :filter :subject/relation})))
   (->> query
        (S/transform [:resource] #(spice-object->internal db %))
        (S/transform [:cursor]
@@ -226,6 +257,7 @@
            spice-cursor->internal
            internal-cursor->spice]}
    query]
+  (validate-consistency! query)
   (->> query
        (S/transform [:resource] #(spice-object->internal db %))
        (S/transform [:cursor]

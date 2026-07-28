@@ -3,7 +3,10 @@
             [clojure.tools.logging :as log]
             [datomic.api :as d]
             [eacl.core :refer [spice-object]]
-            [eacl.lazy-merge-sort :as lazy-sort]))
+            [eacl.lazy-merge-sort :as lazy-sort])
+  (:import [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.util Base64]))
 
 (def ^:private forward-relationship-attr
   :eacl.v7.relationship/subject-type+relation+resource-type+resource)
@@ -11,44 +14,206 @@
 (def ^:private reverse-relationship-attr
   :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
-(defn- inclusive-cursor->exclusive
-  [cursor-eid]
-  (when cursor-eid
-    (dec cursor-eid)))
+(def ^:private default-page-size 1000)
+(def ^:private max-page-size 10000)
+(def ^:private lookup-frontier-version 1)
+
+(defn- object-eid
+  "Resolves an object id to an eid for read paths. String ids resolve via the
+  canonical [:eacl/id ...] identity — d/entid on a bare string throws a raw
+  IllegalArgumentException, which leaked out of can?/lookups for raw-impl
+  callers. Anything else passes to d/entid unchanged (eids, lookup refs,
+  idents). Returns nil when the id does not resolve; callers treat that as an
+  unknown object (can? => false, lookups => empty page)."
+  [db id]
+  (cond
+    (nil? id) nil
+    (string? id) (when (d/entid db :eacl/id)
+                   (d/entid db [:eacl/id id]))
+    :else (d/entid db id)))
+
+(defn- page-error!
+  [message data]
+  (throw (ex-info message data)))
+
+(defn normalize-page-request
+  [query]
+  (let [has-first? (contains? query :first)
+        has-last? (contains? query :last)
+        has-after? (contains? query :after)
+        has-before? (contains? query :before)]
+    (cond
+      (contains? query :cursor)
+      (page-error! ":cursor is not supported; use :first/:after or :last/:before."
+                   {:key :cursor})
+
+      (contains? query :limit)
+      (page-error! ":limit is not supported for list pagination; use :first or :last."
+                   {:key :limit})
+
+      (and has-first? has-last?)
+      (page-error! "Use exactly one of :first or :last." {:first (:first query)
+                                                          :last (:last query)})
+
+      (and has-before? has-after?)
+      (page-error! "Use only one cursor boundary, :after or :before." {:after (:after query)
+                                                                       :before (:before query)})
+
+      (and has-after? (not has-first?))
+      (page-error! ":after is valid only with :first." {:after (:after query)})
+
+      (and has-before? (not has-last?))
+      (page-error! ":before is valid only with :last." {:before (:before query)}))
+
+    (let [direction (if has-last? :desc :asc)
+          size (or (when has-first? (:first query))
+                   (when has-last? (:last query))
+                   default-page-size)
+          bound (case direction
+                  :asc (:after query)
+                  :desc (:before query))]
+      (when-not (and (integer? size) (pos? size))
+        (page-error! "Page size must be a positive integer." {:size size}))
+      (when (> size max-page-size)
+        (page-error! "Page size exceeds configured maximum." {:size size
+                                                              :max max-page-size}))
+      {:direction direction
+       :size size
+       :bound bound})))
+
+(defn- scan-opts
+  [cursor-or-opts]
+  (if (and (map? cursor-or-opts)
+           (contains? cursor-or-opts :direction))
+    {:direction (:direction cursor-or-opts)
+     :bound-eid (:bound-eid cursor-or-opts)
+     :inclusive-bound? (boolean (:inclusive-bound? cursor-or-opts))}
+    {:direction :asc
+     :bound-eid cursor-or-opts
+     :inclusive-bound? false}))
+
+(defn- merge-eid-seqs
+  [direction seqs]
+  (case direction
+    :asc (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity seqs)
+    :desc (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc identity seqs)))
+
+(defn- path-frontier-identity
+  "Stable, semantic identity for a permission path.
+
+  Cursor state must not depend on the incidental ordering of keys in a path
+  map. Relation eids make the identity specific to the schema visible at the
+  token's pinned Datomic basis."
+  [path]
+  (case (:type path)
+    :relation
+    [:relation
+     (:subject-type path)
+     (:relation-eid path)]
+
+    :self-permission
+    [:self-permission
+     (:resource-type path)
+     (:target-permission path)]
+
+    :arrow
+    [:arrow
+     (:via-relation-eid path)
+     (:target-type path)
+     (:target-relation path)
+     (:target-permission path)
+     (mapv path-frontier-identity (:sub-paths path))]
+
+    [:unknown (pr-str path)]))
+
+(defn- path-frontier-key
+  [path]
+  (let [bytes (.getBytes (pr-str (path-frontier-identity path))
+                         StandardCharsets/UTF_8)
+        digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
+    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) digest)))
+
+(defn- lookup-edge
+  ([eid]
+   (lookup-edge eid nil nil))
+  ([eid frontier-direction path-frontiers]
+   (cond-> {:kind :lookup-eid
+            :result-eid eid}
+     (seq path-frontiers)
+     (assoc :frontier-version lookup-frontier-version
+            :frontier-direction frontier-direction
+            :path-frontiers path-frontiers))))
+
+(defn- page-info
+  [{:keys [items has-next? has-previous?]}]
+  {:start-cursor (some-> items first :cursor)
+   :end-cursor (some-> items last :cursor)
+   :has-next-page? (boolean has-next?)
+   :has-previous-page? (boolean has-previous?)})
+
+(defn- page-response
+  [{:keys [items has-next? has-previous?]}]
+  {:data (mapv :node items)
+   :page-info (page-info {:items items
+                          :has-next? has-next?
+                          :has-previous? has-previous?})})
+
+(defn- lookup-items
+  [result-type eids frontier-direction path-frontiers]
+  (mapv (fn [eid]
+          {:node (spice-object result-type eid)
+           :cursor (lookup-edge eid frontier-direction path-frontiers)})
+        eids))
 
 (defn subject->resources
-  [db subject-type subject-eid relation-eid resource-type cursor-resource-eid]
+  [db subject-type subject-eid relation-eid resource-type cursor-or-opts]
   {:pre [subject-type subject-eid relation-eid resource-type]}
-  (let [attr-eid    (d/entid db forward-relationship-attr)
-        start-tuple [subject-type
-                     relation-eid
-                     resource-type
-                     (if cursor-resource-eid (inc cursor-resource-eid) 0)]]
-    (->> (d/seek-datoms db :eavt subject-eid attr-eid start-tuple)
+  (let [{:keys [direction bound-eid inclusive-bound?]} (scan-opts cursor-or-opts)
+        attr-eid    (d/entid db forward-relationship-attr)
+        prefix      [subject-type relation-eid resource-type]
+        start-tuple (conj prefix
+                          (case direction
+                            :asc (or bound-eid 0)
+                            :desc (or bound-eid Long/MAX_VALUE)))
+        datoms      (case direction
+                      :asc (d/seek-datoms db :eavt subject-eid attr-eid start-tuple)
+                      :desc (d/rseek-datoms db :eavt subject-eid attr-eid start-tuple))]
+    (->> datoms
          (take-while
-          (fn [[e a v]]
-            (and (== subject-eid e)
-                 (== attr-eid a)
-                 (= [subject-type relation-eid resource-type]
-                    (subvec (vec v) 0 3)))))
-         (map (fn [[_ _ v]] (nth v 3))))))
+          (fn [datom]
+            (let [v (:v datom)]
+              (and (== subject-eid (:e datom))
+                   (== attr-eid (:a datom))
+                   (= prefix (subvec (vec v) 0 3))))))
+         (drop-while #(and bound-eid
+                           (not inclusive-bound?)
+                           (= bound-eid (nth (:v %) 3))))
+         (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn resource->subjects
-  [db resource-type resource-eid relation-eid subject-type cursor-subject-eid]
+  [db resource-type resource-eid relation-eid subject-type cursor-or-opts]
   {:pre [resource-type resource-eid relation-eid subject-type]}
-  (let [attr-eid    (d/entid db reverse-relationship-attr)
-        start-tuple [resource-type
-                     relation-eid
-                     subject-type
-                     (if cursor-subject-eid (inc cursor-subject-eid) 0)]]
-    (->> (d/seek-datoms db :eavt resource-eid attr-eid start-tuple)
+  (let [{:keys [direction bound-eid inclusive-bound?]} (scan-opts cursor-or-opts)
+        attr-eid    (d/entid db reverse-relationship-attr)
+        prefix      [resource-type relation-eid subject-type]
+        start-tuple (conj prefix
+                          (case direction
+                            :asc (or bound-eid 0)
+                            :desc (or bound-eid Long/MAX_VALUE)))
+        datoms      (case direction
+                      :asc (d/seek-datoms db :eavt resource-eid attr-eid start-tuple)
+                      :desc (d/rseek-datoms db :eavt resource-eid attr-eid start-tuple))]
+    (->> datoms
          (take-while
-          (fn [[e a v]]
-            (and (== resource-eid e)
-                 (== attr-eid a)
-                 (= [resource-type relation-eid subject-type]
-                    (subvec (vec v) 0 3)))))
-         (map (fn [[_ _ v]] (nth v 3))))))
+          (fn [datom]
+            (let [v (:v datom)]
+              (and (== resource-eid (:e datom))
+                   (== attr-eid (:a datom))
+                   (= prefix (subvec (vec v) 0 3))))))
+         (drop-while #(and bound-eid
+                           (not inclusive-bound?)
+                           (= bound-eid (nth (:v %) 3))))
+         (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn relation-datoms
   "Returns relation datoms for the exact resource/relation name pair,
@@ -112,42 +277,36 @@
 (def permission-paths-cache
   (atom (cache/lru-cache-factory {} :threshold 1000)))
 
-(def recursive-query-plan-cache
-  (atom (cache/lru-cache-factory {} :threshold 256)))
-
 (defn evict-permission-paths-cache!
-  "Manual override that clears both the permission-path and query-plan caches.
-  write-schema! calls it for immediate local hygiene; cross-peer and as-of
-  correctness rely on the :eacl/schema-version cache key, not on this. It is
-  also the recovery hatch after unsupported programmatic schema edits."
+  "Manual override that clears the permission-path cache. write-schema! calls
+  it for immediate local hygiene; cross-peer and as-of correctness rely on the
+  :eacl/schema-version cache key, not on this. It is also the recovery hatch
+  after unsupported programmatic schema edits."
   []
-  (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000))
-  (reset! recursive-query-plan-cache (cache/lru-cache-factory {} :threshold 256)))
+  (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000)))
 
 ;; --- Schema-version cache scope (issue #74) ---------------------------------
 ;;
-;; The path/plan caches are invalidated ONLY by eacl.datomic.schema/write-schema!,
+;; The path cache is invalidated ONLY by eacl.datomic.schema/write-schema!,
 ;; which asserts a fresh :eacl/schema-version squuid on the schema singleton in
 ;; the same transaction as any definition change. Reading the stamp is a single
-;; AVET lookup — O(log N), no history scans — and unrelated d/transact calls
-;; leave it (and therefore every cache key) untouched, so relationship write
-;; load can never evict or recompute paths. (The previous design derived a
-;; digest from schema history per db basis, i.e. recomputed after every
-;; transact — issue #74.)
+;; AVET lookup — O(log N), no per-call schema-datom scans — and unrelated
+;; d/transact calls leave it (and therefore every cache key) untouched, so
+;; relationship write load can never evict or recompute paths. (The previous
+;; design derived a digest from the schema datoms on every lookup — issue #74.)
 ;;
 ;; Contract: permission schema mutations MUST go through write-schema!.
 ;; Programmatic edits of relation/permission datoms (raw d/transact, d/with,
-;; excision) do not bump the version, so caches and cursors may serve paths
-;; computed from the pre-edit schema until the next write-schema! or a manual
+;; excision) do not bump the version, so caches may serve paths computed from
+;; the pre-edit schema until the next write-schema! or a manual
 ;; evict-permission-paths-cache!. That trade-off is by design.
 ;;
 ;; The stamp lives in the database, not in peer memory, so:
 ;;  - write-schema! on any peer invalidates every peer (the stored value changes);
 ;;  - d/as-of views read the version that was current at that basis, giving
-;;    historic views their own cache slots (audit §3 fix, preserved);
+;;    historic views their own cache slots;
 ;;  - a squuid can never be re-asserted to an unchanged value by a concurrent
-;;    writer (no counter-elision race);
-;;  - cursor fingerprints survive process restarts.
+;;    writer (no counter-elision race).
 
 (def schema-version-attr
   "Installed by eacl.datomic.schema/v7-schema; asserted by write-schema!."
@@ -181,7 +340,7 @@
   "Returns [database-id schema-version-string] for positively classified
   plain/as-of db values, or a sentinel scope for anything else (filter, since,
   history, unrecognized views) and for ANY failure. Sentinel scopes bypass the
-  caches entirely: every failure mode degrades to recomputation from the
+  cache entirely: every failure mode degrades to recomputation from the
   queried db value — never to serving a stale entry."
   [db]
   (or (try
@@ -195,57 +354,15 @@
 
 (defn schema-version-stamp
   "String form of the schema version for this db value, or nil when no version
-  has been written yet or the view cannot be classified (see schema-cache-scope).
-  Used for cursor fingerprints; nil forces the :p paths-digest comparison."
+  has been written yet or the view cannot be classified (see schema-cache-scope)."
   [db]
   (let [scope (schema-cache-scope db)]
     (when-not (uncached-scope? scope)
       (second scope))))
 
-(defn- fingerprint-digest
-  "128-bit hex digest of a value's printed representation (SHA-256 truncated)."
-  [x]
-  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
-    (.update md (.getBytes (pr-str x) "UTF-8"))
-    (format "%032x" (java.math.BigInteger. 1 (java.util.Arrays/copyOf (.digest md) 16)))))
-
-(defn- cursor-fingerprint
-  "Two-part cursor fingerprint: :s is the schema-version stamp at mint time
-  (nil on unclassifiable views or pre-version databases), :p digests this
-  query's resolved paths/plan."
-  [db paths-or-plan]
-  {:s (schema-version-stamp db)
-   :p (fingerprint-digest paths-or-plan)})
-
-(defn- check-cursor-fingerprint!
-  "Guards cursor resumption against schema changes. An equal schema-version
-  stamp means no write-schema! ran between mint and resume (programmatic datom
-  edits bypass the stamp — see the schema-version contract above), so the
-  cursor resumes on the fast path. A differing (or unavailable) stamp falls
-  back to comparing this query's resolved paths/plan: equal means the schema
-  change did not affect this query; different throws :eacl/stale-cursor instead
-  of silently mis-skipping via reordered :p path indices or replaying a stale
-  v3 :stack. Cursors minted before fingerprints existed are accepted with a
-  warning."
-  [db cursor paths-or-plan]
-  (when (map? cursor)
-    (if-let [f (:f cursor)]
-      (let [current-s (schema-version-stamp db)]
-        (when-not (and (:s f) current-s (= (:s f) current-s))
-          (when-not (= (:p f) (fingerprint-digest paths-or-plan))
-            (throw (ex-info "Stale cursor: the permission paths for this query changed since the cursor was minted. Restart pagination."
-                     {:type :eacl/stale-cursor})))))
-      (log/warn "Cursor without a schema fingerprint accepted (minted before fingerprints existed)."))))
-
 (defn- permission-paths-cache-key
   [scope resource-type permission-name]
   (conj scope resource-type permission-name))
-
-(defn- recursive-query-plan-cache-key
-  [scope root-node]
-  (conj scope root-node))
-
-(def ^:private default-max-depth 50)
 
 (defn calc-permission-paths
   "Returns path maps with resolved relation eids.
@@ -306,7 +423,7 @@
   [db resource-type permission-name]
   (let [scope (schema-cache-scope db)]
     (if (uncached-scope? scope)
-      ;; Unclassifiable view (filter/since/history) or digest failure:
+      ;; Unclassifiable view (filter/since/history) or scope failure:
       ;; compute fresh from this db value; never share cache entries.
       (calc-permission-paths db resource-type permission-name)
       (let [cache @permission-paths-cache
@@ -318,6 +435,25 @@
           (let [paths (calc-permission-paths db resource-type permission-name)]
             (swap! permission-paths-cache cache/miss cache-key paths)
             paths))))))
+
+(defn- frontier-permission-paths
+  "Expands same-resource permission aliases into independently resumable paths.
+
+  A self-permission has no intermediate frontier of its own. Keeping it as a
+  top-level lookup path would discard the frontiers of any arrow paths below
+  it, forcing every page to replay those intermediates."
+  [db resource-type permission-name]
+  (letfn [(expand [permission-name visited-nodes]
+            (let [node [resource-type permission-name]]
+              (if (contains? visited-nodes node)
+                []
+                (let [visited-nodes' (conj visited-nodes node)]
+                  (mapcat (fn [path]
+                            (if (= :self-permission (:type path))
+                              (expand (:target-permission path) visited-nodes')
+                              [path]))
+                          (get-permission-paths db resource-type permission-name))))))]
+    (vec (expand permission-name #{}))))
 
 (defn- permission-query-node
   [resource-type permission-name]
@@ -335,132 +471,61 @@
        distinct
        vec))
 
-(defn- build-recursive-query-plan
-  [db root-node]
-  (let [ordered    (volatile! [])
-        seen       (volatile! #{})
-        visiting   (volatile! #{})
-        recursive? (volatile! false)]
-    (letfn [(visit [node]
-              (when-not (contains? @seen node)
-                (vswap! seen conj node)
-                (vswap! ordered conj node)
-                (vswap! visiting conj node)
-                (doseq [dep (permission-query-dependencies db node)]
-                  (when (contains? @visiting dep)
-                    (vreset! recursive? true))
-                  (when-not (contains? @seen dep)
-                    (visit dep)))
-                (vswap! visiting disj node)))]
-      (visit root-node)
-      (let [nodes        @ordered
-            node-paths   (into {}
-                               (map (fn [[resource-type permission-name :as node]]
-                                      [node (vec (get-permission-paths db resource-type permission-name))]))
-                               nodes)
-            seed-sources (into {}
-                               (map (fn [[resource-type _ :as node]]
-                                      [node (->> (get node-paths node)
-                                                 (map-indexed
-                                                  (fn [path-idx path]
-                                                    (case (:type path)
-                                                      :relation {:kind :relation
-                                                                 :path-idx path-idx
-                                                                 :subject-type (:subject-type path)
-                                                                 :relation-eid (:relation-eid path)}
-                                                      :arrow (when (:target-relation path)
-                                                               {:kind :arrow-relation
-                                                                :path-idx path-idx
-                                                                :target-type (:target-type path)
-                                                                :via-relation-eid (:via-relation-eid path)
-                                                                :sub-paths (vec (:sub-paths path))})
-                                                      nil)))
-                                                 (remove nil?)
-                                                 vec)]))
-                               nodes)
-            dependents   (reduce
-                          (fn [acc [resource-type _ :as node]]
-                            (reduce
-                             (fn [acc path]
-                               (case (:type path)
-                                 :self-permission
-                                 (update acc
-                                         (permission-query-node resource-type (:target-permission path))
-                                         (fnil conj [])
-                                         {:kind :copy
-                                          :node node})
-
-                                 :arrow
-                                 (if-let [target-permission (:target-permission path)]
-                                   (update acc
-                                           (permission-query-node (:target-type path) target-permission)
-                                           (fnil conj [])
-                                           {:kind :via
-                                            :node node
-                                            :intermediate-type (:target-type path)
-                                            :via-relation-eid (:via-relation-eid path)})
-                                   acc)
-
-                                 acc))
-                             acc
-                             (get node-paths node)))
-                          {}
-                          nodes)]
-        {:root-node root-node
-         :nodes nodes
-         :recursive? @recursive?
-         :seed-sources seed-sources
-         :dependents dependents}))))
-
-(defn- recursive-query-plan
-  [db root-node]
-  (let [scope (schema-cache-scope db)]
-    (if (uncached-scope? scope)
-      (build-recursive-query-plan db root-node)
-      (let [cache-key (recursive-query-plan-cache-key scope root-node)
-            cache     @recursive-query-plan-cache]
-        (if (cache/has? cache cache-key)
-          (do
-            (swap! recursive-query-plan-cache cache/hit cache-key)
-            (cache/lookup cache cache-key))
-          (let [plan (build-recursive-query-plan db root-node)]
-            (swap! recursive-query-plan-cache cache/miss cache-key plan)
-            plan))))))
-
 (defn- recursive-permission-query?
   [db resource-type permission-name]
-  (:recursive? (recursive-query-plan db (permission-query-node resource-type permission-name))))
+  (let [root (permission-query-node resource-type permission-name)]
+    (loop [stack [{:node root
+                   :deps (seq (permission-query-dependencies db root))}]
+           visited #{}]
+      (if-let [{:keys [node deps]} (peek stack)]
+        (if-let [dep (first deps)]
+          (cond
+            (= dep node) true
+            (some #(= dep (:node %)) stack) true
+            (contains? visited dep) (recur (conj (pop stack) {:node node
+                                                              :deps (next deps)})
+                                           visited)
+            :else (recur (conj (conj (pop stack) {:node node
+                                                  :deps (next deps)})
+                               {:node dep
+                                :deps (seq (permission-query-dependencies db dep))})
+                         visited))
+          (recur (pop stack) (conj visited node)))
+        false))))
 
-(defn- extract-cursor-eid
-  [cursor v1-key]
-  (if (= 2 (:v cursor))
-    (:e cursor)
-    (get-in cursor [v1-key :id])))
+(defn- reachable-permission-query-nodes
+  [db root-node]
+  (loop [stack [root-node]
+         seen  #{}]
+    (if-let [node (peek stack)]
+      (if (contains? seen node)
+        (recur (pop stack) seen)
+        (recur (into (pop stack) (permission-query-dependencies db node))
+               (conj seen node)))
+      (vec seen))))
 
 (defn- arrow-via-intermediates
-  [intermediate-eids result-fn]
-  (let [pairs (keep (fn [intermediate-eid]
-                      (let [results (result-fn intermediate-eid)]
-                        (when (seq results)
-                          {:int-eid intermediate-eid
-                           :results results})))
-                    intermediate-eids)
-        min-int (:int-eid (first pairs))
-        result-seqs (map :results pairs)]
-    {:results (if (seq result-seqs)
-                (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity result-seqs)
-                [])
-     :!state (when min-int (volatile! min-int))}))
-
-(defn- build-v2-cursor
-  [cursor last-eid path-results v1-key]
-  {:v 2
-   :e (or last-eid (:e cursor) (get-in cursor [v1-key :id]))
-   :p (into (or (:p cursor) {})
-            (keep (fn [{:keys [idx !state]}]
-                    (when-let [v (and !state @!state)]
-                      [idx v])))
-            path-results)})
+  ([intermediate-eids result-fn]
+   (arrow-via-intermediates :asc intermediate-eids result-fn))
+  ([direction intermediate-eids result-fn]
+   (let [pairs (keep (fn [intermediate-eid]
+                       (let [results (result-fn intermediate-eid)]
+                         (when (seq results)
+                           {:int-eid intermediate-eid
+                            :results results})))
+                     intermediate-eids)
+         first-pair (first pairs)
+         result-seqs (map :results pairs)]
+     {:results (if (seq result-seqs)
+                 (merge-eid-seqs direction result-seqs)
+                 [])
+      ;; Inclusive frontier: the next page rechecks the first intermediate that
+      ;; can still contribute above/below the current global result boundary.
+      ;; If none can contribute, later pages in the same direction can skip the
+      ;; path permanently.
+      :frontier (if first-pair
+                  (:int-eid first-pair)
+                  :exhausted)})))
 
 (defn direct-match-datoms-in-relationship-index
   [db subject-type subject-eid relation-eid resource-type resource-eid]
@@ -476,401 +541,998 @@
                 (= subject-type (:subject-type %)))
           sub-paths))
 
-(defn- query-max-depth
-  [{:keys [max-depth]}]
-  (or max-depth default-max-depth))
+(defn all-permission-nodes
+  [db]
+  (->> (d/q '[:find ?resource-type ?permission-name
+             :where
+             [?p :eacl.permission/resource-type ?resource-type]
+             [?p :eacl.permission/permission-name ?permission-name]]
+           db)
+       (mapv vec)
+       set))
 
-(defn- max-depth-exceeded!
-  [state node resource-eid]
-  (throw
-   (ex-info (str "recursive permission query exceeded max depth " (:max-depth state))
-            {:type ::max-depth-exceeded
-             :max-depth (:max-depth state)
-             :node node
-             :resource-eid resource-eid})))
+(defn traversal-permission?
+  "True when a permission root transitively depends on a recursive permission SCC.
+  These roots cannot be proven page-bounded in eid order without materialized
+  grants, so list APIs evaluate them in deterministic traversal order."
+  [db resource-type permission-name]
+  (recursive-permission-query? db resource-type permission-name))
 
-(defn- push-tasks
-  [stack tasks]
-  (reduce conj stack (reverse (remove nil? tasks))))
+(defn traversal-nodes
+  [db]
+  (->> (all-permission-nodes db)
+       (filter (fn [[resource-type permission-name]]
+                 (traversal-permission? db resource-type permission-name)))
+       set))
 
-(defn- matching-sub-path-descriptors
-  [subject-type sub-paths]
-  (filter #(= subject-type (:subject-type %)) sub-paths))
+(def ^:private recursive-engine-version 1)
 
-(defn- initial-recursive-tasks
-  [plan subject-type max-depth]
-  (->> (:nodes plan)
-       (mapcat
-        (fn [node]
-          (mapcat
-           (fn [seed]
-             (case (:kind seed)
-               :relation
-               (when (= subject-type (:subject-type seed))
-                 [{:kind :direct-stream
+(def ^:dynamic *recursive-traversal-limits*
+  {:max-derived-grants 100000
+   :max-advanced-datoms 100000
+   :max-queued-work 100000})
+
+(def ^:dynamic *recursive-traversal-stats* nil)
+
+(defn- recursive-traversal-error!
+  [message data]
+  (throw (ex-info message data)))
+
+(defn- inc-stat!
+  [k]
+  (when *recursive-traversal-stats*
+    (swap! *recursive-traversal-stats* update k (fnil inc 0))))
+
+(defn- increment-counter
+  [state counter-key limit-key]
+  (let [n (inc (get-in state [:counters counter-key] 0))
+        limit (get *recursive-traversal-limits* limit-key)]
+    (when (and limit (> n limit))
+      (recursive-traversal-error!
+       "Recursive traversal safety limit exceeded."
+       {:eacl/error :eacl.recursive-traversal/limit-exceeded
+        :limit-kind counter-key
+        :limit limit}))
+    (assoc-in state [:counters counter-key] n)))
+
+(defn- enqueue-work
+  [state work]
+  (let [queue' (conj (:queue state) work)
+        limit (:max-queued-work *recursive-traversal-limits*)]
+    (when (and limit (> (count queue') limit))
+      (recursive-traversal-error!
+       "Recursive traversal queue safety limit exceeded."
+       {:eacl/error :eacl.recursive-traversal/limit-exceeded
+        :limit-kind :queued-work
+        :limit limit}))
+    (assoc state :queue queue')))
+
+(defn- enqueue-works
+  [state works]
+  (reduce enqueue-work state works))
+
+(defn- pop-work
+  [state]
+  [(peek (:queue state)) (update state :queue pop)])
+
+(defn- sorted-paths
+  [paths]
+  (sort-by (fn [path]
+             (case (:type path)
+               :relation [:relation (:subject-type path) (:relation-eid path)]
+               :self-permission [:self-permission (:resource-type path) (:target-permission path)]
+               :arrow [:arrow (:via path) (:target-type path) (:via-relation-eid path)
+                       (:target-relation path) (:target-permission path)
+                       (mapv (juxt :subject-type :relation-eid) (:sub-paths path))]
+               [(:type path)]))
+           paths))
+
+(defn- rule-id
+  [node rule path extra]
+  (vec (concat [rule node]
+               (case rule
+                 :relation [(:subject-type path) (:relation-eid path)]
+                 :self-permission [(:target-permission path)]
+                 :arrow-permission [(:via path) (:target-type path)
+                                    (:via-relation-eid path) (:target-permission path)]
+                 :arrow-relation [(:via path) (:target-type path)
+                                  (:via-relation-eid path)]
+                 [])
+               extra)))
+
+(defn- compile-recursive-rules
+  [db root-node]
+  (let [nodes (sort (reachable-permission-query-nodes db root-node))]
+    (->> nodes
+         (mapcat
+          (fn [[resource-type permission :as node]]
+            (mapcat
+             (fn [path]
+               (case (:type path)
+                 :relation
+                 [{:id (rule-id node :relation path [])
+                   :rule :relation
                    :node node
-                   :relation-eid (:relation-eid seed)
-                   :cursor nil
-                   :depth max-depth}])
+                   :resource-type resource-type
+                   :permission permission
+                   :relation-eid (:relation-eid path)
+                   :subject-type (:subject-type path)}]
 
-               :arrow-relation
-               (->> (matching-sub-path-descriptors subject-type (:sub-paths seed))
-                    (map (fn [sub-path]
-                           {:kind :subject-intermediate-stream
+                 :self-permission
+                 [{:id (rule-id node :self-permission path [])
+                   :rule :self-permission
+                   :node node
+                   :resource-type resource-type
+                   :permission permission
+                   :target-node [resource-type (:target-permission path)]}]
+
+                 :arrow
+                 (if-let [target-permission (:target-permission path)]
+                   [{:id (rule-id node :arrow-permission path [])
+                     :rule :arrow-permission
+                     :node node
+                     :resource-type resource-type
+                     :permission permission
+                     :via-relation-eid (:via-relation-eid path)
+                     :intermediate-type (:target-type path)
+                     :target-node [(:target-type path) target-permission]}]
+                   (mapv (fn [sub-path]
+                           {:id (rule-id node :arrow-relation path [(:subject-type sub-path)
+                                                                    (:relation-eid sub-path)])
+                            :rule :arrow-relation
                             :node node
-                            :intermediate-type (:target-type seed)
-                            :subject-relation-eid (:relation-eid sub-path)
-                            :via-relation-eid (:via-relation-eid seed)
-                            :cursor nil
-                            :depth max-depth}))
-                    vec)
+                            :resource-type resource-type
+                            :permission permission
+                            :via-relation-eid (:via-relation-eid path)
+                            :intermediate-type (:target-type path)
+                            :target-relation-eid (:relation-eid sub-path)
+                            :target-subject-type (:subject-type sub-path)})
+                         (sort-by (juxt :subject-type :relation-eid) (:sub-paths path))))))
+             (sorted-paths (get-permission-paths db resource-type permission)))))
+         (sort-by :id)
+         vec)))
 
-               []))
-           (get-in plan [:seed-sources node]))))
-       vec))
+(defn- recursive-edge
+  [direction result-kind ordinal result-type result-eid]
+  {:kind :recursive-traversal
+   :engine-version recursive-engine-version
+   :direction direction
+   :result-kind result-kind
+   :ordinal ordinal
+   :result {:type result-type
+            :eid result-eid}})
 
-(defn- init-recursive-state
-  [plan subject-type max-depth]
-  {:v 3
-   :mode :recursive-forward
-   :max-depth max-depth
-   :stack (push-tasks [] (initial-recursive-tasks plan subject-type max-depth))
-   :best-depth {}
-   :emitted #{}
-   :last nil})
+(defn- validate-recursive-bound!
+  [bound direction result-kind]
+  (when bound
+    (when-not (= :recursive-traversal (:kind bound))
+      (recursive-traversal-error!
+       "Recursive traversal cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :expected :recursive-traversal
+        :actual (:kind bound)}))
+    (when-not (= recursive-engine-version (:engine-version bound))
+      (recursive-traversal-error!
+       "Recursive traversal cursor was created by a different engine version."
+       {:eacl/error :eacl.pagination/stale-cursor
+        :expected recursive-engine-version
+        :actual (:engine-version bound)}))
+    (when-not (= direction (:direction bound))
+      (recursive-traversal-error!
+       "Recursive traversal cursor direction does not match the lookup."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :expected direction
+        :actual (:direction bound)}))
+    (when-not (= result-kind (:result-kind bound))
+      (recursive-traversal-error!
+       "Recursive traversal cursor result kind does not match the lookup."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :expected result-kind
+        :actual (:result-kind bound)}))))
 
-(defn- recursive-state-for-query
-  [plan query]
-  (let [max-depth (query-max-depth query)
-        cursor    (:cursor query)
-        subject-type (:type (:subject query))]
-    (cond
-      (nil? cursor)
-      (init-recursive-state plan subject-type max-depth)
+(defn- same-recursive-bound-result?
+  [bound item]
+  (and (= (get-in bound [:result :type])
+          (get-in item [:cursor :result :type]))
+       (= (get-in bound [:result :eid])
+          (get-in item [:cursor :result :eid]))))
 
-      (= 3 (:v cursor))
+(defn- valid-cursor-eid?
+  [eid]
+  (and (instance? Long eid)
+       (pos? eid)))
+
+(defn- validate-lookup-eid-bound!
+  [bound]
+  (when bound
+    (when-not (= :lookup-eid (:kind bound))
+      (page-error! "Lookup page cursor has the wrong kind."
+                   {:eacl/error :eacl.pagination/wrong-cursor-kind
+                    :expected :lookup-eid
+                    :actual (:kind bound)}))
+    (when-not (valid-cursor-eid? (:result-eid bound))
+      (page-error! "Lookup page cursor has an invalid result boundary."
+                   {:eacl/error :eacl.pagination/invalid-cursor
+                    :result-eid (:result-eid bound)}))
+    (when-let [frontiers (:path-frontiers bound)]
+      (when-not (map? frontiers)
+        (page-error! "Lookup page cursor has invalid path frontiers."
+                     {:eacl/error :eacl.pagination/invalid-cursor}))
+      (when-not (= lookup-frontier-version (:frontier-version bound))
+        (page-error! "Lookup page cursor has an unsupported frontier version."
+                     {:eacl/error :eacl.pagination/invalid-cursor
+                      :expected lookup-frontier-version
+                      :actual (:frontier-version bound)}))
+      (when-not (#{:asc :desc} (:frontier-direction bound))
+        (page-error! "Lookup page cursor has an invalid frontier direction."
+                     {:eacl/error :eacl.pagination/invalid-cursor
+                      :frontier-direction (:frontier-direction bound)}))
+      (when-not (every? (fn [[path-key frontier]]
+                          (and (string? path-key)
+                               (or (= :exhausted frontier)
+                                   (valid-cursor-eid? frontier))))
+                        frontiers)
+        (page-error! "Lookup page cursor contains an invalid path frontier."
+                     {:eacl/error :eacl.pagination/invalid-cursor})))))
+
+(defn- stream-work
+  [eids on-eid]
+  (when-let [s (seq eids)]
+    {:kind :stream
+     :eids s
+     :on-eid on-eid}))
+
+(defn- enqueue-stream
+  [state eids on-eid]
+  (if-let [work (stream-work eids on-eid)]
+    (enqueue-work state work)
+    state))
+
+(defn- advance-stream
+  [state {:keys [eids on-eid]}]
+  (let [eid (first eids)
+        more (rest eids)
+        state' (-> state
+                   (increment-counter :advanced-datoms :max-advanced-datoms)
+                   (enqueue-works (on-eid eid)))]
+    (inc-stat! :advanced-stream-datoms)
+    (if (seq more)
+      (enqueue-work state' {:kind :stream
+                            :eids more
+                            :on-eid on-eid})
+      state')))
+
+(defn- forward-consumers
+  [rules]
+  (->> rules
+       (keep (fn [rule]
+               (case (:rule rule)
+                 :self-permission
+                 [(:target-node rule) rule]
+                 :arrow-permission
+                 [(:target-node rule) rule]
+                 nil)))
+       (group-by first)
+       (into {}
+             (map (fn [[node pairs]]
+                    [node (mapv second (sort-by (comp :id second) pairs))])))))
+
+(defn- forward-seed-state
+  [db subject-type subject-eid rules]
+  (reduce
+   (fn [state rule]
+     (case (:rule rule)
+       :relation
+       (if (= subject-type (:subject-type rule))
+         (enqueue-stream state
+                         (subject->resources db subject-type subject-eid
+                                             (:relation-eid rule)
+                                             (:resource-type rule)
+                                             nil)
+                         (fn [resource-eid]
+                           [{:kind :grant
+                             :node (:node rule)
+                             :resource-eid resource-eid}]))
+         state)
+
+       :arrow-relation
+       (if (= subject-type (:target-subject-type rule))
+         (enqueue-stream state
+                         (subject->resources db subject-type subject-eid
+                                             (:target-relation-eid rule)
+                                             (:intermediate-type rule)
+                                             nil)
+                         (fn [intermediate-eid]
+                           (if-let [stream (stream-work
+                                            (subject->resources db
+                                                                (:intermediate-type rule)
+                                                                intermediate-eid
+                                                                (:via-relation-eid rule)
+                                                                (:resource-type rule)
+                                                                nil)
+                                            (fn [resource-eid]
+                                              [{:kind :grant
+                                                :node (:node rule)
+                                                :resource-eid resource-eid}]))]
+                             [stream]
+                             [])))
+         state)
+
+       state))
+   {:queue clojure.lang.PersistentQueue/EMPTY
+    :seen-grants #{}
+    :emitted-root #{}
+    :ordinal 0
+    :counters {}
+    :consumers (forward-consumers rules)}
+   rules))
+
+(defn- forward-consumer-work
+  [db grant rule]
+  (case (:rule rule)
+    :self-permission
+    [{:kind :grant
+      :node (:node rule)
+      :resource-eid (:resource-eid grant)}]
+
+    :arrow-permission
+    (if-let [stream (stream-work
+                     (subject->resources db
+                                         (:intermediate-type rule)
+                                         (:resource-eid grant)
+                                         (:via-relation-eid rule)
+                                         (:resource-type rule)
+                                         nil)
+                     (fn [resource-eid]
+                       [{:kind :grant
+                         :node (:node rule)
+                         :resource-eid resource-eid}]))]
+      [stream]
+      [])
+
+    []))
+
+(defn- process-forward-grant
+  [db root-node result-type state {:keys [node resource-eid] :as grant}]
+  (let [grant-key [node resource-eid]]
+    (if (contains? (:seen-grants state) grant-key)
       (do
-        (when (and (:max-depth cursor) (not= (:max-depth cursor) max-depth))
-          (throw (ex-info "recursive query cursor max-depth does not match query max-depth"
-                          {:cursor-max-depth (:max-depth cursor)
-                           :query-max-depth max-depth})))
-        cursor)
+        (inc-stat! :deduped-grants)
+        [state nil])
+      (let [state' (-> state
+                       (increment-counter :derived-grants :max-derived-grants)
+                       (update :seen-grants conj grant-key))
+            state'' (enqueue-works state'
+                                   (mapcat #(forward-consumer-work db grant %)
+                                           (get-in state' [:consumers node])))]
+        (inc-stat! :derived-grants)
+        (if (and (= root-node node)
+                 (not (contains? (:emitted-root state'') resource-eid)))
+          (let [ordinal (:ordinal state'')
+                item {:node (spice-object result-type resource-eid)
+                      :cursor (recursive-edge :forward :resource ordinal result-type resource-eid)}]
+            (inc-stat! :emitted-results)
+            [(-> state''
+                 (update :emitted-root conj resource-eid)
+                 (update :ordinal inc))
+             item])
+          [state'' nil])))))
 
-      :else
-      (throw (ex-info "unsupported cursor version for recursive lookup"
-                      {:cursor-version (:v cursor)})))))
+(defn- initial-forward-state
+  [db subject-type subject-eid root-node]
+  (let [rules (compile-recursive-rules db root-node)]
+    (forward-seed-state db subject-type subject-eid rules)))
 
-(defn- dependent-recursive-tasks
-  [plan node resource-eid depth]
-  (let [next-depth (dec depth)]
-    (mapv
-     (fn [dep]
-       (case (:kind dep)
-         :copy {:kind :copy-fact
-                :node (:node dep)
-                :resource-eid resource-eid
-                :depth next-depth}
-         :via {:kind :via-stream
-               :node (:node dep)
-               :intermediate-type (:intermediate-type dep)
-               :intermediate-eid resource-eid
-               :via-relation-eid (:via-relation-eid dep)
-               :cursor nil
-               :depth next-depth}))
-     (get-in plan [:dependents node] []))))
-
-(defn- accept-recursive-fact
-  [plan state node resource-eid depth]
-  (let [prev-depth (get-in state [:best-depth node resource-eid] Long/MIN_VALUE)]
-    (cond
-      (<= depth prev-depth)
-      {:state state
-       :emit nil
-       :tasks []}
-
-      (neg? depth)
-      (max-depth-exceeded! state node resource-eid)
-
-      :else
-      (let [state'       (assoc-in state [:best-depth node resource-eid] depth)
-            root-node?   (= node (:root-node plan))
-            already-out? (contains? (:emitted state') resource-eid)
-            [state'' emit]
-            (if (and root-node? (not already-out?))
-              [(-> state'
-                   (update :emitted (fnil conj #{}) resource-eid)
-                   (assoc :last resource-eid))
-               resource-eid]
-              [state' nil])]
-        {:state state''
-         :emit emit
-         :tasks (dependent-recursive-tasks plan node resource-eid depth)}))))
-
-(defn- recursive-next-result
-  [db plan subject-type subject-eid state]
+(defn- next-forward-item
+  [db root-node result-type state]
   (loop [state state]
-    (if-let [task (peek (:stack state))]
-      (let [state' (update state :stack pop)]
-        (case (:kind task)
-          :copy-fact
-          (let [{:keys [state emit tasks]}
-                (accept-recursive-fact plan state' (:node task) (:resource-eid task) (:depth task))
-                next-state (update state :stack push-tasks tasks)]
-            (if emit
-              {:state next-state
-               :emit emit}
-              (recur next-state)))
+    (if (empty? (:queue state))
+      [state nil]
+      (let [[work state'] (pop-work state)]
+        (case (:kind work)
+          :stream
+          (recur (advance-stream state' work))
 
-          :direct-stream
-          (let [resource-type (first (:node task))
-                next-eid      (first (subject->resources db
-                                                         subject-type
-                                                         subject-eid
-                                                         (:relation-eid task)
-                                                         resource-type
-                                                         (:cursor task)))]
-            (if next-eid
-              (let [updated-task          (assoc task :cursor next-eid)
-                    {:keys [state emit tasks]}
-                    (accept-recursive-fact plan state' (:node task) next-eid (:depth task))
-                    next-state (update state :stack push-tasks (concat tasks [updated-task]))]
-                (if emit
-                  {:state next-state
-                   :emit emit}
-                  (recur next-state)))
-              (recur state')))
+          :grant
+          (let [[state'' item] (process-forward-grant db root-node result-type state' work)]
+            (if item
+              [state'' item]
+              (recur state''))))))))
 
-          :subject-intermediate-stream
-          (let [next-intermediate-eid (first (subject->resources db
-                                                                 subject-type
-                                                                 subject-eid
-                                                                 (:subject-relation-eid task)
-                                                                 (:intermediate-type task)
-                                                                 (:cursor task)))]
-            (if next-intermediate-eid
-              (let [updated-task (assoc task :cursor next-intermediate-eid)
-                    via-task     {:kind :via-stream
-                                  :node (:node task)
-                                  :intermediate-type (:intermediate-type task)
-                                  :intermediate-eid next-intermediate-eid
-                                  :via-relation-eid (:via-relation-eid task)
-                                  :cursor nil
-                                  :depth (:depth task)}
-                    next-state   (update state' :stack push-tasks [via-task updated-task])]
-                (recur next-state))
-              (recur state')))
-
-          :via-stream
-          (let [resource-type (first (:node task))
-                next-eid      (first (subject->resources db
-                                                         (:intermediate-type task)
-                                                         (:intermediate-eid task)
-                                                         (:via-relation-eid task)
-                                                         resource-type
-                                                         (:cursor task)))]
-            (if next-eid
-              (let [updated-task          (assoc task :cursor next-eid)
-                    {:keys [state emit tasks]}
-                    (accept-recursive-fact plan state' (:node task) next-eid (:depth task))
-                    next-state (update state :stack push-tasks (concat tasks [updated-task]))]
-                (if emit
-                  {:state next-state
-                   :emit emit}
-                  (recur next-state)))
-              (recur state')))))
-      {:state state
-       :emit nil
-       :done? true})))
-
-(defn- recursive-page
-  [db plan subject-type subject-eid state limit]
-  (loop [state   state
-         results []]
-    (if (and (>= limit 0)
-             (>= (count results) limit))
-      {:state state
-       :results results}
-      (let [{:keys [state emit done?]} (recursive-next-result db plan subject-type subject-eid state)]
+(defn- collect-forward-after
+  [db root-node result-type state bound size]
+  (loop [state state
+         mode (if bound :seek :collect)
+         items []]
+    (if (>= (count items) (inc size))
+      {:items items :complete? false}
+      (let [[state' item] (next-forward-item db root-node result-type state)]
         (cond
-          emit (recur state (conj results emit))
-          done? {:state state
-                 :results results}
-          :else (recur state results))))))
+          (nil? item)
+          (if (= mode :seek)
+            (recursive-traversal-error!
+             "Recursive traversal cursor no longer exists."
+             {:eacl/error :eacl.pagination/stale-cursor
+              :bound bound})
+            {:items items :complete? true})
+
+          (= mode :seek)
+          (let [ordinal (get-in item [:cursor :ordinal])]
+            (cond
+              (< ordinal (:ordinal bound))
+              (recur state' :seek items)
+
+              (= ordinal (:ordinal bound))
+              (if (same-recursive-bound-result? bound item)
+                (recur state' :collect items)
+                (recursive-traversal-error!
+                 "Recursive traversal cursor points at a different result."
+                 {:eacl/error :eacl.pagination/stale-cursor
+                  :bound bound
+                  :actual (:cursor item)}))
+
+              :else
+              (recursive-traversal-error!
+               "Recursive traversal cursor was skipped."
+               {:eacl/error :eacl.pagination/stale-cursor
+                :bound bound
+                :actual (:cursor item)})))
+
+          :else
+          (recur state' :collect (conj items item)))))))
+
+(defn- collect-forward-before
+  [db root-node result-type state bound size]
+  (loop [state state
+         ring clojure.lang.PersistentQueue/EMPTY
+         ring-count 0]
+    (let [[state' item] (next-forward-item db root-node result-type state)]
+      (cond
+        (nil? item)
+        (recursive-traversal-error!
+         "Recursive traversal cursor no longer exists."
+         {:eacl/error :eacl.pagination/stale-cursor
+          :bound bound})
+
+        (= (:ordinal bound) (get-in item [:cursor :ordinal]))
+        (if (same-recursive-bound-result? bound item)
+          (let [items (vec ring)
+                has-sentinel? (> (count items) size)
+                page-items (if has-sentinel?
+                             (subvec items (- (count items) size))
+                             items)]
+            {:items page-items
+             :has-sentinel? has-sentinel?})
+          (recursive-traversal-error!
+           "Recursive traversal cursor points at a different result."
+           {:eacl/error :eacl.pagination/stale-cursor
+            :bound bound
+            :actual (:cursor item)}))
+
+        (> (get-in item [:cursor :ordinal]) (:ordinal bound))
+        (recursive-traversal-error!
+         "Recursive traversal cursor was skipped."
+         {:eacl/error :eacl.pagination/stale-cursor
+          :bound bound
+          :actual (:cursor item)})
+
+        :else
+        (let [ring' (conj ring item)
+              ring-count' (inc ring-count)
+              trim? (> ring-count' (inc size))]
+          (recur state'
+                 (if trim? (pop ring') ring')
+                 (if trim? (inc size) ring-count')))))))
+
+(defn- recursive-forward-page
+  [db query]
+  (let [{:keys [direction size bound]} (normalize-page-request query)
+        _ (validate-recursive-bound! bound :forward :resource)
+        _ (when (and (= :desc direction) (nil? bound))
+            (page-error! "Bare :last is not supported for recursive traversal pagination."
+                         {:eacl/error :eacl.pagination/unsupported-recursive-last
+                          :reason :requires-full-traversal}))
+        {:keys [subject permission]} query
+        subject-type (:type subject)
+        subject-eid (object-eid db (:id subject))
+        result-type (:resource/type query)
+        root-node (permission-query-node result-type permission)
+        state (when subject-eid
+                (initial-forward-state db subject-type subject-eid root-node))]
+    (if-not state
+      (page-response {:items []
+                      :has-next? false
+                      :has-previous? (boolean bound)})
+      (case direction
+        :asc
+        (let [{:keys [items complete?]} (collect-forward-after db root-node result-type state bound size)
+              page-items (take size items)
+              has-sentinel? (> (count items) size)]
+          (page-response {:items page-items
+                          :has-next? (and has-sentinel? (not complete?))
+                          :has-previous? (boolean bound)}))
+
+        :desc
+        (let [{:keys [items has-sentinel?]} (collect-forward-before db root-node result-type state bound size)]
+          (page-response {:items items
+                          :has-next? true
+                          :has-previous? has-sentinel?}))))))
+
+(defn- rules-by-node
+  [rules]
+  (->> rules
+       (group-by :node)
+       (into {}
+             (map (fn [[node node-rules]]
+                    [node (vec (sort-by :id node-rules))])))))
+
+(defn- reverse-consumer-key
+  [node resource-eid]
+  [node resource-eid])
+
+(defn- add-reverse-consumer
+  [state key consumer]
+  (let [state' (update-in state [:consumers key] (fnil conj []) consumer)
+        existing (get-in state' [:grants-by-goal key])]
+    (enqueue-works state'
+                   (mapcat consumer existing))))
+
+(declare enqueue-reverse-goal)
+
+(defn- reverse-goal-rule-work
+  [db state resource-eid rule]
+  (case (:rule rule)
+    :relation
+    (if (= (:subject-type state) (:subject-type rule))
+      (enqueue-stream state
+                      (resource->subjects db
+                                          (:resource-type rule)
+                                          resource-eid
+                                          (:relation-eid rule)
+                                          (:subject-type state)
+                                          nil)
+                      (fn [subject-eid]
+                        [{:kind :grant
+                          :node (:node rule)
+                          :resource-eid resource-eid
+                          :subject-type (:subject-type state)
+                          :subject-eid subject-eid}]))
+      state)
+
+    :self-permission
+    (let [target-key (reverse-consumer-key (:target-node rule) resource-eid)
+          consumer (fn [grant]
+                     [{:kind :grant
+                       :node (:node rule)
+                       :resource-eid resource-eid
+                       :subject-type (:subject-type grant)
+                       :subject-eid (:subject-eid grant)}])]
+      (-> state
+          (add-reverse-consumer target-key consumer)
+          (enqueue-reverse-goal (:target-node rule) resource-eid)))
+
+    :arrow-relation
+    (enqueue-stream state
+                    (resource->subjects db
+                                        (:resource-type rule)
+                                        resource-eid
+                                        (:via-relation-eid rule)
+                                        (:intermediate-type rule)
+                                        nil)
+                    (fn [intermediate-eid]
+                      (if-let [stream (stream-work
+                                       (resource->subjects db
+                                                           (:intermediate-type rule)
+                                                           intermediate-eid
+                                                           (:target-relation-eid rule)
+                                                           (:subject-type state)
+                                                           nil)
+                                       (fn [subject-eid]
+                                         [{:kind :grant
+                                           :node (:node rule)
+                                           :resource-eid resource-eid
+                                           :subject-type (:subject-type state)
+                                           :subject-eid subject-eid}]))]
+                        [stream]
+                        [])))
+
+    :arrow-permission
+    (enqueue-stream state
+                    (resource->subjects db
+                                        (:resource-type rule)
+                                        resource-eid
+                                        (:via-relation-eid rule)
+                                        (:intermediate-type rule)
+                                        nil)
+                    (fn [intermediate-eid]
+                      (let [target-key (reverse-consumer-key (:target-node rule) intermediate-eid)
+                            consumer (fn [grant]
+                                       [{:kind :grant
+                                         :node (:node rule)
+                                         :resource-eid resource-eid
+                                         :subject-type (:subject-type grant)
+                                         :subject-eid (:subject-eid grant)}])]
+                        [{:kind :register-consumer
+                          :consumer-key target-key
+                          :consumer consumer}
+                         {:kind :goal
+                          :node (:target-node rule)
+                          :resource-eid intermediate-eid}])))))
+
+(defn- enqueue-reverse-goal
+  [state node resource-eid]
+  (enqueue-work state {:kind :goal
+                       :node node
+                       :resource-eid resource-eid}))
+
+(defn- process-reverse-goal
+  [db state {:keys [node resource-eid]}]
+  (let [goal-key (reverse-consumer-key node resource-eid)]
+    (if (contains? (:seen-goals state) goal-key)
+      state
+      (reduce (fn [acc rule]
+                (reverse-goal-rule-work db acc resource-eid rule))
+              (update state :seen-goals conj goal-key)
+              (get-in state [:rules-by-node node])))))
+
+(defn- process-reverse-grant
+  [root-node root-resource-eid result-type state {:keys [node resource-eid subject-type subject-eid] :as grant}]
+  (let [grant-key [node resource-eid subject-type subject-eid]
+        goal-key (reverse-consumer-key node resource-eid)]
+    (if (contains? (:seen-grants state) grant-key)
+      (do
+        (inc-stat! :deduped-grants)
+        [state nil])
+      (let [state' (-> state
+                       (increment-counter :derived-grants :max-derived-grants)
+                       (update :seen-grants conj grant-key)
+                       (update-in [:grants-by-goal goal-key] (fnil conj []) grant))
+            state'' (enqueue-works state'
+                                   (mapcat #(% grant)
+                                           (get-in state' [:consumers goal-key])))]
+        (inc-stat! :derived-grants)
+        (if (and (= root-node node)
+                 (= root-resource-eid resource-eid)
+                 (= result-type subject-type)
+                 (not (contains? (:emitted-subjects state'') [subject-type subject-eid])))
+          (let [ordinal (:ordinal state'')
+                item {:node (spice-object result-type subject-eid)
+                      :cursor (recursive-edge :reverse :subject ordinal result-type subject-eid)}]
+            (inc-stat! :emitted-results)
+            [(-> state''
+                 (update :emitted-subjects conj [subject-type subject-eid])
+                 (update :ordinal inc))
+             item])
+          [state'' nil])))))
+
+(defn- initial-reverse-state
+  [db subject-type root-node root-resource-eid]
+  (let [rules (compile-recursive-rules db root-node)]
+    (enqueue-reverse-goal
+     {:queue clojure.lang.PersistentQueue/EMPTY
+      :seen-goals #{}
+      :seen-grants #{}
+      :grants-by-goal {}
+      :consumers {}
+      :emitted-subjects #{}
+      :ordinal 0
+      :counters {}
+      :subject-type subject-type
+      :rules-by-node (rules-by-node rules)}
+     root-node
+     root-resource-eid)))
+
+(defn- next-reverse-item
+  [db root-node root-resource-eid result-type state]
+  (loop [state state]
+    (if (empty? (:queue state))
+      [state nil]
+      (let [[work state'] (pop-work state)]
+        (case (:kind work)
+          :stream
+          (recur (advance-stream state' work))
+
+          :goal
+          (recur (process-reverse-goal db state' work))
+
+          :register-consumer
+          (recur (add-reverse-consumer state' (:consumer-key work) (:consumer work)))
+
+          :grant
+          (let [[state'' item] (process-reverse-grant root-node root-resource-eid result-type state' work)]
+            (if item
+              [state'' item]
+              (recur state''))))))))
+
+(defn- collect-reverse-after
+  [db root-node root-resource-eid result-type state bound size]
+  (loop [state state
+         mode (if bound :seek :collect)
+         items []]
+    (if (>= (count items) (inc size))
+      {:items items :complete? false}
+      (let [[state' item] (next-reverse-item db root-node root-resource-eid result-type state)]
+        (cond
+          (nil? item)
+          (if (= mode :seek)
+            (recursive-traversal-error!
+             "Recursive traversal cursor no longer exists."
+             {:eacl/error :eacl.pagination/stale-cursor
+              :bound bound})
+            {:items items :complete? true})
+
+          (= mode :seek)
+          (let [ordinal (get-in item [:cursor :ordinal])]
+            (cond
+              (< ordinal (:ordinal bound))
+              (recur state' :seek items)
+
+              (= ordinal (:ordinal bound))
+              (if (same-recursive-bound-result? bound item)
+                (recur state' :collect items)
+                (recursive-traversal-error!
+                 "Recursive traversal cursor points at a different result."
+                 {:eacl/error :eacl.pagination/stale-cursor
+                  :bound bound
+                  :actual (:cursor item)}))
+
+              :else
+              (recursive-traversal-error!
+               "Recursive traversal cursor was skipped."
+               {:eacl/error :eacl.pagination/stale-cursor
+                :bound bound
+                :actual (:cursor item)})))
+
+          :else
+          (recur state' :collect (conj items item)))))))
+
+(defn- collect-reverse-before
+  [db root-node root-resource-eid result-type state bound size]
+  (loop [state state
+         ring clojure.lang.PersistentQueue/EMPTY
+         ring-count 0]
+    (let [[state' item] (next-reverse-item db root-node root-resource-eid result-type state)]
+      (cond
+        (nil? item)
+        (recursive-traversal-error!
+         "Recursive traversal cursor no longer exists."
+         {:eacl/error :eacl.pagination/stale-cursor
+          :bound bound})
+
+        (= (:ordinal bound) (get-in item [:cursor :ordinal]))
+        (if (same-recursive-bound-result? bound item)
+          (let [items (vec ring)
+                has-sentinel? (> (count items) size)
+                page-items (if has-sentinel?
+                             (subvec items (- (count items) size))
+                             items)]
+            {:items page-items
+             :has-sentinel? has-sentinel?})
+          (recursive-traversal-error!
+           "Recursive traversal cursor points at a different result."
+           {:eacl/error :eacl.pagination/stale-cursor
+            :bound bound
+            :actual (:cursor item)}))
+
+        (> (get-in item [:cursor :ordinal]) (:ordinal bound))
+        (recursive-traversal-error!
+         "Recursive traversal cursor was skipped."
+         {:eacl/error :eacl.pagination/stale-cursor
+          :bound bound
+          :actual (:cursor item)})
+
+        :else
+        (let [ring' (conj ring item)
+              ring-count' (inc ring-count)
+              trim? (> ring-count' (inc size))]
+          (recur state'
+                 (if trim? (pop ring') ring')
+                 (if trim? (inc size) ring-count')))))))
+
+(defn- recursive-reverse-page
+  [db query]
+  (when (:subject/relation query)
+    (page-error! ":subject/relation is not supported for recursive lookup-subjects."
+                 {:eacl/error :eacl.pagination/unsupported-filter
+                  :filter :subject/relation}))
+  (let [{:keys [direction size bound]} (normalize-page-request query)
+        _ (validate-recursive-bound! bound :reverse :subject)
+        _ (when (and (= :desc direction) (nil? bound))
+            (page-error! "Bare :last is not supported for recursive traversal pagination."
+                         {:eacl/error :eacl.pagination/unsupported-recursive-last
+                          :reason :requires-full-traversal}))
+        {:keys [resource permission]} query
+        resource-type (:type resource)
+        resource-eid (object-eid db (:id resource))
+        subject-type (:subject/type query)
+        root-node (permission-query-node resource-type permission)
+        state (when resource-eid
+                (initial-reverse-state db subject-type root-node resource-eid))]
+    (if-not state
+      (page-response {:items []
+                      :has-next? false
+                      :has-previous? (boolean bound)})
+      (case direction
+        :asc
+        (let [{:keys [items complete?]} (collect-reverse-after db root-node resource-eid subject-type state bound size)
+              page-items (take size items)
+              has-sentinel? (> (count items) size)]
+          (page-response {:items page-items
+                          :has-next? (and has-sentinel? (not complete?))
+                          :has-previous? (boolean bound)}))
+
+        :desc
+        (let [{:keys [items has-sentinel?]} (collect-reverse-before db root-node resource-eid subject-type state bound size)]
+          (page-response {:items items
+                          :has-next? true
+                          :has-previous? has-sentinel?}))))))
 
 (declare traverse-permission-path lookup-subject-eids* can*)
 
 (defn traverse-permission-path-via-subject
-  [db subject-type subject-eid path resource-type cursor-eid intermediate-cursor-eid visited-paths _depth-left _max-depth]
-  (case (:type path)
-    :relation
-    {:results (when (= subject-type (:subject-type path))
-                (subject->resources db
-                                    subject-type
-                                    subject-eid
-                                    (:relation-eid path)
-                                    resource-type
-                                    cursor-eid))
-     :!state nil}
+  [db subject-type subject-eid path resource-type page-opts intermediate-cursor-eid visited-paths]
+  (let [{:keys [direction]} (scan-opts page-opts)
+        intermediate-opts {:direction direction
+                           :bound-eid intermediate-cursor-eid
+                           :inclusive-bound? true}]
+    (case (:type path)
+      :relation
+      {:results (when (= subject-type (:subject-type path))
+                  (subject->resources db
+                                      subject-type
+                                      subject-eid
+                                      (:relation-eid path)
+                                      resource-type
+                                      page-opts))
+       :frontier nil}
 
-    :self-permission
-    {:results (traverse-permission-path db
-                                        subject-type
-                                        subject-eid
-                                        (:target-permission path)
-                                        resource-type
-                                        cursor-eid
-                                        (or visited-paths #{}))
-     :!state nil}
+      :self-permission
+      {:results (traverse-permission-path db
+                                          subject-type
+                                          subject-eid
+                                          (:target-permission path)
+                                          resource-type
+                                          page-opts
+                                          (or visited-paths #{}))
+       :frontier nil}
 
-    :arrow
-    (let [intermediate-type (:target-type path)
-          via-relation-eid (:via-relation-eid path)
-          inclusive-intermediate-cursor (inclusive-cursor->exclusive intermediate-cursor-eid)]
-      (if (:target-relation path)
-        (let [intermediate-seqs
-              (->> (matching-relation-sub-paths (:sub-paths path) subject-type)
-                   (map (fn [sub-path]
-                          (subject->resources db
-                                              subject-type
-                                              subject-eid
-                                              (:relation-eid sub-path)
-                                              intermediate-type
-                                              inclusive-intermediate-cursor)))
-                   (filter seq))
-              intermediate-eids (if (seq intermediate-seqs)
-                                  (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
-                                   identity
-                                   intermediate-seqs)
-                                  [])]
-          (arrow-via-intermediates intermediate-eids
-                                   (fn [intermediate-eid]
-                                     (subject->resources db
-                                                         intermediate-type
-                                                         intermediate-eid
-                                                         via-relation-eid
-                                                         resource-type
-                                                         cursor-eid))))
-        (let [target-permission (:target-permission path)
-              intermediate-eids (traverse-permission-path db
-                                                          subject-type
-                                                          subject-eid
-                                                          target-permission
-                                                          intermediate-type
-                                                          inclusive-intermediate-cursor
-                                                          (or visited-paths #{}))]
-          (arrow-via-intermediates intermediate-eids
-                                   (fn [intermediate-eid]
-                                     (subject->resources db
-                                                         intermediate-type
-                                                         intermediate-eid
-                                                         via-relation-eid
-                                                         resource-type
-                                                         cursor-eid))))))))
+      :arrow
+      (let [intermediate-type (:target-type path)
+            via-relation-eid (:via-relation-eid path)]
+        (if (:target-relation path)
+          (let [intermediate-seqs
+                (->> (matching-relation-sub-paths (:sub-paths path) subject-type)
+                     (map (fn [sub-path]
+                            (subject->resources db
+                                                subject-type
+                                                subject-eid
+                                                (:relation-eid sub-path)
+                                                intermediate-type
+                                                intermediate-opts)))
+                     (filter seq))
+                intermediate-eids (if (seq intermediate-seqs)
+                                    (merge-eid-seqs direction intermediate-seqs)
+                                    [])]
+            (arrow-via-intermediates direction intermediate-eids
+                                     (fn [intermediate-eid]
+                                       (subject->resources db
+                                                           intermediate-type
+                                                           intermediate-eid
+                                                           via-relation-eid
+                                                           resource-type
+                                                           page-opts))))
+          (let [target-permission (:target-permission path)
+                intermediate-eids (traverse-permission-path db
+                                                            subject-type
+                                                            subject-eid
+                                                            target-permission
+                                                            intermediate-type
+                                                            intermediate-opts
+                                                            (or visited-paths #{}))]
+            (arrow-via-intermediates direction intermediate-eids
+                                     (fn [intermediate-eid]
+                                       (subject->resources db
+                                                           intermediate-type
+                                                           intermediate-eid
+                                                           via-relation-eid
+                                                           resource-type
+                                                           page-opts)))))))))
 
 (defn traverse-permission-path
   ([db subject-type subject-eid permission-name resource-type cursor-eid]
    (traverse-permission-path db subject-type subject-eid permission-name resource-type cursor-eid #{}))
-  ([db subject-type subject-eid permission-name resource-type cursor-eid visited-paths]
-   (let [path-key [subject-type subject-eid permission-name resource-type]]
+  ([db subject-type subject-eid permission-name resource-type cursor-or-opts visited-paths]
+   (let [{:keys [direction] :as page-opts} (scan-opts cursor-or-opts)
+         path-key [subject-type subject-eid permission-name resource-type]]
      (if (contains? visited-paths path-key)
        []
        (let [paths (get-permission-paths db resource-type permission-name)
              next-visited (conj visited-paths path-key)
              path-seqs (->> paths
                             (map (fn [path]
-                                   (:results
-                                   (traverse-permission-path-via-subject db
+                                    (:results
+                                     (traverse-permission-path-via-subject db
                                                                           subject-type
                                                                           subject-eid
                                                                           path
                                                                           resource-type
-                                                                          cursor-eid
+                                                                          page-opts
                                                                           nil
-                                                                          next-visited
-                                                                          default-max-depth
-                                                                          default-max-depth))))
+                                                                          next-visited))))
                             (filter seq))]
          (if (seq path-seqs)
-           (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
+           (merge-eid-seqs direction path-seqs)
            []))))))
 
 (defn traverse-permission-path-reverse
-  [db resource-type resource-eid path subject-type cursor-eid intermediate-cursor-eid visited-paths depth-left max-depth]
-  (case (:type path)
-    :relation
-    {:results (when (= subject-type (:subject-type path))
-                (resource->subjects db
-                                    resource-type
-                                    resource-eid
-                                    (:relation-eid path)
-                                    subject-type
-                                    cursor-eid))
-     :!state nil}
+  [db resource-type resource-eid path subject-type page-opts intermediate-cursor-eid visited-paths]
+  (let [{:keys [direction]} (scan-opts page-opts)
+        intermediate-opts {:direction direction
+                           :bound-eid intermediate-cursor-eid
+                           :inclusive-bound? true}]
+    (case (:type path)
+      :relation
+      {:results (when (= subject-type (:subject-type path))
+                  (resource->subjects db
+                                      resource-type
+                                      resource-eid
+                                      (:relation-eid path)
+                                      subject-type
+                                      page-opts))
+       :frontier nil}
 
-    :self-permission
-    {:results (lookup-subject-eids* db
-                                    resource-type
-                                    resource-eid
-                                    (:target-permission path)
-                                    subject-type
-                                    cursor-eid
-                                    (or visited-paths #{})
-                                    (dec depth-left)
-                                    max-depth)
-     :!state nil}
+      :self-permission
+      {:results (lookup-subject-eids* db
+                                      resource-type
+                                      resource-eid
+                                      (:target-permission path)
+                                      subject-type
+                                      page-opts
+                                      (or visited-paths #{}))
+       :frontier nil}
 
-    :arrow
-    (let [intermediate-type (:target-type path)
-          via-relation-eid (:via-relation-eid path)
-          inclusive-intermediate-cursor (inclusive-cursor->exclusive intermediate-cursor-eid)
-          intermediate-eids (resource->subjects db
-                                                resource-type
-                                                resource-eid
-                                                via-relation-eid
-                                                intermediate-type
-                                                inclusive-intermediate-cursor)]
-      (if (:target-relation path)
-        (let [matching-sub-paths (matching-relation-sub-paths (:sub-paths path) subject-type)]
-          (arrow-via-intermediates intermediate-eids
-                                   (fn [intermediate-eid]
-                                     (let [subject-seqs (->> matching-sub-paths
-                                                             (map (fn [sub-path]
-                                                                    (resource->subjects db
-                                                                                        intermediate-type
-                                                                                        intermediate-eid
-                                                                                        (:relation-eid sub-path)
-                                                                                        subject-type
-                                                                                        cursor-eid)))
-                                                             (filter seq))]
-                                       (if (seq subject-seqs)
-                                         (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity subject-seqs)
-                                         [])))))
-        (let [target-permission (:target-permission path)]
-          (arrow-via-intermediates intermediate-eids
-                                   (fn [intermediate-eid]
-                                     (lookup-subject-eids* db
-                                                           intermediate-type
-                                                           intermediate-eid
-                                                           target-permission
-                                                           subject-type
-                                                           cursor-eid
-                                                           (or visited-paths #{})
-                                                           (dec depth-left)
-                                                           max-depth))))))))
+      :arrow
+      (let [intermediate-type (:target-type path)
+            via-relation-eid (:via-relation-eid path)
+            intermediate-eids (resource->subjects db
+                                                  resource-type
+                                                  resource-eid
+                                                  via-relation-eid
+                                                  intermediate-type
+                                                  intermediate-opts)]
+        (if (:target-relation path)
+          (let [matching-sub-paths (matching-relation-sub-paths (:sub-paths path) subject-type)]
+            (arrow-via-intermediates direction intermediate-eids
+                                     (fn [intermediate-eid]
+                                       (let [subject-seqs (->> matching-sub-paths
+                                                               (map (fn [sub-path]
+                                                                      (resource->subjects db
+                                                                                          intermediate-type
+                                                                                          intermediate-eid
+                                                                                          (:relation-eid sub-path)
+                                                                                          subject-type
+                                                                                          page-opts)))
+                                                               (filter seq))]
+                                         (if (seq subject-seqs)
+                                           (merge-eid-seqs direction subject-seqs)
+                                           [])))))
+          (let [target-permission (:target-permission path)]
+            (arrow-via-intermediates direction intermediate-eids
+                                     (fn [intermediate-eid]
+                                       (lookup-subject-eids* db
+                                                             intermediate-type
+                                                             intermediate-eid
+                                                             target-permission
+                                                             subject-type
+                                                             page-opts
+                                                             (or visited-paths #{}))))))))))
 
 (defn- lookup-subject-eids*
-  [db resource-type resource-eid permission-name subject-type cursor-eid visited-states depth-left max-depth]
-  (let [state [resource-type resource-eid permission-name subject-type]]
-    (cond
-      (contains? visited-states state)
+  [db resource-type resource-eid permission-name subject-type cursor-or-opts visited-states]
+  (let [{:keys [direction] :as page-opts} (scan-opts cursor-or-opts)
+        state [resource-type resource-eid permission-name subject-type]]
+    (if (contains? visited-states state)
       []
-
-      (neg? depth-left)
-      (max-depth-exceeded! {:max-depth max-depth}
-                           (permission-query-node resource-type permission-name)
-                           resource-eid)
-
-      :else
       (let [next-visited (conj visited-states state)
             paths (get-permission-paths db resource-type permission-name)
             path-seqs (->> paths
@@ -881,30 +1543,20 @@
                                                                      resource-eid
                                                                      path
                                                                      subject-type
-                                                                     cursor-eid
+                                                                     page-opts
                                                                      nil
-                                                                     next-visited
-                                                                     depth-left
-                                                                     max-depth))))
+                                                                     next-visited))))
                            (filter seq))]
         (if (seq path-seqs)
-          (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity path-seqs)
+          (merge-eid-seqs direction path-seqs)
           [])))))
 
 (defn- can*
-  [db subject-type subject-eid permission resource-type resource-eid visited-states depth-left max-depth]
+  [db subject-type subject-eid permission resource-type resource-eid visited-states]
   (let [state [subject-type subject-eid permission resource-type resource-eid]
         paths (get-permission-paths db resource-type permission)]
-    (cond
-      (contains? visited-states state)
+    (if (contains? visited-states state)
       false
-
-      (neg? depth-left)
-      (max-depth-exceeded! {:max-depth max-depth}
-                           (permission-query-node resource-type permission)
-                           resource-eid)
-
-      :else
       (let [next-visited (conj visited-states state)]
         (boolean
          (some
@@ -927,9 +1579,7 @@
                     (:target-permission path)
                     resource-type
                     resource-eid
-                    next-visited
-                    (dec depth-left)
-                    max-depth)
+                    next-visited)
 
               :arrow
               (let [intermediate-type (:target-type path)
@@ -961,26 +1611,19 @@
                                 (:target-permission path)
                                 intermediate-type
                                 intermediate-eid
-                                next-visited
-                                (dec depth-left)
-                                max-depth))
+                                next-visited))
                         intermediate-eids)))))
           paths))))))
 
 (defn can?
-  ([db subject permission resource]
-   (can? db {:subject subject
-             :permission permission
-             :resource resource}))
-  ([db {:keys [subject permission resource max-depth]}]
-   (let [subject-type  (:type subject)
-         subject-eid   (when (some? (:id subject)) (d/entid db (:id subject)))
-         resource-type (:type resource)
-         resource-eid  (when (some? (:id resource)) (d/entid db (:id resource)))
-         max-depth     (or max-depth default-max-depth)]
-     (if (or (nil? subject-eid) (nil? resource-eid))
-       false
-       (can* db subject-type subject-eid permission resource-type resource-eid #{} max-depth max-depth)))))
+  [db subject permission resource]
+  (let [subject-type  (:type subject)
+        subject-eid   (object-eid db (:id subject))
+        resource-type (:type resource)
+        resource-eid  (object-eid db (:id resource))]
+    (if (or (nil? subject-eid) (nil? resource-eid))
+      false
+      (can* db subject-type subject-eid permission resource-type resource-eid #{}))))
 
 (def ^:private forward-direction
   {:anchor-key :subject
@@ -997,148 +1640,169 @@
    :v1-cursor-key :subject})
 
 (defn- lazy-merged-lookup
-  [db direction query]
-  (let [{:keys [anchor-key traverse-fn v1-cursor-key perm-type-fn]} direction
+  [db direction query page-req]
+  (let [{:keys [anchor-key traverse-fn perm-type-fn]} direction
         anchor      (get query anchor-key)
         anchor-type (:type anchor)
-        anchor-eid  (when (some? (:id anchor)) (d/entid db (:id anchor)))
-        cursor      (:cursor query)
-        cursor-eid  (extract-cursor-eid cursor v1-cursor-key)
-        max-depth   (query-max-depth query)
+        anchor-eid  (object-eid db (:id anchor))
         permission  (:permission query)
         perm-type   (perm-type-fn query)
         result-type-key (if (= anchor-key :subject) :resource/type :subject/type)
         result-type (get query result-type-key)
-        paths       (get-permission-paths db perm-type permission)
+        page-opts   {:direction (:direction page-req)
+                     :bound-eid (get-in page-req [:bound :result-eid])}
+        reusable-frontiers (when (and (= lookup-frontier-version
+                                         (get-in page-req [:bound :frontier-version]))
+                                      (= (:direction page-req)
+                                         (get-in page-req [:bound :frontier-direction])))
+                             (get-in page-req [:bound :path-frontiers]))
+        paths       (frontier-permission-paths db perm-type permission)
         path-results (vec
                       (->> paths
-                           (map-indexed
-                            (fn [idx path]
-                              (let [intermediate-cursor-eid (get-in cursor [:p idx])
-                                    {:keys [results !state]}
-                                    (if anchor-eid
+                           (map
+                            (fn [path]
+                              (let [path-key (path-frontier-key path)
+                                    prior-frontier (get reusable-frontiers path-key)
+                                    {:keys [results frontier]}
+                                    (cond
+                                      (= :exhausted prior-frontier)
+                                      {:results []
+                                       :frontier :exhausted}
+
+                                      anchor-eid
                                       (traverse-fn db
                                                    anchor-type
                                                    anchor-eid
                                                    path
                                                    result-type
-                                                   cursor-eid
-                                                   intermediate-cursor-eid
-                                                   #{}
-                                                   max-depth
-                                                   max-depth)
-                                      {:results [] :!state nil})]
-                                {:idx idx
+                                                   page-opts
+                                                   prior-frontier
+                                                   #{})
+
+                                      :else
+                                      {:results []
+                                       :frontier nil})]
+                                {:path-key path-key
                                  :results results
-                                 :!state !state})))
-                           (filter (comp seq :results))))]
-    {:results (if (seq path-results)
-                (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity (map :results path-results))
-                [])
+                                 :frontier frontier})))))]
+    {:results (let [result-seqs (filter seq (map :results path-results))]
+                (if (seq result-seqs)
+                  (merge-eid-seqs (:direction page-req) result-seqs)
+                  []))
+     :path-frontiers (into {}
+                           (keep (fn [{:keys [path-key frontier]}]
+                                   (when frontier
+                                     [path-key frontier])))
+                           path-results)
      :path-results path-results}))
-
-(defn- recursive-forward-lookup
-  [db {:as query :keys [subject permission limit] :or {limit 1000}}]
-  (let [subject-type  (:type subject)
-        subject-eid   (when (some? (:id subject)) (d/entid db (:id subject)))
-        resource-type (:resource/type query)
-        root-node     (permission-query-node resource-type permission)
-        plan          (recursive-query-plan db root-node)
-        _             (check-cursor-fingerprint! db (:cursor query) plan)
-        state         (recursive-state-for-query plan query)]
-    (if subject-eid
-      (let [{:keys [state results]}
-            (recursive-page db plan subject-type subject-eid state limit)]
-        {:data (mapv #(spice-object resource-type %) results)
-         :cursor (assoc state :f (cursor-fingerprint db plan))})
-      {:data []
-       :cursor (assoc state :f (cursor-fingerprint db plan))})))
-
-(defn- recursive-forward-count
-  [db {:as query :keys [limit subject permission] :or {limit -1}}]
-  (let [subject-type  (:type subject)
-        subject-eid   (when (some? (:id subject)) (d/entid db (:id subject)))
-        resource-type (:resource/type query)
-        root-node     (permission-query-node resource-type permission)
-        plan          (recursive-query-plan db root-node)
-        _             (check-cursor-fingerprint! db (:cursor query) plan)
-        state         (recursive-state-for-query plan query)]
-    (if subject-eid
-      (let [{:keys [state results]}
-            (recursive-page db plan subject-type subject-eid state limit)]
-        {:count (count results)
-         :limit limit
-         :cursor (assoc state :f (cursor-fingerprint db plan))})
-      {:count 0
-       :limit limit
-       :cursor (assoc state :f (cursor-fingerprint db plan))})))
 
 (defn- lookup
   [db direction query]
-  (let [{:keys [result-type-fn v1-cursor-key perm-type-fn]} direction
-        {:keys [limit cursor] :or {limit 1000}} query
-        paths       (get-permission-paths db (perm-type-fn query) (:permission query))
-        _           (check-cursor-fingerprint! db cursor paths)
-        {:keys [results path-results]} (lazy-merged-lookup db direction query)
-        limited-results (if (>= limit 0)
-                          (take limit results)
-                          results)
+  (let [{:keys [result-type-fn]} direction
+        page-req (normalize-page-request query)
+        {:keys [size bound]} page-req
+        _ (validate-lookup-eid-bound! bound)
+        {:keys [results path-frontiers]} (lazy-merged-lookup db direction query page-req)
+        realized (doall (take (inc size) results))
+        has-sentinel? (> (count realized) size)
+        page-results-in-scan-order (take size realized)
+        page-results (case (:direction page-req)
+                       :asc page-results-in-scan-order
+                       :desc (reverse page-results-in-scan-order))
         result-type (result-type-fn query)
-        items       (doall (map #(spice-object result-type %) limited-results))
-        last-eid    (:id (last items))]
-    {:data items
-     :cursor (assoc (build-v2-cursor cursor last-eid path-results v1-cursor-key)
-                    :f (cursor-fingerprint db paths))}))
+        items       (lookup-items result-type
+                                  page-results
+                                  (:direction page-req)
+                                  path-frontiers)]
+    (page-response {:items items
+                    :has-next? (case (:direction page-req)
+                                 :asc has-sentinel?
+                                 :desc (boolean bound))
+                    :has-previous? (case (:direction page-req)
+                                     :asc (boolean bound)
+                                     :desc has-sentinel?)})))
 
 (defn lookup-resources
-  "Enumerates resources of :resource/type that :subject holds :permission on.
-
-  Non-recursive schemas return in ascending internal-eid order with v2 cursors.
-  Recursive schemas use a stable-discovery-order engine whose v3 cursor IS the
-  recursion state: it grows O(results-emitted-so-far) (~48 bytes/resource) and
-  embeds internal state, because exact cross-page deduplication requires the
-  emitted set. Known limitation (audit §6) pending a cursor-state redesign —
-  prefer bounded pagination sessions on recursive schemas."
+  "Cursor maps returned in :page-info embed per-path frontiers (including
+  :exhausted markers) that are only valid against the db basis that minted
+  them. The public token layer pins d/as-of for you; raw-impl callers must
+  hold ONE db value for a whole paginated walk — reusing a cursor against a
+  newer db can silently skip results written since."
   [db query]
-  (if (recursive-permission-query? db (:resource/type query) (:permission query))
-    (recursive-forward-lookup db query)
+  (if (traversal-permission? db (:resource/type query) (:permission query))
+    (recursive-forward-page db query)
     (lookup db forward-direction query)))
 
 (defn lookup-subjects
-  "Unknown/missing resources return an empty page (SpiceDB-consistent),
-  matching can? -> false; assertion-based rejection disappears under
-  *assert* false and crashed with an untyped AssertionError."
+  "See lookup-resources: cursors are only valid against the minting db basis."
   [db query]
-  (lookup db reverse-direction query))
+  {:pre [(:type (:resource query)) (:id (:resource query))]}
+  (when (:subject/relation query)
+    ;; The recursive path has rejected this since v7.2; the non-recursive path
+    ;; silently ignored it, returning subjects the caller did not filter for.
+    (page-error! ":subject/relation is not supported by lookup-subjects."
+                 {:eacl/error :eacl.pagination/unsupported-filter
+                  :filter :subject/relation}))
+  (if (traversal-permission? db (:type (:resource query)) (:permission query))
+    (recursive-reverse-page db query)
+    (lookup db reverse-direction query)))
 
 (defn count-resources
-  [db {:as query :keys [limit cursor] :or {limit -1}}]
-  (if (recursive-permission-query? db (:resource/type query) (:permission query))
-    (recursive-forward-count db query)
-    (let [paths (get-permission-paths db (:resource/type query) (:permission query))
-          _     (check-cursor-fingerprint! db cursor paths)
-          {:keys [results path-results]} (lazy-merged-lookup db forward-direction query)
-          limited-results (if (>= limit 0)
-                            (take limit results)
-                            results)
-          counted (doall limited-results)
-          last-eid (last counted)]
+  [db {:as query}]
+  (when (or (contains? query :cursor)
+            (contains? query :limit)
+            (contains? query :first)
+            (contains? query :last)
+            (contains? query :before)
+            (contains? query :after))
+    (page-error! "count-resources does not use list pagination keys."
+                 (select-keys query [:cursor :limit :first :last :before :after])))
+  (if (traversal-permission? db (:resource/type query) (:permission query))
+    (let [page (recursive-forward-page db (assoc query :first max-page-size))]
+      {:count (loop [counted (count (:data page))
+                     cursor (get-in page [:page-info :end-cursor])
+                     has-next? (get-in page [:page-info :has-next-page?])]
+                (if-not has-next?
+                  counted
+                  (let [next-page (recursive-forward-page db (assoc query
+                                                                    :first max-page-size
+                                                                    :after cursor))]
+                    (recur (+ counted (count (:data next-page)))
+                           (get-in next-page [:page-info :end-cursor])
+                           (get-in next-page [:page-info :has-next-page?])))))
+       :limit -1})
+    (let [page-req {:direction :asc :size max-page-size :bound nil}
+          {:keys [results]} (lazy-merged-lookup db forward-direction query page-req)
+          counted (doall results)]
       {:count (count counted)
-       :limit limit
-       :cursor (assoc (build-v2-cursor cursor last-eid path-results :resource)
-                      :f (cursor-fingerprint db paths))})))
+       :limit -1})))
 
 (defn count-subjects
-  [db {:as query :keys [limit cursor] :or {limit -1}}]
-  (let [paths (get-permission-paths db (:type (:resource query)) (:permission query))
-        _     (check-cursor-fingerprint! db cursor paths)
-        {:keys [results path-results]} (lazy-merged-lookup db reverse-direction query)
-        limited-results (if (>= limit 0)
-                          (take limit results)
-                          results)
-        counted (doall limited-results)
-        last-eid (last counted)]
-    {:count (count counted)
-     :limit limit
-     :cursor (assoc (build-v2-cursor cursor last-eid path-results :subject)
-                    :f (cursor-fingerprint db paths))}))
+  [db {:as query}]
+  (when (or (contains? query :cursor)
+            (contains? query :limit)
+            (contains? query :first)
+            (contains? query :last)
+            (contains? query :before)
+            (contains? query :after))
+    (page-error! "count-subjects does not use list pagination keys."
+                 (select-keys query [:cursor :limit :first :last :before :after])))
+  (if (traversal-permission? db (:type (:resource query)) (:permission query))
+    (let [page (recursive-reverse-page db (assoc query :first max-page-size))]
+      {:count (loop [counted (count (:data page))
+                     cursor (get-in page [:page-info :end-cursor])
+                     has-next? (get-in page [:page-info :has-next-page?])]
+                (if-not has-next?
+                  counted
+                  (let [next-page (recursive-reverse-page db (assoc query
+                                                                    :first max-page-size
+                                                                    :after cursor))]
+                    (recur (+ counted (count (:data next-page)))
+                           (get-in next-page [:page-info :end-cursor])
+                           (get-in next-page [:page-info :has-next-page?])))))
+       :limit -1})
+    (let [page-req {:direction :asc :size max-page-size :bound nil}
+          {:keys [results]} (lazy-merged-lookup db reverse-direction query page-req)
+          counted (doall results)]
+      {:count (count counted)
+       :limit -1})))
