@@ -46,6 +46,7 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v7.2 is the current development version of EACL. It includes bidirectional cursor pagination and the recursive traversal engine. Releases are not tagged yet, so pin the Git SHA.
+> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](migration-v6-to-v7.md).
 
 # What is SpiceDB?
 
@@ -608,7 +609,7 @@ clojure -M:test -v my.namespace/test-name
 
 ## Funding
 
-This open-source work was generously funded by my employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
+This open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/), a Clojure shop. We occasionally hire Clojure & Datomic experts.
 
 # Licence
 

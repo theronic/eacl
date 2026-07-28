@@ -42,8 +42,9 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- Presently, EACL has _no cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
-- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- Presently, EACL has _no result cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
+- EACL does cache resolved *permission paths*. The cache is invalidated **only by `eacl/write-schema!`**, which bumps a schema-version stamp (`:eacl/schema-version`) stored in the database in the same transaction as the definition change — so invalidation reaches every peer, `d/as-of` views resolve the paths of their own era, and unrelated `d/transact` calls never touch a cache key (zero per-transaction overhead — issue #74). Editing relation/permission datoms outside `write-schema!` is not detected by design; if you must, call `eacl.datomic.impl.indexed/evict-permission-paths-cache!` on every peer afterwards.
+- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 *Note* that EACL v7.2 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself.
 
@@ -53,6 +54,7 @@ Situated AuthZ offers some advantages for typical use-cases:
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > v7.2 is the current development version of EACL. It includes the minor breaking pagination API change from `:cursor/:limit` to `:first/:after` and `:last/:before`, and introduces the recursive traversal engine. Recursive lookup pagination uses deterministic traversal order instead of global eid order. Releases are not tagged yet, so pin the Git SHA.
+> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## ReBAC: Relationship-based Access Control
 
@@ -317,10 +319,12 @@ EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/w
 
 ### Schema Validation
 
-`write-schema!` validates your schema and provides informative error messages:
-- **Reference validation**: Ensures all relations and permissions reference valid definitions
-- **Orphan protection**: Prevents deleting relations that have existing relationships
-- **Unsupported feature detection**: Rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
+`write-schema!` validates your schema and provides informative error messages. An invalid schema throws and nothing is transacted:
+- **Parse validation**: unparseable schema strings and duplicate `definition`/relation declarations throw. `//` and `/* */` comments are supported.
+- **Reference validation**: all relations and permissions must reference valid definitions. Arrow targets must exist on **every** subject type of the source relation.
+- **Orphan protection**: relations with existing relationships cannot be deleted.
+- **Empty-schema guard**: replacing a non-empty schema with zero definitions throws unless you pass `{:allow-empty-schema? true}`.
+- **Unsupported feature detection**: rejects SpiceDB features not yet supported by EACL (see [Limitations](#limitations-deficiencies--gotchas))
 
 ### Schema Updates
 
@@ -468,6 +472,8 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
             :object-id->ident (fn [obj-id] obj-id)}))
 ```
 
+`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` (a silently dropped ID-coercion key would mean silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) is a deprecated alias for `:entid->object-id`; supplying both throws. Page tokens expire after 5 minutes by default; tune with `:page-token-ttl-seconds`.
+
 For multi-peer deployments, configure a shared page-token key so `eacl3_...` cursors survive restarts and can be decoded by every peer:
 
 ```clojure
@@ -475,6 +481,13 @@ For multi-peer deployments, configure a shared page-token key so `eacl3_...` cur
            {:page-token-key "32+ bytes of shared secret key material"
             :page-token-kid :prod-2026-05}))
 ```
+
+### Unknown object IDs
+
+EACL follows SpiceDB semantics for object IDs that don't resolve to an entity:
+
+- **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
+- **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
 
 ## Schema Syntax
 
@@ -498,6 +511,8 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
 ### Advanced: Programmatic Schema (Optional)
 
 For advanced use cases, you can also define schema programmatically using the internal `Relation` and `Permission` functions:
+
+> **Cache caveat:** transacting `Relation`/`Permission` datoms directly bypasses `write-schema!`'s cache invalidation (see the caching note above). After a programmatic schema change, call `(eacl.datomic.impl.indexed/evict-permission-paths-cache!)` on every peer — or prefer `write-schema!`, which handles this for you.
 
 ```clojure
 (require '[eacl.datomic.impl :refer [Relation Permission]])
@@ -548,24 +563,24 @@ This schema defines:
 - `server` resources belong to an `account` and can have `shared_admin` users, with `reboot` permission granted to account admins and shared_admins
 ```
 
-Now you can transact relationships:
+Now you can transact relationships. The usual way is `eacl/create-relationships!` against existing entities (see Quickstart). To create entities and relationships **in the same transaction**, use `eacl.datomic.impl/tx-relationship` with `{:allow-tempids? true}` — tempid pass-through is opt-in because a typo'd ID would otherwise silently create a ghost entity:
 
 ```clojure
-@(d/transact conn
-  [{:db/id     "platform-tempid"
-    :eacl/id   "my-platform"}
-   
-   {:db/id     "user1-tempid"
-    :eacl/id   "user1"}
+(require '[eacl.datomic.impl :as impl])
 
-   {:db/id     "account1-tempid"
-    :eacl/id   "account1"}
+(let [db (d/db conn)]
+  @(d/transact conn
+    (concat
+      [{:db/id   "user1-tempid"
+        :eacl/id "user1"}
 
-   (Relationship "platform-tempid" :platform "account1-tempid")
-   (Relationship "user1-tempid" :owner "account1-tempid")])
+       {:db/id   "account1-tempid"
+        :eacl/id "account1"}]
+
+      (impl/tx-relationship db
+        (impl/Relationship (spice-object :user "user1-tempid") :owner (spice-object :account "account1-tempid"))
+        {:allow-tempids? true}))))
 ```
-
-(I'm using tempids in example because entities are defined in same tx as relationships)
 
 ## Limitations, Deficiencies & Gotchas:
 
@@ -608,6 +623,27 @@ Note difference between `-M` & `-X` switches.
 ```bash
 clojure -M:test -v my.namespace/test-name
 ```
+
+## Upgrading
+
+### v6 → v7
+
+v7 changed how Relationships are stored in Datomic (one entity per relationship → two tuple datoms on your subject & resource entities). The public API is unchanged, but stored relationship data must be migrated once. To protect you, `eacl.datomic.core/make-client` checks the storage version recorded in Datomic and **refuses to start against unmigrated v6 data** with `{:type :eacl/storage-version}` — v7 code reading a v6 database would otherwise silently answer every permission check with `false`/empty.
+
+Migrate with the batteries-included, idempotent [`eacl.migrations.v6-to-v7`](src/eacl/migrations/v6_to_v7.clj) namespace:
+
+```clojure
+(require '[eacl.migrations.v6-to-v7 :as migrations])
+(migrations/migrate! conn {:schema "definition user {} ..."})  ; re-asserts your schema via write-schema!
+```
+
+or opt into automatic migration at client construction:
+
+```clojure
+(eacl.datomic.core/make-client conn {:auto-migrate-v6 {:schema "definition user {} ..."}})
+```
+
+The migration is additive and rollback-friendly (v6 data is kept until you explicitly retract it) and end-to-end tested in [test/eacl/migrations/v6_to_v7_test.clj](test/eacl/migrations/v6_to_v7_test.clj). For the full sequence — write-pause window, verification, soak, cleanup, rollback — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## Funding
 

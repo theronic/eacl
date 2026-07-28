@@ -72,6 +72,124 @@
       (is (thrown? Throwable (spiceomic/token->page-bound opts "garbage")))
       (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl3_not-valid-base64!!!"))))))
 
+(deftest protocol-completeness-tests
+  ;; Audit §13: write-relationship!/delete-relationship! were declared on the
+  ;; protocol but unimplemented -> AbstractMethodError.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (spiceomic/make-client conn {})
+          u1     (spice-object :user "u1")
+          a1     (spice-object :account "a1")]
+      (eacl/write-schema! client "definition user {}
+         definition account { relation owner: user  permission admin = owner }")
+      @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
+
+      (testing "write-relationship! (positional arity) creates and returns a token"
+        (let [{token :zed/token} (eacl/write-relationship! client :touch u1 :owner a1)]
+          (is (string? token))
+          (is (true? (eacl/can? client u1 :admin a1)))))
+
+      (testing "delete-relationship! (positional arity) removes"
+        (eacl/delete-relationship! client u1 :owner a1)
+        (is (false? (eacl/can? client u1 :admin a1))))
+
+      (testing "map arities work"
+        (eacl/write-relationship! client {:operation :touch :subject u1 :relation :owner :resource a1})
+        (is (true? (eacl/can? client u1 :admin a1)))
+        (eacl/delete-relationship! client {:subject u1 :relation :owner :resource a1})
+        (is (false? (eacl/can? client u1 :admin a1))))
+
+      (testing "unsupported consistency throws a typed error (not an assert)"
+        (try
+          (eacl/can? client u1 :admin a1 (consistency/fresh "tok"))
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl/unsupported-consistency (:type (ex-data e)))))))
+
+      (testing "expand-permission-tree throws a typed not-implemented error"
+        (try
+          (eacl/expand-permission-tree client {:resource a1 :permission :admin})
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl/not-implemented (:type (ex-data e))))))))))
+
+(deftest strict-object-id-resolution-tests
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (spiceomic/make-client conn {})]
+      (eacl/write-schema! client "definition user {}
+         definition account { relation owner: user  permission admin = owner }")
+      @(d/transact conn [{:eacl/id "alice"} {:eacl/id "bob"} {:eacl/id "acct-1"} {:eacl/id "acct-2"}])
+      (eacl/create-relationships! client
+        [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
+         (->Relationship (spice-object :user "bob") :owner (spice-object :account "acct-2"))])
+
+      (testing "read-relationships with a nonexistent subject returns [], not ALL relationships (audit §4)"
+        (is (= [] (:data (eacl/read-relationships client {:resource/type :account
+                                                          :subject/id    "i-do-not-exist"}))))
+        (is (= 1 (count (:data (eacl/read-relationships client {:resource/type :account
+                                                                :subject/id    "alice"}))))))
+
+      (testing "lookups and counts return empty results for unknown objects (SpiceDB-consistent, D9)"
+        (is (= [] (:data (eacl/lookup-resources client {:subject (spice-object :user "ghost")
+                                                        :permission :admin
+                                                        :resource/type :account}))))
+        (is (= 0 (:count (eacl/count-resources client {:subject (spice-object :user "ghost")
+                                                       :permission :admin
+                                                       :resource/type :account}))))
+        (is (= [] (:data (eacl/lookup-subjects client {:resource (spice-object :account "no-such-acct")
+                                                       :permission :admin
+                                                       :subject/type :user}))))
+        (is (false? (eacl/can? client (spice-object :user "ghost") :admin (spice-object :account "acct-1")))))
+
+      (testing "writes to unknown objects throw :eacl/unknown-object naming the object (audit §11)"
+        (try
+          (eacl/create-relationships! client
+            [(->Relationship (spice-object :user "ghost-user") :owner (spice-object :account "acct-1"))])
+          (is false "should have thrown")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl/unknown-object (:type (ex-data e))))
+            (is (= {:type :user :id "ghost-user"} (:object (ex-data e)))))))))
+
+  (testing "make-client config validation (audit §5)"
+    (with-mem-conn [conn schema/v7-schema]
+      (let [setup (spiceomic/make-client conn {})]
+        (eacl/write-schema! setup "definition user {}
+           definition account { relation owner: user  permission admin = owner }")
+        @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
+        (eacl/create-relationships! setup
+          [(->Relationship (spice-object :user "u1") :owner (spice-object :account "a1"))])
+
+        (testing "the README-documented :entid->object-id key is honored"
+          (let [ext-client (spiceomic/make-client conn
+                             {:entid->object-id (fn [db eid] (str "EXT-" (:eacl/id (d/entity db eid))))})]
+            (is (= ["EXT-a1"]
+                   (mapv :id (:data (eacl/lookup-resources ext-client {:subject (spice-object :user "u1")
+                                                                       :permission :admin
+                                                                       :resource/type :account})))))))
+
+        (testing "the deprecated :entity->object-id alias still works"
+          (let [alias-client (spiceomic/make-client conn
+                               {:entity->object-id (fn [ent] (str "ALIAS-" (:eacl/id ent)))})]
+            (is (= ["ALIAS-a1"]
+                   (mapv :id (:data (eacl/lookup-resources alias-client {:subject (spice-object :user "u1")
+                                                                         :permission :admin
+                                                                         :resource/type :account})))))))
+
+        (testing "unknown option keys fail fast instead of silently falling back to defaults"
+          (try
+            (spiceomic/make-client conn {:entid->objectid (fn [_db eid] eid)}) ; misspelled
+            (is false "should have thrown")
+            (catch clojure.lang.ExceptionInfo e
+              (is (= :eacl/invalid-config (:type (ex-data e))))
+              (is (= [:entid->objectid] (:unknown-keys (ex-data e)))))))
+
+        (testing "supplying both the canonical key and the alias is rejected"
+          (try
+            (spiceomic/make-client conn {:entid->object-id (fn [_db eid] eid)
+                                         :entity->object-id (fn [ent] (:eacl/id ent))})
+            (is false "should have thrown")
+            (catch clojure.lang.ExceptionInfo e
+              (is (= :eacl/invalid-config (:type (ex-data e)))))))))))
+
 (deftest spicedb-helper-tests
   (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"
     (is (= #eacl.core.SpiceObject{:type :user, :id "my-user", :relation nil}

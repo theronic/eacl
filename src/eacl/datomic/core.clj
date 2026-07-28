@@ -12,6 +12,7 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.spicedb.consistency :as consistency]
             [malli.core :as m])
   (:import [java.nio.charset StandardCharsets]
@@ -299,6 +300,16 @@
       (update :page-info
               #(encode-page-info opts op query-shape basis-t %))))
 
+(def ^:private empty-page
+  "Unknown objects match nothing (SpiceDB-consistent, audit D9): lookups and
+  reads over an object id that does not resolve to an existing entity return
+  an empty page instead of asserting or degrading to a broader scan."
+  {:data []
+   :page-info {:start-cursor nil
+               :end-cursor nil
+               :has-next-page? false
+               :has-previous-page? false}})
+
 (defn spiceomic-read-relationships
   [conn
    {:keys [object-id->entid] :as opts}
@@ -306,22 +317,44 @@
   (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts filters)
         subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
-        subject-eid  (when subject-id (object-id->entid db subject-id))
-        resource-eid (when resource-id (object-id->entid db resource-id))
-        filters'     (cond-> filters
-                       subject-id (assoc :subject/id subject-eid)
-                       resource-id (assoc :resource/id resource-eid))
-        query-shape  (list-query-shape :read-relationships filters')
-        internal-query (internal-page-query filters' page-req decoded)]
-    (validate-page-token! :read-relationships query-shape decoded)
-    (coerce-relationship-page db opts :read-relationships query-shape basis-t
-                              (impl/read-relationships db internal-query))))
+        subject-eid  (when (some? subject-id) (object-id->entid db subject-id))
+        resource-eid (when (some? resource-id) (object-id->entid db resource-id))]
+    (if (or (and (some? subject-id) (nil? subject-eid))
+            (and (some? resource-id) (nil? resource-eid)))
+      ;; A filter names an object that does not exist: nothing can match.
+      ;; A supplied-but-unresolvable ID must not be conflated with an absent
+      ;; filter — that conflation degraded this query to a global scan.
+      empty-page
+      (let [filters'     (cond-> filters
+                           subject-id (assoc :subject/id subject-eid)
+                           resource-id (assoc :resource/id resource-eid))
+            query-shape  (list-query-shape :read-relationships filters')
+            internal-query (internal-page-query filters' page-req decoded)]
+        (validate-page-token! :read-relationships query-shape decoded)
+        (coerce-relationship-page db opts :read-relationships query-shape basis-t
+                                  (impl/read-relationships db internal-query))))))
+
+(defn- resolve-existing-object
+  "Resolves an external spice object to its internal eid, verifying the entity
+  actually exists. Existence is checked via datom presence because d/entid
+  passes unallocated numeric eids through unchanged. Throws :eacl/unknown-object
+  when the object cannot be resolved to an existing entity."
+  [db object-id->entid {:keys [type id] :as obj}]
+  (let [eid (when (some? id) (object-id->entid db id))]
+    (if (and eid (seq (d/datoms db :eavt eid)))
+      (assoc obj :id eid)
+      (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
+               {:type :eacl/unknown-object
+                :object {:type type :id id}})))))
 
 (defn spice-relationship->internal
-  [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
-  {:subject (spice-object->internal db subject)
+  "Resolves both relationship endpoints to existing internal eids.
+  Throws :eacl/unknown-object for either endpoint rather than letting nils or
+  ghost ids reach tx-data (raw :db.error/not-an-entity) or silently no-op."
+  [db {:keys [object-id->entid]} {:keys [subject relation resource]}]
+  {:subject (resolve-existing-object db object-id->entid subject)
    :relation relation
-   :resource (spice-object->internal db resource)})
+   :resource (resolve-existing-object db object-id->entid resource)})
 
 (defn spiceomic-write-relationships!
   [conn opts updates]
@@ -337,8 +370,10 @@
 
 (defn spiceomic-can?
   [db {:keys [object->entid]} subject permission resource consistency]
-  (assert (= consistency/fully-consistent consistency)
-          "EACL only supports consistency/fully-consistent at this time.")
+  (when-not (= consistency/fully-consistent consistency)
+    (throw (ex-info "EACL only supports consistency/fully-consistent at this time."
+             {:type :eacl/unsupported-consistency
+              :consistency consistency})))
   (let [subject-type (:type subject)
         subject-eid  (object->entid db subject)
         resource-type (:type resource)
@@ -360,16 +395,15 @@
   (log/debug 'spiceomic-lookup-resources 'query query)
   (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts query)
         internal-subject (spice-object->internal db subject)]
-    (assert (:id internal-subject)
-            (str "subject " (pr-str subject)
-                 " passed to lookup-resources does not exist with ident "
-                 (object-id->ident (:id subject))))
-    (let [query' (assoc query :subject internal-subject)
-          query-shape (list-query-shape :lookup-resources query')
-          internal-query (internal-page-query query' page-req decoded)]
-      (validate-page-token! :lookup-resources query-shape decoded)
-      (coerce-lookup-page db opts :lookup-resources query-shape basis-t
-                          (impl/lookup-resources db internal-query)))))
+    (if (nil? (:id internal-subject))
+      ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
+      empty-page
+      (let [query' (assoc query :subject internal-subject)
+            query-shape (list-query-shape :lookup-resources query')
+            internal-query (internal-page-query query' page-req decoded)]
+        (validate-page-token! :lookup-resources query-shape decoded)
+        (coerce-lookup-page db opts :lookup-resources query-shape basis-t
+                            (impl/lookup-resources db internal-query))))))
 
 (defn spiceomic-count-resources
   [db
@@ -377,14 +411,12 @@
     :keys [spice-object->internal]}
    {:as query :keys [subject]}]
   (let [subject-ent (spice-object->internal db subject)]
-    (assert (:id subject-ent)
-            (str "subject passed to count-resources does not exist: " (pr-str subject)))
-    (assert (= (:type subject-ent) (:type subject))
-            (str "count-resources: subject type passed does not match entity: "
-                 (pr-str subject)))
-    (->> query
-         (S/setval [:subject] subject-ent)
-         (impl/count-resources db))))
+    (if (nil? (:id subject-ent))
+      ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
+      {:count 0 :limit -1}
+      (->> query
+           (S/setval [:subject] subject-ent)
+           (impl/count-resources db)))))
 
 (defn spiceomic-lookup-subjects
   [conn
@@ -393,12 +425,16 @@
            spice-object->internal]}
    query]
   (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts query)
-        query' (S/transform [:resource] #(spice-object->internal db %) query)
-        query-shape (list-query-shape :lookup-subjects query')
-        internal-query (internal-page-query query' page-req decoded)]
-    (validate-page-token! :lookup-subjects query-shape decoded)
-    (coerce-lookup-page db opts :lookup-subjects query-shape basis-t
-                        (impl/lookup-subjects db internal-query))))
+        internal-resource (spice-object->internal db (:resource query))]
+    (if (nil? (:id internal-resource))
+      ;; Unknown resources match nothing (SpiceDB-consistent).
+      empty-page
+      (let [query' (assoc query :resource internal-resource)
+            query-shape (list-query-shape :lookup-subjects query')
+            internal-query (internal-page-query query' page-req decoded)]
+        (validate-page-token! :lookup-subjects query-shape decoded)
+        (coerce-lookup-page db opts :lookup-subjects query-shape basis-t
+                            (impl/lookup-subjects db internal-query))))))
 
 (defrecord Spiceomic [conn opts]
   IAuthorization
@@ -437,6 +473,24 @@
     (spiceomic-write-relationships! conn opts
                                     [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
 
+  ;; Audit §13: these were declared on the protocol but unimplemented ->
+  ;; AbstractMethodError at runtime.
+  (write-relationship! [_ operation subject relation resource]
+    (spiceomic-write-relationships! conn opts
+                                    [(->RelationshipUpdate operation (->Relationship subject relation resource))]))
+
+  (write-relationship! [_ {:keys [operation subject relation resource]}]
+    (spiceomic-write-relationships! conn opts
+                                    [(->RelationshipUpdate operation (->Relationship subject relation resource))]))
+
+  (delete-relationship! [_ subject relation resource]
+    (spiceomic-write-relationships! conn opts
+                                    [(->RelationshipUpdate :delete (->Relationship subject relation resource))]))
+
+  (delete-relationship! [_ {:keys [subject relation resource]}]
+    (spiceomic-write-relationships! conn opts
+                                    [(->RelationshipUpdate :delete (->Relationship subject relation resource))]))
+
   (delete-relationships! [_ relationships]
     (let [relationships' (if (map? relationships)
                            (:data relationships)
@@ -455,52 +509,99 @@
     (spiceomic-lookup-subjects conn opts query))
 
   (expand-permission-tree [_ _]
-    (throw (Exception. "not impl."))))
+    (throw (ex-info "expand-permission-tree is not implemented yet."
+             {:type :eacl/not-implemented
+              :method 'expand-permission-tree}))))
+
+(def ^:private known-client-opt-keys
+  #{:entid->object-id
+    :entity->object-id
+    :object-id->ident
+    :page-token-key
+    :page-token-keys
+    :page-token-keyring
+    :page-token-kid
+    :page-token-ttl-seconds
+    :auto-migrate-v6})
 
 (defn make-client
+  "Builds an IAuthorization client over a Datomic conn.
+
+  Options (unknown keys throw :eacl/invalid-config — a silently ignored key
+  means silently wrong ID coercion):
+  - :entid->object-id  (fn [db eid] external-id) — canonical ID coercion, as documented in the README.
+  - :entity->object-id (fn [entity] external-id) — deprecated alias; do not combine with the above.
+  - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
+  - :page-token-key / :page-token-keys / :page-token-keyring / :page-token-kid —
+    AES-GCM page-token key material. Default: a random per-process key, meaning
+    page tokens do not survive restarts and are not portable across peers;
+    supply stable key material in production.
+  - :page-token-ttl-seconds — overrides the default page-token expiry.
+  - :auto-migrate-v6 — opt-in automatic v6->v7 storage migration at startup.
+    Construction fails with {:type :eacl/storage-version} when the database
+    holds unmigrated v6 relationship entities (v7 would silently answer false/
+    empty against them). Pass true (default options) or an eacl.migrations.v6-to-v7/migrate!
+    options map, e.g. {:schema \"definition user {} ...\"} — see docs/migration-v6-to-v7.md."
   [conn
-	   {:keys [entity->object-id
-	           object-id->ident
-	           internal-cursor->spice
-	           spice-cursor->internal
-	           page-token-key
-	           page-token-keys
-	           page-token-keyring
-	           page-token-kid
-	           page-token-ttl-seconds]
-	    :or   {entity->object-id      (fn [ent] (:eacl/id ent))
-	           object-id->ident       (fn [obj-id] [:eacl/id obj-id])}}]
-  (assert (fn? object-id->ident)
-          "EACL Config Error: object-id->ident fn is required to coerce a Spice Object ID to a Datomic ident that can be resolved by d/entid.")
-  (let [object-id->entid (fn [db object-id]
-                           (d/entid db (object-id->ident object-id)))
-	        entid->object-id (fn [db eid]
-	                           (entity->object-id (d/entity db eid)))
-	        current-kid      (or page-token-kid :current)
-	        configured-keyring (or page-token-keyring page-token-keys)
-	        keyring          (if configured-keyring
-	                           (into {}
-	                                 (map (fn [[kid key]]
-	                                        [kid (normalize-token-key key)]))
-	                                 configured-keyring)
-	                           {current-kid (if page-token-key
-	                                          (normalize-token-key page-token-key)
-	                                          (random-bytes 32))})
-	        _                (when-not (get keyring current-kid)
-	                           (throw (ex-info "Page token current key id is not present in keyring."
-	                                           {:page-token-kid current-kid
-	                                            :available-kids (set (keys keyring))})))
-	        opts             {:object-id->ident object-id->ident
-	                          :entid->object-id entid->object-id
-	                          :entity->object-id entity->object-id
-                          :object-id->entid object-id->entid
-                          :object->entid (fn [db {:keys [id]}]
-                                           (object-id->entid db id))
-	                          :internal-object->spice (fn [db {:keys [type id]}]
-	                                                    (spice-object type (entid->object-id db id)))
-	                          :spice-object->internal (fn [db obj]
-	                                                    (update obj :id #(object-id->entid db %)))
-	                          :page-token-current-kid current-kid
-	                          :page-token-keyring keyring
-	                          :page-token-ttl-seconds page-token-ttl-seconds}]
+   {:as   config-opts
+    :keys [entid->object-id
+           entity->object-id
+           object-id->ident
+           page-token-key
+           page-token-keys
+           page-token-keyring
+           page-token-kid
+           page-token-ttl-seconds
+           auto-migrate-v6]
+    :or   {object-id->ident (fn [obj-id] [:eacl/id obj-id])}}]
+  (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
+    (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
+                         ". Known options: " (pr-str (vec (sort known-client-opt-keys))) ".")
+             {:type :eacl/invalid-config
+              :unknown-keys (vec unknown-keys)
+              :known-keys known-client-opt-keys})))
+  (when (and entid->object-id entity->object-id)
+    (throw (ex-info "EACL Config Error: supply only one of :entid->object-id (canonical) or :entity->object-id (deprecated alias)."
+             {:type :eacl/invalid-config
+              :conflicting-keys [:entid->object-id :entity->object-id]})))
+  (when-not (fn? object-id->ident)
+    (throw (ex-info "EACL Config Error: object-id->ident must be a fn that coerces a Spice Object ID to a Datomic ident resolvable by d/entid."
+             {:type :eacl/invalid-config
+              :key :object-id->ident})))
+  ;; Refuse to run v7 code against unmigrated v6 relationship data — it would
+  ;; silently answer every check with false/empty. Throws :eacl/storage-version
+  ;; unless the DB is v7/fresh/stamped, or :auto-migrate-v6 opts into migration.
+  (migrations/assert-storage-compatible! conn {:auto-migrate-v6 auto-migrate-v6})
+  (let [entid->object-id   (or entid->object-id
+                               (when entity->object-id
+                                 (fn [db eid] (entity->object-id (d/entity db eid))))
+                               (fn [db eid] (:eacl/id (d/entity db eid))))
+        object-id->entid   (fn [db object-id]
+                             (d/entid db (object-id->ident object-id)))
+        current-kid        (or page-token-kid :current)
+        configured-keyring (or page-token-keyring page-token-keys)
+        keyring            (if configured-keyring
+                             (into {}
+                                   (map (fn [[kid key]]
+                                          [kid (normalize-token-key key)]))
+                                   configured-keyring)
+                             {current-kid (if page-token-key
+                                            (normalize-token-key page-token-key)
+                                            (random-bytes 32))})
+        _                  (when-not (get keyring current-kid)
+                             (throw (ex-info "Page token current key id is not present in keyring."
+                                             {:page-token-kid current-kid
+                                              :available-kids (set (keys keyring))})))
+        opts               {:object-id->ident object-id->ident
+                            :entid->object-id entid->object-id
+                            :object-id->entid object-id->entid
+                            :object->entid (fn [db {:keys [id]}]
+                                             (object-id->entid db id))
+                            :internal-object->spice (fn [db {:keys [type id]}]
+                                                      (spice-object type (entid->object-id db id)))
+                            :spice-object->internal (fn [db obj]
+                                                      (update obj :id #(when (some? %) (object-id->entid db %))))
+                            :page-token-current-kid current-kid
+                            :page-token-keyring keyring
+                            :page-token-ttl-seconds page-token-ttl-seconds}]
     (->Spiceomic conn opts)))

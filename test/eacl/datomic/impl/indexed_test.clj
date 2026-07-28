@@ -11,7 +11,6 @@
              :refer [Relation Relationship Permission
                      can?
                      read-relationships]]
-    ;[eacl.datomic.impl.datalog :as impl.datalog :refer [lookup-subjects]]
             [eacl.datomic.impl.indexed :as impl.indexed :refer [count-resources lookup-resources lookup-subjects]]))
 
 ; Test grouping & cleanup is in progress.
@@ -643,12 +642,14 @@
                                  (first (impl/tx-relationship (d/db *conn*)
                                                               (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
                                  (second (impl/tx-relationship (d/db *conn*)
-                                                               (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
-                                 ; We can use tempids in Relationship because tuple tx-data keeps the tempid.
+                                           (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
+                                 ; Tempids in Relationship require explicit opt-in now (audit §12).
                                  (first (impl/tx-relationship (d/db *conn*)
-                                                              (Relationship (->user :user/super-user) :shared_admin (->server "server3"))))
+                                          (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
+                                          {:allow-tempids? true}))
                                  (second (impl/tx-relationship (d/db *conn*)
-                                                               (Relationship (->user :user/super-user) :shared_admin (->server "server3"))))])))
+                                           (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
+                                           {:allow-tempids? true}))])))
 
       (let [db' (d/db *conn*)]
         (testing "ensure user1 can only see servers from account1, so excludes server-3"
@@ -819,6 +820,69 @@
                    (paginated->spice db' page2)))
             (is (= [(spice-object :account "account-1")]
                    (paginated->spice db' previous-page)))))))))
+
+(deftest tx-relationship-strictness-test
+  ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn [(Relation :account :owner :user)])
+    @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"}])
+    (let [db (d/db conn)]
+      (testing "a typo'd string id throws :eacl/unknown-object instead of minting a ghost entity"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
+              (impl/tx-relationship db
+                (Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1x"))))))
+
+      (testing "unallocated positive numeric eids are rejected with the typed error, not a raw transactor error"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
+              (impl/tx-relationship db
+                (Relationship (spice-object :user 17592186999999) :owner (spice-object :account [:eacl/id "acct-1"]))))))
+
+      (testing "{:allow-tempids? true} supports same-transaction entity+relationship creation"
+        (let [tx (concat [{:db/id "new-user" :eacl/id "new-user"}]
+                         (impl/tx-relationship db
+                           (Relationship (spice-object :user "new-user") :owner (spice-object :account [:eacl/id "acct-1"]))
+                           {:allow-tempids? true}))
+              {:keys [db-after]} @(d/transact conn tx)]
+          (is (impl/find-one-relationship-id db-after
+                {:subject  (spice-object :user [:eacl/id "new-user"])
+                 :relation :owner
+                 :resource (spice-object :account [:eacl/id "acct-1"])})))))))
+
+(deftest relation-datoms-keyword-collation-test
+  ;; Audit §2: the old [:a]..[:z] index-range made relations whose subject-type
+  ;; keyword collates outside that window invisible to permission evaluation.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn [(Relation :zone :owner :zebra)       ; sorts after :z
+                       (Relation :zone :editor :Admin)      ; sorts before :a
+                       (Relation :zone :viewer :my.app/user) ; namespaced
+                       (Relation :zone :ownerx :user)       ; prefix-isolation foil for :owner
+                       (Permission :zone :admin {:relation :owner})])
+    @(d/transact conn [{:db/id "z1" :eacl/id "zebra-1"}
+                       {:db/id "zone1" :eacl/id "zone-1"}])
+    @(d/transact conn (impl/tx-relationship (d/db conn)
+                        (Relationship (spice-object :zebra [:eacl/id "zebra-1"])
+                                      :owner
+                                      (spice-object :zone [:eacl/id "zone-1"]))))
+    (let [db (d/db conn)]
+      (testing "relations are visible for any legal subject-type keyword"
+        (is (= [[:zone :editor :Admin]] (mapv :v (impl.indexed/relation-datoms db :zone :editor))))
+        (is (= [[:zone :viewer :my.app/user]] (mapv :v (impl.indexed/relation-datoms db :zone :viewer)))))
+
+      (testing "prefix isolation: (:zone :owner) does not match (:zone :ownerx) or later attributes"
+        (is (= [[:zone :owner :zebra]] (mapv :v (impl.indexed/relation-datoms db :zone :owner)))))
+
+      (testing "end-to-end: permission evaluation works for a :zebra subject"
+        (let [zebra (spice-object :zebra (d/entid db [:eacl/id "zebra-1"]))
+              zone  (spice-object :zone (d/entid db [:eacl/id "zone-1"]))]
+          (is (true? (can? db zebra :admin zone)))
+          (is (= [(spice-object :zone "zone-1")]
+                 (paginated->spice db (lookup-resources db {:subject zebra
+                                                            :permission :admin
+                                                            :resource/type :zone}))))
+          (is (= [(spice-object :zebra "zebra-1")]
+                 (paginated->spice db (lookup-subjects db {:resource zone
+                                                           :permission :admin
+                                                           :subject/type :zebra})))))))))
 
 (deftest permission-schema-helper-tests
   (let [db (d/db *conn*)]
@@ -1223,14 +1287,6 @@
                                        :subject/relation :member
                                        :first            10})))))))))
 
-; uncommented because server :owner relation went away.
-;(testing "Performance - early termination"
-;  ;; Add multiple paths that grant the same permission
-;  @(d/transact *conn* [(Relationship (->user :test/user1) :owner (->server :test/server1))])
-;  (let [db' (d/db *conn*)]
-;    ;; Should still be fast even with multiple valid paths
-;    (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
-
 (deftest reproduce-infinite-recursion-test
   (testing "lookup-resources should handle cyclic permissions without throwing"
     ;; Introduce a dependency cycle:
@@ -1307,20 +1363,25 @@
           "Permission path caching must not leak DB-specific relation eids across databases"))))
 
 (deftest permission-paths-cache-is-scoped-per-schema-test
+  ;; Issue #74 contract: ONLY write-schema! invalidates the path cache — it
+  ;; bumps the :eacl/schema-version stamp the cache keys on, giving each
+  ;; schema era (including as-of views) its own cache slot. Programmatic
+  ;; edits of relation/permission datoms are deliberately NOT detected; they
+  ;; require write-schema! or a manual evict-permission-paths-cache!.
   (with-mem-conn [conn schema/v7-schema]
-    @(d/transact conn fixtures/relations+permissions)
-    @(d/transact conn fixtures/entity-fixtures)
-
+    (schema/write-schema! conn "definition user {}
+       definition account { relation owner: user  relation viewer: user
+                            permission view = owner + viewer }")
     (impl.indexed/evict-permission-paths-cache!)
-
-    (let [db-before (d/db conn)
+    (let [db-before    (d/db conn)
           before-paths (impl.indexed/get-permission-paths db-before :account :view)]
-      @(d/transact conn [(Relation :account :auditor :user)
-                         (Permission :account :view {:relation :auditor})])
-      (let [db-after (d/db conn)
-            after-paths (impl.indexed/get-permission-paths db-after :account :view)
+      (schema/write-schema! conn "definition user {}
+         definition account { relation owner: user  relation viewer: user  relation auditor: user
+                              permission view = owner + viewer + auditor }")
+      (let [db-after         (d/db conn)
+            after-paths      (impl.indexed/get-permission-paths db-after :account :view)
             historical-paths (impl.indexed/get-permission-paths db-before :account :view)]
         (is (< (count before-paths) (count after-paths)))
         (is (= before-paths historical-paths))
         (is (= 2 (count @impl.indexed/permission-paths-cache))
-            "Permission path caching must not reuse live schema paths for an older as-of db")))))
+            "each schema-version era gets its own cache slot; an older db value must not see live-schema paths")))))

@@ -151,15 +151,26 @@
          (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn relation-datoms
-  "Returns relation datoms for the exact resource/relation name pair."
+  "Returns relation datoms for the exact resource/relation name pair,
+  for ANY subject-type keyword.
+
+  Implemented as a seek + prefix take-while rather than a bounded
+  d/index-range: a keyword-sentinel range like [.. :a]..[.. :z] silently
+  misses subject types that collate outside it (uppercase-initial,
+  z-prefixed, and all namespaced keywords), which made those relations
+  invisible to permission evaluation. The attr-eid guard is mandatory —
+  seek-datoms iterates past the end of the attribute's index segment."
   [db resource-type relation-name]
   (if (and resource-type relation-name)
-    (let [start-tuple [resource-type relation-name :a]
-          end-tuple   [resource-type relation-name :z]]
-      (d/index-range db
-                     :eacl.relation/resource-type+relation-name+subject-type
-                     start-tuple
-                     end-tuple))
+    (let [attr-eid (d/entid db :eacl.relation/resource-type+relation-name+subject-type)]
+      (->> (d/seek-datoms db :avet
+                          :eacl.relation/resource-type+relation-name+subject-type
+                          [resource-type relation-name])
+           (take-while (fn [datom]
+                         (and (= attr-eid (:a datom))
+                              (let [v (:v datom)]
+                                (and (= resource-type (nth v 0))
+                                     (= relation-name (nth v 1)))))))))
     []))
 
 (defn find-relation-def
@@ -201,31 +212,92 @@
 (def permission-paths-cache
   (atom (cache/lru-cache-factory {} :threshold 1000)))
 
-(defn evict-permission-paths-cache! []
+(defn evict-permission-paths-cache!
+  "Manual override that clears the permission-path cache. write-schema! calls
+  it for immediate local hygiene; cross-peer and as-of correctness rely on the
+  :eacl/schema-version cache key, not on this. It is also the recovery hatch
+  after unsupported programmatic schema edits."
+  []
   (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000)))
 
-(def ^:private permission-path-schema-attrs
-  [:eacl.permission/resource-type+permission-name
-   :eacl.permission/source-relation-name
-   :eacl.permission/target-type
-   :eacl.permission/target-name
-   :eacl.relation/resource-type+relation-name+subject-type])
+;; --- Schema-version cache scope (issue #74) ---------------------------------
+;;
+;; The path cache is invalidated ONLY by eacl.datomic.schema/write-schema!,
+;; which asserts a fresh :eacl/schema-version squuid on the schema singleton in
+;; the same transaction as any definition change. Reading the stamp is a single
+;; AVET lookup — O(log N), no per-call schema-datom scans — and unrelated
+;; d/transact calls leave it (and therefore every cache key) untouched, so
+;; relationship write load can never evict or recompute paths. (The previous
+;; design derived a digest from the schema datoms on every lookup — issue #74.)
+;;
+;; Contract: permission schema mutations MUST go through write-schema!.
+;; Programmatic edits of relation/permission datoms (raw d/transact, d/with,
+;; excision) do not bump the version, so caches may serve paths computed from
+;; the pre-edit schema until the next write-schema! or a manual
+;; evict-permission-paths-cache!. That trade-off is by design.
+;;
+;; The stamp lives in the database, not in peer memory, so:
+;;  - write-schema! on any peer invalidates every peer (the stored value changes);
+;;  - d/as-of views read the version that was current at that basis, giving
+;;    historic views their own cache slots;
+;;  - a squuid can never be re-asserted to an unchanged value by a concurrent
+;;    writer (no counter-elision race).
 
-(defn- permission-path-schema-fingerprint
+(def schema-version-attr
+  "Installed by eacl.datomic.schema/v7-schema; asserted by write-schema!."
+  :eacl/schema-version)
+
+(defn schema-version
+  "The schema-version squuid asserted by the most recent write-schema! visible
+  in this db value, or nil for databases that predate versioned schema writes.
+  A single AVET lookup on a one-datom attribute."
   [db]
-  (hash
-   (mapv (fn [attr]
-           [attr (mapv (fn [datom]
-                         [(:e datom) (:v datom)])
-                       (d/datoms db :aevt attr))])
-         permission-path-schema-attrs)))
+  (when (d/entid db schema-version-attr)
+    (:v (first (d/datoms db :avet schema-version-attr)))))
+
+(def ^:private uncached-scope [::uncached])
+
+(defn- classified-view
+  "Positively classifies a db value: :plain, :as-of, or nil for any view the
+  version stamp cannot be trusted on. d/filter views are excluded because their
+  predicates are arbitrary functions that may hide definition datoms without
+  hiding the version datom; d/since views hide old schema and are pointless to
+  cache; history views are not queryable schema states."
+  [db]
+  (cond
+    (d/is-history db)      nil
+    (d/is-filtered db)     nil
+    (some? (d/since-t db)) nil
+    (some? (d/as-of-t db)) :as-of
+    :else                  :plain))
+
+(defn- schema-cache-scope
+  "Returns [database-id schema-version-string] for positively classified
+  plain/as-of db values, or a sentinel scope for anything else (filter, since,
+  history, unrecognized views) and for ANY failure. Sentinel scopes bypass the
+  cache entirely: every failure mode degrades to recomputation from the
+  queried db value — never to serving a stale entry."
+  [db]
+  (or (try
+        (when (classified-view db)
+          [(str (.id db)) (some-> (schema-version db) str)])
+        (catch Throwable _ nil))
+      uncached-scope))
+
+(defn- uncached-scope? [scope]
+  (identical? uncached-scope scope))
+
+(defn schema-version-stamp
+  "String form of the schema version for this db value, or nil when no version
+  has been written yet or the view cannot be classified (see schema-cache-scope)."
+  [db]
+  (let [scope (schema-cache-scope db)]
+    (when-not (uncached-scope? scope)
+      (second scope))))
 
 (defn- permission-paths-cache-key
-  [db resource-type permission-name]
-  [(.id db)
-   (permission-path-schema-fingerprint db)
-   resource-type
-   permission-name])
+  [scope resource-type permission-name]
+  (conj scope resource-type permission-name))
 
 (defn calc-permission-paths
   "Returns path maps with resolved relation eids.
@@ -284,15 +356,20 @@
 
 (defn get-permission-paths
   [db resource-type permission-name]
-  (let [cache @permission-paths-cache
-        cache-key (permission-paths-cache-key db resource-type permission-name)]
-    (if (cache/has? cache cache-key)
-      (do
-        (swap! permission-paths-cache cache/hit cache-key)
-        (cache/lookup cache cache-key))
-      (let [paths (calc-permission-paths db resource-type permission-name)]
-        (swap! permission-paths-cache cache/miss cache-key paths)
-        paths))))
+  (let [scope (schema-cache-scope db)]
+    (if (uncached-scope? scope)
+      ;; Unclassifiable view (filter/since/history) or scope failure:
+      ;; compute fresh from this db value; never share cache entries.
+      (calc-permission-paths db resource-type permission-name)
+      (let [cache @permission-paths-cache
+            cache-key (permission-paths-cache-key scope resource-type permission-name)]
+        (if (cache/has? cache cache-key)
+          (do
+            (swap! permission-paths-cache cache/hit cache-key)
+            (cache/lookup cache cache-key))
+          (let [paths (calc-permission-paths db resource-type permission-name)]
+            (swap! permission-paths-cache cache/miss cache-key paths)
+            paths))))))
 
 (defn- permission-query-node
   [resource-type permission-name]
