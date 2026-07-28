@@ -24,11 +24,18 @@
    }")
 
 (deftest eacl-schema-stable-ident-tests
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "we can transact Realtions & Permissions twice without datom conflicts after introduction of :eacl/id for Relation & Permission."
       (is @(d/transact conn fixtures/relations+permissions))
       (is @(d/transact conn fixtures/relations+permissions))
       (is (schema/read-schema (d/db conn))))))
+
+(deftest schema-does-not-include-persisted-grants-test
+  (testing "recursive traversal does not require persisted effective grant attrs"
+    (let [idents (set (map :db/ident schema/v7-schema))]
+      (is (not (contains? idents :eacl.v7.grant/subject-type+permission+resource-type+resource)))
+      (is (not (contains? idents :eacl.v7.grant/resource-type+permission+subject-type+subject)))
+      (is (not (contains? idents :eacl.grant/indexed-node))))))
 
 (deftest eacl-schema-comparison-tests
   (testing "we can calculate additions & retractions"
@@ -53,7 +60,7 @@
             :permissions [:retained :added]})))))
 
 (deftest write-schema-test
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (testing "Initial schema write"
       (let [deltas (schema/write-schema! conn example-schema-string)
             db     (d/db conn)
@@ -116,7 +123,7 @@
   "Tests for ADR 012 requirement: 'Invalid schema should be rejected and no changes made.'"
 
   (testing "permission referencing non-existent relation is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition account {
                           permission admin = nonexistent_relation
@@ -125,7 +132,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "arrow permission with invalid target is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition account { relation owner: user }
                         definition server {
@@ -136,7 +143,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "self-permission referencing non-existent permission is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition server {
                           permission view = fake_permission
@@ -145,7 +152,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "arrow permission with missing source relation is rejected"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
                         definition account { relation owner: user }
                         definition server {
@@ -156,7 +163,7 @@
               (schema/write-schema! conn bad-schema))))))
 
   (testing "valid schema is accepted"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [good-schema "definition user {}
                          definition platform { relation super_admin: user }
                          definition account {
@@ -173,7 +180,7 @@
 
 (deftest write-schema-parse-failure-test
   (testing "a malformed schema string throws a typed error and leaves the stored schema untouched"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (schema/write-schema! conn example-schema-string)
       (let [before (schema/read-schema (d/db conn))]
         (try
@@ -189,7 +196,7 @@
             "schema must be unchanged after a failed write"))))
 
   (testing "a schema containing comments (e.g. pasted from the SpiceDB playground) writes cleanly"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (is (schema/write-schema! conn "// users of the system
          definition user {}
          /* accounts own things */
@@ -201,7 +208,7 @@
 
 (deftest write-schema-empty-guard-test
   (testing "zero-definition output cannot wipe a non-empty schema (parser-gap belt-and-braces)"
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (schema/write-schema! conn example-schema-string)
       (with-redefs [eacl.spicedb.parser/->eacl-schema (fn [_] {:definitions [] :relations [] :permissions []})]
         (try
@@ -222,13 +229,13 @@
     (testing "arrow targets are validated against ALL subject types, regardless of declaration order"
       ;; mgmt exists on user but not group: both orders must be rejected identically.
       (doseq [types ["user | group" "group | user"]]
-        (with-mem-conn [conn schema/v6-schema]
+        (with-mem-conn [conn schema/v7-schema]
           (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
                 (schema/write-schema! conn (schema-with-owner-types types)))
               (str "owner: " types " should be rejected — mgmt missing on group")))))
 
     (testing "accepted when the target exists on every subject type"
-      (with-mem-conn [conn schema/v6-schema]
+      (with-mem-conn [conn schema/v7-schema]
         (is (schema/write-schema! conn
               "definition user { relation boss: user  permission mgmt = boss }
                definition group { relation lead: user  permission mgmt = lead }
@@ -238,7 +245,7 @@
 (deftest fixtures-schema-round-trip-test
   "Tests that fixtures.schema can be written and read back correctly.
    ADR 012 requirement: 'Rewrite the fixtures... to a new test/eacl/fixtures.schema file'"
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (let [schema-string (slurp "test/eacl/fixtures.schema")
           _             (schema/write-schema! conn schema-string)
           db            (d/db conn)

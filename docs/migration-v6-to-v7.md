@@ -50,7 +50,7 @@ Why v7: 2 datoms instead of 7 per relationship, better index locality for the cu
 
 ### New in the v7 schema
 
-- `:eacl/schema-version` (uuid) — a cache-invalidation stamp asserted by `write-schema!` whenever definitions change. Permission-path caches and cursor fingerprints key on it (issue #74). It is absent on a freshly migrated database, and that is a valid state: the stamp first appears on your first definition-changing `write-schema!`.
+- `:eacl/schema-version` (uuid) — a cache-invalidation stamp asserted by `write-schema!` whenever definitions change. The permission-path cache keys on it (issue #74). It is absent on a freshly migrated database, and that is a valid state: the stamp first appears on your first definition-changing `write-schema!`.
 - `:eacl/storage-version` (long) — the relationship storage-model version, stamped `7` by a completed `migrate!`. This is what `make-client`'s startup check reads: a stamp of `7` (or higher) tells v7 that any remaining v6 relationship entities are migrated leftovers, not live data.
 
 ### Unchanged
@@ -59,7 +59,7 @@ Why v7: 2 datoms instead of 7 per relationship, better index locality for the cu
 - `:eacl/id`, `:eacl/schema-string`, and the stored `"schema-string"` singleton entity.
 - The SpiceDB schema DSL and `write-schema!` semantics.
 - The public `IAuthorization` protocol: `can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `read-relationships`, `write-relationships!`, `create-relationships!`, `delete-relationships!`, `read-schema`, `write-schema!`.
-- `schema/v6-schema` still exists as an alias for `schema/v7-schema`, so `@(d/transact conn schema/v6-schema)` in bootstrap code keeps compiling — it now installs the v7 attributes.
+- The `schema/v6-schema` var was removed. Update bootstrap code that transacted it to `@(d/transact conn schema/v7-schema)` (or let `migrate!`/`ensure-v7-attributes!` install the attributes for you).
 
 ---
 
@@ -71,7 +71,8 @@ Three notes:
 
 - **`make-client` now checks the storage version.** Construction throws `{:type :eacl/storage-version}` against unmigrated v6 relationship data (see the intro). Fresh databases and migrated databases are unaffected. Opt into automatic migration with `{:auto-migrate-v6 true}` or `{:auto-migrate-v6 {:schema "definition user {} ..."}}` (any [`migrate!`](../src/eacl/migrations/v6_to_v7.clj) options map).
 - **`make-client` option rename.** `:entity->object-id (fn [entity] id)` is deprecated in favour of `:entid->object-id (fn [db eid] id)`. The old key still works as an alias; supplying both throws. Unknown option keys now throw `{:type :eacl/invalid-config}` instead of being silently ignored — if you had a typo'd option in v6, v7 will tell you about it at client construction.
-- **Discard persisted cursors.** v7 cursor tokens are opaque and carry a schema fingerprint. Any v6 cursor value you stored (in a session, queue, or DB) is invalid after the upgrade and will throw `{:type :eacl/invalid-cursor}`. Treat pagination sessions as ephemeral across the migration.
+- **The pagination API changed.** `:cursor`/`:limit` are rejected with a typed error; paginate with `:first`/`:after` (forward) or `:last`/`:before` (backward). Lookups and `read-relationships` return `{:data [...] :page-info {:start-cursor ... :end-cursor ... :has-next-page? ... :has-previous-page? ...}}`.
+- **Discard persisted cursors.** v7.2 page tokens (`eacl3_...`) are AES-GCM-encrypted, bound to the query and its Datomic basis, and expire after 5 minutes by default (`:page-token-ttl-seconds` to tune; `:page-token-key`/`:page-token-keyring` for multi-peer deployments). Any v6 cursor value you stored is rejected after the upgrade. Treat pagination sessions as ephemeral across the migration.
 
 ### If you used internals
 
@@ -111,7 +112,7 @@ Upgrading from v6 also jumps over the 2026-07 audit root-cause fixes. All of the
 - Arrow targets are validated against **all** subject types of the source relation (v6 was declaration-order-dependent: only the last-declared type was checked).
 - Reads with unknown object IDs return **empty results** (v6's `read-relationships` returned *all* relationships — a data leak — and lookups threw `AssertionError`s); writes throw `{:type :eacl/unknown-object}`.
 - `make-client` throws `{:type :eacl/invalid-config}` on unknown option keys (v6 silently ignored them, so a typo'd ID-coercion config silently fell back to `:eacl/id`).
-- Expired/corrupt cursor tokens throw `{:type :eacl/invalid-cursor}` (v6 decoded them to nil and silently restarted pagination at page one). Tokens do not expire by default; opt in with `:cursor-ttl-seconds`. Cursors detect mid-pagination schema changes with `{:type :eacl/stale-cursor}`.
+- Expired/corrupt page tokens are rejected with an error (v6 decoded them to nil and silently restarted pagination at page one). v7.2 tokens are additionally encrypted and bound to the operation, query shape, and Datomic basis, so a token can never be replayed against a different query.
 - `impl/tx-relationship` requires `{:allow-tempids? true}` to treat unresolvable string IDs as tempids (a typo'd ID in v6 silently created a ghost entity).
 - Dead v6-era namespaces were removed: `eacl.datomic.rules*`, `eacl.datomic.impl.datalog`, and `eacl.datomic.impl.base/Relationship` (see the internals table above).
 
@@ -203,7 +204,7 @@ Update your pin to a current SHA and deploy. From this moment all reads and writ
 
 (def acl (eacl.datomic.core/make-client conn {...your id-coercion config...}))
 (eacl/can? acl known-subject :some-permission known-resource)   ; => expected answer
-(eacl/lookup-resources acl {:subject known-subject :permission :view :resource/type :server :limit 10})
+(eacl/lookup-resources acl {:subject known-subject :permission :view :resource/type :server :first 10})
 ```
 
 ### Step 5 — Cleanup (after a soak period)
@@ -233,7 +234,7 @@ Once you're satisfied — days, not minutes; this forfeits the easy rollback:
 - **Dangling refs.** A v6 relationship whose subject or resource entity was retracted migrates into a tuple pointing at the dead eid. It behaves the same as it did in v6 (matches nothing meaningful), but if you want to use the migration as a cleaning pass, pre-filter such rows by checking the eids under `:eacl.relationship/subject` / `:eacl.relationship/resource` still resolve to live entities.
 - **`d/as-of` history.** Time-travel views with a basis **before** the backfill contain no v7 tuples, so v7 code sees an empty permission graph there. If you audit permissions against historical bases, keep a v6-pinned tooling environment around for pre-migration history.
 - **Old attributes stay installed.** Datomic cannot uninstall attributes; the seven `:eacl.relationship/*` definitions remain in your schema forever, unused (they are kept, documented, as `eacl.migrations.v6-to-v7/v6-relationship-schema` for reference and test fixtures). Harmless. Storage from retracted entities is only truly reclaimed by decanting to a new database, which is far outside this guide's scope.
-- **Cursors don't survive.** Covered above, worth repeating: any persisted v6 cursor throws `{:type :eacl/invalid-cursor}` under v7. Mid-flight pagination sessions must restart.
+- **Cursors don't survive.** Covered above, worth repeating: any persisted v6 cursor is rejected under v7.2, and page tokens expire after 5 minutes by default. Mid-flight pagination sessions must restart.
 - **Storage during the transition.** Between backfill and cleanup you carry both representations (~9 datoms per relationship instead of 7). After cleanup, the live size is 2 datoms per relationship — a net reduction — though history retains everything.
 
 ---

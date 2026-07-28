@@ -62,20 +62,21 @@
 (defn- eid-of [db id] (d/entid db [:eacl/id id]))
 
 (defn- collect-paged
-  "Collects a full paginated enumeration at the given page size."
+  "Collects a full paginated enumeration at the given page size via :first/:after."
   [db query page-size]
-  (loop [cursor nil
-         acc    []]
-    (let [page (idx/lookup-resources db (assoc query :limit page-size :cursor cursor))
+  (loop [after nil
+         acc   []]
+    (let [page (idx/lookup-resources db (cond-> (assoc query :first page-size)
+                                          after (assoc :after after)))
           acc' (into acc (map :id (:data page)))]
-      (if (seq (:data page))
-        (recur (:cursor page) acc')
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (get-in page [:page-info :end-cursor]) acc')
         acc'))))
 
 (defn- check-forward-invariants!
   [db label subject permission resource-type all-resource-eids sorted?]
   (let [query {:subject subject :permission permission :resource/type resource-type}
-        full  (mapv :id (:data (idx/lookup-resources db (assoc query :limit -1))))
+        full  (collect-paged db query 500)
         truth (set (filter #(idx/can? db subject permission (spice-object resource-type %))
                            all-resource-eids))]
     (is (= truth (set full))
@@ -89,7 +90,7 @@
       (is (= full (collect-paged db query page-size))
           (str label ": paginated union at page size " page-size " must equal the full enumeration")))
     (is (= (count full)
-           (:count (idx/count-resources db (assoc query :limit -1))))
+           (:count (idx/count-resources db query)))
         (str label ": count-resources must agree"))
     full))
 
@@ -98,7 +99,7 @@
   (let [subjects (mapv :id (:data (idx/lookup-subjects db {:resource resource
                                                            :permission permission
                                                            :subject/type subject-type
-                                                           :limit -1})))
+                                                           :first 500})))
         truth    (set (filter #(idx/can? db (spice-object subject-type %) permission resource)
                               all-subject-eids))]
     (is (= truth (set subjects))
@@ -108,7 +109,7 @@
 
 (deftest differential-nonrecursive-test
   (doseq [seed [7 23 42 1337]]
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [rng       (java.util.Random. (long seed))
             users     (mapv #(str "user-" %) (range 3))
             accounts  (mapv #(str "acct-" %) (range 3))
@@ -159,7 +160,7 @@
 
 (deftest differential-recursive-test
   (doseq [seed [11 99]]
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [rng     (java.util.Random. (long seed))
             folders (mapv #(str "folder-" %) (range 10))
             users   ["reader-1" "reader-2"]]

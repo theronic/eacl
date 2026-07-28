@@ -118,8 +118,8 @@
                (mapv :id (:data (eacl/lookup-resources acl {:subject       (->user "user-1")
                                                             :permission    :edit
                                                             :resource/type :product
-                                                            :limit         10})))))
-        (is (= 1 (count (eacl/read-relationships acl {:resource/type :account}))))))))
+                                                            :first         10})))))
+        (is (= 1 (count (:data (eacl/read-relationships acl {:resource/type :account})))))))))
 
 (deftest migrate!-idempotency-test
   (with-mem-conn [conn v6-schema]

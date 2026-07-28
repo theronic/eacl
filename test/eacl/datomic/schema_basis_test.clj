@@ -28,7 +28,7 @@
                         permission admin = owner + viewer }")
 
 (deftest pinned-datomic-behaviors-test
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     (let [db1 (d/db conn)
           _   (schema/write-schema! conn schema-v2)
@@ -60,7 +60,7 @@
   ;; Audit §3 regression, reworked for issue #74: invalidation is signaled by
   ;; write-schema!'s version bump (visible to every peer via the db), not
   ;; derived from db content and not dependent on the local eviction.
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     @(d/transact conn [{:db/id "u" :eacl/id "u"} {:db/id "a" :eacl/id "a"}])
     @(d/transact conn (impl/tx-relationship (d/db conn)
@@ -103,7 +103,7 @@
 (deftest unrelated-transact-keeps-cache-test
   ;; Issue #74 itself: relationship/application writes must not bust the path
   ;; cache — neither before any write-schema! (nil version) nor after one.
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     @(d/transact conn [(Relation :account :owner :user)
                        (Permission :account :admin {:relation :owner})])
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
@@ -138,7 +138,7 @@
                 "d/transact of relationships/entities must not recompute paths (issue #74)")))))))
 
 (deftest filtered-views-cannot-poison-cache-test
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     (let [db       (d/db conn)
           perm-eid (d/q '[:find ?e .
