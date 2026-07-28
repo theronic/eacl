@@ -819,7 +819,38 @@
             (is (= [(spice-object :account "account-2")]
                    (paginated->spice db' page2)))
             (is (= [(spice-object :account "account-1")]
-                   (paginated->spice db' previous-page)))))))))
+                   (paginated->spice db' previous-page)))
+
+            (testing "cursor-tree state is versioned, stable per path, and scoped to its scan direction"
+              (let [forward-edge (page-end-cursor page1)
+                    next-forward-edge (page-end-cursor page2)
+                    reverse-edge (page-start-cursor previous-page)]
+                (is (= 1 (:frontier-version forward-edge)))
+                (is (= :asc (:frontier-direction forward-edge)))
+                (is (seq (:path-frontiers forward-edge)))
+                (is (= (set (keys (:path-frontiers forward-edge)))
+                       (set (keys (:path-frontiers next-forward-edge)))))
+                ;; page2's ascending frontier must be ignored when it is used
+                ;; as a descending :before boundary; the result assertion above
+                ;; proves that switching direction remains correct.
+                (is (= :desc (:frontier-direction reverse-edge)))
+                (is (seq (:path-frontiers reverse-edge)))))
+
+            (testing "malformed frontier state is rejected"
+              (is (= :eacl.pagination/invalid-cursor
+                     (:eacl/error
+                      (thrown-ex-data
+                       #(lookup-resources
+                         db'
+                         {:first 1
+                          :after {:kind :lookup-eid
+                                  :result-eid (d/entid db' [:eacl/id "account-1"])
+                                  :frontier-version 1
+                                  :frontier-direction :asc
+                                  :path-frontiers {"path" {:not "an eid"}}}
+                          :resource/type :account
+                          :permission :view
+                          :subject (->user super-user-eid)}))))))))))))
 
 (deftest tx-relationship-strictness-test
   ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.

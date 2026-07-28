@@ -26,7 +26,12 @@
                      :query-shape "shape"
                      :basis :stable
                      :basis-t 42
-                     :edge {:kind :lookup-eid :result-eid 123}
+                     :edge {:kind :lookup-eid
+                            :result-eid 123
+                            :frontier-version 1
+                            :frontier-direction :asc
+                            :path-frontiers {"path-a" 99
+                                             "path-b" :exhausted}}
                      :ttl-seconds 60}
             token (spiceomic/page-token opts payload)
             decoded (spiceomic/token->page-bound opts token)]
