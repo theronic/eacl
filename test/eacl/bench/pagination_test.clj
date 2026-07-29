@@ -526,23 +526,19 @@
 
 ;; --- Permission-check hot path ----------------------------------------------
 ;;
-;; can? is the highest-frequency EACL call, and the permission-path cache scope
-;; sits directly on it. The scope is a fingerprint of the schema's definition
-;; datoms — exact against d/with, filtered and unstamped databases — memoised
-;; on the db VALUE, so it costs one O(number-of-definitions) scan per db value
-;; observed and nothing thereafter.
+;; can? is the highest-frequency EACL call. A connection-backed client reads
+;; its schema generation once at construction, then new db values caused by
+;; unrelated transactions do no schema reads or definition scans.
 ;;
 ;; Two numbers matter and both are reported:
-;;   warm  — repeated checks against one db value (the normal shape)
-;;   cold  — every check against a db value the memo has not seen, i.e. the
-;;           database advancing between every single check. This is the price
-;;           of exact scoping; it is bounded by schema size, not by data size.
+;;   warm — repeated checks against the client generation
+;;   cold — explicit cache eviction before each call (path-resolution cost)
 
 (def ^:private can-warm-threshold-us 25)
 (def ^:private can-cold-threshold-us 250)
 
 (deftest ^:benchmark permission-check-benchmark
-  (testing "can? throughput, warm and cold cache scope"
+  (testing "can? throughput, warm and cold permission paths"
     (with-mem-conn [conn []]
       (let [acl     (seed-multipath! conn {:num-accounts     5
                                            :teams-per-acct   2
@@ -559,13 +555,14 @@
           (is (< warm-us can-warm-threshold-us)
               (format "REGRESSION: warm can? median %.2fus exceeds %dus" warm-us can-warm-threshold-us)))
 
-        (testing "with a fingerprint scan forced on every call"
+        (testing "with permission paths forced cold on every call"
           (let [cold-us (* 1000.0
                            (median (run-timed 500
                                               (fn []
-                                                (impl.indexed/evict-permission-paths-cache!)
+                                                (impl.indexed/evict-permission-paths-cache!
+                                                 @(:schema-state acl))
                                                 (check)))))]
-            (println (format "can? cold scope + cold paths: median=%.2fus" cold-us))
+            (println (format "can? cold paths: median=%.2fus" cold-us))
             (is (< cold-us can-cold-threshold-us)
-                (format "REGRESSION: cold can? median %.2fus exceeds %dus; the schema fingerprint or path calc got more expensive"
+                (format "REGRESSION: cold can? median %.2fus exceeds %dus; path calculation got more expensive"
                         cold-us can-cold-threshold-us))))))))

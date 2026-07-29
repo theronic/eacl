@@ -9,9 +9,6 @@
            ;; Datomic
         com.datomic/peer {:mvn/version "1.0.7622"}
 
-           ;; Caching
-        org.clojure/core.cache {:mvn/version "1.1.234"}
-
            ;; Parsing
         instaparse/instaparse {:mvn/version "1.5.0"}
 

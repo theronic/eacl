@@ -19,6 +19,7 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
+            [eacl.datomic.integrity :as integrity]
             [eacl.datomic.schema :as schema]))
 
 (def ^:private test-schema
@@ -145,6 +146,31 @@
                                                :subject/type :user
                                                :first        10})))))))
 
+(deftest public-integrity-audit-is-explicit-and-bounded-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [{:keys [u]} (seed! conn)
+          acl (core/make-client conn {})]
+      (is (= :current (:status (integrity/client-schema-status acl))))
+
+      @(d/transact conn [[:db.fn/retractEntity u]])
+
+      (is (= {:valid? false
+              :dangling-count 1
+              :by-half {:forward 0 :reverse 1}
+              :sample []}
+             (integrity/dangling-relationship-report (d/db conn) {:sample-size 0})))
+
+      (let [batches (integrity/repair-tx-batches (d/db conn) {:batch-size 1})]
+        (is (= 1 (count batches)))
+        (doseq [batch batches]
+          @(d/transact conn batch)))
+
+      (is (= {:valid? true
+              :dangling-count 0
+              :by-half {:forward 0 :reverse 0}
+              :sample []}
+             (integrity/dangling-relationship-report (d/db conn)))))))
+
 (deftest half-written-relationships-are-repairable-test
   ;; relationship-exists? consulted only the forward index, so a surviving
   ;; reverse half read as "already there" to :touch and "nothing to do" to
@@ -183,9 +209,11 @@
         (is (= 1 (reverse-count (d/db conn) a)))
         (is (= 1 (forward-count (d/db conn) u)))))))
 
-(deftest public-can-does-not-grant-on-a-retracted-entity-test
-  ;; With the README-documented eid-as-external-id coercion, d/entid passes any
-  ;; long through unchanged, so can? answered from the surviving forward half.
+(deftest bare-retract-can-leave-a-detectable-ghost-test
+  ;; With eid-as-external-id coercion, d/entid passes any long through
+  ;; unchanged. EACL deliberately does not add entity-existence probes to every
+  ;; can?; the consumer deletion contract and explicit integrity auditor own
+  ;; this failure mode.
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [u a]} (seed! conn)
           acl (core/make-client conn {:object-id->ident identity
@@ -195,8 +223,12 @@
       @(d/transact conn [[:db.fn/retractEntity a]])
 
       (is (= 1 (forward-count (d/db conn) u)) "the orphan is still there…")
-      (is (false? (eacl/can? acl (spice-object :user u) :admin (spice-object :account a)))
-          "…but a retracted object grants nothing")
+      (is (true? (eacl/can? acl (spice-object :user u) :admin (spice-object :account a)))
+          "…and raw eid identity can still address the surviving tuple")
+      (is (= 1 (:dangling-count
+                (integrity/dangling-relationship-report (d/db conn)))))
 
-      (testing "and the same holds for a retracted subject"
-        (is (false? (eacl/can? acl (spice-object :user 99999999) :admin (spice-object :account a))))))))
+      (doseq [batch (integrity/repair-tx-batches (d/db conn))]
+        @(d/transact conn batch))
+      (is (false? (eacl/can? acl (spice-object :user u) :admin (spice-object :account a)))
+          "repair removes the ghost grant"))))

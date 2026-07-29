@@ -520,8 +520,11 @@
 ;; Worse, the survivor is unreachable through write-relationships!, because
 ;; resolving either endpoint of the relationship now throws :eacl/unknown-object.
 ;;
-;; tx-delete-object is the supported way to delete: call it (or the client's
-;; delete-object!) BEFORE retracting the entity.
+;; EACL consumers are expected to delete relationships before retracting an
+;; entity. tx-delete-object and the client's delete-object! are convenience
+;; helpers for that workflow. A bare retractEntity remains valid Datomic, but
+;; callers should run the explicit integrity audit if it might have left a
+;; surviving peer half.
 
 (defn- relation-triples
   "[resource-type relation-eid subject-type] for every Relation in the schema.
@@ -631,10 +634,10 @@
 (defn tx-retract-orphaned-relationships
   "Retraction tx-data for orphaned-relationship-halves. Fails closed: an
   orphan means one endpoint is gone, so the survivor should stop granting.
-  Transact in batches on large databases."
+  Returns a lazy sequence; transact in batches on large databases."
   [db]
-  (mapv (fn [{:keys [e attr v]}] [:db/retract e attr v])
-        (orphaned-relationship-halves db)))
+  (map (fn [{:keys [e attr v]}] [:db/retract e attr v])
+       (orphaned-relationship-halves db)))
 
 (defn tx-relationship
   "Translate relationship data into v7 tuple writes.

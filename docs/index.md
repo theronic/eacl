@@ -174,6 +174,8 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/lookup-subjects client filters) => {:data [subjects...] :page-info {...}}`
 - `(eacl/lookup-resources client filters) => {:data [resources...] :page-info {...}}`
 - `(eacl/count-resources client filters) => {:keys [count limit]}` counts the full result set.
+- `(eacl/count-subjects client filters) => {:keys [count limit]}` counts the full subject result set.
+- Add `:count-limit n` to either count operation to bound work and receive `:truncated?`.
 - `(eacl/read-relationships client filters) => {:data [relationships...] :page-info {...}}`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
   - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:touch` or `:delete`.
@@ -506,25 +508,13 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
    }")
 ```
 
-### Advanced: Programmatic Schema (Optional)
+### Schema Mutation Contract
 
-For advanced use cases, you can also define schema programmatically using the internal `Relation` and `Permission` functions:
-
-```clojure
-(require '[eacl.datomic.impl :refer [Relation Permission]])
-
-@(d/transact conn
-  [(Relation :account :owner :user)
-   (Permission :account :admin {:relation :owner})
-   (Relation :server :account :account)
-   (Permission :server :admin {:arrow :account :permission :admin})])
-```
-
-`Permission` supports the following spec syntax:
-- `{:relation some_relation}` - direct permission via relation
-- `{:permission some_permission}` - permission via another permission
-- `{:arrow source :permission via_permission}` - arrow to permission
-- `{:arrow source :relation via_relation}` - arrow to relation
+Use `eacl/write-schema!` for every schema change. The internal `Relation` and `Permission`
+records are not a supported schema API: transacting them directly bypasses validation, the
+schema-generation stamp, and client cache replacement. EACL reads `:eacl/schema-version` once
+when a client is created, never on ordinary authorization calls. Recreate clients after any
+out-of-band schema write.
 
 ## Example Schema
 

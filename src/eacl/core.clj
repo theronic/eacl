@@ -83,7 +83,8 @@
 	  ;                                  :has-next-page? ... :has-previous-page? ...}}.
 
   (count-resources [this {:as query :keys [consistency]}])
-  ; counting can be slow because it enumerates the full lookup-resources result set
+  ; counting can be slow because it enumerates the full lookup-resources result
+  ; set. Pass :count-limit to bound work and receive :truncated? in the result.
 
   (lookup-subjects [this {:as query :keys [consistency]}])
 	  ; lookup-subjects (formerly 'who-can?') accepts:
@@ -92,6 +93,10 @@
 	  ; - :subject/type (keyword) required.
 	  ; - :subject/relation is NOT supported and throws :eacl.pagination/unsupported-filter.
 	  ; - :first/:after or :last/:before pagination, as above.
+
+  (count-subjects [this {:as query :keys [consistency]}])
+  ; Mirrors count-resources for lookup-subjects. Pass :count-limit to bound
+  ; work and receive :truncated? in the result.
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
 

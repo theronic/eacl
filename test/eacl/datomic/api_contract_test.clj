@@ -236,19 +236,17 @@
                (:type (ex-data-of #(core/make-client conn {:recursive-traversal-limits bad}))))
             (pr-str bad))))))
 
-(deftest recursive-bare-last-and-count-subjects-test
+(deftest recursive-last-and-count-subjects-test
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [db u]} (seed-recursive! conn 5)
           root  (d/entid db [:eacl/id "root"])
           leaf  (d/entid db [:eacl/id "f-0"])
-          query {:subject (spice-object :user u) :permission :read :resource/type :folder}
-          all   (mapv :id (:data (idx/lookup-resources db (assoc query :first 100))))]
+          query {:subject (spice-object :user u) :permission :read :resource/type :folder}]
 
-      (testing "bare :last on a recursive permission returns the trailing window"
-        (let [tail (idx/lookup-resources db (assoc query :last 2))]
-          (is (= (vec (take-last 2 all)) (mapv :id (:data tail))))
-          (is (false? (get-in tail [:page-info :has-next-page?])))
-          (is (true? (get-in tail [:page-info :has-previous-page?])))))
+      (testing "bare :last rejects the implicit full recursive traversal"
+        (is (= :eacl.pagination/unsupported-recursive-last
+               (:eacl/error
+                (ex-data-of #(idx/lookup-resources db (assoc query :last 2)))))))
 
       (testing "count-subjects agrees with lookup-subjects on a recursive permission"
         (doseq [[label resource] [["root" root] ["leaf" leaf]]]
@@ -266,3 +264,34 @@
                                                                  :permission :read
                                                                  :subject/type :user
                                                                  :subject/relation :member})))))))))
+
+(deftest bounded-counts-stop-before-a-full-recursive-traversal-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [{:keys [db u]} (seed-recursive! conn 60)
+          root   (d/entid db [:eacl/id "root"])
+          client (core/make-client conn {})
+          forward-query {:subject (spice-object :user u)
+                         :permission :read
+                         :resource/type :folder}
+          reverse-query {:resource (spice-object :folder root)
+                         :permission :read
+                         :subject/type :user}]
+      (is (= {:count 5 :limit 5 :truncated? true}
+             (idx/count-resources db (assoc forward-query :count-limit 5))))
+      (is (= {:count 61 :limit 100 :truncated? false}
+             (idx/count-resources db (assoc forward-query :count-limit 100))))
+      (is (= {:count 0 :limit 0 :truncated? true}
+             (idx/count-resources db (assoc forward-query :count-limit 0))))
+
+      (testing "count-subjects is exposed on the public client"
+        (is (= {:count 1 :limit 1 :truncated? false}
+               (eacl/count-subjects
+                client
+                (-> reverse-query
+                    (assoc :resource (spice-object :folder "root"))
+                    (assoc :count-limit 1))))))
+
+      (testing "invalid limits are typed"
+        (is (= :eacl.count/invalid-limit
+               (:eacl/error
+                (ex-data-of #(idx/count-subjects db (assoc reverse-query :count-limit -1))))))))))

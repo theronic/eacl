@@ -138,10 +138,20 @@
     (doseq [page-size [1 3]]
       (is (= subjects (collect-subjects-paged db query page-size))
           (str label ": forward subject pagination at page size " page-size
-               " must equal the full enumeration"))
-      (is (= subjects (collect-paged-backward idx/lookup-subjects db query page-size))
-          (str label ": reverse subject pagination at page size " page-size
                " must equal the full enumeration")))
+    (if (idx/traversal-permission? db (:type resource) permission)
+      (is (= :eacl.pagination/unsupported-recursive-last
+             (:eacl/error
+              (try
+                (idx/lookup-subjects db (assoc query :last 1))
+                nil
+                (catch clojure.lang.ExceptionInfo e
+                  (ex-data e)))))
+          (str label ": recursive reverse pagination requires a :before boundary"))
+      (doseq [page-size [1 3]]
+        (is (= subjects (collect-paged-backward idx/lookup-subjects db query page-size))
+            (str label ": reverse subject pagination at page size " page-size
+                 " must equal the full enumeration"))))
     (is (= (count subjects) (:count (idx/count-subjects db query)))
         (str label ": count-subjects must agree"))))
 

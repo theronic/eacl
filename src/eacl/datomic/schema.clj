@@ -37,14 +37,13 @@
 ;  [:or DirectPermission ArrowPermission])
 
 (def schema-version-attr-definition
-  "Cache-invalidation stamp. write-schema! asserts a fresh squuid here in the
-  same transaction as any definition change; EACL's permission-path caches and
-  cursor fingerprints key on it, so ONLY write-schema! invalidates them (#74).
-  A squuid (not a counter) so two concurrent writers can never assert the same
-  value and elide each other's invalidation. Do not edit EACL definitions
-  outside write-schema! — the stamp will not change and caches will be stale."
+  "Schema-generation stamp. write-schema! asserts a fresh squuid here in the
+  same transaction as any definition change. A connection-backed EACL client
+  reads it once at construction and replaces its one cached generation when
+  write-schema! is invoked through that client. Do not edit EACL definitions
+  outside write-schema!."
   {:db/ident       :eacl/schema-version
-   :db/doc         "Squuid bumped by write-schema! whenever definitions change. Path caches and cursor fingerprints key on it."
+   :db/doc         "Squuid bumped by write-schema! whenever definitions change. EACL clients latch one generation at construction."
    :db/valueType   :db.type/uuid
    :db/cardinality :db.cardinality/one
    :db/index       true})
@@ -205,11 +204,11 @@
     (if-not relation-eid
       0
       (reduce (fn [n _] (inc n))
-        0
-        (d/index-range db
-          :eacl.v7.relationship/subject-type+relation+resource-type+resource
-          [subject-type relation-eid resource-type 0]
-          [subject-type relation-eid resource-type Long/MAX_VALUE])))))
+              0
+              (d/index-range db
+                             :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                             [subject-type relation-eid resource-type 0]
+                             [subject-type relation-eid resource-type Long/MAX_VALUE])))))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
@@ -220,7 +219,7 @@
                                  :eacl.relation/relation-name]) ...]
          :where
          [?relation :eacl.relation/relation-name ?relation-name]]
-    db))
+       db))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -233,7 +232,7 @@
                              :eacl.permission/target-name]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
-    db))
+       db))
 
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -259,25 +258,25 @@
         permissions-by-type (group-by :eacl.permission/resource-type permissions)
 
         relation-names-by-type
-                            (into {} (for [[rt rels] relations-by-type]
-                                       [rt (set (map :eacl.relation/relation-name rels))]))
+        (into {} (for [[rt rels] relations-by-type]
+                   [rt (set (map :eacl.relation/relation-name rels))]))
 
         permission-names-by-type
-                            (into {} (for [[rt perms] permissions-by-type]
-                                       [rt (set (map :eacl.permission/permission-name perms))]))
+        (into {} (for [[rt perms] permissions-by-type]
+                   [rt (set (map :eacl.permission/permission-name perms))]))
 
         ;; Subject types for each relation as full SETS (for arrow target validation).
         ;; Multi-type relations (relation owner: user | group) expand to one entry per
         ;; type; keeping a set makes validation independent of declaration order.
         relation-subject-types
-                            (reduce (fn [acc rel]
-                                      (update acc
-                                        [(:eacl.relation/resource-type rel)
-                                         (:eacl.relation/relation-name rel)]
-                                        (fnil conj #{})
-                                        (:eacl.relation/subject-type rel)))
-                              {}
-                              relations)
+        (reduce (fn [acc rel]
+                  (update acc
+                          [(:eacl.relation/resource-type rel)
+                           (:eacl.relation/relation-name rel)]
+                          (fnil conj #{})
+                          (:eacl.relation/subject-type rel)))
+                {}
+                relations)
 
         errors              (atom [])]
 
@@ -294,30 +293,30 @@
             ;; Self -> relation: validate relation exists on this resource type
             (when-not (contains? (get relation-names-by-type res-type) target-name)
               (swap! errors conj
-                {:type       :invalid-self-relation
-                 :permission (str (name res-type) "/" (name perm-name))
-                 :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name)
-                              " references non-existent relation: " (name target-name))}))
+                     {:type       :invalid-self-relation
+                      :permission (str (name res-type) "/" (name perm-name))
+                      :target     target-name
+                      :message    (str "Permission " (name res-type) "/" (name perm-name)
+                                       " references non-existent relation: " (name target-name))}))
             ;; Self -> permission: validate permission exists on this resource type
             (when-not (contains? (get permission-names-by-type res-type) target-name)
               (swap! errors conj
-                {:type       :invalid-self-permission
-                 :permission (str (name res-type) "/" (name perm-name))
-                 :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name)
-                              " references non-existent permission: " (name target-name))})))
+                     {:type       :invalid-self-permission
+                      :permission (str (name res-type) "/" (name perm-name))
+                      :target     target-name
+                      :message    (str "Permission " (name res-type) "/" (name perm-name)
+                                       " references non-existent permission: " (name target-name))})))
 
           ;; For arrow permissions (source-rel != :self)
           (do
             ;; Validate source relation exists on this resource type
             (when-not (contains? (get relation-names-by-type res-type) source-rel)
               (swap! errors conj
-                {:type       :missing-source-relation
-                 :permission (str (name res-type) "/" (name perm-name))
-                 :relation   source-rel
-                 :message    (str "Permission " (name res-type) "/" (name perm-name)
-                              " references non-existent relation: " (name source-rel))}))
+                     {:type       :missing-source-relation
+                      :permission (str (name res-type) "/" (name perm-name))
+                      :relation   source-rel
+                      :message    (str "Permission " (name res-type) "/" (name perm-name)
+                                       " references non-existent relation: " (name source-rel))}))
 
             ;; If source relation exists, validate the target exists on EVERY subject
             ;; type of the source relation. Anything else is declaration-order-dependent,
@@ -328,30 +327,30 @@
                   ;; Arrow to relation: validate relation exists on target type
                   (when-not (contains? (get relation-names-by-type target-res-type) target-name)
                     (swap! errors conj
-                      {:type        :invalid-arrow-target-relation
-                       :permission  (str (name res-type) "/" (name perm-name))
-                       :arrow-via   source-rel
-                       :target-type target-res-type
-                       :target      target-name
-                       :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                     " arrow via " (name source-rel) "->" (name target-name)
-                                     " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
+                           {:type        :invalid-arrow-target-relation
+                            :permission  (str (name res-type) "/" (name perm-name))
+                            :arrow-via   source-rel
+                            :target-type target-res-type
+                            :target      target-name
+                            :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                              " arrow via " (name source-rel) "->" (name target-name)
+                                              " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
                   ;; Arrow to permission: validate permission exists on target type
                   (when-not (contains? (get permission-names-by-type target-res-type) target-name)
                     (swap! errors conj
-                      {:type        :invalid-arrow-target-permission
-                       :permission  (str (name res-type) "/" (name perm-name))
-                       :arrow-via   source-rel
-                       :target-type target-res-type
-                       :target      target-name
-                       :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                     " arrow via " (name source-rel) "->" (name target-name)
-                                     " - permission '" (name target-name) "' does not exist on " (name target-res-type))})))))))))
+                           {:type        :invalid-arrow-target-permission
+                            :permission  (str (name res-type) "/" (name perm-name))
+                            :arrow-via   source-rel
+                            :target-type target-res-type
+                            :target      target-name
+                            :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                              " arrow via " (name source-rel) "->" (name target-name)
+                                              " - permission '" (name target-name) "' does not exist on " (name target-res-type))})))))))))
 
     (when (seq @errors)
       (throw (ex-info "Invalid schema: reference validation failed"
-               {:errors      @errors
-                :error-count (count @errors)})))
+                      {:errors      @errors
+                       :error-count (count @errors)})))
     nil))
 
 ; now we have to do a diff of relations and permissions
@@ -376,17 +375,17 @@
   ; when can we ditch the setval :db/id?
   (let [before-relations-set   (->> before-relations
                                  ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
-                                   (set))
+                                    (set))
         after-relations-set    (->> after-relations
                                     ;(S/setval [S/ALL :db/id] S/NONE)
                                     (set))
 
         before-permissions-set (->> before-permissions
                                  ;(S/setval [S/ALL :db/id] S/NONE)
-                                 (set))
+                                    (set))
         after-permissions-set  (->> after-permissions
                                  ;(S/setval [S/ALL :db/id] S/NONE)
-                                  (set))]
+                                    (set))]
     {:relations   (calc-set-deltas before-relations-set after-relations-set)
      :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
 
@@ -402,8 +401,11 @@
   {:allow-empty-schema? true} to explicitly wipe the stored schema."
   ([conn schema-string]
    (write-schema! conn schema-string {}))
-  ([conn schema-string {:keys [allow-empty-schema?]}]
-   ;; Upgrade path: databases installed before :eacl/schema-version existed.
+  ([conn schema-string opts]
+   (write-schema! conn schema-string opts ::read-current-version))
+  ([conn schema-string {:keys [allow-empty-schema?]} known-schema-version]
+   ;; Fresh/partially installed v7 databases may not have the stamp attribute
+   ;; yet. This is schema installation, not a v6 cache-compatibility path.
    (when-not (d/entid (d/db conn) :eacl/schema-version)
      @(d/transact conn [schema-version-attr-definition]))
    (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
@@ -417,28 +419,37 @@
                                                (seq (:permissions existing-schema))))
                                   (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                        " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard
-                                            :existing {:relations (count (:relations existing-schema))
-                                                       :permissions (count (:permissions existing-schema))}})))
+                                                  {:type :eacl.schema/empty-schema-guard
+                                                   :existing {:relations (count (:relations existing-schema))
+                                                              :permissions (count (:permissions existing-schema))}})))
          deltas                 (compare-schema existing-schema new-schema-map)
          {:keys [relations permissions]} deltas
          relation-retractions   (:retractions relations)
          permission-retractions (:retractions permissions)]
 
     ;; Check for orphaned relationships
-    (doseq [rel relation-retractions]
-      (let [cnt (count-relationships-using-relation db rel)]
-        (when (pos? cnt)
-          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                            " because it is used by " cnt " relationships.")
-                   {:relation rel :count cnt})))))
+     (doseq [rel relation-retractions]
+       (let [cnt (count-relationships-using-relation db rel)]
+         (when (pos? cnt)
+           (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                                " because it is used by " cnt " relationships.")
+                           {:relation rel :count cnt})))))
 
     ;; Transact changes
-    (let [schema-changed? (boolean (or (seq (:additions relations))
-                                       (seq relation-retractions)
-                                       (seq (:additions permissions))
-                                       (seq permission-retractions)))
-          tx-data (concat
+     (let [schema-changed?  (boolean (or (seq (:additions relations))
+                                         (seq relation-retractions)
+                                         (seq (:additions permissions))
+                                         (seq permission-retractions)))
+          ;; The connection-backed client passes its construction-time value,
+          ;; avoiding another DB read. Direct low-level callers pay the
+          ;; explicit diagnostic read here.
+           current-version  (if (= ::read-current-version known-schema-version)
+                              (impl.indexed/schema-version db)
+                              known-schema-version)
+           stamp-missing?   (nil? current-version)
+           stamp-schema?    (or schema-changed? stamp-missing?)
+           next-version     (if stamp-schema? (d/squuid) current-version)
+           tx-data (concat
                     ;; Additions
                     (:additions relations)
                     (:additions permissions)
@@ -447,13 +458,11 @@
                       [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
                     (for [perm permission-retractions]
                       [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
-                     ;; Store schema string + bump the version stamp when
-                     ;; definitions changed. The stamp is what invalidates the
-                     ;; path caches and cursor fingerprints — on every peer,
-                     ;; and correctly for d/as-of views (issue #74).
+                     ;; Store schema string + establish/bump the version stamp.
+                     ;; An identical first write on an unstamped database must
+                     ;; still establish a cacheable client generation.
                     [(cond-> {:eacl/id            "schema-string"
                               :eacl/schema-string schema-string}
-                       schema-changed? (assoc :eacl/schema-version (d/squuid)))])]
-      @(d/transact conn tx-data)
-      (impl.indexed/evict-permission-paths-cache!)
-      deltas))))
+                       stamp-schema? (assoc :eacl/schema-version next-version))])]
+       @(d/transact conn tx-data)
+       (with-meta deltas {:eacl/schema-version next-version})))))

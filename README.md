@@ -43,10 +43,11 @@ Situated AuthZ offers some advantages for typical use-cases:
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - Presently, EACL has _no result cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
-- EACL does cache resolved *permission paths*. Cache entries are scoped by an exact fingerprint of the EACL definition datoms visible in the `db` value you query, so two `db` values share a cached path set only when their schemas are identical — however the schema changed. That means `write-schema!`, a raw `d/transact` of `Relation`/`Permission` maps, an excision, a `d/filter` that hides definitions and a speculative `d/with` database each resolve against their own schema, and none of them can publish paths under another's key. There is nothing to invalidate manually.
-  - The fingerprint is `O(number of definitions)` — never `O(number of relationships)` — and is memoised on the `db` value itself, so it is computed once per `db` value you query and never again. An unrelated `d/transact` yields a new `db` value with the *same* fingerprint, so relationship write load re-verifies the (small) definition index once and every permission-path entry still hits: no path is ever recomputed unless the definitions actually changed (issue #74).
-  - The cost that remains is one definition-index scan per new `db` value. If your database advances between essentially every `can?` — and your schema is very large — that scan is on the hot path. It is a few microseconds for a normal schema; see the `permission-check-benchmark` in `test/eacl/bench/pagination_test.clj` for warm and cold numbers.
-  - `:eacl/schema-version` is still stamped by `write-schema!`, but it is now informational (a readable schema generation, including under `d/as-of`) rather than the cache key.
+- EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
+  - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
+  - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
+  - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. EACL does not provide time-travel semantics for a connection-backed client, and speculative/historic evaluation cannot publish paths into its cache.
+  - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
@@ -59,7 +60,7 @@ Public `eacl3_` cursors are string-safe AES-GCM envelopes. Authentication is req
 > [!WARNING]
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v7.3 is the current development version of EACL. It retains the v7.2 pagination API and recursive traversal engine, and adds direction-scoped cursor frontiers for deep acyclic lookup pages. Releases are not tagged yet, so pin the Git SHA.
+> The changes on this branch are the v7.4 candidate (they may be released as a v7.3 patch because v7.3 is recent). They retain the pagination API, replace per-`db` schema fingerprints with client-lifecycle caches, and add bounded counting/integrity diagnostics. Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## ReBAC: Relationship-based Access Control
@@ -123,6 +124,10 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
 - `(eacl/lookup-subjects acl filters) => {:data [subjects...] :page-info {...}}`
 - `(eacl/lookup-resources acl filters) => {:data [resources...] :page-info {...}}`
 - `(eacl/count-resources acl filters) => {:keys [count limit]}` counts the full result set.
+- `(eacl/count-subjects acl filters) => {:keys [count limit]}` counts the full subject result set.
+
+Pass `:count-limit n` to either count operation to bound work. The result then includes
+`:truncated?`; `true` means at least one additional result exists.
 
 ### Relationship Maintenance
 
@@ -131,7 +136,7 @@ The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines 
   - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
-- `(eacl/delete-object! acl object) => {:zed/token 'db-basis, :retracted-datoms n}` removes every relationship touching `object`, in both directions. Call this before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- `(eacl/delete-object! acl object) => {:zed/token 'db-basis, :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
 All list APIs use the v7.3 pagination contract:
 
@@ -146,6 +151,11 @@ All list APIs use the v7.3 pagination contract:
 - `(eacl/write-schema! acl schema-string)` parses a SpiceDB schema DSL string, validates it, computes deltas against existing schema, checks for orphaned relationships, and transacts changes atomically.
 - `(eacl/read-schema acl)` returns the current schema as a map of `{:relations [...] :permissions [...]}`.
 - `(eacl/expand-permission-tree acl filters)` is not impl. yet. It is a low priority to implement.
+
+All schema changes must use `eacl/write-schema!`. EACL clients deliberately do not detect raw
+definition transactions on every authorization call. After an out-of-band schema write, recreate
+other clients (or call `eacl.datomic.integrity/client-schema-status` explicitly to detect the
+generation mismatch).
 
 ### Example Queries
 
@@ -481,7 +491,7 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 `make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` (a silently dropped ID-coercion key would mean silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) is a deprecated alias for `:entid->object-id`; supplying both throws. Page tokens expire after 5 minutes by default; tune with `:page-token-ttl-seconds`.
 
-`:recursive-traversal-limits` raises the safety ceilings on recursive permission traversal (see [Limitations](#limitations-deficiencies--gotchas)):
+`:recursive-traversal-limits` tunes hard safety ceilings on recursive permission traversal (see [Limitations](#limitations-deficiencies--gotchas)):
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
@@ -489,6 +499,8 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 ```
 
 Keys you omit keep their defaults (`eacl.datomic.impl.indexed/default-recursive-traversal-limits`), so a partial override cannot silently disable the limits it does not mention.
+These are heap-protection limits, not ordinary page-size controls. Prefer `:count-limit` for
+situated authorization counts; raise traversal ceilings only after load-testing the host JVM.
 
 For multi-peer deployments, configure a shared page-token key so `eacl3_...` cursors survive restarts and can be decoded by every peer:
 
@@ -502,13 +514,13 @@ For multi-peer deployments, configure a shared page-token key so `eacl3_...` cur
 
 EACL follows SpiceDB semantics for object IDs that don't resolve to an entity:
 
-- **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
+- **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
 - **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
 
 ### Deleting a permissioned entity
 
 > [!IMPORTANT]
-> `:db.fn/retractEntity` does **not** remove an entity's EACL relationships. Call `eacl/delete-object!` first.
+> `:db.fn/retractEntity` does **not** remove an entity's EACL relationships. Delete those relationships first; `eacl/delete-object!` is a convenience helper for doing so.
 
 A v7 relationship is two datoms living on two different entities, each naming its peer *inside a tuple value*:
 
@@ -519,7 +531,8 @@ A v7 relationship is two datoms living on two different entities, each naming it
 
 Datomic's `:db.fn/retractEntity` follows `:db.type/ref` *attributes*; it does not follow ref-typed *components of a heterogeneous tuple* (and a heterogeneous tuple cannot be `:db/isComponent`). So retracting a permissioned entity directly removes only the half stored on that entity and leaves the peer's half behind, where it keeps answering queries — a deleted resource still passes `can?`, a deleted subject still appears in `lookup-subjects` — and the survivor is unreachable through `write-relationships!`, because resolving either endpoint now throws `:eacl/unknown-object`.
 
-Delete relationships first, then the entity:
+The expected workflow is to call `eacl/delete-relationships!` for relationships known by the
+consumer, then retract the entity. `delete-object!` is a convenient catch-all:
 
 ```clojure
 (eacl/delete-object! acl (->account "acme"))   ; removes both halves of every relationship touching it
@@ -537,11 +550,17 @@ Or in one application transaction, using the tx-data directly:
 
 `delete-object!` retracts relationships only — retracting the entity itself stays your call. It is idempotent, and it also accepts the raw eid of an entity you already retracted, which is how you clean up after the fact.
 
-To find and repair relationships orphaned by earlier bare `retractEntity` calls (an offline maintenance pass — it scans both relationship indexes):
+EACL does not prevent direct `:db.fn/retractEntity` calls or add existence probes to every read.
+To detect and repair relationship halves left by such calls, use the explicit offline integrity
+API (it scans both relationship indexes):
 
 ```clojure
-(take 10 (impl/orphaned-relationship-halves (d/db conn)))     ; inspect
-@(d/transact conn (impl/tx-retract-orphaned-relationships (d/db conn)))
+(require '[eacl.datomic.integrity :as integrity])
+
+(integrity/dangling-relationship-report (d/db conn) {:sample-size 20})
+
+(doseq [tx-data (integrity/repair-tx-batches (d/db conn) {:batch-size 1000})]
+  @(d/transact conn tx-data))
 ```
 
 ## Schema Syntax
@@ -563,21 +582,12 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
    }")
 ```
 
-### Advanced: Programmatic Schema (Optional)
+### Internal Definition Records
 
-For advanced use cases, you can also define schema programmatically using the internal `Relation` and `Permission` functions:
-
-> Programmatic definition changes take effect immediately: the permission-path cache is scoped by a fingerprint of the definition datoms themselves, not by `write-schema!`'s version stamp (see the caching note above). You still lose `write-schema!`'s parse-time validation, reference checking and orphaned-relationship guard, so prefer `write-schema!` where you can.
-
-```clojure
-(require '[eacl.datomic.impl :refer [Relation Permission]])
-
-@(d/transact conn
-  [(Relation :account :owner :user)
-   (Permission :account :admin {:relation :owner})
-   (Relation :server :account :account)
-   (Permission :server :admin {:arrow :account :permission :admin})])
-```
+`eacl.datomic.impl/Relation` and `Permission` are implementation records used by migrations and
+tests. Transacting them directly is not a supported schema API: it bypasses validation, the
+schema-generation stamp, and client cache replacement. Use `eacl/write-schema!` for every schema
+change. If an operational tool bypasses that boundary, recreate every affected client.
 
 `Permission` supports the following spec syntax:
 - `{:relation some_relation}` - direct permission via relation
@@ -652,8 +662,8 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
 - *No cache:* EACL does not presently have a result cache, because Datomic Peers cache datoms aggressively and queries so far are fast enough. A cache is planned. (Resolved *permission paths* are cached — see [Performance](#performance).)
-- *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Call `eacl/delete-object!` first — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
-- *Recursive permissions do not paginate cheaply:* a permission that transitively depends on itself (`permission read = reader + parent->read`) is evaluated in traversal order, and each page resumes by replaying the traversal prefix and discarding results up to the cursor. Work per page therefore grows with the page's offset — enumerating `N` results is `O(N²/page-size)` — and a single page is capped by `:max-derived-grants` (default 100 000), so a recursive permission with a very large grant set starts failing on *deep* pages while page 1 still succeeds. Raise the ceiling with `make-client`'s `:recursive-traversal-limits` (it is a memory bound), or model the permission acyclically. Acyclic permissions have no such limit: they resume from per-path cursor frontiers and cost `O(log N)` per page.
+- *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- *Recursive permissions do not paginate cheaply:* a permission that transitively depends on itself (`permission read = reader + parent->read`) is evaluated in traversal order, and each page resumes by replaying the traversal prefix and discarding results up to the cursor. Enumerating `N` results is therefore `O(N²/page-size)`. Fixing that without moving unbounded traversal state into page tokens requires a persisted effective-grant index; see `docs/plans/2026-05-17-recursive-pagination-effective-grants-plan.md`. Until then, bare recursive `:last` is rejected, recursive work has hard heap-protection ceilings, and counts use one traversal rather than page replay. Use `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load tests. Acyclic pages seek from cursor frontiers and do not have this replay cost.
 - *Return order:* Acyclic EACL lookups enumerate in Datomic eid order and relationship reads enumerate in tuple-index order. Recursive lookups enumerate in deterministic traversal order. SpiceDB returns results in discovery or schema order. You should not rely on either system's order as a domain sort order.
 
 ## How to Run All Tests

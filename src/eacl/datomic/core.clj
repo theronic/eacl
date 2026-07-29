@@ -18,6 +18,7 @@
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest SecureRandom]
            [java.util Base64]
+           [java.util.concurrent.locks Lock ReentrantReadWriteLock]
            [javax.crypto Cipher]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
@@ -231,8 +232,12 @@
                                :first :last :after :before
                                :cursor :limit :page/basis :consistency)}))
 
+(defn- client-schema-version
+  [opts]
+  (some-> opts :schema-state deref :schema-version str))
+
 (defn- validate-page-token!
-  [op query-shape decoded]
+  [opts op query-shape decoded]
   (when decoded
     (when-not (= op (:op decoded))
       (throw (ex-info "Page token was created for a different operation."
@@ -244,6 +249,11 @@
                        :actual (:query-shape decoded)})))
     (when-not (= :stable (:basis decoded))
       (throw (ex-info "Unsupported page token basis." {:basis (:basis decoded)})))
+    (when-not (= (client-schema-version opts) (:schema-version decoded))
+      (throw (ex-info "Page token was created under a different EACL schema generation."
+                      {:type :eacl.pagination/stale-schema
+                       :expected (client-schema-version opts)
+                       :actual (:schema-version decoded)})))
     true))
 
 (defn- internal-page-query
@@ -261,6 +271,7 @@
                          :query-shape query-shape
                          :basis-t basis-t
                          :basis :stable
+                         :schema-version (client-schema-version opts)
                          :edge edge}
                   (:page-token-ttl-seconds opts)
                   (assoc :ttl-seconds (:page-token-ttl-seconds opts))))))
@@ -322,7 +333,7 @@
                            resource-id (assoc :resource/id resource-eid))
             query-shape  (list-query-shape :read-relationships filters')
             internal-query (internal-page-query filters' page-req decoded)]
-        (validate-page-token! :read-relationships query-shape decoded)
+        (validate-page-token! opts :read-relationships query-shape decoded)
         (coerce-relationship-page db opts :read-relationships query-shape basis-t
                                   (impl/read-relationships db internal-query))))))
 
@@ -360,15 +371,6 @@
         basis (d/basis-t db-after)]
     {:zed/token (str basis)}))
 
-(defn- existing-eid
-  "d/entid passes any long through unchanged, including the eid of a retracted
-  entity, so an id-coercion that hands EACL raw eids (a documented option) let
-  can? answer from relationship halves left behind by :db.fn/retractEntity.
-  Datom presence is the same existence test writes already use."
-  [db eid]
-  (when (and eid (seq (d/datoms db :eavt eid)))
-    eid))
-
 (defmacro ^:private with-recursive-limits
   "Applies the client's :recursive-traversal-limits, if configured, for the
   duration of one list call. Recursive permissions with large grant sets need
@@ -379,6 +381,28 @@
        (binding [impl.indexed/*recursive-traversal-limits* limits#]
          ~@body)
        (do ~@body))))
+
+(defmacro ^:private with-client-schema-read
+  "Runs one client operation against its latched schema generation. The read
+  lock permits concurrent authorization calls while excluding write-schema!'s
+  transaction-and-cache-swap window."
+  [schema-lock schema-state & body]
+  `(let [^Lock lock# (.readLock ^ReentrantReadWriteLock ~schema-lock)]
+     (.lock lock#)
+     (try
+       (binding [impl.indexed/*schema-cache* (deref ~schema-state)]
+         ~@body)
+       (finally
+         (.unlock lock#)))))
+
+(defmacro ^:private with-client-schema-write
+  [schema-lock & body]
+  `(let [^Lock lock# (.writeLock ^ReentrantReadWriteLock ~schema-lock)]
+     (.lock lock#)
+     (try
+       ~@body
+       (finally
+         (.unlock lock#)))))
 
 (def ^:private delete-object-batch-size 1000)
 
@@ -417,9 +441,9 @@
              {:type :eacl/unsupported-consistency
               :consistency consistency})))
   (let [subject-type (:type subject)
-        subject-eid  (existing-eid db (object->entid db subject))
+        subject-eid  (object->entid db subject)
         resource-type (:type resource)
-        resource-eid  (existing-eid db (object->entid db resource))]
+        resource-eid  (object->entid db resource)]
     (if-not (and subject-eid resource-eid)
       false
       (impl/can? db
@@ -444,20 +468,30 @@
       (let [query' (assoc query :subject internal-subject)
             query-shape (list-query-shape :lookup-resources query')
             internal-query (internal-page-query query' page-req decoded)]
-        (validate-page-token! :lookup-resources query-shape decoded)
+        (validate-page-token! opts :lookup-resources query-shape decoded)
         (coerce-lookup-page db opts :lookup-resources query-shape basis-t
                             (impl/lookup-resources db internal-query))))))
 
+(defn- empty-count-response
+  [query]
+  (if (contains? query :count-limit)
+    (let [limit (:count-limit query)]
+      (when-not (and (integer? limit) (not (neg? limit)))
+        (throw (ex-info ":count-limit must be a non-negative integer."
+                        {:eacl/error :eacl.count/invalid-limit
+                         :count-limit limit})))
+      {:count 0 :limit limit :truncated? false})
+    {:count 0 :limit -1}))
+
 (defn spiceomic-count-resources
   [db
-   {:as opts
-    :keys [spice-object->internal]}
+   {:keys [spice-object->internal]}
    {:as query :keys [subject]}]
   (validate-consistency! query)
   (let [subject-ent (spice-object->internal db subject)]
     (if (nil? (:id subject-ent))
       ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
-      {:count 0 :limit -1}
+      (empty-count-response query)
       (->> query
            (S/setval [:subject] subject-ent)
            (impl/count-resources db)))))
@@ -477,87 +511,132 @@
       (let [query' (assoc query :resource internal-resource)
             query-shape (list-query-shape :lookup-subjects query')
             internal-query (internal-page-query query' page-req decoded)]
-        (validate-page-token! :lookup-subjects query-shape decoded)
+        (validate-page-token! opts :lookup-subjects query-shape decoded)
         (coerce-lookup-page db opts :lookup-subjects query-shape basis-t
                             (impl/lookup-subjects db internal-query))))))
 
-(defrecord Spiceomic [conn opts]
+(defn spiceomic-count-subjects
+  [db
+   {:keys [spice-object->internal]}
+   query]
+  (validate-consistency! query)
+  (let [resource-ent (spice-object->internal db (:resource query))]
+    (if (nil? (:id resource-ent))
+      (empty-count-response query)
+      (->> query
+           (S/setval [:resource] resource-ent)
+           (impl/count-subjects db)))))
+
+(defrecord Spiceomic [conn opts schema-state schema-lock]
   IAuthorization
   (can? [_ subject permission resource]
-    (spiceomic-can? (d/db conn) opts subject permission resource consistency/fully-consistent))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-can? (d/db conn) opts subject permission resource consistency/fully-consistent)))
 
   (can? [_ subject permission resource consistency]
-    (spiceomic-can? (d/db conn) opts subject permission resource consistency))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-can? (d/db conn) opts subject permission resource consistency)))
 
   (can? [_ {:keys [subject permission resource consistency]}]
-    (spiceomic-can? (d/db conn) opts subject permission resource
-                    (or consistency consistency/fully-consistent)))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-can? (d/db conn) opts subject permission resource
+                      (or consistency consistency/fully-consistent))))
 
   (read-schema [_]
-    (schema/read-schema (d/db conn)))
+    (with-client-schema-read schema-lock schema-state
+      (schema/read-schema (d/db conn))))
 
   (write-schema! [_ schema-string]
-    (schema/write-schema! conn schema-string))
+    (with-client-schema-write schema-lock
+      (let [deltas      (schema/write-schema!
+                         conn schema-string
+                         {}
+                         (:schema-version @schema-state))
+            next-version (:eacl/schema-version (meta deltas))
+            next-cache  (impl.indexed/make-schema-cache (d/db conn) next-version)]
+        (when-not (= (:schema-version @schema-state)
+                     (:schema-version next-cache))
+          (reset! schema-state next-cache))
+        deltas)))
 
   (read-relationships [_ filters]
-    (spiceomic-read-relationships conn opts filters))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-read-relationships conn opts filters)))
 
   (write-relationships! [_ updates]
-    (spiceomic-write-relationships! conn opts updates))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts updates)))
 
   (create-relationships! [_ relationships]
-    (spiceomic-write-relationships! conn opts
-                                    (for [rel relationships]
-                                      (->RelationshipUpdate :create rel))))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      (for [rel relationships]
+                                        (->RelationshipUpdate :create rel)))))
 
   (create-relationship! [_ relationship]
-    (spiceomic-write-relationships! conn opts
-                                    [(->RelationshipUpdate :create relationship)]))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      [(->RelationshipUpdate :create relationship)])))
 
   (create-relationship! [_ subject relation resource]
-    (spiceomic-write-relationships! conn opts
-                                    [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      [(->RelationshipUpdate :create (->Relationship subject relation resource))])))
 
   ;; Audit §13: these were declared on the protocol but unimplemented ->
   ;; AbstractMethodError at runtime.
   (write-relationship! [_ operation subject relation resource]
-    (spiceomic-write-relationships! conn opts
-                                    [(->RelationshipUpdate operation (->Relationship subject relation resource))]))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      [(->RelationshipUpdate operation (->Relationship subject relation resource))])))
 
   (write-relationship! [_ {:keys [operation subject relation resource]}]
-    (spiceomic-write-relationships! conn opts
-                                    [(->RelationshipUpdate operation (->Relationship subject relation resource))]))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      [(->RelationshipUpdate operation (->Relationship subject relation resource))])))
 
   (delete-relationship! [_ subject relation resource]
-    (spiceomic-write-relationships! conn opts
-                                    [(->RelationshipUpdate :delete (->Relationship subject relation resource))]))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      [(->RelationshipUpdate :delete (->Relationship subject relation resource))])))
 
   (delete-relationship! [_ {:keys [subject relation resource]}]
-    (spiceomic-write-relationships! conn opts
-                                    [(->RelationshipUpdate :delete (->Relationship subject relation resource))]))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-write-relationships! conn opts
+                                      [(->RelationshipUpdate :delete (->Relationship subject relation resource))])))
 
   (delete-relationships! [_ relationships]
-    (let [relationships' (if (map? relationships)
-                           (:data relationships)
-                           relationships)]
-      (spiceomic-write-relationships! conn opts
-                                      (for [rel relationships']
-                                        (->RelationshipUpdate :delete rel)))))
+    (with-client-schema-read schema-lock schema-state
+      (let [relationships' (if (map? relationships)
+                             (:data relationships)
+                             relationships)]
+        (spiceomic-write-relationships! conn opts
+                                        (for [rel relationships']
+                                          (->RelationshipUpdate :delete rel))))))
 
   (delete-object! [_ object]
-    (spiceomic-delete-object! conn opts object))
+    (with-client-schema-read schema-lock schema-state
+      (spiceomic-delete-object! conn opts object)))
 
   (lookup-resources [_ query]
-    (with-recursive-limits opts
-      (spiceomic-lookup-resources conn opts query)))
+    (with-client-schema-read schema-lock schema-state
+      (with-recursive-limits opts
+        (spiceomic-lookup-resources conn opts query))))
 
   (count-resources [_ query]
-    (with-recursive-limits opts
-      (spiceomic-count-resources (d/db conn) opts query)))
+    (with-client-schema-read schema-lock schema-state
+      (with-recursive-limits opts
+        (spiceomic-count-resources (d/db conn) opts query))))
 
   (lookup-subjects [_ query]
-    (with-recursive-limits opts
-      (spiceomic-lookup-subjects conn opts query)))
+    (with-client-schema-read schema-lock schema-state
+      (with-recursive-limits opts
+        (spiceomic-lookup-subjects conn opts query))))
+
+  (count-subjects [_ query]
+    (with-client-schema-read schema-lock schema-state
+      (with-recursive-limits opts
+        (spiceomic-count-subjects (d/db conn) opts query))))
 
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
@@ -593,7 +672,8 @@
     for list calls, e.g. {:max-derived-grants 1000000 :max-advanced-datoms 1000000
     :max-queued-work 1000000}. Deep pages of a recursive permission replay the
     traversal prefix, so a grant set approaching the default 100k trips the
-    ceiling on later pages while page 1 still succeeds. These are a memory bound.
+    ceiling on later pages while page 1 still succeeds. These are host-JVM
+    memory bounds; tune them only after representative heap/load tests.
   - :auto-migrate-v6 — opt-in automatic v6->v7 storage migration at startup.
     Construction fails with {:type :eacl/storage-version} when the database
     holds unmigrated v6 relationship entities (v7 would silently answer false/
@@ -643,7 +723,9 @@
   ;; silently answer every check with false/empty. Throws :eacl/storage-version
   ;; unless the DB is v7/fresh/stamped, or :auto-migrate-v6 opts into migration.
   (migrations/assert-storage-compatible! conn {:auto-migrate-v6 auto-migrate-v6})
-  (let [entid->object-id   (or entid->object-id
+  (let [schema-state       (atom (impl.indexed/make-schema-cache (d/db conn)))
+        schema-lock        (ReentrantReadWriteLock.)
+        entid->object-id   (or entid->object-id
                                (when entity->object-id
                                  (fn [db eid] (entity->object-id (d/entity db eid))))
                                (fn [db eid] (:eacl/id (d/entity db eid))))
@@ -664,6 +746,7 @@
                                              {:page-token-kid current-kid
                                               :available-kids (set (keys keyring))})))
         opts               {:object-id->ident object-id->ident
+                            :schema-state schema-state
                             :entid->object-id entid->object-id
                             :object-id->entid object-id->entid
                             :object->entid (fn [db {:keys [id]}]
@@ -680,4 +763,4 @@
                             :recursive-traversal-limits (when recursive-traversal-limits
                                                           (merge impl.indexed/default-recursive-traversal-limits
                                                                  recursive-traversal-limits))}]
-    (->Spiceomic conn opts)))
+    (->Spiceomic conn opts schema-state schema-lock)))

@@ -1388,33 +1388,14 @@
                                                        :resource/type :account
                                                        :first         2})))))))
 
-      ;; Regression: bare :last used to throw :eacl.pagination/unsupported-recursive-last
-      ;; while the acyclic engine accepted it, so adding `parent->read` to a
-      ;; schema turned every existing {:last n} caller into a runtime error.
-      ;; It now exhausts the traversal into a trailing window, like count-*.
-      (testing "bare recursive :last returns the trailing page, matching the acyclic contract"
-        (let [all  (paginated->spice db (lookup-resources db {:subject       user
-                                                              :permission    :read
-                                                              :resource/type :account
-                                                              :first         100}))
-              tail (lookup-resources db {:subject       user
-                                         :permission    :read
-                                         :resource/type :account
-                                         :last          2})]
-          (is (= (vec (take-last 2 all)) (paginated->spice db tail))
-              "bare :last is the last window of the traversal order")
-          (is (false? (get-in tail [:page-info :has-next-page?]))
-              "nothing follows the last page")
-          (is (true? (get-in tail [:page-info :has-previous-page?]))
-              "3 results, page size 2: an earlier page exists")
-          (testing "and :before composes backwards from it"
-            (is (= (vec (drop-last 2 all))
-                   (paginated->spice db
-                                     (lookup-resources db {:subject       user
-                                                           :permission    :read
-                                                           :resource/type :account
-                                                           :last          2
-                                                           :before        (page-start-cursor tail)})))))))
+      (testing "bare recursive :last rejects its implicit full-closure traversal"
+        (is (= :eacl.pagination/unsupported-recursive-last
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-resources db {:subject       user
+                                        :permission    :read
+                                        :resource/type :account
+                                        :last          2}))))))
 
       (testing "wrong cursor kind is rejected by recursive lookup"
         (is (= :eacl.pagination/wrong-cursor-kind
@@ -1479,34 +1460,35 @@
 
 (deftest permission-paths-caching-test
   (let [db (d/db *conn*)]
-    (testing "Caching of permission paths"
-      (impl.indexed/evict-permission-paths-cache!)
-
+    (testing "A client generation caches permission paths"
       (let [calc-calls (atom 0)
-            orig-calc impl.indexed/calc-permission-paths]
-        (with-redefs [impl.indexed/calc-permission-paths (fn [& args]
-                                                           (swap! calc-calls inc)
-                                                           (apply orig-calc args))]
-          ;; First call - should compute
-          (let [paths1 (impl.indexed/get-permission-paths db :account :view)]
-            (is (pos? (count paths1)))
-            (is (pos? @calc-calls) "Should have called calc-permission-paths")
+            orig-calc impl.indexed/calc-permission-paths
+            client-cache (assoc (impl.indexed/make-schema-cache db)
+                                :schema-version (d/squuid))]
+        (binding [impl.indexed/*schema-cache* client-cache]
+          (with-redefs [impl.indexed/calc-permission-paths (fn [& args]
+                                                             (swap! calc-calls inc)
+                                                             (apply orig-calc args))]
+            ;; First call - should compute
+            (let [paths1 (impl.indexed/get-permission-paths db :account :view)]
+              (is (pos? (count paths1)))
+              (is (pos? @calc-calls) "Should have called calc-permission-paths")
 
-            (reset! calc-calls 0)
+              (reset! calc-calls 0)
 
-            ;; Second call - should be cached
-            (let [paths2 (impl.indexed/get-permission-paths db :account :view)]
-              (is (pos? (count paths2)))
-              (is (= paths1 paths2))
-              (is (zero? @calc-calls) "Should use cache, not call calc-permission-paths")
+              ;; Second call - should be cached
+              (let [paths2 (impl.indexed/get-permission-paths db :account :view)]
+                (is (pos? (count paths2)))
+                (is (= paths1 paths2))
+                (is (zero? @calc-calls) "Should use cache, not call calc-permission-paths")
 
-              ;; Evict cache
-              (impl.indexed/evict-permission-paths-cache!)
+                ;; Evict this client generation
+                (impl.indexed/evict-permission-paths-cache!)
 
-              ;; Third call - should recompute
-              (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
-                (is (pos? (count paths3)))
-                (is (pos? @calc-calls) "Should call calc-permission-paths after eviction")))))))))
+                ;; Third call - should recompute
+                (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
+                  (is (pos? (count paths3)))
+                  (is (pos? @calc-calls) "Should call calc-permission-paths after eviction"))))))))))
 
 (deftest permission-paths-cache-is-scoped-per-database-test
   (with-mem-conn [conn1 schema/v7-schema]
@@ -1516,37 +1498,45 @@
       @(d/transact conn2 fixtures/relations+permissions)
       @(d/transact conn2 fixtures/entity-fixtures)
 
-      (impl.indexed/evict-permission-paths-cache!)
-
-      (impl.indexed/get-permission-paths (d/db conn1) :server :view)
-      (impl.indexed/get-permission-paths (d/db conn2) :server :view)
-
-      (is (= 2 (count @impl.indexed/permission-paths-cache))
-          "Permission path caching must not leak DB-specific relation eids across databases"))))
+      (let [db1 (d/db conn1)
+            db2 (d/db conn2)
+            cache1 (assoc (impl.indexed/make-schema-cache db1) :schema-version (d/squuid))
+            cache2 (assoc (impl.indexed/make-schema-cache db2) :schema-version (d/squuid))
+            paths1 (binding [impl.indexed/*schema-cache* cache1]
+                     (impl.indexed/get-permission-paths db1 :server :view))
+            paths2 (binding [impl.indexed/*schema-cache* cache2]
+                     (impl.indexed/get-permission-paths db2 :server :view))]
+        (is (= (count paths1) (count paths2)))
+        (is (not= (:database-id cache1) (:database-id cache2)))
+        (is (not (identical? (:permission-paths cache1)
+                             (:permission-paths cache2)))
+            "separate clients own separate cache generations")))))
 
 (deftest permission-paths-cache-is-scoped-per-schema-test
-  ;; Issue #74 contract: ONLY write-schema! invalidates the path cache — it
-  ;; bumps the :eacl/schema-version stamp the cache keys on, giving each
-  ;; schema era (including as-of views) its own cache slot. Programmatic
-  ;; edits of relation/permission datoms are deliberately NOT detected; they
-  ;; require write-schema! or a manual evict-permission-paths-cache!.
+  ;; Each client owns one generation. A client write swaps that generation;
+  ;; historic db values are evaluated only with an explicitly matching cache
+  ;; (or uncached through the low-level API).
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn "definition user {}
        definition account { relation owner: user  relation viewer: user
                             permission view = owner + viewer }")
-    (impl.indexed/evict-permission-paths-cache!)
     (let [db-before    (d/db conn)
-          before-paths (impl.indexed/get-permission-paths db-before :account :view)]
+          cache-before (impl.indexed/make-schema-cache db-before)
+          before-paths (binding [impl.indexed/*schema-cache* cache-before]
+                         (impl.indexed/get-permission-paths db-before :account :view))]
       (schema/write-schema! conn "definition user {}
          definition account { relation owner: user  relation viewer: user  relation auditor: user
                               permission view = owner + viewer + auditor }")
       (let [db-after         (d/db conn)
-            after-paths      (impl.indexed/get-permission-paths db-after :account :view)
-            historical-paths (impl.indexed/get-permission-paths db-before :account :view)]
+            cache-after      (impl.indexed/make-schema-cache db-after)
+            after-paths      (binding [impl.indexed/*schema-cache* cache-after]
+                               (impl.indexed/get-permission-paths db-after :account :view))
+            historical-paths (binding [impl.indexed/*schema-cache* cache-before]
+                               (impl.indexed/get-permission-paths db-before :account :view))]
         (is (< (count before-paths) (count after-paths)))
         (is (= before-paths historical-paths))
-        (is (= 2 (count @impl.indexed/permission-paths-cache))
-            "each schema-version era gets its own cache slot; an older db value must not see live-schema paths")))))
+        (is (not= (:schema-version cache-before) (:schema-version cache-after))
+            "write-schema! created a new generation stamp")))))
 
 (deftest string-object-id-resolution-test
   ;; d/entid on a bare string throws a raw IllegalArgumentException, which

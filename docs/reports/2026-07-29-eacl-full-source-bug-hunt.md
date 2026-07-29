@@ -7,6 +7,11 @@ verification of every finding on a **freshly started nREPL** (port 7788, `clojur
 (`indexed-test`, `spice-test`, `schema-test`, `config-test`, `parser-test`, `differential-test`,
 `v6-to-v7-test`, `schema-basis-test`). Every bug below is present with the suite fully green.
 
+> **Operator-review note:** the findings and first-pass recommendations below describe the
+> v7.3 baseline investigation. The [Remediation](#remediation-2026-07-29-branch-fix2026-07-29-cache-scope-dangling-tuples)
+> section records the revised lifecycle contract and supersedes the fingerprint/time-travel,
+> read-time ghost filtering, and recursive bare-`:last` recommendations.
+
 > Read alongside [2026-07-28-v7.3-cursor-frontier-review.md](2026-07-28-v7.3-cursor-frontier-review.md).
 > That review's findings 1–7, 9, 11 are fixed on this branch and are **not** repeated here.
 > Its finding 8 (silent-empty on unknown permission names) is re-raised only where a *new* variant
@@ -625,72 +630,60 @@ was executed against that REPL; findings 7, 11 and 12d/12e are code reads and ar
 
 | # | Status | Change |
 |---|---|---|
-| 1, 2 | **Fixed** | The permission-path cache scope is now an exact fingerprint of the EACL definition datoms in the queried `db` value (`attr-fingerprint` over the two `:db.unique/identity` composite tuples: count + entity hash + max tx — Datomic re-asserts a composite tuple with a fresh tx whenever any component changes), memoised on the `db` value itself. `d/with`, `d/filter`, unstamped and programmatically-edited databases each resolve against their own schema and cannot share a slot. Issue #74's requirement is preserved and now pinned by a test: an unrelated `d/transact` yields the same fingerprint, so no path is recomputed. `:eacl/schema-version` is retained but demoted to informational. |
-| 3 | **Fixed** | New `eacl/delete-object!` (protocol) / `impl/tx-delete-object` retracts both halves of every relationship touching an object, finding them from the object's own datoms *and* by exact `:avet` lookup per schema Relation — so it works before or after the entity is retracted. `impl/orphaned-relationship-halves` + `impl/tx-retract-orphaned-relationships` repair existing damage. The public `can?` no longer answers from a retracted entity's surviving half (`existing-eid` datom probe, closing the eid-as-external-id privilege escalation). README gained a "Deleting a permissioned entity" section and a Limitations entry. |
-| 4 | **Partly fixed** | `count-resources`/`count-subjects` on recursive permissions now do ONE traversal instead of replaying the prefix per `max-page-size` page (was `O(N²)` and tripped the limit long before a large grant set could be counted). Limits are configurable via `make-client`'s `:recursive-traversal-limits` (merged with defaults so a partial override cannot disable the rest), and the limit-exceeded message explains the deep-page cause and the fix. **The `O(N²)` page replay itself remains** — that needs the materialised-grants engine in `docs/plans/2026-05-17-recursive-pagination-effective-grants-plan.md`. Now documented in Limitations. |
+| 1, 2 | **Fixed (revised after operator review)** | Definition fingerprints and per-`db` cache scopes were removed. A connection-backed client reads `:eacl/schema-version` once from the canonical schema entity at construction and owns one in-memory permission-path generation. New `db` values caused by ordinary transactions perform no schema read, definition scan, cache-key work, or database-value retention. `eacl/write-schema!` through that client replaces the generation under a schema write lock; identical writes retain it. Arbitrary/historic/speculative low-level databases are uncached and cannot publish into a client. An unstamped fresh v7 database stays uncached until its first supported schema write; this is not a v6 compatibility mode. Out-of-band schema mutation is outside the lifecycle contract; `eacl.datomic.integrity/client-schema-status` provides an explicit one-entity mismatch diagnostic without taxing `can?`. |
+| 3 | **Fixed to the operator's contract** | Consumers remain responsible for calling `delete-relationships!` before `:db.fn/retractEntity`; EACL does not intercept Datomic or add per-candidate entity-existence probes to authorization reads. `eacl/delete-object!` / `impl/tx-delete-object` remains a convenience helper that retracts both halves. The public `eacl.datomic.integrity` namespace now exposes a bounded-memory dangling-half report and lazy batched repair transactions. |
+| 4 | **Count fixed; pagination redesign deferred** | Recursive `count-resources`/`count-subjects` do one traversal instead of page replay and accept `:count-limit` for an early, explicitly truncated result. `count-subjects` is now public. Recursive page enumeration still replays the traversal prefix and remains `O(N²/page-size)`: eliminating that while keeping stateless, bounded tokens requires the persisted effective-grant index in `docs/plans/2026-05-17-recursive-pagination-effective-grants-plan.md`. The current release documents that boundary and keeps hard heap-protection ceilings rather than pretending a larger limit is a performance solution. |
 | 5 | **Fixed** | Anchor check uses `some?` on the value, not `contains?` on the key; the error names the nil-valued keys. |
-| 6 | **Fixed** | Bare `:last` works for recursive permissions (`collect-trailing-items`), matching the acyclic contract. |
-| 7 | **Fixed** | `count-*` reduce instead of `doall`; the dead `:size` in the constructed page-req is gone. |
+| 6 | **Resolved by an explicit contract** | Bare recursive `:last` is rejected with `:eacl.pagination/unsupported-recursive-last`; implementing it by exhausting the closure was removed because it puts unbounded work on an ordinary page request. `:last` with `:before` remains supported for previous-page navigation. |
+| 7 | **Fixed** | `count-*` no longer `doall` or retain the realized head. Acyclic counts stream in constant application memory; recursive counts retain only their request-local, hard-capped traversal state. `:count-limit` stops both engines early and reports `:truncated?`. |
 | 8 | **Fixed** | `page-response` (and `relationship-page`) clamp both `has-*-page?` flags to false on an empty page, so `has-next-page?` always implies a usable `end-cursor`. A present-but-nil `:after`/`:before` now throws `:eacl.pagination/invalid-cursor` instead of silently restarting at page 1. |
 | 9 | **Fixed** | `impl/can?` map arity destructures and forwards to the 4-arity. |
 | 10 | **Fixed** | `:eacl/relationship-conflict`, `:eacl/unsupported-operation`, `:eacl/unauthorized` via `ex-info`. |
 | 11 | **Fixed** | `relationship-exists?` requires both halves; `:delete` retracts unconditionally (Datomic ignores absent retractions), so a half-pair is repairable by `:touch` and removable by `:delete`. |
-| 12 | **Fixed** (a, b, c, e) / **deferred** (d) | (a) `(.id ^datomic.Database db)` is hinted and now runs once per `db` value, not per call; the scope memo is a plain map (LRU hit bookkeeping cost ~6x a map lookup on the hottest path). (b) `traversal-permission?` is memoised under the same schema scope. (c) Element-wise tuple-prefix comparison — no per-datom vector allocation. (e) `frontier-permission-paths` dedupes by `path-frontier-identity`. (d) `find-relations`' relation-table scan is unchanged: bounded by schema size, and touching the `read-relationships` scan planner was more risk than the gain. |
+| 12 | **Fixed** (a, b, c, e) / **deferred** (d) | (a) Database identity/schema generation are captured once per client, not per `db` value; global LRU caches and hit bookkeeping were deleted. (b) `traversal-permission?` is memoised inside the same client generation. (c) Element-wise tuple-prefix comparison avoids per-datom vector allocation. (e) `frontier-permission-paths` dedupes by `path-frontier-identity`. (d) `find-relations`' relation-table scan is unchanged: bounded by schema size. |
 
-**Not done, deliberately.** Read-time filtering of ghost results from `lookup-resources`/`lookup-subjects`
-was considered and rejected for this change: it costs one datom probe per candidate row on every
-page, and doing it inside the recursive engine would shift emission ordinals and invalidate
-in-flight cursors. `delete-object!` plus the orphan repair pass fixes the data instead. The
-residual is that a database with existing orphans still lists them until repaired.
+**Not done, deliberately.** Read-time filtering of ghost results remains rejected: it costs
+existence probes on situated authorization reads and changes recursive emission ordinals.
+`retractEntity` is still available, dangling halves remain visible until repaired, and operators
+can now detect that state explicitly. Time travel is likewise not a connection-client goal.
 
 ### Verification
 
-Full suite on a **fresh** nREPL: **90 tests, 1636 assertions, 0 failures, 0 errors**
-(baseline before this change: 73 / 1297). New coverage: `object-deletion-test` (7 tests),
-`api-contract-test` (9), `schema-basis-test` gained the speculative-db, unstamped-database and
-scope-memo-cost contracts, and `differential-test` gained recursive **reverse** invariants —
-a path that previously had none (860 assertions in that namespace, up from ~360).
+Full suite on a **fresh** nREPL: **92 tests, 1656 assertions, 0 failures, 0 errors**
+(baseline before the PR: 73 / 1297). Coverage now pins client-lifecycle schema reads,
+generation replacement, out-of-band mismatch diagnostics, uncached arbitrary-db evaluation,
+bounded counts, the public `count-subjects` API, dangling-half audit/repair, and the explicit
+recursive bare-`:last` rejection.
 
-**Benchmarks.** Protocol: fresh JVM per version, `^:benchmark` suite only, two consecutive runs,
-second run reported (the first is JIT-dominated — first-run first-page medians ranged 2.3–2.7 ms
-on *both* versions, so any single-run comparison is meaningless here).
+**Benchmarks against v7.3 (`2ccc6c4`).** Protocol: separate nREPL/JVM per version, identical
+in-memory seed and query, warm-up before measurement. The heavy pagination suite was run twice;
+the second run is reported because the first is JIT-dominated.
 
 `multipath-pagination-benchmark`, 15 000 servers over a 4-arrow-path permission:
 
-| | before | after |
+| | v7.3 | v7.4 candidate |
 |---|---|---|
-| First page (`:first 50`) median / p95 | 1.36 / 2.26 ms | 1.34 / 1.95 ms |
-| Forward pagination, early / late / max page | 1.56 / 1.37 / 1.75 ms | 1.40 / 1.30 / 1.64 ms |
-| Reverse pagination, early / late / max page | 1.62 / 1.51 / 1.75 ms | 1.61 / 1.42 / 1.84 ms |
-| Deep-page medians, first / middle / last | 1.32 / 0.86 / 0.44 ms | 1.24 / 0.86 / 0.41 ms |
+| First page (`:first 50`) median / p95 | 1.18 / 1.92 ms | 1.21 / 1.90 ms |
+| Forward pagination, early / late / max page | 1.40 / 1.34 / 1.51 ms | 1.29 / 1.26 / 1.51 ms |
+| Reverse pagination, early / late / max page | 1.26 / 1.15 / 1.33 ms | 1.37 / 1.29 / 1.44 ms |
+| Deep-page medians, first / middle / last | 1.20 / 0.89 / 0.48 ms | 1.14 / 0.85 / 0.41 ms |
 | Traversal calls by depth (frontier effectiveness) | 282 / 184 / 79 | 282 / 184 / 79 |
 
-**Flat, within run-to-run noise, no regression.** The identical traversal-call counts confirm the
-frontier algorithm is untouched. Paging is dominated by index traversal (~282 scan calls for a
-50-row page), so cache-key overhead was never a large share of it.
+The mixed single-digit changes are within run-to-run timing noise; identical traversal-call
+counts confirm the acyclic pagination algorithm is unchanged.
 
-`can?` is where the cache change actually lands. Measured with identical version-agnostic code on
-a fresh JVM per version, median of 9 batches after warmup:
+`can?` is where the lifecycle cache lands. Hot figures are the median of nine 10,000-call batches
+on the second warmed run. The moving-connection figures are the median of 1,000 individual
+authorization calls, each made immediately after an unrelated transaction; transaction time is
+excluded. The larger schema has 311 relation/permission definition-index rows.
 
-| schema | | before | after | |
-|---|---|---|---|---|
-| 51 definitions | **public `eacl/can?`** | 2.90 µs | **2.24 µs** | **−23%** |
-| 601 definitions | **public `eacl/can?`** | 3.12 µs | **2.52 µs** | **−19%** |
-| 51 definitions | raw `impl.indexed/can?`, warm | 2.29 µs | **1.37 µs** | −40% |
-| 601 definitions | raw `impl.indexed/can?`, warm | 2.69 µs | **1.50 µs** | −44% |
-| 51 definitions | raw, a new `db` value every call | 2.34 µs | 3.42 µs | +46% |
-| 601 definitions | raw, a new `db` value every call | 2.54 µs | 15.67 µs | +518% |
+| definition rows | workload | v7.3 | v7.4 candidate | change |
+|---|---|---:|---:|---:|
+| 11 | hot public `eacl/can?` | 16.66 µs | 9.70 µs | **−42%** |
+| 311 | hot public `eacl/can?` | 16.95 µs | 9.43 µs | **−44%** |
+| 11 | new connection value before every `can?` | 22.50 µs | 16.54 µs | **−26%** |
+| 311 | new connection value before every `can?` | 22.04 µs | 12.63 µs | **−43%** |
 
-The public path is what applications call, and it is **19–23% faster** — even though finding 3
-added two datom existence probes to it. The cache work more than paid for them.
-
-The last two rows are the whole cost of exact scoping, stated plainly: a `db` value the memo has
-not seen pays one definition-index scan. "A new `db` value every call" means the database advances
-between *every single check*; the scan is bounded by schema size, never by data size, and 601
-definitions (60 definition blocks) is a deliberately extreme schema. The constant was already
-reduced ~4x during this work — direct index iteration instead of a seq walk (2x), and a plain-map
-memo instead of LRU hit bookkeeping (2x on the hit path).
-
-Pinned going forward by `permission-check-benchmark` (warm and cold `can?` medians, with
-thresholds) and by `schema-scope-is-computed-once-per-db-value-test`, which deterministically
-asserts the scan happens once per `db` value and not per call.
+The key result is the absence of schema-size growth on a moving connection: the candidate performs
+zero automatic schema reads or definition scans after construction. The committed heavy
+`permission-check-benchmark` also passes (warm 1.00 µs, explicitly cold paths 1.08 µs).
