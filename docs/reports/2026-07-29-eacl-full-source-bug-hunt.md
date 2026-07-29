@@ -633,7 +633,7 @@ was executed against that REPL; findings 7, 11 and 12d/12e are code reads and ar
 |---|---|---|
 | 1, 2 | **Fixed (revised after operator review)** | Definition fingerprints and per-`db` cache scopes were removed. A connection-backed client reads `:eacl/schema-version` once from the canonical schema entity at construction and owns one in-memory permission-path generation. New `db` values caused by ordinary transactions perform no schema read, definition scan, cache-key work, or database-value retention. `eacl/write-schema!` through that client replaces the generation under a schema write lock; identical writes retain it. Arbitrary/historic/speculative low-level databases are uncached and cannot publish into a client. An unstamped fresh v7 database stays uncached until its first supported schema write; this is not a v6 compatibility mode. Out-of-band schema mutation is outside the lifecycle contract; `eacl.datomic.integrity/client-schema-status` provides an explicit one-entity mismatch diagnostic without taxing `can?`. |
 | 3 | **Fixed to the operator's contract** | Consumers remain responsible for calling `delete-relationships!` before `:db.fn/retractEntity`; EACL does not intercept Datomic or add per-candidate entity-existence probes to authorization reads. `eacl/delete-object!` / `impl/tx-delete-object` remains a convenience helper that retracts both halves. The public `eacl.datomic.integrity` namespace now exposes a bounded-memory dangling-half report and lazy batched repair transactions. |
-| 4 | **Count fixed; pagination redesign deferred** | Recursive `count-resources`/`count-subjects` do one traversal instead of page replay and accept `:count-limit` for an early, explicitly truncated result. `count-subjects` is now public. Recursive page enumeration still replays the traversal prefix and remains `O(N²/page-size)`: eliminating that while keeping stateless, bounded tokens requires the persisted effective-grant index in `docs/plans/2026-05-17-recursive-pagination-effective-grants-plan.md`. The current release documents that boundary and keeps hard heap-protection ceilings rather than pretending a larger limit is a performance solution. |
+| 4 | **Fixed with an ephemeral continuation cache** | Recursive `count-resources`/`count-subjects` do one traversal and accept `:count-limit`. Recursive pages now admit bounded, expiring traversal continuations keyed to the token's exact database/schema/query/basis/edge. Sequential cache hits advance the traversal approximately linearly; eviction, disabled caching, alternate Peers, provider failure, and oversized entries replay the authenticated ordinal against `d/as-of` and return the same page. Already produced pages accelerate backward navigation. No effective-grant tuples, marker datoms, or schema attributes are installed. |
 | 5 | **Fixed** | Anchor check uses `some?` on the value, not `contains?` on the key; the error names the nil-valued keys. |
 | 6 | **Resolved by an explicit contract** | Bare recursive `:last` is rejected with `:eacl.pagination/unsupported-recursive-last`; implementing it by exhausting the closure was removed because it puts unbounded work on an ordinary page request. `:last` with `:before` remains supported for previous-page navigation. |
 | 7 | **Fixed** | `count-*` no longer `doall` or retain the realized head. Acyclic counts stream in constant application memory; recursive counts retain only their request-local, hard-capped traversal state. `:count-limit` stops both engines early and reports `:truncated?`. |
@@ -646,7 +646,8 @@ was executed against that REPL; findings 7, 11 and 12d/12e are code reads and ar
 **Not done, deliberately.** Read-time filtering of ghost results remains rejected: it costs
 existence probes on situated authorization reads and changes recursive emission ordinals.
 `retractEntity` is still available, dangling halves remain visible until repaired, and operators
-can now detect that state explicitly. Time travel is likewise not a connection-client goal.
+can now detect that state explicitly. General time travel is likewise not a connection-client goal;
+the existing public pagination contract still reconstructs its own authenticated historical basis.
 
 ### Verification
 
@@ -688,3 +689,54 @@ excluded. The larger schema has 311 relation/permission definition-index rows.
 The key result is the absence of schema-size growth on a moving connection: the candidate performs
 zero automatic schema reads or definition scans after construction. The committed heavy
 `permission-check-benchmark` also passes (warm 1.00 µs, explicitly cold paths 1.08 µs).
+
+### Intelligent-cache follow-up (2026-07-30)
+
+Relationship-cache coherence is implemented at EACL's supported mutation interaction points, not
+by reading the Datomic transaction log or keying entries by `basis-t`. Relationship helpers hold a
+coordinator mutation barrier around their existing transaction. The transaction report already
+returned by that write is inspected for actual v7 relationship tuple datoms; only a real change
+advances the epoch of the changed relation definition. No-op relationship writes, relationship
+changes outside a permission's dependency set, and unrelated application transactions therefore
+preserve eligible live cache entries without extra reads.
+
+The default cache accelerates exact-basis cursor pages and recursive continuations. Those entries
+are safe without a relationship barrier because the authenticated cursor reconstructs the original
+database basis. Cross-request memoization of a new live non-recursive query is opt-in with
+`:cache {:live-lookups? true}` and requires every relevant relationship writer to share its
+coordinator. With live memoization disabled—the default—ordinary lookups take no relationship read
+lock. Separate processes need explicit shared coordination before enabling live memoization;
+otherwise they remain correct through the uncached indexed path.
+
+The completed follow-up suite passes on nREPL: **111 tests, 1752 assertions, 0 failures, 0 errors**.
+The heavy suite passes separately: **3 tests, 3228 assertions, 0 failures, 0 errors**.
+
+Fresh-JVM 15,000-resource pagination comparison:
+
+| workload | v7.3 | candidate, default cache | candidate, cache disabled |
+|---|---:|---:|---:|
+| First page median / p95 | 2.77 / 4.24 ms | 2.43 / 4.59 ms | 2.97 / 5.03 ms |
+| Forward early / late / max-page median | 2.41 / 2.20 / 2.87 ms | 0.61 / 0.54 / 2.74 ms | 2.72 / 2.01 / 2.92 ms |
+| Reverse early / late / max-page median | 2.20 / 2.05 / 2.32 ms | 0.39 / 0.36 / 2.65 ms | 2.11 / 1.95 / 2.65 ms |
+| Deep first / middle / last-page median | 1.82 / 1.39 / 0.69 ms | 1.55 / 0.26 / 0.30 ms | 1.81 / 0.99 / 0.54 ms |
+
+All three variants made the same **282 / 184 / 79** traversal calls at the sampled first, middle,
+and final depths. Disabled-cache timings remain in the v7.3 range; the default cache makes repeated
+exact-cursor pages cheaper without changing traversal results.
+
+With opt-in live memoization on the same 15,000-resource seed, warmed
+`lookup-resources` / `lookup-subjects` hit medians were **0.124 / 0.082 ms**. Advancing the
+connection with an unrelated transaction before every measured lookup left the entries valid at
+**0.147 / 0.096 ms**; transaction time was excluded. Tests additionally prove that a relationship
+write outside the permission's dependency set stays hot, while direct, arrow-source, and nested
+target-permission relation changes invalidate the affected page.
+
+A complete first walk of a 500-resource recursive chain (`:first 25`, 2,000 unrelated entities)
+took **86.58 ms on v7.3**, **61.50 ms with the candidate cache disabled**, and **15.41 ms with
+continuations enabled** in the comparison runs. Wall-clock figures are host/JIT-sensitive, so the
+regression test also checks deterministic work: enabled pagination returns the same 500 resources
+while deriving less than half the grants of ordinal replay.
+
+No Datomic schema file changed, and the cache adds no effective-grant, generation, marker, page, or
+continuation datoms to the consumer database. Storage is bounded ephemeral memory by default,
+fully disableable, and replaceable through the cache-store protocol.

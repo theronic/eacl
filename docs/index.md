@@ -38,7 +38,7 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 # What is EACL good for?
 
 - EACL is suitable for Clojure & Datomic Pro and Datomic Cloud applications.
-- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range`, `d/seek-datoms`, and `d/rseek-datoms` for acyclic paths, while recursive permission pagination uses deterministic traversal order with request-local dedupe instead of persisted grant caches.
+- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range`, `d/seek-datoms`, and `d/rseek-datoms` for acyclic paths, while recursive permission pagination uses deterministic traversal order with bounded ephemeral continuations instead of persisted grant caches.
 - EACL performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
 - EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 

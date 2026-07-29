@@ -173,6 +173,33 @@
         (is (some? (idx/schema-version (d/db conn))))
         (is (true? (eacl/can? acl u :admin a)))))))
 
+(deftest unstamped-client-does-not-cache-lookup-results-test
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn [(Relation :account :owner :user)
+                       (Permission :account :admin {:relation :owner})])
+    (seed-owner! conn)
+    (let [acl (core/make-client conn {:cache {:live-lookups? true}})
+          query {:subject (spice-object :user "u")
+                 :permission :admin
+                 :resource/type :account}
+          calls (atom 0)
+          lookup-resources impl/lookup-resources]
+      (with-redefs [impl/lookup-resources
+                    (fn [db internal-query]
+                      (swap! calls inc)
+                      (lookup-resources db internal-query))]
+        (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
+        @(d/transact conn [{:eacl/id "unrelated"}])
+        (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
+        (is (= 2 @calls)
+            "an unstamped schema remains uncached even when live lookups are requested")
+
+        (eacl/write-schema! acl schema-v1)
+        (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
+        (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
+        (is (= 3 @calls)
+            "the first supported schema write enables the client result cache")))))
+
 (deftest out-of-band-schema-write-requires-a-new-client-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)

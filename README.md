@@ -42,14 +42,21 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- Presently, EACL has _no result cache_ because graph traversal is fast enough over Datomic's aggressive datom caching even for ~1M permissioned resources. A cache is planned and once it lands, should bring query latency down to ~1-2ms per API call, even for large pages.
+- EACL has one optional, bounded ephemeral lookup cache. Recursive page cursors retain a
+  basis-pinned continuation so a linear walk advances the traversal instead of replaying its
+  prefix. Missing, evicted, disabled, oversized, or unavailable entries fall back to the same
+  historical ordinal replay and therefore cannot change an answer.
+- Non-recursive pages can use the same store when `:cache {:live-lookups? true}` is configured.
+  Live entries are keyed by EACL's schema generation and the mutation epochs of only the relation
+  definitions used by the permission, not Datomic `basis-t`, so unrelated application transactions
+  and relationship writes outside that dependency set leave them hot.
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
   - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. EACL does not provide time-travel semantics for a connection-backed client, and speculative/historic evaluation cannot publish paths into its cache.
   - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
-- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe; they avoid materializing the full closure, but late pages replay the traversal prefix instead of seeking directly to a global sort key. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. A cache hit resumes the previous state, making a sequential walk approximately linear in traversed work; a miss replays the prefix. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 *Note* that EACL v7.3 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself, and you must hold **one** `db` value for the whole paginated walk: internal cursor maps embed per-path frontiers (including `:exhausted` markers) that are only valid against the basis that minted them. Reusing a cursor against a newer `(d/db conn)` can silently skip results written after the first page — the token layer prevents this by pinning `d/as-of` for you.
 
@@ -491,6 +498,53 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 `make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` (a silently dropped ID-coercion key would mean silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) is a deprecated alias for `:entid->object-id`; supplying both throws. Page tokens expire after 5 minutes by default; tune with `:page-token-ttl-seconds`.
 
+### Lookup cache configuration
+
+Recursive cursor continuations use a bounded 16 MiB local cache by default. Disable all result and
+continuation caching without changing behavior:
+
+```clojure
+(def acl (eacl.datomic.core/make-client conn {:cache false}))
+```
+
+Capacity and lifetime are consumer-controlled:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:cache {:max-weight (* 64 1024 1024)
+            :max-entry-weight (* 8 1024 1024)
+            :max-entries 4096
+            :ttl-ms 300000}}))
+```
+
+Cache TTL is clamped to the page-token TTL. Oversized entries are rejected and replayed rather than
+allowed to threaten the host heap.
+
+Live non-recursive result memoization is opt-in:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:cache {:live-lookups? true}}))
+```
+
+EACL clients in one JVM share a relationship coordinator for the same Datomic database. All
+relationship helpers hold its mutation barrier across their transaction and advance only the
+changed relation-definition epochs after an actual relationship tuple change. Unrelated Datomic
+transactions, relationship no-ops, and changes to relations outside a cached permission's
+dependency set do not expire that entry.
+
+In a multi-process deployment, enable live result memoization only when every EACL reader and
+writer uses a shared `eacl.datomic.cache/RelationshipCoordinator`; otherwise leave
+`:live-lookups?` false. Separate processes cannot invalidate private memory without a communication
+channel. Recursive cursor continuations remain safe locally in either configuration because their
+tokens pin the original Datomic basis; another Peer simply replays when it does not have the entry.
+Custom stores implement `eacl.datomic.cache/CacheStore` and may use local memory, a separate
+ephemeral Datomic database, or a shared cache without adding attributes to the consumer database.
+
 `:recursive-traversal-limits` tunes hard safety ceilings on recursive permission traversal (see [Limitations](#limitations-deficiencies--gotchas)):
 
 ```clojure
@@ -661,9 +715,17 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- *No cache:* EACL does not presently have a result cache, because Datomic Peers cache datoms aggressively and queries so far are fast enough. A cache is planned. (Resolved *permission paths* are cached — see [Performance](#performance).)
+- *Cache coherence is explicit across processes:* recursive cursor continuations are always safe,
+  but live non-recursive result memoization requires every relationship writer to share its
+  coordinator. Leave `:live-lookups?` false when that cannot be guaranteed.
 - *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
-- *Recursive permissions do not paginate cheaply:* a permission that transitively depends on itself (`permission read = reader + parent->read`) is evaluated in traversal order, and each page resumes by replaying the traversal prefix and discarding results up to the cursor. Enumerating `N` results is therefore `O(N²/page-size)`. Fixing that without moving unbounded traversal state into page tokens requires a persisted effective-grant index; see `docs/plans/2026-05-17-recursive-pagination-effective-grants-plan.md`. Until then, bare recursive `:last` is rejected, recursive work has hard heap-protection ceilings, and counts use one traversal rather than page replay. Use `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load tests. Acyclic pages seek from cursor frontiers and do not have this replay cost.
+- *Recursive cache misses replay:* a permission that transitively depends on itself
+  (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
+  hits resume the traversal and avoid `O(N²/page-size)` enumeration. Cache misses remain correct by
+  replaying to the authenticated ordinal, so a repeatedly evicted or disabled cache can still pay
+  the earlier quadratic aggregate CPU cost. Recursive work retains hard heap-protection ceilings,
+  and counts use one traversal. Use `:count-limit` to bound count work; do not raise
+  `:recursive-traversal-limits` without JVM load tests.
 - *Return order:* Acyclic EACL lookups enumerate in Datomic eid order and relationship reads enumerate in tuple-index order. Recursive lookups enumerate in deterministic traversal order. SpiceDB returns results in discovery or schema order. You should not rely on either system's order as a domain sort order.
 
 ## How to Run All Tests

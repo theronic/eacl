@@ -355,7 +355,8 @@
    {:database-id (str (.id ^datomic.Database db))
     :schema-version known-schema-version
     :permission-paths (atom {})
-    :traversal-permissions (atom {})}))
+    :traversal-permissions (atom {})
+    :relationship-dependencies (atom {})}))
 
 (defn- permission-paths-cache-key
   [resource-type permission-name]
@@ -370,6 +371,7 @@
   ([schema-cache]
    (reset! (:permission-paths schema-cache) {})
    (reset! (:traversal-permissions schema-cache) {})
+   (reset! (:relationship-dependencies schema-cache) {})
    nil))
 
 (defn calc-permission-paths
@@ -476,6 +478,69 @@
 (defn- permission-query-node
   [resource-type permission-name]
   [resource-type permission-name])
+
+(defn- calc-permission-relationship-eids
+  [db resource-type permission-name]
+  (loop [stack [(permission-query-node resource-type permission-name)]
+         seen #{}
+         relationship-eids #{}]
+    (if-let [[node-resource-type node-permission :as node] (peek stack)]
+      (if (contains? seen node)
+        (recur (pop stack) seen relationship-eids)
+        (let [paths (get-permission-paths db node-resource-type node-permission)
+              next-nodes
+              (keep (fn [path]
+                      (case (:type path)
+                        :self-permission
+                        (permission-query-node node-resource-type
+                                               (:target-permission path))
+
+                        :arrow
+                        (when-let [target-permission (:target-permission path)]
+                          (permission-query-node (:target-type path)
+                                                 target-permission))
+
+                        nil))
+                    paths)
+              relationship-eids'
+              (reduce
+               (fn [result path]
+                 (cond-> result
+                   (:relation-eid path)
+                   (conj (:relation-eid path))
+
+                   (:via-relation-eid path)
+                   (conj (:via-relation-eid path))
+
+                   (seq (:sub-paths path))
+                   (into (keep :relation-eid (:sub-paths path)))))
+               relationship-eids
+               paths)]
+          (recur (into (pop stack) next-nodes)
+                 (conj seen node)
+                 relationship-eids')))
+      relationship-eids)))
+
+(defn permission-relationship-eids
+  "Returns the relation-definition eids whose relationship tuples can affect
+  one permission lookup. A stamped client memoises the set for its schema
+  generation; raw and unstamped evaluation recomputes it."
+  [db resource-type permission-name]
+  (if-not (some? (:schema-version *schema-cache*))
+    (calc-permission-relationship-eids db resource-type permission-name)
+    (let [cache-key (permission-paths-cache-key resource-type permission-name)
+          cache-atom (:relationship-dependencies *schema-cache*)
+          snapshot @cache-atom]
+      (if (contains? snapshot cache-key)
+        (get snapshot cache-key)
+        (let [dependencies
+              (calc-permission-relationship-eids
+               db resource-type permission-name)]
+          (get (swap! cache-atom
+                      #(if (contains? % cache-key)
+                         %
+                         (assoc % cache-key dependencies)))
+               cache-key))))))
 
 (defn- permission-query-dependencies
   [db [resource-type permission-name]]
@@ -621,6 +686,18 @@
   default-recursive-traversal-limits)
 
 (def ^:dynamic *recursive-traversal-stats* nil)
+
+(def ^:dynamic *recursive-continuation-cache*
+  "Optional callbacks bound by the connection-backed public client.
+
+  {:get  (fn [edge] continuation-or-nil)
+   :evict! (fn [edge] ...)
+   :put! (fn [edge continuation weight] ...)
+   :get-page (fn [page-key] page-or-nil)
+   :put-page! (fn [page-key page weight] ...)}
+
+  Raw/arbitrary-db evaluation leaves this nil and always uses ordinal replay."
+  nil)
 
 (defn- recursive-traversal-error!
   [message data]
@@ -788,6 +865,91 @@
           (get-in item [:cursor :result :type]))
        (= (get-in bound [:result :eid])
           (get-in item [:cursor :result :eid]))))
+
+(defn- continuation-weight
+  [state]
+  ;; Conservative retained-work estimate. Cache bounds are admission controls,
+  ;; not claims about exact JVM object layout.
+  (+ 2048
+     (* 128 (count (:queue state)))
+     (* 96 (count (:seen-grants state)))
+     (* 64 (count (:emitted-root state)))
+     (* 64 (count (:emitted-subjects state)))
+     (* 96 (count (:seen-goals state)))
+     (* 128 (count (:grants-by-goal state)))
+     (* 128 (count (:consumers state)))))
+
+(defn- cached-continuation
+  [bound direction result-kind]
+  (when-let [get-continuation (:get *recursive-continuation-cache*)]
+    (when-let [{:keys [engine-version state] :as continuation}
+               (try
+                 (get-continuation bound)
+                 (catch Throwable _
+                   nil))]
+      (when (and (= recursive-engine-version engine-version)
+                 (= direction (:direction continuation))
+                 (= result-kind (:result-kind continuation))
+                 (= bound (:bound continuation))
+                 (= (inc (:ordinal bound)) (:ordinal state)))
+        ;; A linear walk retains one growing state, not one state per page.
+        ;; Retrying/branching from the consumed cursor safely replays.
+        (when-let [evict-continuation! (:evict! *recursive-continuation-cache*)]
+          (try
+            (evict-continuation! bound)
+            (catch Throwable _
+              nil)))
+        (inc-stat! :continuation-hits)
+        continuation))))
+
+(defn- store-continuation!
+  [edge direction result-kind state]
+  (when-let [put-continuation! (:put! *recursive-continuation-cache*)]
+    (try
+      (put-continuation!
+       edge
+       {:engine-version recursive-engine-version
+        :direction direction
+        :result-kind result-kind
+        :bound edge
+        :state state}
+       (continuation-weight state))
+      (catch Throwable _
+        false))))
+
+(defn- recursive-page-key
+  [direction result-kind end-ordinal size]
+  [direction result-kind end-ordinal size])
+
+(defn- cached-recursive-page
+  [direction result-kind bound size]
+  (when-let [get-page (:get-page *recursive-continuation-cache*)]
+    (when-let [page (try
+                      (get-page
+                       (recursive-page-key direction
+                                           result-kind
+                                           (dec (:ordinal bound))
+                                           size))
+                      (catch Throwable _
+                        nil))]
+      (when (and (map? page)
+                 (vector? (:data page))
+                 (<= (count (:data page)) size)
+                 (= (dec (:ordinal bound))
+                    (get-in page [:page-info :end-cursor :ordinal])))
+        (inc-stat! :recursive-page-hits)
+        page))))
+
+(defn- store-recursive-page!
+  [direction result-kind size page]
+  (when-let [put-page! (:put-page! *recursive-continuation-cache*)]
+    (when-let [end-ordinal (get-in page [:page-info :end-cursor :ordinal])]
+      (try
+        (put-page! (recursive-page-key direction result-kind end-ordinal size)
+                   page
+                   (+ 512 (* 192 (count (:data page)))))
+        (catch Throwable _
+          false)))))
 
 (defn- valid-cursor-eid?
   [eid]
@@ -995,9 +1157,12 @@
   [db root-node result-type state bound size]
   (loop [state state
          mode (if bound :seek :collect)
-         items []]
+         items []
+         page-end-state nil]
     (if (>= (count items) (inc size))
-      {:items items :complete? false}
+      {:items items
+       :complete? false
+       :page-end-state page-end-state}
       (let [[state' item] (next-forward-item db root-node result-type state)]
         (cond
           (nil? item)
@@ -1006,17 +1171,19 @@
              "Recursive traversal cursor no longer exists."
              {:eacl/error :eacl.pagination/stale-cursor
               :bound bound})
-            {:items items :complete? true})
+            {:items items
+             :complete? true
+             :page-end-state page-end-state})
 
           (= mode :seek)
           (let [ordinal (get-in item [:cursor :ordinal])]
             (cond
               (< ordinal (:ordinal bound))
-              (recur state' :seek items)
+              (recur state' :seek items page-end-state)
 
               (= ordinal (:ordinal bound))
               (if (same-recursive-bound-result? bound item)
-                (recur state' :collect items)
+                (recur state' :collect items page-end-state)
                 (recursive-traversal-error!
                  "Recursive traversal cursor points at a different result."
                  {:eacl/error :eacl.pagination/stale-cursor
@@ -1031,7 +1198,13 @@
                 :actual (:cursor item)})))
 
           :else
-          (recur state' :collect (conj items item)))))))
+          (let [items' (conj items item)]
+            (recur state'
+                   :collect
+                   items'
+                   (if (<= (count items') size)
+                     state'
+                     page-end-state))))))))
 
 (defn- collect-forward-before
   [db root-node result-type state bound size]
@@ -1109,27 +1282,39 @@
         subject-eid (object-eid db (:id subject))
         result-type (:resource/type query)
         root-node (permission-query-node result-type permission)
-        state (when subject-eid
-                (initial-forward-state db subject-type subject-eid root-node))]
+        continuation (when (and bound (= :asc direction))
+                       (cached-continuation bound :forward :resource))
+        state (or (:state continuation)
+                  (when subject-eid
+                    (initial-forward-state db subject-type subject-eid root-node)))
+        replay-bound (when-not continuation bound)]
     (if-not state
       (page-response {:items []
                       :has-next? false
                       :has-previous? (boolean bound)})
       (case direction
         :asc
-        (let [{:keys [items complete?]} (collect-forward-after db root-node result-type state bound size)
-              page-items (take size items)
-              has-sentinel? (> (count items) size)]
-          (page-response {:items page-items
-                          :has-next? (and has-sentinel? (not complete?))
-                          :has-previous? (boolean bound)}))
+        (let [{:keys [items complete? page-end-state]}
+              (collect-forward-after db root-node result-type state replay-bound size)
+              page-items (vec (take size items))
+              has-sentinel? (> (count items) size)
+              page (page-response {:items page-items
+                                   :has-next? (and has-sentinel? (not complete?))
+                                   :has-previous? (boolean bound)})]
+          (when-let [end-edge (some-> page-items last :cursor)]
+            (store-continuation! end-edge :forward :resource page-end-state))
+          (store-recursive-page! :forward :resource size page)
+          page)
 
         :desc
-        (let [{:keys [items has-sentinel?]}
-              (collect-forward-before db root-node result-type state bound size)]
-          (page-response {:items items
-                          :has-next? true
-                          :has-previous? has-sentinel?}))))))
+        (or (cached-recursive-page :forward :resource bound size)
+            (let [{:keys [items has-sentinel?]}
+                  (collect-forward-before db root-node result-type state bound size)
+                  page (page-response {:items items
+                                       :has-next? true
+                                       :has-previous? has-sentinel?})]
+              (store-recursive-page! :forward :resource size page)
+              page))))))
 
 (defn- rules-by-node
   [rules]
@@ -1321,9 +1506,12 @@
   [db root-node root-resource-eid result-type state bound size]
   (loop [state state
          mode (if bound :seek :collect)
-         items []]
+         items []
+         page-end-state nil]
     (if (>= (count items) (inc size))
-      {:items items :complete? false}
+      {:items items
+       :complete? false
+       :page-end-state page-end-state}
       (let [[state' item] (next-reverse-item db root-node root-resource-eid result-type state)]
         (cond
           (nil? item)
@@ -1332,17 +1520,19 @@
              "Recursive traversal cursor no longer exists."
              {:eacl/error :eacl.pagination/stale-cursor
               :bound bound})
-            {:items items :complete? true})
+            {:items items
+             :complete? true
+             :page-end-state page-end-state})
 
           (= mode :seek)
           (let [ordinal (get-in item [:cursor :ordinal])]
             (cond
               (< ordinal (:ordinal bound))
-              (recur state' :seek items)
+              (recur state' :seek items page-end-state)
 
               (= ordinal (:ordinal bound))
               (if (same-recursive-bound-result? bound item)
-                (recur state' :collect items)
+                (recur state' :collect items page-end-state)
                 (recursive-traversal-error!
                  "Recursive traversal cursor points at a different result."
                  {:eacl/error :eacl.pagination/stale-cursor
@@ -1357,7 +1547,13 @@
                 :actual (:cursor item)})))
 
           :else
-          (recur state' :collect (conj items item)))))))
+          (let [items' (conj items item)]
+            (recur state'
+                   :collect
+                   items'
+                   (if (<= (count items') size)
+                     state'
+                     page-end-state))))))))
 
 (defn- collect-reverse-before
   [db root-node root-resource-eid result-type state bound size]
@@ -1419,27 +1615,39 @@
         resource-eid (object-eid db (:id resource))
         subject-type (:subject/type query)
         root-node (permission-query-node resource-type permission)
-        state (when resource-eid
-                (initial-reverse-state db subject-type root-node resource-eid))]
+        continuation (when (and bound (= :asc direction))
+                       (cached-continuation bound :reverse :subject))
+        state (or (:state continuation)
+                  (when resource-eid
+                    (initial-reverse-state db subject-type root-node resource-eid)))
+        replay-bound (when-not continuation bound)]
     (if-not state
       (page-response {:items []
                       :has-next? false
                       :has-previous? (boolean bound)})
       (case direction
         :asc
-        (let [{:keys [items complete?]} (collect-reverse-after db root-node resource-eid subject-type state bound size)
-              page-items (take size items)
-              has-sentinel? (> (count items) size)]
-          (page-response {:items page-items
-                          :has-next? (and has-sentinel? (not complete?))
-                          :has-previous? (boolean bound)}))
+        (let [{:keys [items complete? page-end-state]}
+              (collect-reverse-after db root-node resource-eid subject-type state replay-bound size)
+              page-items (vec (take size items))
+              has-sentinel? (> (count items) size)
+              page (page-response {:items page-items
+                                   :has-next? (and has-sentinel? (not complete?))
+                                   :has-previous? (boolean bound)})]
+          (when-let [end-edge (some-> page-items last :cursor)]
+            (store-continuation! end-edge :reverse :subject page-end-state))
+          (store-recursive-page! :reverse :subject size page)
+          page)
 
         :desc
-        (let [{:keys [items has-sentinel?]}
-              (collect-reverse-before db root-node resource-eid subject-type state bound size)]
-          (page-response {:items items
-                          :has-next? true
-                          :has-previous? has-sentinel?}))))))
+        (or (cached-recursive-page :reverse :subject bound size)
+            (let [{:keys [items has-sentinel?]}
+                  (collect-reverse-before db root-node resource-eid subject-type state bound size)
+                  page (page-response {:items items
+                                       :has-next? true
+                                       :has-previous? has-sentinel?})]
+              (store-recursive-page! :reverse :subject size page)
+              page))))))
 
 (declare traverse-permission-path lookup-subject-eids* can*)
 

@@ -491,7 +491,7 @@
             (is (false? (get-in last-page [:page-info :has-next-page?])))))))))
 
 (deftest ^:benchmark recursive-traversal-prefix-benchmark
-  (testing "Recursive traversal pagination does reachable-prefix work, not candidate-universe work"
+  (testing "Recursive continuation pagination advances reachable work without prefix replay"
     (with-mem-conn [conn []]
       (let [acl (seed-recursive-chain! conn {:chain-length 250
                                              :unrelated-count 2000})
@@ -518,9 +518,11 @@
         (is (<= (:emitted-results @stats1) 26))
         (is (< (:advanced-stream-datoms @stats1) 100)
             "first page should not scan the unrelated candidate universe")
-        (is (> (:advanced-stream-datoms @stats2)
-               (:advanced-stream-datoms @stats1))
-            "second page replays a deeper traversal prefix")
+        (is (= 1 (:continuation-hits @stats2))
+            "second page resumes the first page's bounded continuation")
+        (is (<= (:advanced-stream-datoms @stats2)
+                (:advanced-stream-datoms @stats1))
+            "second page advances new work instead of replaying a deeper prefix")
         (is (< (:advanced-stream-datoms @stats2) 200)
             "second page work should still be bounded by the reachable prefix")))))
 
