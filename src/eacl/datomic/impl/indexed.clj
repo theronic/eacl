@@ -18,7 +18,7 @@
 (def ^:private max-page-size 10000)
 (def ^:private lookup-frontier-version 1)
 
-(defn- object-eid
+(defn object-eid
   "Resolves an object id to an eid for read paths. String ids resolve via the
   canonical [:eacl/id ...] identity — d/entid on a bare string throws a raw
   IllegalArgumentException, which leaked out of can?/lookups for raw-impl
@@ -63,7 +63,21 @@
       (page-error! ":after is valid only with :first." {:after (:after query)})
 
       (and has-before? (not has-last?))
-      (page-error! ":before is valid only with :last." {:before (:before query)}))
+      (page-error! ":before is valid only with :last." {:before (:before query)})
+
+      ;; A present-but-nil boundary used to mean "start over", so a client
+      ;; looping on a page-info that carried a nil cursor silently restarted at
+      ;; page 1 forever. Absent means first page; nil means the caller lost
+      ;; their cursor and must be told.
+      (and has-after? (nil? (:after query)))
+      (page-error! ":after was passed as nil. Omit it for the first page."
+                   {:eacl/error :eacl.pagination/invalid-cursor
+                    :key :after})
+
+      (and has-before? (nil? (:before query)))
+      (page-error! ":before was passed as nil. Omit it for the last page."
+                   {:eacl/error :eacl.pagination/invalid-cursor
+                    :key :before}))
 
     (let [direction (if has-last? :desc :asc)
           size (or (when has-first? (:first query))
@@ -152,11 +166,15 @@
    :has-previous-page? (boolean has-previous?)})
 
 (defn- page-response
+  "An empty page carries no cursors, so it can advertise neither direction:
+  `has-next-page? true` with a nil `end-cursor` gave clients a loop they could
+  not exit. Both flags are therefore clamped to false when there are no items."
   [{:keys [items has-next? has-previous?]}]
-  {:data (mapv :node items)
-   :page-info (page-info {:items items
-                          :has-next? has-next?
-                          :has-previous? has-previous?})})
+  (let [any? (boolean (seq items))]
+    {:data (mapv :node items)
+     :page-info (page-info {:items items
+                            :has-next? (and any? has-next?)
+                            :has-previous? (and any? has-previous?)})}))
 
 (defn- lookup-items
   [result-type eids frontier-direction path-frontiers]
@@ -177,17 +195,21 @@
                             :desc (or bound-eid Long/MAX_VALUE)))
         datoms      (case direction
                       :asc (d/seek-datoms db :eavt subject-eid attr-eid start-tuple)
-                      :desc (d/rseek-datoms db :eavt subject-eid attr-eid start-tuple))]
+                      :desc (d/rseek-datoms db :eavt subject-eid attr-eid start-tuple))
+        skip-bound? (boolean (and bound-eid (not inclusive-bound?)))]
     (->> datoms
+         ;; Element-wise prefix comparison. `(= prefix (subvec (vec v) 0 3))`
+         ;; allocated two vectors for every datom scanned, in the innermost
+         ;; loop of the whole engine; the semantics are identical.
          (take-while
           (fn [datom]
             (let [v (:v datom)]
               (and (== subject-eid (:e datom))
                    (== attr-eid (:a datom))
-                   (= prefix (subvec (vec v) 0 3))))))
-         (drop-while #(and bound-eid
-                           (not inclusive-bound?)
-                           (= bound-eid (nth (:v %) 3))))
+                   (= subject-type (nth v 0))
+                   (= relation-eid (nth v 1))
+                   (= resource-type (nth v 2))))))
+         (drop-while #(and skip-bound? (= bound-eid (nth (:v %) 3))))
          (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn resource->subjects
@@ -202,17 +224,20 @@
                             :desc (or bound-eid Long/MAX_VALUE)))
         datoms      (case direction
                       :asc (d/seek-datoms db :eavt resource-eid attr-eid start-tuple)
-                      :desc (d/rseek-datoms db :eavt resource-eid attr-eid start-tuple))]
+                      :desc (d/rseek-datoms db :eavt resource-eid attr-eid start-tuple))
+        skip-bound? (boolean (and bound-eid (not inclusive-bound?)))]
     (->> datoms
+         ;; See subject->resources: element-wise prefix comparison, no per-datom
+         ;; vector allocation.
          (take-while
           (fn [datom]
             (let [v (:v datom)]
               (and (== resource-eid (:e datom))
                    (== attr-eid (:a datom))
-                   (= prefix (subvec (vec v) 0 3))))))
-         (drop-while #(and bound-eid
-                           (not inclusive-bound?)
-                           (= bound-eid (nth (:v %) 3))))
+                   (= resource-type (nth v 0))
+                   (= relation-eid (nth v 1))
+                   (= subject-type (nth v 2))))))
+         (drop-while #(and skip-bound? (= bound-eid (nth (:v %) 3))))
          (map (fn [datom] (nth (:v datom) 3))))))
 
 (defn relation-datoms
@@ -274,42 +299,82 @@
                    :relation-name target-relation-name})
         []))))
 
+;; --- Schema-scoped permission-path cache (issue #74) -------------------------
+;;
+;; Two levels:
+;;
+;;   schema-scope-cache : db value        -> schema scope   (LRU, few entries)
+;;   permission-paths-cache : [scope resource-type permission-name] -> paths
+;;
+;; The scope is an exact fingerprint of the EACL *definition* datoms visible in
+;; that db value, so two db values share a paths entry only when their schemas
+;; are identical. That closes two holes in the previous
+;; [database-uuid schema-version] scope, both of which produced silently wrong
+;; authorization answers:
+;;
+;;   1. A d/with speculative database inherits the database uuid, reads as
+;;      :plain (is-filtered/as-of-t/since-t are all false/nil on it) and does
+;;      not bump :eacl/schema-version. Evaluating a permission against a
+;;      speculative schema change therefore published the speculative paths
+;;      under the LIVE database's key, granting permissions the committed
+;;      schema does not define — until the process restarted.
+;;   2. Databases that never called write-schema! (programmatic Relation /
+;;      Permission writes, or migrate! without :schema) have a nil version
+;;      stamp, so their scope was constant for the life of the database and no
+;;      definition change was ever visible to the cache.
+;;
+;; Issue #74's requirement is preserved: the fingerprint is computed once per
+;; db VALUE and memoised on the db itself. Datomic returns an identical object
+;; for repeated (d/db conn) at the same basis, and db equality is
+;; content-sensitive (a d/with db is never = to a committed db at the same t),
+;; so the memo is both exact and ~free on the hot path. An unrelated d/transact
+;; produces a new db value but the SAME fingerprint, so relationship write load
+;; re-verifies the (small) definition index once and every permission-path
+;; entry still hits. Nothing recomputes paths unless the definitions changed.
+
+(def ^:private schema-scope-cache-threshold
+  "How many distinct db values keep a memoised schema scope. Each entry pins one
+  Datomic db value, so this is deliberately small; it only needs to cover the
+  db values in flight (one per request, plus one per in-progress paginated walk
+  pinned to d/as-of)."
+  64)
+
+(def ^:private permission-paths-cache-threshold 1000)
+
+(defn- fresh-lru [threshold]
+  (cache/lru-cache-factory {} :threshold threshold))
+
 (def permission-paths-cache
-  (atom (cache/lru-cache-factory {} :threshold 1000)))
+  (atom (fresh-lru permission-paths-cache-threshold)))
+
+(def schema-scope-cache
+  "db value -> schema scope. A plain map rather than an LRU: this is read on
+  every get-permission-paths call, and a bare map lookup is ~6x cheaper than
+  LRU hit bookkeeping. It memoises a pure function whose recomputation costs
+  microseconds, so dropping the whole map when it outgrows its bound is an
+  acceptable eviction policy — and it keeps the number of retained Datomic db
+  values (and therefore index roots) hard-bounded."
+  (atom {}))
+
+(def traversal-permission-cache
+  (atom (fresh-lru permission-paths-cache-threshold)))
 
 (defn evict-permission-paths-cache!
-  "Manual override that clears the permission-path cache. write-schema! calls
-  it for immediate local hygiene; cross-peer and as-of correctness rely on the
-  :eacl/schema-version cache key, not on this. It is also the recovery hatch
-  after unsupported programmatic schema edits."
+  "Clears the permission-path caches. Correctness no longer depends on calling
+  this: the cache scope is an exact fingerprint of the definition datoms in the
+  queried db value, so any definition change — through write-schema! or not —
+  already yields a different cache key. write-schema! still calls it to release
+  entries for schema eras that can no longer be queried."
   []
-  (reset! permission-paths-cache (cache/lru-cache-factory {} :threshold 1000)))
-
-;; --- Schema-version cache scope (issue #74) ---------------------------------
-;;
-;; The path cache is invalidated ONLY by eacl.datomic.schema/write-schema!,
-;; which asserts a fresh :eacl/schema-version squuid on the schema singleton in
-;; the same transaction as any definition change. Reading the stamp is a single
-;; AVET lookup — O(log N), no per-call schema-datom scans — and unrelated
-;; d/transact calls leave it (and therefore every cache key) untouched, so
-;; relationship write load can never evict or recompute paths. (The previous
-;; design derived a digest from the schema datoms on every lookup — issue #74.)
-;;
-;; Contract: permission schema mutations MUST go through write-schema!.
-;; Programmatic edits of relation/permission datoms (raw d/transact, d/with,
-;; excision) do not bump the version, so caches may serve paths computed from
-;; the pre-edit schema until the next write-schema! or a manual
-;; evict-permission-paths-cache!. That trade-off is by design.
-;;
-;; The stamp lives in the database, not in peer memory, so:
-;;  - write-schema! on any peer invalidates every peer (the stored value changes);
-;;  - d/as-of views read the version that was current at that basis, giving
-;;    historic views their own cache slots;
-;;  - a squuid can never be re-asserted to an unchanged value by a concurrent
-;;    writer (no counter-elision race).
+  (reset! permission-paths-cache (fresh-lru permission-paths-cache-threshold))
+  (reset! schema-scope-cache {})
+  (reset! traversal-permission-cache (fresh-lru permission-paths-cache-threshold)))
 
 (def schema-version-attr
-  "Installed by eacl.datomic.schema/v7-schema; asserted by write-schema!."
+  "Installed by eacl.datomic.schema/v7-schema; asserted by write-schema!.
+  Informational since the path cache moved to content fingerprints: it records
+  which write-schema! call a database is on, and gives d/as-of views a readable
+  schema generation."
   :eacl/schema-version)
 
 (defn schema-version
@@ -320,14 +385,13 @@
   (when (d/entid db schema-version-attr)
     (:v (first (d/datoms db :avet schema-version-attr)))))
 
-(def ^:private uncached-scope [::uncached])
-
 (defn- classified-view
-  "Positively classifies a db value: :plain, :as-of, or nil for any view the
-  version stamp cannot be trusted on. d/filter views are excluded because their
-  predicates are arbitrary functions that may hide definition datoms without
-  hiding the version datom; d/since views hide old schema and are pointless to
-  cache; history views are not queryable schema states."
+  "Positively classifies a db value: :plain, :as-of, or nil for a view whose
+  :eacl/schema-version stamp is not a meaningful schema generation. d/filter
+  predicates are arbitrary and may hide definition datoms without hiding the
+  version datom; d/since views hide old schema; history views are not
+  queryable schema states. Only schema-version-stamp consults this — the path
+  cache fingerprints definition content and is exact on every view."
   [db]
   (cond
     (d/is-history db)      nil
@@ -336,29 +400,68 @@
     (some? (d/as-of-t db)) :as-of
     :else                  :plain))
 
-(defn- schema-cache-scope
-  "Returns [database-id schema-version-string] for positively classified
-  plain/as-of db values, or a sentinel scope for anything else (filter, since,
-  history, unrecognized views) and for ANY failure. Sentinel scopes bypass the
-  cache entirely: every failure mode degrades to recomputation from the
-  queried db value — never to serving a stale entry."
-  [db]
-  (or (try
-        (when (classified-view db)
-          [(str (.id db)) (some-> (schema-version db) str)])
-        (catch Throwable _ nil))
-      uncached-scope))
-
-(defn- uncached-scope? [scope]
-  (identical? uncached-scope scope))
-
 (defn schema-version-stamp
   "String form of the schema version for this db value, or nil when no version
-  has been written yet or the view cannot be classified (see schema-cache-scope)."
+  has been written yet or the view is one the stamp does not describe (filter,
+  since, history — see classified-view). Informational only."
   [db]
-  (let [scope (schema-cache-scope db)]
-    (when-not (uncached-scope? scope)
-      (second scope))))
+  (when (classified-view db)
+    (some-> (schema-version db) str)))
+
+(def ^:private relation-identity-attr
+  :eacl.relation/resource-type+relation-name+subject-type)
+
+(def ^:private permission-identity-attr
+  :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name)
+
+(defn- attr-fingerprint
+  "[count entity-hash max-tx] over an attribute's AEVT range.
+
+  Both attributes fingerprinted here are :db.unique/identity composite tuples.
+  Datomic re-asserts a composite tuple with a fresh tx whenever ANY of its
+  component attributes changes, so max-tx detects in-place definition edits,
+  while count and entity-hash detect additions, retractions and excisions.
+  O(number of definitions) — never O(number of relationships). Iterated
+  directly rather than through a seq: this runs once per new db value on the
+  hot authz path, and skipping the seq allocation halves it."
+  [db attr]
+  (let [it (.iterator ^Iterable (d/datoms db :aevt attr))]
+    (loop [n      0
+           h      1
+           max-tx 0]
+      (if (.hasNext it)
+        (let [^datomic.Datom datom (.next it)
+              tx (long (.tx datom))]
+          (recur (unchecked-inc n)
+                 (unchecked-add (unchecked-multiply 31 h) (long (.e datom)))
+                 (if (> tx max-tx) tx max-tx)))
+        [n h max-tx]))))
+
+(defn- calc-schema-scope
+  "Exact identity of the EACL definitions visible in this db value. The database
+  id is required because two freshly created databases can hold byte-identical
+  definitions at identical eids and tx ids."
+  [db]
+  [(str (.id ^datomic.Database db))
+   (attr-fingerprint db relation-identity-attr)
+   (attr-fingerprint db permission-identity-attr)])
+
+(defn schema-scope
+  "Memoised calc-schema-scope, keyed on the db value itself.
+
+  Datomic returns an identical object for repeated (d/db conn) at the same
+  basis and its db equality is content-sensitive, so this hits for every query
+  against a db value already seen and is exact for one that has not been.
+  A db value the memo has not seen costs one O(number-of-definitions) scan;
+  that is the price of never sharing a cache slot between two schemas."
+  [db]
+  (or (get @schema-scope-cache db)
+      (let [scope (calc-schema-scope db)]
+        (swap! schema-scope-cache
+               (fn [m]
+                 (assoc (if (> (count m) schema-scope-cache-threshold) {} m)
+                        db scope)))
+        scope)))
 
 (defn- permission-paths-cache-key
   [scope resource-type permission-name]
@@ -421,20 +524,15 @@
 
 (defn get-permission-paths
   [db resource-type permission-name]
-  (let [scope (schema-cache-scope db)]
-    (if (uncached-scope? scope)
-      ;; Unclassifiable view (filter/since/history) or scope failure:
-      ;; compute fresh from this db value; never share cache entries.
-      (calc-permission-paths db resource-type permission-name)
-      (let [cache @permission-paths-cache
-            cache-key (permission-paths-cache-key scope resource-type permission-name)]
-        (if (cache/has? cache cache-key)
-          (do
-            (swap! permission-paths-cache cache/hit cache-key)
-            (cache/lookup cache cache-key))
-          (let [paths (calc-permission-paths db resource-type permission-name)]
-            (swap! permission-paths-cache cache/miss cache-key paths)
-            paths))))))
+  (let [cache-key (permission-paths-cache-key (schema-scope db) resource-type permission-name)
+        cache     @permission-paths-cache]
+    (if (cache/has? cache cache-key)
+      (do
+        (swap! permission-paths-cache cache/hit cache-key)
+        (cache/lookup cache cache-key))
+      (let [paths (calc-permission-paths db resource-type permission-name)]
+        (swap! permission-paths-cache cache/miss cache-key paths)
+        paths))))
 
 (defn- frontier-permission-paths
   "Expands same-resource permission aliases into independently resumable paths.
@@ -453,7 +551,18 @@
                               (expand (:target-permission path) visited-nodes')
                               [path]))
                           (get-permission-paths db resource-type permission-name))))))]
-    (vec (expand permission-name #{}))))
+    ;; `permission view = owner + admin` where `permission admin = owner`
+    ;; expands to the same relation path twice: scanned twice, and both
+    ;; collapsing onto one path-frontier-key anyway.
+    (->> (expand permission-name #{})
+         (reduce (fn [{:keys [seen paths] :as acc} path]
+                   (let [k (path-frontier-identity path)]
+                     (if (contains? seen k)
+                       acc
+                       {:seen (conj seen k)
+                        :paths (conj paths path)})))
+                 {:seen #{} :paths []})
+         :paths)))
 
 (defn- permission-query-node
   [resource-type permission-name]
@@ -554,9 +663,21 @@
 (defn traversal-permission?
   "True when a permission root transitively depends on a recursive permission SCC.
   These roots cannot be proven page-bounded in eid order without materialized
-  grants, so list APIs evaluate them in deterministic traversal order."
+  grants, so list APIs evaluate them in deterministic traversal order.
+
+  Every list API calls this on every page, and answering it walks the whole
+  permission dependency graph, so it is memoised under the same schema scope as
+  the paths it is derived from."
   [db resource-type permission-name]
-  (recursive-permission-query? db resource-type permission-name))
+  (let [cache-key (permission-paths-cache-key (schema-scope db) resource-type permission-name)
+        cache     @traversal-permission-cache]
+    (if (cache/has? cache cache-key)
+      (do
+        (swap! traversal-permission-cache cache/hit cache-key)
+        (cache/lookup cache cache-key))
+      (let [recursive? (recursive-permission-query? db resource-type permission-name)]
+        (swap! traversal-permission-cache cache/miss cache-key recursive?)
+        recursive?))))
 
 (defn traversal-nodes
   [db]
@@ -567,10 +688,25 @@
 
 (def ^:private recursive-engine-version 1)
 
-(def ^:dynamic *recursive-traversal-limits*
+(def default-recursive-traversal-limits
+  "Safety ceilings for one recursive traversal.
+
+  These bound a SINGLE page computation. Recursive pages resume by replaying
+  the traversal prefix and discarding results up to the cursor's ordinal, so
+  work — and :derived-grants — grows with the page's offset: enumerating N
+  results needs roughly N derived grants on the last page. A recursive
+  permission whose grant set approaches :max-derived-grants therefore starts
+  failing on DEEP pages while page 1 still succeeds.
+
+  Raise them for large recursive grant sets with make-client's
+  :recursive-traversal-limits (they are a memory bound: the traversal keeps a
+  seen-grants set of this size), or model the permission acyclically."
   {:max-derived-grants 100000
    :max-advanced-datoms 100000
    :max-queued-work 100000})
+
+(def ^:dynamic *recursive-traversal-limits*
+  default-recursive-traversal-limits)
 
 (def ^:dynamic *recursive-traversal-stats* nil)
 
@@ -589,7 +725,10 @@
         limit (get *recursive-traversal-limits* limit-key)]
     (when (and limit (> n limit))
       (recursive-traversal-error!
-       "Recursive traversal safety limit exceeded."
+       (str "Recursive traversal safety limit exceeded (" (name counter-key) " > " limit ")."
+            " Deep pages of a recursive permission replay the traversal prefix, so this trips"
+            " on later pages of a large grant set. Raise it with make-client's"
+            " :recursive-traversal-limits, or model the permission acyclically.")
        {:eacl/error :eacl.recursive-traversal/limit-exceeded
         :limit-kind counter-key
         :limit limit}))
@@ -1024,14 +1163,51 @@
                  (if trim? (pop ring') ring')
                  (if trim? (inc size) ring-count')))))))
 
+(defn- collect-trailing-items
+  "Bare :last: exhausts a traversal keeping only the trailing size+1 items.
+  next-item is (fn [state] [state' item-or-nil]).
+
+  Acyclic lookups have always accepted bare :last, and whether a permission is
+  recursive is a property of the schema that callers cannot see — so rejecting
+  it here turned adding `parent->read` to a schema into a runtime break for
+  every :last caller. This costs a full traversal, the same as count-resources."
+  [next-item state size]
+  (loop [state state
+         ring clojure.lang.PersistentQueue/EMPTY
+         ring-count 0]
+    (let [[state' item] (next-item state)]
+      (if (nil? item)
+        (let [items (vec ring)
+              has-sentinel? (> (count items) size)]
+          {:items (if has-sentinel?
+                    (subvec items (- (count items) size))
+                    items)
+           :has-sentinel? has-sentinel?})
+        (let [ring' (conj ring item)
+              ring-count' (inc ring-count)
+              trim? (> ring-count' (inc size))]
+          (recur state'
+                 (if trim? (pop ring') ring')
+                 (if trim? (inc size) ring-count')))))))
+
+(defn- count-traversal-items
+  "Number of results a traversal emits, in ONE pass.
+
+  The paged alternative (repeatedly asking for the next max-page-size page)
+  replays the whole traversal prefix per page, which is O(N^2) and trips
+  :max-derived-grants long before a large grant set is counted."
+  [next-item state]
+  (loop [state state
+         n 0]
+    (let [[state' item] (next-item state)]
+      (if item
+        (recur state' (unchecked-inc n))
+        n))))
+
 (defn- recursive-forward-page
   [db query]
   (let [{:keys [direction size bound]} (normalize-page-request query)
         _ (validate-recursive-bound! bound :forward :resource)
-        _ (when (and (= :desc direction) (nil? bound))
-            (page-error! "Bare :last is not supported for recursive traversal pagination."
-                         {:eacl/error :eacl.pagination/unsupported-recursive-last
-                          :reason :requires-full-traversal}))
         {:keys [subject permission]} query
         subject-type (:type subject)
         subject-eid (object-eid db (:id subject))
@@ -1053,9 +1229,12 @@
                           :has-previous? (boolean bound)}))
 
         :desc
-        (let [{:keys [items has-sentinel?]} (collect-forward-before db root-node result-type state bound size)]
+        (let [{:keys [items has-sentinel?]}
+              (if bound
+                (collect-forward-before db root-node result-type state bound size)
+                (collect-trailing-items #(next-forward-item db root-node result-type %) state size))]
           (page-response {:items items
-                          :has-next? true
+                          :has-next? (boolean bound)
                           :has-previous? has-sentinel?}))))))
 
 (defn- rules-by-node
@@ -1337,10 +1516,6 @@
                   :filter :subject/relation}))
   (let [{:keys [direction size bound]} (normalize-page-request query)
         _ (validate-recursive-bound! bound :reverse :subject)
-        _ (when (and (= :desc direction) (nil? bound))
-            (page-error! "Bare :last is not supported for recursive traversal pagination."
-                         {:eacl/error :eacl.pagination/unsupported-recursive-last
-                          :reason :requires-full-traversal}))
         {:keys [resource permission]} query
         resource-type (:type resource)
         resource-eid (object-eid db (:id resource))
@@ -1362,9 +1537,12 @@
                           :has-previous? (boolean bound)}))
 
         :desc
-        (let [{:keys [items has-sentinel?]} (collect-reverse-before db root-node resource-eid subject-type state bound size)]
+        (let [{:keys [items has-sentinel?]}
+              (if bound
+                (collect-reverse-before db root-node resource-eid subject-type state bound size)
+                (collect-trailing-items #(next-reverse-item db root-node resource-eid subject-type %) state size))]
           (page-response {:items items
-                          :has-next? true
+                          :has-next? (boolean bound)
                           :has-previous? has-sentinel?}))))))
 
 (declare traverse-permission-path lookup-subject-eids* can*)
@@ -1747,62 +1925,60 @@
     (recursive-reverse-page db query)
     (lookup db reverse-direction query)))
 
+(def ^:private count-pagination-keys
+  [:cursor :limit :first :last :before :after])
+
+(defn- reject-count-pagination-keys!
+  [op query]
+  (when (some #(contains? query %) count-pagination-keys)
+    (page-error! (str op " does not use list pagination keys.")
+                 (select-keys query count-pagination-keys))))
+
+(defn- count-lazy-results
+  "Counts without retaining the head: doall bound the whole realized seq to a
+  local, so counting a broad permission held every result eid in memory for the
+  duration."
+  [results]
+  (reduce (fn [n _] (unchecked-inc n)) 0 results))
+
 (defn count-resources
   [db {:as query}]
-  (when (or (contains? query :cursor)
-            (contains? query :limit)
-            (contains? query :first)
-            (contains? query :last)
-            (contains? query :before)
-            (contains? query :after))
-    (page-error! "count-resources does not use list pagination keys."
-                 (select-keys query [:cursor :limit :first :last :before :after])))
+  (reject-count-pagination-keys! "count-resources" query)
   (if (traversal-permission? db (:resource/type query) (:permission query))
-    (let [page (recursive-forward-page db (assoc query :first max-page-size))]
-      {:count (loop [counted (count (:data page))
-                     cursor (get-in page [:page-info :end-cursor])
-                     has-next? (get-in page [:page-info :has-next-page?])]
-                (if-not has-next?
-                  counted
-                  (let [next-page (recursive-forward-page db (assoc query
-                                                                    :first max-page-size
-                                                                    :after cursor))]
-                    (recur (+ counted (count (:data next-page)))
-                           (get-in next-page [:page-info :end-cursor])
-                           (get-in next-page [:page-info :has-next-page?])))))
+    (let [{:keys [subject permission]} query
+          subject-eid (object-eid db (:id subject))
+          result-type (:resource/type query)
+          root-node   (permission-query-node result-type permission)]
+      {:count (if-not subject-eid
+                0
+                (count-traversal-items
+                 #(next-forward-item db root-node result-type %)
+                 (initial-forward-state db (:type subject) subject-eid root-node)))
        :limit -1})
-    (let [page-req {:direction :asc :size max-page-size :bound nil}
-          {:keys [results]} (lazy-merged-lookup db forward-direction query page-req)
-          counted (doall results)]
-      {:count (count counted)
+    (let [page-req {:direction :asc :bound nil}
+          {:keys [results]} (lazy-merged-lookup db forward-direction query page-req)]
+      {:count (count-lazy-results results)
        :limit -1})))
 
 (defn count-subjects
   [db {:as query}]
-  (when (or (contains? query :cursor)
-            (contains? query :limit)
-            (contains? query :first)
-            (contains? query :last)
-            (contains? query :before)
-            (contains? query :after))
-    (page-error! "count-subjects does not use list pagination keys."
-                 (select-keys query [:cursor :limit :first :last :before :after])))
+  (reject-count-pagination-keys! "count-subjects" query)
+  (when (:subject/relation query)
+    (page-error! ":subject/relation is not supported by count-subjects."
+                 {:eacl/error :eacl.pagination/unsupported-filter
+                  :filter :subject/relation}))
   (if (traversal-permission? db (:type (:resource query)) (:permission query))
-    (let [page (recursive-reverse-page db (assoc query :first max-page-size))]
-      {:count (loop [counted (count (:data page))
-                     cursor (get-in page [:page-info :end-cursor])
-                     has-next? (get-in page [:page-info :has-next-page?])]
-                (if-not has-next?
-                  counted
-                  (let [next-page (recursive-reverse-page db (assoc query
-                                                                    :first max-page-size
-                                                                    :after cursor))]
-                    (recur (+ counted (count (:data next-page)))
-                           (get-in next-page [:page-info :end-cursor])
-                           (get-in next-page [:page-info :has-next-page?])))))
+    (let [{:keys [resource permission]} query
+          resource-eid (object-eid db (:id resource))
+          subject-type (:subject/type query)
+          root-node    (permission-query-node (:type resource) permission)]
+      {:count (if-not resource-eid
+                0
+                (count-traversal-items
+                 #(next-reverse-item db root-node resource-eid subject-type %)
+                 (initial-reverse-state db subject-type root-node resource-eid)))
        :limit -1})
-    (let [page-req {:direction :asc :size max-page-size :bound nil}
-          {:keys [results]} (lazy-merged-lookup db reverse-direction query page-req)
-          counted (doall results)]
-      {:count (count counted)
+    (let [page-req {:direction :asc :bound nil}
+          {:keys [results]} (lazy-merged-lookup db reverse-direction query page-req)]
+      {:count (count-lazy-results results)
        :limit -1})))

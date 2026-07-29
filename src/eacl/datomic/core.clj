@@ -360,6 +360,56 @@
         basis (d/basis-t db-after)]
     {:zed/token (str basis)}))
 
+(defn- existing-eid
+  "d/entid passes any long through unchanged, including the eid of a retracted
+  entity, so an id-coercion that hands EACL raw eids (a documented option) let
+  can? answer from relationship halves left behind by :db.fn/retractEntity.
+  Datom presence is the same existence test writes already use."
+  [db eid]
+  (when (and eid (seq (d/datoms db :eavt eid)))
+    eid))
+
+(defmacro ^:private with-recursive-limits
+  "Applies the client's :recursive-traversal-limits, if configured, for the
+  duration of one list call. Recursive permissions with large grant sets need
+  headroom above the defaults on deep pages."
+  [opts & body]
+  `(let [limits# (:recursive-traversal-limits ~opts)]
+     (if limits#
+       (binding [impl.indexed/*recursive-traversal-limits* limits#]
+         ~@body)
+       (do ~@body))))
+
+(def ^:private delete-object-batch-size 1000)
+
+(defn spiceomic-delete-object!
+  "Retracts every relationship touching `object`, in both directions, in
+  batches. Returns {:zed/token ... :retracted-datoms <n>}.
+
+  The object's own entity is left alone — retract it yourself once this
+  returns (or in the same application transaction, using
+  eacl.datomic.impl/tx-delete-object directly)."
+  [conn {:keys [object-id->entid] :as _opts} object]
+  (let [object-id (if (map? object) (:id object) object)
+        db        (d/db conn)
+        eid       (or (try (object-id->entid db object-id)
+                           (catch Exception _ nil))
+                      ;; A retracted entity no longer resolves through the
+                      ;; caller's id coercion, but its raw eid still cleans up.
+                      (when (number? object-id) object-id))
+        tx-data   (impl/tx-delete-object db eid)]
+    (if (empty? tx-data)
+      {:zed/token (str (d/basis-t db)) :retracted-datoms 0}
+      (loop [batches   (partition-all delete-object-batch-size tx-data)
+             retracted 0
+             token     nil]
+        (if-let [batch (first batches)]
+          (let [{:keys [db-after]} @(d/transact conn (vec batch))]
+            (recur (next batches)
+                   (+ retracted (count batch))
+                   (str (d/basis-t db-after))))
+          {:zed/token token :retracted-datoms retracted})))))
+
 (defn spiceomic-can?
   [db {:keys [object->entid]} subject permission resource consistency]
   (when-not (= consistency/fully-consistent consistency)
@@ -367,9 +417,9 @@
              {:type :eacl/unsupported-consistency
               :consistency consistency})))
   (let [subject-type (:type subject)
-        subject-eid  (object->entid db subject)
+        subject-eid  (existing-eid db (object->entid db subject))
         resource-type (:type resource)
-        resource-eid  (object->entid db resource)]
+        resource-eid  (existing-eid db (object->entid db resource))]
     (if-not (and subject-eid resource-eid)
       false
       (impl/can? db
@@ -494,14 +544,20 @@
                                       (for [rel relationships']
                                         (->RelationshipUpdate :delete rel)))))
 
+  (delete-object! [_ object]
+    (spiceomic-delete-object! conn opts object))
+
   (lookup-resources [_ query]
-    (spiceomic-lookup-resources conn opts query))
+    (with-recursive-limits opts
+      (spiceomic-lookup-resources conn opts query)))
 
   (count-resources [_ query]
-    (spiceomic-count-resources (d/db conn) opts query))
+    (with-recursive-limits opts
+      (spiceomic-count-resources (d/db conn) opts query)))
 
   (lookup-subjects [_ query]
-    (spiceomic-lookup-subjects conn opts query))
+    (with-recursive-limits opts
+      (spiceomic-lookup-subjects conn opts query)))
 
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
@@ -517,6 +573,7 @@
     :page-token-keyring
     :page-token-kid
     :page-token-ttl-seconds
+    :recursive-traversal-limits
     :auto-migrate-v6})
 
 (defn make-client
@@ -532,6 +589,11 @@
     page tokens do not survive restarts and are not portable across peers;
     supply stable key material in production.
   - :page-token-ttl-seconds — overrides the default page-token expiry.
+  - :recursive-traversal-limits — overrides eacl.datomic.impl.indexed/default-recursive-traversal-limits
+    for list calls, e.g. {:max-derived-grants 1000000 :max-advanced-datoms 1000000
+    :max-queued-work 1000000}. Deep pages of a recursive permission replay the
+    traversal prefix, so a grant set approaching the default 100k trips the
+    ceiling on later pages while page 1 still succeeds. These are a memory bound.
   - :auto-migrate-v6 — opt-in automatic v6->v7 storage migration at startup.
     Construction fails with {:type :eacl/storage-version} when the database
     holds unmigrated v6 relationship entities (v7 would silently answer false/
@@ -547,6 +609,7 @@
            page-token-keyring
            page-token-kid
            page-token-ttl-seconds
+           recursive-traversal-limits
            auto-migrate-v6]
     :or   {object-id->ident (fn [obj-id] [:eacl/id obj-id])}}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
@@ -563,6 +626,19 @@
     (throw (ex-info "EACL Config Error: object-id->ident must be a fn that coerces a Spice Object ID to a Datomic ident resolvable by d/entid."
              {:type :eacl/invalid-config
               :key :object-id->ident})))
+  (when recursive-traversal-limits
+    (let [known (set (keys impl.indexed/default-recursive-traversal-limits))]
+      (when-not (and (map? recursive-traversal-limits)
+                     (every? known (keys recursive-traversal-limits))
+                     (every? (fn [v] (and (integer? v) (pos? v)))
+                             (vals recursive-traversal-limits)))
+        (throw (ex-info (str "EACL Config Error: :recursive-traversal-limits must be a map of "
+                             (pr-str (vec (sort known)))
+                             " to positive integers.")
+                 {:type :eacl/invalid-config
+                  :key :recursive-traversal-limits
+                  :known-keys known
+                  :value recursive-traversal-limits})))))
   ;; Refuse to run v7 code against unmigrated v6 relationship data — it would
   ;; silently answer every check with false/empty. Throws :eacl/storage-version
   ;; unless the DB is v7/fresh/stamped, or :auto-migrate-v6 opts into migration.
@@ -598,5 +674,10 @@
                                                       (update obj :id #(when (some? %) (object-id->entid db %))))
                             :page-token-current-kid current-kid
                             :page-token-keyring keyring
-                            :page-token-ttl-seconds page-token-ttl-seconds}]
+                            :page-token-ttl-seconds page-token-ttl-seconds
+                            ;; merged, so a partial override cannot silently
+                            ;; disable the limits it does not mention
+                            :recursive-traversal-limits (when recursive-traversal-limits
+                                                          (merge impl.indexed/default-recursive-traversal-limits
+                                                                 recursive-traversal-limits))}]
     (->Spiceomic conn opts)))

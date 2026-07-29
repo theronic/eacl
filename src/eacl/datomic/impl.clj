@@ -18,8 +18,10 @@
 (defn can?
   ([db subject permission resource]
    (impl.indexed/can? db subject permission resource))
-  ([db demand]
-   (impl.indexed/can? db demand)))
+  ;; The map arity used to forward to a 2-arity impl.indexed/can? that does not
+  ;; exist, so every call threw ArityException.
+  ([db {:keys [subject permission resource]}]
+   (impl.indexed/can? db subject permission resource)))
 
 (defn lookup-subjects
   [db query]
@@ -33,6 +35,10 @@
   [db query]
   (impl.indexed/count-resources db query))
 
+(defn count-subjects
+  [db query]
+  (impl.indexed/count-subjects db query))
+
 (def ^:private forward-relationship-attr
   :eacl.v7.relationship/subject-type+relation+resource-type+resource)
 
@@ -40,11 +46,15 @@
   :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (defn can!
-  "The thrown exception should probably be configurable."
+  "Like can?, but throws :eacl/unauthorized instead of returning false."
   [db subject permission resource]
   (if (can? db subject permission resource)
     true
-    (throw (Exception. "Unauthorized"))))
+    (throw (ex-info "Unauthorized"
+             {:type :eacl/unauthorized
+              :subject subject
+              :permission permission
+              :resource resource}))))
 
 (defn- unknown-object!
   [object-id]
@@ -145,17 +155,28 @@
     reverse-relationship-attr
     (reverse-relationship-tuple resolved)]])
 
+(defn- forward-tuple-exists?
+  [db {:keys [subject-eid] :as resolved}]
+  (boolean (seq (d/datoms db :eavt subject-eid forward-relationship-attr
+                          (relationship-tuple resolved)))))
+
+(defn- reverse-tuple-exists?
+  [db {:keys [resource-eid] :as resolved}]
+  (boolean (seq (d/datoms db :eavt resource-eid reverse-relationship-attr
+                          (reverse-relationship-tuple resolved)))))
+
 (defn- relationship-exists?
+  "True only when BOTH halves of the relationship are present.
+
+  Checking the forward index alone made a half-written pair unrepairable:
+  :touch saw 'already there' and :delete saw 'nothing to do', so the surviving
+  half kept answering lookups forever. A half-pair now reads as absent, which
+  lets :touch re-assert it and :delete retract it."
   [db {:keys [subject-eid resource-eid] :as resolved}]
-  (if (and (number? subject-eid) (number? resource-eid))
-    (boolean
-     (seq
-      (d/datoms db
-                :eavt
-                subject-eid
-                forward-relationship-attr
-                (relationship-tuple resolved))))
-    false))
+  (and (number? subject-eid)
+       (number? resource-eid)
+       (forward-tuple-exists? db resolved)
+       (reverse-tuple-exists? db resolved)))
 
 (defn find-one-relationship-id
   "Returns the resolved tuple identity for an existing relationship, or nil.
@@ -394,15 +415,20 @@
                       (case direction
                         :asc (take size realized)
                         :desc (reverse (take size realized))))]
-      {:data (mapv :node items)
-       :page-info {:start-cursor (some-> items first :cursor)
-                   :end-cursor (some-> items last :cursor)
-                   :has-next-page? (case direction
-                                     :asc (> (count realized) size)
-                                     :desc (boolean bound))
-                   :has-previous-page? (case direction
-                                         :asc (boolean bound)
-                                         :desc (> (count realized) size))}})))
+      ;; An empty page carries no cursors, so it can advertise neither
+      ;; direction — see eacl.datomic.impl.indexed/page-response.
+      (let [any? (boolean (seq items))]
+        {:data (mapv :node items)
+         :page-info {:start-cursor (some-> items first :cursor)
+                     :end-cursor (some-> items last :cursor)
+                     :has-next-page? (and any?
+                                          (case direction
+                                            :asc (> (count realized) size)
+                                            :desc (boolean bound)))
+                     :has-previous-page? (and any?
+                                              (case direction
+                                                :asc (boolean bound)
+                                                :desc (> (count realized) size)))}}))))
 
 (def ^:private known-relationship-filter-keys
   "Filter + pagination keys read-relationships accepts. :cursor and :limit are
@@ -433,11 +459,18 @@
                          ". Known keys: " (pr-str (vec (sort known-relationship-filter-keys))) ".")
              {:eacl/error :eacl.filters/unknown-filter
               :unknown-keys (vec unknown-keys)})))
-  (when-not (some #(contains? filters %) relationship-anchor-keys)
-    (throw (ex-info (str "read-relationships requires at least one anchor filter of "
+  ;; some? not contains?: a present-but-nil anchor (the shape you get from
+  ;; {:subject/id (get-in req [:params :user-id])} with the param missing) is
+  ;; treated as absent by every consumer below, so accepting it as an anchor
+  ;; degraded the read to exactly the global scan this guard exists to prevent.
+  (when-not (some #(some? (get filters %)) relationship-anchor-keys)
+    (throw (ex-info (str "read-relationships requires at least one non-nil anchor filter of "
                          (pr-str (vec (sort relationship-anchor-keys)))
                          ". An unfiltered read would scan the entire relationship index.")
-             {:eacl/error :eacl.filters/missing-anchor}))))
+             {:eacl/error :eacl.filters/missing-anchor
+              :nil-anchor-keys (vec (sort (filter #(and (contains? filters %)
+                                                        (nil? (get filters %)))
+                                                  relationship-anchor-keys)))}))))
 
 (defn read-relationships
   [db filters]
@@ -445,8 +478,10 @@
   (let [relations    (find-relations db filters)
         subject-id    (:subject/id filters)
         resource-id   (:resource/id filters)
-        subject-eid  (when subject-id (d/entid db subject-id))
-        resource-eid (when resource-id (d/entid db resource-id))
+        ;; object-eid, not d/entid: a raw-impl caller passing a string id got a
+        ;; bare :db.error/not-a-keyword out of Datomic.
+        subject-eid  (when (some? subject-id) (impl.indexed/object-eid db subject-id))
+        resource-eid (when (some? resource-id) (impl.indexed/object-eid db resource-id))
         normalized-filters (cond-> filters
                              subject-eid (assoc :subject/id subject-eid)
                              resource-eid (assoc :resource/id resource-eid))]
@@ -461,6 +496,145 @@
 
       :else
       (relationship-page db relations normalized-filters subject-eid resource-eid))))
+
+;; --- Object deletion --------------------------------------------------------
+;;
+;; A v7 relationship is two datoms living on two DIFFERENT entities, each
+;; naming its peer inside a tuple VALUE:
+;;
+;;   [subject-eid  <forward-attr> [subject-type relation-eid resource-type resource-eid]]
+;;   [resource-eid <reverse-attr> [resource-type relation-eid subject-type subject-eid]]
+;;
+;; :db.fn/retractEntity follows :db.type/ref ATTRIBUTES. It does not follow
+;; ref-typed components of a heterogeneous tuple, and a heterogeneous tuple
+;; cannot be :db/isComponent. So retracting a permissioned entity the ordinary
+;; Datomic way removes only the half stored ON that entity and leaves the peer's
+;; half behind, where it keeps answering queries:
+;;
+;;   - delete a RESOURCE  -> the subject keeps its forward tuple, so can? still
+;;                           answers true and lookup-resources still lists it;
+;;   - delete a SUBJECT   -> the resource keeps its reverse tuple, so
+;;                           lookup-subjects still lists the deleted subject
+;;                           while can? answers false — the two APIs disagree.
+;;
+;; Worse, the survivor is unreachable through write-relationships!, because
+;; resolving either endpoint of the relationship now throws :eacl/unknown-object.
+;;
+;; tx-delete-object is the supported way to delete: call it (or the client's
+;; delete-object!) BEFORE retracting the entity.
+
+(defn- relation-triples
+  "[resource-type relation-eid subject-type] for every Relation in the schema.
+  Bounded by schema size, never by relationship count."
+  [db]
+  (mapv (fn [datom]
+          (let [[resource-type _relation-name subject-type] (:v datom)]
+            [resource-type (:e datom) subject-type]))
+        (d/datoms db :aevt :eacl.relation/resource-type+relation-name+subject-type)))
+
+(defn- relationship-pair-retractions
+  "Both halves of one relationship, as retraction ops."
+  [subject-type subject-eid relation-eid resource-type resource-eid]
+  [[:db/retract subject-eid forward-relationship-attr
+    [subject-type relation-eid resource-type resource-eid]]
+   [:db/retract resource-eid reverse-relationship-attr
+    [resource-type relation-eid subject-type subject-eid]]])
+
+(defn tx-delete-object
+  "Retraction tx-data removing every EACL relationship that touches `object-id`,
+  in BOTH directions — including the halves stored on the peer entities.
+
+  `object-id` is resolved the same way reads resolve object ids (string ->
+  [:eacl/id ...], anything else -> d/entid), so it also accepts the raw eid of
+  an entity that was already retracted the bare Datomic way. Returns [] for an
+  id that does not resolve.
+
+  Finds relationships two ways, so it is complete whether or not the object's
+  own datoms still exist:
+    - the object's own halves, via :eavt on the object; and
+    - the peers' halves that NAME the object, via one exact :avet lookup per
+      Relation in the schema (both indexes are :db/index true).
+  Retracting a datom that is already absent is a no-op, so the overlap between
+  the two is harmless and this is idempotent.
+
+  Retracts relationships only; retracting the entity itself is yours to do."
+  [db object-id]
+  (if-let [eid (impl.indexed/object-eid db object-id)]
+    (let [triples (relation-triples db)]
+      (vec
+       (distinct
+        (concat
+         ;; The object's own halves. Needed on top of the index lookups below
+         ;; because a half whose peer is already missing is only visible here.
+         (mapcat (fn [datom]
+                   (let [[subject-type relation-eid resource-type resource-eid] (:v datom)]
+                     (relationship-pair-retractions subject-type eid relation-eid
+                                                    resource-type resource-eid)))
+                 (d/datoms db :eavt eid forward-relationship-attr))
+         (mapcat (fn [datom]
+                   (let [[resource-type relation-eid subject-type subject-eid] (:v datom)]
+                     (relationship-pair-retractions subject-type subject-eid relation-eid
+                                                    resource-type eid)))
+                 (d/datoms db :eavt eid reverse-relationship-attr))
+         ;; Peers naming this object as the SUBJECT (halves stored on resources).
+         (mapcat (fn [[resource-type relation-eid subject-type]]
+                   (mapcat (fn [datom]
+                             (relationship-pair-retractions subject-type eid relation-eid
+                                                            resource-type (:e datom)))
+                           (d/datoms db :avet reverse-relationship-attr
+                                     [resource-type relation-eid subject-type eid])))
+                 triples)
+         ;; Peers naming this object as the RESOURCE (halves stored on subjects).
+         (mapcat (fn [[resource-type relation-eid subject-type]]
+                   (mapcat (fn [datom]
+                             (relationship-pair-retractions subject-type (:e datom) relation-eid
+                                                            resource-type eid))
+                           (d/datoms db :avet forward-relationship-attr
+                                     [subject-type relation-eid resource-type eid])))
+                 triples)))))
+    []))
+
+(defn orphaned-relationship-halves
+  "Lazy seq of relationship halves whose peer half is absent — the residue of
+  entities retracted without tx-delete-object.
+
+  Scans both relationship indexes and probes for each peer, so this is an
+  offline maintenance operation, O(number of relationships). Pass a plain db
+  value (not history/filter)."
+  [db]
+  (concat
+   (for [datom (d/datoms db :aevt forward-relationship-attr)
+         :let  [subject-eid (:e datom)
+                [subject-type relation-eid resource-type resource-eid] (:v datom)]
+         :when (empty? (d/datoms db :eavt resource-eid reverse-relationship-attr
+                                 [resource-type relation-eid subject-type subject-eid]))]
+     {:half          :forward
+      :e             subject-eid
+      :attr          forward-relationship-attr
+      :v             (vec (:v datom))
+      :subject-eid   subject-eid
+      :resource-eid  resource-eid
+      :relation-eid  relation-eid})
+   (for [datom (d/datoms db :aevt reverse-relationship-attr)
+         :let  [resource-eid (:e datom)
+                [resource-type relation-eid subject-type subject-eid] (:v datom)]
+         :when (empty? (d/datoms db :eavt subject-eid forward-relationship-attr
+                                 [subject-type relation-eid resource-type resource-eid]))]
+     {:half          :reverse
+      :e             resource-eid
+      :attr          reverse-relationship-attr
+      :v             (vec (:v datom))
+      :subject-eid   subject-eid
+      :resource-eid  resource-eid
+      :relation-eid  relation-eid})))
+
+(defn tx-retract-orphaned-relationships
+  "Retraction tx-data for orphaned-relationship-halves. Fails closed: an
+  orphan means one endpoint is gone, so the survivor should stop granting.
+  Transact in batches on large databases."
+  [db]
+  (mapv (fn [{:keys [e attr v]}] [:db/retract e attr v])
+        (orphaned-relationship-halves db)))
 
 (defn tx-relationship
   "Translate relationship data into v7 tuple writes.
@@ -489,12 +663,17 @@
 
       :create
       (if exists?
-        (throw (Exception. ":create relationship conflicts with existing tuple relationship"))
+        (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+                 {:type :eacl/relationship-conflict
+                  :relationship relationship}))
         (add-relationship-txes resolved))
 
+      ;; Unconditional: Datomic ignores retraction of an absent datom, and
+      ;; skipping on a not-exists? check left a surviving half-pair in place.
       :delete
-      (when exists?
-        (retract-relationship-txes resolved))
+      (retract-relationship-txes resolved)
 
       :unspecified
-      (throw (Exception. ":unspecified relationship update not supported.")))))
+      (throw (ex-info ":unspecified relationship update is not supported. Use :create, :touch or :delete."
+               {:type :eacl/unsupported-operation
+                :operation :unspecified})))))

@@ -724,8 +724,12 @@
             (is (empty? (paginated->spice db' empty-page)))
             (is (nil? (page-start-cursor empty-page)))
             (is (nil? (page-end-cursor empty-page)))
+            ;; A page with no items carries no cursors, so it can advertise
+            ;; neither direction: has-*-page? true alongside a nil cursor gave
+            ;; clients a loop with no exit (and :after nil silently restarted
+            ;; at page 1). Both flags are clamped to false on an empty page.
             (is (false? (get-in empty-page [:page-info :has-next-page?])))
-            (is (true? (get-in empty-page [:page-info :has-previous-page?])))))
+            (is (false? (get-in empty-page [:page-info :has-previous-page?])))))
 
         (testing "forward pages compose with :after end-cursor"
           (let [both-pages (lookup-resources db' {:first 5
@@ -1384,14 +1388,33 @@
                                                        :resource/type :account
                                                        :first         2})))))))
 
-      (testing "bare recursive :last is rejected because it requires full traversal"
-        (is (= :eacl.pagination/unsupported-recursive-last
-               (:eacl/error
-                (thrown-ex-data
-                 #(lookup-resources db {:subject       user
-                                        :permission    :read
-                                        :resource/type :account
-                                        :last          2}))))))
+      ;; Regression: bare :last used to throw :eacl.pagination/unsupported-recursive-last
+      ;; while the acyclic engine accepted it, so adding `parent->read` to a
+      ;; schema turned every existing {:last n} caller into a runtime error.
+      ;; It now exhausts the traversal into a trailing window, like count-*.
+      (testing "bare recursive :last returns the trailing page, matching the acyclic contract"
+        (let [all  (paginated->spice db (lookup-resources db {:subject       user
+                                                              :permission    :read
+                                                              :resource/type :account
+                                                              :first         100}))
+              tail (lookup-resources db {:subject       user
+                                         :permission    :read
+                                         :resource/type :account
+                                         :last          2})]
+          (is (= (vec (take-last 2 all)) (paginated->spice db tail))
+              "bare :last is the last window of the traversal order")
+          (is (false? (get-in tail [:page-info :has-next-page?]))
+              "nothing follows the last page")
+          (is (true? (get-in tail [:page-info :has-previous-page?]))
+              "3 results, page size 2: an earlier page exists")
+          (testing "and :before composes backwards from it"
+            (is (= (vec (drop-last 2 all))
+                   (paginated->spice db
+                                     (lookup-resources db {:subject       user
+                                                           :permission    :read
+                                                           :resource/type :account
+                                                           :last          2
+                                                           :before        (page-start-cursor tail)})))))))
 
       (testing "wrong cursor kind is rejected by recursive lookup"
         (is (= :eacl.pagination/wrong-cursor-kind
