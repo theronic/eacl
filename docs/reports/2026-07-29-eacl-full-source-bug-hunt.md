@@ -272,7 +272,8 @@ the tuple datom by hand can remove it.
 
 Note also that `can?` and `lookup-subjects` now **disagree**, which breaks the invariant
 `differential-test` asserts everywhere else. Any downstream job driven by `lookup-subjects`
-("notify all admins", "sync relationships to SpiceDB") will act on ghost subjects with `nil` ids.
+("notify all admins", "sync authorization relationships downstream") will act on ghost subjects
+with `nil` ids.
 
 ### Recommended fix
 
