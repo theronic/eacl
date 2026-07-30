@@ -26,3 +26,21 @@
          (finally
            (datomic.api/release ~sym)
            (datomic.api/delete-database datomic-uri#))))))
+
+(defmacro with-mem-conns
+  "Creates two independent connections to one temporary in-memory database."
+  [[first-sym second-sym schema] & body]
+  `(let [random-uuid# (java.util.UUID/randomUUID)
+         datomic-uri# (str "datomic:mem://test-" (.toString random-uuid#))
+         created?# (datomic.api/create-database datomic-uri#)]
+     (assert (true? created?#)
+             (str "Failed to create in-memory Datomic:" datomic-uri#))
+     (let [~first-sym (datomic.api/connect datomic-uri#)
+           ~second-sym (datomic.api/connect datomic-uri#)]
+       (try
+         @(datomic.api/transact ~first-sym ~schema)
+         (do ~@body)
+         (finally
+           (datomic.api/release ~first-sym)
+           (datomic.api/release ~second-sym)
+           (datomic.api/delete-database datomic-uri#))))))

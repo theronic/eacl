@@ -4,7 +4,8 @@
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
-            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn
+                                                  with-mem-conns]]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]))
@@ -160,6 +161,50 @@
                (set (map :id (:data (eacl/lookup-resources reader query))))))
         (is (= 2 @calls)
             "a writer whose own cache is disabled still advances the shared coordinator")))))
+
+(deftest lagging-reader-cannot-pair-a-stale-db-with-a-new-proof-test
+  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+    (let [context (cache/local-context)
+          writer (core/make-client
+                  writer-conn
+                  {:cache {:store false
+                           :coordinator (:coordinator context)}})
+          alice (spice-object :user "alice")
+          account (spice-object :account "a-1")
+          relationship (->Relationship alice :owner account)]
+      (seed-direct! writer-conn writer)
+      (let [reader (core/make-client
+                    reader-conn
+                    {:cache (assoc context :live-results? true)})]
+        (is (true? (eacl/can? reader alice :admin account)))
+        (is (pos? (:entries
+                   (cache/stats (get-in reader [:opts :lookup-cache-store]))))
+            "the stale positive decision is resident before the deletion")
+        (let [stale-db (d/db reader-conn)
+              original-db d/db
+              original-sync d/sync
+              lagging? (atom true)
+              sync-calls (atom [])]
+          (eacl/delete-relationship! writer relationship)
+          (with-redefs [d/db
+                        (fn [conn]
+                          (if (and (identical? conn reader-conn)
+                                   @lagging?)
+                            stale-db
+                            (original-db conn)))
+                        d/sync
+                        (fn [conn t]
+                          (if (identical? conn reader-conn)
+                            (do
+                              (swap! sync-calls conj t)
+                              (reset! lagging? false)
+                              (future (original-db conn)))
+                            (original-sync conn t)))]
+            (is (false? (eacl/can? reader alice :admin account))
+                "the reader catches up before evaluating under the published proof")
+            (is (= 1 (count @sync-calls)))
+            (is (false? (eacl/can? reader alice :admin account))
+                "the caught-up false result, not the stale true result, is cached")))))))
 
 (deftest shared-store-does-not-share-live-results-across-coordinator-incarnations-test
   (with-mem-conn [conn schema/v7-schema]
@@ -467,7 +512,7 @@
         (is (= 1 @classifications)
             "the uniform completed-page hit precedes traversal selection")))))
 
-(deftest recursive-cursors-fail-closed-across-independent-client-proofs-test
+(deftest recursive-cursors-replay-across-independent-client-proofs-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           token-key "shared-store-opaque-continuation"
@@ -492,17 +537,17 @@
                                                   :page-token-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])
+            expected-page (eacl/lookup-resources first-client
+                                                 (assoc query :after cursor))
             stats (atom {})]
-        (try
-          (binding [idx/*recursive-traversal-stats* stats]
-            (eacl/lookup-resources second-client
-                                   (assoc query :after cursor)))
-          (is false "another client cannot resume process-local state")
-          (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl.consistency/snapshot-unavailable
-                   (:type (ex-data e))))))
-        (is (empty? @stats)
-            "a mismatched coordinator proof is rejected before traversal")))))
+        (is (= (:data expected-page)
+               (:data
+                (binding [idx/*recursive-traversal-stats* stats]
+                  (eacl/lookup-resources second-client
+                                         (assoc query :after cursor)))))
+            "another client replays the cursor against its authenticated snapshot")
+        (is (= 1 (:recursive-page-hits @stats))
+            "the shared immutable page is reusable across client instances")))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]
@@ -561,4 +606,41 @@
                   conn
                   {:cache {:store false
                            :coordinator (cache/local-coordinator)
-                           :live-results? true}})))))
+                           :live-results? true}})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client
+                  conn
+                  {:consistency-sync-timeout-ms 0})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client
+                  conn
+                  {:zed-token-key "one"
+                   :zed-token-keyring {:current "two"}})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client
+                  conn
+                  {:zed-token-keyring {:old "old"}
+                   :zed-token-kid :missing})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client
+                  conn
+                  {:zed-token-keyring {:current 42}})))
+    (doseq [config [{:consistency-sync-timeout-ms nil}
+                    {:zed-token-key nil}
+                    {:zed-token-key false}
+                    {:zed-token-key ""}
+                    {:zed-token-key (byte-array 0)}
+                    {:zed-token-keyring nil}
+                    {:zed-token-keyring []}
+                    {:zed-token-keyring {}}
+                    {:zed-token-keyring {"" "key"}
+                     :zed-token-kid ""}
+                    {:zed-token-keyring {:current "key"}
+                     :zed-token-kid nil}
+                    {:zed-token-keyring {:current "key"}
+                     :zed-token-kid []}]]
+      (try
+        (core/make-client conn config)
+        (is false (str "expected invalid config: " (pr-str config)))
+        (catch clojure.lang.ExceptionInfo e
+          (is (= :eacl/invalid-config (:type (ex-data e)))))))))

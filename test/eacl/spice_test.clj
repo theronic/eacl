@@ -543,24 +543,28 @@
 	                                          :resource/type :server
 	                                          :first         2}))))
 
-	    (testing "page tokens fail closed after live changes when their exact snapshot is unavailable"
+	    (testing "page tokens replay their historical snapshot after live changes"
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
 	            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
 	            page1-end-cursor (page-end-cursor page1)
+	            expected-page2 (eacl/lookup-resources
+	                            *client
+	                            (assoc base-query
+	                                   :first 100
+	                                   :after page1-end-cursor))
 	            new-server (->server "stable-new-server")]
 	        @(d/transact conn [{:eacl/id (:id new-server)}])
 	        (is (eacl/create-relationship! *client my-account :account new-server))
-	        (is (= :eacl.consistency/snapshot-unavailable
-	               (try
-	                 (eacl/lookup-resources *client
-	                                        (assoc base-query
-	                                               :first 100
-	                                               :after page1-end-cursor))
-	                 :no-error
-	                 (catch clojure.lang.ExceptionInfo e
-	                   (:type (ex-data e)))))))
+	        (is (= (:data expected-page2)
+	               (:data
+	                (eacl/lookup-resources
+	                 *client
+	                 (assoc base-query
+	                        :first 100
+	                        :after page1-end-cursor)))))
+	        (is (not-any? #(= new-server %) (:data expected-page2))))
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -572,15 +576,13 @@
 	                                                         :after page1-end-cursor))
 	            victim (first (:data expected-page2))]
 	        @(d/transact conn [[:db/retract [:eacl/id (:id victim)] :eacl/id (:id victim)]])
-	        (is (= :eacl.consistency/snapshot-unavailable
-	               (try
-	                 (eacl/lookup-resources *client
-	                                        (assoc base-query
-	                                               :first 2
-	                                               :after page1-end-cursor))
-	                 :no-error
-	                 (catch clojure.lang.ExceptionInfo e
-	                   (:type (ex-data e))))))))
+	        (is (= (:data expected-page2)
+	               (:data
+	                (eacl/lookup-resources
+	                 *client
+	                 (assoc base-query
+	                        :first 2
+	                        :after page1-end-cursor)))))))
 
 	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
 	      (testing "transact the test entities we are about to use"

@@ -171,6 +171,25 @@
         (is (= :eacl/unsupported-operation
                (:type (ex-data-of #(impl/tx-update-relationship (d/db conn)
                                                                 {:operation :unspecified :relationship rel}))))))
+      (testing "nil and arbitrary operations are rejected before endpoint resolution"
+        (doseq [operation [nil :replace "delete"]]
+          (let [data (ex-data-of #(impl/tx-update-relationship
+                                  (d/db conn)
+                                  {:operation operation
+                                   :relationship nil}))]
+            (is (= :eacl/unsupported-operation (:type data)))
+            (is (= operation (:operation data))))))
+      (testing "the public batch validates every operation before coercing endpoints"
+        (let [client (core/make-client conn {})]
+          (doseq [operation [nil :unspecified :replace]]
+            (let [data
+                  (ex-data-of
+                   #(eacl/write-relationships!
+                     client
+                     [{:operation operation
+                       :relationship nil}]))]
+              (is (= :eacl/unsupported-operation (:type data)))
+              (is (= operation (:operation data)))))))
       (testing "can!"
         (is (true? (impl/can! db (spice-object :user u) :admin (spice-object :account a))))
         (is (= :eacl/unauthorized

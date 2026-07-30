@@ -113,7 +113,8 @@
       (is (= 1 (reverse-count (d/db conn) a)) "orphan present before repair")
 
       (let [result (eacl/delete-object! acl (spice-object :user u))]
-        (is (pos? (:retracted-datoms result))))
+        (is (= 1 (:retracted-datoms result))
+            "only the surviving half is counted"))
 
       (is (zero? (reverse-count (d/db conn) a)))
       (is (empty? (:data (idx/lookup-subjects (d/db conn)
@@ -121,6 +122,52 @@
                                                :permission   :admin
                                                :subject/type :user
                                                :first        10})))))))
+
+(deftest delete-object-counts-only-datoms-that-existed-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [{:keys [u a]} (seed! conn)
+          acl (core/make-client conn {})
+          forward (first
+                   (d/datoms
+                    (d/db conn)
+                    :eavt
+                    u
+                    :eacl.v7.relationship/subject-type+relation+resource-type+resource))]
+      @(d/transact conn [[:db/retract
+                          u
+                          :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                          (vec (:v forward))]])
+      (is (= 1 (reverse-count (d/db conn) a)))
+      (is (= 1
+             (:retracted-datoms
+              (eacl/delete-object! acl (spice-object :account "a"))))
+          "a requested no-op retraction is not included in the result count")
+      (is (zero? (reverse-count (d/db conn) a))))))
+
+(deftest delete-object-accumulates-exact-count-across-batches-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [relationship-count 501
+          acl (core/make-client conn {})
+          user (spice-object :user "u")]
+      (schema/write-schema! conn test-schema)
+      @(d/transact
+        conn
+        (into [{:eacl/id "u"}]
+              (map (fn [n] {:eacl/id (str "a-" n)})
+                   (range relationship-count))))
+      (eacl/create-relationships!
+       acl
+       (mapv (fn [n]
+               (Relationship user
+                             :owner
+                             (spice-object :account (str "a-" n))))
+             (range relationship-count)))
+      (is (= (* 2 relationship-count)
+             (:retracted-datoms (eacl/delete-object! acl user)))
+          "the public count sums actual retractions from every batch")
+      (is (zero? (forward-count
+                  (d/db conn)
+                  (d/entid (d/db conn) [:eacl/id "u"])))))))
 
 (deftest orphan-detection-and-repair-test
   (with-mem-conn [conn schema/v7-schema]

@@ -3,8 +3,7 @@
 
   Cache availability never changes a recomputable authorization answer. Store
   failures, eviction, and disabled caches fall back to indexed/traversal work
-  while the selected proof remains reproducible; explicitly cache-resident
-  exact snapshots instead become unavailable."
+  against the selected live or historical Datomic value."
   (:import [java.util Iterator LinkedHashMap Map$Entry UUID]
            [java.util.concurrent.locks ReentrantReadWriteLock Lock]))
 
@@ -440,6 +439,38 @@
              (valid-value? (:eacl.cache/value cached)))
     (:eacl.cache/value cached)))
 
+(defn safe-record-provider-error!
+  "Best-effort provider telemetry. Observability cannot replace cache fallback."
+  [store operation kind]
+  (when store
+    (try
+      (record-provider-error! store operation kind)
+      (catch Exception _
+        nil))))
+
+(defn safe-capabilities
+  "Returns provider capabilities, or the conservative empty set on failure."
+  [store]
+  (if store
+    (try
+      (let [result (capabilities store)]
+        (if (set? result) result #{}))
+      (catch Exception _
+        (safe-record-provider-error! store :capabilities :unknown)
+        #{}))
+    #{}))
+
+(defn safe-evict!
+  "Best-effort single-entry eviction."
+  [store k]
+  (boolean
+   (when store
+     (try
+       (evict! store k)
+       (catch Exception _
+         (safe-record-provider-error! store :evict :unknown)
+         false)))))
+
 (defn safe-lookup
   "Cache lookup whose failure is always a miss."
   [store k]
@@ -447,7 +478,7 @@
     (try
       (lookup store k)
       (catch Exception _
-        (record-provider-error! store :lookup :unknown)
+        (safe-record-provider-error! store :lookup :unknown)
         nil))))
 
 (defn safe-store!
@@ -458,7 +489,7 @@
      (try
       (store! store k value weight ttl-ms)
       (catch Exception _
-        (record-provider-error! store :store (entry-kind value))
+        (safe-record-provider-error! store :store (entry-kind value))
         false)))))
 
 (defn safe-entry-value
@@ -469,15 +500,18 @@
             (some-> (lookup store cache-key)
                     (entry-value cache-key kind valid-value?))
             (catch Exception _
-              (record-provider-error! store :lookup kind)
+              (safe-record-provider-error! store :lookup kind)
               nil))]
       ;; CacheStore/lookup predates typed requests, so the built-in store can
       ;; only infer a hit's kind. The typed wrapper records the requested kind
       ;; for misses without double-counting the total miss metric.
       (when (and (nil? value)
                  (instance? LocalStore store))
-        (swap! (:state store)
-               update-in [:by-kind kind :misses] (fnil inc 0)))
+        (try
+          (swap! (:state store)
+                 update-in [:by-kind kind :misses] (fnil inc 0))
+          (catch Exception _
+            nil)))
       value)))
 
 (defn portable-value?
@@ -506,7 +540,7 @@
 
 (defn compatible-entry?
   [store kind value]
-  (let [provider-capabilities (capabilities store)]
+  (let [provider-capabilities (safe-capabilities store)]
     (cond
       (contains? provider-capabilities :opaque-values) true
       (not (contains? provider-capabilities :portable-values)) false
@@ -552,5 +586,5 @@
        false)
      (catch Exception _
        (when store
-         (record-provider-error! store :admission kind))
+         (safe-record-provider-error! store :admission kind))
        false))))

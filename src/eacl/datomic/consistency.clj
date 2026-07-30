@@ -1,14 +1,23 @@
 (ns eacl.datomic.consistency
-  "Datomic revision tokens and optional observed-revision checkpoints.
+  "Authenticated Datomic revision tokens and optional observed checkpoints.
 
-  A token's semantic value is one monotonic Datomic basis t. It is a freshness
-  lower bound, not a wall-clock timestamp and not a retained database value."
+  A token names one logical database and monotonic Datomic basis t. Its HMAC
+  prevents claim forgery, but does not make it a credential, prevent replay,
+  or authorize a caller to select exact historical evaluation."
   (:require [clojure.edn :as edn])
   (:import [java.nio.charset StandardCharsets]
-           [java.util Base64]))
+           [java.security MessageDigest]
+           [java.util Base64]
+           [javax.crypto Mac]
+           [javax.crypto.spec SecretKeySpec]))
 
-(def token-version 1)
-(def ^:private token-prefix "eacl_z1_")
+(def token-version 2)
+(def ^:private token-prefix "eacl_z2_")
+(def ^:private maximum-token-length 4096)
+(def ^:private maximum-key-id-length 128)
+(def ^:private signing-algorithm "HmacSHA256")
+(def ^:private signing-domain "eacl/zed-token/envelope/v2")
+(def ^:private signing-key-domain "eacl/zed-token/signing-key/v2")
 
 (defn- utf8-bytes
   [value]
@@ -22,9 +31,80 @@
   [^String value]
   (.decode (Base64/getUrlDecoder) value))
 
+(defn- canonicalize
+  [x]
+  (cond
+    (map? x)
+    (into (sorted-map)
+          (map (fn [[k v]] [k (canonicalize v)]))
+          x)
+
+    (set? x)
+    (mapv canonicalize (sort x))
+
+    (sequential? x)
+    (mapv canonicalize x)
+
+    :else x))
+
+(defn- canonical-bytes
+  [value]
+  (utf8-bytes (pr-str (canonicalize value))))
+
+(defn- hmac-sha-256
+  [^bytes key ^bytes value]
+  (let [mac (Mac/getInstance signing-algorithm)]
+    (.init mac (SecretKeySpec. key signing-algorithm))
+    (.doFinal mac value)))
+
+(defn derive-signing-key
+  "Derives a purpose-specific Zed-token HMAC key from normalized root key bytes."
+  [root-key]
+  (when-not (and (bytes? root-key)
+                 (pos? (alength ^bytes root-key)))
+    (throw (ex-info "Zed token root key must be non-empty bytes."
+                    {:type :eacl/invalid-config
+                     :key :zed-token-key})))
+  (hmac-sha-256 root-key (utf8-bytes signing-key-domain)))
+
+(defn- key-id?
+  [kid]
+  (and (or (keyword? kid)
+           (and (string? kid) (not-empty kid)))
+       (<= (count (pr-str kid)) maximum-key-id-length)))
+
+(defn- signing-context
+  [{:keys [zed-token-current-kid zed-token-keyring]}]
+  (let [key (get zed-token-keyring zed-token-current-kid)]
+    (when-not (and (key-id? zed-token-current-kid)
+                   (map? zed-token-keyring)
+                   (bytes? key)
+                   (pos? (alength ^bytes key)))
+      (throw (ex-info "Invalid EACL Zed token signing context."
+                      {:type :eacl/invalid-config
+                       :key :zed-token-keyring})))
+    {:kid zed-token-current-kid
+     :key key}))
+
+(defn- signing-input
+  [envelope]
+  (utf8-bytes
+   (str signing-domain "\n" (pr-str (canonicalize envelope)))))
+
+(defn- invalid-token!
+  ([]
+   (invalid-token! :invalid))
+  ([reason]
+   (throw (ex-info "Invalid EACL Zed token."
+                   {:type :eacl/invalid-zed-token
+                    :reason reason}))))
+
 (defn zed-token
-  "Creates a versioned token bound to `database-id` at Datomic basis `t`."
-  [database-id t]
+  "Creates an authenticated token bound to `database-id` at Datomic basis `t`.
+
+  `opts` must contain the normalized :zed-token-current-kid and
+  :zed-token-keyring installed by eacl.datomic.core/make-client."
+  [opts database-id t]
   (when-not (and (string? database-id)
                  (not-empty database-id)
                  (integer? t)
@@ -34,41 +114,84 @@
                     {:type :eacl/invalid-zed-token
                      :database-id database-id
                      :revision t})))
-  (str token-prefix
-       (b64url-encode
-        (utf8-bytes
-         (pr-str {:v token-version
-                  :db database-id
-                  :t (long t)})))))
+  (let [{:keys [kid key]} (signing-context opts)
+        payload (b64url-encode
+                 (canonical-bytes
+                  {:v token-version
+                   :db database-id
+                   :t (long t)}))
+        signed-envelope {:v token-version
+                         :kid kid
+                         :payload payload}
+        envelope (assoc signed-envelope
+                        :tag
+                        (b64url-encode
+                         (hmac-sha-256
+                          key
+                          (signing-input signed-envelope))))
+        token (str token-prefix
+                   (b64url-encode (canonical-bytes envelope)))]
+    (when (> (count token) maximum-token-length)
+      (throw (ex-info "EACL Zed token exceeds the maximum encoded length."
+                      {:type :eacl/invalid-zed-token
+                       :reason :too-long})))
+    token))
 
 (defn token-data
-  "Validates and decodes `token` for `expected-database-id`.
+  "Authenticates and decodes `token` for `expected-database-id`.
 
   Returns {:database-id string :revision Long}."
-  [expected-database-id token]
+  [opts expected-database-id token]
   (try
     (when-not (and (string? token)
+                   (<= (count token) maximum-token-length)
                    (.startsWith ^String token token-prefix))
-      (throw (ex-info "Invalid EACL Zed token."
-                      {:type :eacl/invalid-zed-token})))
-    (let [payload (edn/read-string
-                   (String.
-                    (b64url-decode (subs token (count token-prefix)))
-                    StandardCharsets/UTF_8))
-          {:keys [v db t]} payload]
-      (when-not (= #{:v :db :t} (set (keys payload)))
-        (throw (ex-info "Malformed EACL Zed token payload."
-                        {:type :eacl/invalid-zed-token})))
-      (when-not (= token-version v)
-        (throw (ex-info "Unsupported EACL Zed token version."
-                        {:type :eacl/invalid-zed-token
-                         :version v})))
+      (invalid-token! :malformed))
+    (let [envelope (edn/read-string
+                    (String.
+                     (b64url-decode (subs token (count token-prefix)))
+                     StandardCharsets/UTF_8))
+          envelope-version (:v envelope)
+          kid (:kid envelope)
+          encoded-payload (:payload envelope)
+          tag (:tag envelope)
+          _ (when-not (and (= #{:v :kid :payload :tag}
+                              (set (keys envelope)))
+                           (= token-version envelope-version)
+                           (key-id? kid)
+                           (string? encoded-payload)
+                           (string? tag))
+              (invalid-token! :malformed))
+          key (get (:zed-token-keyring opts) kid)
+          _ (when-not (bytes? key)
+              (invalid-token! :authentication-failed))
+          supplied-tag (b64url-decode tag)
+          expected-tag
+          (hmac-sha-256
+           key
+           (signing-input {:v envelope-version
+                           :kid kid
+                           :payload encoded-payload}))
+          _ (when-not (and (= (alength ^bytes expected-tag)
+                              (alength ^bytes supplied-tag))
+                           (MessageDigest/isEqual expected-tag supplied-tag))
+              (invalid-token! :authentication-failed))
+          parsed-payload (edn/read-string
+                          (String. (b64url-decode encoded-payload)
+                                   StandardCharsets/UTF_8))
+          payload-version (:v parsed-payload)
+          db (:db parsed-payload)
+          t (:t parsed-payload)]
+      (when-not (= #{:v :db :t} (set (keys parsed-payload)))
+        (invalid-token! :malformed))
+      (when-not (= token-version payload-version)
+        (invalid-token! :malformed))
       (when-not (and (string? db)
+                     (not-empty db)
                      (integer? t)
                      (not (neg? t))
                      (<= t Long/MAX_VALUE))
-        (throw (ex-info "Malformed EACL Zed token payload."
-                        {:type :eacl/invalid-zed-token})))
+        (invalid-token! :malformed))
       (when-not (= expected-database-id db)
         (throw (ex-info "EACL Zed token belongs to another database."
                         {:type :eacl/invalid-zed-token
@@ -79,14 +202,14 @@
        :revision (long t)})
     (catch clojure.lang.ExceptionInfo e
       (throw e))
-    (catch Exception e
-      (throw (ex-info "Invalid EACL Zed token."
-                      {:type :eacl/invalid-zed-token}
-                      e)))))
+    (catch StackOverflowError _
+      (invalid-token! :malformed))
+    (catch Exception _
+      (invalid-token! :malformed))))
 
 (defn token-revision
-  [expected-database-id token]
-  (:revision (token-data expected-database-id token)))
+  [opts expected-database-id token]
+  (:revision (token-data opts expected-database-id token)))
 
 (def ^:private default-checkpoint-config
   {:max-entries 64

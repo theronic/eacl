@@ -194,6 +194,34 @@
     (is (nil? (cache/safe-lookup broken :key)))
     (is (false? (cache/safe-store! broken :key :value 1 1000)))))
 
+(deftest provider-and-observability-failures-are-contained-test
+  (let [hostile
+        (reify
+          cache/CacheStore
+          (lookup [_ _] (throw (ex-info "lookup down" {})))
+          (store! [_ _ _ _ _] (throw (ex-info "store down" {})))
+          (evict! [_ _] (throw (ex-info "evict down" {})))
+          (clear! [_] (throw (ex-info "clear down" {})))
+          (stats [_] (throw (ex-info "metrics down" {})))
+
+          cache/CacheProvider
+          (capabilities [_] (throw (ex-info "capabilities down" {})))
+          (clear-namespace! [_ _]
+            (throw (ex-info "namespace clear down" {})))
+          (record-provider-error! [_ _ _]
+            (throw (ex-info "provider telemetry down" {}))))]
+    (is (nil? (cache/safe-lookup hostile :key)))
+    (is (nil? (cache/safe-entry-value hostile :key :can? boolean?)))
+    (is (false? (cache/safe-store! hostile :key :value 1 1000)))
+    (is (false? (cache/safe-evict! hostile :key)))
+    (is (= #{} (cache/safe-capabilities hostile)))
+    (is (false?
+         (cache/safe-store-entry!
+          hostile :key :can? true 1 1000)))
+    (is (nil?
+         (cache/safe-record-provider-error!
+          hostile :lookup :can?)))))
+
 (deftest dependency-generation-compresses-to-safe-maximum-test
   (let [snapshot {:incarnation "inc"
                   :uncertain 3

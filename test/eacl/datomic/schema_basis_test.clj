@@ -27,6 +27,12 @@
                         relation viewer: user
                         permission admin = owner + viewer }")
 
+(def ^:private schema-viewer-only
+  "definition user {}
+   definition account { relation owner: user
+                        relation viewer: user
+                        permission admin = viewer }")
+
 (defn- seed-owner!
   [conn]
   @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
@@ -99,7 +105,7 @@
             (is (true? (eacl/can? acl viewer :admin account)))
             (is (= 2 @path-calcs))))))))
 
-(deftest page-token-does-not-time-travel-across-schema-generations-test
+(deftest page-token-replays-with-its-historical-schema-generation-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a-1"} {:eacl/id "a-2"}])
@@ -118,12 +124,16 @@
           page1 (eacl/lookup-resources acl query)
           cursor (get-in page1 [:page-info :end-cursor])]
       (is (some? cursor))
-      (eacl/write-schema! acl schema-v2)
-      (try
-        (eacl/lookup-resources acl (assoc query :after cursor))
-        (is false "a token may not evaluate a historical schema")
-        (catch clojure.lang.ExceptionInfo e
-          (is (= :eacl.pagination/stale-schema (:type (ex-data e)))))))))
+      (eacl/write-schema! acl schema-viewer-only)
+      (is (= ["a-2"]
+             (mapv :id
+                   (:data
+                    (eacl/lookup-resources
+                     acl
+                     (assoc query :after cursor)))))
+          "cursor replay evaluates permission definitions from its basis")
+      (is (empty? (:data (eacl/lookup-resources acl query)))
+          "a new enumeration uses the new schema generation"))))
 
 (deftest arbitrary-db-evaluation-is-uncached-and-isolated-test
   (with-mem-conn [conn schema/v7-schema]

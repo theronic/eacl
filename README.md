@@ -32,7 +32,7 @@ Situated AuthZ offers some advantages for typical use-cases:
 2. Storing permission data directly in Datomic avoids network I/O to an external AuthZ system, reducing latency.
 3. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
 4. Queries default to the current DB visible to the local Peer and also support
-   `minimize-latency`, `at-least-as-fresh`, and cache-resident `at-exact-snapshot` semantics.
+   `minimize-latency`, `at-least-as-fresh`, and historical `at-exact-snapshot` semantics.
 5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but you will find the eager Datalog engine too slow and unable to handle all the grounding cases. The first version of EACL was implemented with Datalog rules, but it was simply too slow and materialized all intermediate results. Correct bidirectional cursor-pagination is also non-trivial, because parallel paths through the permission graph can yield duplicate resources. EACL does this for you with good performance.
 
 ## Performance
@@ -46,9 +46,9 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL has one optional, bounded ephemeral authorization cache for `can?`, lookup pages, counts,
   exact snapshots, and recursive continuations. A continuation hit advances recursive pagination
   from its saved frontier, removing repeated-prefix `O(N²/page-size)` work. If a continuation is
-  unavailable while the cursor's relationship proof still matches, EACL safely recomputes the
-  deterministic prefix. After a relevant relationship change, only an already retained exact page
-  may answer; otherwise EACL fails closed instead of evaluating a different snapshot.
+  unavailable, EACL reconstructs the cursor's authenticated historical Datomic basis and safely
+  recomputes the deterministic prefix. Relevant relationship or schema changes after page one do
+  not alter later pages.
 - Live `can?`, lookup, and count results can use the same store when `:live-results? true` is
   configured with an explicit coordinator shared by every participating EACL reader and writer.
   Keys use the schema generation and committed revision of only the relation definitions used by
@@ -57,17 +57,17 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
-  - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. EACL does not provide time-travel semantics for a connection-backed client, and speculative/historic evaluation cannot publish paths into its cache.
+  - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. Connection-backed cursor and exact reads build request-scoped schema state from their historical DB; they do not publish paths into the client's live schema cache.
   - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a proof-equivalent miss is slower but correct because it replays the prefix. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-*Note* that EACL page tokens pin an EACL schema and relationship proof, not a retained Datomic
-database value. A later page may use the current DB only while that proof still matches. Otherwise
-the exact completed page must already be in the ephemeral cache; a continuation cannot be resumed
-against changed relationship state. If the page is absent, EACL returns
-`:eacl.consistency/snapshot-unavailable`. EACL does not call `d/as-of` to reconstruct it. Refresh
-from the first page to select a current snapshot.
+EACL page tokens pin the database identity, historical basis, operation, query, ordering, and
+schema semantics selected by page one. A matching cached page or continuation is an accelerator;
+on a miss, eviction, disabled cache, or recoverable provider failure, EACL uses `d/as-of` and
+replays from the pinned basis. It never silently falls forward to live relationship or schema
+state. A typed snapshot-unavailable/cursor-expired error is reserved for invalid, expired, or
+genuinely unreconstructable history.
 
 The internal functions in `eacl.datomic.impl.indexed` continue to accept a `db` directly. This is
 the escape hatch for deliberate `d/as-of`, `d/with`, or prospective database evaluation:
@@ -154,11 +154,11 @@ Pass `:count-limit n` to either count operation to bound work. The result then i
 ### Relationship Maintenance
 
 - `(eacl/read-relationships acl filters) => {:data [relationships...] :page-info {...}}`
-- `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z1_..."}`,
+- `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z2_..."}`,
   - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
-- `(eacl/delete-object! acl object) => {:zed/token "eacl_z1_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z2_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
 All list APIs use the v7.3 pagination contract:
 
@@ -587,11 +587,13 @@ permission's dependency set do not expire that entry. The read barrier is releas
 captures the Datomic value and dependency proof; it is not held during cache I/O, lookup, or count.
 
 A shared store is not a distributed coordinator. Separate coordinator incarnations deliberately
-miss one another's live entries. In a multi-process deployment, enable live memoization only when
+miss one another's live entries. When one participating connection lags a revision already
+published by the shared coordinator, EACL performs a bounded targeted catch-up before pairing that
+DB with the proof. In a multi-process deployment, enable live memoization only when
 every reader and writer participates in a coordinator implementation with the same barrier and
 revision-publication contract. Otherwise leave `:live-results?` disabled; exact entries remain
-usable by consistency token when `:exact-results?` is enabled, and ordinary reads remain correct
-through the indexed evaluator.
+useful accelerators when `:exact-results?` is enabled, while exact and ordinary reads remain
+correct through historical or current indexed evaluation.
 
 Even without live-result memoization, each cache-enabled client owns a local coordinator for its
 cursor proofs. This lets that client's cursors and continuations survive unrelated application
@@ -613,12 +615,18 @@ never require flushing the provider's whole database. Provider projects can call
 `eacl.datomic.cache-store-contract/assert-provider-contract!` to verify
 TTL, wrapper validation, namespace isolation, failures, and concurrent access.
 
+Cache lookup, capability probing, publication, eviction, and provider-error telemetry are
+best-effort on authorization paths. A provider failure is contained as a miss or rejected
+publication: live reads compute authoritatively, and exact/cursor reads fall back to historical
+evaluation.
+
 No cache data or derived tuples are written to the consumer's Datomic database.
 
 ### Consistency and Zed tokens
 
-Relationship writes return a versioned `:zed/token` whose revision is the exact committed Datomic
-basis `t`. The token is bound to one logical database. Read operations accept these descriptors:
+Relationship writes return an authenticated v2 `:zed/token` whose revision is the exact committed
+Datomic basis `t`. The token is bound to one logical database and signed with HMAC-SHA-256. Read
+operations accept these descriptors:
 
 ```clojure
 (require '[eacl.spicedb.consistency :as consistency])
@@ -635,8 +643,8 @@ basis `t`. The token is bound to one logical database. Read operations accept th
 (eacl/can? acl subject :view resource
            (consistency/at-least-as-fresh write-token))
 
-;; Cache-resident snapshot only; requires :exact-results? (or :live-results?).
-;; A miss fails and never invokes d/as-of.
+;; Exact historical snapshot. A matching cache entry is a fast path; otherwise
+;; EACL reconstructs the basis with d/as-of and historical schema state.
 (eacl/can? acl subject :view resource
            (consistency/at-exact-snapshot prior-token))
 
@@ -646,8 +654,17 @@ basis `t`. The token is bound to one logical database. Read operations accept th
 
 `fully-consistent` means the current DB visible to the local Peer; EACL does not force
 zero-argument `d/sync`. Callers that require the Peer to observe transactor head may synchronize
-before calling EACL. `at-exact-snapshot` is intentionally ephemeral: expiry, eviction, provider
-failure, or a missing query entry returns `:eacl.consistency/snapshot-unavailable`.
+before calling EACL. Targeted waits for `at-least-as-fresh`, exact history, cursor history, and a
+shared coordinator's published floor are bounded by `:consistency-sync-timeout-ms` (30,000 ms by
+default). A timeout returns `:eacl.consistency/freshness-unavailable` with requested, observed, and
+timeout revisions; EACL does not fall back to an older DB.
+
+Zed-token authentication prevents a frontend from changing the database or revision, but it does
+not make a valid token single-use, bind it to an end user, prevent replay, or authorize historical
+access. For a token echoed through an untrusted frontend, the backend should normally choose
+`at-least-as-fresh`. Selecting `at-exact-snapshot` permits historical evaluation and must be a
+backend-controlled, independently authorized decision; do not let the frontend choose the
+consistency descriptor.
 
 Optional bounded checkpoints let callers request "at least as fresh as N seconds ago" without
 doing arithmetic on `t`:
@@ -679,13 +696,27 @@ Keys you omit keep their defaults (`eacl.datomic.impl.indexed/default-recursive-
 These are heap-protection limits, not ordinary page-size controls. Prefer `:count-limit` for
 situated authorization counts; raise traversal ceilings only after load-testing the host JVM.
 
-For multi-peer deployments, configure a shared page-token key so `eacl3_...` cursors survive restarts and can be decoded by every peer:
+For multi-peer deployments, configure stable shared page- and Zed-token keys so `eacl3_...`
+cursors and frontend-returned `eacl_z2_...` tokens survive restarts and can be verified by every
+backend:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:page-token-key "32+ bytes of shared secret key material"
-            :page-token-kid :prod-2026-05}))
+            :page-token-kid :page-2026-07
+            :zed-token-keyring {:zed-2026-06 old-zed-root
+                                :zed-2026-07 current-zed-root}
+            :zed-token-kid :zed-2026-07
+            :consistency-sync-timeout-ms 10000}))
 ```
+
+New Zed tokens are signed only with `:zed-token-kid`; all keys explicitly retained in
+`:zed-token-keyring` remain verification keys during a rotation overlap. Remove an old key only
+after the intended outstanding-token lifetime. A single `:zed-token-key` is shorthand for a
+one-key ring. If no dedicated Zed key is configured, EACL derives domain-separated signing keys
+from the page-token keyring. The default page key is random per client instance, so the derived
+default is fail-closed but not portable across clients, restarts, or backend instances. The unreleased unsigned
+`eacl_z1_` format is rejected.
 
 ### Unknown object IDs
 
@@ -826,9 +857,9 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 
 ## Limitations, Deficiencies & Gotchas:
 
-- *Exact snapshots are ephemeral:* `at-exact-snapshot` never reconstructs a Datomic historical
-  DB. The exact query result must still exist in the configured cache or EACL returns
-  `:eacl.consistency/snapshot-unavailable`.
+- *Exact snapshots require Datomic history:* `at-exact-snapshot` and continued cursors reconstruct
+  a historical DB on cache miss. If the authenticated basis is no longer reconstructable, EACL
+  returns a typed snapshot-unavailable/cursor-expired error rather than falling forward.
 - *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
   - `permission admin = owner + shared_admin` is valid,
   - but `permission admin = owner - banned_member` is not (note the `-` Negation operator).
@@ -847,8 +878,8 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - *Recursive cursors benefit from their continuation:* a permission that transitively depends on itself
   (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
   hits resume the traversal and avoid `O(N²/page-size)` enumeration. An evicted, expired, rejected,
-  or unavailable continuation replays only while the cursor's relationship proof still matches.
-  After a relevant write, an already retained exact page may answer; otherwise EACL fails closed.
+  or unavailable continuation replays against the cursor's historical DB and schema, including
+  after a relevant live write.
   Recursive work retains hard heap-protection ceilings, and counts use one traversal. Use
   `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load
   tests.

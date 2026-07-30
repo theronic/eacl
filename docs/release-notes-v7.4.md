@@ -18,9 +18,13 @@ adding Datomic schema attributes or permanent tuples.
   permit cross-client live reuse without the explicit shared coordinator above.
 - Relevant relationship helpers publish their exact committed Datomic `t`; unrelated application
   transactions, no-op writes, and unrelated relation changes do not invalidate hot entries.
+- A reader connection behind the coordinator's published floor performs a bounded targeted catch-up
+  and retries coherent capture; it cannot cache a stale DB under a newer proof.
 - The built-in memory store has hard total-weight, entry-weight, entry-count, TTL, per-kind, and
   optional two-hit admission limits.
 - Custom portable stores can be implemented without adding backend dependencies to EACL core.
+- Cache lookup, capability, publication, metrics, and provider-error failures are contained as
+  misses or rejected admissions and never replace authoritative authorization outcomes.
 
 ## Recursive pagination and counts
 
@@ -28,23 +32,31 @@ adding Datomic schema attributes or permanent tuples.
 - Continuations retain scalar scan descriptors and bounded internal-EID chunks, not Datomic DB
   values or lazy index sequences.
 - Recursive state is keyed by its relationship proof rather than general Datomic basis churn.
-- A missing continuation replays its deterministic prefix while the cursor's relationship proof
-  still matches. After a relevant write, only an already retained exact page may answer; otherwise
-  EACL returns `:eacl.consistency/snapshot-unavailable`.
+- A cursor pins its database identity, basis, operation, query, ordering, and schema semantics.
+  A missing continuation or exact page reconstructs `d/as-of` and replays its deterministic prefix,
+  even when caching is disabled or live relationships/schema have changed.
 - Acyclic count misses advance through bounded frontier pages; recursive counts use one explicit,
   hard-capped traversal state. Neither count direction retains a full-cardinality lazy result head.
 
 ## Consistency
 
-- Write tokens are versioned, database-bound envelopes around the exact committed Long basis `t`.
+- Write tokens are bounded, database-bound v2 envelopes authenticated with a domain-separated
+  HMAC-SHA-256 tag over their exact encoded claims. The unreleased unsigned v1 format is rejected.
 - Authorization reads support `fully-consistent`, `minimize-latency`, `at-least-as-fresh`, and
-  cache-resident `at-exact-snapshot`.
-- Ordinary reads do not call zero-argument `d/sync`. Only `at-least-as-fresh` may wait for its
-  explicit lower-bound `T`.
-- Exact snapshots never invoke `d/as-of`; expiry, eviction, corruption, or provider failure returns
-  `:eacl.consistency/snapshot-unavailable`.
+  historical `at-exact-snapshot`.
+- Ordinary reads do not call zero-argument `d/sync`. Targeted revision waits are bounded by the new
+  positive `:consistency-sync-timeout-ms` option (30 seconds by default) and return typed
+  freshness-unavailable diagnostics rather than using an older DB.
+- Exact cache entries remain accelerators; on a miss or provider failure, exact reads evaluate
+  against `d/as-of` with schema state reconstructed at the requested basis.
 - Optional bounded revision checkpoints construct age-based lower-bound tokens without arithmetic
   on `t`, background timers, retained DB values, or implicit synchronization.
+- `:zed-token-key`, `:zed-token-keyring`, and `:zed-token-kid` support stable multi-instance keys
+  and overlap-based rotation. When omitted, domain-separated signing keys derive from the page-token
+  keyring; the random default is deliberately client-instance-local.
+- Token authentication prevents database/revision forgery but not replay and is not authorization.
+  Backends should normally apply frontend-echoed tokens as `at-least-as-fresh`; choosing exact
+  historical access must remain a backend-controlled decision.
 
 ## Schema and mutation lifecycle
 
@@ -58,6 +70,9 @@ adding Datomic schema attributes or permanent tuples.
 - Consumers should call `delete-relationships!` before retracting an entity.
   `eacl.datomic.integrity/dangling-relationship-report` detects reverse ghost tuples left by an
   incorrect deletion sequence.
+- Relationship update operations are validated before endpoint resolution. `delete-object!`
+  reports actual committed relationship-datom retractions across all batches.
 
 The cache can be disabled with `{:cache false}`. Authorization remains correct and usable, with
-the expected loss of cache-dependent performance and exact-snapshot retention.
+the expected loss of cache-dependent performance; cursors and exact reads still use reconstructable
+Datomic history.

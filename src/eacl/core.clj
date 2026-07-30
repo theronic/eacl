@@ -40,7 +40,7 @@
 
   (write-relationships! [this updates])
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
-  ; operation is one of #{:create :touch :delete :unspecified} and Relationship has {:keys [subject relation resource]}.
+  ; operation is one of #{:create :touch :delete} and Relationship has {:keys [subject relation resource]}.
   ; Note :touch is like :create but does not throw if a relationship already exists.
 
   (write-relationship!

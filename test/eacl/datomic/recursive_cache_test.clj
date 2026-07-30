@@ -78,7 +78,7 @@
         (recur (page-end-cursor page) data')
         data'))))
 
-(deftest forward-recursive-pagination-resumes-retries-and-miss-fails-closed-test
+(deftest forward-recursive-pagination-resumes-retries-and-replays-misses-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-forward-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -101,6 +101,11 @@
                          (eacl/lookup-resources
                           disabled-client
                           (assoc query :after (page-end-cursor replay-page1))))
+            alternate-stats (atom {})
+            alternate-page2
+            (binding [idx/*recursive-traversal-stats* alternate-stats]
+              (eacl/lookup-resources alternate-client
+                                     (assoc query :after cursor)))
             retry-stats (atom {})
             retry-page2 (binding [idx/*recursive-traversal-stats* retry-stats]
                           (eacl/lookup-resources cached-client
@@ -118,18 +123,14 @@
         (is (= (mapv account-id (range 5 10))
                (mapv :id (:data hit-page2))))
         (is (= (:data hit-page2) (:data miss-page2)))
-        (try
-          (eacl/lookup-resources alternate-client
-                                 (assoc query :after cursor))
-          (is false "an alternate cache should fail closed")
-          (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl.consistency/snapshot-unavailable
-                   (:type (ex-data e))))))
+        (is (= (:data hit-page2) (:data alternate-page2))
+            "an alternate cache replays the authenticated historical snapshot")
         (is (= (:data hit-page2) (:data retry-page2))
             "a cursor retry returns its immutable cached page")
         (is (= (:data page1) (:data previous-page)))
         (is (= 1 (:continuation-hits @hit-stats)))
         (is (nil? (:continuation-hits @miss-stats)))
+        (is (= 1 (:continuation-misses @alternate-stats)))
         (is (= 1 (:recursive-page-hits @retry-stats))
             "a retry does not consume or replay the traversal frontier")
         (is (= 1 (:recursive-page-hits @previous-stats))
@@ -163,7 +164,7 @@
           (is (= 130 (count (set (map :id all-subjects))))
               "reverse scans resume correctly across 64-EID chunks"))))))
 
-(deftest recursive-cursor-fails-closed-after-relevant-write-test
+(deftest recursive-cursor-replays-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-historical-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -190,15 +191,18 @@
                 (eacl/lookup-resources cached-client
                                        (assoc query :after cursor))))
             "an already produced exact page remains cache-resident")
-        (doseq [[client next-cursor]
-                [[cached-client uncomputed-cursor]
-                 [replay-client cursor]]]
-          (try
-            (eacl/lookup-resources client (assoc query :after next-cursor))
-            (is false "a changed relationship proof cannot fall forward")
-            (catch clojure.lang.ExceptionInfo e
-              (is (= :eacl.consistency/snapshot-unavailable
-                     (:type (ex-data e)))))))
+        (is (= (mapv account-id (range 10 15))
+               (mapv :id
+                     (:data
+                      (eacl/lookup-resources
+                       cached-client
+                       (assoc query :after uncomputed-cursor)))))
+            "an uncomputed page is replayed against the historical snapshot")
+        (is (= (:data page2)
+               (:data
+                (eacl/lookup-resources replay-client
+                                       (assoc query :after cursor))))
+            "cache-disabled replay does not fall forward after a relevant write")
         (is (= "new-live-account"
                (-> (collect-forward cached-client query) :data peek :id))
             "a new enumeration observes the relationship write")))))
@@ -231,7 +235,7 @@
                 "a new identical lookup is keyed by relationship proof, not basis t")
             (is (zero? (get @restart-stats :derived-grants 0)))))))))
 
-(deftest recursive-cursor-fails-closed-when-its-boundary-object-is-gone-test
+(deftest recursive-cursor-replays-when-its-boundary-object-is-gone-live-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {:page-token-key "recursive-deleted-boundary"})
           subject (spice-object :user (user-id 0))
@@ -245,14 +249,12 @@
             subject-eid (d/entid (d/db conn) [:eacl/id (user-id 0)])]
         (eacl/delete-object! client subject)
         @(d/transact conn [[:db.fn/retractEntity subject-eid]])
-        (try
-          (eacl/lookup-resources client (assoc query :after cursor))
-          (is false "an exact cursor cannot silently become an empty lookup")
-          (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl.consistency/snapshot-unavailable
-                   (:type (ex-data e))))
-            (is (= :unresolved-boundary-object
-                   (:reason (ex-data e))))))))))
+        (is (= (mapv account-id (range 5 10))
+               (mapv :id
+                     (:data
+                      (eacl/lookup-resources client
+                                             (assoc query :after cursor)))))
+            "the cursor resolves its boundary object in the historical snapshot")))))
 
 (deftest alternate-cache-replays-a-cursor-when-the-relationship-proof-matches-test
   (with-mem-conn [conn schema/v7-schema]
