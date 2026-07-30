@@ -11,8 +11,8 @@
            ;; Datomic
         com.datomic/peer {:mvn/version "1.0.7622"}
         datascript/datascript {:mvn/version "1.7.8"}
-
-        ;; 0.8.1759 includes composite tuple derivation under :attribute-refs?.
+        ;; 0.8.1759 is the first release carrying replikativ/datahike#921
+        ;; (composite tuples derived + validated under :attribute-refs?)
         org.replikativ/datahike {:mvn/version "0.8.1759"}
 
         ;; Parsing

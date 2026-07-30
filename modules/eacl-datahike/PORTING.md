@@ -1,63 +1,109 @@
-# Porting the DataScript backend to Datahike
+# The Datahike backend
 
-The three source files are a near-mechanical port of `modules/eacl-datascript`
-(425 + 505 + 224 lines: `core.cljc`, `impl.cljc`, `schema.cljc`). DataScript is
-the right template rather than Datomic, because both DataScript and Datahike
-diverge from Datomic in the *same* places — see "Tuple seek bounds" below.
+A port of `modules/eacl-datascript`. DataScript was the right template rather
+than Datomic, because DataScript and Datahike diverge from Datomic in the *same*
+place — see "Tuple seek bounds" below.
 
-The target is `test/eacl/datahike/contract_test.clj`, which runs the shared
-`eacl.contract-support` suite. A backend is done when that passes.
+Status: `eacl.datahike.contract-test` runs the shared `eacl.contract-support`
+suite (the same one the DataScript backend runs, 23 assertions) **twice**, once
+per attribute representation, and passes. `eacl.datahike.backend-test` covers
+the datahike-specific paths the shared contract does not reach.
 
-## What actually differs from the DataScript source
+The module is **JVM-only** (`.clj`, not `.cljc`): datahike's ClojureScript API is
+asynchronous and the backend SPI is synchronous.
+
+## Layout
+
+Four namespaces, where DataScript has three. `eacl.datahike.db` holds the
+adapter primitives — `entid`, attribute representation, and the three index
+accessors — so that everything above it reads like the DataScript source and
+every datahike divergence lives in one file:
+
+| | |
+|---|---|
+| `db.clj` | adapter primitives (no eacl concepts) |
+| `schema.clj` | attribute declarations, `create-conn`, `write-schema!` |
+| `impl.clj` | the SPI implementation and relationship scans |
+| `core.clj` | `IAuthorization`, `make-client`, cursor coercion |
+
+## What differs from the DataScript source
 
 | | DataScript | Datahike |
 |---|---|---|
-| `datoms` / `seek-datoms` / `rseek-datoms` | positional: `(ds/seek-datoms db :avet a v)` | option MAP: `(dh/seek-datoms db {:index :avet :components [a v]})` |
-| `index-range` | — | `(dh/index-range db {:attrid a :start s :end e})` |
-| `transact` | `ds/transact!`, returns report | `dh/transact`, returns report (NOT a future — no `@`) |
-| `entid` | `ds/entid` | **absent** — use `(:db/id (dh/entity db ident))` |
-| conn creation | `(ds/create-conn schema)` | `(dh/create-database cfg)` then `(dh/connect cfg)` |
-| db value | `@conn` | `(dh/db conn)` or `@conn` |
+| `datoms` / `seek-datoms` | positional: `(ds/seek-datoms db :avet a v)` | option MAP: `(d/seek-datoms db {:index :avet :components [a v]})` |
+| `index-range` | positional | `(d/index-range db {:attrid a :start s :end e})` |
+| `transact` | `ds/transact!` | `d/transact` — a report, not a future, so no `@` |
+| `entid` | `ds/entid` | **absent** — `db/entid`, via `d/entity` |
+| `listen` | `ds/listen!` | `d/listen` |
+| conn creation | `(ds/create-conn schema)` | `create-database` + `connect`, with a config |
+| schema | map of attribute to options | transaction data; `:write` flexibility needs `:db/valueType` and `:db/cardinality` on every attribute |
+| `extra-schema` | DataScript schema map | datahike transaction data — the two are NOT interconvertible, since a DataScript schema map carries no value types |
 
-Datahike additionally needs a real config. Use:
+`read-relations` / `read-permissions` read the index rather than running the
+DataScript version's `q` with a pull expression: the index is the engine's own
+view of the schema, so a relation invisible there is invisible to permission
+evaluation too, and it sidesteps datahike's query planner entirely.
+
+## Attribute representation — two modes, and they are not interchangeable
+
+Datahike reports a datom's `:a` as the attribute KEYWORD by default and as a
+numeric ref under `:attribute-refs? true` (Datomic's representation). This is a
+creation-time, one-way choice per database. Both modes are supported and both
+are tested; three consequences are load-bearing.
+
+1. A composite tuple attribute under `:attribute-refs?` needs datahike
+   **>= 0.8.1759** (replikativ/datahike#921). Before that fix the tuples were
+   silently never derived and never validated, and since the tuples ARE the v7
+   engine, every permission check denied.
+
+2. `index-range`'s `:attrid` is the one accessor that does **not** accept the
+   attribute keyword in both modes: under `:attribute-refs?` it demands the
+   numeric ref and raises. `db/avet-range` resolves it via `db/attr-repr`.
+   (`datoms` and `seek-datoms` take the keyword in either mode.)
+
+3. Anything comparing a datom's `:a` against a set of keywords matches nothing
+   under `:attribute-refs?`. In this module that is `core/schema-transaction?`,
+   the tx listener that evicts cached permission paths. Left unresolved it
+   fails **OPEN** — `can?` keeps answering from pre-change permission paths and
+   grants what the schema has just revoked. `db/attr-ident` resolves it.
+
+MEASURED, both modes: `(:attribute-refs? (:config db))` is the reliable flag.
+
+## Tuple seek bounds — the one non-obvious ordering fact
+
+MEASURED on datahike 0.8.1759, in BOTH modes:
 
 ```clojure
-{:store {:backend :memory :id (random-uuid)}
- :schema-flexibility :write      ; required: tuple attrs must be declared
- :keep-history? false}
+seek [:room :owner]        → [:kb :reader :party]   ; bound IGNORED
+seek [:room :owner nil]    → [:room :owner :party]  ; correct
+seek [:room :owner :party] → [:room :owner :party]  ; correct
 ```
 
-## Tuple seek bounds — the one non-obvious thing
-
-MEASURED on datahike main (with #921), in BOTH `:attribute-refs?` modes:
-
-```clojure
-seek [:room :owner]       → [:kb :reader :party]   ; bound IGNORED
-seek [:room :owner nil]   → [:room :owner :party]  ; correct
-seek [:room :owner :party]→ [:room :owner :party]  ; correct
-```
-
-So a PARTIAL tuple is not a valid seek bound — identical to DataScript, whose
+A PARTIAL tuple is not a valid seek bound — identical to DataScript, whose
 adapter comments "DataScript sorts vectors by LENGTH FIRST". Datomic is the
-outlier here, and `modules/eacl-datomic` relies on Datomic's behaviour.
+outlier, and `modules/eacl-datomic` relies on Datomic's behaviour.
 
-**Therefore: keep the DataScript approach verbatim** — pad to full tuple arity
-with `nil` (`nil` sorts lowest) and then `take-while` on the prefix. Do NOT try
-to emulate Datomic's partial-tuple bound, and do not work around it by scanning
-the whole attribute segment: padding is correct AND O(log n).
+So `db/seek-tuple-prefix` pads to full tuple arity with `nil` (`nil` sorts
+lowest) and then takes the matching prefix. Padding is both correct AND
+O(log n) — do not replace it with a scan of the whole attribute segment.
 
-## Attribute representation — why this module needs no `:a` handling
+`seek-datoms` also runs off the end of the attribute into the next one, so the
+`take-while` guards on `:a` as well as on the value.
 
-Datahike reports a datom's `:a` as the attribute KEYWORD by default, and as a
-numeric ref under `:attribute-refs? true` (Datomic's representation). The engine
-above the SPI never sees `:a`, so this is purely internal here — but be
-consistent within the module: compare attributes with `=`, never `==`, and
-resolve through `attr-ident`-style lookups before consulting schema/rschema.
+## A coverage trap worth knowing about
 
-A composite tuple attribute under `:attribute-refs?` requires datahike ≥ the
-#921 fix. Before it, tuples were silently never derived and never validated.
+The shared contract goes through `make-client`, which serves relation
+definitions from a prebuilt schema catalog — a full index scan. So **the
+contract suite never exercises the tuple seek at all**: removing the nil
+padding entirely leaves it green. The seek is reached only by the bare-db path
+(`impl/can?` with no options) and by the relation-retraction guard, which is
+what `backend-test` tests directly.
 
-## SPI surface to implement
+Both mechanisms above were verified non-vacuously by breaking them:
+removing the padding fails 12 assertions in both modes; comparing `:a` raw
+fails exactly 1, only under `:attribute-refs?`.
+
+## SPI surface
 
 `eacl.backend.spi` is six fns supplied as a map (see
 `modules/eacl/src/eacl/backend/spi.cljc`):
@@ -67,9 +113,3 @@ A composite tuple attribute under `:attribute-refs?` requires datahike ≥ the
 
 None of them mention datoms, seeks, or attribute ids — those are all private to
 this module.
-
-## Wiring
-
-Add `"modules/eacl-datahike/src"` to the root `deps.edn` `:paths`, the test dir
-to `:dev`/`:test`/`:nrepl` `:extra-paths`, and `org.replikativ/datahike` to
-`:deps`. A `:build-eacl-datahike` alias mirrors the other modules.
