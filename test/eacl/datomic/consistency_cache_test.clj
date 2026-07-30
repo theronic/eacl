@@ -39,6 +39,14 @@
                    :owner
                    (spice-object :account "acct"))))
 
+(defn- ex-data-of
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo e
+      (ex-data e))))
+
 (deftest can-results-obey-all-cache-consistency-modes-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
@@ -197,6 +205,60 @@
                       (consistency/at-exact-snapshot created-token)))
           "historical ID resolution does not depend on the live entity"))))
 
+(deftest stale-cached-lookup-pages-use-their-selected-basis-test
+  (testing "lookup-resources with minimize-latency"
+    (with-mem-conn [conn schema/v7-schema]
+      (let [client (cached-client conn)
+            alice (spice-object :user "alice")
+            account (spice-object :account "acct")
+            relationship (->Relationship alice :owner account)
+            _ (seed! conn client)
+            query {:subject alice
+                   :permission :admin
+                   :resource/type :account
+                   :first 10}]
+        (is (= ["acct"]
+               (mapv :id (:data (eacl/lookup-resources client query)))))
+        (eacl/delete-relationship! client relationship)
+        @(d/transact conn [[:db.fn/retractEntity [:eacl/id "acct"]]])
+        (is (= ["acct"]
+               (mapv
+                :id
+                (:data
+                 (eacl/lookup-resources
+                  client
+                  (assoc query
+                         :consistency
+                         consistency/minimize-latency)))))
+            "the selected stale page resolves IDs at its own historical basis"))))
+
+  (testing "lookup-subjects with at-least-as-fresh"
+    (with-mem-conn [conn schema/v7-schema]
+      (let [client (cached-client conn)
+            alice (spice-object :user "alice")
+            account (spice-object :account "acct")
+            relationship (->Relationship alice :owner account)
+            {created-token :zed/token} (seed! conn client)
+            query {:resource account
+                   :permission :admin
+                   :subject/type :user
+                   :first 10}]
+        (is (= ["alice"]
+               (mapv :id (:data (eacl/lookup-subjects client query)))))
+        (eacl/delete-relationship! client relationship)
+        @(d/transact conn [[:db.fn/retractEntity [:eacl/id "alice"]]])
+        (is (= ["alice"]
+               (mapv
+                :id
+                (:data
+                 (eacl/lookup-subjects
+                  client
+                  (assoc query
+                         :consistency
+                         (consistency/at-least-as-fresh
+                          created-token))))))
+            "the freshness floor may select an older cached page whose subject is now deleted")))))
+
 (deftest exact-query-preserves-historical-unknown-object-semantics-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
@@ -270,6 +332,37 @@
           (is false "a token cannot cross databases")
           (catch clojure.lang.ExceptionInfo e
             (is (= :database-mismatch (:reason (ex-data e))))))))))
+
+(deftest cross-database-page-cursor-is-rejected-before-history-test
+  (with-mem-conn [conn-a schema/v7-schema]
+    (with-mem-conn [conn-b schema/v7-schema]
+      (let [token-key "shared-page-token-key"
+            client-a (core/make-client conn-a {:page-token-key token-key})
+            client-b (core/make-client conn-b {:page-token-key token-key})
+            _ (seed! conn-a client-a)
+            _ (seed! conn-b client-b)
+            query {:subject (spice-object :user "alice")
+                   :permission :admin
+                   :resource/type :account
+                   :first 1}
+            cursor (get-in (eacl/lookup-resources client-a query)
+                           [:page-info :end-cursor])
+            history-operations (atom [])
+            original-as-of d/as-of
+            error
+            (with-redefs [d/as-of
+                          (fn [db t]
+                            (swap! history-operations conj [db t])
+                            (original-as-of db t))]
+              (ex-data-of
+               #(eacl/lookup-resources
+                 client-b
+                 (assoc query :after cursor))))]
+        (is (string? cursor))
+        (is (= :eacl.pagination/invalid-cursor (:type error)))
+        (is (= :database-mismatch (:reason error)))
+        (is (empty? @history-operations)
+            "database identity is rejected before selecting the cursor basis")))))
 
 (deftest forged-zed-token-is-rejected-before-revision-work-test
   (with-mem-conn [conn schema/v7-schema]

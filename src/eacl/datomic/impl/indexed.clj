@@ -872,6 +872,14 @@
      (* 128 (count (:emitted-subjects state)))
      (* 160 (count (:seen-goals state)))
      (* 160 (count (:grants-by-goal state)))
+     ;; Reverse continuations retain the compiled rule graph. New states carry
+     ;; the scalar count so weighing each emitted page stays O(1); the fallback
+     ;; handles an in-process continuation created before a code reload.
+     (* 128 (count (:rules-by-node state)))
+     (* 512 (long (or (:rule-count state)
+                      (reduce + 0
+                              (map count
+                                   (vals (:rules-by-node state)))))))
      (* 512 (long (or (:consumer-count state)
                       (count (:consumers state)))))))
 
@@ -1585,7 +1593,8 @@
 
 (defn- initial-reverse-state
   [db subject-type root-node root-resource-eid]
-  (let [rules (compile-recursive-rules db root-node)]
+  (let [rules (compile-recursive-rules db root-node)
+        indexed-rules (rules-by-node rules)]
     (enqueue-reverse-goal
      {:queue clojure.lang.PersistentQueue/EMPTY
       :seen-goals #{}
@@ -1596,7 +1605,8 @@
       :ordinal 0
       :counters {}
       :subject-type subject-type
-      :rules-by-node (rules-by-node rules)
+      :rules-by-node indexed-rules
+      :rule-count (count rules)
       :consumer-count 0}
      root-node
      root-resource-eid)))

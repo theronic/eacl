@@ -358,8 +358,14 @@
       (client-schema-version opts)))
 
 (defn- validate-page-token-identity!
-  [op query-shape decoded]
+  [opts op query-shape decoded]
   (when decoded
+    (when-not (= (:database-id opts) (:database-id decoded))
+      (throw
+       (ex-info "Page token was created for a different database."
+                {:type :eacl.pagination/invalid-cursor
+                 :eacl/error :eacl.pagination/invalid-cursor
+                 :reason :database-mismatch})))
     (when-not (= op (:op decoded))
       (throw (ex-info "Page token was created for a different operation."
                       {:expected op
@@ -404,6 +410,7 @@
    (when edge
      (page-token opts
                  (cond-> {:op op
+                          :database-id (:database-id opts)
                           :query-shape query-shape
                           :basis-t basis-t
                           :basis :stable
@@ -710,6 +717,7 @@
                         (:lookup-cache-store opts))]
     (let [prefix [:recursive-continuation
                   result-cache-version
+                  (:cache-namespace opts)
                   (:database-id opts)
                   (selected-schema-version opts)
                   op
@@ -783,7 +791,7 @@
         page-req (impl.indexed/normalize-page-request filters)
         decoded (decoded-page-bound opts page-req)
         _ (validate-page-token-identity!
-           :read-relationships query-shape decoded)
+           opts :read-relationships query-shape decoded)
         {:keys [db basis-t schema-version]}
         (capture-result-context
          conn opts (:consistency filters) false
@@ -1105,7 +1113,7 @@
         page-req (impl.indexed/normalize-page-request query)
         decoded (decoded-page-bound opts page-req)
         _ (validate-page-token-identity!
-           :lookup-resources query-shape decoded)
+           opts :lookup-resources query-shape decoded)
         prepare
         (fn [db]
           (let [internal-subject (spice-object->internal db subject)
@@ -1151,11 +1159,16 @@
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
+            selected-db
+            (if (= selected-basis (d/basis-t db))
+              db
+              (historical-db
+               conn selected-opts selected-basis :lookup-resources))
             token-scope (or (:cursor-scope result-context)
                             (:cache-scope answer)
                             cache-scope)]
         (coerce-lookup-page
-         db selected-opts :lookup-resources query-shape
+         selected-db selected-opts :lookup-resources query-shape
          selected-basis token-scope
          internal-page)))))
 
@@ -1213,7 +1226,7 @@
         page-req (impl.indexed/normalize-page-request query)
         decoded (decoded-page-bound opts page-req)
         _ (validate-page-token-identity!
-           :lookup-subjects query-shape decoded)
+           opts :lookup-subjects query-shape decoded)
         prepare
         (fn [db]
           (let [internal-resource
@@ -1259,11 +1272,16 @@
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
+            selected-db
+            (if (= selected-basis (d/basis-t db))
+              db
+              (historical-db
+               conn selected-opts selected-basis :lookup-subjects))
             token-scope (or (:cursor-scope result-context)
                             (:cache-scope answer)
                             cache-scope)]
         (coerce-lookup-page
-         db selected-opts :lookup-subjects query-shape
+         selected-db selected-opts :lookup-subjects query-shape
          selected-basis token-scope
          internal-page)))))
 

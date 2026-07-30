@@ -205,6 +205,30 @@ Alternative considered: probe the pre-transaction DB for every command. That dup
 work, can diverge from the committed result, and is unnecessary because Datomic already reports
 the actual retractions.
 
+### 7. Bind cache and cursor state to the context that produced it
+
+Page-token v5 will include the Datomic database identity captured by the client. Cursor validation
+will compare that authenticated identity before selecting a historical basis or resolving request
+objects. Deployments may intentionally share page-token keys across backend instances, but a token
+from another logical database must fail even when both databases have matching schema generations,
+basis revisions, internal EIDs, and query shapes.
+
+Completed lookup pages continue to store internal EIDs. When a consistency mode selects an older
+cached answer, boundary coercion will therefore use `d/as-of` at that answer's `:basis-t`. This is
+distinct from ordinary live-result reuse, whose proof is promoted to the current captured basis.
+Deleting an entity after caching a page must not make a legitimate stale or lower-bound read fail
+merely because the live DB no longer maps the cached EID to an external identifier.
+
+Every recursive page and continuation key will include `:cache :namespace`, matching completed
+result keys. The wrapper namespace remains provider cleanup metadata; it is not a substitute for
+key isolation because lookup occurs before wrapper cleanup. Separate consumers sharing one store
+must neither read nor overwrite each other's recursive entries.
+
+Continuation admission will charge every retained traversal structure. Reverse state retains the
+compiled `:rules-by-node` graph, so state construction will record its rule count and
+`continuation-weight` will include that scalar count without walking the graph on every emitted
+page. The estimate remains an admission heuristic rather than a measured JVM heap size.
+
 ## Risks / Trade-offs
 
 - **Historical replay can be slower than an exact cache hit.** → Keep exact pages and recursive
@@ -224,6 +248,12 @@ the actual retractions.
   require backend-controlled authorization before selecting `at-exact-snapshot`.
 - **Key retirement invalidates outstanding tokens.** → Document an overlap window and retain prior
   verification keys until the deployment's intended token lifetime has elapsed.
+- **Shared page-token keys span multiple logical databases.** → Authenticate the database identity
+  in every page token and reject a mismatch before historical selection.
+- **A stale cached page refers to an entity deleted from the live DB.** → Resolve its internal EIDs
+  against the cached answer's historical basis.
+- **Several cache namespaces share one provider.** → Put the namespace in recursive physical keys,
+  not only in entry metadata used by targeted cleanup.
 
 ## Migration Plan
 
@@ -239,9 +269,11 @@ the actual retractions.
    reports.
 8. Update README/API docs and changelog with pagination guarantees, timeout behavior, token-key
    deployment, replay limitations, and frontend usage.
-9. Run the regular nREPL suite and targeted multi-connection, token-tampering, key-rotation,
-   schema-rotation, and provider-fault tests; run pagination benchmarks only when explicitly
-   validating performance.
+9. Add follow-up regressions for stale cached lookup coercion, cross-database page cursors,
+   recursive namespace isolation, and reverse-continuation weight.
+10. Run the regular nREPL suite and targeted multi-connection, token-tampering, key-rotation,
+    schema-rotation, and provider-fault tests; run pagination benchmarks only when explicitly
+    validating performance.
 
 No Datomic data migration is required. Rollback is code-only; if a rollout must revert before a
 corrected build is available, disable v7.4 result caching and avoid issuing cross-transaction v7.4

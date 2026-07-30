@@ -71,6 +71,21 @@ provider failure MUST affect latency only when the pinned value remains reconstr
 - **THEN** EACL may use it instead of historical replay
 - **AND** the returned page is identical to evaluation at the cursor's pinned snapshot
 
+#### Scenario: Page cursor belongs to another database
+
+- **WHEN** an authenticated page cursor produced for another Datomic database is supplied
+- **THEN** EACL rejects it before selecting its basis or resolving its query inputs
+- **AND** matching keys, schema generation, basis revision, internal EIDs, and query shape do not
+  make that cursor valid for the current database
+
+#### Scenario: Cached lookup entity was deleted from the live database
+
+- **WHEN** `minimize-latency` or `at-least-as-fresh` selects an older cached lookup page
+- **AND** an entity in that page has since been deleted from the live database
+- **THEN** EACL resolves the page's internal EIDs against the cached answer's historical basis
+- **AND** it returns the selected page instead of reporting snapshot-unavailable solely because
+  the current DB no longer contains the entity
+
 #### Scenario: Historical snapshot cannot be reconstructed
 
 - **WHEN** a valid cursor's database identity and basis pass validation but its exact historical
@@ -133,11 +148,30 @@ correctness, including while handling a prior provider exception.
 - **THEN** EACL returns the authoritative result
 - **AND** subsequent requests remain eligible for uncached evaluation
 
+#### Scenario: Recursive cache namespaces share one provider
+
+- **WHEN** clients with different configured cache namespaces use the same provider
+- **THEN** recursive pages and continuations written by one namespace are misses in the other
+- **AND** clearing either namespace does not remove recursive entries owned by the other
+
 #### Scenario: Exact cache access fails but history is available
 
 - **WHEN** an exact cache access fails and the requested Datomic basis is reconstructable
 - **THEN** EACL evaluates against the historical basis
 - **AND** the provider failure does not become snapshot-unavailable
+
+### Requirement: Continuation admission accounts for all retained state
+
+EACL SHALL include every retained recursive traversal structure in its continuation admission
+estimate. The estimate MAY use scalar counters to remain constant-time, but adding a retained rule
+graph or other cardinality-bearing structure MUST increase the reported continuation weight.
+
+#### Scenario: Reverse continuation retains compiled rules
+
+- **WHEN** reverse traversal state retains a compiled `:rules-by-node` graph
+- **THEN** its continuation weight includes the retained rule count
+- **AND** `:max-entry-weight` can reject a continuation whose compiled graph exceeds the configured
+  admission budget
 
 ### Requirement: Zed tokens are cryptographically authenticated
 

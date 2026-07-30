@@ -69,6 +69,11 @@ replays from the pinned basis. It never silently falls forward to live relations
 state. A typed snapshot-unavailable/cursor-expired error is reserved for invalid, expired, or
 genuinely unreconstructable history.
 
+The authenticated database identity is checked before EACL selects a cursor basis or resolves
+query inputs. Sharing a stable page-token key across backend instances does not make a cursor
+portable to another logical Datomic database, even when a cloned database has matching schema,
+basis revisions, internal EIDs, and query shape.
+
 The internal functions in `eacl.datomic.impl.indexed` continue to accept a `db` directly. This is
 the escape hatch for deliberate `d/as-of`, `d/with`, or prospective database evaluation:
 construct the DB yourself, apply the EACL schema to a prospective DB when needed, keep one DB value
@@ -554,6 +559,11 @@ bounds until reclaimed. Recursive state is keyed by the relationship proof rathe
 `basis-t`, so unrelated application transactions do not make a fresh identical recursive walk
 cold.
 
+Reverse continuations also retain their compiled rule graph; its scalar rule and node counts are
+included in admission weight without walking that graph for every page. Recursive physical keys
+include `:cache :namespace`, so clients sharing a provider cannot read or overwrite another
+namespace's pages or continuations, and targeted cleanup cannot remove another namespace's state.
+
 Live `can?`, lookup, and count memoization is opt-in and uses an explicit coherence context:
 
 ```clojure
@@ -602,7 +612,9 @@ must still receive the same explicit coordinator.
 
 All result keys and values contain internal EIDs, never external object IDs. Missing external IDs
 return the ordinary false/empty boundary result and are not cached. EACL assumes the external-ID
-mapping for an entity is stable for that entity's lifetime.
+mapping for an entity is stable for that entity's lifetime. When a stale or freshness-floor mode
+selects an older cached lookup page, coercion runs against that answer's historical basis; deleting
+the live entity therefore does not turn an otherwise valid cached snapshot into a boundary error.
 
 Custom stores implement `eacl.datomic.cache/CacheStore`. New providers may also implement
 `CacheProvider` to declare `:portable-values`, `:opaque-values`, `:ttl`, and

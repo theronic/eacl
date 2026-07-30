@@ -14,8 +14,12 @@ cache acceleration optional.
 - Preserve cursor snapshot semantics across unrelated transactions and when result caching is
   disabled by replaying from the cursor's historical Datomic basis when no exact cached state is
   available.
+- Bind every page cursor to its Datomic database identity, and coerce cached historical lookup
+  pages against the basis that produced the cached answer rather than the caller's newer live DB.
 - Make every cache-provider and cache-observability operation best-effort for non-exact reads, while
   retaining typed snapshot-unavailable failures where exact state truly cannot be recovered.
+- Keep recursive pages and continuations isolated by the configured cache namespace, and include
+  every retained traversal structure in continuation admission estimates.
 - Replace the draft unsigned `:zed/token` encoding with a versioned HMAC-authenticated format that
   detects malicious frontend modification, supports backend key rotation, rejects invalid tokens
   before synchronization or historical access, and bounds waits for valid revisions not yet
@@ -27,8 +31,9 @@ cache acceleration optional.
 - Report the number of relationship datoms actually retracted by object deletion instead of the
   number of attempted retract operations.
 - Add adversarial regression tests for multiple connections, unrelated transactions, disabled
-  caching, hostile cache providers, invalid operations, partial relationship state, and future
-  consistency tokens.
+  caching, hostile cache providers, invalid operations, partial relationship state, future
+  consistency tokens, cross-database page-token replay, stale cached entity deletion, recursive
+  namespace isolation, and continuation admission accounting.
 
 ## Capabilities
 

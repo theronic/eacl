@@ -106,3 +106,14 @@
   implementation-driven contract changes before release.
 - [x] 7.6 If performance validation is explicitly requested, run the heavy pagination benchmark
   namespace through nREPL and compare cache-hit and historical-replay work bounds.
+
+## 8. Adversarial Review Follow-up
+
+- [x] 8.1 Add regressions for cached lookup coercion after entity deletion and authenticated page
+  cursor rejection across databases.
+- [x] 8.2 Add regressions for recursive cache namespace isolation and reverse-continuation rule
+  graph admission weight.
+- [x] 8.3 Bind page-token v5 to database identity, coerce older cached lookup pages at their own
+  historical basis, namespace recursive physical keys, and charge retained reverse rules.
+- [x] 8.4 Update public documentation, run the focused and regular nREPL suites, and validate this
+  OpenSpec change strictly.

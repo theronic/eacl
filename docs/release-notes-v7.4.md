@@ -12,6 +12,8 @@ adding Datomic schema attributes or permanent tuples.
   is opt-in with `:exact-results? true`; live result caching implies exact retention.
 - Cache keys and values contain internal EIDs. Missing external IDs are resolved at the boundary
   and are not cached.
+- Older cached lookup answers resolve those EIDs against the answer's own historical basis, so a
+  later live entity deletion does not break `minimize-latency` or freshness-floor reads.
 - Live reuse is opt-in with `:cache {:live-results? true ...}` and an explicit relationship
   coordinator shared by every participating EACL reader and writer.
 - Every cache-enabled client has a local coordinator for its own cursor proofs; this does not
@@ -35,6 +37,10 @@ adding Datomic schema attributes or permanent tuples.
 - A cursor pins its database identity, basis, operation, query, ordering, and schema semantics.
   A missing continuation or exact page reconstructs `d/as-of` and replays its deterministic prefix,
   even when caching is disabled or live relationships/schema have changed.
+- Database identity is authenticated and rejected before historical selection; shared page-token
+  keys do not permit cursor replay against another logical Datomic database.
+- Recursive physical keys include the configured cache namespace, and continuation admission
+  accounts for retained reverse-rule graphs.
 - Acyclic count misses advance through bounded frontier pages; recursive counts use one explicit,
   hard-capped traversal state. Neither count direction retains a full-cardinality lazy result head.
 

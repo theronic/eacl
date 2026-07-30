@@ -235,6 +235,79 @@
                 "a new identical lookup is keyed by relationship proof, not basis t")
             (is (zero? (get @restart-stats :derived-grants 0)))))))))
 
+(deftest recursive-pages-are-isolated-by-cache-namespace-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [store (cache/local-store)
+          coordinator (cache/local-coordinator)
+          token-key "recursive-namespace-isolation"
+          client-a
+          (core/make-client
+           conn
+           {:page-token-key token-key
+            :cache {:store store
+                    :coordinator coordinator
+                    :namespace :tenant-a}})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 3}]
+      (seed-recursive! conn client-a 12 1)
+      (let [client-b
+            (core/make-client
+             conn
+             {:page-token-key token-key
+              :cache {:store store
+                      :coordinator coordinator
+                      :namespace :tenant-b}})
+            page-a (eacl/lookup-resources client-a query)
+            first-b-stats (atom {})
+            page-b
+            (binding [idx/*recursive-traversal-stats* first-b-stats]
+              (eacl/lookup-resources client-b query))]
+        (is (= (:data page-a) (:data page-b)))
+        (is (nil? (:recursive-page-hits @first-b-stats))
+            "tenant B cannot read tenant A's completed recursive page")
+        (is (pos? (cache/clear-namespace! store :tenant-a)))
+        (let [second-b-stats (atom {})
+              page-b-again
+              (binding [idx/*recursive-traversal-stats* second-b-stats]
+                (eacl/lookup-resources client-b query))]
+          (is (= (:data page-b) (:data page-b-again)))
+          (is (= 1 (:recursive-page-hits @second-b-stats))
+              "clearing tenant A leaves tenant B's recursive page intact"))))))
+
+(deftest reverse-continuation-weight-includes-retained-rule-graph-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [store (cache/local-store)
+          client
+          (core/make-client
+           conn
+           {:page-token-key "reverse-rule-weight"
+            :cache {:store store}})
+          query {:resource (spice-object :account (account-id 2))
+                 :permission :read
+                 :subject/type :user
+                 :first 1}]
+      (seed-recursive! conn client 3 3)
+      (eacl/lookup-subjects client query)
+      (let [continuation
+            (->> (.values ^java.util.LinkedHashMap (:entries store))
+                 (keep (fn [entry]
+                         (when (= :recursive-continuation
+                                  (get-in entry [:value :eacl.cache/kind]))
+                           (get-in entry
+                                   [:value :eacl.cache/value :continuation]))))
+                 first)
+            state (:state continuation)
+            retained-rule-count
+            (reduce + 0 (map count (vals (:rules-by-node state))))
+            weight #'idx/continuation-weight]
+        (is (pos? retained-rule-count))
+        (is (= retained-rule-count (:rule-count state)))
+        (is (> (weight state)
+               (weight (assoc state :rule-count 0)))
+            "the admission estimate charges the retained reverse rule graph")))))
+
 (deftest recursive-cursor-replays-when-its-boundary-object-is-gone-live-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {:page-token-key "recursive-deleted-boundary"})
