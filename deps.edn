@@ -1,53 +1,67 @@
 {:paths ["modules/eacl/src"
          "modules/eacl-datomic/src"
          "modules/eacl-datascript/src"
+         "modules/eacl-datahike/src"
          "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0-alpha5"}
         com.rpl/specter {:mvn/version "1.1.4"}
         metosin/malli {:mvn/version "0.19.1"}
         com.datomic/peer {:mvn/version "1.0.6733"}
         datascript/datascript {:mvn/version "1.7.8"}
+        ;; needs replikativ/datahike#921 (composite tuples under :attribute-refs?),
+        ;; merged to main but not yet tagged — switch to an :mvn/version once released
+        org.replikativ/datahike {:local/root "../datahike"}
         org.clojure/core.cache {:mvn/version "1.1.234"}
         instaparse/instaparse {:mvn/version "1.5.0"}
         org.clojure/tools.logging {:mvn/version "1.3.0"}}
  :aliases {:dev {:extra-paths ["modules/eacl/test"
                                "modules/eacl-datomic/test"
-                               "modules/eacl-datascript/test"]}
+                               "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]}
            :build-eacl {:extra-paths ["modules/eacl"]
                         :ns-default build
                         :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
            :build-eacl-datomic {:extra-paths ["modules/eacl-datomic"]
                                 :ns-default build
                                 :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
+           :build-eacl-datahike {:extra-paths ["modules/eacl-datahike"]
+                                 :ns-default build
+                                 :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
            :build-eacl-datascript {:extra-paths ["modules/eacl-datascript"]
                                    :ns-default build
                                    :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
            :cljs-test {:extra-paths ["modules/eacl/test"
-                                     "modules/eacl-datascript/test"]
+                                     "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]
                        :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}}
            :datascript-cljs-test {:extra-paths ["modules/eacl/test"
-                                                "modules/eacl-datascript/test"]
+                                                "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]
                                   :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}
                                   :main-opts ["-m" "cljs.main"
                                               "-re" "node"
                                               "-m" "eacl.datascript.cljs-test-runner"]}
            :test {:extra-paths ["modules/eacl/test"
                                 "modules/eacl-datomic/test"
-                                "modules/eacl-datascript/test"]
+                                "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]
                   :extra-deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                                criterium/criterium {:mvn/version "0.4.6"}}
                   :main-opts ["-m" "cognitect.test-runner"
                               "-d" "modules/eacl/test"
                               "-d" "modules/eacl-datomic/test"
-                              "-d" "modules/eacl-datascript/test"]
+                              "-d" "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]
                   :exec-fn cognitect.test-runner.api/test
                   ;; scan module test dirs only - the legacy top-level test/ tree
                   ;; is retained for history but is not on this branch's classpath.
                   :exec-args {:dirs ["modules/eacl/test"
                                      "modules/eacl-datomic/test"
-                                     "modules/eacl-datascript/test"]}}
+                                     "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]}}
            :nrepl {:extra-paths ["modules/eacl/test"
                                  "modules/eacl-datomic/test"
-                                 "modules/eacl-datascript/test"]
+                                 "modules/eacl-datascript/test"
+                               "modules/eacl-datahike/test"]
                    :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}
                    :main-opts ["-m" "nrepl.cmdline"]}}}
