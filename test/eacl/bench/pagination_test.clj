@@ -535,6 +535,8 @@
                                  #(eacl/count-subjects
                                    live-acl
                                    count-subjects-query))
+                    resource-live-calls @resource-calls
+                    subject-live-calls @subject-calls
                     disabled-resource-times
                     (run-timed
                      10
@@ -552,9 +554,9 @@
                 (is (= total-servers
                        (get-in resource-cold [:value :count])))
                 (is (pos? (get-in subject-cold [:value :count])))
-                (is (= 1 @resource-calls)
+                (is (= 1 resource-live-calls)
                     "resource count computes once, then uses completed results")
-                (is (= 1 @subject-calls)
+                (is (= 1 subject-live-calls)
                     "subject count computes once, then uses completed results")))))))))
 
 (deftest ^:benchmark recursive-traversal-prefix-benchmark
@@ -622,11 +624,13 @@
              [:admission-rejected
               (spiceomic/make-client
                conn
-               {:cache {:store rejecting-store}})]
+               {:cache {:store rejecting-store
+                        :exact-results? true}})]
              [:provider-failure
               (spiceomic/make-client
                conn
-               {:cache {:store failing-store}})]]
+               {:cache {:store failing-store
+                        :exact-results? true}})]]
             query {:subject (->user "super-user")
                    :permission :view
                    :resource/type :server}]

@@ -150,9 +150,12 @@
                  (if (and last-entry
                           (< (- now (:captured-at last-entry)) interval-ms))
                    entries'
-                   (conj entries'
-                         {:captured-at now
-                          :basis-t (long basis-t)})))))
+                   (retain-checkpoints
+                    (conj entries'
+                          {:captured-at now
+                           :basis-t (long basis-t)})
+                    now
+                    config)))))
       basis-t)))
 
 (defn revision-at-least-seconds-ago

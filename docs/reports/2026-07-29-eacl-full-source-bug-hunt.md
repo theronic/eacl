@@ -831,8 +831,8 @@ All variants returned exactly 500 resources.
 
 Final verification:
 
-- regular suite: **144 tests, 4,390 assertions, 0 failures, 0 errors**;
-- heavy pagination/count/retention suite: **4 tests, 3,245 assertions, 0 failures, 0 errors**;
+- regular suite: **144 tests, 4,396 assertions, 0 failures, 0 errors**;
+- heavy pagination/count/retention suite: **4 tests, 3,247 assertions, 0 failures, 0 errors**;
 - deterministic cache model: five seeds × 50 randomized relationship writes, no-ops, unrelated
   application transactions, and schema rotations, comparing cached and cache-disabled `can?`,
   both lookup directions, and both count directions;
