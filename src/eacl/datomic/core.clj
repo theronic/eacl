@@ -195,19 +195,20 @@
            (token->page-bound opts)))
 
 (defn- pagination-context
-  [conn opts query]
-  (reject-live-basis! query)
-  (let [page-req (impl.indexed/normalize-page-request query)
-        decoded (decoded-page-bound opts page-req)
-        live-db (d/db conn)
-        basis-t (or (:basis-t decoded) (d/basis-t live-db))
-        pagination-db (if decoded
-                        (d/as-of live-db basis-t)
-                        live-db)]
-    {:page-req page-req
-     :decoded decoded
-     :db pagination-db
-     :basis-t basis-t}))
+  ([live-db opts query]
+   (reject-live-basis! query)
+   (let [page-req (impl.indexed/normalize-page-request query)]
+     (pagination-context live-db opts query page-req
+                         (decoded-page-bound opts page-req))))
+  ([live-db _opts _query page-req decoded]
+   (let [basis-t (or (:basis-t decoded) (d/basis-t live-db))
+         pagination-db (if decoded
+                         (d/as-of live-db basis-t)
+                         live-db)]
+     {:page-req page-req
+      :decoded decoded
+      :db pagination-db
+      :basis-t basis-t})))
 
 (defn- validate-consistency!
   "EACL is always fully consistent. can? has thrown on any other requested
@@ -221,17 +222,22 @@
              {:type :eacl/unsupported-consistency
               :consistency consistency}))))
 
-(defn- list-query-shape
+(defn- list-query-identity
   [op query]
   ;; :consistency is excluded from the shape: it is validated (only
   ;; fully-consistent is accepted), so it cannot change what a token may
   ;; resume, and including it made page 2 fail when a caller passed it on
   ;; page 1 but not page 2.
-  (stable-hash {:op op
-                :basis :stable
-                :query (dissoc query
-                               :first :last :after :before
-                               :cursor :limit :page/basis :consistency)}))
+  (canonicalize
+   {:op op
+    :basis :stable
+    :query (dissoc query
+                   :first :last :after :before
+                   :cursor :limit :page/basis :consistency)}))
+
+(defn- list-query-shape
+  [op query]
+  (stable-hash (list-query-identity op query)))
 
 (defn- client-schema-version
   [opts]
@@ -307,26 +313,20 @@
       (update :page-info
               #(encode-page-info opts op query-shape basis-t %))))
 
-(def ^:dynamic *relationship-coordinator*
-  "The coordinator bound while an opt-in live lookup holds its read barrier."
-  nil)
+(def ^:private result-cache-version 2)
 
-(defn- lookup-page-cache-key
-  [opts op query-shape basis-t decoded page-req relationship-dependencies]
-  (let [scope (if decoded
-                [:basis basis-t]
-                [:relationships
-                 (cache/generation *relationship-coordinator*
-                                   relationship-dependencies)])]
-    [:lookup-page
-     (:database-id opts)
-     (client-schema-version opts)
-     scope
-     op
-     query-shape
-     (:direction page-req)
-     (:size page-req)
-     (:edge decoded)]))
+(defn- result-cache-key
+  [opts op query-identity scope]
+  [:result
+   result-cache-version
+   (:database-id opts)
+   (client-schema-version opts)
+   scope
+   op
+   ;; Keep the exact canonical request in the key. The compact query hash in
+   ;; the page token is authenticated, but cache correctness need not rely on
+   ;; collision resistance when ordinary value equality is available.
+   (canonicalize query-identity)])
 
 (defn- internal-page-weight
   [page]
@@ -335,56 +335,145 @@
   ;; guard, not a JVM object-size claim.
   (+ 512 (* 128 (count (:data page)))))
 
-(defn- cacheable-live-page?
+(defn- cacheable-result?
   [opts decoded]
-  (and (cacheable-client-schema? opts)
-       (or decoded (:cache-live-lookups? opts))))
+  (and (:lookup-cache-store opts)
+       (cacheable-client-schema? opts)
+       (or decoded (:cache-live-results? opts))))
 
-(defn- cached-lookup-page
-  [opts cache-key compute]
+(defn- positive-eid?
+  [eid]
+  (and (integer? eid) (pos? eid)))
+
+(defn- cursor-result
+  [cursor]
+  (case (:kind cursor)
+    :lookup-eid
+    (when (positive-eid? (:result-eid cursor))
+      {:eid (:result-eid cursor)})
+
+    :recursive-traversal
+    (let [{:keys [engine-version direction result-kind ordinal result]} cursor]
+      (when (and (integer? engine-version)
+                 (pos? engine-version)
+                 (#{:forward :reverse} direction)
+                 (#{:resource :subject} result-kind)
+                 (integer? ordinal)
+                 (not (neg? ordinal))
+                 (keyword? (:type result))
+                 (positive-eid? (:eid result)))
+        result))
+
+    nil))
+
+(defn- internal-page?
+  [page]
+  (and (map? page)
+       (vector? (:data page))
+       (every? (fn [{:keys [type id]}]
+                 (and (keyword? type)
+                      (positive-eid? id)))
+               (:data page))
+       (let [{:keys [start-cursor
+                     end-cursor
+                     has-next-page?
+                     has-previous-page?]} (:page-info page)
+             data (:data page)
+             start-result (some-> start-cursor cursor-result)
+             end-result (some-> end-cursor cursor-result)]
+         (and (map? (:page-info page))
+              (boolean? has-next-page?)
+              (boolean? has-previous-page?)
+              (if (empty? data)
+                (and (nil? start-cursor)
+                     (nil? end-cursor)
+                     (false? has-next-page?)
+                     (false? has-previous-page?))
+                (and start-result
+                     end-result
+                     (= (:id (first data)) (:eid start-result))
+                     (= (:id (peek data)) (:eid end-result))
+                     (or (nil? (:type start-result))
+                         (= (:type (first data)) (:type start-result)))
+                     (or (nil? (:type end-result))
+                         (= (:type (peek data)) (:type end-result)))))))))
+
+(defn- count-response?
+  [response]
+  (let [limit (:limit response)]
+    (and (map? response)
+         (integer? (:count response))
+         (not (neg? (:count response)))
+         (integer? limit)
+         (<= -1 limit)
+         (if (= -1 limit)
+           (= #{:count :limit} (set (keys response)))
+           (and (= #{:count :limit :truncated?} (set (keys response)))
+                (boolean? (:truncated? response))
+                (<= (:count response) limit))))))
+
+(defn- cached-result
+  [opts cache-key kind valid-value? weight-fn compute]
   (let [store (:lookup-cache-store opts)]
-    (if-let [cached (cache/safe-lookup store cache-key)]
+    (if-let [cached (cache/safe-entry-value
+                     store cache-key kind valid-value?)]
       cached
-      (let [page (compute)]
-        (cache/safe-store! store
-                           cache-key
-                           page
-                           (internal-page-weight page)
-                           (:lookup-cache-ttl-ms opts))
-        page))))
+      (let [result (compute)]
+        (cache/safe-store-entry! store
+                                 cache-key
+                                 kind
+                                 result
+                                 (weight-fn result)
+                                 (:lookup-cache-ttl-ms opts))
+        result))))
 
 (defn- recursive-continuation-context
-  [opts op query-shape basis-t]
+  [opts op query-identity basis-t]
   (when-let [store (and (cacheable-client-schema? opts)
                         (:lookup-cache-store opts))]
     (let [prefix [:recursive-continuation
+                  result-cache-version
                   (:database-id opts)
                   (client-schema-version opts)
                   op
-                  query-shape
+                  (canonicalize query-identity)
                   basis-t]
-          cache-key #(conj prefix %)]
+          cache-key #(conj prefix %)
+          opaque-token (:opaque-cache-token opts)]
       {:get (fn [edge]
-              (cache/safe-lookup store (cache-key edge)))
+              (some-> (cache/safe-entry-value
+                       store
+                       (cache-key edge)
+                       :recursive-continuation
+                       #(and (map? %)
+                             (identical? opaque-token (:opaque-token %))
+                             (map? (:continuation %))))
+                      :continuation))
        :evict! (fn [edge]
                  (try
                    (cache/evict! store (cache-key edge))
-                   (catch Throwable _
+                   (catch Exception _
                      false)))
        :put! (fn [edge continuation weight]
-               (cache/safe-store! store
-                                  (cache-key edge)
-                                  continuation
-                                  weight
-                                  (:lookup-cache-ttl-ms opts)))
+               (cache/safe-store-entry!
+                store
+                (cache-key edge)
+                :recursive-continuation
+                {:opaque-token opaque-token
+                 :continuation continuation}
+                weight
+                (:lookup-cache-ttl-ms opts)))
        :get-page (fn [page-key]
-                   (cache/safe-lookup
+                   (cache/safe-entry-value
                     store
-                    (cache-key [:page page-key])))
+                    (cache-key [:page page-key])
+                    :recursive-page
+                    internal-page?))
        :put-page! (fn [page-key page weight]
-                    (cache/safe-store!
+                    (cache/safe-store-entry!
                      store
                      (cache-key [:page page-key])
+                     :recursive-page
                      page
                      weight
                      (:lookup-cache-ttl-ms opts)))})))
@@ -404,7 +493,7 @@
    {:keys [object-id->entid] :as opts}
    filters]
   (validate-consistency! filters)
-  (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts filters)
+  (let [{:keys [db page-req decoded basis-t]} (pagination-context (d/db conn) opts filters)
         subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
         subject-eid  (when (some? subject-id) (object-id->entid db subject-id))
@@ -461,9 +550,15 @@
                     (nth v 1))))
           tx-data)))
 
+(defn- coordinate-relationship-mutation
+  [coordinator f]
+  (if coordinator
+    (cache/with-mutation coordinator f)
+    (first (f))))
+
 (defn spiceomic-write-relationships!
   [conn {:keys [relationship-coordinator] :as opts} updates]
-  (cache/with-mutation
+  (coordinate-relationship-mutation
    relationship-coordinator
    (fn []
      (let [db (d/db conn)
@@ -510,18 +605,27 @@
        (finally
          (.unlock lock#)))))
 
-(defmacro ^:private with-relationship-read
-  "Runs a live-cache lookup against one coherent relationship generation.
-  Exact-basis cursor and recursive caches need no mutation barrier."
-  [opts & body]
-  `(if (:cache-live-lookups? ~opts)
-     (cache/with-read (:relationship-coordinator ~opts)
-                      (fn [_relationship-snapshot#]
-                        (binding [*relationship-coordinator*
-                                  (:relationship-coordinator ~opts)]
-                          ~@body)))
-     (binding [*relationship-coordinator* nil]
-       ~@body)))
+(defn- live-result-cache-enabled?
+  [opts]
+  (and (:cache-live-results? opts)
+       (:relationship-coordinator opts)
+       (:lookup-cache-store opts)
+       (cacheable-client-schema? opts)))
+
+(defn- capture-live-result-context
+  "Captures a db value and its dependency token under a short read barrier.
+  Cache I/O and result computation happen after the barrier is released."
+  [conn opts prepare]
+  (let [coordinator (:relationship-coordinator opts)]
+    (cache/with-read
+     coordinator
+     (fn [_snapshot]
+       (let [{:keys [relationship-dependencies] :as prepared}
+             (prepare (d/db conn))]
+         (assoc prepared
+                :cache-scope
+                [:relationships
+                 (cache/generation coordinator relationship-dependencies)]))))))
 
 (def ^:private delete-object-batch-size 1000)
 
@@ -533,7 +637,7 @@
   returns (or in the same application transaction, using
   eacl.datomic.impl/tx-delete-object directly)."
   [conn {:keys [object-id->entid relationship-coordinator] :as _opts} object]
-  (cache/with-mutation
+  (coordinate-relationship-mutation
    relationship-coordinator
    (fn []
      (let [object-id (if (map? object) (:id object) object)
@@ -578,48 +682,60 @@
 (defn spiceomic-lookup-resources
   [conn
    {:as opts
-    :keys [spice-object->internal
-           entid->object-id
-           object-id->ident]}
+    :keys [spice-object->internal]}
    {:as query :keys [subject]}]
   (log/debug 'spiceomic-lookup-resources 'query query)
   (validate-consistency! query)
-  (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts query)
-        internal-subject (spice-object->internal db subject)]
+  (reject-live-basis! query)
+  (let [page-req (impl.indexed/normalize-page-request query)
+        decoded (decoded-page-bound opts page-req)
+        prepare
+        (fn [live-db]
+          (let [{:keys [db basis-t] :as page-context}
+                (pagination-context live-db opts query page-req decoded)
+                internal-subject (spice-object->internal db subject)
+                query' (assoc query :subject internal-subject)]
+            (assoc page-context
+                   :internal-subject internal-subject
+                   :query' query'
+                   :query-shape (list-query-shape :lookup-resources query')
+                   :internal-query (internal-page-query query' page-req decoded)
+                   :relationship-dependencies
+                   (when (and (nil? decoded)
+                              (live-result-cache-enabled? opts))
+                     (impl.indexed/permission-relationship-eids
+                      db (:resource/type query') (:permission query')))
+                   :basis-t basis-t)))
+        {:keys [db basis-t internal-subject query' query-shape internal-query
+                cache-scope]}
+        (if (and (nil? decoded) (live-result-cache-enabled? opts))
+          (capture-live-result-context conn opts prepare)
+          (prepare (d/db conn)))]
     (if (nil? (:id internal-subject))
       ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
       empty-page
-      (let [query' (assoc query :subject internal-subject)
-            query-shape (list-query-shape :lookup-resources query')
-            internal-query (internal-page-query query' page-req decoded)
-            recursive? (impl.indexed/traversal-permission?
-                        db (:resource/type query') (:permission query'))
-            relationship-dependencies
-            (when (and (not recursive?)
-                       (nil? decoded)
-                       (:cache-live-lookups? opts))
-              (impl.indexed/permission-relationship-eids
-               db (:resource/type query') (:permission query')))
-            cache-key (when (and (not recursive?)
-                                 (cacheable-live-page? opts decoded))
-                        (lookup-page-cache-key opts
-                                               :lookup-resources
-                                               query-shape
-                                               basis-t
-                                               decoded
-                                               page-req
-                                               relationship-dependencies))]
+      (let [cache-key (when (cacheable-result? opts decoded)
+                        (result-cache-key
+                         opts
+                         :lookup-resources
+                         internal-query
+                         (or cache-scope [:basis basis-t])))
+            compute #(impl/lookup-resources
+                      db internal-query
+                      {:recursive-continuation-cache-fn
+                       (fn []
+                         (recursive-continuation-context
+                          opts
+                          :lookup-resources
+                          (list-query-identity :lookup-resources query')
+                          basis-t))})]
         (validate-page-token! opts :lookup-resources query-shape decoded)
         (coerce-lookup-page db opts :lookup-resources query-shape basis-t
-                            (binding [impl.indexed/*recursive-continuation-cache*
-                                      (when recursive?
-                                        (recursive-continuation-context
-                                         opts :lookup-resources query-shape basis-t))]
-                              (if cache-key
-                                (cached-lookup-page
-                                 opts cache-key
-                                 #(impl/lookup-resources db internal-query))
-                                (impl/lookup-resources db internal-query))))))))
+                            (if cache-key
+                              (cached-result
+                               opts cache-key :lookup-page internal-page?
+                               internal-page-weight compute)
+                              (compute)))))))
 
 (defn- empty-count-response
   [query]
@@ -633,73 +749,126 @@
     {:count 0 :limit -1}))
 
 (defn spiceomic-count-resources
-  [db
-   {:keys [spice-object->internal]}
+  [conn
+   {:as opts :keys [spice-object->internal]}
    {:as query :keys [subject]}]
   (validate-consistency! query)
-  (let [subject-ent (spice-object->internal db subject)]
+  (let [prepare
+        (fn [db]
+          (let [subject-ent (spice-object->internal db subject)
+                query' (assoc query :subject subject-ent)]
+            {:db db
+             :subject-ent subject-ent
+             :query' query'
+             :relationship-dependencies
+             (when (live-result-cache-enabled? opts)
+               (impl.indexed/permission-relationship-eids
+                db (:resource/type query') (:permission query')))}))
+        {:keys [db subject-ent query' cache-scope]}
+        (if (live-result-cache-enabled? opts)
+          (capture-live-result-context conn opts prepare)
+          (prepare (d/db conn)))]
     (if (nil? (:id subject-ent))
       ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
       (empty-count-response query)
-      (->> query
-           (S/setval [:subject] subject-ent)
-           (impl/count-resources db)))))
+      (let [cache-key
+            (when (live-result-cache-enabled? opts)
+              (result-cache-key opts :count-resources query' cache-scope))
+            compute #(impl/count-resources db query')]
+        (if cache-key
+          (cached-result opts cache-key :count count-response?
+                         (constantly 256) compute)
+          (compute))))))
 
 (defn spiceomic-lookup-subjects
   [conn
    {:as opts
-    :keys [entid->object-id
-           spice-object->internal]}
+    :keys [spice-object->internal]}
    query]
   (validate-consistency! query)
-  (let [{:keys [db page-req decoded basis-t]} (pagination-context conn opts query)
-        internal-resource (spice-object->internal db (:resource query))]
+  (reject-live-basis! query)
+  (let [page-req (impl.indexed/normalize-page-request query)
+        decoded (decoded-page-bound opts page-req)
+        prepare
+        (fn [live-db]
+          (let [{:keys [db basis-t] :as page-context}
+                (pagination-context live-db opts query page-req decoded)
+                internal-resource
+                (spice-object->internal db (:resource query))
+                query' (assoc query :resource internal-resource)]
+            (assoc page-context
+                   :internal-resource internal-resource
+                   :query' query'
+                   :query-shape (list-query-shape :lookup-subjects query')
+                   :internal-query (internal-page-query query' page-req decoded)
+                   :relationship-dependencies
+                   (when (and (nil? decoded)
+                              (live-result-cache-enabled? opts))
+                     (impl.indexed/permission-relationship-eids
+                      db (:type internal-resource) (:permission query')))
+                   :basis-t basis-t)))
+        {:keys [db basis-t internal-resource query' query-shape internal-query
+                cache-scope]}
+        (if (and (nil? decoded) (live-result-cache-enabled? opts))
+          (capture-live-result-context conn opts prepare)
+          (prepare (d/db conn)))]
     (if (nil? (:id internal-resource))
       ;; Unknown resources match nothing (SpiceDB-consistent).
       empty-page
-      (let [query' (assoc query :resource internal-resource)
-            query-shape (list-query-shape :lookup-subjects query')
-            internal-query (internal-page-query query' page-req decoded)
-            recursive? (impl.indexed/traversal-permission?
-                        db (:type internal-resource) (:permission query'))
-            relationship-dependencies
-            (when (and (not recursive?)
-                       (nil? decoded)
-                       (:cache-live-lookups? opts))
-              (impl.indexed/permission-relationship-eids
-               db (:type internal-resource) (:permission query')))
-            cache-key (when (and (not recursive?)
-                                 (cacheable-live-page? opts decoded))
-                        (lookup-page-cache-key opts
-                                               :lookup-subjects
-                                               query-shape
-                                               basis-t
-                                               decoded
-                                               page-req
-                                               relationship-dependencies))]
+      (let [cache-key (when (cacheable-result? opts decoded)
+                        (result-cache-key
+                         opts
+                         :lookup-subjects
+                         internal-query
+                         (or cache-scope [:basis basis-t])))
+            compute #(impl/lookup-subjects
+                      db internal-query
+                      {:recursive-continuation-cache-fn
+                       (fn []
+                         (recursive-continuation-context
+                          opts
+                          :lookup-subjects
+                          (list-query-identity :lookup-subjects query')
+                          basis-t))})]
         (validate-page-token! opts :lookup-subjects query-shape decoded)
         (coerce-lookup-page db opts :lookup-subjects query-shape basis-t
-                            (binding [impl.indexed/*recursive-continuation-cache*
-                                      (when recursive?
-                                        (recursive-continuation-context
-                                         opts :lookup-subjects query-shape basis-t))]
-                              (if cache-key
-                                (cached-lookup-page
-                                 opts cache-key
-                                 #(impl/lookup-subjects db internal-query))
-                                (impl/lookup-subjects db internal-query))))))))
+                            (if cache-key
+                              (cached-result
+                               opts cache-key :lookup-page internal-page?
+                               internal-page-weight compute)
+                              (compute)))))))
 
 (defn spiceomic-count-subjects
-  [db
-   {:keys [spice-object->internal]}
-   query]
+  [conn
+   {:as opts :keys [spice-object->internal]}
+  query]
   (validate-consistency! query)
-  (let [resource-ent (spice-object->internal db (:resource query))]
+  (let [prepare
+        (fn [db]
+          (let [resource-ent
+                (spice-object->internal db (:resource query))
+                query' (assoc query :resource resource-ent)]
+            {:db db
+             :resource-ent resource-ent
+             :query' query'
+             :relationship-dependencies
+             (when (live-result-cache-enabled? opts)
+               (impl.indexed/permission-relationship-eids
+                db (:type resource-ent) (:permission query')))}))
+        {:keys [db resource-ent query' cache-scope]}
+        (if (live-result-cache-enabled? opts)
+          (capture-live-result-context conn opts prepare)
+          (prepare (d/db conn)))]
     (if (nil? (:id resource-ent))
       (empty-count-response query)
-      (->> query
-           (S/setval [:resource] resource-ent)
-           (impl/count-subjects db)))))
+      (let [cache-key
+            (when (live-result-cache-enabled? opts)
+              (result-cache-key opts :count-subjects query' cache-scope))
+            compute #(impl/count-subjects db query')]
+        (if cache-key
+          (cached-result opts cache-key :count count-response?
+                         (constantly 256) compute)
+          (compute))))))
 
 (defrecord Spiceomic [conn opts schema-state schema-lock]
   IAuthorization
@@ -794,25 +963,23 @@
 
   (lookup-resources [_ query]
     (with-client-schema-read schema-lock schema-state
-      (with-relationship-read opts
-        (with-recursive-limits opts
-          (spiceomic-lookup-resources conn opts query)))))
+      (with-recursive-limits opts
+        (spiceomic-lookup-resources conn opts query))))
 
   (count-resources [_ query]
     (with-client-schema-read schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-count-resources (d/db conn) opts query))))
+        (spiceomic-count-resources conn opts query))))
 
   (lookup-subjects [_ query]
     (with-client-schema-read schema-lock schema-state
-      (with-relationship-read opts
-        (with-recursive-limits opts
-          (spiceomic-lookup-subjects conn opts query)))))
+      (with-recursive-limits opts
+        (spiceomic-lookup-subjects conn opts query))))
 
   (count-subjects [_ query]
     (with-client-schema-read schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-count-subjects (d/db conn) opts query))))
+        (spiceomic-count-subjects conn opts query))))
 
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
@@ -835,14 +1002,14 @@
 (def ^:private known-cache-opt-keys
   #{:store
     :coordinator
-    :live-lookups?
+    :live-results?
     :ttl-ms
     :max-weight
     :max-entry-weight
     :max-entries})
 
 (defn- normalize-cache-config
-  [cache-option page-token-ttl-seconds database-id]
+  [cache-option page-token-ttl-seconds]
   (when-not (or (nil? cache-option)
                 (false? cache-option)
                 (map? cache-option))
@@ -858,7 +1025,14 @@
                        :key :cache
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-cache-opt-keys})))
+    (when (and (contains? config :live-results?)
+               (not (boolean? (:live-results? config))))
+      (throw (ex-info "EACL Config Error: :cache :live-results? must be boolean."
+                      {:type :eacl/invalid-config
+                       :key :cache
+                       :value (:live-results? config)})))
     (let [enabled? (not (false? cache-option))
+          live-results? (and enabled? (true? (:live-results? config)))
           token-ttl-ms (* 1000 (or page-token-ttl-seconds
                                    default-page-token-ttl-seconds))
           ttl-ms (or (:ttl-ms config) token-ttl-ms)
@@ -868,29 +1042,42 @@
                                :key :cache
                                :value ttl-ms})))
           store (when enabled?
-                  (or (:store config)
-                      (cache/local-store
-                       (select-keys config [:max-weight
-                                            :max-entry-weight
-                                            :max-entries]))))
-          coordinator (or (:coordinator config)
-                          (cache/process-coordinator database-id))]
+                  (if (false? (:store config))
+                    nil
+                    (or (:store config)
+                        (cache/local-store
+                         (select-keys config [:max-weight
+                                              :max-entry-weight
+                                              :max-entries])))))
+          coordinator (when enabled? (:coordinator config))]
       (when (and store (not (satisfies? cache/CacheStore store)))
         (throw (ex-info "EACL Config Error: :cache :store must implement CacheStore."
                         {:type :eacl/invalid-config
                          :key :cache
                          :value (:store config)})))
-      (when-not (satisfies? cache/RelationshipCoordinator coordinator)
+      (when (and coordinator
+                 (not (satisfies? cache/RelationshipCoordinator coordinator)))
         (throw (ex-info "EACL Config Error: :cache :coordinator must implement RelationshipCoordinator."
                         {:type :eacl/invalid-config
                          :key :cache
                          :value (:coordinator config)})))
+      (when (and live-results? (nil? store))
+        (throw (ex-info "EACL Config Error: :cache :live-results? requires a cache store."
+                        {:type :eacl/invalid-config
+                         :key :cache
+                         :value config})))
+      (when (and live-results? (nil? coordinator))
+        (throw (ex-info "EACL Config Error: :cache :live-results? requires an explicit coordinator."
+                        {:type :eacl/invalid-config
+                         :key :cache
+                         :value config})))
       {:store store
        :coordinator coordinator
        :ttl-ms (min ttl-ms token-ttl-ms)
-       ;; Cross-request live memoization requires every relationship writer to
-       ;; share this coordinator. Cursor continuations do not.
-       :live-lookups? (and enabled? (true? (:live-lookups? config)))})))
+       ;; Cross-request live memoization requires every relationship writer in
+       ;; the coherence scope to receive this same explicit coordinator.
+       ;; Basis-pinned cursor continuations do not.
+       :live-results? live-results?})))
 
 (defn make-client
   "Builds an IAuthorization client over a Datomic conn.
@@ -902,11 +1089,14 @@
   - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
   - :cache — false disables all lookup caching. A map configures the bounded
     ephemeral store with :max-weight, :max-entry-weight, :max-entries and
-    :ttl-ms. :live-lookups? true enables non-recursive cross-request page
-    memoization only when every relationship writer shares the configured
-    coordinator. :store and :coordinator accept custom protocol
+    :ttl-ms. :live-results? true enables cross-request lookup and count
+    memoization and requires an explicit :coordinator shared by every EACL
+    relationship reader and writer in that coherence scope. Use
+    eacl.datomic.cache/local-context to create a local :store/:coordinator
+    pair. :store false creates a writer-only client which still advances the
+    supplied coordinator. :store and :coordinator accept custom protocol
     implementations. Recursive cursor continuations remain basis-pinned and
-    safe without a global coordinator.
+    safe without a coordinator.
   - :page-token-key / :page-token-keys / :page-token-keyring / :page-token-kid —
     AES-GCM page-token key material. Default: a random per-process key, meaning
     page tokens do not survive restarts and are not portable across peers;
@@ -970,8 +1160,7 @@
   (let [initial-db         (d/db conn)
         schema-state       (atom (impl.indexed/make-schema-cache initial-db))
         cache-config       (normalize-cache-config cache
-                                                   page-token-ttl-seconds
-                                                   (:database-id @schema-state))
+                                                   page-token-ttl-seconds)
         schema-lock        (ReentrantReadWriteLock.)
         entid->object-id   (or entid->object-id
                                (when entity->object-id
@@ -998,8 +1187,9 @@
                             :database-id (:database-id @schema-state)
                             :lookup-cache-store (:store cache-config)
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
-                            :cache-live-lookups? (:live-lookups? cache-config)
+                            :cache-live-results? (:live-results? cache-config)
                             :relationship-coordinator (:coordinator cache-config)
+                            :opaque-cache-token (Object.)
                             :entid->object-id entid->object-id
                             :object-id->entid object-id->entid
                             :object->entid (fn [db {:keys [id]}]

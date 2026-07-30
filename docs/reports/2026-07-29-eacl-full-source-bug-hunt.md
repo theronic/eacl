@@ -702,11 +702,20 @@ preserve eligible live cache entries without extra reads.
 
 The default cache accelerates exact-basis cursor pages and recursive continuations. Those entries
 are safe without a relationship barrier because the authenticated cursor reconstructs the original
-database basis. Cross-request memoization of a new live non-recursive query is opt-in with
-`:cache {:live-lookups? true}` and requires every relevant relationship writer to share its
-coordinator. With live memoization disabled—the default—ordinary lookups take no relationship read
-lock. Separate processes need explicit shared coordination before enabling live memoization;
-otherwise they remain correct through the uncached indexed path.
+database basis. Cross-request memoization of live lookup pages and count responses is opt-in with
+`:live-results? true` and requires an explicitly supplied coordinator shared by every relevant EACL
+relationship reader and writer. The coordinator is an ordinary client argument; there is no
+process-global registry. With live memoization disabled—the default—ordinary lookups take no
+relationship read lock. Separate processes need explicit shared coordination before enabling live
+memoization; otherwise they remain correct through the uncached indexed path.
+
+The live read barrier covers only capture of `(d/db conn)` and the permission dependency epochs.
+Cache access and the lookup/count itself happen after it is released, so a large count does not
+hold relationship writers behind the full query. Completed lookup pages use one cache path before
+the indexed engine decides whether its miss requires acyclic seek traversal or recursive closure
+traversal; count responses use the same generation key. Opaque recursive frontier state is accepted
+only by the client that created it, while completed pages and counts remain suitable for a
+serializing cache provider.
 
 The completed follow-up suite passes on nREPL: **111 tests, 1752 assertions, 0 failures, 0 errors**.
 The heavy suite passes separately: **3 tests, 3228 assertions, 0 failures, 0 errors**.
@@ -740,3 +749,43 @@ while deriving less than half the grants of ordinal replay.
 No Datomic schema file changed, and the cache adds no effective-grant, generation, marker, page, or
 continuation datoms to the consumer database. Storage is bounded ephemeral memory by default,
 fully disableable, and replaceable through the cache-store protocol.
+
+### Adversarial cache hardening rerun (2026-07-30)
+
+The follow-up removed the process-global coordinator registry and requires live result coherence
+to be supplied explicitly. Completed recursive and acyclic pages now pass through the same cache
+before the engine classifies a miss; recursive continuation callbacks are constructed lazily only
+after that classification. `count-resources` and `count-subjects` use the same dependency epochs.
+Cache-disabled counts do not construct cache keys or query hashes.
+
+Additional correctness guards reject cache values with mismatched keys, versions, kinds, page
+cursor invariants, or count-limit shapes. Opaque traversal state must carry the creating client's
+identity token. A relationship helper exception advances a fail-closed uncertainty epoch, and
+entry admission includes retained key shape so large identifiers cannot bypass the configured
+weight estimate. Cache provider failures remain misses; fatal JVM errors are not swallowed.
+
+The complete non-benchmark suite passes on nREPL: **125 tests, 1815 assertions, 0 failures,
+0 errors**. The heavy suite, including the new count-cache benchmark, passes separately:
+**3 tests, 3232 assertions, 0 failures, 0 errors**.
+
+Fresh 15,000-resource comparison against the v7.3 merge commit:
+
+| workload | v7.3 | hardened candidate, cache disabled | hardened candidate, cache hit |
+|---|---:|---:|---:|
+| First page median | 2.60 ms | 1.32 ms | — |
+| Forward early / late / max-page median | 2.06 / 1.95 / 2.31 ms | 1.37 / 1.24 / 1.57 ms | 0.37 / 0.37 / 2.64 ms |
+| Reverse early / late / max-page median | 1.96 / 1.65 / 2.23 ms | 1.31 / 1.24 / 1.41 ms | 0.32 / 0.31 / 2.43 ms |
+| `count-resources` median (15,000 results) | 18.573 ms | 18.697 ms | 0.067 ms |
+
+The uncached broad count changed by **+0.7%**, within run noise, while a coherent hot count was
+about **280× faster**. `count-subjects` was not present on the v7.3 public protocol; the candidate's
+uncached public call measured 0.168 ms for the sampled result and its live hit measured 0.054 ms.
+The final committed heavy benchmark's cold/hot observations were 27.42/0.016 ms for resources and
+0.30/0.016 ms for subjects.
+
+A complete 500-resource recursive walk measured **63.69 ms on v7.3**, **66.03 ms with the candidate
+cache disabled**, and **8.53 ms with continuations enabled**. All variants returned exactly 500
+resources; the disabled difference was 3.7% in this host-sensitive single run, while continuation
+hits removed the repeated-prefix cost. In the concurrency probe, a relationship write completed
+in 0.58 ms while a count was deliberately suspended after snapshot capture; the in-flight count
+returned its old snapshot and the next count returned the new relationship generation.

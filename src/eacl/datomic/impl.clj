@@ -24,12 +24,16 @@
    (impl.indexed/can? db subject permission resource)))
 
 (defn lookup-subjects
-  [db query]
-  (impl.indexed/lookup-subjects db query))
+  ([db query]
+   (impl.indexed/lookup-subjects db query))
+  ([db query lookup-opts]
+   (impl.indexed/lookup-subjects db query lookup-opts)))
 
 (defn lookup-resources
-  [db query]
-  (impl.indexed/lookup-resources db query))
+  ([db query]
+   (impl.indexed/lookup-resources db query))
+  ([db query lookup-opts]
+   (impl.indexed/lookup-resources db query lookup-opts)))
 
 (defn count-resources
   [db query]

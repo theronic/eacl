@@ -8,6 +8,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [spice-object]]
+            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl :refer [Permission Relation Relationship]]
@@ -178,16 +179,21 @@
     @(d/transact conn [(Relation :account :owner :user)
                        (Permission :account :admin {:relation :owner})])
     (seed-owner! conn)
-    (let [acl (core/make-client conn {:cache {:live-lookups? true}})
+    (let [acl (core/make-client
+               conn
+               {:cache (assoc (cache/local-context)
+                              :live-results? true)})
           query {:subject (spice-object :user "u")
                  :permission :admin
                  :resource/type :account}
           calls (atom 0)
           lookup-resources impl/lookup-resources]
       (with-redefs [impl/lookup-resources
-                    (fn [db internal-query]
+                    (fn [db internal-query continuation-context]
                       (swap! calls inc)
-                      (lookup-resources db internal-query))]
+                      (lookup-resources db
+                                        internal-query
+                                        continuation-context))]
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
         @(d/transact conn [{:eacl/id "unrelated"}])
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))

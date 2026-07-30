@@ -46,10 +46,11 @@ Situated AuthZ offers some advantages for typical use-cases:
   basis-pinned continuation so a linear walk advances the traversal instead of replaying its
   prefix. Missing, evicted, disabled, oversized, or unavailable entries fall back to the same
   historical ordinal replay and therefore cannot change an answer.
-- Non-recursive pages can use the same store when `:cache {:live-lookups? true}` is configured.
-  Live entries are keyed by EACL's schema generation and the mutation epochs of only the relation
-  definitions used by the permission, not Datomic `basis-t`, so unrelated application transactions
-  and relationship writes outside that dependency set leave them hot.
+- Lookup pages and counts can use the same store when `:live-results? true` is configured with an
+  explicit shared coordinator. Live entries are keyed by EACL's schema generation and the mutation
+  epochs of only the relation definitions used by the permission, not Datomic `basis-t`, so
+  unrelated application transactions and relationship writes outside that dependency set leave
+  them hot.
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
@@ -500,8 +501,9 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 ### Lookup cache configuration
 
-Recursive cursor continuations use a bounded 16 MiB local cache by default. Disable all result and
-continuation caching without changing behavior:
+Recursive cursor continuations use a bounded local cache by default. Its default admission budget
+is 16,777,216 estimated weight units; this deliberately familiar number is not a measured 16 MiB
+heap guarantee. Disable all result and continuation caching without changing behavior:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn {:cache false}))
@@ -519,27 +521,43 @@ Capacity and lifetime are consumer-controlled:
             :ttl-ms 300000}}))
 ```
 
-Cache TTL is clamped to the page-token TTL. Oversized entries are rejected and replayed rather than
-allowed to threaten the host heap.
+Cache TTL is clamped to the page-token TTL. Entry admission includes a conservative estimate of
+the retained key and result/traversal shape; the weight settings are estimates, not literal JVM
+bytes or a heap guarantee. Oversized entries are rejected and replayed rather than allowed to
+threaten the host heap.
 
-Live non-recursive result memoization is opt-in:
+Live lookup and count memoization is opt-in and uses an explicit coherence
+context:
 
 ```clojure
-(def acl
+(require '[eacl.datomic.cache :as eacl-cache])
+
+(def cache-context (eacl-cache/local-context))
+
+(def reader
   (eacl.datomic.core/make-client
    conn
-   {:cache {:live-lookups? true}}))
+   {:cache (assoc cache-context :live-results? true)}))
+
+;; A writer that does not need its own result store still advances the same
+;; relationship epochs.
+(def writer
+  (eacl.datomic.core/make-client
+   conn
+   {:cache {:store false
+            :coordinator (:coordinator cache-context)}}))
 ```
 
-EACL clients in one JVM share a relationship coordinator for the same Datomic database. All
-relationship helpers hold its mutation barrier across their transaction and advance only the
-changed relation-definition epochs after an actual relationship tuple change. Unrelated Datomic
-transactions, relationship no-ops, and changes to relations outside a cached permission's
-dependency set do not expire that entry.
+Pass the same coordinator explicitly to every EACL relationship reader and writer in the
+coherence scope. Relationship helpers hold its mutation barrier across their transaction and
+advance only the changed relation-definition epochs after an actual relationship tuple change.
+Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
+permission's dependency set do not expire that entry. The read barrier is released after EACL
+captures the Datomic value and dependency epochs; it is not held during the lookup or count.
 
 In a multi-process deployment, enable live result memoization only when every EACL reader and
-writer uses a shared `eacl.datomic.cache/RelationshipCoordinator`; otherwise leave
-`:live-lookups?` false. Separate processes cannot invalidate private memory without a communication
+writer uses a shared `eacl.datomic.cache/RelationshipCoordinator`; otherwise omit
+`:live-results?`. Separate processes cannot invalidate private memory without a communication
 channel. Recursive cursor continuations remain safe locally in either configuration because their
 tokens pin the original Datomic basis; another Peer simply replays when it does not have the entry.
 Custom stores implement `eacl.datomic.cache/CacheStore` and may use local memory, a separate
@@ -715,9 +733,9 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- *Cache coherence is explicit across processes:* recursive cursor continuations are always safe,
-  but live non-recursive result memoization requires every relationship writer to share its
-  coordinator. Leave `:live-lookups?` false when that cannot be guaranteed.
+- *Cache coherence is explicit:* recursive cursor continuations are always safe, but live lookup
+  and count memoization requires every relationship writer to receive the same coordinator.
+  Omit `:live-results?` when that cannot be guaranteed.
 - *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 - *Recursive cache misses replay:* a permission that transitively depends on itself
   (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache

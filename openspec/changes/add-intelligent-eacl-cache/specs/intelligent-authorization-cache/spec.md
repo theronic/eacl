@@ -20,6 +20,10 @@ reader can use a pre-write cache generation with a post-write database value.
 - **WHEN** an EACL relationship helper commits no relationship tuple change
 - **THEN** all relationship dependency epochs remain reusable
 
+#### Scenario: Uncertain helper outcome
+- **WHEN** a relationship helper throws before it can report whether its transaction changed tuples
+- **THEN** the coordinator makes every result from its prior certainty epoch unreachable
+
 ### Requirement: Recursive continuations are optional accelerators
 The system SHALL preserve the complete recursive traversal result independently of continuation
 cache availability.
@@ -36,9 +40,9 @@ cache availability.
 - **WHEN** relationships change after a cursor was issued
 - **THEN** continuation hit and replay miss paths both return results from the cursor's original historical basis
 
-### Requirement: Non-recursive lookup caching is generation coherent
-The system SHALL cache non-recursive lookup pages only when all relationship writers relevant to
-the cache share its coordinator.
+### Requirement: Live result caching is generation coherent
+The system SHALL cache live lookup and count results only when all relationship writers relevant to
+the cache share its explicitly supplied coordinator.
 
 #### Scenario: Repeated lookup without EACL changes
 - **WHEN** an identical resolved non-recursive lookup is executed after unrelated Datomic transactions
@@ -59,6 +63,65 @@ the cache share its coordinator.
 #### Scenario: Unstamped client schema
 - **WHEN** a client has no `:eacl/schema-version` because no supported schema write has established one
 - **THEN** lookup pages and recursive continuations are not cached until `write-schema!` establishes the client generation
+
+### Requirement: Lookup caching is traversal-agnostic
+The system SHALL apply completed-page caching before recursive/non-recursive engine selection.
+
+#### Scenario: Completed-page cache hit
+- **WHEN** a valid completed lookup page exists for either traversal kind
+- **THEN** EACL returns it without evaluating `traversal-permission?`
+
+#### Scenario: Completed-page cache miss
+- **WHEN** no valid completed page exists
+- **THEN** the indexed engine classifies the permission once and runs the appropriate algorithm
+
+### Requirement: Count results use the same coherent cache
+The system SHALL support live caching for `count-resources` and `count-subjects` with the same
+schema and relationship dependency tokens as lookup results.
+
+#### Scenario: Repeated expensive count
+- **WHEN** an identical count query is repeated without a relevant schema or relationship change
+- **THEN** the cached count response may be reused without traversing the grant set
+
+#### Scenario: Count dependency changes
+- **WHEN** a relation definition used by a cached count changes
+- **THEN** the old count is unreachable from subsequent live requests
+
+#### Scenario: Unrelated count dependency changes
+- **WHEN** an unrelated Datomic transaction or relationship outside the permission dependency set changes
+- **THEN** the cached count remains reusable
+
+### Requirement: Live snapshot barriers are short
+The system SHALL hold the relationship read barrier only while capturing a coherent Datomic
+database value and dependency token, not while computing or reading/writing cache storage.
+
+#### Scenario: Long-running count
+- **WHEN** a count computation is in progress
+- **THEN** a relationship writer may commit after the count's initial coherent snapshot is captured
+- **AND** the count remains correct for that captured snapshot
+
+### Requirement: Cache context is explicit
+The system SHALL not use process-global mutable registries to discover relationship coordinators.
+
+#### Scenario: Multiple clients share live caching
+- **WHEN** multiple clients participate in one live-cache coherence scope
+- **THEN** the same coordinator is passed explicitly to every reader and relationship writer
+
+#### Scenario: Live caching lacks a coordinator
+- **WHEN** `:live-results? true` is configured without a coordinator
+- **THEN** client construction fails with a configuration error
+
+### Requirement: Cached values are self-identifying
+The system SHALL reject cached values whose entry version, kind, or embedded key does not match the
+requested cache entry.
+
+#### Scenario: Cache returns a value for the wrong key
+- **WHEN** a cache provider returns a mismatched or incompatible entry
+- **THEN** EACL treats it as a miss and computes the authoritative result
+
+#### Scenario: Opaque continuation crosses an incompatible store boundary
+- **WHEN** a recursive continuation loses its process-local identity token
+- **THEN** EACL treats it as a miss and performs exact-basis ordinal replay
 
 ### Requirement: Cache storage is bounded and optional
 The system SHALL permit consumers to disable caching and SHALL enforce configured cache capacity,

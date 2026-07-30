@@ -4,9 +4,10 @@
   Cache availability is never part of an authorization answer. Store failures,
   eviction and disabled caches all fall back to the ordinary indexed/traversal
   implementation."
-  (:import [java.lang.ref WeakReference]
-           [java.util Iterator LinkedHashMap Map$Entry]
+  (:import [java.util Iterator LinkedHashMap Map$Entry]
            [java.util.concurrent.locks ReentrantReadWriteLock Lock]))
+
+(def cache-entry-version 1)
 
 (defprotocol CacheStore
   (lookup [store k]
@@ -185,10 +186,14 @@
     (:clock @generation-state))
 
   (generation [_ dependency-keys]
-    (let [{:keys [dependencies]} @generation-state]
-      (mapv (fn [dependency-key]
-              [dependency-key (get dependencies dependency-key 0)])
-            (sort dependency-keys))))
+    (let [{:keys [dependencies uncertain]} @generation-state
+          ordered-keys (if (vector? dependency-keys)
+                         dependency-keys
+                         (sort dependency-keys))]
+      (into [[:uncertain uncertain]]
+            (map (fn [dependency-key]
+                   [dependency-key (get dependencies dependency-key 0)]))
+            ordered-keys)))
 
   (with-read [_ f]
     (let [^Lock read-lock (.readLock lock)]
@@ -202,52 +207,63 @@
     (let [^Lock write-lock (.writeLock lock)]
       (.lock write-lock)
       (try
-        (let [[value changed-dependency-keys] (f)]
-          (when (seq changed-dependency-keys)
-            (swap! generation-state
-                   (fn [{:keys [clock] :as state}]
-                     (let [next-clock (inc clock)]
-                       (-> state
-                           (assoc :clock next-clock)
-                           (update :dependencies
-                                   (fn [dependencies]
-                                     (reduce #(assoc %1 %2 next-clock)
-                                             dependencies
-                                             changed-dependency-keys))))))))
-          value)
+        (try
+          (let [[value changed-dependency-keys] (f)]
+            (when (seq changed-dependency-keys)
+              (swap! generation-state
+                     (fn [{:keys [clock] :as state}]
+                       (let [next-clock (inc clock)]
+                         (-> state
+                             (assoc :clock next-clock)
+                             (update :dependencies
+                                     (fn [dependencies]
+                                       (reduce #(assoc %1 %2 next-clock)
+                                               dependencies
+                                               changed-dependency-keys))))))))
+            value)
+          (catch Exception e
+            ;; A helper failure could occur after its Datomic transaction
+            ;; committed but before its changed relation ids were returned.
+            ;; Fail closed by making every prior live result unreachable.
+            (swap! generation-state update :uncertain unchecked-inc)
+            (throw e)))
         (finally
           (.unlock write-lock))))))
 
 (defn local-coordinator []
   (->LocalRelationshipCoordinator (ReentrantReadWriteLock.)
                                   (atom {:clock 0
+                                         :uncertain 0
                                          :dependencies {}})))
 
-(defonce ^:private process-coordinators
-  (atom {}))
+(defn local-context
+  "Creates an explicit local cache context.
 
-(defn process-coordinator
-  "Returns the process-shared coordinator for one captured Datomic database id.
+  Pass the same context to every EACL client that reads or writes relationships
+  in one live-cache coherence scope."
+  ([]
+   (local-context {}))
+  ([store-config]
+   {:store (local-store store-config)
+    :coordinator (local-coordinator)}))
 
-  Values are weakly held so transient databases do not retain coordinator
-  state for the life of the JVM."
-  [database-id]
-  (loop []
-    (let [snapshot @process-coordinators
-          existing-ref (get snapshot database-id)
-          existing (some-> ^WeakReference existing-ref .get)]
-      (if existing
-        existing
-        (let [created (local-coordinator)
-              next-map (->> snapshot
-                            (keep (fn [[k ^WeakReference ref]]
-                                    (when-let [coordinator (.get ref)]
-                                      [k (WeakReference. coordinator)])))
-                            (into {})
-                            (#(assoc % database-id (WeakReference. created))))]
-          (if (compare-and-set! process-coordinators snapshot next-map)
-            created
-            (recur)))))))
+(defn entry
+  [cache-key kind value]
+  {:eacl.cache/version cache-entry-version
+   :eacl.cache/key cache-key
+   :eacl.cache/kind kind
+   :eacl.cache/value value})
+
+(defn entry-value
+  "Returns a matching wrapped value or nil. Cache providers are trusted for
+  values stored under a valid wrapper; mismatched versions/keys/kinds miss."
+  [cached cache-key kind valid-value?]
+  (when (and (map? cached)
+             (= cache-entry-version (:eacl.cache/version cached))
+             (= cache-key (:eacl.cache/key cached))
+             (= kind (:eacl.cache/kind cached))
+             (valid-value? (:eacl.cache/value cached)))
+    (:eacl.cache/value cached)))
 
 (defn safe-lookup
   "Cache lookup whose failure is always a miss."
@@ -255,7 +271,7 @@
   (when store
     (try
       (lookup store k)
-      (catch Throwable _
+      (catch Exception _
         nil))))
 
 (defn safe-store!
@@ -265,5 +281,48 @@
    (when store
      (try
        (store! store k value weight ttl-ms)
-       (catch Throwable _
+       (catch Exception _
          false)))))
+
+(defn safe-entry-value
+  [store cache-key kind valid-value?]
+  (when store
+    (try
+      (some-> (lookup store cache-key)
+              (entry-value cache-key kind valid-value?))
+      (catch Exception _
+        nil))))
+
+(defn- estimated-key-weight
+  "Conservative retained-shape estimate for cache keys. This is deliberately
+  allocation-free: building a serialized copy merely to size an untrusted
+  request could itself create the memory spike the bound is meant to avoid."
+  [cache-key]
+  (letfn [(estimate [x]
+            (cond
+              (nil? x) 8
+              (string? x) (+ 40 (* 2 (count x)))
+              (keyword? x) (+ 40
+                              (* 2 (count (name x)))
+                              (* 2 (count (or (namespace x) ""))))
+              (number? x) 24
+              (boolean? x) 8
+              (map? x) (reduce-kv (fn [n k v]
+                                    (+ n 32 (estimate k) (estimate v)))
+                                  64
+                                  x)
+              (set? x) (reduce (fn [n v] (+ n 24 (estimate v))) 64 x)
+              (sequential? x) (reduce (fn [n v] (+ n 16 (estimate v))) 48 x)
+              :else 128))]
+    (estimate cache-key)))
+
+(defn safe-store-entry!
+  [store cache-key kind value weight ttl-ms]
+  (try
+    (safe-store! store
+                 cache-key
+                 (entry cache-key kind value)
+                 (+ weight (estimated-key-weight cache-key))
+                 ttl-ms)
+    (catch Exception _
+      false)))

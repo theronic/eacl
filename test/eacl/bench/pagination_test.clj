@@ -10,6 +10,7 @@
             [clojure.set :as set]
             [datomic.api :as d]
             [eacl.core :as eacl]
+            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as impl.indexed]
@@ -488,7 +489,64 @@
                 "Intermediate frontiers should reduce traversal work by the middle page")
             (is (< last-page-calls middle-page-calls)
                 "Exhausted path markers should reduce traversal work further near exhaustion")
-            (is (false? (get-in last-page [:page-info :has-next-page?])))))))))
+            (is (false? (get-in last-page [:page-info :has-next-page?])))))
+
+        (testing "live lookup/count hits share one dependency-aware cache"
+          (let [live-acl
+                (spiceomic/make-client
+                 conn
+                 {:entity->object-id (fn [ent] (:eacl/id ent))
+                  :object-id->ident (fn [obj-id] [:eacl/id obj-id])
+                  :cache (assoc (cache/local-context)
+                                :live-results? true)})
+                count-resources-query (dissoc base-query :first)
+                first-server
+                (first (:data (eacl/lookup-resources live-acl base-query)))
+                count-subjects-query {:resource first-server
+                                      :permission :view
+                                      :subject/type :user}
+                resource-calls (atom 0)
+                subject-calls (atom 0)
+                original-count-resources impl/count-resources
+                original-count-subjects impl/count-subjects]
+            (with-redefs [impl/count-resources
+                          (fn [db query]
+                            (swap! resource-calls inc)
+                            (original-count-resources db query))
+                          impl/count-subjects
+                          (fn [db query]
+                            (swap! subject-calls inc)
+                            (original-count-subjects db query))]
+              (let [resource-cold (timed #(eacl/count-resources
+                                           live-acl
+                                           count-resources-query))
+                    resource-hot (run-timed
+                                  30
+                                  #(eacl/count-resources
+                                    live-acl
+                                    count-resources-query))
+                    subject-cold (timed #(eacl/count-subjects
+                                          live-acl
+                                          count-subjects-query))
+                    subject-hot (run-timed
+                                 30
+                                 #(eacl/count-subjects
+                                   live-acl
+                                   count-subjects-query))]
+                (println
+                 (format
+                  "Count cache: resources cold=%.2fms/hot=%.3fms; subjects cold=%.2fms/hot=%.3fms"
+                  (:elapsed-ms resource-cold)
+                  (median resource-hot)
+                  (:elapsed-ms subject-cold)
+                  (median subject-hot)))
+                (is (= total-servers
+                       (get-in resource-cold [:value :count])))
+                (is (pos? (get-in subject-cold [:value :count])))
+                (is (= 1 @resource-calls)
+                    "resource count computes once, then uses completed results")
+                (is (= 1 @subject-calls)
+                    "subject count computes once, then uses completed results")))))))))
 
 (deftest ^:benchmark recursive-traversal-prefix-benchmark
   (testing "Recursive continuation pagination advances reachable work without prefix replay"

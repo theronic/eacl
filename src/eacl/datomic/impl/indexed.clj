@@ -519,12 +519,12 @@
           (recur (into (pop stack) next-nodes)
                  (conj seen node)
                  relationship-eids')))
-      relationship-eids)))
+      (vec (sort relationship-eids)))))
 
 (defn permission-relationship-eids
-  "Returns the relation-definition eids whose relationship tuples can affect
-  one permission lookup. A stamped client memoises the set for its schema
-  generation; raw and unstamped evaluation recomputes it."
+  "Returns the sorted relation-definition eids whose relationship tuples can
+  affect one permission lookup. A stamped client memoises the vector for its
+  schema generation, so live-result reads do not sort dependencies."
   [db resource-type permission-name]
   (if-not (some? (:schema-version *schema-cache*))
     (calc-permission-relationship-eids db resource-type permission-name)
@@ -686,18 +686,6 @@
   default-recursive-traversal-limits)
 
 (def ^:dynamic *recursive-traversal-stats* nil)
-
-(def ^:dynamic *recursive-continuation-cache*
-  "Optional callbacks bound by the connection-backed public client.
-
-  {:get  (fn [edge] continuation-or-nil)
-   :evict! (fn [edge] ...)
-   :put! (fn [edge continuation weight] ...)
-   :get-page (fn [page-key] page-or-nil)
-   :put-page! (fn [page-key page weight] ...)}
-
-  Raw/arbitrary-db evaluation leaves this nil and always uses ordinal replay."
-  nil)
 
 (defn- recursive-traversal-error!
   [message data]
@@ -880,12 +868,12 @@
      (* 128 (count (:consumers state)))))
 
 (defn- cached-continuation
-  [bound direction result-kind]
-  (when-let [get-continuation (:get *recursive-continuation-cache*)]
+  [continuation-cache bound direction result-kind]
+  (when-let [get-continuation (:get continuation-cache)]
     (when-let [{:keys [engine-version state] :as continuation}
                (try
                  (get-continuation bound)
-                 (catch Throwable _
+                 (catch Exception _
                    nil))]
       (when (and (= recursive-engine-version engine-version)
                  (= direction (:direction continuation))
@@ -894,17 +882,17 @@
                  (= (inc (:ordinal bound)) (:ordinal state)))
         ;; A linear walk retains one growing state, not one state per page.
         ;; Retrying/branching from the consumed cursor safely replays.
-        (when-let [evict-continuation! (:evict! *recursive-continuation-cache*)]
+        (when-let [evict-continuation! (:evict! continuation-cache)]
           (try
             (evict-continuation! bound)
-            (catch Throwable _
+            (catch Exception _
               nil)))
         (inc-stat! :continuation-hits)
         continuation))))
 
 (defn- store-continuation!
-  [edge direction result-kind state]
-  (when-let [put-continuation! (:put! *recursive-continuation-cache*)]
+  [continuation-cache edge direction result-kind state]
+  (when-let [put-continuation! (:put! continuation-cache)]
     (try
       (put-continuation!
        edge
@@ -914,7 +902,7 @@
         :bound edge
         :state state}
        (continuation-weight state))
-      (catch Throwable _
+      (catch Exception _
         false))))
 
 (defn- recursive-page-key
@@ -922,15 +910,15 @@
   [direction result-kind end-ordinal size])
 
 (defn- cached-recursive-page
-  [direction result-kind bound size]
-  (when-let [get-page (:get-page *recursive-continuation-cache*)]
+  [continuation-cache direction result-kind bound size]
+  (when-let [get-page (:get-page continuation-cache)]
     (when-let [page (try
                       (get-page
                        (recursive-page-key direction
                                            result-kind
                                            (dec (:ordinal bound))
                                            size))
-                      (catch Throwable _
+                      (catch Exception _
                         nil))]
       (when (and (map? page)
                  (vector? (:data page))
@@ -941,14 +929,14 @@
         page))))
 
 (defn- store-recursive-page!
-  [direction result-kind size page]
-  (when-let [put-page! (:put-page! *recursive-continuation-cache*)]
+  [continuation-cache direction result-kind size page]
+  (when-let [put-page! (:put-page! continuation-cache)]
     (when-let [end-ordinal (get-in page [:page-info :end-cursor :ordinal])]
       (try
         (put-page! (recursive-page-key direction result-kind end-ordinal size)
                    page
                    (+ 512 (* 192 (count (:data page)))))
-        (catch Throwable _
+        (catch Exception _
           false)))))
 
 (defn- valid-cursor-eid?
@@ -1270,7 +1258,7 @@
         (recur state' (unchecked-inc n))))))
 
 (defn- recursive-forward-page
-  [db query]
+  [db query continuation-cache]
   (let [{:keys [direction size bound]} (normalize-page-request query)
         _ (validate-recursive-bound! bound :forward :resource)
         _ (when (and (= :desc direction) (nil? bound))
@@ -1283,7 +1271,8 @@
         result-type (:resource/type query)
         root-node (permission-query-node result-type permission)
         continuation (when (and bound (= :asc direction))
-                       (cached-continuation bound :forward :resource))
+                       (cached-continuation continuation-cache
+                                            bound :forward :resource))
         state (or (:state continuation)
                   (when subject-eid
                     (initial-forward-state db subject-type subject-eid root-node)))
@@ -1302,18 +1291,22 @@
                                    :has-next? (and has-sentinel? (not complete?))
                                    :has-previous? (boolean bound)})]
           (when-let [end-edge (some-> page-items last :cursor)]
-            (store-continuation! end-edge :forward :resource page-end-state))
-          (store-recursive-page! :forward :resource size page)
+            (store-continuation! continuation-cache
+                                 end-edge :forward :resource page-end-state))
+          (store-recursive-page! continuation-cache
+                                 :forward :resource size page)
           page)
 
         :desc
-        (or (cached-recursive-page :forward :resource bound size)
+        (or (cached-recursive-page continuation-cache
+                                   :forward :resource bound size)
             (let [{:keys [items has-sentinel?]}
                   (collect-forward-before db root-node result-type state bound size)
                   page (page-response {:items items
                                        :has-next? true
                                        :has-previous? has-sentinel?})]
-              (store-recursive-page! :forward :resource size page)
+              (store-recursive-page! continuation-cache
+                                     :forward :resource size page)
               page))))))
 
 (defn- rules-by-node
@@ -1599,7 +1592,7 @@
                  (if trim? (inc size) ring-count')))))))
 
 (defn- recursive-reverse-page
-  [db query]
+  [db query continuation-cache]
   (when (:subject/relation query)
     (page-error! ":subject/relation is not supported for recursive lookup-subjects."
                  {:eacl/error :eacl.pagination/unsupported-filter
@@ -1616,7 +1609,8 @@
         subject-type (:subject/type query)
         root-node (permission-query-node resource-type permission)
         continuation (when (and bound (= :asc direction))
-                       (cached-continuation bound :reverse :subject))
+                       (cached-continuation continuation-cache
+                                            bound :reverse :subject))
         state (or (:state continuation)
                   (when resource-eid
                     (initial-reverse-state db subject-type root-node resource-eid)))
@@ -1635,18 +1629,22 @@
                                    :has-next? (and has-sentinel? (not complete?))
                                    :has-previous? (boolean bound)})]
           (when-let [end-edge (some-> page-items last :cursor)]
-            (store-continuation! end-edge :reverse :subject page-end-state))
-          (store-recursive-page! :reverse :subject size page)
+            (store-continuation! continuation-cache
+                                 end-edge :reverse :subject page-end-state))
+          (store-recursive-page! continuation-cache
+                                 :reverse :subject size page)
           page)
 
         :desc
-        (or (cached-recursive-page :reverse :subject bound size)
+        (or (cached-recursive-page continuation-cache
+                                   :reverse :subject bound size)
             (let [{:keys [items has-sentinel?]}
                   (collect-reverse-before db root-node resource-eid subject-type state bound size)
                   page (page-response {:items items
                                        :has-next? true
                                        :has-previous? has-sentinel?})]
-              (store-recursive-page! :reverse :subject size page)
+              (store-recursive-page! continuation-cache
+                                     :reverse :subject size page)
               page))))))
 
 (declare traverse-permission-path lookup-subject-eids* can*)
@@ -2010,24 +2008,40 @@
   them. The public token layer pins d/as-of for you; raw-impl callers must
   hold ONE db value for a whole paginated walk — reusing a cursor against a
   newer db can silently skip results written since."
-  [db query]
-  (if (traversal-permission? db (:resource/type query) (:permission query))
-    (recursive-forward-page db query)
-    (lookup db forward-direction query)))
+  ([db query]
+   (lookup-resources db query nil))
+  ([db query {:keys [recursive-continuation-cache
+                     recursive-continuation-cache-fn]}]
+   (if (traversal-permission? db (:resource/type query) (:permission query))
+     (recursive-forward-page
+      db
+      query
+      (or recursive-continuation-cache
+          (when recursive-continuation-cache-fn
+            (recursive-continuation-cache-fn))))
+     (lookup db forward-direction query))))
 
 (defn lookup-subjects
   "See lookup-resources: cursors are only valid against the minting db basis."
-  [db query]
-  {:pre [(:type (:resource query)) (:id (:resource query))]}
-  (when (:subject/relation query)
-    ;; The recursive path has rejected this since v7.2; the non-recursive path
-    ;; silently ignored it, returning subjects the caller did not filter for.
-    (page-error! ":subject/relation is not supported by lookup-subjects."
-                 {:eacl/error :eacl.pagination/unsupported-filter
-                  :filter :subject/relation}))
-  (if (traversal-permission? db (:type (:resource query)) (:permission query))
-    (recursive-reverse-page db query)
-    (lookup db reverse-direction query)))
+  ([db query]
+   (lookup-subjects db query nil))
+  ([db query {:keys [recursive-continuation-cache
+                     recursive-continuation-cache-fn]}]
+   {:pre [(:type (:resource query)) (:id (:resource query))]}
+   (when (:subject/relation query)
+     ;; The recursive path has rejected this since v7.2; the non-recursive path
+     ;; silently ignored it, returning subjects the caller did not filter for.
+     (page-error! ":subject/relation is not supported by lookup-subjects."
+                  {:eacl/error :eacl.pagination/unsupported-filter
+                   :filter :subject/relation}))
+   (if (traversal-permission? db (:type (:resource query)) (:permission query))
+     (recursive-reverse-page
+      db
+      query
+      (or recursive-continuation-cache
+          (when recursive-continuation-cache-fn
+            (recursive-continuation-cache-fn))))
+     (lookup db reverse-direction query))))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])
