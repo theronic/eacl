@@ -161,6 +161,60 @@
         (is (= 2 @calls)
             "a writer whose own cache is disabled still advances the shared coordinator")))))
 
+(deftest shared-store-does-not-share-live-results-across-coordinator-incarnations-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [store (cache/local-store)
+          client-a (core/make-client
+                    conn
+                    {:cache {:store store
+                             :coordinator (cache/local-coordinator)
+                             :live-results? true}})
+          _ (seed-direct! conn client-a)
+          client-b (core/make-client
+                    conn
+                    {:cache {:store store
+                             :coordinator (cache/local-coordinator)
+                             :live-results? true}})
+          query {:subject (spice-object :user "alice")
+                 :permission :admin
+                 :resource/type :account}
+          calls (atom 0)
+          original impl/lookup-resources]
+      (with-redefs [impl/lookup-resources
+                    (fn [db internal-query continuation-context]
+                      (swap! calls inc)
+                      (original db internal-query continuation-context))]
+        (is (= ["a-1"]
+               (mapv :id (:data (eacl/lookup-resources client-a query)))))
+        (is (= ["a-1"]
+               (mapv :id (:data (eacl/lookup-resources client-b query)))))
+        (is (= 2 @calls)
+            "a shared store is not a distributed mutation coordinator")))))
+
+(deftest direct-relationship-writes-are-deliberately-not-polled-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [context (live-cache-context)
+          client (core/make-client conn {:cache context})
+          query {:subject (spice-object :user "alice")
+                 :permission :admin
+                 :resource/type :account}
+          relationship
+          (->Relationship (spice-object :user "alice")
+                          :owner
+                          (spice-object :account "a-2"))]
+      (seed-direct! conn client)
+      (is (= ["a-1"]
+             (mapv :id (:data (eacl/lookup-resources client query)))))
+      @(d/transact conn
+                   (impl/tx-relationship (d/db conn) relationship))
+      (is (= ["a-1"]
+             (mapv :id (:data (eacl/lookup-resources client query))))
+          "unsupported direct tuple writes do not trigger DB or tx-log polling")
+      (cache/clear! (:store context))
+      (is (= #{"a-1" "a-2"}
+             (set (map :id (:data (eacl/lookup-resources client query)))))
+          "after explicit eviction, ordinary evaluation sees the direct write"))))
+
 (deftest live-page-dependencies-include-arrow-relations-and-target-permissions-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
@@ -240,6 +294,29 @@
                         :resource/type :account})))))
         (is (= 1 @calls)
             "the internal-EID page remains valid while ID coercion observes the current db")))))
+
+(deftest recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:cache (live-cache-context)})
+          alice (spice-object :user "alice")
+          account (spice-object :account "a-1")
+          relationship (->Relationship alice :owner account)
+          query {:subject alice
+                 :permission :admin
+                 :resource/type :account}]
+      (seed-direct! conn client)
+      (is (true? (eacl/can? client alice :admin account)))
+      (is (= ["a-1"]
+             (mapv :id (:data (eacl/lookup-resources client query)))))
+      (let [old-eid (d/entid (d/db conn) [:eacl/id "a-1"])]
+        (eacl/delete-relationship! client relationship)
+        @(d/transact conn [[:db.fn/retractEntity old-eid]])
+        @(d/transact conn [{:eacl/id "a-1"}])
+        (is (not= old-eid
+                  (d/entid (d/db conn) [:eacl/id "a-1"])))
+        (is (false? (eacl/can? client alice :admin account)))
+        (is (empty? (:data (eacl/lookup-resources client query)))
+            "the recreated external ID resolves to a new internal cache key")))))
 
 (deftest disabled-and-failing-caches-use-the-indexed-path-test
   (with-mem-conn [conn schema/v7-schema]
@@ -390,7 +467,7 @@
         (is (= 1 @classifications)
             "the uniform completed-page hit precedes traversal selection")))))
 
-(deftest recursive-continuations-are-client-local-even-in-a-shared-store-test
+(deftest recursive-continuations-are-client-local-and-fail-closed-cross-client-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           token-key "shared-store-opaque-continuation"
@@ -415,14 +492,17 @@
                                                   :page-token-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])
-            stats (atom {})
-            second-page
-            (binding [idx/*recursive-traversal-stats* stats]
-              (eacl/lookup-resources second-client
-                                     (assoc query :after cursor)))]
-        (is (= ["child"] (mapv :id (:data second-page))))
-        (is (nil? (:continuation-hits @stats))
-            "opaque traversal state from another client is replayed, not trusted")))))
+            stats (atom {})]
+        (try
+          (binding [idx/*recursive-traversal-stats* stats]
+            (eacl/lookup-resources second-client
+                                   (assoc query :after cursor)))
+          (is false "another client cannot resume process-local state")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl.pagination/cursor-expired
+                   (:type (ex-data e))))))
+        (is (= 1 (:continuation-misses @stats))
+            "opaque traversal state from another client is never trusted")))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]
@@ -468,6 +548,12 @@
                  (core/make-client conn {:cache {:ttl-ms 0}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:live-results? :yes}})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client conn {:cache {:exact-results? :yes}})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client conn {:cache {:namespace ""}})))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (core/make-client conn {:cache {:checkpoints :yes}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:live-results? true}})))
     (is (thrown? clojure.lang.ExceptionInfo

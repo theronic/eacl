@@ -15,6 +15,7 @@
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
+(def ^:private count-page-size 16384)
 (def ^:private lookup-frontier-version 1)
 
 (defn object-eid
@@ -668,12 +669,10 @@
 (def default-recursive-traversal-limits
   "Safety ceilings for one recursive traversal.
 
-  These bound a SINGLE page computation. Recursive pages resume by replaying
-  the traversal prefix and discarding results up to the cursor's ordinal, so
-  work — and :derived-grants — grows with the page's offset: enumerating N
-  results needs roughly N derived grants on the last page. A recursive
-  permission whose grant set approaches :max-derived-grants therefore starts
-  failing on DEEP pages while page 1 still succeeds.
+  These bound a SINGLE page computation. A cache-disabled recursive cursor may
+  replay its traversal prefix when its relationship proof is still current.
+  Cache-enabled cursors resume a retained continuation and fail explicitly
+  when that continuation has expired.
 
   These are host-JVM memory bounds, not ordinary pagination controls. Use
   :count-limit for bounded counts, model large permissions acyclically, or tune
@@ -686,6 +685,10 @@
   default-recursive-traversal-limits)
 
 (def ^:dynamic *recursive-traversal-stats* nil)
+
+(def ^:dynamic *count-stats*
+  "Optional atom recording bounded count-page work for tests/benchmarks."
+  nil)
 
 (defn- recursive-traversal-error!
   [message data]
@@ -703,8 +706,8 @@
     (when (and limit (> n limit))
       (recursive-traversal-error!
        (str "Recursive traversal safety limit exceeded (" (name counter-key) " > " limit ")."
-            " Deep pages of a recursive permission replay the traversal prefix, so this trips"
-            " on later pages of a large grant set. Use :count-limit for bounded counts,"
+            " A cache-disabled deep recursive page may replay its traversal prefix."
+            " Use :count-limit for bounded counts,"
             " model the permission acyclically, or tune make-client's"
             " :recursive-traversal-limits only after heap/load testing.")
        {:eacl/error :eacl.recursive-traversal/limit-exceeded
@@ -889,6 +892,19 @@
               nil)))
         (inc-stat! :continuation-hits)
         continuation))))
+
+(defn- require-continuation!
+  [continuation-cache bound continuation]
+  (when (and bound
+             (:required? continuation-cache)
+             (nil? continuation))
+    (inc-stat! :continuation-misses)
+    (recursive-traversal-error!
+     "Recursive traversal continuation is unavailable."
+     {:type :eacl.pagination/cursor-expired
+      :eacl/error :eacl.pagination/cursor-expired
+      :bound bound}))
+  continuation)
 
 (defn- store-continuation!
   [continuation-cache edge direction result-kind state]
@@ -1271,8 +1287,11 @@
         result-type (:resource/type query)
         root-node (permission-query-node result-type permission)
         continuation (when (and bound (= :asc direction))
-                       (cached-continuation continuation-cache
-                                            bound :forward :resource))
+                       (require-continuation!
+                        continuation-cache
+                        bound
+                        (cached-continuation continuation-cache
+                                             bound :forward :resource)))
         state (or (:state continuation)
                   (when subject-eid
                     (initial-forward-state db subject-type subject-eid root-node)))
@@ -1609,8 +1628,11 @@
         subject-type (:subject/type query)
         root-node (permission-query-node resource-type permission)
         continuation (when (and bound (= :asc direction))
-                       (cached-continuation continuation-cache
-                                            bound :reverse :subject))
+                       (require-continuation!
+                        continuation-cache
+                        bound
+                        (cached-continuation continuation-cache
+                                             bound :reverse :subject)))
         state (or (:state continuation)
                   (when resource-eid
                     (initial-reverse-state db subject-type root-node resource-eid)))
@@ -2068,23 +2090,67 @@
            :limit (or limit -1)}
     (some? limit) (assoc :truncated? truncated?)))
 
-(defn- count-lazy-results
-  "Counts without retaining the head, and stops after `limit` when set.
+(defn- count-acyclic-pages
+  "Counts through bounded, frontier-resuming pages.
 
-  The old doall implementation bound the whole realized seq to a local, so
-  counting a broad permission held every result eid in memory."
-  [results limit]
-  (loop [remaining (seq results)
-         n 0]
-    (cond
-      (nil? remaining)
-      {:count n :truncated? false}
+  Each page realizes at most `count-page-size` EIDs. Unlike consuming the
+  merged lazy result directly, this cannot retain the heads of every path for
+  the full cardinality. Acyclic path frontiers make page-to-page work advance
+  from the last EID rather than replaying a prefix."
+  [db direction query limit]
+  (loop [n 0
+         bound nil]
+    (let [remaining (when limit (- limit n))
+          page-size (if remaining
+                      (max 1 (min count-page-size (inc remaining)))
+                      count-page-size)
+          page-request {:direction :asc
+                        :size page-size
+                        :bound bound}
+          {:keys [results path-frontiers]}
+          (lazy-merged-lookup
+           db direction (dissoc query :count-limit) page-request)
+          {:keys [page-count last-eid has-sentinel?]}
+          (loop [remaining (seq results)
+                 page-count 0
+                 last-eid nil]
+            (cond
+              (nil? remaining)
+              {:page-count page-count
+               :last-eid last-eid
+               :has-sentinel? false}
 
-      (and limit (>= n limit))
-      {:count n :truncated? true}
+              (= page-count page-size)
+              {:page-count page-count
+               :last-eid last-eid
+               :has-sentinel? true}
 
-      :else
-      (recur (next remaining) (unchecked-inc n)))))
+              :else
+              (recur (next remaining)
+                     (unchecked-inc page-count)
+                     (first remaining))))
+          n' (+ n page-count)]
+      (when *count-stats*
+        (swap! *count-stats*
+               (fn [stats]
+                 (-> stats
+                     (update :pages (fnil inc 0))
+                     (update :max-page-eids
+                             (fnil max 0)
+                             page-count)))))
+      (cond
+        (and limit (> n' limit))
+        {:count limit :truncated? true}
+
+        has-sentinel?
+        (recur n'
+               (lookup-edge
+                last-eid
+                :asc
+                path-frontiers))
+
+        :else
+        {:count n' :truncated? false}))))
 
 (defn count-resources
   [db {:as query}]
@@ -2103,9 +2169,9 @@
             (initial-forward-state db (:type subject) subject-eid root-node)
             limit))
          limit))
-      (let [page-req {:direction :asc :bound nil}
-            {:keys [results]} (lazy-merged-lookup db forward-direction query page-req)]
-        (count-response (count-lazy-results results limit) limit)))))
+      (count-response
+       (count-acyclic-pages db forward-direction query limit)
+       limit))))
 
 (defn count-subjects
   [db {:as query}]
@@ -2128,6 +2194,6 @@
             (initial-reverse-state db subject-type root-node resource-eid)
             limit))
          limit))
-      (let [page-req {:direction :asc :bound nil}
-            {:keys [results]} (lazy-merged-lookup db reverse-direction query page-req)]
-        (count-response (count-lazy-results results limit) limit)))))
+      (count-response
+       (count-acyclic-pages db reverse-direction query limit)
+       limit))))

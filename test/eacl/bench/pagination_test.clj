@@ -100,7 +100,7 @@
 
     ;; Seed accounts with teams, vpcs, servers
     (let [account-uuids (repeatedly num-accounts d/squuid)]
-      (doseq [[n account-uuid] (map-indexed vector account-uuids)]
+      (doseq [[_n account-uuid] (map-indexed vector account-uuids)]
         (let [account-tempid (d/tempid :db.part/user)
               owner-tempid   (d/tempid :db.part/user)
 
@@ -505,6 +505,8 @@
                 count-subjects-query {:resource first-server
                                       :permission :view
                                       :subject/type :user}
+                disabled-acl
+                (spiceomic/make-client conn {:cache false})
                 resource-calls (atom 0)
                 subject-calls (atom 0)
                 original-count-resources impl/count-resources
@@ -532,14 +534,21 @@
                                  30
                                  #(eacl/count-subjects
                                    live-acl
-                                   count-subjects-query))]
+                                   count-subjects-query))
+                    disabled-resource-times
+                    (run-timed
+                     10
+                     #(eacl/count-resources
+                       disabled-acl
+                       count-resources-query))]
                 (println
                  (format
-                  "Count cache: resources cold=%.2fms/hot=%.3fms; subjects cold=%.2fms/hot=%.3fms"
+                  "Count cache: resources cold=%.2fms/hot=%.3fms; subjects cold=%.2fms/hot=%.3fms; disabled median=%.2fms"
                   (:elapsed-ms resource-cold)
                   (median resource-hot)
                   (:elapsed-ms subject-cold)
-                  (median subject-hot)))
+                  (median subject-hot)
+                  (median disabled-resource-times)))
                 (is (= total-servers
                        (get-in resource-cold [:value :count])))
                 (is (pos? (get-in subject-cold [:value :count])))
@@ -584,6 +593,64 @@
         (is (< (:advanced-stream-datoms @stats2) 200)
             "second page work should still be bounded by the reachable prefix")))))
 
+(deftest ^:benchmark count-miss-retained-memory-benchmark
+  (testing "Broad count misses retain at most one bounded page"
+    (with-mem-conn [conn []]
+      (let [retention-config (assoc bench-config :num-accounts 40)
+            total-servers
+            (* (:num-accounts retention-config)
+               (:servers-per-acct retention-config))
+            _ (seed-multipath! conn retention-config)
+            rejecting-store
+            (cache/local-store {:max-weight 256
+                                :max-entry-weight 256
+                                :max-entries 8})
+            provider-calls (atom 0)
+            failing-store
+            (reify cache/CacheStore
+              (lookup [_ _]
+                (swap! provider-calls inc)
+                (throw (ex-info "provider unavailable" {})))
+              (store! [_ _ _ _ _]
+                (swap! provider-calls inc)
+                (throw (ex-info "provider unavailable" {})))
+              (evict! [_ _] false)
+              (clear! [_] nil)
+              (stats [_] {}))
+            clients
+            [[:disabled (spiceomic/make-client conn {:cache false})]
+             [:admission-rejected
+              (spiceomic/make-client
+               conn
+               {:cache {:store rejecting-store}})]
+             [:provider-failure
+              (spiceomic/make-client
+               conn
+               {:cache {:store failing-store}})]]
+            query {:subject (->user "super-user")
+                   :permission :view
+                   :resource/type :server}]
+        (doseq [[label client] clients]
+          (let [stats (atom {})
+                result
+                (binding [impl.indexed/*count-stats* stats]
+                  (eacl/count-resources client query))]
+            (println
+             (format
+              "Broad count %s: count=%d, pages=%d, max retained page=%d EIDs"
+              (name label)
+              (:count result)
+              (:pages @stats)
+              (:max-page-eids @stats)))
+            (is (= total-servers (:count result)))
+            (is (= 2 (:pages @stats)))
+            (is (<= (:max-page-eids @stats) 16384)
+                "count misses never retain the full 20,000-result head")))
+        (is (zero? (:entries (cache/stats rejecting-store)))
+            "a rejected count answer leaves no retained cache entry")
+        (is (pos? @provider-calls)
+            "provider failures exercise recomputation rather than changing the result")))))
+
 ;; --- Permission-check hot path ----------------------------------------------
 ;;
 ;; can? is the highest-frequency EACL call. A connection-backed client reads
@@ -605,8 +672,23 @@
                                            :vpcs-per-acct    1
                                            :servers-per-acct 20})
             subject (->user "super-user")
-            server  (->server "server-1-1")
-            check   #(eacl/can? acl subject :view server)]
+            server-id
+            (d/q '[:find ?id .
+                   :where
+                   [?server :server/name _]
+                   [?server :eacl/id ?id]]
+                 (d/db conn))
+            server  (->server server-id)
+            check   #(eacl/can? acl subject :view server)
+            live-context
+            (cache/local-context
+             {:kind-max-weight {:can? (* 2 1024 1024)}
+              :two-hit-kinds #{:can?}})
+            live-acl
+            (spiceomic/make-client
+             conn
+             {:cache (assoc live-context :live-results? true)})
+            live-check #(eacl/can? live-acl subject :view server)]
 
         (run-timed 2000 check)                              ; warm JIT + caches
 
@@ -625,4 +707,23 @@
             (println (format "can? cold paths: median=%.2fus" cold-us))
             (is (< cold-us can-cold-threshold-us)
                 (format "REGRESSION: cold can? median %.2fus exceeds %dus; path calculation got more expensive"
-                        cold-us can-cold-threshold-us))))))))
+                        cold-us can-cold-threshold-us))))
+
+        (testing "completed Boolean cache"
+          (let [calls (atom 0)
+                original impl/can?]
+            (with-redefs [impl/can?
+                          (fn [db internal-subject permission internal-resource]
+                            (swap! calls inc)
+                            (original db internal-subject permission internal-resource))]
+              ;; Two-hit admission computes twice; the third and later calls
+              ;; reuse the same typed store as lookup/count entries.
+              (is (true? (live-check)))
+              (is (true? (live-check)))
+              (run-timed 2000 live-check)
+              (let [live-us
+                    (* 1000.0 (median (run-timed 5000 live-check)))]
+                (println
+                 (format "can? completed-cache hit: median=%.2fus" live-us))
+                (is (= 2 @calls))
+                (is (< live-us can-cold-threshold-us))))))))))

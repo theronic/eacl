@@ -105,7 +105,7 @@
 
       (testing "unsupported consistency throws a typed error (not an assert)"
         (try
-          (eacl/can? client u1 :admin a1 (consistency/fresh "tok"))
+          (eacl/can? client u1 :admin a1 :unknown-consistency)
           (is false "should have thrown")
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl/unsupported-consistency (:type (ex-data e)))))))
@@ -342,8 +342,10 @@
                                          (->Relationship my-account :account my-server)])]
         (testing "All Spice operations returns a ZedToken that can be passed to subsequent read operations to guarantee consistent cache."
           (is (string? token))
-          (testing "passing anything but consistency/fully-consistent throws until we have a cache to support consistency/fresh."
-            (is (thrown? Throwable (eacl/can? *client my-user :reboot my-server (consistency/fresh token))))))))
+          (testing "a write token can be used as an at-least-as-fresh lower bound"
+            (is (true?
+                 (eacl/can? *client my-user :reboot my-server
+                            (consistency/fresh token))))))))
 
     (testing "assign joe as the owner of acme-account and joe's server to acme-account"
       (is (eacl/create-relationships! *client
@@ -643,7 +645,7 @@
 
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
 
-(deftest consistency-validation-tests
+(deftest consistency-selection-tests
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client conn {})]
       (eacl/write-schema! client "definition user {}
@@ -653,23 +655,40 @@
         [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
          (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-2"))
          (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-3"))])
-      (let [q {:subject (spice-object :user "alice") :permission :admin :resource/type :account :first 2}]
+      (let [q {:subject (spice-object :user "alice") :permission :admin :resource/type :account :first 2}
+            token (spiceomic/current-zed-token client)]
 
-        (testing "list & read APIs reject non-fully-consistent requests like can? does (previously silently ignored)"
-          (doseq [call [#(eacl/lookup-resources client (assoc q :consistency (consistency/fresh "tok")))
-                        #(eacl/lookup-subjects client {:resource (spice-object :account "acct-1")
-                                                       :permission :admin :subject/type :user
-                                                       :consistency :minimize-latency})
-                        #(eacl/read-relationships client {:resource/type :account
-                                                          :consistency :minimize-latency})
-                        #(eacl/count-resources client {:subject (spice-object :user "alice")
-                                                       :permission :admin :resource/type :account
-                                                       :consistency :minimize-latency})]]
-            (try
-              (call)
-              (is false "should have thrown :eacl/unsupported-consistency")
-              (catch clojure.lang.ExceptionInfo e
-                (is (= :eacl/unsupported-consistency (:type (ex-data e))))))))
+        (testing "list, relationship-read, and count APIs accept consistency descriptors"
+          (is (= 2
+                 (count
+                  (:data
+                   (eacl/lookup-resources
+                    client
+                    (assoc q :consistency (consistency/fresh token)))))))
+          (is (= ["alice"]
+                 (mapv :id
+                       (:data
+                        (eacl/lookup-subjects
+                         client
+                         {:resource (spice-object :account "acct-1")
+                          :permission :admin
+                          :subject/type :user
+                          :consistency :minimize-latency})))))
+          (is (= 3
+                 (count
+                  (:data
+                   (eacl/read-relationships
+                    client
+                    {:resource/type :account
+                     :consistency :minimize-latency})))))
+          (is (= 3
+                 (:count
+                  (eacl/count-resources
+                   client
+                   {:subject (spice-object :user "alice")
+                    :permission :admin
+                    :resource/type :account
+                    :consistency :minimize-latency})))))
 
         (testing "explicit fully-consistent is accepted and does not perturb page tokens"
           (let [page1 (eacl/lookup-resources client (assoc q :consistency fully-consistent))

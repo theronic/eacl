@@ -1,6 +1,20 @@
 (ns eacl.datomic.cache-test
   (:require [clojure.test :refer [deftest is testing]]
-            [eacl.datomic.cache :as cache]))
+            [eacl.datomic.cache :as cache]
+            [eacl.datomic.cache-store-contract :as contract]))
+
+(deftest local-store-provider-contract-test
+  (let [now (atom 0)]
+    (contract/assert-provider-contract!
+     {:clock #(deref now)
+      :advance-clock! #(swap! now + %)
+      :store-factory
+      (fn [config]
+        (cache/local-store
+         (merge {:max-weight 100000
+                 :max-entry-weight 10000
+                 :max-entries 100}
+                config)))})))
 
 (deftest local-store-is-weight-and-entry-bounded-test
   (let [store (cache/local-store {:max-weight 10
@@ -18,11 +32,13 @@
     (is (<= (:entries (cache/stats store)) 2))))
 
 (deftest local-store-expiry-and-clear-test
-  (let [store (cache/local-store {:max-weight 10
+  (let [now (atom 100)
+        store (cache/local-store {:max-weight 10
                                   :max-entry-weight 10
-                                  :max-entries 2})]
+                                  :max-entries 2
+                                  :clock #(deref now)})]
     (is (cache/store! store :short :value 1 1))
-    (Thread/sleep 5)
+    (swap! now + 2)
     (is (nil? (cache/lookup store :short)))
     (is (pos? (:expirations (cache/stats store))))
     (is (cache/store! store :long :value 1 10000))
@@ -39,25 +55,31 @@
     (is (zero? (:entries (cache/stats store))))))
 
 (deftest relationship-coordinator-advances-only-on-change-test
-  (let [coordinator (cache/local-coordinator)]
-    (is (= 0 (cache/generation coordinator)))
+  (let [coordinator (cache/local-coordinator {:incarnation "test"})]
+    (is (= {:incarnation "test" :uncertain 0 :revision 0}
+           (cache/generation coordinator)))
     (is (= :unchanged
-           (cache/with-mutation coordinator (fn [] [:unchanged #{}]))))
-    (is (= 0 (cache/generation coordinator)))
+           (cache/with-mutation coordinator (fn [] [:unchanged nil]))))
+    (is (= {:incarnation "test" :uncertain 0 :revision 0}
+           (cache/generation coordinator)))
     (is (= :changed
            (cache/with-mutation coordinator
-                                (fn [] [:changed #{10 20}]))))
-    (is (= 1 (cache/generation coordinator)))
-    (is (= [[:uncertain 0] [10 1] [20 1]]
+                                (fn [] [:changed {:dependency-keys #{10 20}
+                                                  :basis-t 101}]))))
+    (is (= {:incarnation "test" :uncertain 0 :revision 101}
+           (cache/generation coordinator)))
+    (is (= {:incarnation "test" :uncertain 0 :revision 101}
            (cache/generation coordinator #{10 20})))
-    (is (= [1 :read]
+    (is (= [101 :read]
            (cache/with-read coordinator
                             (fn [snapshot]
-                              [(:clock snapshot) :read]))))
-    (cache/with-mutation coordinator (fn [] [:other #{30}]))
-    (is (= [[:uncertain 0] [10 1] [20 1]]
+                              [(:observed-t snapshot) :read]))))
+    (cache/with-mutation coordinator
+                         (fn [] [:other {:dependency-keys #{30}
+                                         :basis-t 107}]))
+    (is (= {:incarnation "test" :uncertain 0 :revision 101}
            (cache/generation coordinator #{10 20})))
-    (is (= [[:uncertain 0] [30 2]]
+    (is (= {:incarnation "test" :uncertain 0 :revision 107}
            (cache/generation coordinator #{30})))))
 
 (deftest relationship-coordinator-fails-closed-on-mutation-exception-test
@@ -84,14 +106,15 @@
                   (fn []
                     (deliver writer-entered true)
                     @release-writer
-                    [:written #{10}])))
+                    [:written {:dependency-keys #{10}
+                               :basis-t 1}])))
         _ @writer-entered
         reader (future
                  (cache/with-read
                   coordinator
                   (fn [snapshot]
-                    (deliver reader-finished (:clock snapshot))
-                    (:clock snapshot))))]
+                    (deliver reader-finished (:observed-t snapshot))
+                    (:observed-t snapshot))))]
     (is (= ::blocked (deref reader-finished 50 ::blocked))
         "a read cannot publish against the old generation during a write")
     (deliver release-writer true)
@@ -128,6 +151,9 @@
                                       [:result :other-db :query]
                                       :count
                                       map?)))
+    (is (nil? (cache/safe-entry-value store :missing :count map?)))
+    (is (pos? (get-in (cache/stats store)
+                      [:by-kind :count :misses])))
     (is (nil? (cache/safe-entry-value
                store
                key
@@ -150,3 +176,86 @@
                  (stats [_] {}))]
     (is (nil? (cache/safe-lookup broken :key)))
     (is (false? (cache/safe-store! broken :key :value 1 1000)))))
+
+(deftest dependency-generation-compresses-to-safe-maximum-test
+  (let [snapshot {:incarnation "inc"
+                  :uncertain 3
+                  :dependencies {10 100
+                                 20 70
+                                 30 110}}]
+    (is (= {:incarnation "inc" :uncertain 3 :revision 100}
+           (cache/dependency-generation snapshot [10 20])))
+    (is (= {:incarnation "inc" :uncertain 3 :revision 110}
+           (cache/dependency-generation
+            (assoc-in snapshot [:dependencies 20] 110)
+            [10 20])))))
+
+(deftest local-store-is-kind-aware-and-frequency-admitted-test
+  (let [store (cache/local-store {:max-weight 10000
+                                  :max-entry-weight 4000
+                                  :max-entries 20
+                                  :kind-max-weight {:can? 1200}
+                                  :two-hit-kinds #{:can?}})]
+    (is (false? (cache/safe-store-entry!
+                 store [:can 1] :can? false 100 10000))
+        "a one-off permission key is not admitted")
+    (is (cache/safe-store-entry!
+         store [:can 1] :can? false 100 10000)
+        "the second observation is admitted")
+    (is (false? (cache/safe-store-entry!
+                 store [:can 2] :can? true 1100 10000))
+        "the class share remains bounded")
+    (is (= 1 (get-in (cache/stats store) [:entries-by-kind :can?])))
+    (is (pos? (get-in (cache/stats store) [:by-kind :can? :rejections])))))
+
+(deftest namespaced-clear-never-clears-other-consumers-test
+  (let [store (cache/local-store)]
+    (is (cache/safe-store-entry!
+         store :consumer-a :a :count {:count 1 :limit -1} 10 10000))
+    (is (cache/safe-store-entry!
+         store :consumer-b :b :count {:count 2 :limit -1} 10 10000))
+    (is (= 1 (cache/clear-namespace! store :consumer-a)))
+    (is (nil? (cache/lookup store :a)))
+    (is (some? (cache/lookup store :b)))))
+
+(deftest portable-provider-rejects-process-local-values-test
+  (let [values (atom {})
+        provider
+        (reify
+          cache/CacheStore
+          (lookup [_ k] (get @values k))
+          (store! [_ k value _weight _ttl]
+            (swap! values assoc k value)
+            true)
+          (evict! [_ k] (boolean (get (swap! values dissoc k) k)))
+          (clear! [_] (reset! values {}))
+          (stats [_] {:entries (count @values)})
+
+          cache/CacheProvider
+          (capabilities [_] #{:portable-values :ttl})
+          (clear-namespace! [_ namespace]
+            (swap! values
+                   (fn [entries]
+                     (into {}
+                           (remove (fn [[_ value]]
+                                     (= namespace
+                                        (:eacl.cache/namespace value))))
+                           entries))))
+          (record-provider-error! [_ _ _] nil))]
+    (is (cache/safe-store-entry!
+         provider :portable :count {:count 1 :limit -1} 10 10000))
+    (is (false? (cache/safe-store-entry!
+                 provider :opaque :recursive-continuation
+                 {:resume (fn [])} 10 10000)))
+    (is (false? (cache/safe-store-entry!
+                 provider :lazy :lookup-page
+                 {:data (map identity [1 2])} 10 10000)))))
+
+(deftest provider-errors-are-observable-test
+  (let [store (cache/local-store)]
+    (cache/record-provider-error! store :serialize :can?)
+    (is (= 1 (:provider-errors (cache/stats store))))
+    (is (= 1 (get-in (cache/stats store)
+                     [:provider-errors-by-operation :serialize])))
+    (is (= 1 (get-in (cache/stats store)
+                     [:by-kind :can? :provider-errors])))))

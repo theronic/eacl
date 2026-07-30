@@ -633,10 +633,10 @@ was executed against that REPL; findings 7, 11 and 12d/12e are code reads and ar
 |---|---|---|
 | 1, 2 | **Fixed (revised after operator review)** | Definition fingerprints and per-`db` cache scopes were removed. A connection-backed client reads `:eacl/schema-version` once from the canonical schema entity at construction and owns one in-memory permission-path generation. New `db` values caused by ordinary transactions perform no schema read, definition scan, cache-key work, or database-value retention. `eacl/write-schema!` through that client replaces the generation under a schema write lock; identical writes retain it. Arbitrary/historic/speculative low-level databases are uncached and cannot publish into a client. An unstamped fresh v7 database stays uncached until its first supported schema write; this is not a v6 compatibility mode. Out-of-band schema mutation is outside the lifecycle contract; `eacl.datomic.integrity/client-schema-status` provides an explicit one-entity mismatch diagnostic without taxing `can?`. |
 | 3 | **Fixed to the operator's contract** | Consumers remain responsible for calling `delete-relationships!` before `:db.fn/retractEntity`; EACL does not intercept Datomic or add per-candidate entity-existence probes to authorization reads. `eacl/delete-object!` / `impl/tx-delete-object` remains a convenience helper that retracts both halves. The public `eacl.datomic.integrity` namespace now exposes a bounded-memory dangling-half report and lazy batched repair transactions. |
-| 4 | **Fixed with an ephemeral continuation cache** | Recursive `count-resources`/`count-subjects` do one traversal and accept `:count-limit`. Recursive pages now admit bounded, expiring traversal continuations keyed to the token's exact database/schema/query/basis/edge. Sequential cache hits advance the traversal approximately linearly; eviction, disabled caching, alternate Peers, provider failure, and oversized entries replay the authenticated ordinal against `d/as-of` and return the same page. Already produced pages accelerate backward navigation. No effective-grant tuples, marker datoms, or schema attributes are installed. |
+| 4 | **Fixed with an ephemeral continuation cache** | Recursive `count-resources`/`count-subjects` do one traversal and accept `:count-limit`. Recursive pages admit bounded, expiring traversal continuations keyed to the token's database/schema/query/revision/proof/edge. Sequential hits advance the traversal approximately linearly. A missing required continuation fails closed with a typed cursor/snapshot error; it does not replay a prefix against a newer DB or invoke `d/as-of`. Already produced pages accelerate backward navigation. No effective-grant tuples, marker datoms, or schema attributes are installed. |
 | 5 | **Fixed** | Anchor check uses `some?` on the value, not `contains?` on the key; the error names the nil-valued keys. |
 | 6 | **Resolved by an explicit contract** | Bare recursive `:last` is rejected with `:eacl.pagination/unsupported-recursive-last`; implementing it by exhausting the closure was removed because it puts unbounded work on an ordinary page request. `:last` with `:before` remains supported for previous-page navigation. |
-| 7 | **Fixed** | `count-*` no longer `doall` or retain the realized head. Acyclic counts stream in constant application memory; recursive counts retain only their request-local, hard-capped traversal state. `:count-limit` stops both engines early and reports `:truncated?`. |
+| 7 | **Fixed** | `count-*` no longer `doall` or consume a full-cardinality merged lazy head. Acyclic counts advance through frontier-resuming pages of at most 16,384 EIDs; recursive counts retain only their request-local, hard-capped traversal state. `:count-limit` stops both engines early and reports `:truncated?`. |
 | 8 | **Fixed** | `page-response` (and `relationship-page`) clamp both `has-*-page?` flags to false on an empty page, so `has-next-page?` always implies a usable `end-cursor`. A present-but-nil `:after`/`:before` now throws `:eacl.pagination/invalid-cursor` instead of silently restarting at page 1. |
 | 9 | **Fixed** | `impl/can?` map arity destructures and forwards to the 4-arity. |
 | 10 | **Fixed** | `:eacl/relationship-conflict`, `:eacl/unsupported-operation`, `:eacl/unauthorized` via `ex-info`. |
@@ -647,7 +647,8 @@ was executed against that REPL; findings 7, 11 and 12d/12e are code reads and ar
 existence probes on situated authorization reads and changes recursive emission ordinals.
 `retractEntity` is still available, dangling halves remain visible until repaired, and operators
 can now detect that state explicitly. General time travel is likewise not a connection-client goal;
-the existing public pagination contract still reconstructs its own authenticated historical basis.
+public pagination uses an authenticated EACL relationship proof and requires its ephemeral exact
+page or continuation when that proof has changed.
 
 ### Verification
 
@@ -700,14 +701,16 @@ advances the epoch of the changed relation definition. No-op relationship writes
 changes outside a permission's dependency set, and unrelated application transactions therefore
 preserve eligible live cache entries without extra reads.
 
-The default cache accelerates exact-basis cursor pages and recursive continuations. Those entries
-are safe without a relationship barrier because the authenticated cursor reconstructs the original
-database basis. Cross-request memoization of live lookup pages and count responses is opt-in with
-`:live-results? true` and requires an explicitly supplied coordinator shared by every relevant EACL
-relationship reader and writer. The coordinator is an ordinary client argument; there is no
-process-global registry. With live memoization disabled—the default—ordinary lookups take no
-relationship read lock. Separate processes need explicit shared coordination before enabling live
-memoization; otherwise they remain correct through the uncached indexed path.
+The bounded default cache accelerates recursive continuations. Completed exact-result retention is
+opt-in with `:exact-results? true`, so default `can?` and acyclic lookup calls do not pay for result
+cache keying, lookup, or publication. Exact entries are safe without a relationship barrier because
+they can only be selected by their authenticated revision and proof. Cross-request memoization of
+live `can?`, lookup pages, and count responses is opt-in with `:live-results? true` and requires an
+explicitly supplied coordinator shared by every relevant EACL relationship reader and writer. The
+coordinator is an ordinary client argument; there is no process-global registry. With live
+memoization disabled—the default—ordinary lookups take no relationship read lock. Separate
+processes need explicit shared coordination before enabling live memoization; otherwise they
+remain correct through the uncached indexed path.
 
 The live read barrier covers only capture of `(d/db conn)` and the permission dependency epochs.
 Cache access and the lookup/count itself happen after it is released, so a large count does not
@@ -715,14 +718,15 @@ hold relationship writers behind the full query. Completed lookup pages use one 
 the indexed engine decides whether its miss requires acyclic seek traversal or recursive closure
 traversal; count responses use the same generation key. Opaque recursive frontier state is accepted
 only by the client that created it, while completed pages and counts remain suitable for a
-serializing cache provider.
+serializing cache provider. A backend that cannot store opaque continuations may still store
+portable completed answers; a missing required continuation fails closed rather than replaying.
 
 The completed follow-up suite passes on nREPL: **111 tests, 1752 assertions, 0 failures, 0 errors**.
 The heavy suite passes separately: **3 tests, 3228 assertions, 0 failures, 0 errors**.
 
 Fresh-JVM 15,000-resource pagination comparison:
 
-| workload | v7.3 | candidate, default cache | candidate, cache disabled |
+| workload | v7.3 | intermediate candidate, exact retention | candidate, cache disabled |
 |---|---:|---:|---:|
 | First page median / p95 | 2.77 / 4.24 ms | 2.43 / 4.59 ms | 2.97 / 5.03 ms |
 | Forward early / late / max-page median | 2.41 / 2.20 / 2.87 ms | 0.61 / 0.54 / 2.74 ms | 2.72 / 2.01 / 2.92 ms |
@@ -730,8 +734,8 @@ Fresh-JVM 15,000-resource pagination comparison:
 | Deep first / middle / last-page median | 1.82 / 1.39 / 0.69 ms | 1.55 / 0.26 / 0.30 ms | 1.81 / 0.99 / 0.54 ms |
 
 All three variants made the same **282 / 184 / 79** traversal calls at the sampled first, middle,
-and final depths. Disabled-cache timings remain in the v7.3 range; the default cache makes repeated
-exact-cursor pages cheaper without changing traversal results.
+and final depths. Disabled-cache timings remain in the v7.3 range; opt-in exact retention makes
+repeated exact-cursor pages cheaper without changing traversal results.
 
 With opt-in live memoization on the same 15,000-resource seed, warmed
 `lookup-resources` / `lookup-subjects` hit medians were **0.124 / 0.082 ms**. Advancing the
@@ -789,3 +793,47 @@ resources; the disabled difference was 3.7% in this host-sensitive single run, w
 hits removed the repeated-prefix cost. In the concurrency probe, a relationship write completed
 in 0.58 ms while a count was deliberately suspended after snapshot capture; the in-flight count
 returned its old snapshot and the next count returned the new relationship generation.
+
+### Final v7.3 comparison and verification (2026-07-30)
+
+This section supersedes the intermediate timing and test totals above. It compares the v7.3 merge
+commit `2ccc6c4` with the final candidate in separate warmed nREPL JVMs on an Apple M3 Pro with
+18 GiB RAM, macOS Darwin 25.5.0, and Temurin OpenJDK 24.0.1. Both versions used the same in-memory
+15,000-resource seed. The pagination figures are from the second warmed heavy run: the first-page
+test used 20 warmups and 30 samples, and the pagination test measured 40 pages over eight runs.
+
+| workload | v7.3 | final candidate | change |
+|---|---:|---:|---:|
+| First page median | 2.20 ms | 1.50 ms | **−32%** |
+| Forward early / late / max-page median | 2.71 / 2.35 / 3.08 ms | 1.88 / 1.67 / 2.09 ms | **−31% / −29% / −32%** |
+| Reverse early / late / max-page median | 2.08 / 1.84 / 2.67 ms | 1.37 / 1.24 / 1.58 ms | **−34% / −33% / −41%** |
+| Deep first / middle / last-page median | 2.21 / 1.62 / 0.78 ms | 1.38 / 0.83 / 0.46 ms | **−38% / −49% / −41%** |
+
+The corrected public `can?` benchmark uses an existing permissioned resource rather than an
+unresolved external ID. With 2,000 warmups and 5,000 measured calls, its median improved from
+**24.42 µs** on v7.3 to **13.13 µs** on the final default configuration. The explicitly cold path
+improved from **116.33 µs** to **85.38 µs**. Opt-in completed-result caching measured **9.83 µs**
+per hit. Making completed exact-result retention opt-in removed cache bookkeeping from the default
+hot path.
+
+For a 15,000-resource acyclic count, separate-JVM medians were **23.77 ms** on v7.3 and
+**24.71 ms** on the candidate, a roughly 4% difference within host/JIT noise. An alternating
+same-JVM comparison of the old full-head loop and the new bounded-frontier loop measured
+essentially identical medians (about 23.84 and 23.77 ms). The final committed heavy run measured
+**26.92 ms** with caching disabled and **0.011 ms** on a live cache hit. Its 20,000-resource
+retention probe completed in two chunks and retained at most **16,384 EIDs** at once with caching
+disabled, admission rejected, and the provider failing.
+
+A complete 500-resource recursive walk, with 25 results per page and 2,000 unrelated entities,
+measured **45.65–62.16 ms** across three warmed v7.3 runs and **31.17–34.42 ms** across three
+cache-disabled candidate runs. Continuations reduced one observed full walk to **22.11 ms**.
+All variants returned exactly 500 resources.
+
+Final verification:
+
+- regular suite: **144 tests, 4,390 assertions, 0 failures, 0 errors**;
+- heavy pagination/count/retention suite: **4 tests, 3,245 assertions, 0 failures, 0 errors**;
+- deterministic cache model: five seeds × 50 randomized relationship writes, no-ops, unrelated
+  application transactions, and schema rotations, comparing cached and cache-disabled `can?`,
+  both lookup directions, and both count directions;
+- no new Datomic schema attributes or permanent cache tuples.

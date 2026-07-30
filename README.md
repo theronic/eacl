@@ -31,7 +31,8 @@ Situated AuthZ offers some advantages for typical use-cases:
 1. If you want [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization without an external system, EACL is your only option.
 2. Storing permission data directly in Datomic avoids network I/O to an external AuthZ system, reducing latency.
 3. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
-4. Queries are fully consistent. If you need consistency semantics like `at_least_as_fresh`, use SpiceDB.
+4. Queries default to the current DB visible to the local Peer and also support
+   `minimize-latency`, `at-least-as-fresh`, and cache-resident `at-exact-snapshot` semantics.
 5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but you will find the eager Datalog engine too slow and unable to handle all the grounding cases. The first version of EACL was implemented with Datalog rules, but it was simply too slow and materialized all intermediate results. Correct bidirectional cursor-pagination is also non-trivial, because parallel paths through the permission graph can yield duplicate resources. EACL does this for you with good performance.
 
 ## Performance
@@ -42,24 +43,36 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- EACL has one optional, bounded ephemeral lookup cache. Recursive page cursors retain a
-  basis-pinned continuation so a linear walk advances the traversal instead of replaying its
-  prefix. Missing, evicted, disabled, oversized, or unavailable entries fall back to the same
-  historical ordinal replay and therefore cannot change an answer.
-- Lookup pages and counts can use the same store when `:live-results? true` is configured with an
-  explicit shared coordinator. Live entries are keyed by EACL's schema generation and the mutation
-  epochs of only the relation definitions used by the permission, not Datomic `basis-t`, so
-  unrelated application transactions and relationship writes outside that dependency set leave
-  them hot.
+- EACL has one optional, bounded ephemeral authorization cache for `can?`, lookup pages, counts,
+  exact snapshots, and recursive continuations. A continuation hit advances recursive pagination
+  from its saved frontier, removing repeated-prefix `O(N²/page-size)` work. If a cursor requires
+  state that has expired or was rejected, EACL fails closed with a typed cursor/snapshot error
+  instead of silently evaluating a different snapshot.
+- Live `can?`, lookup, and count results can use the same store when `:live-results? true` is
+  configured with an explicit coordinator shared by every participating EACL reader and writer.
+  Keys use the schema generation and committed revision of only the relation definitions used by
+  the permission—not every Datomic `basis-t`—so unrelated application transactions and
+  relationship writes outside that dependency set leave entries hot.
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
   - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. EACL does not provide time-travel semantics for a connection-backed client, and speculative/historic evaluation cannot publish paths into its cache.
   - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
-- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. A cache hit resumes the previous state, making a sequential walk approximately linear in traversed work; a miss replays the prefix. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work. A missing required continuation fails closed. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-*Note* that EACL v7.3 page tokens are stable: after the first page, `:after` and `:before` continue against the same Datomic basis. If your DB changes while a UI is paging, refresh from the first page to see the newest view. You can pass a stable `db` basis and shave off a few milliseconds by calling the internals in `eacl.datomic.impl.indexed` directly – these functions take `db` as an argument directly instead of `conn`. If you do this, you will need to coerce internal Datomic eids to/from your desired external IDs yourself, and you must hold **one** `db` value for the whole paginated walk: internal cursor maps embed per-path frontiers (including `:exhausted` markers) that are only valid against the basis that minted them. Reusing a cursor against a newer `(d/db conn)` can silently skip results written after the first page — the token layer prevents this by pinning `d/as-of` for you.
+*Note* that EACL page tokens pin an EACL schema and relationship proof, not a retained Datomic
+database value. A later page may use the current DB only while that proof still matches. Otherwise
+the exact completed page or recursive continuation must still be in the ephemeral cache; if it is
+not, EACL returns `:eacl.consistency/snapshot-unavailable` or
+`:eacl.pagination/cursor-expired`. EACL does not call `d/as-of` to reconstruct it. Refresh from the
+first page to select a current snapshot.
+
+The internal functions in `eacl.datomic.impl.indexed` continue to accept a `db` directly. This is
+the escape hatch for deliberate `d/as-of`, `d/with`, or prospective database evaluation:
+construct the DB yourself, apply the EACL schema to a prospective DB when needed, keep one DB value
+for the operation, and perform the internal EID coercion yourself. Those calls do not publish into
+a connection-backed client's schema or result cache.
 
 Public `eacl3_` cursors are string-safe AES-GCM envelopes. Authentication is required so a caller cannot alter a result boundary, query binding, basis, or per-path frontier. Encryption is not required for pagination correctness, but it prevents internal Datomic eids and basis metadata from leaking through an otherwise merely Base64-encoded token. Token cryptography runs once when a page cursor is encoded or decoded; it is not part of each relationship-index traversal.
 
@@ -68,7 +81,7 @@ Public `eacl3_` cursors are string-safe AES-GCM envelopes. Authentication is req
 > [!WARNING]
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> The changes on this branch are the v7.4 candidate (they may be released as a v7.3 patch because v7.3 is recent). They retain the pagination API, replace per-`db` schema fingerprints with client-lifecycle caches, and add bounded counting/integrity diagnostics. Releases are not tagged yet, so pin the Git SHA.
+> The changes on this branch are the [v7.4 candidate](docs/release-notes-v7.4.md) (they may be released as a v7.3 patch because v7.3 is recent). They retain the pagination API, replace per-`db` schema fingerprints with client-lifecycle caches, and add bounded ephemeral authorization caching and consistency tokens. Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## ReBAC: Relationship-based Access Control
@@ -140,11 +153,11 @@ Pass `:count-limit n` to either count operation to bound work. The result then i
 ### Relationship Maintenance
 
 - `(eacl/read-relationships acl filters) => {:data [relationships...] :page-info {...}}`
-- `(eacl/write-relationships! acl updates) => {:zed/token 'db-basis}`,
+- `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z1_..."}`,
   - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
-- `(eacl/delete-object! acl object) => {:zed/token 'db-basis, :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z1_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
 All list APIs use the v7.3 pagination contract:
 
@@ -501,9 +514,11 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 ### Lookup cache configuration
 
-Recursive cursor continuations use a bounded local cache by default. Its default admission budget
-is 16,777,216 estimated weight units; this deliberately familiar number is not a measured 16 MiB
-heap guarantee. Disable all result and continuation caching without changing behavior:
+Recursive cursor continuations use a bounded local store by default. Completed exact-result
+retention is opt-in so the default `can?` and acyclic lookup fast paths perform no result-cache
+lookup or publication. The store's default admission budget is 16,777,216 estimated weight units;
+this is not a measured 16 MiB heap guarantee. Disable all result and continuation caching without
+changing authorization answers:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn {:cache false}))
@@ -515,19 +530,22 @@ Capacity and lifetime are consumer-controlled:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:max-weight (* 64 1024 1024)
+   {:cache {:exact-results? true
+            :max-weight (* 64 1024 1024)
             :max-entry-weight (* 8 1024 1024)
             :max-entries 4096
+            :kind-max-weight {:can? (* 16 1024 1024)}
+            :two-hit-kinds #{:can?}
             :ttl-ms 300000}}))
 ```
 
 Cache TTL is clamped to the page-token TTL. Entry admission includes a conservative estimate of
 the retained key and result/traversal shape; the weight settings are estimates, not literal JVM
-bytes or a heap guarantee. Oversized entries are rejected and replayed rather than allowed to
-threaten the host heap.
+bytes or a heap guarantee. Oversized entries are rejected rather than allowed to threaten the
+host heap. `:kind-max-weight` and `:two-hit-kinds` keep high-cardinality permission checks from
+displacing every expensive lookup or continuation.
 
-Live lookup and count memoization is opt-in and uses an explicit coherence
-context:
+Live `can?`, lookup, and count memoization is opt-in and uses an explicit coherence context:
 
 ```clojure
 (require '[eacl.datomic.cache :as eacl-cache])
@@ -548,20 +566,92 @@ context:
             :coordinator (:coordinator cache-context)}}))
 ```
 
+`:live-results? true` implies `:exact-results? true`. To retain completed exact snapshots without
+live reuse or a relationship coordinator, configure only `:exact-results? true`.
+
 Pass the same coordinator explicitly to every EACL relationship reader and writer in the
 coherence scope. Relationship helpers hold its mutation barrier across their transaction and
-advance only the changed relation-definition epochs after an actual relationship tuple change.
+publish the committed Datomic `t` only for changed relation definitions after an actual tuple
+change.
 Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
 permission's dependency set do not expire that entry. The read barrier is released after EACL
-captures the Datomic value and dependency epochs; it is not held during the lookup or count.
+captures the Datomic value and dependency proof; it is not held during cache I/O, lookup, or count.
 
-In a multi-process deployment, enable live result memoization only when every EACL reader and
-writer uses a shared `eacl.datomic.cache/RelationshipCoordinator`; otherwise omit
-`:live-results?`. Separate processes cannot invalidate private memory without a communication
-channel. Recursive cursor continuations remain safe locally in either configuration because their
-tokens pin the original Datomic basis; another Peer simply replays when it does not have the entry.
-Custom stores implement `eacl.datomic.cache/CacheStore` and may use local memory, a separate
-ephemeral Datomic database, or a shared cache without adding attributes to the consumer database.
+A shared store is not a distributed coordinator. Separate coordinator incarnations deliberately
+miss one another's live entries. In a multi-process deployment, enable live memoization only when
+every reader and writer participates in a coordinator implementation with the same barrier and
+revision-publication contract. Otherwise leave `:live-results?` disabled; exact entries remain
+usable by consistency token when `:exact-results?` is enabled, and ordinary reads remain correct
+through the indexed evaluator.
+
+All result keys and values contain internal EIDs, never external object IDs. Missing external IDs
+return the ordinary false/empty boundary result and are not cached. EACL assumes the external-ID
+mapping for an entity is stable for that entity's lifetime.
+
+Custom stores implement `eacl.datomic.cache/CacheStore`. New providers may also implement
+`CacheProvider` to declare `:portable-values`, `:opaque-values`, `:ttl`, and
+`:namespaced-clear`. Portable providers may store completed pages, counts, Booleans, and exact
+metadata, but must reject process-local recursive continuations. This supports adapters backed by
+RocksDB, Apache Kvrocks, Redis, an ephemeral Datomic database, or another store without adding
+those dependencies to EACL core. Namespace cleanup must remove only EACL's configured namespace;
+it must never require flushing the provider's whole database. Provider projects can call
+`eacl.datomic.cache-store-contract/assert-provider-contract!` to verify
+TTL, wrapper validation, namespace isolation, failures, and concurrent access.
+
+No cache data or derived tuples are written to the consumer's Datomic database.
+
+### Consistency and Zed tokens
+
+Relationship writes return a versioned `:zed/token` whose revision is the exact committed Datomic
+basis `t`. The token is bound to one logical database. Read operations accept these descriptors:
+
+```clojure
+(require '[eacl.spicedb.consistency :as consistency])
+(require '[eacl.datomic.core :as eacl-datomic])
+
+;; Current locally observed DB and matching relationship proof. This is the default.
+(eacl/can? acl subject :view resource consistency/fully-consistent)
+
+;; Newest usable cached result, otherwise the current local DB.
+(eacl/can? acl subject :view resource consistency/minimize-latency)
+
+;; Never older than the exact write/read token. Only this mode may perform
+;; targeted (d/sync conn T), and only when the local Peer is behind T.
+(eacl/can? acl subject :view resource
+           (consistency/at-least-as-fresh write-token))
+
+;; Cache-resident snapshot only; requires :exact-results? (or :live-results?).
+;; A miss fails and never invokes d/as-of.
+(eacl/can? acl subject :view resource
+           (consistency/at-exact-snapshot prior-token))
+
+;; Construct lower-bound tokens without synchronizing.
+(def now-token (eacl-datomic/current-zed-token acl))
+```
+
+`fully-consistent` means the current DB visible to the local Peer; EACL does not force
+zero-argument `d/sync`. Callers that require the Peer to observe transactor head may synchronize
+before calling EACL. `at-exact-snapshot` is intentionally ephemeral: expiry, eviction, provider
+failure, or a missing query entry returns `:eacl.consistency/snapshot-unavailable`.
+
+Optional bounded checkpoints let callers request "at least as fresh as N seconds ago" without
+doing arithmetic on `t`:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:cache {:checkpoints true}}))
+
+(def lower-bound
+  (eacl-datomic/zed-token-at-least-seconds-ago acl 30))
+
+(eacl/can? acl subject :view resource
+           (consistency/at-least-as-fresh lower-bound))
+```
+
+Checkpoints contain only sampled monotonic capture times and observed Long revisions. They retain
+no DB values, start no timer, are disabled by default, and never call `d/sync`.
 
 `:recursive-traversal-limits` tunes hard safety ceilings on recursive permission traversal (see [Limitations](#limitations-deficiencies--gotchas)):
 
@@ -721,8 +811,9 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 
 ## Limitations, Deficiencies & Gotchas:
 
-- *No consistency semantics:* all EACL queries are `fully_consistent`.
-  - If you need consistency semantics, use SpiceDB. SpiceDB is heavily optimised to maintain a consistent cache across the graph.
+- *Exact snapshots are ephemeral:* `at-exact-snapshot` never reconstructs a Datomic historical
+  DB. The exact query result must still exist in the configured cache or EACL returns
+  `:eacl.consistency/snapshot-unavailable`.
 - *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
   - `permission admin = owner + shared_admin` is valid,
   - but `permission admin = owner - banned_member` is not (note the `-` Negation operator).
@@ -733,17 +824,18 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- *Cache coherence is explicit:* recursive cursor continuations are always safe, but live lookup
-  and count memoization requires every relationship writer to receive the same coordinator.
-  Omit `:live-results?` when that cannot be guaranteed.
+- *Cache coherence is explicit:* live `can?`, lookup, and count memoization requires every
+  relationship writer to receive the same coordinator. Direct transactions of EACL relationship
+  tuples are outside this contract and are not polled. Omit `:live-results?` when coordination
+  cannot be guaranteed.
 - *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
-- *Recursive cache misses replay:* a permission that transitively depends on itself
+- *Recursive cursors require their continuation:* a permission that transitively depends on itself
   (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
-  hits resume the traversal and avoid `O(N²/page-size)` enumeration. Cache misses remain correct by
-  replaying to the authenticated ordinal, so a repeatedly evicted or disabled cache can still pay
-  the earlier quadratic aggregate CPU cost. Recursive work retains hard heap-protection ceilings,
-  and counts use one traversal. Use `:count-limit` to bound count work; do not raise
-  `:recursive-traversal-limits` without JVM load tests.
+  hits resume the traversal and avoid `O(N²/page-size)` enumeration. An evicted, expired, rejected,
+  or unavailable required continuation fails closed; it does not replay against a newer DB.
+  Recursive work retains hard heap-protection ceilings, and counts use one traversal. Use
+  `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load
+  tests.
 - *Return order:* Acyclic EACL lookups enumerate in Datomic eid order and relationship reads enumerate in tuple-index order. Recursive lookups enumerate in deterministic traversal order. SpiceDB returns results in discovery or schema order. You should not rely on either system's order as a domain sort order.
 
 ## How to Run All Tests
