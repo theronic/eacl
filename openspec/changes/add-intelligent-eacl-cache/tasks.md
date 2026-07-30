@@ -41,4 +41,4 @@
 - [x] 6.7 Replace `Throwable` cache catches and document the trusted-provider/estimated-weight boundary.
 - [x] 6.8 Add corruption, count, recursive-hit, dependency, concurrency, and no-global-state tests.
 - [x] 6.9 Re-run regular/heavy suites and benchmark counts, cache hits/misses, and writer concurrency.
-- [ ] 6.10 Commit, push, update PR #80, and verify CI.
+- [x] 6.10 Commit, push, update PR #80, and verify CI.
