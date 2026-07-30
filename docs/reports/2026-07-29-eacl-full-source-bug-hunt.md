@@ -633,7 +633,7 @@ was executed against that REPL; findings 7, 11 and 12d/12e are code reads and ar
 |---|---|---|
 | 1, 2 | **Fixed (revised after operator review)** | Definition fingerprints and per-`db` cache scopes were removed. A connection-backed client reads `:eacl/schema-version` once from the canonical schema entity at construction and owns one in-memory permission-path generation. New `db` values caused by ordinary transactions perform no schema read, definition scan, cache-key work, or database-value retention. `eacl/write-schema!` through that client replaces the generation under a schema write lock; identical writes retain it. Arbitrary/historic/speculative low-level databases are uncached and cannot publish into a client. An unstamped fresh v7 database stays uncached until its first supported schema write; this is not a v6 compatibility mode. Out-of-band schema mutation is outside the lifecycle contract; `eacl.datomic.integrity/client-schema-status` provides an explicit one-entity mismatch diagnostic without taxing `can?`. |
 | 3 | **Fixed to the operator's contract** | Consumers remain responsible for calling `delete-relationships!` before `:db.fn/retractEntity`; EACL does not intercept Datomic or add per-candidate entity-existence probes to authorization reads. `eacl/delete-object!` / `impl/tx-delete-object` remains a convenience helper that retracts both halves. The public `eacl.datomic.integrity` namespace now exposes a bounded-memory dangling-half report and lazy batched repair transactions. |
-| 4 | **Fixed with an ephemeral continuation cache** | Recursive `count-resources`/`count-subjects` do one traversal and accept `:count-limit`. Recursive pages admit bounded, expiring traversal continuations keyed to the token's database/schema/query/revision/proof/edge. Sequential hits advance the traversal approximately linearly. A missing required continuation fails closed with a typed cursor/snapshot error; it does not replay a prefix against a newer DB or invoke `d/as-of`. Already produced pages accelerate backward navigation. No effective-grant tuples, marker datoms, or schema attributes are installed. |
+| 4 | **Fixed with an ephemeral continuation cache** | Recursive `count-resources`/`count-subjects` do one traversal and accept `:count-limit`. Recursive pages admit bounded, expiring traversal continuations keyed to the token's database/schema/query/revision/proof/edge. Sequential hits advance the traversal approximately linearly. A missing continuation safely replays the deterministic prefix while the complete relationship proof still matches; after a relevant write only an already retained exact page may answer, otherwise EACL fails closed. The engine never invokes `d/as-of`. Already produced pages accelerate retry and backward navigation. No effective-grant tuples, marker datoms, or schema attributes are installed. |
 | 5 | **Fixed** | Anchor check uses `some?` on the value, not `contains?` on the key; the error names the nil-valued keys. |
 | 6 | **Resolved by an explicit contract** | Bare recursive `:last` is rejected with `:eacl.pagination/unsupported-recursive-last`; implementing it by exhausting the closure was removed because it puts unbounded work on an ordinary page request. `:last` with `:before` remains supported for previous-page navigation. |
 | 7 | **Fixed** | `count-*` no longer `doall` or consume a full-cardinality merged lazy head. Acyclic counts advance through frontier-resuming pages of at most 16,384 EIDs; recursive counts retain only their request-local, hard-capped traversal state. `:count-limit` stops both engines early and reports `:truncated?`. |
@@ -648,7 +648,7 @@ existence probes on situated authorization reads and changes recursive emission 
 `retractEntity` is still available, dangling halves remain visible until repaired, and operators
 can now detect that state explicitly. General time travel is likewise not a connection-client goal;
 public pagination uses an authenticated EACL relationship proof and requires its ephemeral exact
-page or continuation when that proof has changed.
+page when that proof has changed.
 
 ### Verification
 
@@ -719,7 +719,8 @@ the indexed engine decides whether its miss requires acyclic seek traversal or r
 traversal; count responses use the same generation key. Opaque recursive frontier state is accepted
 only by the client that created it, while completed pages and counts remain suitable for a
 serializing cache provider. A backend that cannot store opaque continuations may still store
-portable completed answers; a missing required continuation fails closed rather than replaying.
+portable completed answers; a missing continuation replays only while its relationship proof
+remains equivalent.
 
 The completed follow-up suite passes on nREPL: **111 tests, 1752 assertions, 0 failures, 0 errors**.
 The heavy suite passes separately: **3 tests, 3228 assertions, 0 failures, 0 errors**.
@@ -837,3 +838,95 @@ Final verification:
   application transactions, and schema rotations, comparing cached and cache-disabled `can?`,
   both lookup directions, and both count directions;
 - no new Datomic schema attributes or permanent cache tuples.
+
+### Adversarial performance and correctness review (2026-07-30)
+
+This section supersedes the single-size recursive timing immediately above. That benchmark was not
+adequate to establish the asymptotic change: 500 results at 25 per page provides only 20 prefix
+replays, one wall-clock observation mixes traversal with public cursor and coercion overhead, and
+it does not distinguish a continuation walk from a completed-page hit.
+
+The replacement benchmark uses three trials at each graph size, reports deterministic derived-grant
+work, measures cache-disabled replay, continuation advancement, and repeated completed pages
+separately, and runs the actual v7.3 commit `2ccc6c4` in a separate JVM. With page size 25:
+
+| results | pages | v7.3 | candidate, cache disabled | continuation walk | completed-page walk | v7.3/replay work | continuation work |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 250 | 10 | 39.15 ms | 11.61 ms | 4.29 ms | 1.64 ms | 1,384 | 259 |
+| 500 | 20 | 74.10 ms | 28.38 ms | 6.73 ms | 3.76 ms | 5,269 | 519 |
+| 1,000 | 40 | 154.68 ms | 94.71 ms | 11.30 ms | 6.32 ms | 20,539 | 1,039 |
+| 2,000 | 80 | 456.29 ms | 358.58 ms | 23.19 ms | 12.52 ms | 81,079 | 2,079 |
+| 4,000 | 160 | 1,562.04 ms | 1,351.92 ms | 45.75 ms | 23.30 ms | 322,159 | 4,159 |
+
+At 4,000 results, continuations perform **77.46× less traversal work**, the first continuation walk
+is **34.1× faster than v7.3**, and a repeated completed-page walk is **67.0× faster**. The work
+curves are the important evidence: replay grows approximately with `N²/page-size`, while the
+continuation path stays below `1.04N` derived grants.
+
+Page size determines how much fixed public-API work is visible. On one 2,000-result graph:
+
+| page size | pages | cache-disabled replay | continuation walk | completed-page walk | replay/continuation work |
+|---:|---:|---:|---:|---:|---:|
+| 10 | 200 | 884.65 ms | 40.48 ms | 27.82 ms | 91.50× |
+| 25 | 80 | 347.23 ms | 22.49 ms | 12.02 ms | 39.00× |
+| 100 | 20 | 90.69 ms | 12.88 ms | 3.94 ms | 10.41× |
+| 250 | 8 | 39.58 ms | 10.97 ms | 2.26 ms | 4.49× |
+| 1,000 | 2 | 13.25 ms | 10.02 ms | 1.46 ms | 1.50× |
+
+This explains why “one second to ten milliseconds” is not a universal cache result. A cold
+continuation walk must still traverse every reachable relationship once and a 200-page public walk
+must still authenticate cursors and return 200 responses. With larger pages, the cold linear
+traversal reaches about 10 ms; once the completed pages are hot it reaches 1–4 ms. Small pages
+expose the eliminated quadratic work but retain more per-page overhead.
+
+Profiling a 1,000-result, 40-page walk found these overlapping costs:
+
+- continuation engine: **5.87 ms**; cache lookup plus publication: **0.54 ms**;
+- 39 cursor decryptions plus 80 cursor encryptions: **3.75 ms**;
+- boundary coercion of 1,000 internal EIDs and cursor construction: **3.24 ms**, including most of
+  the encryption time; direct cached `d/entity` work was only **0.06 ms**;
+- on a completed-page walk, graph execution falls to **0.55 ms**, while cursor cryptography and
+  response construction remain.
+
+The remaining recursive bottleneck is therefore no longer repeated graph traversal. It is the
+linear cold traversal plus unavoidable work proportional to results and page count. Caching
+external IDs or public response records would reduce some boundary work, but violates the
+internal-EID cache boundary and creates harder invalidation rules, so it was rejected.
+
+The same review found and fixed five cache-induced loopholes:
+
+1. Local-store expiry scanned every entry on every lookup/store. Expiry is now checked only for the
+   requested key; physical stale entries remain globally capacity-bounded.
+2. Continuations could retain lazy Datomic index streams. Pending scans now contain scalar
+   descriptors and at most 64 materialized internal EIDs, with no DB value or lazy sequence.
+3. Continuation weight calculation walked the queued frontier on every page. It is now a
+   constant-time conservative estimate using maintained counters, avoiding a second source of
+   quadratic work.
+4. Recursive internal pages were still keyed by general `basis-t`. They are now keyed by schema
+   and relationship proof, so unrelated application transactions remain hot; public exact entries
+   remain keyed by transaction `t`.
+5. Eviction, rejected admission, and alternate local stores made cursors unnecessarily
+   unavailable. A missing continuation now replays only while the complete relationship proof
+   matches. After a relevant write, EACL returns an already retained exact page or fails closed;
+   it never resumes old traversal state against changed relationships.
+
+The cache remains justified but deliberately optional. Without a continuation, a stateful
+recursive closure cannot be paged linearly unless its growing visited/frontier state is persisted
+somewhere or embedded into unbounded public cursors. The ephemeral continuation is the cheapest
+choice and adds no consumer Datomic storage. Completed live caching has workload-specific value:
+the final heavy run measured a 15,000-result count at **24.48 ms cold and 0.008 ms hot** (over
+3,000×), while already-fast public `can?` improved from **12.00 µs** on the default path to
+**3.88 µs** on a completed live hit. A 100× speedup is impossible for a default check that already
+finishes in roughly twelve microseconds; resolving two boundaries and proving cache validity
+become the floor.
+
+Final adversarial verification on nREPL:
+
+- regular suite: **149 tests, 4,427 assertions, 0 failures, 0 errors**;
+- heavy benchmark/load suite: **7 tests, 3,301 assertions, 0 failures, 0 errors**;
+- recursive scaling at five graph sizes and five page sizes, including exact result equality and
+  zero graph work on repeated completed-page walks;
+- deterministic cache model: cached and cache-disabled `can?`, both lookups, and both counts remain
+  identical across randomized writes, no-ops, unrelated transactions, and schema rotations;
+- no Datomic schema attributes, derived cache tuples, retained DB values, or lazy Datomic streams
+  were introduced.

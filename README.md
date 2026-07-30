@@ -45,9 +45,10 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - EACL has one optional, bounded ephemeral authorization cache for `can?`, lookup pages, counts,
   exact snapshots, and recursive continuations. A continuation hit advances recursive pagination
-  from its saved frontier, removing repeated-prefix `O(N²/page-size)` work. If a cursor requires
-  state that has expired or was rejected, EACL fails closed with a typed cursor/snapshot error
-  instead of silently evaluating a different snapshot.
+  from its saved frontier, removing repeated-prefix `O(N²/page-size)` work. If a continuation is
+  unavailable while the cursor's relationship proof still matches, EACL safely recomputes the
+  deterministic prefix. After a relevant relationship change, only an already retained exact page
+  may answer; otherwise EACL fails closed instead of evaluating a different snapshot.
 - Live `can?`, lookup, and count results can use the same store when `:live-results? true` is
   configured with an explicit coordinator shared by every participating EACL reader and writer.
   Keys use the schema generation and committed revision of only the relation definitions used by
@@ -59,14 +60,14 @@ Situated AuthZ offers some advantages for typical use-cases:
   - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. EACL does not provide time-travel semantics for a connection-backed client, and speculative/historic evaluation cannot publish paths into its cache.
   - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
-- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work. A missing required continuation fails closed. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a proof-equivalent miss is slower but correct because it replays the prefix. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 *Note* that EACL page tokens pin an EACL schema and relationship proof, not a retained Datomic
 database value. A later page may use the current DB only while that proof still matches. Otherwise
-the exact completed page or recursive continuation must still be in the ephemeral cache; if it is
-not, EACL returns `:eacl.consistency/snapshot-unavailable` or
-`:eacl.pagination/cursor-expired`. EACL does not call `d/as-of` to reconstruct it. Refresh from the
-first page to select a current snapshot.
+the exact completed page must already be in the ephemeral cache; a continuation cannot be resumed
+against changed relationship state. If the page is absent, EACL returns
+`:eacl.consistency/snapshot-unavailable`. EACL does not call `d/as-of` to reconstruct it. Refresh
+from the first page to select a current snapshot.
 
 The internal functions in `eacl.datomic.impl.indexed` continue to accept a `db` directly. This is
 the escape hatch for deliberate `d/as-of`, `d/with`, or prospective database evaluation:
@@ -545,6 +546,14 @@ bytes or a heap guarantee. Oversized entries are rejected rather than allowed to
 host heap. `:kind-max-weight` and `:two-hit-kinds` keep high-cardinality permission checks from
 displacing every expensive lookup or continuation.
 
+Continuation state contains only internal traversal structures. Pending relationship-index scans
+are stored as scalar descriptors plus at most 64 materialized internal EIDs; no Datomic DB value or
+lazy index sequence is retained. TTL is checked on the requested key, without scanning every cache
+entry on each hot operation. Expired entries remain subject to the same global weight and entry
+bounds until reclaimed. Recursive state is keyed by the relationship proof rather than general
+`basis-t`, so unrelated application transactions do not make a fresh identical recursive walk
+cold.
+
 Live `can?`, lookup, and count memoization is opt-in and uses an explicit coherence context:
 
 ```clojure
@@ -584,6 +593,11 @@ revision-publication contract. Otherwise leave `:live-results?` disabled; exact 
 usable by consistency token when `:exact-results?` is enabled, and ordinary reads remain correct
 through the indexed evaluator.
 
+Even without live-result memoization, each cache-enabled client owns a local coordinator for its
+cursor proofs. This lets that client's cursors and continuations survive unrelated application
+transactions. It does not authorize cross-client live reuse: clients that need one coherence scope
+must still receive the same explicit coordinator.
+
 All result keys and values contain internal EIDs, never external object IDs. Missing external IDs
 return the ordinary false/empty boundary result and are not cached. EACL assumes the external-ID
 mapping for an entity is stable for that entity's lifetime.
@@ -591,10 +605,11 @@ mapping for an entity is stable for that entity's lifetime.
 Custom stores implement `eacl.datomic.cache/CacheStore`. New providers may also implement
 `CacheProvider` to declare `:portable-values`, `:opaque-values`, `:ttl`, and
 `:namespaced-clear`. Portable providers may store completed pages, counts, Booleans, and exact
-metadata, but must reject process-local recursive continuations. This supports adapters backed by
-RocksDB, Apache Kvrocks, Redis, an ephemeral Datomic database, or another store without adding
-those dependencies to EACL core. Namespace cleanup must remove only EACL's configured namespace;
-it must never require flushing the provider's whole database. Provider projects can call
+metadata, but must reject process-local recursive continuations. A cursor with an unchanged proof
+then recomputes its prefix; it never changes the answer. This supports adapters backed by RocksDB,
+Apache Kvrocks, Redis, an ephemeral Datomic database, or another store without adding those
+dependencies to EACL core. Namespace cleanup must remove only EACL's configured namespace; it must
+never require flushing the provider's whole database. Provider projects can call
 `eacl.datomic.cache-store-contract/assert-provider-contract!` to verify
 TTL, wrapper validation, namespace isolation, failures, and concurrent access.
 
@@ -829,10 +844,11 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   tuples are outside this contract and are not polled. Omit `:live-results?` when coordination
   cannot be guaranteed.
 - *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
-- *Recursive cursors require their continuation:* a permission that transitively depends on itself
+- *Recursive cursors benefit from their continuation:* a permission that transitively depends on itself
   (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
   hits resume the traversal and avoid `O(N²/page-size)` enumeration. An evicted, expired, rejected,
-  or unavailable required continuation fails closed; it does not replay against a newer DB.
+  or unavailable continuation replays only while the cursor's relationship proof still matches.
+  After a relevant write, an already retained exact page may answer; otherwise EACL fails closed.
   Recursive work retains hard heap-protection ceilings, and counts use one traversal. Use
   `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load
   tests.

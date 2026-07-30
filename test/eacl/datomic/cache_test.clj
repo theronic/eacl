@@ -45,6 +45,23 @@
     (cache/clear! store)
     (is (zero? (:entries (cache/stats store))))))
 
+(deftest local-store-expiry-is-key-local-test
+  (let [now (atom 100)
+        store (cache/local-store {:max-weight 100
+                                  :max-entry-weight 100
+                                  :max-entries 10
+                                  :clock #(deref now)})]
+    (is (cache/store! store :expired :old 1 1))
+    (is (cache/store! store :live :current 1 10000))
+    (swap! now + 2)
+    (is (= :current (cache/lookup store :live)))
+    (is (= 2 (:entries (cache/stats store)))
+        "a hot lookup does not scan and remove unrelated keys")
+    (is (zero? (:expirations (cache/stats store))))
+    (is (nil? (cache/lookup store :expired)))
+    (is (= 1 (:entries (cache/stats store))))
+    (is (= 1 (:expirations (cache/stats store))))))
+
 (deftest wrapped-entry-admission-includes-retained-key-shape-test
   (let [store (cache/local-store {:max-weight 512
                                   :max-entry-weight 256

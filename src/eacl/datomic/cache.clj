@@ -1,9 +1,10 @@
 (ns eacl.datomic.cache
   "Ephemeral, bounded cache primitives for EACL's Datomic client.
 
-  Cache availability is never part of an authorization answer. Store failures,
-  eviction and disabled caches all fall back to the ordinary indexed/traversal
-  implementation."
+  Cache availability never changes a recomputable authorization answer. Store
+  failures, eviction, and disabled caches fall back to indexed/traversal work
+  while the selected proof remains reproducible; explicitly cache-resident
+  exact snapshots instead become unavailable."
   (:import [java.util Iterator LinkedHashMap Map$Entry UUID]
            [java.util.concurrent.locks ReentrantReadWriteLock Lock]))
 
@@ -101,28 +102,6 @@
                  (update-metric kind reason))))
     true))
 
-(defn- expire-entries!
-  [^LinkedHashMap entries state now]
-  (let [^Iterator iterator (.iterator (.entrySet entries))]
-    (loop []
-      (when (.hasNext iterator)
-        (let [^Map$Entry map-entry (.next iterator)
-              {:keys [weight kind] :as entry} (.getValue map-entry)]
-          (when (expired? now entry)
-            (.remove iterator)
-            (swap! state
-                   (fn [s]
-                     (-> s
-                         (update :weight - weight)
-                         (update :entries-by-kind update kind (fnil dec 1))
-                         (update :entries-by-kind
-                                 #(if (pos? (get % kind 0)) % (dissoc % kind)))
-                         (update :weight-by-kind update kind (fnil - 0) weight)
-                         (update :weight-by-kind
-                                 #(if (pos? (get % kind 0)) % (dissoc % kind)))
-                         (update-metric kind :expirations)))))
-          (recur))))))
-
 (defn- evict-to-capacity!
   [^LinkedHashMap entries state {:keys [max-weight max-entries]}]
   (loop []
@@ -181,7 +160,6 @@
   (lookup [_ k]
     (locking entries
       (let [now (now-ms config)]
-        (expire-entries! entries state now)
         (if-let [{:keys [value kind] :as entry} (.get entries k)]
           (if (expired? now entry)
             (do
@@ -209,8 +187,12 @@
           false)
         (locking entries
           (let [now (now-ms config)
-                existing (.get entries k)]
-            (expire-entries! entries state now)
+                existing (.get entries k)
+                existing (if (and existing (expired? now existing))
+                           (do
+                             (remove-entry! entries state k :expirations)
+                             nil)
+                           existing)]
             (if (and (frequency-admitted? admission config k kind (some? existing))
                      (within-kind-capacity? @state config kind weight existing))
               (do
@@ -563,7 +545,9 @@
        (safe-store! store
                     cache-key
                     (entry namespace cache-key kind value)
-                    (+ weight (estimated-key-weight cache-key))
+                    ;; The key is retained both by the provider's map and by
+                    ;; the self-validating entry wrapper.
+                    (+ weight (* 2 (estimated-key-weight cache-key)))
                     ttl-ms)
        false)
      (catch Exception _

@@ -467,7 +467,7 @@
         (is (= 1 @classifications)
             "the uniform completed-page hit precedes traversal selection")))))
 
-(deftest recursive-continuations-are-client-local-and-fail-closed-cross-client-test
+(deftest recursive-cursors-fail-closed-across-independent-client-proofs-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           token-key "shared-store-opaque-continuation"
@@ -499,10 +499,10 @@
                                    (assoc query :after cursor)))
           (is false "another client cannot resume process-local state")
           (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl.pagination/cursor-expired
+            (is (= :eacl.consistency/snapshot-unavailable
                    (:type (ex-data e))))))
-        (is (= 1 (:continuation-misses @stats))
-            "opaque traversal state from another client is never trusted")))))
+        (is (empty? @stats)
+            "a mismatched coordinator proof is rejected before traversal")))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]

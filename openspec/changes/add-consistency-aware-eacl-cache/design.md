@@ -77,10 +77,15 @@ they share one store: completed lookup page, recursive continuation, count, perm
 and exact-snapshot metadata. Revision checkpoints remain separate explicit client-local state
 because their monotonic capture times are not comparable across processes.
 
+Internal recursive pages and continuations use the schema generation plus relationship proof
+rather than general `basis-t`, so a fresh identical walk remains hot across unrelated application
+transactions. Public exact-result entries remain keyed by `t`; the two notions are not conflated.
+
 For consistency modes that permit recomputation, eviction, expiry, rejected admission, or a
-provider error becomes a miss. For `at-exact-snapshot` and an already-issued cursor, falling
-forward would change semantics, so absence becomes a typed snapshot-unavailable or cursor-expired
-error.
+provider error becomes a miss. An already-issued cursor may also recompute its deterministic
+prefix while its complete schema and relationship proof still matches the current DB. After that
+proof changes, falling forward would change semantics: only an already retained exact page may
+answer, otherwise EACL returns typed snapshot-unavailable.
 
 ### 2. External IDs are resolved only at the boundary
 
@@ -105,8 +110,10 @@ contract.
 
 Cache context is explicit client state, not a global registry. It contains at least a `CacheStore`,
 a `RelationshipCoordinator`, a coordinator incarnation, an uncertainty generation, and optional
-revision-checkpoint state. The same context must be passed to every cached reader and relationship
-writer in one coherence scope.
+revision-checkpoint state. A cache-enabled client gets a local coordinator by default so its own
+cursor proof survives unrelated Datomic basis churn. Cross-client live-result reuse remains
+disabled unless one coordinator is supplied explicitly to every reader and writer in the
+coherence scope.
 
 The coordinator exposes a short read barrier and an exclusive mutation barrier:
 
@@ -227,9 +234,17 @@ Checkpointing is disabled by default and never calls `d/sync`.
 ### 9. Recursive state and completed answers share a store, with different portability
 
 The recursive evaluator stores a bounded continuation containing the frontier, visited state,
-stable ordering state, and enough canonical metadata to resume. A continuation hit avoids replaying
-earlier pages. If it is unavailable, EACL reports cursor expiry/snapshot unavailability; it does
-not restart at a new basis or automatically pay for `d/as-of`.
+stable ordering state, and enough canonical metadata to resume. Pending relationship-index scans
+are represented by scalar scan descriptors and at most 64 already materialized internal EIDs.
+Continuations retain neither a Datomic DB value nor a lazy Datomic sequence. A continuation hit
+avoids replaying earlier pages.
+
+If the continuation is unavailable but the cursor's complete schema/relationship proof still
+matches, EACL safely replays the deterministic prefix on the current equivalent DB. This preserves
+correctness when entries are rejected, evicted, routed to another local store, or caching is
+disabled, at the expected latency cost. If the proof changed, EACL may return an already retained
+exact page but must otherwise report snapshot-unavailable. It never restarts against changed
+relationship state or automatically pays for `d/as-of`.
 
 Process-local in-memory stores may support opaque continuation objects. Portable stores must reject
 functions, lazy sequences, DB values, engine objects, or other process-local state. They may store
@@ -258,8 +273,9 @@ disabled, because a first request, rejected admission, or provider outage must r
 ### 11. Capacity is weighted and aware of entry class
 
 The built-in store is bounded by total weight, entry count, maximum entry weight, and TTL. TTL is
-checked on lookup even when physical cleanup is lazy. Weight approximates retained graph state,
-not only serialized byte count.
+checked on the requested key at lookup; physical cleanup of other keys is lazy and globally
+bounded, avoiding an O(entry-count) expiry scan on every hot access. Weight approximates retained
+keys and graph state, not only serialized byte count.
 
 A single logical store does not imply one undifferentiated eviction pool. Admission can use
 per-class budgets, protected shares, or a small frequency gate so high-cardinality permission
@@ -303,10 +319,11 @@ supplied DB. This keeps tests and non-Datomic adapters decoupled from process-gl
 
 ## Risks / Trade-offs
 
-- **All writers must share the coordinator.** Two independent clients writing the same relationship
-  data cannot safely share live entries merely because they share a cache store. Incarnation
-  namespacing forces misses rather than unsafe reuse. Documentation and configuration validation
-  must make this deployment rule prominent.
+- **All live-result writers must share the coordinator.** Two independent clients writing the same
+  relationship data cannot safely share live entries merely because they share a cache store.
+  Incarnation namespacing forces misses rather than unsafe reuse. A client's default local
+  coordinator is sufficient only for its own cursor proof; documentation and configuration
+  validation must make the cross-client deployment rule prominent.
 - **Exact snapshots are ephemeral.** Eviction, alternate-Peer routing, cache disablement, or a
   provider outage can make `at-exact-snapshot` unavailable. Returning an explicit error is safer
   and cheaper than hidden Datomic time travel.
@@ -320,8 +337,9 @@ supplied DB. This keeps tests and non-Datomic adapters decoupled from process-gl
   cache access or traversal. Benchmarks must confirm no meaningful regression to the fast acyclic
   path.
 - **Portable stores cannot accelerate opaque recursion by default.** They still improve completed
-  pages, counts, and permission checks. A backend-specific portable continuation format can be
-  added later without weakening the core protocol.
+  pages, counts, and permission checks. On a missing continuation, proof-equivalent cursors replay
+  correctly but more slowly. A backend-specific portable continuation format can be added later
+  without weakening the core protocol.
 - **Class-aware admission is more configuration.** Conservative defaults and global hard bounds
   are necessary so the cache cannot become a Peer-memory hazard.
 - **Unstamped schemas do not cache.** This trades startup performance for an unambiguous generation
@@ -344,8 +362,9 @@ supplied DB. This keeps tests and non-Datomic adapters decoupled from process-gl
    `fully-consistent` as the default and do not add implicit `d/sync` or `d/as-of`.
 6. Move boundary resolution/coercion outside canonical internal query construction. Add `can?`,
    lookup, and count entry kinds in the single store.
-7. Replace recursive prefix replay with bounded continuations and snapshot-pinned cursors. Return
-   typed expiry/unavailable errors on required continuation misses.
+7. Replace recursive prefix replay with bounded continuations and proof-pinned cursors. Replay a
+   missing continuation only while the proof is unchanged; otherwise return an already retained
+   exact page or typed snapshot-unavailable.
 8. Make uncached counts streaming and head-safe before enabling count caching.
 9. Add weighted class-aware admission, optional observed-revision checkpoints, metrics, and
    provider capability checks.

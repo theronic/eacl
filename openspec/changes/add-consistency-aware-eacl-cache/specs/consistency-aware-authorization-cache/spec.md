@@ -34,7 +34,9 @@ EACL SHALL represent a recursive pagination continuation as bounded internal tra
 can resume without replaying all preceding pages. On continuation-cache hits, enumerating a result
 set SHALL perform work linear in the graph work and results newly traversed or emitted, rather than
 restarting the traversal for every page. Core pagination MUST NOT require permanent derived tuples
-in a consumer database.
+in a consumer database. A continuation MUST NOT retain a Datomic database value or lazy Datomic
+sequence; pending index scans SHALL be resumable from scalar descriptors with a bounded
+materialized internal-EID chunk.
 
 #### Scenario: Sequential recursive enumeration
 
@@ -46,14 +48,22 @@ in a consumer database.
 #### Scenario: Recursive continuation is evicted
 
 - **WHEN** a cursor's opaque recursive continuation has been evicted
-- **THEN** EACL returns a typed snapshot-unavailable or cursor-expired error
-- **AND** EACL neither silently restarts at a newer snapshot nor returns duplicate or skipped
-  results
+- **AND** the cursor's complete schema and relationship proof still matches the current DB
+- **THEN** EACL may replay the deterministic prefix and return the same next page
+- **AND** eviction changes latency, not the authorization result
+
+#### Scenario: Recursive continuation is evicted after a relevant change
+
+- **WHEN** a cursor's opaque recursive continuation has been evicted
+- **AND** its relationship proof no longer matches because a relevant relationship changed
+- **THEN** EACL returns an already retained exact page or typed snapshot-unavailable
+- **AND** it does not replay the prefix against the changed relationship state
 
 #### Scenario: Cache backend cannot store opaque state
 
 - **WHEN** a configured backend declares that it cannot store process-local opaque continuations
 - **THEN** EACL rejects continuation admission for that backend
+- **AND** a proof-equivalent cursor can recompute its prefix correctly
 - **AND** completed portable result entries may still use the backend
 
 ### Requirement: One typed cache serves authorization reads
@@ -359,10 +369,11 @@ only the bounded count response and cache metadata.
 ### Requirement: Cache resources are bounded and class-aware
 
 The built-in cache SHALL enforce maximum total weight, maximum entry weight, maximum entries, and
-TTL at lookup. It SHALL support class-aware admission or capacity controls so high-cardinality
+TTL at lookup of the requested key without requiring an O(entry-count) expiry sweep on each cache
+operation. It SHALL support class-aware admission or capacity controls so high-cardinality
 `can?` traffic cannot unconditionally evict all recursive continuations or expensive completed
 results. Eviction MUST affect latency only, except for explicitly cache-resident exact snapshots
-and continuations which become unavailable.
+after their schema or relationship proof changes.
 
 #### Scenario: Permission-check flood reaches capacity
 

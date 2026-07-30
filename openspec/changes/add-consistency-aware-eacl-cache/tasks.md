@@ -113,12 +113,12 @@
 ## 8. Replace recursive prefix replay with continuations
 
 - [x] 8.1 Refactor recursive lookup into an explicit resumable state machine containing frontier,
-  visited state, stable ordering state, and canonical query metadata
+  visited state, stable ordering state, canonical query metadata, and bounded index-scan chunks
 - [x] 8.2 Store a bounded continuation after each emitted page and resume it directly for the next
   cursor
 - [x] 8.3 Pin cursors to the selected schema generation, dependency scope, and exact basis revision
-- [x] 8.4 Return cursor-expired or snapshot-unavailable when a required continuation is absent,
-  never restarting silently at a newer DB
+- [x] 8.4 Replay a missing continuation only while its complete relationship proof matches; after
+  a relevant change, return an exact retained page or snapshot-unavailable
 - [x] 8.5 Reject opaque continuations from providers that declare portable-values-only capability
 - [x] 8.6 Test cycles, diamonds, deep recursion, duplicate suppression, stable ordering, empty
   pages, eviction, expiry, alternate coordinator incarnation, and incompatible freshness options
@@ -182,3 +182,22 @@
   `delete-relationships!` followed by entity retraction
 - [x] 12.8 Record release notes as v7.4 behavior while keeping the change eligible for a v7.3 patch
   release if compatibility and benchmark evidence support it
+
+## 13. Adversarially verify performance and release value
+
+- [x] 13.1 Add recursive scaling benchmarks across multiple graph sizes and page sizes, reporting
+  deterministic traversal work as well as warmed wall-clock distributions
+- [x] 13.2 Compare full-walk v7.3 prefix replay, cache-disabled traversal, continuation hits, and
+  repeated completed-result hits so the benchmark separates algorithmic and memoization gains
+- [x] 13.3 Profile recursive page setup, continuation lookup/admission, traversal, boundary
+  coercion, token handling, and Datomic index access to identify the remaining bottlenecks
+- [x] 13.4 Audit continuation correctness, memory growth, eviction, cursor chaining, alternate
+  Peers, malformed providers, and mutation races with adversarial tests
+- [x] 13.5 Audit live-result keying, dependency invalidation, consistency selection, negative
+  answers, checkpointing, and provider capability handling for stale-answer loopholes
+- [x] 13.6 Remove or bypass cache machinery whose measured cost or complexity is not justified,
+  while preserving cache-disabled correctness and exact-snapshot fail-closed behavior
+- [x] 13.7 State the cache value proposition per operation using reproducible measurements and
+  block release if recursive continuations do not demonstrate linear scaling
+- [x] 13.8 Run fresh-JVM regular and heavy suites through nREPL, update the report and OpenSpec
+  artifacts, and republish the reviewed implementation

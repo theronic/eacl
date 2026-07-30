@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
+            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
@@ -65,7 +66,19 @@
         (recur (page-end-cursor page) data' derived')
         {:data data' :derived-grants derived'}))))
 
-(deftest forward-recursive-pagination-resumes-and-miss-fails-closed-test
+(defn- collect-reverse
+  [client query]
+  (loop [after nil
+         data []]
+    (let [page (eacl/lookup-subjects
+                client
+                (cond-> query after (assoc :after after)))
+          data' (into data (:data page))]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (page-end-cursor page) data')
+        data'))))
+
+(deftest forward-recursive-pagination-resumes-retries-and-miss-fails-closed-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-forward-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -79,13 +92,19 @@
             alternate-client (core/make-client conn {:page-token-key token-key})
             page1 (eacl/lookup-resources cached-client query)
             cursor (page-end-cursor page1)
+            replay-page1 (eacl/lookup-resources disabled-client query)
             hit-stats (atom {})
             miss-stats (atom {})
             hit-page2 (binding [idx/*recursive-traversal-stats* hit-stats]
                         (eacl/lookup-resources cached-client (assoc query :after cursor)))
             miss-page2 (binding [idx/*recursive-traversal-stats* miss-stats]
-                         (eacl/lookup-resources disabled-client (assoc query :after cursor)))
+                         (eacl/lookup-resources
+                          disabled-client
+                          (assoc query :after (page-end-cursor replay-page1))))
             retry-stats (atom {})
+            retry-page2 (binding [idx/*recursive-traversal-stats* retry-stats]
+                          (eacl/lookup-resources cached-client
+                                                 (assoc query :after cursor)))
             previous-stats (atom {})
             previous-page (binding [idx/*recursive-traversal-stats* previous-stats]
                             (eacl/lookup-resources
@@ -99,26 +118,20 @@
         (is (= (mapv account-id (range 5 10))
                (mapv :id (:data hit-page2))))
         (is (= (:data hit-page2) (:data miss-page2)))
-        (doseq [[label call]
-                [["alternate cache"
-                  #(eacl/lookup-resources alternate-client
-                                          (assoc query :after cursor))]
-                 ["consumed continuation retry"
-                  #(binding [idx/*recursive-traversal-stats* retry-stats]
-                     (eacl/lookup-resources cached-client
-                                            (assoc query :after cursor)))]]]
-          (try
-            (call)
-            (is false (str label " should fail closed"))
-            (catch clojure.lang.ExceptionInfo e
-              (is (= :eacl.pagination/cursor-expired
-                     (:type (ex-data e)))
-                  label))))
+        (try
+          (eacl/lookup-resources alternate-client
+                                 (assoc query :after cursor))
+          (is false "an alternate cache should fail closed")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl.consistency/snapshot-unavailable
+                   (:type (ex-data e))))))
+        (is (= (:data hit-page2) (:data retry-page2))
+            "a cursor retry returns its immutable cached page")
         (is (= (:data page1) (:data previous-page)))
         (is (= 1 (:continuation-hits @hit-stats)))
         (is (nil? (:continuation-hits @miss-stats)))
-        (is (= 1 (:continuation-misses @retry-stats))
-            "a consumed continuation cannot silently replay")
+        (is (= 1 (:recursive-page-hits @retry-stats))
+            "a retry does not consume or replay the traversal frontier")
         (is (= 1 (:recursive-page-hits @previous-stats))
             "back navigation reuses the already produced immutable page")
         (is (< (:derived-grants @hit-stats)
@@ -132,7 +145,7 @@
                  :permission :read
                  :subject/type :user
                  :first 4}]
-      (seed-recursive! conn client 5 20)
+      (seed-recursive! conn client 5 130)
       (let [page1 (eacl/lookup-subjects client query)
             stats (atom {})
             page2 (binding [idx/*recursive-traversal-stats* stats]
@@ -144,9 +157,13 @@
         (is (empty? (set/intersection
                      (set (map :id (:data page1)))
                      (set (map :id (:data page2))))))
-        (is (= 1 (:continuation-hits @stats)))))))
+        (is (= 1 (:continuation-hits @stats)))
+        (let [all-subjects (collect-reverse client query)]
+          (is (= 130 (count all-subjects)))
+          (is (= 130 (count (set (map :id all-subjects))))
+              "reverse scans resume correctly across 64-EID chunks"))))))
 
-(deftest historical-cursor-becomes-unavailable-after-relevant-write-test
+(deftest recursive-cursor-fails-closed-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-historical-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -154,26 +171,168 @@
                  :permission :read
                  :resource/type :account
                  :first 5}]
-      (seed-recursive! conn cached-client 10 1)
+      (seed-recursive! conn cached-client 15 1)
       (let [replay-client (core/make-client conn {:page-token-key token-key
                                                   :cache false})
             page1 (eacl/lookup-resources cached-client query)
-            cursor (page-end-cursor page1)]
+            cursor (page-end-cursor page1)
+            page2 (eacl/lookup-resources cached-client
+                                         (assoc query :after cursor))
+            uncomputed-cursor (page-end-cursor page2)]
         @(d/transact conn [{:eacl/id "new-live-account"}])
         (eacl/create-relationship!
          cached-client
-         (->Relationship (spice-object :account (account-id 9))
+         (->Relationship (spice-object :account (account-id 14))
                          :parent
                          (spice-object :account "new-live-account")))
-        (doseq [client [cached-client replay-client]]
+        (is (= (:data page2)
+               (:data
+                (eacl/lookup-resources cached-client
+                                       (assoc query :after cursor))))
+            "an already produced exact page remains cache-resident")
+        (doseq [[client next-cursor]
+                [[cached-client uncomputed-cursor]
+                 [replay-client cursor]]]
           (try
-            (eacl/lookup-resources client (assoc query :after cursor))
+            (eacl/lookup-resources client (assoc query :after next-cursor))
             (is false "a changed relationship proof cannot fall forward")
             (catch clojure.lang.ExceptionInfo e
               (is (= :eacl.consistency/snapshot-unavailable
-                     (:type (ex-data e)))))))))))
+                     (:type (ex-data e)))))))
+        (is (= "new-live-account"
+               (-> (collect-forward cached-client query) :data peek :id))
+            "a new enumeration observes the relationship write")))))
 
-(deftest oversized-continuation-is-rejected-and-cursor-expires-test
+(deftest recursive-cursor-survives-unrelated-datomic-transactions-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:page-token-key "recursive-unrelated"})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 5}]
+      (seed-recursive! conn client 20 1)
+      (let [page1 (eacl/lookup-resources client query)
+            cursor (page-end-cursor page1)]
+        (doseq [n (range 20)]
+          @(d/transact conn [{:eacl/id (str "application-" n)}]))
+        (let [stats (atom {})
+              page2 (binding [idx/*recursive-traversal-stats* stats]
+                      (eacl/lookup-resources client (assoc query :after cursor)))]
+          (is (= (mapv account-id (range 5 10))
+                 (mapv :id (:data page2))))
+          (is (= 1 (:continuation-hits @stats))
+              "unrelated basis churn does not invalidate recursive state")
+          (let [restart-stats (atom {})
+                restarted-page1
+                (binding [idx/*recursive-traversal-stats* restart-stats]
+                  (eacl/lookup-resources client query))]
+            (is (= (:data page1) (:data restarted-page1)))
+            (is (= 1 (:recursive-page-hits @restart-stats))
+                "a new identical lookup is keyed by relationship proof, not basis t")
+            (is (zero? (get @restart-stats :derived-grants 0)))))))))
+
+(deftest recursive-cursor-fails-closed-when-its-boundary-object-is-gone-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:page-token-key "recursive-deleted-boundary"})
+          subject (spice-object :user (user-id 0))
+          query {:subject subject
+                 :permission :read
+                 :resource/type :account
+                 :first 5}]
+      (seed-recursive! conn client 10 1)
+      (let [page1 (eacl/lookup-resources client query)
+            cursor (page-end-cursor page1)
+            subject-eid (d/entid (d/db conn) [:eacl/id (user-id 0)])]
+        (eacl/delete-object! client subject)
+        @(d/transact conn [[:db.fn/retractEntity subject-eid]])
+        (try
+          (eacl/lookup-resources client (assoc query :after cursor))
+          (is false "an exact cursor cannot silently become an empty lookup")
+          (catch clojure.lang.ExceptionInfo e
+            (is (= :eacl.consistency/snapshot-unavailable
+                   (:type (ex-data e))))
+            (is (= :unresolved-boundary-object
+                   (:reason (ex-data e))))))))))
+
+(deftest alternate-cache-replays-a-cursor-when-the-relationship-proof-matches-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [coordinator (cache/local-coordinator)
+          token-key "recursive-shared-proof"
+          first-client
+          (core/make-client
+           conn
+           {:cache {:store (cache/local-store)
+                    :coordinator coordinator}
+            :page-token-key token-key})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 5}]
+      (seed-recursive! conn first-client 20 1)
+      (let [second-client
+            (core/make-client
+             conn
+             {:cache {:store (cache/local-store)
+                      :coordinator coordinator}
+              :page-token-key token-key})
+            page1 (eacl/lookup-resources first-client query)
+            stats (atom {})
+            page2
+            (binding [idx/*recursive-traversal-stats* stats]
+              (eacl/lookup-resources
+               second-client
+               (assoc query :after (page-end-cursor page1))))]
+        (is (= (mapv account-id (range 5 10))
+               (mapv :id (:data page2))))
+        (is (= 1 (:continuation-misses @stats)))
+        (is (> (:derived-grants @stats) 5)
+            "an alternate cache recomputes the prefix instead of changing snapshots")))))
+
+(deftest recursive-continuation-retains-bounded-eid-chunks-not-db-values-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [store (cache/local-store)
+          client
+          (core/make-client
+           conn
+           {:cache {:store store}
+            :page-token-key "recursive-bounded-streams"})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 5}]
+      (seed-recursive! conn client 200 1)
+      (eacl/create-relationships!
+       client
+       (for [n (range 1 200)]
+         (->Relationship (spice-object :user (user-id 0))
+                         :reader
+                         (spice-object :account (account-id n)))))
+      (eacl/lookup-resources client query)
+      (let [entries (seq (.values ^java.util.LinkedHashMap (:entries store)))
+            continuations
+            (keep (fn [entry]
+                    (when (= :recursive-continuation
+                             (get-in entry [:value :eacl.cache/kind]))
+                      (get-in entry
+                              [:value :eacl.cache/value :continuation])))
+                  entries)
+            db-class (class (d/db conn))
+            retained-values (mapcat #(tree-seq coll? seq %) continuations)
+            streams (->> continuations
+                         (mapcat #(seq (get-in % [:state :queue])))
+                         (filter #(= :stream (:kind %))))]
+        (is (seq continuations))
+        (is (seq streams))
+        (is (every? vector? (map :eids streams)))
+        (is (every? #(<= (count (:eids %)) 64) streams))
+        (is (not-any? #(instance? db-class %) retained-values))
+        (is (not-any? #(instance? clojure.lang.LazySeq %) retained-values)))
+      (let [walk (collect-forward client query)]
+        (is (= 200 (count (:data walk))))
+        (is (= 200 (count (set (map :id (:data walk)))))
+            "forward scans resume correctly across 64-EID chunks")))))
+
+(deftest rejected-continuation-safely-replays-while-proof-matches-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-rejected-cache"
           client (core/make-client
@@ -188,17 +347,17 @@
                  :first 3}]
       (seed-recursive! conn client 12 1)
       (let [page1 (eacl/lookup-resources client query)
-            stats (atom {})]
-        (try
-          (binding [idx/*recursive-traversal-stats* stats]
-            (eacl/lookup-resources
-             client
-             (assoc query :after (page-end-cursor page1))))
-          (is false "a rejected continuation must not silently replay")
-          (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl.pagination/cursor-expired
-                   (:type (ex-data e))))))
-        (is (= 1 (:continuation-misses @stats)))))))
+            stats (atom {})
+            page2
+            (binding [idx/*recursive-traversal-stats* stats]
+              (eacl/lookup-resources
+               client
+               (assoc query :after (page-end-cursor page1))))]
+        (is (= (mapv account-id (range 3 6))
+               (mapv :id (:data page2))))
+        (is (= 1 (:continuation-misses @stats)))
+        (is (> (:derived-grants @stats) 3)
+            "the safe fallback replays the proven traversal prefix")))))
 
 (deftest complete-recursive-enumeration-is-linear-on-continuation-hits-test
   (with-mem-conn [conn schema/v7-schema]

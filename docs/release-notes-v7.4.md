@@ -14,6 +14,8 @@ adding Datomic schema attributes or permanent tuples.
   and are not cached.
 - Live reuse is opt-in with `:cache {:live-results? true ...}` and an explicit relationship
   coordinator shared by every participating EACL reader and writer.
+- Every cache-enabled client has a local coordinator for its own cursor proofs; this does not
+  permit cross-client live reuse without the explicit shared coordinator above.
 - Relevant relationship helpers publish their exact committed Datomic `t`; unrelated application
   transactions, no-op writes, and unrelated relation changes do not invalidate hot entries.
 - The built-in memory store has hard total-weight, entry-weight, entry-count, TTL, per-kind, and
@@ -23,7 +25,12 @@ adding Datomic schema attributes or permanent tuples.
 ## Recursive pagination and counts
 
 - Recursive pages resume bounded continuation state instead of replaying every preceding prefix.
-- A missing required continuation fails closed with a typed cursor/snapshot error.
+- Continuations retain scalar scan descriptors and bounded internal-EID chunks, not Datomic DB
+  values or lazy index sequences.
+- Recursive state is keyed by its relationship proof rather than general Datomic basis churn.
+- A missing continuation replays its deterministic prefix while the cursor's relationship proof
+  still matches. After a relevant write, only an already retained exact page may answer; otherwise
+  EACL returns `:eacl.consistency/snapshot-unavailable`.
 - Acyclic count misses advance through bounded frontier pages; recursive counts use one explicit,
   hard-capped traversal state. Neither count direction retains a full-cardinality lazy result head.
 
