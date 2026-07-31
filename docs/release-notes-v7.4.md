@@ -82,3 +82,29 @@ adding Datomic schema attributes or permanent tuples.
 The cache can be disabled with `{:cache false}`. Authorization remains correct and usable, with
 the expected loss of cache-dependent performance; cursors and exact reads still use reconstructable
 Datomic history.
+
+## Fixes from the 2026-07-31 adversarial review
+
+See [docs/reports/2026-07-31-eacl-v7.4-cache-adversarial-review.md](reports/2026-07-31-eacl-v7.4-cache-adversarial-review.md).
+All of these were found in this candidate and fixed before release.
+
+- Recursive page-cache keys are scoped by pagination direction. A `:last`/`:before` page could
+  previously be served to a later `:first`/`:after` request naming the same cursor and size,
+  silently returning the wrong page — or an empty one, which stops a paginating caller early.
+- A relationship write that fails before submitting a transaction no longer invalidates cached
+  results. A `:create` conflict or unknown object id commits nothing.
+- A client constructed before the database was schema-stamped adopts the stamp when one appears,
+  and cursors minted on an unstamped basis validate against that same basis. Such a client could
+  previously mint page-one tokens it then rejected on page two.
+- Lookup results naming objects with no external id raise `:eacl/unresolvable-object` listing every
+  offending eid, instead of a cache-flavoured `:eacl.consistency/snapshot-unavailable` naming one.
+- `delete-object!` takes the relationship barrier per batch, so a large deletion no longer blocks
+  concurrent lookups for its whole multi-transaction run.
+- `fully-consistent` reads use a matching basis-pinned exact entry, so `:exact-results? true` is an
+  accelerator for the default consistency mode rather than write-only cost.
+- Page tokens are length-bounded, reject hostile EDN without escaping a `StackOverflowError`, and
+  report every cursor rejection as `:eacl.pagination/invalid-cursor` with a `:reason`.
+- Cursor pages no longer publish live entries and latest-result pointers that nothing can read.
+- The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
+  reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
+  went from ~2.3x slower than `{:cache false}` to ~2.3x faster.

@@ -58,7 +58,7 @@ Situated AuthZ offers some advantages for typical use-cases:
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
   - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. Connection-backed cursor and exact reads build request-scoped schema state from their historical DB; they do not publish paths into the client's live schema cache.
-  - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode.
+  - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode. A client constructed against such a database adopts the generation the first time one is visible — including one written by another client or process — so it does not stay permanently uncached, and its cursors stay valid across that transition. That `:eacl/schema-version` read happens only while the client is still unstamped.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a proof-equivalent miss is slower but correct because it replays the prefix. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
@@ -591,7 +591,11 @@ live reuse or a relationship coordinator, configure only `:exact-results? true`.
 Pass the same coordinator explicitly to every EACL relationship reader and writer in the
 coherence scope. Relationship helpers hold its mutation barrier across their transaction and
 publish the committed Datomic `t` only for changed relation definitions after an actual tuple
-change.
+change. `delete-object!` takes that barrier once per batch rather than once around its whole batch
+loop, so a large deletion does not stall concurrent lookups for the duration of every transaction
+it needs. A write that fails *before* submitting a transaction — a `:create` conflict, an unknown
+object id, an unsupported operation — commits nothing and therefore leaves cached results
+reachable; only a failure after a transaction may have committed fails the coherence scope closed.
 Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
 permission's dependency set do not expire that entry. The read barrier is released after EACL
 captures the Datomic value and dependency proof; it is not held during cache I/O, lookup, or count.
@@ -610,11 +614,21 @@ cursor proofs. This lets that client's cursors and continuations survive unrelat
 transactions. It does not authorize cross-client live reuse: clients that need one coherence scope
 must still receive the same explicit coordinator.
 
-All result keys and values contain internal EIDs, never external object IDs. Missing external IDs
-return the ordinary false/empty boundary result and are not cached. EACL assumes the external-ID
-mapping for an entity is stable for that entity's lifetime. When a stale or freshness-floor mode
-selects an older cached lookup page, coercion runs against that answer's historical basis; deleting
-the live entity therefore does not turn an otherwise valid cached snapshot into a boundary error.
+All result keys and values contain internal EIDs, never external object IDs. A *query input* naming
+an unknown external ID returns the ordinary false/empty boundary result and is not cached. EACL
+assumes the external-ID mapping for an entity is stable for that entity's lifetime. When a stale or
+freshness-floor mode selects an older cached lookup page, coercion runs against that answer's
+historical basis; deleting the live entity therefore does not turn an otherwise valid cached
+snapshot into a boundary error.
+
+A *result* object that has no external ID in the database it was evaluated against is a different
+matter, and `lookup-resources`/`lookup-subjects` raise `{:type :eacl/unresolvable-object}` listing
+every offending eid rather than silently omitting rows from an authorization enumeration. This is a
+data-integrity fault, not a cache fault — it is raised identically with `{:cache false}`. The usual
+cause is an entity retracted without first calling `delete-relationships!`, leaving a relationship
+half that still grants; `eacl.datomic.integrity/dangling-relationship-report` finds them.
+`read-relationships` deliberately still returns such a half with a nil id, because reading it is how
+you repair it.
 
 Custom stores implement `eacl.datomic.cache/CacheStore`. New providers may also implement
 `CacheProvider` to declare `:portable-values`, `:opaque-values`, `:ttl`, and

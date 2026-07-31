@@ -1,0 +1,254 @@
+(ns eacl.datomic.cache-differential-test
+  "Differential tests for the v7.4 cache, run THROUGH eacl.datomic.core/make-client.
+
+  eacl.datomic.differential-test encodes the same invariants but evaluates raw
+  eacl.datomic.impl against a bare db, so it never enters the cache or the
+  consistency plumbing at all. Every finding in the 2026-07-31 adversarial
+  review lived in that gap — most sharply a recursive page-cache key that
+  omitted the pagination direction, so a `:last/:before` page was served to a
+  later `:first/:after` request with the same cursor and size.
+
+  The oracle is a {:cache false} client sharing the same :page-token-key, so a
+  cursor minted by one client is readable by the other and any divergence is
+  attributable to caching alone."
+  (:require [clojure.test :refer [deftest is testing]]
+            [datomic.api :as d]
+            [eacl.core :as eacl :refer [->Relationship spice-object]]
+            [eacl.datomic.cache :as cache]
+            [eacl.datomic.core :as core]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
+            [eacl.datomic.schema :as schema]))
+
+(def ^:private token-key "cache-differential-test-key")
+
+(def ^:private recursive-schema
+  "definition user {}
+   definition folder {
+     relation owner: user
+     relation parent: folder
+     permission view = owner + parent->view
+   }")
+
+(def ^:private acyclic-schema
+  "definition user {}
+   definition group { relation member: user
+                      permission access = member }
+   definition team  { relation lead: user
+                      relation grp: group
+                      permission access = lead + grp->access }
+   definition doc   { relation owner: user
+                      relation team: team
+                      relation grp: group
+                      permission view = owner + team->access + grp->access }")
+
+(defn- cache-configurations
+  "Every shape the store can take, including one that evicts constantly so the
+  d/as-of replay path is exercised rather than the continuation fast path."
+  []
+  [[:disabled {:cache false}]
+   [:default {}]
+   [:exact-results {:cache {:exact-results? true}}]
+   [:live-results {:cache (assoc (cache/local-context) :live-results? true)}]
+   [:constant-eviction {:cache {:max-weight 8192
+                                :max-entry-weight 4096
+                                :max-entries 1}}]])
+
+(defn- client
+  [conn config]
+  (core/make-client conn (assoc config :page-token-key token-key)))
+
+(defn- seed-recursive!
+  "f0 <- f1 <- ... <- fN via :parent, alice owns f0, so `view` is recursive and
+  every folder is reachable."
+  [conn boot n]
+  (eacl/write-schema! boot recursive-schema)
+  @(d/transact conn (vec (concat [{:eacl/id "alice"}]
+                                 (for [k (range n)] {:eacl/id (str "f" k)}))))
+  (eacl/create-relationship!
+   boot (->Relationship (spice-object :user "alice") :owner (spice-object :folder "f0")))
+  (doseq [k (range 1 n)]
+    (eacl/create-relationship!
+     boot (->Relationship (spice-object :folder (str "f" (dec k)))
+                          :parent
+                          (spice-object :folder (str "f" k))))))
+
+(defn- seed-acyclic!
+  "Overlapping union paths (direct owner, team->access, grp->access) so merge
+  and dedupe are exercised alongside the arrow frontiers."
+  [conn boot n]
+  (eacl/write-schema! boot acyclic-schema)
+  @(d/transact conn (vec (concat [{:eacl/id "alice"}]
+                                 (for [k (range n)] {:eacl/id (str "g" k)})
+                                 (for [k (range n)] {:eacl/id (str "t" k)})
+                                 (for [k (range (* 2 n))] {:eacl/id (str "d" k)}))))
+  (doseq [k (range n)]
+    (eacl/create-relationship!
+     boot (->Relationship (spice-object :user "alice") :member (spice-object :group (str "g" k))))
+    (eacl/create-relationship!
+     boot (->Relationship (spice-object :group (str "g" k)) :grp (spice-object :team (str "t" k))))
+    (eacl/create-relationship!
+     boot (->Relationship (spice-object :team (str "t" k)) :team (spice-object :doc (str "d" k)))))
+  (doseq [k (range 0 (* 2 n) 3)]
+    (eacl/create-relationship!
+     boot (->Relationship (spice-object :user "alice") :owner (spice-object :doc (str "d" k)))))
+  (doseq [k (range 1 (* 2 n) 5)]
+    (eacl/create-relationship!
+     boot (->Relationship (spice-object :group (str "g" (mod k n))) :grp (spice-object :doc (str "d" k))))))
+
+(defn- walk-forward
+  [acl query size]
+  (loop [after nil acc [] guard 0]
+    (is (< guard 500) "forward pagination terminated")
+    (if (>= guard 500)
+      acc
+      (let [{:keys [data page-info]}
+            (eacl/lookup-resources acl (cond-> (assoc query :first size)
+                                         after (assoc :after after)))
+            acc' (into acc (map :id) data)]
+        (if (:has-next-page? page-info)
+          (recur (:end-cursor page-info) acc' (inc guard))
+          acc')))))
+
+(defn- walk-backward
+  [acl query size]
+  (loop [before nil acc [] guard 0]
+    (is (< guard 500) "backward pagination terminated")
+    (if (>= guard 500)
+      acc
+      (let [{:keys [data page-info]}
+            (eacl/lookup-resources acl (cond-> (assoc query :last size)
+                                         before (assoc :before before)))
+            acc' (into (vec (map :id data)) acc)]
+        (if (:has-previous-page? page-info)
+          (recur (:start-cursor page-info) acc' (inc guard))
+          acc')))))
+
+(defn- collect-cursors
+  "Every start- and end-cursor along a forward walk, so jumps can bind a cursor
+  that is simultaneously one page's end and another page's start."
+  [acl query size]
+  (loop [after nil cursors [] guard 0]
+    (if (>= guard 500)
+      cursors
+      (let [{:keys [page-info]}
+            (eacl/lookup-resources acl (cond-> (assoc query :first size)
+                                         after (assoc :after after)))
+            cursors' (into cursors (remove nil?) [(:start-cursor page-info)
+                                                  (:end-cursor page-info)])]
+        (if (:has-next-page? page-info)
+          (recur (:end-cursor page-info) cursors' (inc guard))
+          cursors')))))
+
+(defn- page-ids
+  [acl query]
+  (try
+    (mapv :id (:data (eacl/lookup-resources acl query)))
+    (catch clojure.lang.ExceptionInfo e
+      [::threw (:eacl/error (ex-data e))])))
+
+(defn- assert-matches-oracle!
+  [label acl oracle query recursive?]
+  (let [truth (walk-forward oracle query 1000)]
+    (testing (str label " — forward walk at several page sizes")
+      (doseq [size [1 2 3 5 13]]
+        (is (= truth (walk-forward acl query size))
+            (str label " forward size " size))))
+
+    (when-not recursive?
+      (testing (str label " — backward walk at several page sizes")
+        (doseq [size [1 2 3 5 13]]
+          (is (= truth (walk-backward acl query size))
+              (str label " backward size " size)))))
+
+    (testing (str label " — single page and count agree with the walk")
+      (is (= truth (mapv :id (:data (eacl/lookup-resources acl (assoc query :first 10000))))))
+      (is (= (count truth) (:count (eacl/count-resources acl query)))))
+
+    (testing (str label " — random cursor jumps in BOTH directions")
+      ;; The regression that motivated this file: a :desc page cached under a
+      ;; cursor, then an :asc request bound by that same cursor and size.
+      (let [rng (java.util.Random. 20260731)
+            cursors (vec (collect-cursors oracle query 3))]
+        (dotimes [i 120]
+          (let [cursor (nth cursors (.nextInt rng (count cursors)))
+                size (inc (.nextInt rng 4))
+                forward? (zero? (.nextInt rng 2))
+                jump (if forward?
+                       (assoc query :first size :after cursor)
+                       (assoc query :last size :before cursor))]
+            (is (= (page-ids oracle jump) (page-ids acl jump))
+                (str label " jump #" i " " (if forward? :asc :desc)
+                     " size " size))))))))
+
+(deftest cache-configurations-match-a-cache-disabled-oracle-test
+  (testing "recursive traversal permission"
+    (doseq [[label config] (cache-configurations)]
+      (with-mem-conn [conn schema/v7-schema]
+        (let [boot (client conn {:cache false})
+              _ (seed-recursive! conn boot 14)
+              acl (client conn config)
+              oracle (client conn {:cache false})
+              query {:subject (spice-object :user "alice")
+                     :permission :view
+                     :resource/type :folder}]
+          (assert-matches-oracle! (str "recursive/" (name label))
+                                  acl oracle query true)))))
+
+  (testing "acyclic union-of-arrows permission"
+    (doseq [[label config] (cache-configurations)]
+      (with-mem-conn [conn schema/v7-schema]
+        (let [boot (client conn {:cache false})
+              _ (seed-acyclic! conn boot 8)
+              acl (client conn config)
+              oracle (client conn {:cache false})
+              query {:subject (spice-object :user "alice")
+                     :permission :view
+                     :resource/type :doc}]
+          (assert-matches-oracle! (str "acyclic/" (name label))
+                                  acl oracle query false))))))
+
+(deftest recursive-page-cache-is-direction-scoped-test
+  ;; Minimal reproduction of the review's C1. recursive-page-request-key omitted
+  ;; the pagination direction, so {:last N :before C} was stored under exactly
+  ;; the key {:first N :after C} read back. The caller silently received the
+  ;; page BEFORE the cursor — or an empty page, which stops a paginating client
+  ;; early and under-reports what a subject may access.
+  (doseq [[label config] (cache-configurations)]
+    (with-mem-conn [conn schema/v7-schema]
+      (let [boot (client conn {:cache false})
+            _ (seed-recursive! conn boot 12)
+            acl (client conn config)
+            oracle (client conn {:cache false})]
+
+        (testing (str (name label) " — lookup-resources")
+          (let [query {:subject (spice-object :user "alice")
+                       :permission :view
+                       :resource/type :folder}
+                cursor (get-in (eacl/lookup-resources acl (assoc query :first 3))
+                               [:page-info :end-cursor])
+                backward (assoc query :last 3 :before cursor)
+                forward (assoc query :first 3 :after cursor)]
+            (is (= (page-ids oracle backward) (page-ids acl backward)))
+            ;; The forward request must not be answered by the backward page
+            ;; just cached under the same cursor and size.
+            (is (= (page-ids oracle forward) (page-ids acl forward))
+                (str (name label) ": forward page after a backward page"))
+            (is (= ["f3" "f4" "f5"] (page-ids acl forward)))))
+
+        (testing (str (name label) " — lookup-subjects")
+          (let [users (mapv #(str "u" %) (range 8))]
+            @(d/transact conn (mapv (fn [u] {:eacl/id u}) users))
+            (doseq [u users]
+              (eacl/create-relationship!
+               boot (->Relationship (spice-object :user u) :owner (spice-object :folder "f0"))))
+            (let [query {:resource (spice-object :folder "f5")
+                         :permission :view
+                         :subject/type :user}
+                  cursor (get-in (eacl/lookup-subjects acl (assoc query :first 3))
+                                 [:page-info :end-cursor])
+                  backward (assoc query :last 3 :before cursor)
+                  forward (assoc query :first 3 :after cursor)
+                  ids #(mapv :id (:data (eacl/lookup-subjects % %2)))]
+              (is (= (ids oracle backward) (ids acl backward)))
+              (is (= (ids oracle forward) (ids acl forward))
+                  (str (name label) ": forward subjects after a backward page")))))))))

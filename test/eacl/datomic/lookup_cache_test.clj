@@ -206,13 +206,21 @@
             (is (false? (eacl/can? reader alice :admin account))
                 "the caught-up false result, not the stale true result, is cached")))))))
 
-(deftest shared-store-does-not-share-live-results-across-coordinator-incarnations-test
+(deftest shared-store-is-not-a-distributed-mutation-coordinator-test
+  ;; Two clients share a store but own separate coordinator incarnations.
+  ;;
+  ;; At one basis they MAY share the basis-pinned exact entry: same database,
+  ;; same schema generation, same query identity and same t is the same DB
+  ;; value, so it is the same answer. What a shared store must never do is let
+  ;; one client's LIVE proof answer for the other once their views diverge —
+  ;; client B's coordinator knows nothing about a write published to A's.
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
+          coordinator-a (cache/local-coordinator)
           client-a (core/make-client
                     conn
                     {:cache {:store store
-                             :coordinator (cache/local-coordinator)
+                             :coordinator coordinator-a
                              :live-results? true}})
           _ (seed-direct! conn client-a)
           client-b (core/make-client
@@ -229,12 +237,26 @@
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
-        (is (= ["a-1"]
-               (mapv :id (:data (eacl/lookup-resources client-a query)))))
-        (is (= ["a-1"]
-               (mapv :id (:data (eacl/lookup-resources client-b query)))))
-        (is (= 2 @calls)
-            "a shared store is not a distributed mutation coordinator")))))
+        (testing "both clients agree at one basis"
+          (is (= ["a-1"]
+                 (mapv :id (:data (eacl/lookup-resources client-a query)))))
+          (is (= ["a-1"]
+                 (mapv :id (:data (eacl/lookup-resources client-b query)))))
+          (is (= 1 @calls)
+              "the basis-pinned exact entry is sound to share: identical t on
+               one database is one DB value"))
+
+        (testing "a write published only to A's coordinator cannot leave B stale"
+          (eacl/create-relationship!
+           client-a
+           (->Relationship (spice-object :user "alice")
+                           :owner
+                           (spice-object :account "a-2")))
+          (is (= ["a-1" "a-2"]
+                 (mapv :id (:data (eacl/lookup-resources client-b query))))
+              "B advanced with the database; it did not reuse A's live proof")
+          (is (= ["a-1" "a-2"]
+                 (mapv :id (:data (eacl/lookup-resources client-a query))))))))))
 
 (deftest direct-relationship-writes-are-deliberately-not-polled-test
   (with-mem-conn [conn schema/v7-schema]

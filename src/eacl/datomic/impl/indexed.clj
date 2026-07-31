@@ -899,16 +899,12 @@
         (inc-stat! :continuation-hits)
         continuation))))
 
-(defn- require-continuation!
-  [continuation-cache bound continuation]
+(defn- note-continuation-miss!
+  "A missing continuation is never fatal: the caller replays the cursor's
+  deterministic prefix against its pinned historical basis."
+  [bound continuation]
   (when (and bound (nil? continuation))
-    (inc-stat! :continuation-misses)
-    (when (:required? continuation-cache)
-      (recursive-traversal-error!
-       "Recursive traversal continuation is unavailable."
-       {:type :eacl.pagination/cursor-expired
-        :eacl/error :eacl.pagination/cursor-expired
-        :bound bound})))
+    (inc-stat! :continuation-misses))
   continuation)
 
 (defn- evict-continuation!
@@ -934,32 +930,54 @@
       (catch Exception _
         false))))
 
+;; NOTE ON `traversal` VS `page-direction`
+;;
+;; `traversal` is the traversal axis and is CONSTANT per API: :forward for
+;; lookup-resources, :reverse for lookup-subjects. It says nothing about which
+;; way the caller is paginating.
+;;
+;; `page-direction` is the pagination axis: :asc for :first/:after, :desc for
+;; :last/:before. It MUST be part of any key derived from the caller's bound,
+;; because {:first N :after C} and {:last N :before C} carry the same bound and
+;; size while naming completely different pages.
+
 (defn- recursive-page-end-key
-  [direction result-kind end-ordinal size]
-  [:end direction result-kind end-ordinal size])
+  "Physical key for a page by the ordinal it ENDS on.
+
+  Deliberately not scoped by page-direction: a page ending at ordinal k with
+  size N covers ordinals k-N+1..k whichever way it was produced, so an :asc
+  page is a valid answer for a :desc request bounded just past it. An :asc page
+  can only be short when it is the final page, in which case no :before cursor
+  past it exists."
+  [traversal result-kind end-ordinal size]
+  [:end traversal result-kind end-ordinal size])
 
 (defn- recursive-page-request-key
-  [direction result-kind bound size]
-  [:request direction result-kind bound size])
+  "Physical key for one requested page, scoped by the caller's pagination axis.
+
+  Omitting page-direction here let a :last/:before page be served to a later
+  :first/:after request with the same cursor and size."
+  [traversal result-kind page-direction bound size]
+  [:request traversal result-kind page-direction bound size])
 
 (defn- cached-recursive-request-page
-  [continuation-cache direction result-kind bound size]
+  [continuation-cache traversal result-kind page-direction bound size]
   (when-let [get-page (:get-page continuation-cache)]
     (when-let [page (try
                       (get-page
                        (recursive-page-request-key
-                        direction result-kind bound size))
+                        traversal result-kind page-direction bound size))
                       (catch Exception _
                         nil))]
       (inc-stat! :recursive-page-hits)
       page)))
 
 (defn- cached-recursive-previous-page
-  [continuation-cache direction result-kind bound size]
+  [continuation-cache traversal result-kind bound size]
   (when-let [get-page (:get-page continuation-cache)]
     (when-let [page (try
                       (get-page
-                       (recursive-page-end-key direction
+                       (recursive-page-end-key traversal
                                                result-kind
                                                (dec (:ordinal bound))
                                                size))
@@ -974,13 +992,13 @@
         page))))
 
 (defn- store-recursive-page!
-  [continuation-cache direction result-kind bound size page]
+  [continuation-cache traversal result-kind page-direction bound size page]
   (when-let [put-page! (:put-page! continuation-cache)]
     (let [weight (+ 512 (* 192 (count (:data page))))
           request-stored?
           (try
             (put-page! (recursive-page-request-key
-                        direction result-kind bound size)
+                        traversal result-kind page-direction bound size)
                        page
                        weight)
             (catch Exception _
@@ -988,20 +1006,12 @@
       (when-let [end-ordinal (get-in page [:page-info :end-cursor :ordinal])]
         (try
           (put-page! (recursive-page-end-key
-                      direction result-kind end-ordinal size)
+                      traversal result-kind end-ordinal size)
                      page
                      weight)
           (catch Exception _
             false)))
       request-stored?)))
-
-(defn- exact-recursive-page-unavailable!
-  [bound]
-  (recursive-traversal-error!
-   "The requested recursive page is no longer available in cache."
-   {:type :eacl.consistency/snapshot-unavailable
-    :eacl/error :eacl.consistency/snapshot-unavailable
-    :bound bound}))
 
 (defn- valid-cursor-eid?
   [eid]
@@ -1386,16 +1396,13 @@
         cached-page
         (case direction
           :asc (cached-recursive-request-page
-                continuation-cache :forward :resource bound size)
+                continuation-cache :forward :resource :asc bound size)
           :desc (cached-recursive-previous-page
                  continuation-cache :forward :resource bound size))]
     (or
      cached-page
-     (when (:exact-only? continuation-cache)
-       (exact-recursive-page-unavailable! bound))
      (let [continuation (when (and bound (= :asc direction))
-                          (require-continuation!
-                           continuation-cache
+                          (note-continuation-miss!
                            bound
                            (cached-continuation continuation-cache
                                                 bound :forward :resource)))
@@ -1427,7 +1434,7 @@
                     :forward :resource page-end-state))
                  page-stored?
                  (store-recursive-page!
-                  continuation-cache :forward :resource bound size page)]
+                  continuation-cache :forward :resource :asc bound size page)]
              ;; Keep the input continuation until both retry data and the next
              ;; frontier are safely published. A cache failure must not consume
              ;; an otherwise usable cursor.
@@ -1445,7 +1452,7 @@
                                       :has-next? true
                                       :has-previous? has-sentinel?})]
              (store-recursive-page!
-              continuation-cache :forward :resource bound size page)
+              continuation-cache :forward :resource :desc bound size page)
              page)))))))
 
 (defn- rules-by-node
@@ -1502,26 +1509,32 @@
           (add-reverse-consumer target-key consumer)
           (enqueue-reverse-goal (:target-node rule) resource-eid)))
 
+    ;; The sub-path relation only ever holds subjects of its declared type, so
+    ;; a mismatched query subject-type can never produce a grant. forward-seed-
+    ;; state already skips these; without the same guard the reverse engine
+    ;; spent one index seek per intermediate proving the empty set empty.
     :arrow-relation
-    (enqueue-stream state
-                    (resource-subject-scan
-                     (:resource-type rule)
-                     resource-eid
-                     (:via-relation-eid rule)
-                     (:intermediate-type rule))
-                    (fn [intermediate-eid]
-                      [(stream-work
-                        (resource-subject-scan
-                         (:intermediate-type rule)
-                         intermediate-eid
-                         (:target-relation-eid rule)
-                         (:subject-type state))
-                        (fn [subject-eid]
-                          [{:kind :grant
-                            :node (:node rule)
-                            :resource-eid resource-eid
-                            :subject-type (:subject-type state)
-                            :subject-eid subject-eid}]))]))
+    (if (= (:subject-type state) (:target-subject-type rule))
+      (enqueue-stream state
+                      (resource-subject-scan
+                       (:resource-type rule)
+                       resource-eid
+                       (:via-relation-eid rule)
+                       (:intermediate-type rule))
+                      (fn [intermediate-eid]
+                        [(stream-work
+                          (resource-subject-scan
+                           (:intermediate-type rule)
+                           intermediate-eid
+                           (:target-relation-eid rule)
+                           (:subject-type state))
+                          (fn [subject-eid]
+                            [{:kind :grant
+                              :node (:node rule)
+                              :resource-eid resource-eid
+                              :subject-type (:subject-type state)
+                              :subject-eid subject-eid}]))]))
+      state)
 
     :arrow-permission
     (enqueue-stream state
@@ -1749,16 +1762,13 @@
         cached-page
         (case direction
           :asc (cached-recursive-request-page
-                continuation-cache :reverse :subject bound size)
+                continuation-cache :reverse :subject :asc bound size)
           :desc (cached-recursive-previous-page
                  continuation-cache :reverse :subject bound size))]
     (or
      cached-page
-     (when (:exact-only? continuation-cache)
-       (exact-recursive-page-unavailable! bound))
      (let [continuation (when (and bound (= :asc direction))
-                          (require-continuation!
-                           continuation-cache
+                          (note-continuation-miss!
                            bound
                            (cached-continuation continuation-cache
                                                 bound :reverse :subject)))
@@ -1790,7 +1800,7 @@
                     :reverse :subject page-end-state))
                  page-stored?
                  (store-recursive-page!
-                  continuation-cache :reverse :subject bound size page)]
+                  continuation-cache :reverse :subject :asc bound size page)]
              (when (and continuation
                         page-stored?
                         (or (not has-next?) continuation-stored?))
@@ -1806,7 +1816,7 @@
                                       :has-next? true
                                       :has-previous? has-sentinel?})]
              (store-recursive-page!
-              continuation-cache :reverse :subject bound size page)
+              continuation-cache :reverse :subject :desc bound size page)
              page)))))))
 
 (declare traverse-permission-path lookup-subject-eids* can*)

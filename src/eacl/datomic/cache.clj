@@ -5,7 +5,7 @@
   failures, eviction, and disabled caches fall back to indexed/traversal work
   against the selected live or historical Datomic value."
   (:import [java.util Iterator LinkedHashMap Map$Entry UUID]
-           [java.util.concurrent.locks ReentrantReadWriteLock Lock]))
+           [java.util.concurrent.locks StampedLock]))
 
 (def cache-entry-version 2)
 (def portable-value-version 1)
@@ -55,7 +55,30 @@
     "Runs `f` exclusively.
 
     `f` returns [value change], where change is nil/no-op or
-    {:dependency-keys #{...} :basis-t committed-t}."))
+    {:dependency-keys #{...} :basis-t committed-t}.
+
+    `f` must call `eacl.datomic.cache/mutation-attempted!` immediately before
+    the first write it cannot prove was rejected. Only a throw after that call
+    is treated as possibly-committed and fails the coherence scope closed."))
+
+(def ^:dynamic ^:private *mutation-attempted*
+  "Set by with-mutation for the duration of one mutation body. See
+  `mutation-attempted!`."
+  nil)
+
+(defn mutation-attempted!
+  "Marks the enclosing `with-mutation` body as having reached the point where a
+  write may have committed.
+
+  Validation that runs BEFORE this call — endpoint resolution, :create conflict
+  detection, unsupported operations — cannot have changed the database, so its
+  failures must not invalidate cached results. Without this distinction a single
+  :eacl/relationship-conflict (an ordinary, expected application error) flushed
+  every live entry in the coherence scope."
+  []
+  (when-let [attempted *mutation-attempted*]
+    (reset! attempted true))
+  nil)
 
 (def ^:private default-store-config
   {:max-weight (* 16 1024 1024)
@@ -157,20 +180,23 @@
 (defrecord LocalStore [^LinkedHashMap entries ^LinkedHashMap admission state config]
   CacheStore
   (lookup [_ k]
-    (locking entries
-      (let [now (now-ms config)]
-        (if-let [{:keys [value kind] :as entry} (.get entries k)]
-          (if (expired? now entry)
-            (do
-              (remove-entry! entries state k :expirations)
-              (swap! state update-metric kind :misses)
-              nil)
-            (do
-              (swap! state update-metric kind :hits)
-              value))
-          (do
-            (swap! state update-metric :unknown :misses)
-            nil)))))
+    ;; Only the map access and weight accounting need the monitor. The hit/miss
+    ;; counters are advanced after releasing it: a swap! on the shared metrics
+    ;; atom is a CAS loop plus several map allocations, and running it inside
+    ;; the critical section lengthened the one lock every concurrent
+    ;; authorization call contends for.
+    (let [now (now-ms config)
+          [hit? kind value]
+          (locking entries
+            (if-let [{:keys [value kind] :as entry} (.get entries k)]
+              (if (expired? now entry)
+                (do
+                  (remove-entry! entries state k :expirations)
+                  [false kind nil])
+                [true kind value])
+              [false :unknown nil]))]
+      (swap! state update-metric kind (if hit? :hits :misses))
+      value))
 
   (store! [_ k value weight ttl-ms]
     (let [{:keys [max-entry-weight]} config
@@ -326,7 +352,7 @@
                      0
                      dependency-keys)})
 
-(defrecord LocalRelationshipCoordinator [^ReentrantReadWriteLock lock generation-state]
+(defrecord LocalRelationshipCoordinator [^StampedLock lock generation-state]
   RelationshipCoordinator
   (generation [_]
     (let [{:keys [incarnation uncertain observed-t]} @generation-state]
@@ -338,19 +364,37 @@
     (dependency-generation @generation-state dependency-keys))
 
   (with-read [_ f]
-    (let [^Lock read-lock (.readLock lock)]
-      (.lock read-lock)
-      (try
-        (f @generation-state)
-        (finally
-          (.unlock read-lock)))))
+    ;; The barrier's only job is to stop a writer committing AND publishing
+    ;; between the caller's two reads (coordinator snapshot, Datomic value).
+    ;; An optimistic read establishes that without a CAS on the lock: if any
+    ;; writer held the lock during the section, validate fails and we redo the
+    ;; work under a real read lock. `f` must therefore be side-effect-free
+    ;; apart from idempotent reads — which is what capture-result-context does.
+    ;; A ReentrantReadWriteLock read lock is a contended CAS on every hot
+    ;; authorization call, which is exactly the scaling ceiling this removes.
+    (let [stamp (.tryOptimisticRead lock)]
+      (if (zero? stamp)
+        (let [read-stamp (.readLock lock)]
+          (try
+            (f @generation-state)
+            (finally
+              (.unlockRead lock read-stamp))))
+        (let [result (f @generation-state)]
+          (if (.validate lock stamp)
+            result
+            (let [read-stamp (.readLock lock)]
+              (try
+                (f @generation-state)
+                (finally
+                  (.unlockRead lock read-stamp)))))))))
 
   (with-mutation [_ f]
-    (let [^Lock write-lock (.writeLock lock)]
-      (.lock write-lock)
+    (let [attempted (atom false)
+          write-stamp (.writeLock lock)]
       (try
         (try
-          (let [[value change] (f)
+          (let [[value change] (binding [*mutation-attempted* attempted]
+                                 (f))
                 {:keys [dependency-keys basis-t]}
                 (when (map? change) change)]
             (when (seq dependency-keys)
@@ -378,11 +422,15 @@
           (catch Exception e
             ;; A helper failure could occur after its Datomic transaction
             ;; committed but before its changed relation ids were returned.
-            ;; Fail closed by making every prior live result unreachable.
-            (swap! generation-state update :uncertain unchecked-inc)
+            ;; Fail closed by making every prior live result unreachable —
+            ;; but ONLY once the body signalled that a write was actually
+            ;; attempted. A failure during pre-write validation changed
+            ;; nothing, so it must leave cached results reachable.
+            (when @attempted
+              (swap! generation-state update :uncertain unchecked-inc))
             (throw e)))
         (finally
-          (.unlock write-lock))))))
+          (.unlockWrite lock write-stamp))))))
 
 (defn local-coordinator
   ([]
@@ -399,7 +447,7 @@
                       :incarnation incarnation
                       :initial-t initial-t})))
    (->LocalRelationshipCoordinator
-    (ReentrantReadWriteLock.)
+    (StampedLock.)
     (atom {:incarnation incarnation
            :observed-t initial-t
            :uncertain 0

@@ -99,7 +99,7 @@
     (is (= {:incarnation "test" :uncertain 0 :revision 107}
            (cache/generation coordinator #{30})))))
 
-(deftest relationship-coordinator-fails-closed-on-mutation-exception-test
+(deftest relationship-coordinator-fails-closed-after-an-attempted-write-test
   (let [coordinator (cache/local-coordinator)
         before (cache/generation coordinator [10])]
     (is (thrown-with-msg?
@@ -108,9 +108,27 @@
          (cache/with-mutation
           coordinator
           (fn []
+            (cache/mutation-attempted!)
             (throw (ex-info "after commit" {}))))))
     (is (not= before (cache/generation coordinator [10]))
         "an uncertain helper outcome invalidates every prior live result")))
+
+(deftest relationship-coordinator-keeps-results-after-a-pre-write-failure-test
+  ;; A :create conflict or an unknown object id is detected before any
+  ;; transaction is submitted, so the database is unchanged and every cached
+  ;; result is still valid. Invalidating here held the live cache at a 0% hit
+  ;; rate for any caller who could trigger an ordinary application error.
+  (let [coordinator (cache/local-coordinator)
+        before (cache/generation coordinator [10])]
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"before commit"
+         (cache/with-mutation
+          coordinator
+          (fn []
+            (throw (ex-info "before commit" {}))))))
+    (is (= before (cache/generation coordinator [10]))
+        "validation that committed nothing must not invalidate live results")))
 
 (deftest relationship-coordinator-excludes-read-write-publication-races-test
   (let [coordinator (cache/local-coordinator)

@@ -25,8 +25,20 @@
 
 (def ^:private page-token-prefix "eacl3_")
 (def ^:private page-token-version 5)
+(def ^:private maximum-page-token-length
+  "Bounds decode work on an unauthenticated caller-supplied cursor. Real EACL
+  cursors are well under this even with per-path frontiers for a wide
+  permission graph; mirrors the cap eacl.datomic.consistency puts on Zed
+  tokens."
+  16384)
 (def ^:private default-page-token-ttl-seconds 300)
 (def ^:private default-consistency-sync-timeout-ms 30000)
+(def ^:private max-coordinator-catchup-attempts
+  "Bounds the reader's catch-up loop when a shared coordinator has published a
+  revision this connection has not observed. Each attempt is itself bounded by
+  :consistency-sync-timeout-ms; without a cap, sustained write load could keep
+  a reader retrying indefinitely with no deadline of its own."
+  16)
 (def ^:private maximum-token-key-id-length 128)
 (def ^:private secure-random (SecureRandom.))
 
@@ -154,12 +166,28 @@
             (utf8-bytes
              (pr-str (assoc header :ciphertext (b64url-encode ciphertext)))))))))
 
+(defn- invalid-page-token!
+  "Every page-token rejection carries one type so callers can match cursor
+  failures uniformly. The token itself is never echoed back."
+  ([reason]
+   (invalid-page-token! reason {}))
+  ([reason data]
+   (throw (ex-info "Invalid page token."
+                   (assoc data
+                          :type :eacl.pagination/invalid-cursor
+                          :eacl/error :eacl.pagination/invalid-cursor
+                          :reason reason)))))
+
 (defn decrypt-page-token
   [opts token]
   (when token
+    ;; Length is checked before any decoding: the envelope is Base64-decoded
+    ;; and EDN-parsed before its AES-GCM tag can be verified, so an unbounded
+    ;; token is unauthenticated CPU and allocation amplification.
     (when-not (and (string? token)
+                   (<= (count token) maximum-page-token-length)
                    (.startsWith ^String token page-token-prefix))
-      (throw (ex-info "Invalid page token." {:token token})))
+      (invalid-page-token! :malformed))
     (try
       (let [{:keys [page-token-keyring]} opts
             envelope (edn/read-string
@@ -168,9 +196,9 @@
             {:keys [v kid nonce ciphertext]} envelope
             key (get page-token-keyring kid)]
         (when-not (= page-token-version v)
-          (throw (ex-info "Unsupported page token version." {:version v})))
+          (invalid-page-token! :unsupported-version {:version v}))
         (when-not key
-          (throw (ex-info "Unknown page token key id." {:kid kid})))
+          (invalid-page-token! :unknown-key-id {:kid kid}))
         (let [header {:v v :kid kid :nonce nonce}
               aad (utf8-bytes (pr-str (canonicalize header)))
               plaintext (decrypt-aead key
@@ -180,16 +208,19 @@
               payload (edn/read-string (String. plaintext StandardCharsets/UTF_8))
               now (now-seconds)]
           (when-not (= page-token-version (:v payload))
-            (throw (ex-info "Unsupported page token payload version."
-                            {:version (:v payload)})))
+            (invalid-page-token! :unsupported-version {:version (:v payload)}))
           (when (and (:exp payload) (<= (:exp payload) now))
-            (throw (ex-info "Expired page token." {:exp (:exp payload)
-                                                   :now now})))
+            (invalid-page-token! :expired {:exp (:exp payload) :now now}))
           payload))
       (catch clojure.lang.ExceptionInfo e
         (throw e))
-      (catch Exception e
-        (throw (ex-info "Invalid page token." {:token token} e))))))
+      ;; edn/read-string on hostile nesting overflows the stack, and a
+      ;; StackOverflowError is an Error: it walked straight out of
+      ;; lookup-resources past every `catch Exception` in the request stack.
+      (catch StackOverflowError _
+        (invalid-page-token! :malformed))
+      (catch Exception _
+        (invalid-page-token! :malformed)))))
 
 (defn page-token
   [opts {:keys [ttl-seconds] :or {ttl-seconds default-page-token-ttl-seconds} :as payload}]
@@ -353,37 +384,53 @@
   (some-> opts :schema-state deref :schema-version str))
 
 (defn- selected-schema-version
+  "The schema generation this operation is bound to.
+
+  `contains?`, not `or`: a historical read against an unstamped basis selects
+  an explicit nil, and falling back to the client's generation there made a
+  cursor minted on an unstamped database fail its own page-two validation."
   [opts]
-  (or (:selected-schema-version opts)
-      (client-schema-version opts)))
+  (if (contains? opts :selected-schema-version)
+    (:selected-schema-version opts)
+    (client-schema-version opts)))
+
+(defn- invalid-cursor!
+  "All cursor-identity rejections share :eacl.pagination/invalid-cursor. Only
+  the database mismatch used to carry a type, so callers could not match the
+  rest without string-matching messages."
+  [message reason data]
+  (throw (ex-info message
+                  (assoc data
+                         :type :eacl.pagination/invalid-cursor
+                         :eacl/error :eacl.pagination/invalid-cursor
+                         :reason reason))))
 
 (defn- validate-page-token-identity!
   [opts op query-shape decoded]
   (when decoded
     (when-not (= (:database-id opts) (:database-id decoded))
-      (throw
-       (ex-info "Page token was created for a different database."
-                {:type :eacl.pagination/invalid-cursor
-                 :eacl/error :eacl.pagination/invalid-cursor
-                 :reason :database-mismatch})))
+      (invalid-cursor! "Page token was created for a different database."
+                       :database-mismatch {}))
     (when-not (= op (:op decoded))
-      (throw (ex-info "Page token was created for a different operation."
-                      {:expected op
-                       :actual (:op decoded)})))
+      (invalid-cursor! "Page token was created for a different operation."
+                       :operation-mismatch
+                       {:expected op :actual (:op decoded)}))
     (when-not (= query-shape (:query-shape decoded))
-      (throw (ex-info "Page token does not match the current query."
-                      {:expected query-shape
-                       :actual (:query-shape decoded)})))
+      (invalid-cursor! "Page token does not match the current query."
+                       :query-mismatch
+                       {:expected query-shape :actual (:query-shape decoded)}))
     (when-not (= :stable (:basis decoded))
-      (throw (ex-info "Unsupported page token basis." {:basis (:basis decoded)})))
+      (invalid-cursor! "Unsupported page token basis."
+                       :unsupported-basis {:basis (:basis decoded)}))
     (when-not (and (integer? (:basis-t decoded))
                    (not (neg? (:basis-t decoded))))
-      (throw (ex-info "Page token has an invalid revision."
-                      {:basis-t (:basis-t decoded)})))
+      (invalid-cursor! "Page token has an invalid revision."
+                       :invalid-revision {:basis-t (:basis-t decoded)}))
     (when-not (or (nil? (:cache-scope decoded))
                   (vector? (:cache-scope decoded)))
-      (throw (ex-info "Page token has an invalid cache proof."
-                      {:cache-scope (:cache-scope decoded)}))))
+      (invalid-cursor! "Page token has an invalid cache proof."
+                       :invalid-cache-scope
+                       {:cache-scope (:cache-scope decoded)})))
   true)
 
 (defn- validate-page-token-schema!
@@ -432,25 +479,56 @@
                #(encode-page-cursor
                  opts op query-shape basis-t cache-scope %)))))
 
+(defn- unresolvable-objects!
+  "A lookup result names entities that have no external id in the database it
+  was evaluated against.
+
+  This is a data-integrity fault, not a cache fault: it fires with {:cache
+  false} too, and the usual cause is an entity retracted without first calling
+  delete-relationships!, leaving a relationship half that still grants. It is
+  reported rather than silently dropped — omitting rows from an authorization
+  enumeration is the more dangerous failure. Every offending eid on the page is
+  listed so one repair pass fixes them all."
+  [op basis-t historical? entity-ids]
+  (throw
+   (ex-info
+    (str "EACL " (name op) " returned " (count entity-ids)
+         " object(s) with no external id"
+         (if historical?
+           (str " at historical basis t=" basis-t ". ")
+           ". ")
+         "The usual cause is an entity retracted without first calling"
+         " delete-relationships!, leaving a relationship half that still grants."
+         " Run eacl.datomic.integrity/dangling-relationship-report to find and"
+         " repair halves whose peer entity is gone.")
+    {:type :eacl/unresolvable-object
+     :eacl/error :eacl/unresolvable-object
+     :operation op
+     :basis-t basis-t
+     :historical? (boolean historical?)
+     :entity-ids (vec entity-ids)})))
+
 (defn- coerce-lookup-page
   ([db opts op query-shape basis-t page]
-   (coerce-lookup-page db opts op query-shape basis-t nil page))
-  ([db opts op query-shape basis-t cache-scope page]
-   (-> page
-       (update :data
-               (fn [data]
-                 (mapv (fn [{:keys [type id]}]
-                         (let [external-id ((:entid->object-id opts) db id)]
-                           (when (nil? external-id)
-                             (snapshot-unavailable!
-                              {:operation op
-                               :revision basis-t
-                               :entity-id id}))
-                           (spice-object type external-id)))
-                       data)))
-       (update :page-info
-               #(encode-page-info
-                 opts op query-shape basis-t cache-scope %)))))
+   (coerce-lookup-page db opts op query-shape basis-t nil false page))
+  ([db opts op query-shape basis-t cache-scope historical? page]
+   (let [entid->object-id (:entid->object-id opts)
+         resolved (mapv (fn [{:keys [type id]}]
+                          [type id (entid->object-id db id)])
+                        (:data page))
+         unresolvable (into [] (comp (filter (fn [[_ _ external-id]]
+                                               (nil? external-id)))
+                                     (map second))
+                            resolved)]
+     (when (seq unresolvable)
+       (unresolvable-objects! op basis-t historical? unresolvable))
+     (-> page
+         (assoc :data (mapv (fn [[type _ external-id]]
+                              (spice-object type external-id))
+                            resolved))
+         (update :page-info
+                 #(encode-page-info
+                   opts op query-shape basis-t cache-scope %))))))
 
 (defn- coerce-relationship-page
   [db opts op query-shape basis-t page]
@@ -607,11 +685,18 @@
 
 (defn- store-cached-answer!
   [opts cache-prefix kind result weight
-   {:keys [basis-t cache-scope schema-version]}]
+   {:keys [mode basis-t cache-scope schema-version]}]
   (let [store (:lookup-cache-store opts)
         namespace (:cache-namespace opts)
         ttl-ms (:lookup-cache-ttl-ms opts)
         exact-key (exact-result-cache-key cache-prefix basis-t)
+        ;; A cursor/exact page is forced to :at-exact-snapshot, and only that
+        ;; mode reads exact-key. Its live entry would be keyed by a query
+        ;; identity containing an :after/:before edge, and every request
+        ;; carrying such an edge takes the historical branch — so the entry
+        ;; could never be read, while still consuming the weight and entry
+        ;; budget that live page-one answers compete for.
+        historical? (= :at-exact-snapshot mode)
         answer {:basis-t basis-t
                 :cache-scope cache-scope
                 :result (portable-result kind result)}]
@@ -619,15 +704,16 @@
       (when (:cache-exact-results? opts)
         (cache/safe-store-entry!
          store namespace exact-key kind answer (+ 128 weight) ttl-ms))
-      (when (and cache-scope (:cache-live-results? opts))
+      (when (and cache-scope (:cache-live-results? opts) (not historical?))
         (cache/safe-store-entry!
          store namespace
          (result-cache-key cache-prefix cache-scope)
          kind answer (+ 128 weight) ttl-ms))
       ;; This is a latency hint, not a correctness proof. An older concurrent
       ;; writer may overwrite it; at-least-as-fresh validates the revision and
-      ;; falls back to the selected DB when the hint is too old.
-      (when (:cache-exact-results? opts)
+      ;; falls back to the selected DB when the hint is too old. A cursor
+      ;; prefix's pointer is unreachable for the same reason as its live entry.
+      (when (and (:cache-exact-results? opts) (not historical?))
         (cache/safe-store-entry!
          store namespace
          (latest-result-cache-key cache-prefix)
@@ -669,8 +755,12 @@
         live? (:cache-live-results? opts)
         exact? (:cache-exact-results? opts)]
     (cond
+      ;; portable-result even when nothing is retained, so a caller's result
+      ;; shape does not depend on cache configuration. Without it :lookup-page
+      ;; data was SpiceObject records with caching off and plain maps with it
+      ;; on — a trap for any consumer that comes to rely on record type.
       (and (not live?) (not exact?))
-      (assoc consistency-context :result (compute))
+      (assoc consistency-context :result (portable-result kind (compute)))
 
       :else
       (let [cache-prefix (result-cache-prefix
@@ -697,7 +787,14 @@
                            opts cache-prefix kind valid-result?
                            % basis-t))
             hit (case mode
-                  :fully-consistent (current-hit)
+                  ;; exact-hit is a sound fallback here, not a staleness
+                  ;; window: exact-key pins database-id, schema generation,
+                  ;; operation, query identity AND basis-t, and two
+                  ;; connection-backed DB values of one database at the same
+                  ;; basis-t are the same value. Without it, :exact-results?
+                  ;; wrote an entry on every call that the default consistency
+                  ;; mode could never read.
+                  :fully-consistent (or (current-hit) (exact-hit))
                   :minimize-latency (latest-hit nil)
                   :at-least-as-fresh (latest-hit requested-t)
                   :at-exact-snapshot (exact-hit))]
@@ -798,6 +895,11 @@
          (fn [db] {:db db})
          :read-relationships decoded)
         selected-opts (assoc opts :selected-schema-version schema-version)
+        ;; Validated before the empty-page short-circuit, so a cursor from
+        ;; another schema generation raises :eacl.pagination/stale-schema here
+        ;; exactly as it does in the lookups, instead of quietly reading as an
+        ;; empty page whenever the filter also names a missing object.
+        _ (validate-page-token-schema! selected-opts decoded)
         subject-id   (:subject/id filters)
         resource-id  (:resource/id filters)
         subject-eid  (when (some? subject-id) (object-id->entid db subject-id))
@@ -812,10 +914,9 @@
                            subject-id (assoc :subject/id subject-eid)
                            resource-id (assoc :resource/id resource-eid))
             internal-query (internal-page-query filters' page-req decoded)]
-        (validate-page-token-schema! selected-opts decoded)
         (coerce-relationship-page
          db selected-opts :read-relationships query-shape basis-t
-                                  (impl/read-relationships db internal-query))))))
+         (impl/read-relationships db internal-query))))))
 
 (defn- resolve-existing-object
   "Resolves an external spice object to its internal eid, verifying the entity
@@ -880,12 +981,17 @@
   (coordinate-relationship-mutation
    relationship-coordinator
    (fn []
-       (let [db (d/db conn)
+     (let [db (d/db conn)
+           ;; Endpoint resolution and :create conflict detection run BEFORE
+           ;; mutation-attempted!: an :eacl/unknown-object or
+           ;; :eacl/relationship-conflict here commits nothing, so it must not
+           ;; invalidate the coherence scope's cached results.
            tx-data (->> updates
                         (S/transform [S/ALL :relationship]
                                      #(spice-relationship->internal db opts %))
                         (mapcat #(impl/tx-update-relationship db %))
                         (remove nil?))
+           _ (cache/mutation-attempted!)
            {:keys [db-after tx-data]} @(d/transact conn tx-data)
            basis (d/basis-t db-after)
            changes (relationship-changes db-after tx-data)]
@@ -905,19 +1011,6 @@
          ~@body)
        (do ~@body))))
 
-(defmacro ^:private with-client-schema-read
-  "Runs one client operation against its latched schema generation. The read
-  lock permits concurrent authorization calls while excluding write-schema!'s
-  transaction-and-cache-swap window."
-  [schema-lock schema-state & body]
-  `(let [^Lock lock# (.readLock ^ReentrantReadWriteLock ~schema-lock)]
-     (.lock lock#)
-     (try
-       (binding [impl.indexed/*schema-cache* (deref ~schema-state)]
-         ~@body)
-       (finally
-         (.unlock lock#)))))
-
 (defmacro ^:private with-client-schema-write
   [schema-lock & body]
   `(let [^Lock lock# (.writeLock ^ReentrantReadWriteLock ~schema-lock)]
@@ -927,11 +1020,49 @@
        (finally
          (.unlock lock#)))))
 
+(defn- adopt-schema-generation!
+  "Promotes a still-unstamped client to the database's schema generation.
+
+  A client constructed before the first write-schema! latches a nil generation
+  for life unless write-schema! is called through it. That is not merely
+  \"uncached\": a nil generation mints page tokens the client then rejects on
+  page two, because its own historical branch derives the real stamp from the
+  as-of database. Adopting the stamp the first time one is visible fixes
+  pagination and enables caching.
+
+  The :eacl/schema-version read happens ONLY while the client is unstamped; a
+  stamped client never performs it, so the one-read-per-generation contract is
+  preserved for every normal client."
+  [conn schema-state schema-lock]
+  (when (nil? (:schema-version @schema-state))
+    (when-let [version (impl.indexed/schema-version (d/db conn))]
+      (with-client-schema-write schema-lock
+        (when (nil? (:schema-version @schema-state))
+          (reset! schema-state
+                  (impl.indexed/make-schema-cache (d/db conn) version))))))
+  nil)
+
+(defmacro ^:private with-client-schema-read
+  "Runs one client operation against its latched schema generation. The read
+  lock permits concurrent authorization calls while excluding write-schema!'s
+  transaction-and-cache-swap window."
+  [conn schema-lock schema-state & body]
+  `(do
+     (adopt-schema-generation! ~conn ~schema-state ~schema-lock)
+     (let [^Lock lock# (.readLock ^ReentrantReadWriteLock ~schema-lock)]
+       (.lock lock#)
+       (try
+         (binding [impl.indexed/*schema-cache* (deref ~schema-state)]
+           ~@body)
+         (finally
+           (.unlock lock#))))))
+
 (defn- capture-result-context
   "Captures one DB and its matching relationship proof under the read barrier.
 
-  Targeted waits happen outside the short barrier. A cursor or exact request
-  uses a historical DB and request-scoped schema cache."
+  The barrier covers only the coordinator-snapshot/DB pair. Targeted waits,
+  permission-path resolution and the dependency proof happen outside it. A
+  cursor or exact request uses a historical DB and request-scoped schema cache."
   [conn opts consistency-value coordinate? prepare operation decoded]
   (let [{:keys [mode requested-t]}
         (consistency-request opts consistency-value)
@@ -976,39 +1107,47 @@
             _ (await-revision-db conn opts minimum-t)
             coordinator (when coordinate?
                           (:relationship-coordinator opts))
-            capture
-            (fn [snapshot]
-              (let [db (d/db conn)
-                    observed-t (d/basis-t db)
+            ;; ONLY the (snapshot, db) pair needs the barrier: a writer must
+            ;; not be able to commit and publish between those two reads.
+            ;; `prepare` and the dependency proof are pure functions of that
+            ;; immutable pair, so they run outside it — holding the barrier
+            ;; across permission-path resolution made every relationship write
+            ;; queue behind unrelated readers.
+            [snapshot db]
+            (loop [attempt 0]
+              (let [[snapshot db :as pair]
+                    (if coordinator
+                      (cache/with-read coordinator
+                        (fn [snapshot] [snapshot (d/db conn)]))
+                      [nil (d/db conn)])
                     coordinator-floor (:observed-t snapshot)]
                 (if (and coordinator-floor
-                         (< observed-t coordinator-floor))
-                  {:retry-at coordinator-floor}
-                  (let [{:keys [relationship-dependencies] :as prepared}
-                        (prepare db)
-                        cache-scope
-                        (if snapshot
-                          [:relationships
-                           (cache/dependency-generation
-                            snapshot
-                            relationship-dependencies)]
-                          [:basis observed-t])]
-                    (revision/observe! (:revision-checkpoints opts) observed-t)
-                    (assoc prepared
-                           :mode mode
-                           :requested-t requested-t
-                           :basis-t observed-t
-                           :cache-scope cache-scope
-                           :schema-version (client-schema-version opts))))))]
-        (if coordinator
-          (loop []
-            (let [captured (cache/with-read coordinator capture)]
-              (if-let [retry-at (:retry-at captured)]
-                (do
-                  (await-revision-db conn opts retry-at)
-                  (recur))
-                captured)))
-          (capture nil))))))
+                         (< (d/basis-t db) coordinator-floor))
+                  (if (< attempt max-coordinator-catchup-attempts)
+                    (do
+                      (await-revision-db conn opts coordinator-floor)
+                      (recur (inc attempt)))
+                    (freshness-unavailable!
+                     "This connection could not reach the coordinator's published EACL revision."
+                     {:reason :coordinator-floor-unreachable
+                      :requested-t coordinator-floor
+                      :observed-t (d/basis-t db)
+                      :attempts attempt}))
+                  pair)))
+            observed-t (d/basis-t db)
+            {:keys [relationship-dependencies] :as prepared} (prepare db)
+            cache-scope
+            (if snapshot
+              [:relationships
+               (cache/dependency-generation snapshot relationship-dependencies)]
+              [:basis observed-t])]
+        (revision/observe! (:revision-checkpoints opts) observed-t)
+        (assoc prepared
+               :mode mode
+               :requested-t requested-t
+               :basis-t observed-t
+               :cache-scope cache-scope
+               :schema-version (client-schema-version opts))))))
 
 (defn- with-result-schema
   [{:keys [schema-cache]} f]
@@ -1025,45 +1164,48 @@
 
   The object's own entity is left alone — retract it yourself once this
   returns (or in the same application transaction, using
-  eacl.datomic.impl/tx-delete-object directly)."
-  [conn {:keys [object-id->entid relationship-coordinator] :as _opts} object]
-  (coordinate-relationship-mutation
-   relationship-coordinator
-   (fn []
-     (let [object-id (if (map? object) (:id object) object)
-           db        (d/db conn)
-           eid       (or (try (object-id->entid db object-id)
-                              (catch Exception _ nil))
-                         ;; A retracted entity no longer resolves through the
-                         ;; caller's id coercion, but its raw eid still cleans up.
-                         (when (number? object-id) object-id))
-           tx-data   (impl/tx-delete-object db eid)]
-       (if (empty? tx-data)
-         [{:zed/token (revision/zed-token
-                       _opts
-                       (:database-id _opts)
-                       (d/basis-t db))
-           :retracted-datoms 0}
-          nil]
-         (loop [batches   (partition-all delete-object-batch-size tx-data)
-                retracted 0
-                basis-t   nil
-                changes   #{}]
-           (if-let [batch (first batches)]
-             (let [{:keys [db-after tx-data]} @(d/transact conn (vec batch))]
-               (recur (next batches)
-                      (+ retracted
-                         (relationship-retraction-count
-                          db-after tx-data))
-                      (d/basis-t db-after)
-                      (into changes (relationship-changes db-after tx-data))))
-             [{:zed/token (revision/zed-token
-                           _opts
-                           (:database-id _opts)
-                           basis-t)
-               :retracted-datoms retracted}
-              {:dependency-keys changes
-               :basis-t basis-t}])))))))
+  eacl.datomic.impl/tx-delete-object directly).
+
+  The coordinator barrier is taken PER BATCH, not once around the whole loop.
+  Holding it across every batch blocked all concurrent lookups for the full
+  multi-transaction delete (measured 277ms for 20k relationships in-memory,
+  and far worse against a real transactor). Per-batch publication is equally
+  coherent: the batches are separate Datomic transactions either way, so a
+  reader between them already observes a partially deleted object, and each
+  batch publishes its own committed t for the relations it actually changed."
+  [conn {:keys [object-id->entid relationship-coordinator] :as opts} object]
+  (let [object-id (if (map? object) (:id object) object)
+        db        (d/db conn)
+        eid       (or (try (object-id->entid db object-id)
+                           (catch Exception _ nil))
+                      ;; A retracted entity no longer resolves through the
+                      ;; caller's id coercion, but its raw eid still cleans up.
+                      (when (number? object-id) object-id))
+        tx-data   (impl/tx-delete-object db eid)]
+    (if (empty? tx-data)
+      {:zed/token (revision/zed-token opts (:database-id opts) (d/basis-t db))
+       :retracted-datoms 0}
+      (loop [batches   (partition-all delete-object-batch-size tx-data)
+             retracted 0
+             basis-t   nil]
+        (if-let [batch (first batches)]
+          (let [[batch-retracted batch-basis]
+                (coordinate-relationship-mutation
+                 relationship-coordinator
+                 (fn []
+                   (cache/mutation-attempted!)
+                   (let [{:keys [db-after tx-data]} @(d/transact conn (vec batch))
+                         basis (d/basis-t db-after)
+                         changes (relationship-changes db-after tx-data)]
+                     [[(relationship-retraction-count db-after tx-data) basis]
+                      (when (seq changes)
+                        {:dependency-keys changes
+                         :basis-t basis})])))]
+            (recur (next batches)
+                   (+ retracted batch-retracted)
+                   batch-basis))
+          {:zed/token (revision/zed-token opts (:database-id opts) basis-t)
+           :retracted-datoms retracted})))))
 
 (defn spiceomic-can?
   [conn {:keys [object->entid] :as opts}
@@ -1159,8 +1301,9 @@
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
+            same-basis? (= selected-basis (d/basis-t db))
             selected-db
-            (if (= selected-basis (d/basis-t db))
+            (if same-basis?
               db
               (historical-db
                conn selected-opts selected-basis :lookup-resources))
@@ -1170,6 +1313,12 @@
         (coerce-lookup-page
          selected-db selected-opts :lookup-resources query-shape
          selected-basis token-scope
+         ;; Historical when a cursor/exact request pinned an older basis, or
+         ;; when a staleness mode selected an older cached answer to coerce
+         ;; against. Only then is an unresolvable eid a snapshot-age question
+         ;; rather than a live data-integrity fault.
+         (or (not same-basis?)
+             (= :at-exact-snapshot (:mode result-context)))
          internal-page)))))
 
 (defn- empty-count-response
@@ -1272,8 +1421,9 @@
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
+            same-basis? (= selected-basis (d/basis-t db))
             selected-db
-            (if (= selected-basis (d/basis-t db))
+            (if same-basis?
               db
               (historical-db
                conn selected-opts selected-basis :lookup-subjects))
@@ -1283,6 +1433,12 @@
         (coerce-lookup-page
          selected-db selected-opts :lookup-subjects query-shape
          selected-basis token-scope
+         ;; Historical when a cursor/exact request pinned an older basis, or
+         ;; when a staleness mode selected an older cached answer to coerce
+         ;; against. Only then is an unresolvable eid a snapshot-age question
+         ;; rather than a live data-integrity fault.
+         (or (not same-basis?)
+             (= :at-exact-snapshot (:mode result-context)))
          internal-page)))))
 
 (defn spiceomic-count-subjects
@@ -1322,20 +1478,20 @@
 (defrecord Spiceomic [conn opts schema-state schema-lock]
   IAuthorization
   (can? [_ subject permission resource]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-can? conn opts subject permission resource consistency/fully-consistent)))
 
   (can? [_ subject permission resource consistency]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-can? conn opts subject permission resource consistency)))
 
   (can? [_ {:keys [subject permission resource consistency]}]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-can? conn opts subject permission resource
                       (or consistency consistency/fully-consistent))))
 
   (read-schema [_]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (schema/read-schema (d/db conn))))
 
   (write-schema! [_ schema-string]
@@ -1352,53 +1508,53 @@
         deltas)))
 
   (read-relationships [_ filters]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-read-relationships conn opts filters)))
 
   (write-relationships! [_ updates]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts updates)))
 
   (create-relationships! [_ relationships]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       (for [rel relationships]
                                         (->RelationshipUpdate :create rel)))))
 
   (create-relationship! [_ relationship]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       [(->RelationshipUpdate :create relationship)])))
 
   (create-relationship! [_ subject relation resource]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       [(->RelationshipUpdate :create (->Relationship subject relation resource))])))
 
   ;; Audit §13: these were declared on the protocol but unimplemented ->
   ;; AbstractMethodError at runtime.
   (write-relationship! [_ operation subject relation resource]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       [(->RelationshipUpdate operation (->Relationship subject relation resource))])))
 
   (write-relationship! [_ {:keys [operation subject relation resource]}]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       [(->RelationshipUpdate operation (->Relationship subject relation resource))])))
 
   (delete-relationship! [_ subject relation resource]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       [(->RelationshipUpdate :delete (->Relationship subject relation resource))])))
 
   (delete-relationship! [_ {:keys [subject relation resource]}]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-write-relationships! conn opts
                                       [(->RelationshipUpdate :delete (->Relationship subject relation resource))])))
 
   (delete-relationships! [_ relationships]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (let [relationships' (if (map? relationships)
                              (:data relationships)
                              relationships)]
@@ -1407,26 +1563,26 @@
                                           (->RelationshipUpdate :delete rel))))))
 
   (delete-object! [_ object]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (spiceomic-delete-object! conn opts object)))
 
   (lookup-resources [_ query]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
         (spiceomic-lookup-resources conn opts query))))
 
   (count-resources [_ query]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
         (spiceomic-count-resources conn opts query))))
 
   (lookup-subjects [_ query]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
         (spiceomic-lookup-subjects conn opts query))))
 
   (count-subjects [_ query]
-    (with-client-schema-read schema-lock schema-state
+    (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
         (spiceomic-count-subjects conn opts query))))
 
