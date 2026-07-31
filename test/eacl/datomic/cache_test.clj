@@ -71,103 +71,6 @@
                  store large-key :count {:count 1 :limit -1} 1 10000)))
     (is (zero? (:entries (cache/stats store))))))
 
-(deftest relationship-coordinator-advances-only-on-change-test
-  (let [coordinator (cache/local-coordinator {:incarnation "test"})]
-    (is (= {:incarnation "test" :uncertain 0 :revision 0}
-           (cache/generation coordinator)))
-    (is (= :unchanged
-           (cache/with-mutation coordinator (fn [] [:unchanged nil]))))
-    (is (= {:incarnation "test" :uncertain 0 :revision 0}
-           (cache/generation coordinator)))
-    (is (= :changed
-           (cache/with-mutation coordinator
-                                (fn [] [:changed {:dependency-keys #{10 20}
-                                                  :basis-t 101}]))))
-    (is (= {:incarnation "test" :uncertain 0 :revision 101}
-           (cache/generation coordinator)))
-    (is (= {:incarnation "test" :uncertain 0 :revision 101}
-           (cache/generation coordinator #{10 20})))
-    (is (= [101 :read]
-           (cache/with-read coordinator
-                            (fn [snapshot]
-                              [(:observed-t snapshot) :read]))))
-    (cache/with-mutation coordinator
-                         (fn [] [:other {:dependency-keys #{30}
-                                         :basis-t 107}]))
-    (is (= {:incarnation "test" :uncertain 0 :revision 101}
-           (cache/generation coordinator #{10 20})))
-    (is (= {:incarnation "test" :uncertain 0 :revision 107}
-           (cache/generation coordinator #{30})))))
-
-(deftest relationship-coordinator-fails-closed-after-an-attempted-write-test
-  (let [coordinator (cache/local-coordinator)
-        before (cache/generation coordinator [10])]
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"after commit"
-         (cache/with-mutation
-          coordinator
-          (fn []
-            (cache/mutation-attempted!)
-            (throw (ex-info "after commit" {}))))))
-    (is (not= before (cache/generation coordinator [10]))
-        "an uncertain helper outcome invalidates every prior live result")))
-
-(deftest relationship-coordinator-keeps-results-after-a-pre-write-failure-test
-  ;; A :create conflict or an unknown object id is detected before any
-  ;; transaction is submitted, so the database is unchanged and every cached
-  ;; result is still valid. Invalidating here held the live cache at a 0% hit
-  ;; rate for any caller who could trigger an ordinary application error.
-  (let [coordinator (cache/local-coordinator)
-        before (cache/generation coordinator [10])]
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"before commit"
-         (cache/with-mutation
-          coordinator
-          (fn []
-            (throw (ex-info "before commit" {}))))))
-    (is (= before (cache/generation coordinator [10]))
-        "validation that committed nothing must not invalidate live results")))
-
-(deftest relationship-coordinator-excludes-read-write-publication-races-test
-  (let [coordinator (cache/local-coordinator)
-        writer-entered (promise)
-        release-writer (promise)
-        reader-finished (promise)
-        writer (future
-                 (cache/with-mutation
-                  coordinator
-                  (fn []
-                    (deliver writer-entered true)
-                    @release-writer
-                    [:written {:dependency-keys #{10}
-                               :basis-t 1}])))
-        _ @writer-entered
-        reader (future
-                 (cache/with-read
-                  coordinator
-                  (fn [snapshot]
-                    (deliver reader-finished (:observed-t snapshot))
-                    (:observed-t snapshot))))]
-    (is (= ::blocked (deref reader-finished 50 ::blocked))
-        "a read cannot publish against the old generation during a write")
-    (deliver release-writer true)
-    (is (= :written @writer))
-    (is (= 1 @reader))
-    (is (= 1 @reader-finished))))
-
-(deftest local-context-owns-independent-explicit-coordinators-test
-  (let [context-a (cache/local-context)
-        context-b (cache/local-context)]
-    (testing "one context contains the store and coordinator consumers pass"
-      (is (satisfies? cache/CacheStore (:store context-a)))
-      (is (satisfies? cache/RelationshipCoordinator
-                      (:coordinator context-a))))
-    (testing "there is no implicit process-global coherence scope"
-      (is (not (identical? (:coordinator context-a)
-                           (:coordinator context-b)))))))
-
 (deftest cache-entry-wrapper-rejects-mismatches-test
   (let [store (cache/local-store)
         key [:result :db :query]
@@ -239,19 +142,6 @@
     (is (nil?
          (cache/safe-record-provider-error!
           hostile :lookup :can?)))))
-
-(deftest dependency-generation-compresses-to-safe-maximum-test
-  (let [snapshot {:incarnation "inc"
-                  :uncertain 3
-                  :dependencies {10 100
-                                 20 70
-                                 30 110}}]
-    (is (= {:incarnation "inc" :uncertain 3 :revision 100}
-           (cache/dependency-generation snapshot [10 20])))
-    (is (= {:incarnation "inc" :uncertain 3 :revision 110}
-           (cache/dependency-generation
-            (assoc-in snapshot [:dependencies 20] 110)
-            [10 20])))))
 
 (deftest local-store-is-kind-aware-and-frequency-admitted-test
   (let [store (cache/local-store {:max-weight 10000

@@ -41,12 +41,6 @@
   16384)
 (def ^:private default-page-token-ttl-seconds 300)
 (def ^:private default-consistency-sync-timeout-ms 30000)
-(def ^:private max-coordinator-catchup-attempts
-  "Bounds the reader's catch-up loop when a shared coordinator has published a
-  revision this connection has not observed. Each attempt is itself bounded by
-  :consistency-sync-timeout-ms; without a cap, sustained write load could keep
-  a reader retrying indefinitely with no deadline of its own."
-  16)
 (def ^:private maximum-token-key-id-length 128)
 (def ^:private secure-random (SecureRandom.))
 
@@ -446,9 +440,13 @@
   (canonicalize
    {:op op
     :basis :stable
+    ;; :cache is excluded for the same reason as :consistency: it selects HOW
+    ;; the answer is obtained, not WHICH answer. Leaving it in would make a
+    ;; page-2 request that omits it fail validation against a page-1 token
+    ;; minted with it — which is the exact failure :consistency already caused.
     :query (dissoc query
                    :first :last :after :before
-                   :cursor :limit :page/basis :consistency)}))
+                   :cursor :limit :page/basis :consistency :cache)}))
 
 (defn- list-query-shape
   [op query]
@@ -792,11 +790,6 @@
       (when (and (:cache-exact-results? opts) exact-key)
         (cache/safe-store-entry!
          store namespace exact-key kind answer (+ 128 weight) ttl-ms))
-      (when (and cache-scope (:cache-live-results? opts) (not historical?))
-        (cache/safe-store-entry!
-         store namespace
-         (result-cache-key cache-prefix cache-scope)
-         kind answer (+ 128 weight) ttl-ms))
       ;; This is a latency hint, not a correctness proof. An older concurrent
       ;; writer may overwrite it; at-least-as-fresh validates the revision and
       ;; falls back to the selected DB when the hint is too old. A cursor
@@ -846,33 +839,21 @@
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [{:keys [mode basis-t cache-epoch requested-t cache-scope]}
         consistency-context
-        live? (:cache-live-results? opts)
         exact? (:cache-exact-results? opts)]
     (cond
       ;; portable-result even when nothing is retained, so a caller's result
       ;; shape does not depend on cache configuration. Without it :lookup-page
       ;; data was SpiceObject records with caching off and plain maps with it
       ;; on — a trap for any consumer that comes to rely on record type.
-      (and (not live?) (not exact?))
+      (not exact?)
       (assoc consistency-context :result (portable-result kind (compute)))
 
       :else
       (let [cache-prefix (result-cache-prefix
                           opts op query-identity
                           (:schema-version consistency-context))
-            live-key (when (and live? cache-scope)
-                       (result-cache-key cache-prefix cache-scope))
             exact-key (when (and exact? cache-epoch)
                         (exact-result-cache-key cache-prefix cache-epoch))
-            current-hit #(when live-key
-                           (some-> (cached-answer
-                                    opts live-key kind valid-result?
-                                    {:cache-scope cache-scope})
-                                   ;; A live proof establishes EACL
-                                   ;; equivalence at the caller's selected
-                                   ;; local revision.
-                                   (assoc :basis-t basis-t
-                                          :cache-scope cache-scope)))
             exact-hit #(when exact-key
                          (some-> (cached-answer opts exact-key kind valid-result?
                                                 {:epoch cache-epoch})
@@ -895,7 +876,7 @@
                   ;; basis-t are the same value. Without it, :exact-results?
                   ;; wrote an entry on every call that the default consistency
                   ;; mode could never read.
-                  :fully-consistent (or (current-hit) (exact-hit))
+                  :fully-consistent (exact-hit)
                   :minimize-latency (latest-hit nil)
                   :at-least-as-fresh (latest-hit requested-t)
                   :at-exact-snapshot (exact-hit))]
@@ -1011,7 +992,7 @@
            opts :read-relationships query-shape decoded)
         {:keys [db basis-t schema-version]}
         (capture-result-context
-         conn opts (:consistency filters) false
+         conn opts (:consistency filters)
          (fn [db] {:db db})
          :read-relationships decoded)
         selected-opts (assoc opts :selected-schema-version schema-version)
@@ -1088,37 +1069,28 @@
                     (contains? attr-eids a)))
              tx-data))))
 
-(defn- coordinate-relationship-mutation
-  [coordinator f]
-  (if coordinator
-    (cache/with-mutation coordinator f)
-    (first (f))))
-
 (defn spiceomic-write-relationships!
-  [conn {:keys [relationship-coordinator] :as opts} updates]
+  "Writes relationships and returns a zed token for the committed revision.
+
+  There is no cache bookkeeping here. A write used to run inside a coordinator
+  mutation that published which relations it touched, and had to distinguish
+  validation failures (which commit nothing) from a possibly-committed throw so
+  an ordinary :eacl/relationship-conflict did not flush every cached result.
+  The tx-data itself now carries that publication as :eacl/relation-version
+  stamps, so a transaction that never commits announces nothing by
+  construction."
+  [conn opts updates]
   (doseq [{:keys [operation]} updates]
     (impl/validate-relationship-operation! operation))
-  (coordinate-relationship-mutation
-   relationship-coordinator
-   (fn []
-     (let [db (d/db conn)
-           ;; Endpoint resolution and :create conflict detection run BEFORE
-           ;; mutation-attempted!: an :eacl/unknown-object or
-           ;; :eacl/relationship-conflict here commits nothing, so it must not
-           ;; invalidate the coherence scope's cached results.
-           tx-data (->> updates
-                        (S/transform [S/ALL :relationship]
-                                     #(spice-relationship->internal db opts %))
-                        (mapcat #(impl/tx-update-relationship db %))
-                        (remove nil?))
-           _ (cache/mutation-attempted!)
-           {:keys [db-after tx-data]} @(d/transact conn tx-data)
-           basis (d/basis-t db-after)
-           changes (relationship-changes db-after tx-data)]
-       [{:zed/token (revision/zed-token opts (:database-id opts) basis)}
-        (when (seq changes)
-          {:dependency-keys changes
-           :basis-t basis})]))))
+  (let [db (d/db conn)
+        tx-data (->> updates
+                     (S/transform [S/ALL :relationship]
+                                  #(spice-relationship->internal db opts %))
+                     (mapcat #(impl/tx-update-relationship db %))
+                     (remove nil?))
+        {:keys [db-after]} @(d/transact conn tx-data)]
+    {:zed/token (revision/zed-token opts (:database-id opts)
+                                    (d/basis-t db-after))}))
 
 (defmacro ^:private with-recursive-limits
   "Applies the client's :recursive-traversal-limits, if configured, for the
@@ -1178,29 +1150,47 @@
            (.unlock lock#))))))
 
 (defn- needs-relationship-dependencies?
-  "Whether this client has a consumer for a query's relation dependency set.
+  "Whether anything this client caches needs a query's relation dependency set.
 
-  There are two, and they used to be guarded inconsistently — some call sites
-  tested :cache-live-results?, others :relationship-coordinator:
-
-    - the live coordinator proof, and
-    - the per-relation exact epoch, which is what scopes invalidation to the
-      relations an answer actually reads.
-
-  Resolving the set is a memoised map lookup on a stamped client, so the test
-  is about avoiding work on a cacheless client, not about hot-path cost."
+  Both consumers derive from it: the exact-result epoch, and the cache scope
+  that keys recursive continuations and cursors. Resolving the set is a
+  memoised map lookup on a stamped client, so this test is about skipping work
+  on a cacheless client, not about hot-path cost."
   [opts]
-  (boolean (or (:cache-live-results? opts)
-               (:relationship-coordinator opts)
-               (:cache-exact-results? opts))))
+  (boolean (or (:cache-exact-results? opts)
+               (:lookup-cache-store opts))))
+
+(defn- request-cache-opts
+  "Validates and applies a per-request `:cache` override to the client's opts.
+
+  `false` bypasses the cache for this one call: nothing is read from it and
+  nothing is written to it, exactly as if the client had been built with
+  `{:cache false}`. Any other value (including absent) uses the client's own
+  configuration.
+
+  Everything downstream is already guarded on the store and the
+  :cache-exact-results? flag, so clearing those two is the whole mechanism —
+  there is no separate bypass path to keep correct. Cursors still work: a page
+  token is minted and validated from the request, not from the cache."
+  [opts cache-option]
+  (when-not (or (nil? cache-option) (boolean? cache-option))
+    (throw (ex-info "EACL Error: per-request :cache must be true or false."
+                    {:type :eacl/invalid-request
+                     :key :cache
+                     :value cache-option})))
+  (if (false? cache-option)
+    (assoc opts
+           :lookup-cache-store nil
+           :cache-exact-results? false)
+    opts))
 
 (defn- capture-result-context
-  "Captures one DB and its matching relationship proof under the read barrier.
+  "Captures one DB and the cache proof that matches it.
 
-  The barrier covers only the coordinator-snapshot/DB pair. Targeted waits,
-  permission-path resolution and the dependency proof happen outside it. A
-  cursor or exact request uses a historical DB and request-scoped schema cache."
-  [conn opts consistency-value coordinate? prepare operation decoded]
+  A cursor or exact request uses a historical DB and a request-scoped schema
+  cache; everything else reads the current value once. The proof is derived
+  from that same db value, so there is no barrier and nothing to synchronise."
+  [conn opts consistency-value prepare operation decoded]
   (let [{:keys [mode requested-t]}
         (consistency-request opts consistency-value)
         cursor-t (:basis-t decoded)
@@ -1246,57 +1236,37 @@
       (let [minimum-t (when (= :at-least-as-fresh mode)
                         requested-t)
             _ (await-revision-db conn opts minimum-t)
-            coordinator (when coordinate?
-                          (:relationship-coordinator opts))
-            ;; ONLY the (snapshot, db) pair needs the barrier: a writer must
-            ;; not be able to commit and publish between those two reads.
-            ;; `prepare` and the dependency proof are pure functions of that
-            ;; immutable pair, so they run outside it — holding the barrier
-            ;; across permission-path resolution made every relationship write
-            ;; queue behind unrelated readers.
-            [snapshot db]
-            (loop [attempt 0]
-              (let [[snapshot db :as pair]
-                    (if coordinator
-                      (cache/with-read coordinator
-                        (fn [snapshot] [snapshot (d/db conn)]))
-                      [nil (d/db conn)])
-                    coordinator-floor (:observed-t snapshot)]
-                (if (and coordinator-floor
-                         (< (d/basis-t db) coordinator-floor))
-                  (if (< attempt max-coordinator-catchup-attempts)
-                    (do
-                      (await-revision-db conn opts coordinator-floor)
-                      (recur (inc attempt)))
-                    (freshness-unavailable!
-                     "This connection could not reach the coordinator's published EACL revision."
-                     {:reason :coordinator-floor-unreachable
-                      :requested-t coordinator-floor
-                      :observed-t (d/basis-t db)
-                      :attempts attempt}))
-                  pair)))
+            ;; One db value, read once. There used to be a read barrier here
+            ;; pairing this value with a relationship-coordinator snapshot, plus
+            ;; a bounded catch-up loop for a reader behind the coordinator's
+            ;; published floor. Both existed to make an in-process proof cohere
+            ;; with Datomic; per-relation stamps live IN the db value, so the
+            ;; value is the proof and there is nothing to synchronise.
+            db (d/db conn)
             observed-t (d/basis-t db)
             {:keys [relationship-dependencies] :as prepared} (prepare db)
-            cache-scope
-            (if snapshot
-              [:relationships
-               (cache/dependency-generation snapshot relationship-dependencies)]
-              [:basis observed-t])]
+            ;; The max relation stamp over exactly what this answer depends on,
+            ;; read from the same db value. An unrelated application write
+            ;; leaves it alone, and so does churn on an EACL relation this
+            ;; answer does not read. Any write that CAN affect the answer moves
+            ;; it, whichever process or connection made it, because the stamp is
+            ;; transacted with the relationship datoms.
+            cache-epoch (watermark/safe-epoch-for
+                         (:cache-epoch-state opts) db
+                         relationship-dependencies)]
         (revision/observe! (:revision-checkpoints opts) observed-t)
         (assoc prepared
                :mode mode
                :requested-t requested-t
                :basis-t observed-t
-               ;; The max relation stamp over exactly what this answer depends
-               ;; on, read from the same db value. An unrelated application
-               ;; write leaves it alone, and so does churn on an EACL relation
-               ;; this answer does not read. Any write that CAN affect the
-               ;; answer moves it, whichever process or connection made it,
-               ;; because the stamp is transacted with the relationship datoms.
-               :cache-epoch (watermark/safe-epoch-for
-                             (:cache-epoch-state opts) db
-                             relationship-dependencies)
-               :cache-scope cache-scope
+               :cache-epoch cache-epoch
+               ;; Continuations and cursors pin the same proof. Falling back to
+               ;; the basis when no epoch can be established keeps them correct
+               ;; on a database without relation stamps, at that basis's much
+               ;; coarser hit rate.
+               :cache-scope (if cache-epoch
+                              [:relations cache-epoch]
+                              [:basis observed-t])
                :schema-version (client-schema-version opts))))))
 
 (defn- with-result-schema
@@ -1316,14 +1286,13 @@
   returns (or in the same application transaction, using
   eacl.datomic.impl/tx-delete-object directly).
 
-  The coordinator barrier is taken PER BATCH, not once around the whole loop.
-  Holding it across every batch blocked all concurrent lookups for the full
-  multi-transaction delete (measured 277ms for 20k relationships in-memory,
-  and far worse against a real transactor). Per-batch publication is equally
-  coherent: the batches are separate Datomic transactions either way, so a
-  reader between them already observes a partially deleted object, and each
-  batch publishes its own committed t for the relations it actually changed."
-  [conn {:keys [object-id->entid relationship-coordinator] :as opts} object]
+  Batches are separate Datomic transactions, so a reader between them already
+  observes a partially deleted object; each batch stamps the relations it
+  actually retracted. This used to hold a coordinator barrier per batch — and
+  before that, one across the whole loop, which blocked every concurrent lookup
+  for the full multi-transaction delete (277ms for 20k relationships in-memory,
+  far worse against a real transactor). No barrier is taken now."
+  [conn {:keys [object-id->entid] :as opts} object]
   (let [object-id (if (map? object) (:id object) object)
         db        (d/db conn)
         eid       (or (try (object-id->entid db object-id)
@@ -1339,26 +1308,16 @@
              retracted 0
              basis-t   nil]
         (if-let [batch (first batches)]
-          (let [[batch-retracted batch-basis]
-                (coordinate-relationship-mutation
-                 relationship-coordinator
-                 (fn []
-                   (cache/mutation-attempted!)
-                   ;; Each batch must publish the relations IT changes:
-                   ;; tx-delete-object deduplicates stamps across the whole
-                   ;; result, so without this a later batch retracts
-                   ;; relationships while announcing nothing.
-                   (let [{:keys [db-after tx-data]}
-                         @(d/transact conn (impl/stamp-relation-versions batch))
-                         basis (d/basis-t db-after)
-                         changes (relationship-changes db-after tx-data)]
-                     [[(relationship-retraction-count db-after tx-data) basis]
-                      (when (seq changes)
-                        {:dependency-keys changes
-                         :basis-t basis})])))]
+          ;; Each batch must publish the relations IT changes:
+          ;; tx-delete-object deduplicates stamps across the whole result, so
+          ;; without this a later batch retracts relationships while announcing
+          ;; nothing.
+          (let [{:keys [db-after tx-data]}
+                @(d/transact conn (impl/stamp-relation-versions batch))]
             (recur (next batches)
-                   (+ retracted batch-retracted)
-                   batch-basis))
+                   (+ retracted
+                      (relationship-retraction-count db-after tx-data))
+                   (d/basis-t db-after)))
           {:zed/token (revision/zed-token opts (:database-id opts) basis-t)
            :retracted-datoms retracted})))))
 
@@ -1381,8 +1340,7 @@
         {:keys [db internal-subject internal-resource]
          :as result-context}
         (capture-result-context
-         conn opts consistency-value (:cache-live-results? opts)
-         prepare :can? nil)]
+         conn opts consistency-value prepare :can? nil)]
     (if-not (and (:id internal-subject) (:id internal-resource))
       false
       (let [query-identity
@@ -1426,7 +1384,7 @@
                 db (:resource/type query') (:permission query')))}))
         captured
         (capture-result-context
-         conn opts (:consistency query) true prepare
+         conn opts (:consistency query) prepare
          :lookup-resources decoded)
         {:keys [db internal-subject query' query-shape internal-query
                 cache-scope cursor-scope schema-version]
@@ -1507,8 +1465,7 @@
         {:keys [db subject-ent query']
          :as result-context}
         (capture-result-context
-         conn opts (:consistency query) (:cache-live-results? opts)
-         prepare :count-resources nil)]
+         conn opts (:consistency query) prepare :count-resources nil)]
     (if (nil? (:id subject-ent))
       (empty-count-response query)
       (:result
@@ -1547,7 +1504,7 @@
                 db (:type internal-resource) (:permission query')))}))
         captured
         (capture-result-context
-         conn opts (:consistency query) true prepare
+         conn opts (:consistency query) prepare
          :lookup-subjects decoded)
         {:keys [db internal-resource query' query-shape internal-query
                 cache-scope cursor-scope schema-version]
@@ -1617,8 +1574,7 @@
         {:keys [db resource-ent query']
          :as result-context}
         (capture-result-context
-         conn opts (:consistency query) (:cache-live-results? opts)
-         prepare :count-subjects nil)]
+         conn opts (:consistency query) prepare :count-subjects nil)]
     (if (nil? (:id resource-ent))
       (empty-count-response query)
       (:result
@@ -1640,9 +1596,13 @@
     (with-client-schema-read conn schema-lock schema-state
       (spiceomic-can? conn opts subject permission resource consistency)))
 
-  (can? [_ {:keys [subject permission resource consistency]}]
+  ;; The map arity is where a per-request :cache override lands. The
+  ;; positional arities keep their signatures and always use the client's own
+  ;; cache configuration.
+  (can? [_ {:keys [subject permission resource consistency cache]}]
     (with-client-schema-read conn schema-lock schema-state
-      (spiceomic-can? conn opts subject permission resource
+      (spiceomic-can? conn (request-cache-opts opts cache)
+                      subject permission resource
                       (or consistency consistency/fully-consistent))))
 
   (read-schema [_]
@@ -1664,7 +1624,8 @@
 
   (read-relationships [_ filters]
     (with-client-schema-read conn schema-lock schema-state
-      (spiceomic-read-relationships conn opts filters)))
+      (spiceomic-read-relationships
+       conn (request-cache-opts opts (:cache filters)) filters)))
 
   (write-relationships! [_ updates]
     (with-client-schema-read conn schema-lock schema-state
@@ -1724,22 +1685,26 @@
   (lookup-resources [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-lookup-resources conn opts query))))
+        (spiceomic-lookup-resources conn (request-cache-opts opts (:cache query))
+                           query))))
 
   (count-resources [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-count-resources conn opts query))))
+        (spiceomic-count-resources conn (request-cache-opts opts (:cache query))
+                           query))))
 
   (lookup-subjects [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-lookup-subjects conn opts query))))
+        (spiceomic-lookup-subjects conn (request-cache-opts opts (:cache query))
+                           query))))
 
   (count-subjects [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-count-subjects conn opts query))))
+        (spiceomic-count-subjects conn (request-cache-opts opts (:cache query))
+                           query))))
 
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
@@ -1765,8 +1730,6 @@
 
 (def ^:private known-cache-opt-keys
   #{:store
-    :coordinator
-    :live-results?
     :exact-results?
     :namespace
     :checkpoints
@@ -1795,12 +1758,6 @@
                        :key :cache
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-cache-opt-keys})))
-    (when (and (contains? config :live-results?)
-               (not (boolean? (:live-results? config))))
-      (throw (ex-info "EACL Config Error: :cache :live-results? must be boolean."
-                      {:type :eacl/invalid-config
-                       :key :cache
-                       :value (:live-results? config)})))
     (when (and (contains? config :exact-results?)
                (not (boolean? (:exact-results? config))))
       (throw (ex-info "EACL Config Error: :cache :exact-results? must be boolean."
@@ -1824,10 +1781,12 @@
                        :key :cache
                        :value (:checkpoints config)})))
     (let [enabled? (not (false? cache-option))
-          live-results? (and enabled? (true? (:live-results? config)))
-          exact-results? (and enabled?
-                              (or live-results?
-                                  (true? (:exact-results? config))))
+          ;; Result retention stays opt-in. It is now sound and measurably
+          ;; faster in every regime tested, so defaulting it on would be
+          ;; defensible — but it changes a client's memory profile, which is
+          ;; the consumer's call to make, not a side effect of removing
+          ;; :live-results?.
+          exact-results? (and enabled? (true? (:exact-results? config)))
           token-ttl-ms (* 1000 (or page-token-ttl-seconds
                                    default-page-token-ttl-seconds))
           ttl-ms (or (:ttl-ms config) token-ttl-ms)
@@ -1847,33 +1806,13 @@
                                               :kind-max-weight
                                               :two-hit-kinds
                                               :admission-entries])))))
-          configured-coordinator (:coordinator config)
-          coordinator (when enabled?
-                        (or configured-coordinator
-                            (cache/local-coordinator)))]
+]
       (when (and store (not (satisfies? cache/CacheStore store)))
         (throw (ex-info "EACL Config Error: :cache :store must implement CacheStore."
                         {:type :eacl/invalid-config
                          :key :cache
                          :value (:store config)})))
-      (when (and coordinator
-                 (not (satisfies? cache/RelationshipCoordinator coordinator)))
-        (throw (ex-info "EACL Config Error: :cache :coordinator must implement RelationshipCoordinator."
-                        {:type :eacl/invalid-config
-                         :key :cache
-                         :value (:coordinator config)})))
-      (when (and live-results? (nil? store))
-        (throw (ex-info "EACL Config Error: :cache :live-results? requires a cache store."
-                        {:type :eacl/invalid-config
-                         :key :cache
-                         :value config})))
-      (when (and live-results? (nil? configured-coordinator))
-        (throw (ex-info "EACL Config Error: :cache :live-results? requires an explicit coordinator."
-                        {:type :eacl/invalid-config
-                         :key :cache
-                         :value config})))
       {:store store
-       :coordinator coordinator
        :namespace (or (:namespace config) :eacl)
        :checkpoints
        (when (and enabled? (:checkpoints config))
@@ -1882,12 +1821,7 @@
             (:checkpoints config)
             {})))
        :ttl-ms (min ttl-ms token-ttl-ms)
-       :exact-results? exact-results?
-       ;; Cross-request live memoization requires every relationship writer in
-       ;; the coherence scope to receive this same explicit coordinator.
-       ;; The client-local default coordinator gives its own cursors a precise
-       ;; relationship proof without enabling cross-client live reuse.
-       :live-results? live-results?})))
+       :exact-results? (and exact-results? (some? store))})))
 
 (defn make-client
   "Builds an IAuthorization client over a Datomic conn.
@@ -1899,17 +1833,23 @@
   - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
   - :cache — false disables all lookup caching. A map configures the bounded
     ephemeral store with :max-weight, :max-entry-weight, :max-entries and
-    :ttl-ms. :exact-results? true retains completed cache-resident snapshots
-    without live reuse. :live-results? true implies exact retention, enables
-    cross-request can?/lookup/count memoization, and requires an explicit
-    :coordinator shared by every EACL relationship reader and writer in that
-    coherence scope. Use
-    eacl.datomic.cache/local-context to create a local :store/:coordinator
-    pair. :store false creates a writer-only client which still advances the
-    supplied coordinator. :store and :coordinator accept custom protocol
-    implementations. Cache failures are contained as misses or rejected
-    publications. Missing exact pages and recursive continuations replay
-    against the authenticated historical basis rather than falling forward.
+    :ttl-ms, or supplies your own :store (any CacheStore implementation);
+    :store false disables the store while leaving the rest of the client
+    intact. Results are retained by default; :exact-results? false keeps
+    pagination and traversal state cached without retaining answers.
+    Cache failures are contained as misses or rejected publications. Missing
+    exact pages and recursive continuations replay against the authenticated
+    historical basis rather than falling forward.
+
+    A single read can opt out with a per-request :cache false — on the map
+    arity of can?, and in the query map for lookups, counts and
+    read-relationships. It bypasses both reading and writing for that call
+    only; cursors still work, because a page token is minted and validated
+    from the request rather than from the cache.
+
+    There is no cross-process cache coordination to configure. Invalidation
+    rides on :eacl/relation-version stamps written into the transaction that
+    changes a relationship, so every reader of the database observes it.
   - :page-token-key / :page-token-keys / :page-token-keyring / :page-token-kid —
     AES-GCM page-token key material. Default: a random per-client key, meaning
     page tokens do not survive restarts and are not portable across clients;
@@ -2004,7 +1944,12 @@
         ;; may be constructed before the EACL schema exists — this repo's own
         ;; benchmark seeding does that — and retention starts working by itself
         ;; once write-schema! installs :eacl/relation-version.
-        cache-epoch-state  (when (:exact-results? cache-config)
+        ;; Built whenever anything can be cached, not only for exact results:
+        ;; the epoch is also the cache scope that keys recursive continuations
+        ;; and cursors. Gating it on :exact-results? left a default client
+        ;; falling back to [:basis t] there, so 20 unrelated transactions
+        ;; invalidated a recursive page that had not changed.
+        cache-epoch-state  (when (:store cache-config)
                              (watermark/make-epoch-state))
         timeout-ms         (if (contains? config-opts
                                           :consistency-sync-timeout-ms)
@@ -2067,9 +2012,7 @@
                             :lookup-cache-store (:store cache-config)
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
                             :cache-namespace (:namespace cache-config)
-                            :cache-live-results? (:live-results? cache-config)
                             :cache-exact-results? (:exact-results? cache-config)
-                            :relationship-coordinator (:coordinator cache-config)
                             :cache-epoch-state cache-epoch-state
                             :revision-checkpoints (:checkpoints cache-config)
                             :opaque-cache-token (Object.)

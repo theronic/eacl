@@ -14,19 +14,18 @@ it exists, exact-result retention is simply off.
 - One typed store serves `can?`, both lookup directions, both counts, exact results, and recursive
   continuations.
 - Recursive continuations use the bounded local store by default. Completed exact-result retention
-  is opt-in with `:exact-results? true`; live result caching implies exact retention.
+  is opt-in with `:exact-results? true`.
 - Cache keys and values contain internal EIDs. Missing external IDs are resolved at the boundary
   and are not cached.
 - Older cached lookup answers resolve those EIDs against the answer's own historical basis, so a
   later live entity deletion does not break `minimize-latency` or freshness-floor reads.
-- Live reuse is opt-in with `:cache {:live-results? true ...}` and an explicit relationship
-  coordinator shared by every participating EACL reader and writer.
-- Every cache-enabled client has a local coordinator for its own cursor proofs; this does not
-  permit cross-client live reuse without the explicit shared coordinator above.
-- Relevant relationship helpers publish their exact committed Datomic `t`; unrelated application
+- Result retention is opt-in with `:cache {:exact-results? true}`. There is no coordination to
+  configure: invalidation rides on the `:eacl/relation-version` stamps EACL's own write helpers
+  transact, so every reader of the database observes every write.
+- A single read can opt out with a per-request `:cache false` — on the map arity of `can?`, and in
+  the query map for lookups, counts and `read-relationships`.
+- Relationship helpers publish exactly which relations they changed; unrelated application
   transactions, no-op writes, and unrelated relation changes do not invalidate hot entries.
-- A reader connection behind the coordinator's published floor performs a bounded targeted catch-up
-  and retries coherent capture; it cannot cache a stale DB under a newer proof.
 - The built-in memory store has hard total-weight, entry-weight, entry-count, TTL, per-kind, and
   optional two-hit admission limits.
 - Custom portable stores can be implemented without adding backend dependencies to EACL core.
@@ -79,21 +78,18 @@ it exists, exact-result retention is simply off.
 - Exact result entries are keyed by the relations they depend on, stamped by EACL's own write
   helpers, so direct transactions of EACL relationship or schema data — from this process, another
   process, or raw `d/transact` of `tx-relationship` output — DO invalidate them, and writes to
-  relations an answer does not read do not. `:live-results?` entries key on the relationship
-  coordinator's proof instead, which only observes writes made through a client sharing that
-  coordinator; a live hit takes precedence over an epoch-keyed one. Plain `:exact-results?` now
-  gives per-relation granularity too, and is sound against writers you do not control, so
-  `:live-results?` is worth its extra wiring only when you also want reuse across clients at a
-  revision the reader has not yet observed.
+  relations an answer does not read do not.
 - Every relationship-producing helper stamps `:eacl/relation-version` on the relations it touches,
-  including `tx-relationship`, `tx-update-relationship`, `tx-delete-object` and
-  `tx-retract-orphaned-relationships`. A caller that transacts one of these directly publishes the
+  including `tx-relationship`, `tx-update-relationship`, `tx-delete-object`,
+  `tx-retract-orphaned-relationships` and `eacl.datomic.integrity/repair-tx-data`. A caller that transacts one of these directly publishes the
   change without knowing the cache exists. The stamp's value is the transaction entity, so repeated
   or concatenated helper output collapses to one datom instead of conflicting.
 - `delete-object!` transacts in batches and re-stamps each batch with the relations that batch
   retracts. `tx-delete-object` deduplicates its output, which keeps only the first stamp per
   relation, so any caller slicing that output into separate transactions must run
   `eacl.datomic.impl/stamp-relation-versions` over each slice.
+  `integrity/repair-tx-batches` partitions by dangling half rather than by op for the same reason,
+  so a retraction and the stamp that publishes it always share a transaction.
 - Consumers should call `delete-relationships!` before retracting an entity.
   `eacl.datomic.integrity/dangling-relationship-report` detects reverse ghost tuples left by an
   incorrect deletion sequence.
@@ -126,9 +122,6 @@ All of these were found in this candidate and fixed before release.
 - Page tokens are length-bounded, reject hostile EDN without escaping a `StackOverflowError`, and
   report every cursor rejection as `:eacl.pagination/invalid-cursor` with a `:reason`.
 - Cursor pages no longer publish live entries and latest-result pointers that nothing can read.
-- The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
-  reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
-  went from ~2.3x slower than `{:cache false}` to ~2.3x faster.
 - Exact result entries are keyed by per-relation change stamps instead of Datomic `basis-t`, so
   neither an unrelated application write nor a write to an EACL relation the answer does not read
   invalidates them. Under one unrelated transaction per read, `can?` went from 320 evaluations per
@@ -181,3 +174,27 @@ All of these were found in this candidate and fixed before release.
   reads one, so `lookup-resources`/`lookup-subjects` are roughly 2x faster uncached and 3x faster
   with live results. The prefix is now `eacl4_`; `eacl3_` cursors from an earlier build are
   rejected as `:eacl.pagination/invalid-cursor`, the same way an expired cursor already is.
+
+## Removed: `:live-results?` and the relationship coordinator
+
+`:cache {:live-results? true}` and `:cache {:coordinator ...}` are gone, along with the
+`RelationshipCoordinator` protocol, `local-coordinator`, `local-context`, the read and mutation
+barriers, and the bounded reader catch-up loop. Both keys now throw `:eacl/invalid-config` rather
+than being silently ignored.
+
+Per-relation stamps made the coordinator redundant and then strictly worse. It was reachable in
+exactly one consistency mode — `:fully-consistent`, where the epoch-keyed entry was already the
+fallback — and it was consulted FIRST, so a coordinator that had missed a write served a stale
+answer where an epoch-keyed read would correctly have missed. A coordinator can only observe writes
+made through a client sharing it; a stamp is transacted with the relationship datoms, so every
+reader of the database observes it.
+
+Migration: replace `:cache (assoc (cache/local-context) :live-results? true)` with
+`:cache {:exact-results? true}`, and delete any coordinator plumbing. A writer-only client
+configured as `{:store false :coordinator shared}` becomes `{:cache false}` — it no longer needs to
+participate in anything. `:eacl.consistency/coordinator-floor-unreachable` can no longer be raised.
+
+`spiceomic-write-relationships!` no longer distinguishes a validation failure from a
+possibly-committed throw. It does not need to: tx-data that never commits publishes nothing, so the
+regression that distinction existed to prevent — one routine `:eacl/relationship-conflict` flushing
+every cached result — is now structurally impossible.

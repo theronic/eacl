@@ -19,13 +19,11 @@
 
 (defn- cached-client
   [conn]
-  (let [context (cache/local-context)]
-    (core/make-client
-     conn
-     {:zed-token-key "consistency-cache-test-key"
-      :cache (assoc context
-                    :live-results? true
-                    :checkpoints true)})))
+  (core/make-client
+   conn
+   {:zed-token-key "consistency-cache-test-key"
+    :cache {:checkpoints true
+            :exact-results? true}}))
 
 (defn- seed!
   [conn client]
@@ -174,7 +172,7 @@
       (is (empty?
            (:data (eacl/lookup-resources client query)))))))
 
-(deftest exact-result-retention-is-explicit-without-live-coordination-test
+(deftest exact-result-retention-is-explicit-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client
           (core/make-client
@@ -191,6 +189,8 @@
                       (consistency/at-exact-snapshot created-token))))
       (is (false? (eacl/can? client alice :admin account)))))
 
+  ;; Retention stays opt-in after :live-results? was removed. A default client
+  ;; caches pagination and traversal state but retains no answers.
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {})
           alice (spice-object :user "alice")
@@ -692,10 +692,8 @@
               (cache/clear-namespace! delegate namespace))
             (record-provider-error! [_ operation kind]
               (cache/record-provider-error! delegate operation kind)))
-          context {:store store
-                   :coordinator (cache/local-coordinator)
-                   :live-results? true}
-          client (core/make-client conn {:cache context})
+          client (core/make-client conn {:cache {:store store
+                                                 :exact-results? true}})
           {token :zed/token} (seed! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")]

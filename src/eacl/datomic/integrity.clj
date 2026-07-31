@@ -60,15 +60,31 @@
       :sample sample})))
 
 (defn repair-tx-data
-  "Lazily converts dangling-half maps into Datomic retractions."
+  "Lazily converts dangling-half maps into Datomic retractions.
+
+  Each retraction carries an :eacl/relation-version stamp for the relation it
+  clears. Without it a repair would change relationship data while publishing
+  nothing, and any client with result caching enabled would keep serving the
+  ghost grant this repair exists to remove.
+
+  Stays lazy: stamps are emitted inline rather than deduplicated up front,
+  which is safe because they are idempotent within a transaction."
   [dangling-halves]
-  (map (fn [{:keys [e attr v]}]
-         [:db/retract e attr v])
-       dangling-halves))
+  (mapcat (fn [{:keys [e attr v relation-eid]}]
+            [[:db/retract e attr v]
+             (impl/tx-relation-version-stamp relation-eid)])
+          dangling-halves))
 
 (defn repair-tx-batches
   "Returns lazy Datomic transaction batches for all dangling halves visible in
-  `db`. The default batch size is 1000, keeping repair memory bounded."
+  `db`. The default batch size is 1000 dangling halves, keeping repair memory
+  bounded.
+
+  Batches are partitioned by HALF rather than by transaction op, so a
+  retraction and the :eacl/relation-version stamp that publishes it always land
+  in the same transaction. Partitioning the ops instead would let a batch
+  boundary fall between them, and the batch holding the bare retraction would
+  change relationship data while announcing nothing."
   ([db]
    (repair-tx-batches db {}))
   ([db {:keys [batch-size] :or {batch-size 1000}}]
@@ -76,6 +92,5 @@
      (throw (ex-info ":batch-size must be a positive integer."
                      {:type :eacl.integrity/invalid-options
                       :batch-size batch-size})))
-   (map vec
-        (partition-all batch-size
-                       (repair-tx-data (dangling-relationship-halves db))))))
+   (map #(vec (repair-tx-data %))
+        (partition-all batch-size (dangling-relationship-halves db)))))

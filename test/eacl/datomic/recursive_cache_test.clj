@@ -238,14 +238,12 @@
 (deftest recursive-pages-are-isolated-by-cache-namespace-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
-          coordinator (cache/local-coordinator)
           token-key "recursive-namespace-isolation"
           client-a
           (core/make-client
            conn
            {:page-token-key token-key
             :cache {:store store
-                    :coordinator coordinator
                     :namespace :tenant-a}})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
@@ -257,7 +255,6 @@
              conn
              {:page-token-key token-key
               :cache {:store store
-                      :coordinator coordinator
                       :namespace :tenant-b}})
             page-a (eacl/lookup-resources client-a query)
             first-b-stats (atom {})
@@ -331,13 +328,11 @@
 
 (deftest alternate-cache-replays-a-cursor-when-the-relationship-proof-matches-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [coordinator (cache/local-coordinator)
-          token-key "recursive-shared-proof"
+    (let [token-key "recursive-shared-proof"
           first-client
           (core/make-client
            conn
-           {:cache {:store (cache/local-store)
-                    :coordinator coordinator}
+           {:cache {:store (cache/local-store)}
             :page-token-key token-key})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
@@ -347,8 +342,7 @@
       (let [second-client
             (core/make-client
              conn
-             {:cache {:store (cache/local-store)
-                      :coordinator coordinator}
+             {:cache {:store (cache/local-store)}
               :page-token-key token-key})
             page1 (eacl/lookup-resources first-client query)
             stats (atom {})

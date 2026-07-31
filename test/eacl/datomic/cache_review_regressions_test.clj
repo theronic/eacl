@@ -28,9 +28,11 @@
    }")
 
 (defn- live-client
+  "A client that retains results. This used to need an explicit coordinator
+  plus :live-results? true; it is now just :exact-results?."
   [conn context]
   (core/make-client conn {:page-token-key token-key
-                          :cache (assoc context :live-results? true)}))
+                          :cache (assoc context :exact-results? true)}))
 
 (defn- seed-direct!
   [conn boot n-accounts]
@@ -47,56 +49,6 @@
 (defn- ex-data-of
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
-
-;; --- H1 ---------------------------------------------------------------------
-
-(deftest failed-write-validation-does-not-flush-the-live-cache-test
-  ;; A :create conflict and an unknown object id are detected before any
-  ;; transaction is submitted. Treating them as possibly-committed bumped the
-  ;; coordinator's :uncertain counter, which is part of every dependency proof,
-  ;; so one routine application error made 100% of live entries unreachable.
-  (with-mem-conn [conn schema/v7-schema]
-    (let [context (cache/local-context)
-          coordinator (:coordinator context)
-          acl (live-client conn context)
-          _ (seed-direct! conn acl 1)
-          alice (spice-object :user "alice")
-          account (spice-object :account "acct0")
-          calls (atom 0)
-          original impl/can?]
-      (with-redefs [impl/can? (fn [db s p r]
-                                (swap! calls inc)
-                                (original db s p r))]
-        (is (true? (eacl/can? acl alice :admin account)))
-        (is (= 1 @calls) "first call computes")
-        (let [before (cache/generation coordinator [])]
-
-          (testing ":create against an existing relationship"
-            (is (= :eacl/relationship-conflict
-                   (:type (ex-data-of
-                           #(eacl/create-relationship!
-                             acl (->Relationship alice :owner account))))))
-            (is (= before (cache/generation coordinator []))
-                "nothing was committed, so nothing is uncertain"))
-
-          (testing ":create naming an object that does not exist"
-            (is (= :eacl/unknown-object
-                   (:type (ex-data-of
-                           #(eacl/create-relationship!
-                             acl (->Relationship (spice-object :user "nobody")
-                                                 :owner account))))))
-            (is (= before (cache/generation coordinator []))))
-
-          (testing "an unsupported operation"
-            (is (= :eacl/unsupported-operation
-                   (:type (ex-data-of
-                           #(eacl/write-relationship!
-                             acl :upsert alice :owner account)))))
-            (is (= before (cache/generation coordinator []))))
-
-          (is (true? (eacl/can? acl alice :admin account)))
-          (is (= 1 @calls)
-              "the live entry survived every failed write"))))))
 
 ;; --- H2 ---------------------------------------------------------------------
 
@@ -283,8 +235,8 @@
   ;; could never be read while still consuming the weight and entry budget that
   ;; live page-one answers compete for.
   (with-mem-conn [conn schema/v7-schema]
-    (let [context (cache/local-context)
-          store (:store context)
+    (let [store (cache/local-store)
+          context {:store store}
           acl (live-client conn context)
           _ (seed-direct! conn acl 9)
           query {:subject (spice-object :user "alice")
@@ -298,50 +250,12 @@
           stats (cache/stats store)]
       (is (= ["acct0" "acct1" "acct2"] (mapv :id (:data page-1))))
       (is (= ["acct3" "acct4" "acct5"] (mapv :id (:data page-2))))
-      (is (= 3 puts-after-page-1)
-          "page one publishes exact + live + the latest-result pointer")
+      (is (= 2 puts-after-page-1)
+          "page one publishes the exact entry + the latest-result pointer")
       (is (= 1 (- (:puts stats) puts-after-page-1))
           "a cursor page publishes only its exact entry")
       (is (= 1 (get-in stats [:by-kind :latest-result :puts]))
           "and no second latest-result pointer under the cursor prefix"))))
-
-;; --- H4 ---------------------------------------------------------------------
-
-(defrecord CountingCoordinator [delegate mutations]
-  cache/RelationshipCoordinator
-  (generation [_] (cache/generation delegate))
-  (generation [_ dependency-keys] (cache/generation delegate dependency-keys))
-  (with-read [_ f] (cache/with-read delegate f))
-  (with-mutation [_ f]
-    (swap! mutations inc)
-    (cache/with-mutation delegate f)))
-
-(deftest delete-object-takes-the-coordinator-barrier-per-batch-test
-  ;; delete-object! held the write barrier across its whole batch loop, so every
-  ;; concurrent lookup blocked for the full multi-transaction delete (277ms for
-  ;; 20k relationships in-memory; far worse against a real transactor). The
-  ;; batches are separate Datomic transactions either way, so per-batch
-  ;; publication is equally coherent and lets readers interleave.
-  (with-mem-conn [conn schema/v7-schema]
-    (let [coordinator (->CountingCoordinator (cache/local-coordinator) (atom 0))
-          acl (core/make-client conn {:page-token-key token-key
-                                      :cache {:store (cache/local-store)
-                                              :coordinator coordinator}})
-          ;; > 1000 tx ops (two retractions per relationship) forces > 1 batch
-          n 1200
-          _ (seed-direct! conn acl n)
-          mutations-before (do (reset! (:mutations coordinator) 0)
-                               @(:mutations coordinator))
-          result (eacl/delete-object! acl (spice-object :user "alice"))]
-      (is (= (* 2 n) (:retracted-datoms result))
-          "both halves of every relationship are still accounted for")
-      (is (> @(:mutations coordinator) 1)
-          "the barrier is taken per batch, not once around the loop")
-      (is (= mutations-before 0))
-      (is (= [] (mapv :id (:data (eacl/lookup-resources
-                                  acl {:subject (spice-object :user "alice")
-                                       :permission :admin
-                                       :resource/type :account}))))))))
 
 ;; --- L2 ---------------------------------------------------------------------
 
@@ -377,7 +291,7 @@
       (doseq [config [{:cache false}
                       {}
                       {:cache {:exact-results? true}}
-                      {:cache (assoc (cache/local-context) :live-results? true)}]]
+                      {:cache {:exact-results? false}}]]
         (let [acl (core/make-client conn (assoc config :page-token-key token-key))
               data (:data (eacl/lookup-resources acl query))]
           (is (every? #(instance? eacl.core.SpiceObject %) data)

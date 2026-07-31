@@ -108,7 +108,7 @@
   The others show what v7's cache adds on top of the same engine."
   {:off {:cache false}
    :default {}
-   :live-results {:cache-fn #(assoc (cache/local-context) :live-results? true)}})
+   :exact-results {:cache {:exact-results? true}}})
 
 (defn- client-for
   [conn cache-key]
@@ -130,7 +130,7 @@
 (defn run-reference!
   "Runs the v7 reference benchmark for one cache configuration.
 
-  `cache-key` is :off (comparable to v6), :default, or :live-results."
+  `cache-key` is :off (comparable to v6), :default, or :exact-results."
   ([]
    (run-reference! :off default-config))
   ([cache-key]

@@ -542,8 +542,7 @@
                  conn
                  {:entity->object-id (fn [ent] (:eacl/id ent))
                   :object-id->ident (fn [obj-id] [:eacl/id obj-id])
-                  :cache (assoc (cache/local-context)
-                                :live-results? true)})
+                  :cache {:exact-results? true}})
                 count-resources-query (dissoc base-query :first)
                 first-server
                 (first (:data (eacl/lookup-resources live-acl base-query)))
@@ -938,14 +937,12 @@
                  (d/db conn))
             server  (->server server-id)
             check   #(eacl/can? acl subject :view server)
-            live-context
-            (cache/local-context
-             {:kind-max-weight {:can? (* 2 1024 1024)}
-              :two-hit-kinds #{:can?}})
             live-acl
             (spiceomic/make-client
              conn
-             {:cache (assoc live-context :live-results? true)})
+             {:cache {:kind-max-weight {:can? (* 2 1024 1024)}
+                      :two-hit-kinds #{:can?}
+                      :exact-results? true}})
             live-check #(eacl/can? live-acl subject :view server)]
 
         (run-timed 2000 check)                              ; warm JIT + caches

@@ -30,7 +30,7 @@
 
   What ships instead: EACL's relationship tx-data helpers stamp each affected
   relation with the transaction changing it (see
-  `eacl.datomic.impl/bump-relation-version`), atomically with the relationship
+  `eacl.datomic.impl/tx-relation-version-stamp`), atomically with the relationship
   datoms. An answer's epoch is the max stamp over the relations that answer
   actually depends on, so churn on any other relation cannot touch it.
 

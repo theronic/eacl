@@ -4,8 +4,7 @@
   Cache availability never changes a recomputable authorization answer. Store
   failures, eviction, and disabled caches fall back to indexed/traversal work
   against the selected live or historical Datomic value."
-  (:import [java.util Iterator LinkedHashMap Map$Entry UUID]
-           [java.util.concurrent.locks StampedLock]))
+  (:import [java.util Iterator LinkedHashMap Map$Entry]))
 
 (def cache-entry-version 2)
 (def portable-value-version 1)
@@ -43,42 +42,6 @@
     #{:opaque-values :portable-values :ttl})
   (clear-namespace! [_ _] false)
   (record-provider-error! [_ _ _] nil))
-
-(defprotocol RelationshipCoordinator
-  (generation
-    [coordinator]
-    [coordinator dependency-keys]
-    "Returns the coordinator proof, or the proof for a dependency set.")
-  (with-read [coordinator f]
-    "Runs `f` with an immutable coordinator snapshot inside the read barrier.")
-  (with-mutation [coordinator f]
-    "Runs `f` exclusively.
-
-    `f` returns [value change], where change is nil/no-op or
-    {:dependency-keys #{...} :basis-t committed-t}.
-
-    `f` must call `eacl.datomic.cache/mutation-attempted!` immediately before
-    the first write it cannot prove was rejected. Only a throw after that call
-    is treated as possibly-committed and fails the coherence scope closed."))
-
-(def ^:dynamic ^:private *mutation-attempted*
-  "Set by with-mutation for the duration of one mutation body. See
-  `mutation-attempted!`."
-  nil)
-
-(defn mutation-attempted!
-  "Marks the enclosing `with-mutation` body as having reached the point where a
-  write may have committed.
-
-  Validation that runs BEFORE this call — endpoint resolution, :create conflict
-  detection, unsupported operations — cannot have changed the database, so its
-  failures must not invalidate cached results. Without this distinction a single
-  :eacl/relationship-conflict (an ordinary, expected application error) flushed
-  every live entry in the coherence scope."
-  []
-  (when-let [attempted *mutation-attempted*]
-    (reset! attempted true))
-  nil)
 
 (def ^:private default-store-config
   {:max-weight (* 16 1024 1024)
@@ -338,131 +301,6 @@
                           :provider-errors 0
                           :provider-errors-by-operation {}})
                    config'))))
-
-(defn dependency-generation
-  "Pure dependency proof for a coordinator state snapshot."
-  [snapshot dependency-keys]
-  {:incarnation (:incarnation snapshot)
-   :uncertain (:uncertain snapshot)
-   :revision (reduce (fn [revision dependency-key]
-                       (max revision
-                            (long (get-in snapshot
-                                          [:dependencies dependency-key]
-                                          0))))
-                     0
-                     dependency-keys)})
-
-(defrecord LocalRelationshipCoordinator [^StampedLock lock generation-state]
-  RelationshipCoordinator
-  (generation [_]
-    (let [{:keys [incarnation uncertain observed-t]} @generation-state]
-      {:incarnation incarnation
-       :uncertain uncertain
-       :revision observed-t}))
-
-  (generation [_ dependency-keys]
-    (dependency-generation @generation-state dependency-keys))
-
-  (with-read [_ f]
-    ;; The barrier's only job is to stop a writer committing AND publishing
-    ;; between the caller's two reads (coordinator snapshot, Datomic value).
-    ;; An optimistic read establishes that without a CAS on the lock: if any
-    ;; writer held the lock during the section, validate fails and we redo the
-    ;; work under a real read lock. `f` must therefore be side-effect-free
-    ;; apart from idempotent reads — which is what capture-result-context does.
-    ;; A ReentrantReadWriteLock read lock is a contended CAS on every hot
-    ;; authorization call, which is exactly the scaling ceiling this removes.
-    (let [stamp (.tryOptimisticRead lock)]
-      (if (zero? stamp)
-        (let [read-stamp (.readLock lock)]
-          (try
-            (f @generation-state)
-            (finally
-              (.unlockRead lock read-stamp))))
-        (let [result (f @generation-state)]
-          (if (.validate lock stamp)
-            result
-            (let [read-stamp (.readLock lock)]
-              (try
-                (f @generation-state)
-                (finally
-                  (.unlockRead lock read-stamp)))))))))
-
-  (with-mutation [_ f]
-    (let [attempted (atom false)
-          write-stamp (.writeLock lock)]
-      (try
-        (try
-          (let [[value change] (binding [*mutation-attempted* attempted]
-                                 (f))
-                {:keys [dependency-keys basis-t]}
-                (when (map? change) change)]
-            (when (seq dependency-keys)
-              (when-not (and (integer? basis-t)
-                             (not (neg? basis-t)))
-                (throw (ex-info "Relationship mutation did not return a committed basis t."
-                                {:type :eacl/cache-coordinator-contract
-                                 :change change})))
-              (swap! generation-state
-                     (fn [{:keys [observed-t] :as state}]
-                       (when (< basis-t observed-t)
-                         (throw
-                          (ex-info "Relationship revision moved backwards."
-                                   {:type :eacl/cache-coordinator-contract
-                                    :observed-t observed-t
-                                    :basis-t basis-t})))
-                       (-> state
-                           (assoc :observed-t basis-t)
-                           (update :dependencies
-                                   (fn [dependencies]
-                                     (reduce #(assoc %1 %2 basis-t)
-                                             dependencies
-                                             dependency-keys)))))))
-            value)
-          (catch Exception e
-            ;; A helper failure could occur after its Datomic transaction
-            ;; committed but before its changed relation ids were returned.
-            ;; Fail closed by making every prior live result unreachable —
-            ;; but ONLY once the body signalled that a write was actually
-            ;; attempted. A failure during pre-write validation changed
-            ;; nothing, so it must leave cached results reachable.
-            (when @attempted
-              (swap! generation-state update :uncertain unchecked-inc))
-            (throw e)))
-        (finally
-          (.unlockWrite lock write-stamp))))))
-
-(defn local-coordinator
-  ([]
-   (local-coordinator {}))
-  ([{:keys [incarnation initial-t]
-     :or {incarnation (str (UUID/randomUUID))
-          initial-t 0}}]
-   (when-not (and (string? incarnation)
-                  (not-empty incarnation)
-                  (integer? initial-t)
-                  (not (neg? initial-t)))
-     (throw (ex-info "Invalid relationship coordinator configuration."
-                     {:type :eacl/invalid-config
-                      :incarnation incarnation
-                      :initial-t initial-t})))
-   (->LocalRelationshipCoordinator
-    (StampedLock.)
-    (atom {:incarnation incarnation
-           :observed-t initial-t
-           :uncertain 0
-           :dependencies {}}))))
-
-(defn local-context
-  "Creates an explicit local cache context.
-
-  Pass the same context to every EACL client that reads or writes relationships
-  in one live-cache coherence scope."
-  ([]
-   (local-context {}))
-  ([store-config]
-   {:store (local-store store-config)
-    :coordinator (local-coordinator)}))
 
 (defn entry
   ([cache-key kind value]

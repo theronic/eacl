@@ -51,8 +51,12 @@
                    :owner
                    (spice-object :account "a-1"))))
 
-(defn- live-cache-context []
-  (assoc (cache/local-context) :live-results? true))
+(defn- live-cache-context
+  "A client that memoizes completed results. This used to need an explicit
+  coordinator plus :live-results? true; per-relation stamps made the
+  coordinator unnecessary, so it is now just :exact-results?."
+  []
+  {:exact-results? true})
 
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
   (with-mem-conn [conn schema/v7-schema]
@@ -130,138 +134,15 @@
                (set (map :id (:data (eacl/lookup-resources client query))))))
         (is (= 2 @calls) "a relationship no-op keeps the hot generation")))))
 
-(deftest explicit-coordinator-invalidates-other-clients-test
+(deftest direct-relationship-writes-are-observed-test
+  ;; This test used to assert the OPPOSITE: a raw d/transact of
+  ;; tx-relationship output was deliberately not observed, because the
+  ;; relationship coordinator only saw writes made through a client sharing it.
+  ;; tx-relationship's returned tx-data now carries the :eacl/relation-version
+  ;; stamp, so such a caller publishes the change without knowing the cache
+  ;; exists, and no explicit eviction is needed.
   (with-mem-conn [conn schema/v7-schema]
-    (let [context (cache/local-context)
-          writer (core/make-client
-                  conn
-                  {:cache {:store false
-                           :coordinator (:coordinator context)}})
-          reader (core/make-client
-                  conn
-                  {:cache (assoc context :live-results? true)})
-          query {:subject (spice-object :user "alice")
-                 :permission :admin
-                 :resource/type :account}
-          calls (atom 0)
-          original impl/lookup-resources]
-      (seed-direct! conn writer)
-      (with-redefs [impl/lookup-resources
-                    (fn [db internal-query continuation-context]
-                      (swap! calls inc)
-                      (original db internal-query continuation-context))]
-        (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources reader query)))))
-        (is (= 1 @calls))
-        (eacl/create-relationship!
-         writer
-         (->Relationship (spice-object :user "alice")
-                         :owner
-                         (spice-object :account "a-2")))
-        (is (= #{"a-1" "a-2"}
-               (set (map :id (:data (eacl/lookup-resources reader query))))))
-        (is (= 2 @calls)
-            "a writer whose own cache is disabled still advances the shared coordinator")))))
-
-(deftest lagging-reader-cannot-pair-a-stale-db-with-a-new-proof-test
-  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
-    (let [context (cache/local-context)
-          writer (core/make-client
-                  writer-conn
-                  {:cache {:store false
-                           :coordinator (:coordinator context)}})
-          alice (spice-object :user "alice")
-          account (spice-object :account "a-1")
-          relationship (->Relationship alice :owner account)]
-      (seed-direct! writer-conn writer)
-      (let [reader (core/make-client
-                    reader-conn
-                    {:cache (assoc context :live-results? true)})]
-        (is (true? (eacl/can? reader alice :admin account)))
-        (is (pos? (:entries
-                   (cache/stats (get-in reader [:opts :lookup-cache-store]))))
-            "the stale positive decision is resident before the deletion")
-        (let [stale-db (d/db reader-conn)
-              original-db d/db
-              original-sync d/sync
-              lagging? (atom true)
-              sync-calls (atom [])]
-          (eacl/delete-relationship! writer relationship)
-          (with-redefs [d/db
-                        (fn [conn]
-                          (if (and (identical? conn reader-conn)
-                                   @lagging?)
-                            stale-db
-                            (original-db conn)))
-                        d/sync
-                        (fn [conn t]
-                          (if (identical? conn reader-conn)
-                            (do
-                              (swap! sync-calls conj t)
-                              (reset! lagging? false)
-                              (future (original-db conn)))
-                            (original-sync conn t)))]
-            (is (false? (eacl/can? reader alice :admin account))
-                "the reader catches up before evaluating under the published proof")
-            (is (= 1 (count @sync-calls)))
-            (is (false? (eacl/can? reader alice :admin account))
-                "the caught-up false result, not the stale true result, is cached")))))))
-
-(deftest shared-store-is-not-a-distributed-mutation-coordinator-test
-  ;; Two clients share a store but own separate coordinator incarnations.
-  ;;
-  ;; At one basis they MAY share the basis-pinned exact entry: same database,
-  ;; same schema generation, same query identity and same t is the same DB
-  ;; value, so it is the same answer. What a shared store must never do is let
-  ;; one client's LIVE proof answer for the other once their views diverge —
-  ;; client B's coordinator knows nothing about a write published to A's.
-  (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          coordinator-a (cache/local-coordinator)
-          client-a (core/make-client
-                    conn
-                    {:cache {:store store
-                             :coordinator coordinator-a
-                             :live-results? true}})
-          _ (seed-direct! conn client-a)
-          client-b (core/make-client
-                    conn
-                    {:cache {:store store
-                             :coordinator (cache/local-coordinator)
-                             :live-results? true}})
-          query {:subject (spice-object :user "alice")
-                 :permission :admin
-                 :resource/type :account}
-          calls (atom 0)
-          original impl/lookup-resources]
-      (with-redefs [impl/lookup-resources
-                    (fn [db internal-query continuation-context]
-                      (swap! calls inc)
-                      (original db internal-query continuation-context))]
-        (testing "both clients agree at one basis"
-          (is (= ["a-1"]
-                 (mapv :id (:data (eacl/lookup-resources client-a query)))))
-          (is (= ["a-1"]
-                 (mapv :id (:data (eacl/lookup-resources client-b query)))))
-          (is (= 1 @calls)
-              "the basis-pinned exact entry is sound to share: identical t on
-               one database is one DB value"))
-
-        (testing "a write published only to A's coordinator cannot leave B stale"
-          (eacl/create-relationship!
-           client-a
-           (->Relationship (spice-object :user "alice")
-                           :owner
-                           (spice-object :account "a-2")))
-          (is (= ["a-1" "a-2"]
-                 (mapv :id (:data (eacl/lookup-resources client-b query))))
-              "B advanced with the database; it did not reuse A's live proof")
-          (is (= ["a-1" "a-2"]
-                 (mapv :id (:data (eacl/lookup-resources client-a query))))))))))
-
-(deftest direct-relationship-writes-are-deliberately-not-polled-test
-  (with-mem-conn [conn schema/v7-schema]
-    (let [context (live-cache-context)
-          client (core/make-client conn {:cache context})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
@@ -274,13 +155,9 @@
              (mapv :id (:data (eacl/lookup-resources client query)))))
       @(d/transact conn
                    (impl/tx-relationship (d/db conn) relationship))
-      (is (= ["a-1"]
-             (mapv :id (:data (eacl/lookup-resources client query))))
-          "unsupported direct tuple writes do not trigger DB or tx-log polling")
-      (cache/clear! (:store context))
       (is (= #{"a-1" "a-2"}
              (set (map :id (:data (eacl/lookup-resources client query)))))
-          "after explicit eviction, ordinary evaluation sees the direct write"))))
+          "a relationship written outside the EACL client takes effect"))))
 
 (deftest live-page-dependencies-include-arrow-relations-and-target-permissions-test
   (with-mem-conn [conn schema/v7-schema]
@@ -397,9 +274,7 @@
             (stats [_] {}))
           failing (core/make-client
                    conn
-                   {:cache {:store broken-store
-                            :coordinator (cache/local-coordinator)
-                            :live-results? true}})
+                   {:cache {:store broken-store}})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}]
@@ -432,9 +307,7 @@
           client
           (core/make-client
            conn
-           {:cache {:store corrupting-store
-                    :coordinator (cache/local-coordinator)
-                    :live-results? true}})
+           {:cache {:store corrupting-store}})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
@@ -614,21 +487,18 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:ttl-ms 0}})))
     (is (thrown? clojure.lang.ExceptionInfo
-                 (core/make-client conn {:cache {:live-results? :yes}})))
-    (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:exact-results? :yes}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:namespace ""}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:checkpoints :yes}})))
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (core/make-client conn {:cache {:live-results? true}})))
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (core/make-client
-                  conn
-                  {:cache {:store false
-                           :coordinator (cache/local-coordinator)
-                           :live-results? true}})))
+    (testing ":live-results? and :coordinator are gone, not ignored"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (core/make-client conn {:cache {:live-results? true}})))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (core/make-client
+                    conn
+                    {:cache {:coordinator :anything}}))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client
                   conn
@@ -666,3 +536,93 @@
         (is false (str "expected invalid config: " (pr-str config)))
         (catch clojure.lang.ExceptionInfo e
           (is (= :eacl/invalid-config (:type (ex-data e)))))))))
+
+;; --- per-request cache override ----------------------------------------------
+
+(deftest per-request-cache-false-bypasses-the-cache-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:cache {:exact-results? true}})
+          _ (seed-direct! conn client)
+          alice (spice-object :user "alice")
+          account (spice-object :account "a-1")
+          query {:subject alice :permission :admin :resource/type :account}
+          calls (atom 0)
+          original impl/can?
+          lookups (atom 0)
+          original-lookup impl/lookup-resources]
+      (with-redefs [impl/can? (fn [db s p r]
+                                (swap! calls inc)
+                                (original db s p r))
+                    impl/lookup-resources
+                    (fn [db q cc]
+                      (swap! lookups inc)
+                      (original-lookup db q cc))]
+        (testing "can? map arity"
+          (is (true? (eacl/can? client {:subject alice
+                                        :permission :admin
+                                        :resource account})))
+          (is (= 1 @calls))
+          (is (true? (eacl/can? client {:subject alice
+                                        :permission :admin
+                                        :resource account})))
+          (is (= 1 @calls) "second identical call is a hit")
+
+          (is (true? (eacl/can? client {:subject alice
+                                        :permission :admin
+                                        :resource account
+                                        :cache false})))
+          (is (= 2 @calls) ":cache false does not read the cached answer"))
+
+        (testing "the bypassed call also wrote nothing"
+          (is (true? (eacl/can? client {:subject alice
+                                        :permission :admin
+                                        :resource account})))
+          (is (= 2 @calls)
+              "the earlier cached entry is still the one being served"))
+
+        (testing "lookups take it from the query map"
+          (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources client query)))))
+          (let [after-first @lookups]
+            (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources client query)))))
+            (is (= after-first @lookups) "second identical lookup is a hit")
+            (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources
+                                             client (assoc query :cache false))))))
+            (is (= (inc after-first) @lookups)
+                ":cache false recomputes")))))))
+
+(deftest per-request-cache-override-does-not-break-cursors-test
+  ;; :cache is excluded from the cursor's query identity. Leaving it in would
+  ;; make a page-2 request that omits it fail against a page-1 token minted
+  ;; with it — the same failure :consistency once caused.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:cache {:exact-results? true}})]
+      (eacl/write-schema! client direct-schema)
+      @(d/transact conn (into [{:eacl/id "alice"}]
+                              (for [n (range 6)] {:eacl/id (str "a-" n)})))
+      (doseq [n (range 6)]
+        (eacl/create-relationship!
+         client (->Relationship (spice-object :user "alice") :owner
+                                (spice-object :account (str "a-" n)))))
+      (let [query {:subject (spice-object :user "alice")
+                   :permission :admin
+                   :resource/type :account
+                   :first 2}
+            page-1 (eacl/lookup-resources client (assoc query :cache false))
+            cursor (get-in page-1 [:page-info :end-cursor])]
+        (is (= 2 (count (:data page-1))))
+        (testing "a cursor minted with the override is usable without it"
+          (is (= 2 (count (:data (eacl/lookup-resources
+                                  client (assoc query :after cursor)))))))
+        (testing "and vice versa"
+          (let [c2 (get-in (eacl/lookup-resources client query)
+                           [:page-info :end-cursor])]
+            (is (= 2 (count (:data (eacl/lookup-resources
+                                    client (assoc query :after c2
+                                                  :cache false)))))))))
+      (testing "a non-boolean override is rejected rather than ignored"
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (eacl/lookup-resources
+                      client {:subject (spice-object :user "alice")
+                              :permission :admin
+                              :resource/type :account
+                              :cache :sometimes})))))))

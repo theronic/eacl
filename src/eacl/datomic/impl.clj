@@ -51,7 +51,7 @@
 
 (def ^:private relation-version-attr :eacl/relation-version)
 
-(defn- bump-relation-version
+(defn tx-relation-version-stamp
   "Stamps the relation with the transaction that is changing it.
 
   This is how a writer publishes WHAT changed rather than merely THAT
@@ -168,7 +168,7 @@
    [:db/add (:resource-eid resolved)
     reverse-relationship-attr
     (reverse-relationship-tuple resolved)]
-   (bump-relation-version (:relation-eid resolved))])
+   (tx-relation-version-stamp (:relation-eid resolved))])
 
 (defn- retract-relationship-txes
   [resolved]
@@ -178,7 +178,7 @@
    [:db/retract (:resource-eid resolved)
     reverse-relationship-attr
     (reverse-relationship-tuple resolved)]
-   (bump-relation-version (:relation-eid resolved))])
+   (tx-relation-version-stamp (:relation-eid resolved))])
 
 (defn- forward-tuple-exists?
   [db {:keys [subject-eid] :as resolved}]
@@ -567,7 +567,7 @@
     [subject-type relation-eid resource-type resource-eid]]
    [:db/retract resource-eid reverse-relationship-attr
     [resource-type relation-eid subject-type subject-eid]]
-   (bump-relation-version relation-eid)])
+   (tx-relation-version-stamp relation-eid)])
 
 (defn- op-attr
   "The attribute of a list-form tx op, or nil for a map form or anything else.
@@ -612,7 +612,7 @@
                             (remove stamped))
                       ops)]
     (if (seq missing)
-      (into ops (map bump-relation-version) missing)
+      (into ops (map tx-relation-version-stamp) missing)
       ops)))
 
 (defn tx-delete-object
@@ -719,7 +719,7 @@
   [db]
   (mapcat (fn [{:keys [e attr v relation-eid]}]
             [[:db/retract e attr v]
-             (bump-relation-version relation-eid)])
+             (tx-relation-version-stamp relation-eid)])
           (orphaned-relationship-halves db)))
 
 (defn tx-relationship

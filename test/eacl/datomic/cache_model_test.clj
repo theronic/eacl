@@ -66,13 +66,12 @@
     (testing (str "seed " seed)
       (with-mem-conn [conn schema/v7-schema]
         (let [random (java.util.Random. seed)
-              context (cache/local-context
-                       {:max-weight (* 8 1024 1024)
-                        :max-entry-weight (* 2 1024 1024)
-                        :max-entries 2048})
               cached (core/make-client
                       conn
-                      {:cache (assoc context :live-results? true)})
+                      {:cache {:max-weight (* 8 1024 1024)
+                               :max-entry-weight (* 2 1024 1024)
+                               :max-entries 2048
+                               :exact-results? true}})
               uncached (atom (core/make-client conn {:cache false}))
               user-ids (mapv #(str "user-" %) (range 8))
               account-ids (mapv #(str "account-" %) (range 8))]

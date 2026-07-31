@@ -49,7 +49,6 @@
   [[:disabled {:cache false}]
    [:default {}]
    [:exact-results {:cache {:exact-results? true}}]
-   [:live-results {:cache (assoc (cache/local-context) :live-results? true)}]
    [:constant-eviction {:cache {:max-weight 8192
                                 :max-entry-weight 4096
                                 :max-entries 1}}]])

@@ -49,11 +49,11 @@ Situated AuthZ offers some advantages for typical use-cases:
   unavailable, EACL reconstructs the cursor's authenticated historical Datomic basis and safely
   recomputes the deterministic prefix. Relevant relationship or schema changes after page one do
   not alter later pages.
-- Live `can?`, lookup, and count results can use the same store when `:live-results? true` is
-  configured with an explicit coordinator shared by every participating EACL reader and writer.
-  Keys use the schema generation and committed revision of only the relation definitions used by
-  the permission—not every Datomic `basis-t`—so unrelated application transactions and
-  relationship writes outside that dependency set leave entries hot.
+- Completed `can?`, lookup, and count results can use the same store with `:exact-results? true`.
+  Keys use the schema generation and the change stamps of only the relation definitions the
+  permission actually reads—not every Datomic `basis-t`—so unrelated application transactions and
+  relationship writes outside that dependency set leave entries hot. No coordination between
+  clients or processes is needed or configurable.
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
@@ -610,55 +610,48 @@ included in admission weight without walking that graph for every page. Recursiv
 include `:cache :namespace`, so clients sharing a provider cannot read or overwrite another
 namespace's pages or continuations, and targeted cleanup cannot remove another namespace's state.
 
-Live `can?`, lookup, and count memoization is opt-in and uses an explicit coherence context:
+Completed `can?`, lookup, and count results are retained when `:exact-results? true` is set:
 
 ```clojure
-(require '[eacl.datomic.cache :as eacl-cache])
-
-(def cache-context (eacl-cache/local-context))
-
-(def reader
+(def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache (assoc cache-context :live-results? true)}))
-
-;; A writer that does not need its own result store still advances the same
-;; relationship epochs.
-(def writer
-  (eacl.datomic.core/make-client
-   conn
-   {:cache {:store false
-            :coordinator (:coordinator cache-context)}}))
+   {:cache {:exact-results? true}}))
 ```
 
-`:live-results? true` implies `:exact-results? true`. To retain completed exact snapshots without
-live reuse or a relationship coordinator, configure only `:exact-results? true`.
+There is nothing to coordinate between clients or processes. Invalidation rides on the
+`:eacl/relation-version` stamps described above, which are transacted with the relationship datoms
+themselves, so every reader of the database observes every write — from another client, another
+connection, another process, or a raw `d/transact` of `tx-relationship` output.
 
-Pass the same coordinator explicitly to every EACL relationship reader and writer in the
-coherence scope. Relationship helpers hold its mutation barrier across their transaction and
-publish the committed Datomic `t` only for changed relation definitions after an actual tuple
-change. `delete-object!` takes that barrier once per batch rather than once around its whole batch
-loop, so a large deletion does not stall concurrent lookups for the duration of every transaction
-it needs. A write that fails *before* submitting a transaction — a `:create` conflict, an unknown
-object id, an unsupported operation — commits nothing and therefore leaves cached results
-reachable; only a failure after a transaction may have committed fails the coherence scope closed.
+Earlier builds of this candidate offered `:live-results? true` plus an explicit
+`:coordinator` shared by every participating reader and writer, along with a read barrier, a
+mutation barrier and a bounded reader catch-up loop. All of it is gone. Per-relation stamps give
+the same per-relation precision without the wiring, and unlike a coordinator they cannot miss a
+write made outside the process — a live entry was consulted *before* the epoch-keyed one, so a
+coordinator that had missed a write served a stale answer where an epoch-keyed read would correctly
+have missed. `:cache {:live-results? ...}` and `:cache {:coordinator ...}` now throw
+`:eacl/invalid-config` rather than being silently ignored.
+
 Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
-permission's dependency set do not expire that entry. The read barrier is released after EACL
-captures the Datomic value and dependency proof; it is not held during cache I/O, lookup, or count.
+permission's dependency set do not expire an entry.
 
-A shared store is not a distributed coordinator. Separate coordinator incarnations deliberately
-miss one another's live entries. When one participating connection lags a revision already
-published by the shared coordinator, EACL performs a bounded targeted catch-up before pairing that
-DB with the proof. In a multi-process deployment, enable live memoization only when
-every reader and writer participates in a coordinator implementation with the same barrier and
-revision-publication contract. Otherwise leave `:live-results?` disabled; exact entries remain
-useful accelerators when `:exact-results?` is enabled, while exact and ordinary reads remain
-correct through historical or current indexed evaluation.
+A single read can opt out of the cache without building another client:
 
-Even without live-result memoization, each cache-enabled client owns a local coordinator for its
-cursor proofs. This lets that client's cursors and continuations survive unrelated application
-transactions. It does not authorize cross-client live reuse: clients that need one coherence scope
-must still receive the same explicit coordinator.
+```clojure
+(eacl/can? acl {:subject alice :permission :view :resource doc :cache false})
+
+(eacl/lookup-resources acl {:subject alice
+                            :permission :view
+                            :resource/type :doc
+                            :cache false})
+```
+
+`:cache false` on a request neither reads from nor writes to the cache for that call. It is
+accepted on the map arity of `can?` and in the query map for `lookup-resources`,
+`lookup-subjects`, `count-resources`, `count-subjects` and `read-relationships`. Cursors are
+unaffected: a page token is minted and validated from the request, so a cursor minted with the
+override is usable without it and vice versa.
 
 All result keys and values contain internal EIDs, never external object IDs. A *query input* naming
 an unknown external ID returns the ordinary false/empty boundary result and is not cached. EACL
@@ -942,10 +935,11 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- *Cache coherence is explicit:* live `can?`, lookup, and count memoization requires every
-  relationship writer to receive the same coordinator. Direct transactions of EACL relationship
-  tuples are outside this contract and are not polled. Omit `:live-results?` when coordination
-  cannot be guaranteed.
+- *Cache invalidation follows EACL's own writes:* every relationship helper stamps
+  `:eacl/relation-version` on the relations it changes, inside the same transaction, so any writer
+  using those helpers publishes the change — including a caller who transacts `tx-relationship`
+  output itself. Hand-written relationship tuples that bypass the helpers are outside this
+  contract and will not invalidate cached results.
 - *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 - *Recursive cursors benefit from their continuation:* a permission that transitively depends on itself
   (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
