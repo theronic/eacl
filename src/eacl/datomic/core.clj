@@ -773,7 +773,10 @@
   (let [store (:lookup-cache-store opts)
         namespace (:cache-namespace opts)
         ttl-ms (:lookup-cache-ttl-ms opts)
-        exact-key (exact-result-cache-key cache-prefix cache-epoch)
+        ;; nil epoch means no precise dependency proof was available, so there
+        ;; is no key a later read could match. Retaining anyway is pure cost.
+        exact-key (when cache-epoch
+                    (exact-result-cache-key cache-prefix cache-epoch))
         ;; A cursor/exact page is forced to :at-exact-snapshot, and only that
         ;; mode reads exact-key. Its live entry would be keyed by a query
         ;; identity containing an :after/:before edge, and every request
@@ -786,7 +789,7 @@
                 :cache-scope cache-scope
                 :result (portable-result kind result)}]
     (when (and store schema-version)
-      (when (:cache-exact-results? opts)
+      (when (and (:cache-exact-results? opts) exact-key)
         (cache/safe-store-entry!
          store namespace exact-key kind answer (+ 128 weight) ttl-ms))
       (when (and cache-scope (:cache-live-results? opts) (not historical?))
@@ -798,7 +801,7 @@
       ;; writer may overwrite it; at-least-as-fresh validates the revision and
       ;; falls back to the selected DB when the hint is too old. A cursor
       ;; prefix's pointer is unreachable for the same reason as its live entry.
-      (when (and (:cache-exact-results? opts) (not historical?))
+      (when (and (:cache-exact-results? opts) exact-key (not historical?))
         (cache/safe-store-entry!
          store namespace
          (latest-result-cache-key cache-prefix)
@@ -859,7 +862,7 @@
                           (:schema-version consistency-context))
             live-key (when (and live? cache-scope)
                        (result-cache-key cache-prefix cache-scope))
-            exact-key (when exact?
+            exact-key (when (and exact? cache-epoch)
                         (exact-result-cache-key cache-prefix cache-epoch))
             current-hit #(when live-key
                            (some-> (cached-answer
@@ -1174,6 +1177,23 @@
          (finally
            (.unlock lock#))))))
 
+(defn- needs-relationship-dependencies?
+  "Whether this client has a consumer for a query's relation dependency set.
+
+  There are two, and they used to be guarded inconsistently — some call sites
+  tested :cache-live-results?, others :relationship-coordinator:
+
+    - the live coordinator proof, and
+    - the per-relation exact epoch, which is what scopes invalidation to the
+      relations an answer actually reads.
+
+  Resolving the set is a memoised map lookup on a stamped client, so the test
+  is about avoiding work on a cacheless client, not about hot-path cost."
+  [opts]
+  (boolean (or (:cache-live-results? opts)
+               (:relationship-coordinator opts)
+               (:cache-exact-results? opts))))
+
 (defn- capture-result-context
   "Captures one DB and its matching relationship proof under the read barrier.
 
@@ -1267,12 +1287,15 @@
                :mode mode
                :requested-t requested-t
                :basis-t observed-t
-               ;; Verified against the transaction log, so an unrelated
-               ;; application write leaves the exact cache hot while any EACL
-               ;; write — from this process, another process, or a raw
-               ;; d/transact — moves it.
+               ;; The max relation stamp over exactly what this answer depends
+               ;; on, read from the same db value. An unrelated application
+               ;; write leaves it alone, and so does churn on an EACL relation
+               ;; this answer does not read. Any write that CAN affect the
+               ;; answer moves it, whichever process or connection made it,
+               ;; because the stamp is transacted with the relationship datoms.
                :cache-epoch (watermark/safe-epoch-for
-                             (:cache-epoch-state opts) observed-t)
+                             (:cache-epoch-state opts) db
+                             relationship-dependencies)
                :cache-scope cache-scope
                :schema-version (client-schema-version opts))))))
 
@@ -1321,7 +1344,12 @@
                  relationship-coordinator
                  (fn []
                    (cache/mutation-attempted!)
-                   (let [{:keys [db-after tx-data]} @(d/transact conn (vec batch))
+                   ;; Each batch must publish the relations IT changes:
+                   ;; tx-delete-object deduplicates stamps across the whole
+                   ;; result, so without this a later batch retracts
+                   ;; relationships while announcing nothing.
+                   (let [{:keys [db-after tx-data]}
+                         @(d/transact conn (impl/stamp-relation-versions batch))
                          basis (d/basis-t db-after)
                          changes (relationship-changes db-after tx-data)]
                      [[(relationship-retraction-count db-after tx-data) basis]
@@ -1347,7 +1375,7 @@
              :internal-subject (spice-object subject-type subject-eid)
              :internal-resource (spice-object resource-type resource-eid)
              :relationship-dependencies
-             (when (:cache-live-results? opts)
+             (when (needs-relationship-dependencies? opts)
                (impl.indexed/permission-relationship-eids
                 db resource-type permission))}))
         {:keys [db internal-subject internal-resource]
@@ -1393,7 +1421,7 @@
              :query-shape query-shape
              :internal-query (internal-page-query query' page-req decoded)
              :relationship-dependencies
-             (when (:relationship-coordinator opts)
+             (when (needs-relationship-dependencies? opts)
                (impl.indexed/permission-relationship-eids
                 db (:resource/type query') (:permission query')))}))
         captured
@@ -1473,7 +1501,7 @@
              :subject-ent subject-ent
              :query' query'
              :relationship-dependencies
-             (when (:cache-live-results? opts)
+             (when (needs-relationship-dependencies? opts)
                (impl.indexed/permission-relationship-eids
                 db (:resource/type query') (:permission query')))}))
         {:keys [db subject-ent query']
@@ -1514,7 +1542,7 @@
              :query-shape query-shape
              :internal-query (internal-page-query query' page-req decoded)
              :relationship-dependencies
-             (when (:relationship-coordinator opts)
+             (when (needs-relationship-dependencies? opts)
                (impl.indexed/permission-relationship-eids
                 db (:type internal-resource) (:permission query')))}))
         captured
@@ -1583,7 +1611,7 @@
              :resource-ent resource-ent
              :query' query'
              :relationship-dependencies
-             (when (:cache-live-results? opts)
+             (when (needs-relationship-dependencies? opts)
                (impl.indexed/permission-relationship-eids
                 db (:type resource-ent) (:permission query')))}))
         {:keys [db resource-ent query']
@@ -1970,23 +1998,14 @@
         schema-state       (atom (impl.indexed/make-schema-cache initial-db))
         cache-config       (normalize-cache-config cache
                                                    page-token-ttl-seconds)
-        ;; Log-verified cache epochs, built only when results can be retained.
-        ;; With :cache false the connection is never asked for its log.
+        ;; Per-relation epoch state, built only when results can be retained.
+        ;; Holds one memoised attribute eid and no db value. Whether an epoch
+        ;; can actually be established is decided per read, not here: a client
+        ;; may be constructed before the EACL schema exists — this repo's own
+        ;; benchmark seeding does that — and retention starts working by itself
+        ;; once write-schema! installs :eacl/relation-version.
         cache-epoch-state  (when (:exact-results? cache-config)
-                             (try
-                               (watermark/log-cache-epoch conn)
-                               (catch Exception _ nil)))
-        ;; Without a usable transaction log an exact entry can only be keyed by
-        ;; basis-t, which any transaction invalidates — measured WORSE than no
-        ;; cache at all (49us vs 24us for can? under churn), because every read
-        ;; pays a publication it can never read back. Turn it off rather than
-        ;; ship a cache that costs more than it saves. Live results are
-        ;; unaffected: they key on the coordinator proof, not the epoch.
-        cache-config       (cond-> cache-config
-                             (and (:exact-results? cache-config)
-                                  (nil? cache-epoch-state)
-                                  (not (:live-results? cache-config)))
-                             (assoc :exact-results? false))
+                             (watermark/make-epoch-state))
         timeout-ms         (if (contains? config-opts
                                           :consistency-sync-timeout-ms)
                              consistency-sync-timeout-ms

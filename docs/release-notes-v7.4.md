@@ -1,8 +1,13 @@
 # EACL v7.4 candidate
 
 This change may ship as a v7.3 patch while v7.3 is still recent. It preserves the public
-connection-oriented authorization API and adds an optional, bounded, ephemeral cache without
-adding Datomic schema attributes or permanent tuples.
+connection-oriented authorization API and adds an optional, bounded, ephemeral cache.
+
+It adds exactly one Datomic schema attribute, `:eacl/relation-version`, and no permanent tuples.
+The attribute holds one `:db/noHistory` datom per relation naming the transaction that last changed
+a relationship using it; this is what lets a cached answer survive writes to relations it does not
+read. `write-schema!` installs it when a database predates it, so there is no migration step. Until
+it exists, exact-result retention is simply off.
 
 ## Authorization cache
 
@@ -71,14 +76,24 @@ adding Datomic schema attributes or permanent tuples.
 - `write-schema!` rotates that client's immutable schema generation only after a successful write.
 - An unstamped database remains usable but result caching stays disabled until `write-schema!`
   establishes a generation; this is not a v6 compatibility mode.
-- Exact result entries are epoch-keyed and verified against the transaction log, so direct
-  transactions of EACL relationship or schema data — from this process, another process, or raw
-  `d/transact` of `tx-relationship` output — DO invalidate them. `:live-results?` entries are the
-  exception: they key on the relationship coordinator's proof, which only observes writes made
-  through a client sharing that coordinator, and a live hit takes precedence over an epoch-keyed
-  one. Choose `:live-results?` for per-relation granularity under heavy EACL write load when every
-  writer shares the coordinator; choose plain `:exact-results?` when you want soundness against
-  writers you do not control.
+- Exact result entries are keyed by the relations they depend on, stamped by EACL's own write
+  helpers, so direct transactions of EACL relationship or schema data — from this process, another
+  process, or raw `d/transact` of `tx-relationship` output — DO invalidate them, and writes to
+  relations an answer does not read do not. `:live-results?` entries key on the relationship
+  coordinator's proof instead, which only observes writes made through a client sharing that
+  coordinator; a live hit takes precedence over an epoch-keyed one. Plain `:exact-results?` now
+  gives per-relation granularity too, and is sound against writers you do not control, so
+  `:live-results?` is worth its extra wiring only when you also want reuse across clients at a
+  revision the reader has not yet observed.
+- Every relationship-producing helper stamps `:eacl/relation-version` on the relations it touches,
+  including `tx-relationship`, `tx-update-relationship`, `tx-delete-object` and
+  `tx-retract-orphaned-relationships`. A caller that transacts one of these directly publishes the
+  change without knowing the cache exists. The stamp's value is the transaction entity, so repeated
+  or concatenated helper output collapses to one datom instead of conflicting.
+- `delete-object!` transacts in batches and re-stamps each batch with the relations that batch
+  retracts. `tx-delete-object` deduplicates its output, which keeps only the first stamp per
+  relation, so any caller slicing that output into separate transactions must run
+  `eacl.datomic.impl/stamp-relation-versions` over each slice.
 - Consumers should call `delete-relationships!` before retracting an entity.
   `eacl.datomic.integrity/dangling-relationship-report` detects reverse ghost tuples left by an
   incorrect deletion sequence.
@@ -114,14 +129,39 @@ All of these were found in this candidate and fixed before release.
 - The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
   reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
   went from ~2.3x slower than `{:cache false}` to ~2.3x faster.
-- Exact result entries are keyed by a log-verified cache epoch instead of Datomic `basis-t`, so an
-  unrelated application write no longer invalidates them. Under one unrelated transaction per read,
-  `can?` went from 320 evaluations per 300 reads to 1 (26.9us -> 12.1us, and 13.9us with no cache at
-  all); `lookup-resources` 101.8us -> 49.2us. The epoch is verified against the transaction log, so
-  it observes writes from another connection, another process, and raw `d/transact` of
-  `tx-relationship` output — none of which a coordinator can see. A connection without a usable log
-  disables exact retention rather than reverting to basis keying, which measured worse than no
-  cache.
+- Exact result entries are keyed by per-relation change stamps instead of Datomic `basis-t`, so
+  neither an unrelated application write nor a write to an EACL relation the answer does not read
+  invalidates them. Under one unrelated transaction per read, `can?` went from 320 evaluations per
+  300 reads to 1 (26.9us -> 12.1us, and 13.9us with no cache at all); `lookup-resources`
+  101.8us -> 49.2us.
+
+  Scanning `d/tx-range` for EACL datoms was the first design and shipped briefly. It is sound, but
+  it can only ever establish THAT something changed, never WHAT, so every EACL write invalidated
+  every cached answer. On a schema where `doc/view` and `folder/editor` share nothing, writing
+  folder relationships between reads measured (same process, 400 reads each):
+
+  | `can?`, arrow fan-out 400 | us/read | evaluations |
+  |---|---|---|
+  | no cache | 19.2 | 400/400 |
+  | cache, global epoch | 102.4 | 340/400 |
+  | cache, per-relation | 6.9 | 0/400 |
+
+  | `lookup-resources {:first 50}` | us/read | evaluations |
+  |---|---|---|
+  | no cache | 106.2 | 400/400 |
+  | cache, global epoch | 158.4 | 340/400 |
+  | cache, per-relation | 53.3 | 0/400 |
+
+  A global epoch was therefore WORSE than no cache under EACL write traffic: every read paid a
+  publication it could never read back, and the store thrashed on entries nothing would match. With
+  no churn at all the per-relation cache still wins — `can?` 8.9us -> 5.4us, lookups
+  83.0us -> 45.7us — so the epoch's cost (one index seek per dependency, ~0.8us) is absorbed.
+
+  Stamps are written by EACL's own tx-data helpers, so they observe writes from another connection,
+  another process, and raw `d/transact` of `tx-relationship` output — none of which a coordinator
+  can see — and `d/log` is no longer used at all. A database without `:eacl/relation-version`
+  retains nothing rather than reverting to basis keying, which measured worse than no cache; its
+  next `write-schema!` installs the attribute.
 - Forward acyclic pages resume from cached per-intermediate stream heads. Every page previously
   opened an index scan for each of the subject's intermediates just to learn where each stream
   starts; a page now re-opens only the streams it actually drew from. A full walk over 4000

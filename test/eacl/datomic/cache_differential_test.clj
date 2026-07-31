@@ -208,6 +208,118 @@
           (assert-matches-oracle! (str "acyclic/" (name label))
                                   acl oracle query false))))))
 
+;; --- writes interleaved with reads -------------------------------------------
+;;
+;; Everything above seeds once and then only reads, so it cannot observe a
+;; stale cache at all. That gap matters now that exact-result entries are keyed
+;; by per-relation stamps: an answer stays cached until a relation in ITS
+;; dependency set is written, and the dependency set comes from
+;; idx/permission-relationship-eids walking the permission graph. If that walk
+;; ever misses a relation — an arrow target, a nested self-permission, a
+;; recursive back-edge — the epoch will not move for a write that changes the
+;; answer, and the cache serves a revoked grant.
+;;
+;; Rather than reason about the completeness of that walk, mutate every
+;; relation in turn and diff against an uncached oracle after each write.
+
+(defn- recursive-mutations
+  [n]
+  (vec (concat
+        (for [k (range n)]
+          (->Relationship (spice-object :user "alice") :owner
+                          (spice-object :folder (str "f" k))))
+        (for [k (range 1 n)]
+          (->Relationship (spice-object :folder (str "f" (dec k))) :parent
+                          (spice-object :folder (str "f" k)))))))
+
+(defn- acyclic-mutations
+  [n]
+  (vec (concat
+        (for [k (range n)]
+          (->Relationship (spice-object :user "alice") :member
+                          (spice-object :group (str "g" k))))
+        (for [k (range n)]
+          (->Relationship (spice-object :user "alice") :lead
+                          (spice-object :team (str "t" k))))
+        (for [k (range n)]
+          (->Relationship (spice-object :group (str "g" k)) :grp
+                          (spice-object :team (str "t" k))))
+        (for [k (range (* 2 n))]
+          (->Relationship (spice-object :group (str "g" (mod k n))) :grp
+                          (spice-object :doc (str "d" k))))
+        (for [k (range (* 2 n))]
+          (->Relationship (spice-object :team (str "t" (mod k n))) :team
+                          (spice-object :doc (str "d" k))))
+        (for [k (range (* 2 n))]
+          (->Relationship (spice-object :user "alice") :owner
+                          (spice-object :doc (str "d" k)))))))
+
+(defn- assert-agrees-under-writes!
+  "Applies random relationship writes through `acl` and diffs every read shape
+  against `oracle` after each one."
+  [label acl oracle query resource-type ids mutations seed rounds]
+  (let [rng (java.util.Random. seed)
+        subject (:subject query)
+        permission (:permission query)]
+    (dotimes [i rounds]
+      (let [relationship (nth mutations (.nextInt rng (count mutations)))
+            ;; :touch rather than :create so a repeat is idempotent instead of
+            ;; an :eacl/relationship-conflict.
+            operation (if (zero? (.nextInt rng 2)) :touch :delete)]
+        (eacl/write-relationships! acl [{:operation operation
+                                         :relationship relationship}])
+        (let [expected (mapv :id (:data (eacl/lookup-resources
+                                         oracle (assoc query :first 10000))))
+              actual (mapv :id (:data (eacl/lookup-resources
+                                       acl (assoc query :first 10000))))]
+          (is (= expected actual)
+              (str label " round " i " after " operation " "
+                   (pr-str relationship) " — lookup-resources diverged"))
+          (is (= (count expected) (:count (eacl/count-resources acl query)))
+              (str label " round " i " — count-resources diverged"))
+          (doseq [id ids]
+            (let [resource (spice-object resource-type id)]
+              (is (= (eacl/can? oracle subject permission resource)
+                     (eacl/can? acl subject permission resource))
+                  (str label " round " i " — can? diverged on " id)))))))))
+
+(deftest cache-agrees-with-the-oracle-across-interleaved-writes-test
+  (testing "recursive traversal permission"
+    (doseq [[label config] (cache-configurations)]
+      (with-mem-conn [conn schema/v7-schema]
+        (let [boot (client conn {:cache false})
+              _ (seed-recursive! conn boot 8)
+              acl (client conn config)
+              oracle (client conn {:cache false})]
+          (assert-agrees-under-writes!
+           (str "recursive/" (name label))
+           acl oracle
+           {:subject (spice-object :user "alice")
+            :permission :view
+            :resource/type :folder}
+           :folder
+           (mapv #(str "f" %) (range 8))
+           (recursive-mutations 8)
+           20260731 40)))))
+
+  (testing "acyclic union-of-arrows permission"
+    (doseq [[label config] (cache-configurations)]
+      (with-mem-conn [conn schema/v7-schema]
+        (let [boot (client conn {:cache false})
+              _ (seed-acyclic! conn boot 6)
+              acl (client conn config)
+              oracle (client conn {:cache false})]
+          (assert-agrees-under-writes!
+           (str "acyclic/" (name label))
+           acl oracle
+           {:subject (spice-object :user "alice")
+            :permission :view
+            :resource/type :doc}
+           :doc
+           (mapv #(str "d" %) (range 12))
+           (acyclic-mutations 6)
+           20260732 40))))))
+
 (deftest acyclic-pages-resume-from-cached-stream-heads-test
   ;; Every page of an arrow lookup used to open an index scan for each of the
   ;; subject's intermediates just to learn where each stream starts. The

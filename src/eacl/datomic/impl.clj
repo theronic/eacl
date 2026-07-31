@@ -49,6 +49,25 @@
 (def ^:private reverse-relationship-attr
   :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
+(def ^:private relation-version-attr :eacl/relation-version)
+
+(defn- bump-relation-version
+  "Stamps the relation with the transaction that is changing it.
+
+  This is how a writer publishes WHAT changed rather than merely THAT
+  something changed: the stamp lands atomically with the relationship datoms,
+  so no db value can show one without the other. Readers take the max stamp
+  over the relations a permission depends on, so churn on an unrelated relation
+  leaves cached answers alone.
+
+  The value is the transaction entity rather than a fresh id, which makes the
+  assertion idempotent — the same [e a v] however many times it is emitted in
+  one transaction. That is what lets every relationship-producing helper append
+  its own stamp unconditionally, and lets callers concat several helpers'
+  output into a single transaction without provoking :db.error/datoms-conflict."
+  [relation-eid]
+  [:db/add relation-eid relation-version-attr "datomic.tx"])
+
 (defn can!
   "Like can?, but throws :eacl/unauthorized instead of returning false."
   [db subject permission resource]
@@ -148,7 +167,8 @@
     (relationship-tuple resolved)]
    [:db/add (:resource-eid resolved)
     reverse-relationship-attr
-    (reverse-relationship-tuple resolved)]])
+    (reverse-relationship-tuple resolved)]
+   (bump-relation-version (:relation-eid resolved))])
 
 (defn- retract-relationship-txes
   [resolved]
@@ -157,7 +177,8 @@
     (relationship-tuple resolved)]
    [:db/retract (:resource-eid resolved)
     reverse-relationship-attr
-    (reverse-relationship-tuple resolved)]])
+    (reverse-relationship-tuple resolved)]
+   (bump-relation-version (:relation-eid resolved))])
 
 (defn- forward-tuple-exists?
   [db {:keys [subject-eid] :as resolved}]
@@ -545,7 +566,54 @@
   [[:db/retract subject-eid forward-relationship-attr
     [subject-type relation-eid resource-type resource-eid]]
    [:db/retract resource-eid reverse-relationship-attr
-    [resource-type relation-eid subject-type subject-eid]]])
+    [resource-type relation-eid subject-type subject-eid]]
+   (bump-relation-version relation-eid)])
+
+(defn- op-attr
+  "The attribute of a list-form tx op, or nil for a map form or anything else.
+  Map forms cannot express a relationship tuple retraction, so skipping them is
+  correct rather than merely defensive."
+  [op]
+  (when (and (vector? op) (<= 3 (count op)))
+    (nth op 2)))
+
+(defn- relation-eid-of-retraction
+  "The relation eid named by a relationship retraction op, or nil for any other
+  op. Both tuple attributes carry the relation eid at position 1."
+  [op]
+  (let [attr (op-attr op)]
+    (when (or (identical? attr forward-relationship-attr)
+              (identical? attr reverse-relationship-attr))
+      (let [v (nth op 3 nil)]
+        (when (and (vector? v) (<= 2 (count v)))
+          (nth v 1))))))
+
+(defn stamp-relation-versions
+  "Ensures `ops` carries a version stamp for every relation it retracts.
+
+  tx-delete-object deduplicates its output, which keeps only the first stamp
+  per relation. That is correct for a single transaction and WRONG for a
+  batched one: a batch holding the second half of a relation's retractions
+  would change relationship data while publishing nothing, and a reader would
+  keep serving a cached answer that the retraction had already invalidated.
+
+  Idempotent — stamping an already-stamped batch adds nothing, because the
+  stamp is the same [e a v] triple either way."
+  [ops]
+  (let [ops (vec ops)
+        stamped (into #{}
+                      (keep (fn [op]
+                              (when (identical? relation-version-attr
+                                                (op-attr op))
+                                (nth op 1))))
+                      ops)
+        missing (into #{}
+                      (comp (keep relation-eid-of-retraction)
+                            (remove stamped))
+                      ops)]
+    (if (seq missing)
+      (into ops (map bump-relation-version) missing)
+      ops)))
 
 (defn tx-delete-object
   "Retraction tx-data removing every EACL relationship that touches `object-id`,
@@ -564,7 +632,13 @@
   Retracting a datom that is already absent is a no-op, so the overlap between
   the two is harmless and this is idempotent.
 
-  Retracts relationships only; retracting the entity itself is yours to do."
+  Retracts relationships only; retracting the entity itself is yours to do.
+
+  Large results are transacted in batches by delete-object!, so use
+  `stamp-relation-versions` on any slice of this output before transacting it
+  separately — the deduplication below keeps only the FIRST stamp for each
+  relation, which would otherwise leave later batches retracting relationships
+  without publishing that they changed."
   [db object-id]
   (if-let [eid (impl.indexed/object-eid db object-id)]
     (let [triples (relation-triples db)]
@@ -638,10 +712,15 @@
 (defn tx-retract-orphaned-relationships
   "Retraction tx-data for orphaned-relationship-halves. Fails closed: an
   orphan means one endpoint is gone, so the survivor should stop granting.
-  Returns a lazy sequence; transact in batches on large databases."
+  Returns a lazy sequence; transact in batches on large databases.
+
+  Stays lazy: the relation stamps are emitted inline rather than deduplicated
+  up front, which is safe because they are idempotent within a transaction."
   [db]
-  (map (fn [{:keys [e attr v]}] [:db/retract e attr v])
-       (orphaned-relationship-halves db)))
+  (mapcat (fn [{:keys [e attr v relation-eid]}]
+            [[:db/retract e attr v]
+             (bump-relation-version relation-eid)])
+          (orphaned-relationship-halves db)))
 
 (defn tx-relationship
   "Translate relationship data into v7 tuple writes.

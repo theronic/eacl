@@ -75,21 +75,37 @@
                                   consistency/minimize-latency)))
             (is (= 1 @calls)))
 
+          ;; A historical read is keyed by the basis it pins, while a current
+          ;; read is keyed by the relation stamps it observed, so the two no
+          ;; longer share an entry by coincidence of both being a `t`. That
+          ;; costs this one evaluation and is deliberate: relation stamps are
+          ;; :db/noHistory, so reading them through d/as-of is only reliable
+          ;; until the database indexes and collects them — at which point two
+          ;; different historical bases would both read "no stamp" and collide
+          ;; on one cache key. Pinning the basis cannot go wrong that way.
+          ;; Repeat requests for the SAME cursor or snapshot still hit, which
+          ;; is what pagination depends on.
           (testing "exact mode returns the authenticated historical snapshot"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 1 @calls)))
+            (is (= 2 @calls)))
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 2 @calls)))
+            (is (= 3 @calls)))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 2 @calls))))))))
+            (is (= 3 @calls)))
+
+          (testing "and the same historical snapshot is served from cache"
+            (is (true? (eacl/can? client alice :admin account
+                                  (consistency/at-exact-snapshot
+                                   created-token))))
+            (is (= 3 @calls))))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]

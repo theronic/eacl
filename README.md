@@ -553,23 +553,43 @@ Capacity and lifetime are consumer-controlled:
             :ttl-ms 300000}}))
 ```
 
-Exact entries are keyed by a **cache epoch** rather than Datomic's `basis-t`. An epoch changes only
-when EACL-relevant data changes — relationship tuples, relation/permission definitions, or the
-schema generation — and is verified against Datomic's transaction log, so it sees writes from any
-connection, any process, and raw `d/transact` of `tx-relationship` output. Keying on `basis-t` meant
-any unrelated application write minted a new key: measured at a 0% hit rate, and slower than running
-with no cache at all. Keying on a *process-local* counter instead would be faster but unsound —
-another app server's write leaves it untouched and the cache serves a stale answer.
+Exact entries are keyed by a **cache epoch** rather than Datomic's `basis-t`. Keying on `basis-t`
+meant any unrelated application write minted a new key: a 0% hit rate, and slower than running with
+no cache at all.
 
-Verification costs one log scan per newly observed basis, amortised across every read at that
-basis: ~0.3µs for a quiet window, ~0.1µs per intervening transaction, and independent of database
-size. Past `:max-scanned-transactions` (256) the window is abandoned and the epoch advances — a
-miss, never a wrong answer. A connection with no usable transaction log disables exact retention
-rather than falling back to `basis-t` keying, which measured worse than no cache.
+EACL's relationship write helpers publish what they changed. Every one of them appends
+`[:db/add <relation-eid> :eacl/relation-version "datomic.tx"]` to the tx-data it returns, stamping
+each affected relation with the transaction that changed it. An answer's epoch is the greatest
+stamp over the relations that answer actually depends on, so it moves for a write that can change
+the answer and stays put for one that cannot.
 
-Reads pinned to a historical basis — cursors and `at-exact-snapshot` — are their own epoch and are
-deliberately not made hot. EACL targets the current database; a cache per point in time is a
-non-goal.
+Three properties make that sound. The stamp is transacted **with** the relationship datoms, so no
+db value shows one without the other and it does not matter which connection or process wrote them
+— a *process-local* counter would be faster but unsound here, because another app server's write
+leaves it untouched and the cache serves a stale answer. The stamp's value is the transaction
+entity, whose id increases monotonically with `t`, so any new write to a dependency is strictly
+greater and a max can never miss it. And the dependency set is fixed for a schema generation, which
+is already part of every cache key.
+
+Because the value is the transaction rather than a fresh id, the assertion is idempotent: a
+transaction touching a thousand relationships of one relation emits one datom, and callers may
+freely `concat` the output of several helpers into a single transaction. The attribute is
+`:db/noHistory`, so only the current stamp is retained.
+
+Relation and permission **definitions** are not covered by stamps; they move only through
+`write-schema!`, which bumps `:eacl/schema-version` — already a cache-key component.
+
+Reading an epoch costs one index seek per relation in the dependency set (~0.8µs each, typically
+one to four), independent of database size. A database without `:eacl/relation-version` — a v7
+database created before stamps existed — retains nothing rather than falling back to `basis-t`
+keying, which measured worse than no cache; its next `write-schema!` installs the attribute and
+caching begins.
+
+Reads pinned to a historical basis — cursors and `at-exact-snapshot` — key on that basis instead,
+and are deliberately not made hot. Stamps are `:db/noHistory`, so `d/as-of` resolves them only
+until the database indexes and collects the superseded values; after that every historical basis
+would read "no stamp" and collide on one key. EACL targets the current database, and a cache per
+point in time is a non-goal.
 
 Cache TTL is clamped to the page-token TTL. Entry admission includes a conservative estimate of
 the retained key and result/traversal shape; the weight settings are estimates, not literal JVM

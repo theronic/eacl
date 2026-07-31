@@ -48,6 +48,32 @@
    :db/cardinality :db.cardinality/one
    :db/index       true})
 
+(def relation-version-attr-definition
+  "Per-relation change stamp: a ref to the transaction that last added or
+  retracted a relationship using this relation.
+
+  EACL's relationship write helpers append
+  `[:db/add <relation-eid> :eacl/relation-version \"datomic.tx\"]` to their own
+  tx-data, so a writer publishes exactly which relations moved, atomically with
+  the move itself. A reader takes the max stamp over the relations a permission
+  actually depends on, which is why an unrelated relation's churn cannot
+  invalidate a cached answer.
+
+  The value is the tx entity, not a fresh squuid, so the assertion is
+  IDEMPOTENT: a transaction touching a thousand relationships of one relation
+  emits one identical datom rather than a thousand conflicting ones, and
+  callers may freely concat the output of several helpers into one transaction.
+  Tx entity ids increase monotonically with `t`, so a max over a dependency set
+  is strictly increasing on any write to it.
+
+  :db/noHistory because only the current stamp is ever read; without it every
+  EACL write would accumulate a permanent datom per relation."
+  {:db/ident       :eacl/relation-version
+   :db/doc         "Ref to the transaction that last changed a relationship using this relation. Bumped by EACL's relationship tx-data helpers; read by the result cache to scope invalidation to affected relations."
+   :db/valueType   :db.type/ref
+   :db/cardinality :db.cardinality/one
+   :db/noHistory   true})
+
 (def v7-schema
   [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
@@ -62,6 +88,7 @@
     :db/cardinality :db.cardinality/one}
 
    schema-version-attr-definition
+   relation-version-attr-definition
 
    {:db/ident       :eacl/storage-version
     :db/doc         "EACL relationship storage-model major version (7 = tuple relationships). Stamped by eacl.migrations.v6-to-v7 on completed migration; eacl.datomic.core/make-client refuses to start against unmigrated v6 relationship data without it."
@@ -404,10 +431,20 @@
   ([conn schema-string opts]
    (write-schema! conn schema-string opts ::read-current-version))
   ([conn schema-string {:keys [allow-empty-schema?]} known-schema-version]
-   ;; Fresh/partially installed v7 databases may not have the stamp attribute
+   ;; Fresh/partially installed v7 databases may not have the stamp attributes
    ;; yet. This is schema installation, not a v6 cache-compatibility path.
-   (when-not (d/entid (d/db conn) :eacl/schema-version)
-     @(d/transact conn [schema-version-attr-definition]))
+   ;; :eacl/relation-version is installed the same way so that a v7 database
+   ;; created before per-relation stamps existed picks them up on its next
+   ;; schema write, rather than silently running without result caching.
+   (let [db (d/db conn)
+         missing (cond-> []
+                   (not (d/entid db :eacl/schema-version))
+                   (conj schema-version-attr-definition)
+
+                   (not (d/entid db :eacl/relation-version))
+                   (conj relation-version-attr-definition))]
+     (when (seq missing)
+       @(d/transact conn missing)))
    (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
          ;; Validate schema references before proceeding (ADR 012 requirement)
          _                      (validate-schema-references new-schema-map)
