@@ -108,6 +108,12 @@ All of these were found in this candidate and fixed before release.
 - The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
   reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
   went from ~2.3x slower than `{:cache false}` to ~2.3x faster.
+- Forward acyclic pages resume from cached per-intermediate stream heads. Every page previously
+  opened an index scan for each of the subject's intermediates just to learn where each stream
+  starts; a page now re-opens only the streams it actually drew from. A full walk over 4000
+  intermediates: 591ms -> 199ms; on the multipath benchmark, forward pagination 1.3ms -> 0.85ms per
+  page. Still super-linear — see the report for what remains — and a miss falls back to the
+  existing frontier replay, so nothing depends on the cache for correctness.
 - `can?` answers an arrow by intersecting two sorted intermediate streams instead of scanning the
   resource's side in full, so it no longer scales with arrow fan-out. A doc attached to N teams
   where the user belongs to one of them: 133us -> 13us at N=100, 1.34ms -> 13us at N=1000,

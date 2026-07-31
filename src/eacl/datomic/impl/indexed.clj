@@ -17,6 +17,7 @@
 (def ^:private max-page-size 10000)
 (def ^:private count-page-size 16384)
 (def ^:private lookup-frontier-version 1)
+(def ^:private lookup-continuation-version 1)
 
 (defn object-eid
   "Resolves an object id to an eid for read paths. String ids resolve via the
@@ -613,15 +614,53 @@
                (conj seen node)))
       (vec seen))))
 
+(defn- resume-scan-opts
+  "Scan options that resume an intermediate's result stream strictly after
+  `resume-eid`, or the page's own options when there is nothing to resume."
+  [direction page-opts resume-eid]
+  (if resume-eid
+    {:direction direction :bound-eid resume-eid :inclusive-bound? false}
+    page-opts))
+
 (defn- arrow-via-intermediates
+  "Merges one result stream per intermediate into a single ordered stream.
+
+  `head-state`, when present, makes this resumable across pages:
+
+    :cached   {intermediate-eid -> head-eid} proved beyond this page's bound
+              while producing the previous page.
+    :observed an atom collecting each opened stream's head, from which the
+              next page's :cached map is derived.
+
+  Without it every page must open an index scan for every intermediate just to
+  learn where each stream starts, which is O(intermediates) per page and
+  O(intermediates * results / page-size) over a full walk. A cached head is
+  returned without touching the index, and the rest of that stream is only
+  opened if this page actually consumes past it — so a page costs one scan per
+  intermediate it draws from, not one per intermediate that exists."
   ([intermediate-eids result-fn]
-   (arrow-via-intermediates :asc intermediate-eids result-fn))
+   (arrow-via-intermediates :asc intermediate-eids result-fn nil))
   ([direction intermediate-eids result-fn]
-   (let [pairs (keep (fn [intermediate-eid]
-                       (let [results (result-fn intermediate-eid)]
-                         (when (seq results)
+   (arrow-via-intermediates direction intermediate-eids result-fn nil))
+  ([direction intermediate-eids result-fn head-state]
+   (let [cached (:cached head-state)
+         observed (:observed head-state)
+         note-head! (fn [intermediate-eid head]
+                      (when observed
+                        (swap! observed assoc intermediate-eid head)))
+         pairs (keep (fn [intermediate-eid]
+                       (if-let [head (get cached intermediate-eid)]
+                         (do
+                           (note-head! intermediate-eid head)
                            {:int-eid intermediate-eid
-                            :results results})))
+                            :results (cons head
+                                           (lazy-seq
+                                            (result-fn intermediate-eid head)))})
+                         (let [results (seq (result-fn intermediate-eid nil))]
+                           (when results
+                             (note-head! intermediate-eid (first results))
+                             {:int-eid intermediate-eid
+                              :results results}))))
                      intermediate-eids)
          first-pair (first pairs)
          result-seqs (map :results pairs)]
@@ -1075,6 +1114,44 @@
                         frontiers)
         (page-error! "Lookup page cursor contains an invalid path frontier."
                      {:eacl/error :eacl.pagination/invalid-cursor})))))
+
+(defn- valid-lookup-heads?
+  [value]
+  (and (map? value)
+       (= lookup-continuation-version (:version value))
+       (map? (:heads value))
+       (every? (fn [[path-key heads]]
+                 (and (string? path-key)
+                      (map? heads)
+                      (every? (fn [[intermediate-eid head]]
+                                (and (valid-cursor-eid? intermediate-eid)
+                                     (valid-cursor-eid? head)))
+                              heads)))
+               (:heads value))))
+
+(defn- cached-lookup-heads
+  "Per-intermediate stream heads left over from the page that minted `bound`."
+  [continuation-cache bound]
+  (when-let [get-heads (:get-heads continuation-cache)]
+    (when-let [value (try
+                       (get-heads bound)
+                       (catch Exception _
+                         nil))]
+      (when (valid-lookup-heads? value)
+        (inc-stat! :lookup-head-hits)
+        (:heads value)))))
+
+(defn- store-lookup-heads!
+  [continuation-cache edge heads]
+  (when-let [put-heads! (:put-heads! continuation-cache)]
+    (when (and edge (seq heads))
+      (try
+        (put-heads! edge
+                    {:version lookup-continuation-version
+                     :heads heads}
+                    (+ 512 (* 96 (reduce + 0 (map count (vals heads))))))
+        (catch Exception _
+          false)))))
 
 (def ^:private stream-chunk-size 64)
 
@@ -1847,11 +1924,15 @@
 (declare traverse-permission-path lookup-subject-eids* can*)
 
 (defn traverse-permission-path-via-subject
-  [db subject-type subject-eid path resource-type page-opts intermediate-cursor-eid visited-paths]
-  (let [{:keys [direction]} (scan-opts page-opts)
-        intermediate-opts {:direction direction
-                           :bound-eid intermediate-cursor-eid
-                           :inclusive-bound? true}]
+  ([db subject-type subject-eid path resource-type page-opts intermediate-cursor-eid visited-paths]
+   (traverse-permission-path-via-subject
+    db subject-type subject-eid path resource-type page-opts
+    intermediate-cursor-eid visited-paths nil))
+  ([db subject-type subject-eid path resource-type page-opts intermediate-cursor-eid visited-paths head-state]
+   (let [{:keys [direction]} (scan-opts page-opts)
+         intermediate-opts {:direction direction
+                            :bound-eid intermediate-cursor-eid
+                            :inclusive-bound? true}]
     (case (:type path)
       :relation
       {:results (when (= subject-type (:subject-type path))
@@ -1891,13 +1972,15 @@
                                     (merge-eid-seqs direction intermediate-seqs)
                                     [])]
             (arrow-via-intermediates direction intermediate-eids
-                                     (fn [intermediate-eid]
+                                     (fn [intermediate-eid resume-eid]
                                        (subject->resources db
                                                            intermediate-type
                                                            intermediate-eid
                                                            via-relation-eid
                                                            resource-type
-                                                           page-opts))))
+                                                           (resume-scan-opts
+                                                            direction page-opts resume-eid)))
+                                     head-state))
           (let [target-permission (:target-permission path)
                 intermediate-eids (traverse-permission-path db
                                                             subject-type
@@ -1907,13 +1990,15 @@
                                                             intermediate-opts
                                                             (or visited-paths #{}))]
             (arrow-via-intermediates direction intermediate-eids
-                                     (fn [intermediate-eid]
+                                     (fn [intermediate-eid resume-eid]
                                        (subject->resources db
                                                            intermediate-type
                                                            intermediate-eid
                                                            via-relation-eid
                                                            resource-type
-                                                           page-opts)))))))))
+                                                           (resume-scan-opts
+                                                            direction page-opts resume-eid)))
+                                     head-state))))))))
 
 (defn traverse-permission-path
   ([db subject-type subject-eid permission-name resource-type cursor-eid]
@@ -1942,11 +2027,15 @@
            []))))))
 
 (defn traverse-permission-path-reverse
-  [db resource-type resource-eid path subject-type page-opts intermediate-cursor-eid visited-paths]
-  (let [{:keys [direction]} (scan-opts page-opts)
-        intermediate-opts {:direction direction
-                           :bound-eid intermediate-cursor-eid
-                           :inclusive-bound? true}]
+  ([db resource-type resource-eid path subject-type page-opts intermediate-cursor-eid visited-paths]
+   (traverse-permission-path-reverse
+    db resource-type resource-eid path subject-type page-opts
+    intermediate-cursor-eid visited-paths nil))
+  ([db resource-type resource-eid path subject-type page-opts intermediate-cursor-eid visited-paths head-state]
+   (let [{:keys [direction]} (scan-opts page-opts)
+         intermediate-opts {:direction direction
+                            :bound-eid intermediate-cursor-eid
+                            :inclusive-bound? true}]
     (case (:type path)
       :relation
       {:results (when (= subject-type (:subject-type path))
@@ -1980,29 +2069,34 @@
         (if (:target-relation path)
           (let [matching-sub-paths (matching-relation-sub-paths (:sub-paths path) subject-type)]
             (arrow-via-intermediates direction intermediate-eids
-                                     (fn [intermediate-eid]
-                                       (let [subject-seqs (->> matching-sub-paths
+                                     (fn [intermediate-eid resume-eid]
+                                       (let [opts (resume-scan-opts
+                                                   direction page-opts resume-eid)
+                                             subject-seqs (->> matching-sub-paths
                                                                (map (fn [sub-path]
                                                                       (resource->subjects db
                                                                                           intermediate-type
                                                                                           intermediate-eid
                                                                                           (:relation-eid sub-path)
                                                                                           subject-type
-                                                                                          page-opts)))
+                                                                                          opts)))
                                                                (filter seq))]
                                          (if (seq subject-seqs)
                                            (merge-eid-seqs direction subject-seqs)
-                                           [])))))
+                                           [])))
+                                     head-state))
           (let [target-permission (:target-permission path)]
             (arrow-via-intermediates direction intermediate-eids
-                                     (fn [intermediate-eid]
+                                     (fn [intermediate-eid resume-eid]
                                        (lookup-subject-eids* db
                                                              intermediate-type
                                                              intermediate-eid
                                                              target-permission
                                                              subject-type
-                                                             page-opts
-                                                             (or visited-paths #{}))))))))))
+                                                             (resume-scan-opts
+                                                              direction page-opts resume-eid)
+                                                             (or visited-paths #{})))
+                                     head-state))))))))
 
 (defn- lookup-subject-eids*
   [db resource-type resource-eid permission-name subject-type cursor-or-opts visited-states]
@@ -2241,87 +2335,140 @@
    :v1-cursor-key :subject})
 
 (defn- lazy-merged-lookup
-  [db direction query page-req]
-  (let [{:keys [anchor-key traverse-fn perm-type-fn]} direction
-        anchor      (get query anchor-key)
-        anchor-type (:type anchor)
-        anchor-eid  (object-eid db (:id anchor))
-        permission  (:permission query)
-        perm-type   (perm-type-fn query)
-        result-type-key (if (= anchor-key :subject) :resource/type :subject/type)
-        result-type (get query result-type-key)
-        page-opts   {:direction (:direction page-req)
-                     :bound-eid (get-in page-req [:bound :result-eid])}
-        reusable-frontiers (when (and (= lookup-frontier-version
-                                         (get-in page-req [:bound :frontier-version]))
-                                      (= (:direction page-req)
-                                         (get-in page-req [:bound :frontier-direction])))
-                             (get-in page-req [:bound :path-frontiers]))
-        paths       (frontier-permission-paths db perm-type permission)
-        path-results (vec
-                      (->> paths
-                           (map
-                            (fn [path]
-                              (let [path-key (path-frontier-key path)
-                                    prior-frontier (get reusable-frontiers path-key)
-                                    {:keys [results frontier]}
-                                    (cond
-                                      (= :exhausted prior-frontier)
-                                      {:results []
-                                       :frontier :exhausted}
+  ([db direction query page-req]
+   (lazy-merged-lookup db direction query page-req nil))
+  ([db direction query page-req cached-heads]
+   (let [{:keys [anchor-key traverse-fn perm-type-fn]} direction
+         anchor      (get query anchor-key)
+         anchor-type (:type anchor)
+         anchor-eid  (object-eid db (:id anchor))
+         permission  (:permission query)
+         perm-type   (perm-type-fn query)
+         result-type-key (if (= anchor-key :subject) :resource/type :subject/type)
+         result-type (get query result-type-key)
+         page-opts   {:direction (:direction page-req)
+                      :bound-eid (get-in page-req [:bound :result-eid])}
+         reusable-frontiers (when (and (= lookup-frontier-version
+                                          (get-in page-req [:bound :frontier-version]))
+                                       (= (:direction page-req)
+                                          (get-in page-req [:bound :frontier-direction])))
+                              (get-in page-req [:bound :path-frontiers]))
+         paths       (frontier-permission-paths db perm-type permission)
+         ;; One head map per path, collected as streams are opened. The caller
+         ;; turns these into the next page's :cached heads.
+         observed-heads (atom {})
+         path-results (vec
+                       (->> paths
+                            (map
+                             (fn [path]
+                               (let [path-key (path-frontier-key path)
+                                     prior-frontier (get reusable-frontiers path-key)
+                                     path-observed (atom {})
+                                     head-state {:cached (get cached-heads path-key)
+                                                 :observed path-observed}
+                                     _ (swap! observed-heads assoc path-key path-observed)
+                                     {:keys [results frontier]}
+                                     (cond
+                                       (= :exhausted prior-frontier)
+                                       {:results []
+                                        :frontier :exhausted}
 
-                                      anchor-eid
-                                      (traverse-fn db
-                                                   anchor-type
-                                                   anchor-eid
-                                                   path
-                                                   result-type
-                                                   page-opts
-                                                   prior-frontier
-                                                   #{})
+                                       anchor-eid
+                                       (traverse-fn db
+                                                    anchor-type
+                                                    anchor-eid
+                                                    path
+                                                    result-type
+                                                    page-opts
+                                                    prior-frontier
+                                                    #{}
+                                                    head-state)
 
-                                      :else
-                                      {:results []
-                                       :frontier nil})]
-                                {:path-key path-key
-                                 :results results
-                                 :frontier frontier})))))]
-    {:results (let [result-seqs (filter seq (map :results path-results))]
-                (if (seq result-seqs)
-                  (merge-eid-seqs (:direction page-req) result-seqs)
-                  []))
-     :path-frontiers (into {}
-                           (keep (fn [{:keys [path-key frontier]}]
-                                   (when frontier
-                                     [path-key frontier])))
-                           path-results)
-     :path-results path-results}))
+                                       :else
+                                       {:results []
+                                        :frontier nil})]
+                                 {:path-key path-key
+                                  :results results
+                                  :frontier frontier})))))]
+     {:results (let [result-seqs (filter seq (map :results path-results))]
+                 (if (seq result-seqs)
+                   (merge-eid-seqs (:direction page-req) result-seqs)
+                   []))
+      :path-frontiers (into {}
+                            (keep (fn [{:keys [path-key frontier]}]
+                                    (when frontier
+                                      [path-key frontier])))
+                            path-results)
+      :observed-heads observed-heads
+      :path-results path-results})))
+
+(defn- surviving-heads
+  "The next page's cached heads: every stream head this page opened but did
+  NOT consume.
+
+  A head at or before the new boundary was drawn from, so that stream has to be
+  re-opened next page — but only the handful of intermediates that actually
+  contributed, never all of them. Heads beyond the boundary are still exactly
+  where the next page would find them."
+  [observed-heads boundary-eid]
+  (when boundary-eid
+    (persistent!
+     (reduce-kv
+      (fn [acc path-key path-observed]
+        (let [kept (persistent!
+                    (reduce-kv (fn [m intermediate-eid head]
+                                 (if (> (long head) (long boundary-eid))
+                                   (assoc! m intermediate-eid head)
+                                   m))
+                               (transient {})
+                               @path-observed))]
+          (if (seq kept)
+            (assoc! acc path-key kept)
+            acc)))
+      (transient {})
+      @observed-heads))))
 
 (defn- lookup
-  [db direction query]
-  (let [{:keys [result-type-fn]} direction
-        page-req (normalize-page-request query)
-        {:keys [size bound]} page-req
-        _ (validate-lookup-eid-bound! bound)
-        {:keys [results path-frontiers]} (lazy-merged-lookup db direction query page-req)
-        realized (doall (take (inc size) results))
-        has-sentinel? (> (count realized) size)
-        page-results-in-scan-order (take size realized)
-        page-results (case (:direction page-req)
-                       :asc page-results-in-scan-order
-                       :desc (reverse page-results-in-scan-order))
-        result-type (result-type-fn query)
-        items       (lookup-items result-type
-                                  page-results
-                                  (:direction page-req)
-                                  path-frontiers)]
-    (page-response {:items items
-                    :has-next? (case (:direction page-req)
-                                 :asc has-sentinel?
-                                 :desc (boolean bound))
-                    :has-previous? (case (:direction page-req)
-                                     :asc (boolean bound)
-                                     :desc has-sentinel?)})))
+  ([db direction query]
+   (lookup db direction query nil))
+  ([db direction query continuation-cache]
+   (let [{:keys [result-type-fn]} direction
+         page-req (normalize-page-request query)
+         {:keys [size bound]} page-req
+         _ (validate-lookup-eid-bound! bound)
+         ;; Only forward pages resume. A backward walk revisits already-emitted
+         ;; ground and its heads are ordered the other way; keeping the
+         ;; continuation one-directional avoids a second, rarely-exercised
+         ;; boundary rule.
+         resumable? (= :asc (:direction page-req))
+         cached-heads (when (and resumable? bound)
+                        (cached-lookup-heads continuation-cache bound))
+         {:keys [results path-frontiers observed-heads]}
+         (lazy-merged-lookup db direction query page-req cached-heads)
+         realized (doall (take (inc size) results))
+         has-sentinel? (> (count realized) size)
+         page-results-in-scan-order (take size realized)
+         page-results (case (:direction page-req)
+                        :asc page-results-in-scan-order
+                        :desc (reverse page-results-in-scan-order))
+         result-type (result-type-fn query)
+         items       (lookup-items result-type
+                                   page-results
+                                   (:direction page-req)
+                                   path-frontiers)
+         page (page-response {:items items
+                              :has-next? (case (:direction page-req)
+                                           :asc has-sentinel?
+                                           :desc (boolean bound))
+                              :has-previous? (case (:direction page-req)
+                                               :asc (boolean bound)
+                                               :desc has-sentinel?)})]
+     (when (and resumable? has-sentinel?)
+       (store-lookup-heads! continuation-cache
+                            (get-in page [:page-info :end-cursor])
+                            (surviving-heads observed-heads
+                                             (last page-results-in-scan-order))))
+     page)))
 
 (defn lookup-resources
   "Cursor maps returned in :page-info embed per-path frontiers (including
@@ -2331,23 +2478,18 @@
   current relationship state equivalent or uses cache-resident exact state."
   ([db query]
    (lookup-resources db query nil))
-  ([db query {:keys [recursive-continuation-cache
-                     recursive-continuation-cache-fn]}]
-   (if (traversal-permission? db (:resource/type query) (:permission query))
-     (recursive-forward-page
-      db
-      query
-      (or recursive-continuation-cache
-          (when recursive-continuation-cache-fn
-            (recursive-continuation-cache-fn))))
-     (lookup db forward-direction query))))
+  ([db query {:keys [continuation-cache continuation-cache-fn]}]
+   (let [cache (or continuation-cache
+                   (when continuation-cache-fn (continuation-cache-fn)))]
+     (if (traversal-permission? db (:resource/type query) (:permission query))
+       (recursive-forward-page db query cache)
+       (lookup db forward-direction query cache)))))
 
 (defn lookup-subjects
   "See lookup-resources: cursors are only valid against the minting db basis."
   ([db query]
    (lookup-subjects db query nil))
-  ([db query {:keys [recursive-continuation-cache
-                     recursive-continuation-cache-fn]}]
+  ([db query {:keys [continuation-cache continuation-cache-fn]}]
    {:pre [(:type (:resource query)) (:id (:resource query))]}
    (when (:subject/relation query)
      ;; The recursive path has rejected this since v7.2; the non-recursive path
@@ -2355,14 +2497,11 @@
      (page-error! ":subject/relation is not supported by lookup-subjects."
                   {:eacl/error :eacl.pagination/unsupported-filter
                    :filter :subject/relation}))
-   (if (traversal-permission? db (:type (:resource query)) (:permission query))
-     (recursive-reverse-page
-      db
-      query
-      (or recursive-continuation-cache
-          (when recursive-continuation-cache-fn
-            (recursive-continuation-cache-fn))))
-     (lookup db reverse-direction query))))
+   (let [cache (or continuation-cache
+                   (when continuation-cache-fn (continuation-cache-fn)))]
+     (if (traversal-permission? db (:type (:resource query)) (:permission query))
+       (recursive-reverse-page db query cache)
+       (lookup db reverse-direction query cache)))))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])

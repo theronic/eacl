@@ -882,7 +882,11 @@
              opts cache-prefix kind result (weight-fn result)
              consistency-context)))))))
 
-(defn- recursive-continuation-context
+(defn- continuation-context
+  "Cache handles for one list operation: recursive traversal continuations and
+  pages, plus the acyclic engine's per-intermediate stream heads. All are
+  keyed by the cursor edge under one prefix that pins the schema generation,
+  the query identity and the relationship proof."
   [opts op query-identity relationship-proof]
   (when-let [store (and (selected-schema-version opts)
                         (:lookup-cache-store opts))]
@@ -939,7 +943,22 @@
                      :recursive-page
                      page
                      weight
-                     (:lookup-cache-ttl-ms opts)))})))
+                     (:lookup-cache-ttl-ms opts)))
+       :get-heads (fn [edge]
+                    (cache/safe-entry-value
+                     store
+                     (cache-key [:heads edge])
+                     :lookup-heads
+                     map?))
+       :put-heads! (fn [edge heads weight]
+                     (cache/safe-store-entry!
+                      store
+                      namespace
+                      (cache-key [:heads edge])
+                      :lookup-heads
+                      heads
+                      weight
+                      (:lookup-cache-ttl-ms opts)))})))
 
 (def ^:private empty-page
   "Unknown objects match nothing (SpiceDB-consistent, audit D9): lookups and
@@ -1362,9 +1381,9 @@
                (fn []
                  (impl/lookup-resources
                   db internal-query
-                  {:recursive-continuation-cache-fn
+                  {:continuation-cache-fn
                    (fn []
-                     (recursive-continuation-context
+                     (continuation-context
                       selected-opts
                       :lookup-resources
                       (list-query-identity :lookup-resources query')
@@ -1482,9 +1501,9 @@
                (fn []
                  (impl/lookup-subjects
                   db internal-query
-                  {:recursive-continuation-cache-fn
+                  {:continuation-cache-fn
                    (fn []
-                     (recursive-continuation-context
+                     (continuation-context
                       selected-opts
                       :lookup-subjects
                       (list-query-identity :lookup-subjects query')

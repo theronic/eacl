@@ -17,6 +17,7 @@
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
+            [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]))
 
 (def ^:private token-key "cache-differential-test-key")
@@ -206,6 +207,41 @@
                      :resource/type :doc}]
           (assert-matches-oracle! (str "acyclic/" (name label))
                                   acl oracle query false))))))
+
+(deftest acyclic-pages-resume-from-cached-stream-heads-test
+  ;; Every page of an arrow lookup used to open an index scan for each of the
+  ;; subject's intermediates just to learn where each stream starts. The
+  ;; continuation now carries the heads that the previous page proved were
+  ;; beyond its boundary, so a page only re-opens the streams it actually drew
+  ;; from.
+  ;;
+  ;; Correctness of the resumed pages is covered by the differential test
+  ;; above; this asserts the mechanism is reached at all, so that silently
+  ;; losing it does not leave a green suite.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [boot (client conn {:cache false})
+          _ (seed-acyclic! conn boot 12)
+          acl (client conn {})
+          oracle (client conn {:cache false})
+          query {:subject (spice-object :user "alice")
+                 :permission :view
+                 :resource/type :doc}
+          stats (atom {})]
+      (binding [idx/*recursive-traversal-stats* stats]
+        (let [page-1 (eacl/lookup-resources acl (assoc query :first 3))
+              _ (is (get-in page-1 [:page-info :has-next-page?]))
+              cursor (get-in page-1 [:page-info :end-cursor])
+              page-2 (eacl/lookup-resources acl (assoc query :first 3 :after cursor))]
+          (is (pos? (:lookup-head-hits @stats 0))
+              "page two resumed from the heads page one published")
+          (is (= (mapv :id (:data (eacl/lookup-resources
+                                   oracle (assoc query :first 3 :after cursor))))
+                 (mapv :id (:data page-2)))
+              "and still agrees with an uncached client")))
+
+      (testing "a walk with the continuation matches one without it"
+        (is (= (walk-forward oracle query 3)
+               (walk-forward acl query 3)))))))
 
 (deftest recursive-page-cache-is-direction-scoped-test
   ;; Minimal reproduction of the review's C1. recursive-page-request-key omitted
