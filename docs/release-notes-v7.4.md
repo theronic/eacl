@@ -71,8 +71,14 @@ adding Datomic schema attributes or permanent tuples.
 - `write-schema!` rotates that client's immutable schema generation only after a successful write.
 - An unstamped database remains usable but result caching stays disabled until `write-schema!`
   establishes a generation; this is not a v6 compatibility mode.
-- Direct transactions of EACL relationship or schema data are outside cache coherence and are not
-  detected through per-basis or transaction-log polling.
+- Exact result entries are epoch-keyed and verified against the transaction log, so direct
+  transactions of EACL relationship or schema data — from this process, another process, or raw
+  `d/transact` of `tx-relationship` output — DO invalidate them. `:live-results?` entries are the
+  exception: they key on the relationship coordinator's proof, which only observes writes made
+  through a client sharing that coordinator, and a live hit takes precedence over an epoch-keyed
+  one. Choose `:live-results?` for per-relation granularity under heavy EACL write load when every
+  writer shares the coordinator; choose plain `:exact-results?` when you want soundness against
+  writers you do not control.
 - Consumers should call `delete-relationships!` before retracting an entity.
   `eacl.datomic.integrity/dangling-relationship-report` detects reverse ghost tuples left by an
   incorrect deletion sequence.
