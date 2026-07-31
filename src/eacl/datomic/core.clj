@@ -627,18 +627,18 @@
    ;; collision resistance when ordinary value equality is available.
    (canonicalize query-identity)])
 
-(defn- result-cache-key
-  [prefix scope]
-  (conj prefix [:live scope]))
-
 (defn- exact-result-cache-key
-  "Exact entries are keyed by the CACHE EPOCH, not the Datomic basis.
+  "Retained answers are keyed by the CACHE EPOCH, not the Datomic basis.
 
   Keying on basis-t meant any transaction anywhere in the database minted a new
-  key, so the exact cache was effectively a 0% hit rate on a busy system. An
-  epoch changes only when EACL-relevant data changes, and is verified against
-  Datomic's transaction log rather than trusted from a process-local counter —
-  see eacl.datomic.watermark for why the process-local shortcut is unsound."
+  key, so this cache was effectively a 0% hit rate on a busy system. An epoch is
+  the max change stamp over the relations the answer actually reads, so it moves
+  only when one of those relations is written — see eacl.datomic.watermark.
+
+  The `:exact` tag distinguished these from the `:live` entries that
+  :live-results? used to publish. Those are gone; the tag is kept only so a
+  store surviving a rolling deploy cannot serve an old-format entry under a
+  key this build would build the same way."
   [prefix epoch]
   (conj prefix [:exact epoch]))
 
