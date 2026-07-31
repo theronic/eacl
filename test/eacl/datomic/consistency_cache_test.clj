@@ -23,7 +23,7 @@
    conn
    {:zed-token-key "consistency-cache-test-key"
     :cache {:checkpoints true
-            :exact-results? true}}))
+            :remember-answers true}}))
 
 (defn- seed!
   [conn client]
@@ -177,7 +177,7 @@
     (let [client
           (core/make-client
            conn
-           {:cache {:exact-results? true}})
+           {:cache {:remember-answers true}})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           relationship (->Relationship alice :owner account)
@@ -693,7 +693,7 @@
             (record-provider-error! [_ operation kind]
               (cache/record-provider-error! delegate operation kind)))
           client (core/make-client conn {:cache {:store store
-                                                 :exact-results? true}})
+                                                 :remember-answers true}})
           {token :zed/token} (seed! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")]

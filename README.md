@@ -49,7 +49,7 @@ Situated AuthZ offers some advantages for typical use-cases:
   unavailable, EACL reconstructs the cursor's authenticated historical Datomic basis and safely
   recomputes the deterministic prefix. Relevant relationship or schema changes after page one do
   not alter later pages.
-- Completed `can?`, lookup, and count results can use the same store with `:exact-results? true`.
+- Completed `can?`, lookup, and count answers can use the same store with `:remember-answers`.
   Keys use the schema generation and the change stamps of only the relation definitions the
   permission actually reads—not every Datomic `basis-t`—so unrelated application transactions and
   relationship writes outside that dependency set leave entries hot. No coordination between
@@ -544,7 +544,7 @@ Capacity and lifetime are consumer-controlled:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:exact-results? true
+   {:cache {:remember-answers true
             :max-weight (* 64 1024 1024)
             :max-entry-weight (* 8 1024 1024)
             :max-entries 4096
@@ -610,14 +610,26 @@ included in admission weight without walking that graph for every page. Recursiv
 include `:cache :namespace`, so clients sharing a provider cannot read or overwrite another
 namespace's pages or continuations, and targeted cleanup cannot remove another namespace's state.
 
-Completed `can?`, lookup, and count results are retained when `:exact-results? true` is set:
+`:remember-answers` says whether EACL should remember the answer to a permission check, so that
+asking the **same** check again skips evaluation:
 
 ```clojure
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:exact-results? true}}))
+   {:cache {:remember-answers true}}))     ; false (default) | true | :on-repeat
 ```
+
+Pagination and traversal state are cached either way — that is what makes walking a result set
+cheap, and it costs nothing on traffic that never repeats a check. `:remember-answers` governs only
+the finished answers.
+
+Which value to pick depends on your traffic, not on EACL. When the same checks recur, remembering
+took a direct permission from 4.3µs to 3.7µs and an arrow permission from 7.6µs to 3.9µs. When
+every check is different it went from 9.1µs to 24.8µs, because each read pays a store write that
+nothing ever reads back, and those writes evict entries that would have been useful. `:on-repeat`
+is the hedge: an answer is stored only once the same check has been seen twice, which on a mixed
+workload cut stores 3x and evictions 3.7x while keeping the win on the checks that do recur.
 
 There is nothing to coordinate between clients or processes. Invalidation rides on the
 `:eacl/relation-version` stamps described above, which are transacted with the relationship datoms

@@ -48,7 +48,7 @@
   []
   [[:disabled {:cache false}]
    [:default {}]
-   [:exact-results {:cache {:exact-results? true}}]
+   [:remember-answers {:cache {:remember-answers true}}]
    [:constant-eviction {:cache {:max-weight 8192
                                 :max-entry-weight 4096
                                 :max-entries 1}}]])

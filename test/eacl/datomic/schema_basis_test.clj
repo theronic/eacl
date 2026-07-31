@@ -191,7 +191,7 @@
     (seed-owner! conn)
     (let [acl (core/make-client
                conn
-               {:cache {:exact-results? true}})
+               {:cache {:remember-answers true}})
           query {:subject (spice-object :user "u")
                  :permission :admin
                  :resource/type :account}

@@ -71,7 +71,7 @@
                       {:cache {:max-weight (* 8 1024 1024)
                                :max-entry-weight (* 2 1024 1024)
                                :max-entries 2048
-                               :exact-results? true}})
+                               :remember-answers true}})
               uncached (atom (core/make-client conn {:cache false}))
               user-ids (mapv #(str "user-" %) (range 8))
               account-ids (mapv #(str "account-" %) (range 8))]

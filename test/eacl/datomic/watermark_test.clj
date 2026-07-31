@@ -50,7 +50,7 @@
    }")
 
 (defn- exact-client [conn]
-  (core/make-client conn {:cache {:exact-results? true}
+  (core/make-client conn {:cache {:remember-answers true}
                           :page-token-key "watermark-test"}))
 
 (defn- seed! [conn acl]
@@ -427,7 +427,7 @@
   (with-mem-conn [conn (remove #(= :eacl/relation-version (:db/ident %))
                                schema/v7-schema)]
     (is (nil? (d/entid (d/db conn) :eacl/relation-version)))
-    (let [acl (core/make-client conn {:cache {:exact-results? true}
+    (let [acl (core/make-client conn {:cache {:remember-answers true}
                                       :page-token-key "watermark-test"})]
       (seed! conn acl)
       (is (some? (d/entid (d/db conn) :eacl/relation-version))

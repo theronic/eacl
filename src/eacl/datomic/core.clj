@@ -642,6 +642,12 @@
   [prefix epoch]
   (conj prefix [:exact epoch]))
 
+(def ^:private answer-cache-kinds
+  "The entry kinds that hold a finished answer, as opposed to the traversal and
+  pagination state EACL caches regardless. :remember-answers governs exactly
+  these four."
+  #{:can? :lookup-page :count :latest-result})
+
 (defn- latest-result-cache-key
   [prefix]
   (conj prefix :latest))
@@ -787,14 +793,14 @@
                 :cache-scope cache-scope
                 :result (portable-result kind result)}]
     (when (and store schema-version)
-      (when (and (:cache-exact-results? opts) exact-key)
+      (when (and (:cache-remember-answers? opts) exact-key)
         (cache/safe-store-entry!
          store namespace exact-key kind answer (+ 128 weight) ttl-ms))
       ;; This is a latency hint, not a correctness proof. An older concurrent
       ;; writer may overwrite it; at-least-as-fresh validates the revision and
       ;; falls back to the selected DB when the hint is too old. A cursor
       ;; prefix's pointer is unreachable for the same reason as its live entry.
-      (when (and (:cache-exact-results? opts) exact-key (not historical?))
+      (when (and (:cache-remember-answers? opts) exact-key (not historical?))
         (cache/safe-store-entry!
          store namespace
          (latest-result-cache-key cache-prefix)
@@ -839,7 +845,7 @@
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [{:keys [mode basis-t cache-epoch requested-t cache-scope]}
         consistency-context
-        exact? (:cache-exact-results? opts)]
+        exact? (:cache-remember-answers? opts)]
     (cond
       ;; portable-result even when nothing is retained, so a caller's result
       ;; shape does not depend on cache configuration. Without it :lookup-page
@@ -873,7 +879,7 @@
                   ;; window: exact-key pins database-id, schema generation,
                   ;; operation, query identity AND basis-t, and two
                   ;; connection-backed DB values of one database at the same
-                  ;; basis-t are the same value. Without it, :exact-results?
+                  ;; basis-t are the same value. Without it, remembered answers
                   ;; wrote an entry on every call that the default consistency
                   ;; mode could never read.
                   :fully-consistent (exact-hit)
@@ -1157,7 +1163,7 @@
   memoised map lookup on a stamped client, so this test is about skipping work
   on a cacheless client, not about hot-path cost."
   [opts]
-  (boolean (or (:cache-exact-results? opts)
+  (boolean (or (:cache-remember-answers? opts)
                (:lookup-cache-store opts))))
 
 (defn- request-cache-opts
@@ -1169,7 +1175,7 @@
   configuration.
 
   Everything downstream is already guarded on the store and the
-  :cache-exact-results? flag, so clearing those two is the whole mechanism —
+  :cache-remember-answers? flag, so clearing those two is the whole mechanism —
   there is no separate bypass path to keep correct. Cursors still work: a page
   token is minted and validated from the request, not from the cache."
   [opts cache-option]
@@ -1181,7 +1187,7 @@
   (if (false? cache-option)
     (assoc opts
            :lookup-cache-store nil
-           :cache-exact-results? false)
+           :cache-remember-answers? false)
     opts))
 
 (defn- capture-result-context
@@ -1730,7 +1736,7 @@
 
 (def ^:private known-cache-opt-keys
   #{:store
-    :exact-results?
+    :remember-answers
     :namespace
     :checkpoints
     :ttl-ms
@@ -1758,12 +1764,13 @@
                        :key :cache
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-cache-opt-keys})))
-    (when (and (contains? config :exact-results?)
-               (not (boolean? (:exact-results? config))))
-      (throw (ex-info "EACL Config Error: :cache :exact-results? must be boolean."
+    (when-not (contains? #{nil false true :on-repeat}
+                         (:remember-answers config))
+      (throw (ex-info (str "EACL Config Error: :cache :remember-answers must be"
+                           " false, true or :on-repeat.")
                       {:type :eacl/invalid-config
                        :key :cache
-                       :value (:exact-results? config)})))
+                       :value (:remember-answers config)})))
     (when-not (or (nil? (:namespace config))
                   (keyword? (:namespace config))
                   (and (string? (:namespace config))
@@ -1781,12 +1788,16 @@
                        :key :cache
                        :value (:checkpoints config)})))
     (let [enabled? (not (false? cache-option))
-          ;; Result retention stays opt-in. It is now sound and measurably
-          ;; faster in every regime tested, so defaulting it on would be
-          ;; defensible — but it changes a client's memory profile, which is
-          ;; the consumer's call to make, not a side effect of removing
-          ;; :live-results?.
-          exact-results? (and enabled? (true? (:exact-results? config)))
+          remember (when enabled? (:remember-answers config))
+          ;; Off by default, because whether it pays depends on something only
+          ;; the consumer knows: whether the same check gets asked twice. On a
+          ;; workload that repeats, remembering answers is a 4.3->3.7us win for
+          ;; a direct permission and 7.6->3.9us for an arrow. On one that never
+          ;; repeats it is a 9.1->24.8us LOSS, because every read pays a store
+          ;; write that nothing ever reads back. :on-repeat is the middle
+          ;; ground: an answer is only stored once the same check has been seen
+          ;; twice, which halves the cost of guessing wrong.
+          remember-answers? (boolean remember)
           token-ttl-ms (* 1000 (or page-token-ttl-seconds
                                    default-page-token-ttl-seconds))
           ttl-ms (or (:ttl-ms config) token-ttl-ms)
@@ -1795,18 +1806,22 @@
                               {:type :eacl/invalid-config
                                :key :cache
                                :value ttl-ms})))
+          ;; :on-repeat is implemented as second-sighting admission on the
+          ;; four answer kinds, so a check asked once is never stored.
+          store-config
+          (cond-> (select-keys config [:max-weight
+                                       :max-entry-weight
+                                       :max-entries
+                                       :kind-max-weight
+                                       :two-hit-kinds
+                                       :admission-entries])
+            (= :on-repeat remember)
+            (update :two-hit-kinds (fnil into #{}) answer-cache-kinds))
           store (when enabled?
                   (if (false? (:store config))
                     nil
                     (or (:store config)
-                        (cache/local-store
-                         (select-keys config [:max-weight
-                                              :max-entry-weight
-                                              :max-entries
-                                              :kind-max-weight
-                                              :two-hit-kinds
-                                              :admission-entries])))))
-]
+                        (cache/local-store store-config))))]
       (when (and store (not (satisfies? cache/CacheStore store)))
         (throw (ex-info "EACL Config Error: :cache :store must implement CacheStore."
                         {:type :eacl/invalid-config
@@ -1821,7 +1836,7 @@
             (:checkpoints config)
             {})))
        :ttl-ms (min ttl-ms token-ttl-ms)
-       :exact-results? (and exact-results? (some? store))})))
+       :remember-answers? (and remember-answers? (some? store))})))
 
 (defn make-client
   "Builds an IAuthorization client over a Datomic conn.
@@ -1835,8 +1850,22 @@
     ephemeral store with :max-weight, :max-entry-weight, :max-entries and
     :ttl-ms, or supplies your own :store (any CacheStore implementation);
     :store false disables the store while leaving the rest of the client
-    intact. Results are retained by default; :exact-results? false keeps
-    pagination and traversal state cached without retaining answers.
+    intact.
+
+    :remember-answers says whether EACL should remember the answer to a
+    permission check so that asking the SAME check again skips evaluation.
+    Pagination and traversal state are cached either way — that is what makes
+    walking a result set cheap, and it costs nothing on a workload that never
+    repeats a check.
+      false      (default) never remember answers.
+      true       remember every answer.
+      :on-repeat remember an answer only once the same check has been asked
+                 twice.
+    Which to pick depends on your traffic, not on EACL: when checks repeat,
+    remembering took a direct permission from 4.3us to 3.7us and an arrow from
+    7.6us to 3.9us. When they never repeat it went from 9.1us to 24.8us,
+    because every read pays a store write nothing reads back. :on-repeat is
+    the hedge.
     Cache failures are contained as misses or rejected publications. Missing
     exact pages and recursive continuations replay against the authenticated
     historical basis rather than falling forward.
@@ -1946,7 +1975,7 @@
         ;; once write-schema! installs :eacl/relation-version.
         ;; Built whenever anything can be cached, not only for exact results:
         ;; the epoch is also the cache scope that keys recursive continuations
-        ;; and cursors. Gating it on :exact-results? left a default client
+        ;; and cursors. Gating it on :remember-answers left a default client
         ;; falling back to [:basis t] there, so 20 unrelated transactions
         ;; invalidated a recursive page that had not changed.
         cache-epoch-state  (when (:store cache-config)
@@ -2012,7 +2041,7 @@
                             :lookup-cache-store (:store cache-config)
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
                             :cache-namespace (:namespace cache-config)
-                            :cache-exact-results? (:exact-results? cache-config)
+                            :cache-remember-answers? (:remember-answers? cache-config)
                             :cache-epoch-state cache-epoch-state
                             :revision-checkpoints (:checkpoints cache-config)
                             :opaque-cache-token (Object.)

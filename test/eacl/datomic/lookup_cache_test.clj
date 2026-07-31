@@ -54,9 +54,9 @@
 (defn- live-cache-context
   "A client that memoizes completed results. This used to need an explicit
   coordinator plus :live-results? true; per-relation stamps made the
-  coordinator unnecessary, so it is now just :exact-results?."
+  coordinator unnecessary, so it is now just :remember-answers."
   []
-  {:exact-results? true})
+  {:remember-answers true})
 
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
   (with-mem-conn [conn schema/v7-schema]
@@ -487,7 +487,10 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:ttl-ms 0}})))
     (is (thrown? clojure.lang.ExceptionInfo
-                 (core/make-client conn {:cache {:exact-results? :yes}})))
+                 (core/make-client conn {:cache {:remember-answers :yes}})))
+    (testing ":on-repeat is accepted"
+      (is (some? (core/make-client
+                  conn {:cache {:remember-answers :on-repeat}}))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:namespace ""}})))
     (is (thrown? clojure.lang.ExceptionInfo
@@ -541,7 +544,7 @@
 
 (deftest per-request-cache-false-bypasses-the-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache {:exact-results? true}})
+    (let [client (core/make-client conn {:cache {:remember-answers true}})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
@@ -595,7 +598,7 @@
   ;; make a page-2 request that omits it fail against a page-1 token minted
   ;; with it — the same failure :consistency once caused.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache {:exact-results? true}})]
+    (let [client (core/make-client conn {:cache {:remember-answers true}})]
       (eacl/write-schema! client direct-schema)
       @(d/transact conn (into [{:eacl/id "alice"}]
                               (for [n (range 6)] {:eacl/id (str "a-" n)})))

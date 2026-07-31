@@ -14,14 +14,21 @@ it exists, exact-result retention is simply off.
 - One typed store serves `can?`, both lookup directions, both counts, exact results, and recursive
   continuations.
 - Recursive continuations use the bounded local store by default. Completed exact-result retention
-  is opt-in with `:exact-results? true`.
+  is opt-in with `:remember-answers`.
 - Cache keys and values contain internal EIDs. Missing external IDs are resolved at the boundary
   and are not cached.
 - Older cached lookup answers resolve those EIDs against the answer's own historical basis, so a
   later live entity deletion does not break `minimize-latency` or freshness-floor reads.
-- Result retention is opt-in with `:cache {:exact-results? true}`. There is no coordination to
-  configure: invalidation rides on the `:eacl/relation-version` stamps EACL's own write helpers
-  transact, so every reader of the database observes every write.
+- `:cache {:remember-answers ...}` says whether EACL remembers the answer to a permission check so
+  an identical later check skips evaluation: `false` (default), `true`, or `:on-repeat` (remember
+  only once the same check has been asked twice). Pagination and traversal state are cached either
+  way. There is no coordination to configure: invalidation rides on the `:eacl/relation-version`
+  stamps EACL's own write helpers transact, so every reader of the database observes every write.
+- Which value to pick depends on your traffic, not on EACL internals. When checks repeat,
+  remembering took a direct permission from 4.3us to 3.7us and an arrow from 7.6us to 3.9us. When
+  they never repeat it went 9.1us to 24.8us, because every read pays a store write that nothing
+  reads back — hence the default and the `:on-repeat` hedge, which cut stores 3x and evictions 3.7x
+  on a mixed workload.
 - A single read can opt out with a per-request `:cache false` — on the map arity of `can?`, and in
   the query map for lookups, counts and `read-relationships`.
 - Relationship helpers publish exactly which relations they changed; unrelated application
@@ -117,8 +124,8 @@ All of these were found in this candidate and fixed before release.
   offending eid, instead of a cache-flavoured `:eacl.consistency/snapshot-unavailable` naming one.
 - `delete-object!` takes the relationship barrier per batch, so a large deletion no longer blocks
   concurrent lookups for its whole multi-transaction run.
-- `fully-consistent` reads use a matching basis-pinned exact entry, so `:exact-results? true` is an
-  accelerator for the default consistency mode rather than write-only cost.
+- `fully-consistent` reads use a matching epoch-keyed entry, so remembering answers accelerates the
+  default consistency mode rather than being write-only cost.
 - Page tokens are length-bounded, reject hostile EDN without escaping a `StackOverflowError`, and
   report every cursor rejection as `:eacl.pagination/invalid-cursor` with a `:reason`.
 - Cursor pages no longer publish live entries and latest-result pointers that nothing can read.
@@ -190,7 +197,7 @@ made through a client sharing it; a stamp is transacted with the relationship da
 reader of the database observes it.
 
 Migration: replace `:cache (assoc (cache/local-context) :live-results? true)` with
-`:cache {:exact-results? true}`, and delete any coordinator plumbing. A writer-only client
+`:cache {:remember-answers true}`, and delete any coordinator plumbing. A writer-only client
 configured as `{:store false :coordinator shared}` becomes `{:cache false}` — it no longer needs to
 participate in anything. `:eacl.consistency/coordinator-floor-unreachable` can no longer be raised.
 

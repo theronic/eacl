@@ -108,7 +108,7 @@
   The others show what v7's cache adds on top of the same engine."
   {:off {:cache false}
    :default {}
-   :exact-results {:cache {:exact-results? true}}})
+   :remember-answers {:cache {:remember-answers true}}})
 
 (defn- client-for
   [conn cache-key]
@@ -130,7 +130,7 @@
 (defn run-reference!
   "Runs the v7 reference benchmark for one cache configuration.
 
-  `cache-key` is :off (comparable to v6), :default, or :exact-results."
+  `cache-key` is :off (comparable to v6), :default, or :remember-answers."
   ([]
    (run-reference! :off default-config))
   ([cache-key]

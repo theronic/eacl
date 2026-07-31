@@ -29,10 +29,10 @@
 
 (defn- live-client
   "A client that retains results. This used to need an explicit coordinator
-  plus :live-results? true; it is now just :exact-results?."
+  plus :live-results? true; it is now just :remember-answers."
   [conn context]
   (core/make-client conn {:page-token-key token-key
-                          :cache (assoc context :exact-results? true)}))
+                          :cache (assoc context :remember-answers true)}))
 
 (defn- seed-direct!
   [conn boot n-accounts]
@@ -145,13 +145,13 @@
 ;; --- M1 ---------------------------------------------------------------------
 
 (deftest fully-consistent-reads-reuse-the-basis-pinned-exact-entry-test
-  ;; :exact-results? true wrote an entry (and a :latest-result pointer) on every
+  ;; :remember-answers true wrote an entry (and a :latest-result pointer) on every
   ;; call that the default consistency mode could never read, so it was pure
   ;; cost. exact-key pins database-id, schema generation, operation, query
   ;; identity AND basis-t, and one database at one t is one DB value.
   (with-mem-conn [conn schema/v7-schema]
     (let [acl (core/make-client conn {:page-token-key token-key
-                                      :cache {:exact-results? true}})
+                                      :cache {:remember-answers true}})
           _ (seed-direct! conn acl 1)
           alice (spice-object :user "alice")
           account (spice-object :account "acct0")
@@ -290,8 +290,8 @@
                  :resource/type :account}]
       (doseq [config [{:cache false}
                       {}
-                      {:cache {:exact-results? true}}
-                      {:cache {:exact-results? false}}]]
+                      {:cache {:remember-answers true}}
+                      {:cache {:remember-answers false}}]]
         (let [acl (core/make-client conn (assoc config :page-token-key token-key))
               data (:data (eacl/lookup-resources acl query))]
           (is (every? #(instance? eacl.core.SpiceObject %) data)
