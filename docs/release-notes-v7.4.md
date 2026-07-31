@@ -108,6 +108,14 @@ All of these were found in this candidate and fixed before release.
 - The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
   reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
   went from ~2.3x slower than `{:cache false}` to ~2.3x faster.
+- `can?` answers an arrow by intersecting two sorted intermediate streams instead of scanning the
+  resource's side in full, so it no longer scales with arrow fan-out. A doc attached to N teams
+  where the user belongs to one of them: 133us -> 13us at N=100, 1.34ms -> 13us at N=1000,
+  7.16ms -> 16us at N=5000. An arrow with a single intermediate keeps the old point probe.
+- Permission paths are ordered cheapest-to-check first, so a union short-circuits on a direct
+  relation before paying for an arrow. Path order previously came out of a `clojure.set/difference`
+  in `write-schema!` — `owner + team->access` versus `team->access + owner` measured 6.8ms versus
+  3.4us on identical data, decided by hash order and invisible to the schema author.
 - Page tokens moved from EDN to a compact binary payload (`eacl.datomic.codec`) with a reused
   AES-GCM cipher: encode ~41us -> ~2.4us, decode ~24us -> ~2.6us. A page mints two cursors and
   reads one, so `lookup-resources`/`lookup-subjects` are roughly 2x faster uncached and 3x faster
