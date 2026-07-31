@@ -8,7 +8,7 @@
   omitted the pagination direction, so a `:last/:before` page was served to a
   later `:first/:after` request with the same cursor and size.
 
-  The oracle is a {:cache false} client sharing the same :page-token-key, so a
+  The oracle is a {:cache cache/no-cache} client sharing the same :page-token-key, so a
   cursor minted by one client is readable by the other and any divergence is
   attributable to caching alone."
   (:require [clojure.test :refer [deftest is testing]]
@@ -46,7 +46,7 @@
   "Every shape the store can take, including one that evicts constantly so the
   d/as-of replay path is exercised rather than the continuation fast path."
   []
-  [[:disabled {:cache false}]
+  [[:disabled {:cache cache/no-cache}]
    [:default {}]
    [:remember-answers {:cache {:remember-answers true}}]
    [:constant-eviction {:cache {:max-weight 8192
@@ -184,10 +184,10 @@
   (testing "recursive traversal permission"
     (doseq [[label config] (cache-configurations)]
       (with-mem-conn [conn schema/v7-schema]
-        (let [boot (client conn {:cache false})
+        (let [boot (client conn {:cache cache/no-cache})
               _ (seed-recursive! conn boot 14)
               acl (client conn config)
-              oracle (client conn {:cache false})
+              oracle (client conn {:cache cache/no-cache})
               query {:subject (spice-object :user "alice")
                      :permission :view
                      :resource/type :folder}]
@@ -197,10 +197,10 @@
   (testing "acyclic union-of-arrows permission"
     (doseq [[label config] (cache-configurations)]
       (with-mem-conn [conn schema/v7-schema]
-        (let [boot (client conn {:cache false})
+        (let [boot (client conn {:cache cache/no-cache})
               _ (seed-acyclic! conn boot 8)
               acl (client conn config)
-              oracle (client conn {:cache false})
+              oracle (client conn {:cache cache/no-cache})
               query {:subject (spice-object :user "alice")
                      :permission :view
                      :resource/type :doc}]
@@ -286,10 +286,10 @@
   (testing "recursive traversal permission"
     (doseq [[label config] (cache-configurations)]
       (with-mem-conn [conn schema/v7-schema]
-        (let [boot (client conn {:cache false})
+        (let [boot (client conn {:cache cache/no-cache})
               _ (seed-recursive! conn boot 8)
               acl (client conn config)
-              oracle (client conn {:cache false})]
+              oracle (client conn {:cache cache/no-cache})]
           (assert-agrees-under-writes!
            (str "recursive/" (name label))
            acl oracle
@@ -304,10 +304,10 @@
   (testing "acyclic union-of-arrows permission"
     (doseq [[label config] (cache-configurations)]
       (with-mem-conn [conn schema/v7-schema]
-        (let [boot (client conn {:cache false})
+        (let [boot (client conn {:cache cache/no-cache})
               _ (seed-acyclic! conn boot 6)
               acl (client conn config)
-              oracle (client conn {:cache false})]
+              oracle (client conn {:cache cache/no-cache})]
           (assert-agrees-under-writes!
            (str "acyclic/" (name label))
            acl oracle
@@ -330,10 +330,10 @@
   ;; above; this asserts the mechanism is reached at all, so that silently
   ;; losing it does not leave a green suite.
   (with-mem-conn [conn schema/v7-schema]
-    (let [boot (client conn {:cache false})
+    (let [boot (client conn {:cache cache/no-cache})
           _ (seed-acyclic! conn boot 12)
           acl (client conn {})
-          oracle (client conn {:cache false})
+          oracle (client conn {:cache cache/no-cache})
           query {:subject (spice-object :user "alice")
                  :permission :view
                  :resource/type :doc}
@@ -362,10 +362,10 @@
   ;; early and under-reports what a subject may access.
   (doseq [[label config] (cache-configurations)]
     (with-mem-conn [conn schema/v7-schema]
-      (let [boot (client conn {:cache false})
+      (let [boot (client conn {:cache cache/no-cache})
             _ (seed-recursive! conn boot 12)
             acl (client conn config)
-            oracle (client conn {:cache false})]
+            oracle (client conn {:cache cache/no-cache})]
 
         (testing (str (name label) " — lookup-resources")
           (let [query {:subject (spice-object :user "alice")

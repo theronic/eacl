@@ -12,13 +12,14 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
+            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]))
 
 (defn- client! [conn schema-string]
-  (let [acl (core/make-client conn {:cache false})]
+  (let [acl (core/make-client conn {:cache cache/no-cache})]
     (eacl/write-schema! acl schema-string)
     acl))
 

@@ -17,6 +17,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
+            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn with-mem-conns]]
             [eacl.datomic.impl :as impl]
@@ -350,7 +351,7 @@
 
 (deftest epoch-tracks-only-its-own-dependencies-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:cache false})
+    (let [acl (core/make-client conn {:cache cache/no-cache})
           _ (seed-multi! conn acl)
           state (watermark/make-epoch-state)
           alice (spice-object :user "alice")
@@ -381,7 +382,7 @@
 
 (deftest epoch-is-nil-when-it-cannot-be-established-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:cache false})
+    (let [acl (core/make-client conn {:cache cache/no-cache})
           _ (seed! conn acl)
           db (d/db conn)
           state (watermark/make-epoch-state)]
@@ -411,7 +412,7 @@
       (is (nil? (watermark/epoch-for state (d/db conn) [1]))
           "nothing to resolve yet")
       @(d/transact conn schema/v7-schema)
-      (let [acl (core/make-client conn {:cache false})
+      (let [acl (core/make-client conn {:cache cache/no-cache})
             _ (seed! conn acl)
             alice (spice-object :user "alice")
             d1 (spice-object :doc "d1")

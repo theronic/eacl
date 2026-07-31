@@ -502,7 +502,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:cache false
+                  {:cache cache/no-cache
                    :page-token-key "cache-disabled-cursor"})
           alice (spice-object :user "alice")
           _ (eacl/write-schema! client direct-schema)
@@ -565,7 +565,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:cache false
+                  {:cache cache/no-cache
                    :page-token-key "read-relationships-history"})
           alice (spice-object :user "alice")
           _ (eacl/write-schema! client direct-schema)

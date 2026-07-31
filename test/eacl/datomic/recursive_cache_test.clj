@@ -88,7 +88,7 @@
                  :first 5}]
       (seed-recursive! conn cached-client 30 1)
       (let [disabled-client (core/make-client conn {:page-token-key token-key
-                                                    :cache false})
+                                                    :cache cache/no-cache})
             alternate-client (core/make-client conn {:page-token-key token-key})
             page1 (eacl/lookup-resources cached-client query)
             cursor (page-end-cursor page1)
@@ -174,7 +174,7 @@
                  :first 5}]
       (seed-recursive! conn cached-client 15 1)
       (let [replay-client (core/make-client conn {:page-token-key token-key
-                                                  :cache false})
+                                                  :cache cache/no-cache})
             page1 (eacl/lookup-resources cached-client query)
             cursor (page-end-cursor page1)
             page2 (eacl/lookup-resources cached-client
@@ -442,7 +442,7 @@
                  :first 10}]
       (seed-recursive! conn cached-client 80 1)
       (let [disabled-client (core/make-client conn {:page-token-key token-key
-                                                    :cache false})
+                                                    :cache cache/no-cache})
             cached (collect-forward cached-client query)
             replayed (collect-forward disabled-client query)]
         (is (= (:data replayed) (:data cached)))

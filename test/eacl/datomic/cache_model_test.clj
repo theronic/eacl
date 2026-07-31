@@ -72,11 +72,11 @@
                                :max-entry-weight (* 2 1024 1024)
                                :max-entries 2048
                                :remember-answers true}})
-              uncached (atom (core/make-client conn {:cache false}))
+              uncached (atom (core/make-client conn {:cache cache/no-cache}))
               user-ids (mapv #(str "user-" %) (range 8))
               account-ids (mapv #(str "account-" %) (range 8))]
           (eacl/write-schema! cached owner-schema)
-          (reset! uncached (core/make-client conn {:cache false}))
+          (reset! uncached (core/make-client conn {:cache cache/no-cache}))
           @(d/transact
             conn
             (mapv (fn [id] {:eacl/id id})
@@ -85,7 +85,7 @@
             (when (= 25 step)
               (eacl/write-schema! cached owner-and-auditor-schema)
               ;; Other clients are deliberately not polled for schema changes.
-              (reset! uncached (core/make-client conn {:cache false})))
+              (reset! uncached (core/make-client conn {:cache cache/no-cache})))
             (let [user-id (nth user-ids (.nextInt random (count user-ids)))
                   account-id (nth account-ids
                                   (.nextInt random (count account-ids)))

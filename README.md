@@ -529,14 +529,15 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 ### Lookup cache configuration
 
-Recursive cursor continuations use a bounded local store by default. Completed exact-result
-retention is opt-in so the default `can?` and acyclic lookup fast paths perform no result-cache
-lookup or publication. The store's default admission budget is 16,777,216 estimated weight units;
-this is not a measured 16 MiB heap guarantee. Disable all result and continuation caching without
-changing authorization answers:
+Recursive cursor continuations use a bounded local store by default, and a finished answer is kept
+once the same check has been asked twice. The store's default admission budget is 16,777,216
+estimated weight units; this is not a measured 16 MiB heap guarantee. Disable all result and
+continuation caching without changing authorization answers:
 
 ```clojure
-(def acl (eacl.datomic.core/make-client conn {:cache false}))
+(require '[eacl.datomic.cache :as eacl-cache])
+
+(def acl (eacl.datomic.core/make-client conn {:cache eacl-cache/no-cache}))
 ```
 
 Capacity and lifetime can be tuned, though most consumers do not need to:
@@ -615,15 +616,19 @@ one; that is what most consumers want.
 
 ```clojure
 (make-client conn {})                                      ; default adapter
-(make-client conn {:cache false})                          ; no caching
+(make-client conn {:cache eacl-cache/no-cache})            ; no caching
 (make-client conn {:cache (eacl-cache/local-store
                            {:max-weight (* 64 1024 1024)})}) ; your own adapter
 ```
 
 Any `eacl.datomic.cache/CacheStore` implementation is a valid adapter, so a custom or shared store
-needs no backend dependency in EACL core.
+needs no backend dependency in EACL core. Whatever you pass must *be* a cache — a real adapter or
+the explicit `no-cache` one. There is no boolean form: `:cache true` and `:cache false` throw
+`:eacl/invalid-config` rather than being interpreted, because a boolean in an adapter slot reads as
+a flag and left `nil` ambiguous between "the default" and "none". `nil` and an absent `:cache` both
+mean the default adapter.
 
-Pass `false` when the same permission check is essentially never asked twice — a batch job sweeping
+Pass `no-cache` when the same permission check is essentially never asked twice — a batch job sweeping
 distinct resources, say. A read then pays for a cache lookup it can never benefit from: measured
 7.9µs with the cache off against 11.8µs with it on for entirely distinct checks. When checks do
 recur it is the other way round, 8.0µs off against 4.3µs on for an arrow permission.
@@ -669,23 +674,6 @@ process. `:cache {:live-results? ...}` and `:cache {:coordinator ...}` now throw
 Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
 permission's dependency set do not expire an entry.
 
-A single read can opt out of the cache without building another client:
-
-```clojure
-(eacl/can? acl {:subject alice :permission :view :resource doc :cache false})
-
-(eacl/lookup-resources acl {:subject alice
-                            :permission :view
-                            :resource/type :doc
-                            :cache false})
-```
-
-`:cache false` on a request neither reads from nor writes to the cache for that call. It is
-accepted on the map arity of `can?` and in the query map for `lookup-resources`,
-`lookup-subjects`, `count-resources`, `count-subjects` and `read-relationships`. Cursors are
-unaffected: a page token is minted and validated from the request, so a cursor minted with the
-override is usable without it and vice versa.
-
 All result keys and values contain internal EIDs, never external object IDs. A *query input* naming
 an unknown external ID returns the ordinary false/empty boundary result and is not cached. EACL
 assumes the external-ID mapping for an entity is stable for that entity's lifetime. When a stale or
@@ -696,7 +684,8 @@ snapshot into a boundary error.
 A *result* object that has no external ID in the database it was evaluated against is a different
 matter, and `lookup-resources`/`lookup-subjects` raise `{:type :eacl/unresolvable-object}` listing
 every offending eid rather than silently omitting rows from an authorization enumeration. This is a
-data-integrity fault, not a cache fault — it is raised identically with `{:cache false}`. The usual
+data-integrity fault, not a cache fault — it is raised identically with
+`{:cache eacl-cache/no-cache}`. The usual
 cause is an entity retracted without first calling `delete-relationships!`, leaving a relationship
 half that still grants; `eacl.datomic.integrity/dangling-relationship-report` finds them.
 `read-relationships` deliberately still returns such a half with a nil id, because reading it is how

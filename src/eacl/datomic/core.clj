@@ -1171,7 +1171,8 @@
 
   `false` bypasses the cache for this one call: nothing is read from it and
   nothing is written to it, exactly as if the client had been built with
-  `{:cache false}`. Absent or true uses the client's configured cache.
+  `{:cache cache/no-cache}`. Absent or true uses the client's configured
+  cache.
 
   Note the key is `:cache?`, not `:cache`: the client option names WHICH cache
   (an adapter), the request option says WHETHER to use it (a boolean). Two
@@ -1762,25 +1763,36 @@
 (defn- normalize-cache-config
   "Normalizes the :cache client option.
 
-    absent / true  a default client-local adapter
-    false / nil    no cache
-    <adapter>      any CacheStore implementation
-    {...}          advanced tuning and test options; see make-client
+    absent / nil     a default client-local adapter
+    cache/no-cache   no caching
+    <adapter>        any other CacheStore implementation
+    {...}            advanced tuning and test options; see make-client
 
-  The adapter is the cache. Everything else in the map is policy EACL applies
-  around it, and consumers should not need any of it."
+  Whatever is passed must BE a cache: a real adapter, or the explicit
+  `no-cache` one. There is no boolean form. `false` used to mean \"off\" and
+  `nil` used to mean it too, which left `nil` ambiguous between \"none\" and
+  \"the default\" and made the option read as a flag rather than as the cache."
   [cache-option page-token-ttl-seconds]
+  (when (boolean? cache-option)
+    (throw (ex-info (str "EACL Config Error: :cache takes a cache adapter, not"
+                         " a boolean. Use eacl.datomic.cache/no-cache to"
+                         " disable caching, or omit :cache for the default"
+                         " adapter. To bypass the cache for one call, pass"
+                         " :cache? false on the request instead.")
+                    {:type :eacl/invalid-config
+                     :key :cache
+                     :value cache-option})))
   (when-not (or (nil? cache-option)
-                (= ::default cache-option)
-                (boolean? cache-option)
                 (cache-adapter? cache-option)
                 (map? cache-option))
     (throw (ex-info (str "EACL Config Error: :cache must be a cache adapter,"
-                         " true, false, or a configuration map.")
+                         " eacl.datomic.cache/no-cache, or a configuration"
+                         " map.")
                     {:type :eacl/invalid-config
                      :key :cache
                      :value cache-option})))
   (let [config (cond
+                 (cache/no-cache? cache-option) {:store cache/no-cache}
                  (cache-adapter? cache-option) {:store cache-option}
                  (map? cache-option) cache-option
                  :else {})
@@ -1814,11 +1826,9 @@
                       {:type :eacl/invalid-config
                        :key :cache
                        :value (:checkpoints config)})))
-    (let [enabled? (not (or (false? cache-option) (nil? cache-option)))
-          ;; nil is "no cache" when passed EXPLICITLY, but :cache absent from
-          ;; the options map is the default-on case. make-client distinguishes
-          ;; them and passes ::default when the key is absent.
-          enabled? (or enabled? (= ::default cache-option))
+    (let [;; nil and absent both mean "the default adapter" now, so there is
+          ;; nothing to distinguish and no sentinel to thread through.
+          enabled? (not (cache/no-cache? cache-option))
           ;; Consumers choose :cache true or false; they should not have to
           ;; understand entry kinds to get a good outcome. :on-repeat is the
           ;; default because it DOMINATES always-remember in every workload
@@ -1827,7 +1837,7 @@
           ;;   repeating, direct   none 4.9-6.7us  always 4.0-4.2  on-repeat 3.9-4.1
           ;;   repeating, arrow    none 8.0-9.5us  always 4.3      on-repeat 4.3
           ;;   never repeating     none 7.9-8.6us  always 13.3+    on-repeat 11.8+
-          ;; The last row is why `:cache false` remains the meaningful choice:
+          ;; The last row is why `cache/no-cache` remains a meaningful choice:
           ;; on traffic that never asks the same check twice, the key build and
           ;; lookup cost on every read is unrecoverable no matter the admission
           ;; policy. That is a decision about traffic, which consumers can make.
@@ -1854,11 +1864,19 @@
                                        :admission-entries])
             (= :on-repeat remember)
             (update :two-hit-kinds (fnil into #{}) answer-cache-kinds))
-          store (when enabled?
-                  (if (false? (:store config))
-                    nil
-                    (or (:store config)
-                        (cache/local-store store-config))))]
+          ;; Same rule inside the advanced map: :store is an adapter or
+          ;; no-cache, never a boolean.
+          _ (when (boolean? (:store config))
+              (throw (ex-info (str "EACL Config Error: :cache :store takes a"
+                                   " cache adapter, not a boolean. Use"
+                                   " eacl.datomic.cache/no-cache to disable"
+                                   " caching.")
+                              {:type :eacl/invalid-config
+                               :key :cache
+                               :value (:store config)})))
+          store (when (and enabled? (not (cache/no-cache? (:store config))))
+                  (or (:store config)
+                      (cache/local-store store-config)))]
       (when (and store (not (satisfies? cache/CacheStore store)))
         (throw (ex-info "EACL Config Error: :cache :store must implement CacheStore."
                         {:type :eacl/invalid-config
@@ -1905,7 +1923,7 @@
 
     A configuration map may be supplied in place of an adapter for tuning and
     tests. It is deliberately not part of the API consumers need:
-      :store             adapter, or false for none (same as :cache false)
+      :store             an adapter, or cache/no-cache
       :max-weight, :max-entry-weight, :max-entries, :ttl-ms  capacity bounds
       :namespace         isolates entries between clients sharing an adapter
       :kind-max-weight, :two-hit-kinds, :admission-entries   per-kind tuning
@@ -2011,9 +2029,7 @@
   (migrations/assert-storage-compatible! conn {:auto-migrate-v6 auto-migrate-v6})
   (let [initial-db         (d/db conn)
         schema-state       (atom (impl.indexed/make-schema-cache initial-db))
-        cache-config       (normalize-cache-config
-                            (if (contains? config-opts :cache) cache ::default)
-                            page-token-ttl-seconds)
+        cache-config       (normalize-cache-config cache page-token-ttl-seconds)
         ;; Per-relation epoch state, built only when results can be retained.
         ;; Holds one memoised attribute eid and no db value. Whether an epoch
         ;; can actually be established is decided per read, not here: a client

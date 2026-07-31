@@ -43,6 +43,36 @@
   (clear-namespace! [_ _] false)
   (record-provider-error! [_ _ _] nil))
 
+(defrecord NoCache []
+  CacheStore
+  (lookup [_ _] nil)
+  (store! [_ _ _ _ _] false)
+  (evict! [_ _] false)
+  (clear! [_] nil)
+  (stats [_] {:entries 0 :weight 0})
+
+  CacheProvider
+  (capabilities [_] #{})
+  (clear-namespace! [_ _] false)
+  (record-provider-error! [_ _ _] nil))
+
+(def no-cache
+  "The explicit \"do not cache\" adapter, for `make-client`'s :cache option.
+
+  EACL wants whatever is passed as :cache to be a cache — a real adapter or
+  this one. Spelling absence as `false` or `nil` reads as a flag rather than a
+  cache, and it makes `nil` ambiguous between \"the default\" and \"none\".
+
+  EACL recognises this value and skips the cache machinery outright rather than
+  routing calls into a store that always misses. That matters: the cost of a
+  cache that never hits is the key construction and lookup on every read, which
+  measured 11.8us against 7.9us with caching genuinely off."
+  (->NoCache))
+
+(defn no-cache?
+  [x]
+  (instance? NoCache x))
+
 (def ^:private default-store-config
   {:max-weight (* 16 1024 1024)
    :max-entry-weight (* 4 1024 1024)

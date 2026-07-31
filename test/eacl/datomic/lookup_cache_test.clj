@@ -264,7 +264,7 @@
 
 (deftest disabled-and-failing-caches-use-the-indexed-path-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [disabled (core/make-client conn {:cache false})
+    (let [disabled (core/make-client conn {:cache cache/no-cache})
           broken-store
           (reify cache/CacheStore
             (lookup [_ _] (throw (ex-info "unavailable" {})))
@@ -503,10 +503,24 @@
     (testing "a cache adapter is accepted directly"
       (is (some? (core/make-client
                   conn {:cache (cache/local-store {:max-entries 8})}))))
-    (testing "an explicit nil disables, an absent key does not"
-      (is (nil? (:lookup-cache-store
-                 (:opts (core/make-client conn {:cache nil})))))
-      (is (some? (:lookup-cache-store (:opts (core/make-client conn {}))))))
+    (testing "whatever :cache holds must BE a cache"
+      (let [store-of #(:lookup-cache-store (:opts (core/make-client conn %)))]
+        (testing "nil and absent both mean the default adapter"
+          (is (some? (store-of {})))
+          (is (some? (store-of {:cache nil}))))
+        (testing "no-cache is the only way to turn it off"
+          (is (nil? (store-of {:cache cache/no-cache})))
+          (is (nil? (store-of {:cache {:store cache/no-cache}}))))
+        (testing "an explicit adapter is used as given"
+          (let [adapter (cache/local-store)]
+            (is (identical? adapter (store-of {:cache adapter})))))
+        (testing "booleans are rejected rather than interpreted"
+          ;; They read as a flag in a slot that holds a cache, and they left
+          ;; nil ambiguous between "the default" and "none".
+          (is (thrown? clojure.lang.ExceptionInfo (store-of {:cache false})))
+          (is (thrown? clojure.lang.ExceptionInfo (store-of {:cache true})))
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (store-of {:cache {:store false}}))))))
     (testing ":live-results? and :coordinator are gone, not ignored"
       (is (thrown? clojure.lang.ExceptionInfo
                    (core/make-client conn {:cache {:live-results? true}})))

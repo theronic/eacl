@@ -555,7 +555,7 @@
                                       :permission :view
                                       :subject/type :user}
                 disabled-acl
-                (spiceomic/make-client conn {:cache false})
+                (spiceomic/make-client conn {:cache cache/no-cache})
                 resource-calls (atom 0)
                 subject-calls (atom 0)
                 original-count-resources impl/count-resources
@@ -674,7 +674,7 @@
                               replay-client
                               (spiceomic/make-client
                                conn
-                               (assoc client-opts :cache false))
+                               (assoc client-opts :cache cache/no-cache))
                               cached (recursive-walk cached-client query)
                               completed-hit
                               (recursive-walk cached-client query)
@@ -762,7 +762,7 @@
                            (recursive-walk
                             (spiceomic/make-client
                              conn
-                             (assoc client-opts :cache false))
+                             (assoc client-opts :cache cache/no-cache))
                             query)}))
                       (range 3))
                      cached (:cached (first runs))
@@ -885,7 +885,7 @@
               (clear! [_] nil)
               (stats [_] {}))
             clients
-            [[:disabled (spiceomic/make-client conn {:cache false})]
+            [[:disabled (spiceomic/make-client conn {:cache cache/no-cache})]
              [:admission-rejected
               (spiceomic/make-client
                conn

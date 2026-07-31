@@ -106,7 +106,7 @@
 (def cache-configurations
   "v6 had no result cache at all, so `:off` is the like-for-like comparison.
   The others show what v7's cache adds on top of the same engine."
-  {:off {:cache false}
+  {:off {:cache cache/no-cache}
    :default {}
    :remember-answers {:cache {:remember-answers true}}})
 

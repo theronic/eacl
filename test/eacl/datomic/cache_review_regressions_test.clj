@@ -111,8 +111,8 @@
   ;; An entity retracted without delete-relationships! leaves a relationship
   ;; half that still grants. Coercing that result reported
   ;; :eacl.consistency/snapshot-unavailable — a cache/snapshot diagnosis for a
-  ;; fault that also fires with {:cache false}, naming only the first offender.
-  (doseq [config [{:cache false} {}]]
+  ;; fault that also fires with {:cache cache/no-cache}, naming only the first offender.
+  (doseq [config [{:cache cache/no-cache} {}]]
     (with-mem-conn [conn schema/v7-schema]
       (let [acl (core/make-client conn (assoc config :page-token-key token-key))
             _ (seed-direct! conn acl 3)
@@ -140,7 +140,7 @@
             (is (str/includes? message "delete-relationships!"))
             (is (str/includes? message "dangling-relationship-report"))
             (is (not (str/includes? message "cache"))
-                "this fires with {:cache false} too; it must not be diagnosed as a cache fault")))))))
+                "this fires with {:cache cache/no-cache} too; it must not be diagnosed as a cache fault")))))))
 
 ;; --- M1 ---------------------------------------------------------------------
 
@@ -283,12 +283,12 @@
 
 (deftest result-shape-does-not-depend-on-cache-configuration-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [boot (core/make-client conn {:cache false :page-token-key token-key})
+    (let [boot (core/make-client conn {:cache cache/no-cache :page-token-key token-key})
           _ (seed-direct! conn boot 3)
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}]
-      (doseq [config [{:cache false}
+      (doseq [config [{:cache cache/no-cache}
                       {}
                       {:cache {:remember-answers true}}
                       {:cache {:remember-answers false}}]]

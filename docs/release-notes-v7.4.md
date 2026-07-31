@@ -19,8 +19,10 @@ it exists, exact-result retention is simply off.
   and are not cached.
 - Older cached lookup answers resolve those EIDs against the answer's own historical basis, so a
   later live entity deletion does not break `minimize-latency` or freshness-floor reads.
-- `make-client` takes `:cache <adapter>` — any `CacheStore` implementation. Omitted builds a
-  default client-local adapter; `false` or `nil` disables caching. A single call bypasses the
+- `make-client` takes `:cache <adapter>` — any `CacheStore` implementation. Omitted or `nil` builds
+  a default client-local adapter; `eacl.datomic.cache/no-cache` disables caching. Booleans are
+  rejected: whatever is passed must BE a cache, so that `nil` is unambiguous and the option does not
+  read as a flag. A single call bypasses the
   configured cache with `:cache? false` on the request. `:cache` names WHICH cache, `:cache?` says
   WHETHER to use it, so the two are deliberately different keys. There is nothing else to decide
   and nothing to coordinate between clients or processes: invalidation rides on the
@@ -107,7 +109,7 @@ it exists, exact-result retention is simply off.
 - Relationship update operations are validated before endpoint resolution. `delete-object!`
   reports actual committed relationship-datom retractions across all batches.
 
-The cache can be disabled with `{:cache false}`. Authorization remains correct and usable, with
+The cache can be disabled with `{:cache eacl.datomic.cache/no-cache}`. Authorization remains correct and usable, with
 the expected loss of cache-dependent performance; cursors and exact reads still use reconstructable
 Datomic history.
 
@@ -202,7 +204,8 @@ reader of the database observes it.
 
 Migration: replace `:cache (assoc (cache/local-context) :live-results? true)` with
 `:cache <adapter>` (or just omit it), and delete any coordinator plumbing. A writer-only client
-configured as `{:store false :coordinator shared}` becomes `{:cache false}` — it no longer needs to
+configured as `{:store false :coordinator shared}` becomes `{:cache cache/no-cache}` — it no longer
+needs to
 participate in anything. `:eacl.consistency/coordinator-floor-unreachable` can no longer be raised.
 
 `spiceomic-write-relationships!` no longer distinguishes a validation failure from a
