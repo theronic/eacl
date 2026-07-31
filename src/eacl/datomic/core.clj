@@ -14,6 +14,7 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.datomic.watermark :as watermark]
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.spicedb.consistency :as consistency])
   (:import [java.io ByteArrayInputStream ByteArrayOutputStream DataInputStream
@@ -633,8 +634,15 @@
   (conj prefix [:live scope]))
 
 (defn- exact-result-cache-key
-  [prefix basis-t]
-  (conj prefix [:exact basis-t]))
+  "Exact entries are keyed by the CACHE EPOCH, not the Datomic basis.
+
+  Keying on basis-t meant any transaction anywhere in the database minted a new
+  key, so the exact cache was effectively a 0% hit rate on a busy system. An
+  epoch changes only when EACL-relevant data changes, and is verified against
+  Datomic's transaction log rather than trusted from a process-local counter —
+  see eacl.datomic.watermark for why the process-local shortcut is unsound."
+  [prefix epoch]
+  (conj prefix [:exact epoch]))
 
 (defn- latest-result-cache-key
   [prefix]
@@ -731,6 +739,8 @@
            (vector? (:cache-scope answer)))
        (or (not (contains? expected :basis-t))
            (= (:basis-t expected) (:basis-t answer)))
+       (or (not (contains? expected :epoch))
+           (= (:epoch expected) (:epoch answer)))
        (or (not (contains? expected :cache-scope))
            (= (:cache-scope expected) (:cache-scope answer)))
        (contains? answer :result)
@@ -759,11 +769,11 @@
 
 (defn- store-cached-answer!
   [opts cache-prefix kind result weight
-   {:keys [mode basis-t cache-scope schema-version]}]
+   {:keys [mode basis-t cache-epoch cache-scope schema-version]}]
   (let [store (:lookup-cache-store opts)
         namespace (:cache-namespace opts)
         ttl-ms (:lookup-cache-ttl-ms opts)
-        exact-key (exact-result-cache-key cache-prefix basis-t)
+        exact-key (exact-result-cache-key cache-prefix cache-epoch)
         ;; A cursor/exact page is forced to :at-exact-snapshot, and only that
         ;; mode reads exact-key. Its live entry would be keyed by a query
         ;; identity containing an :after/:before edge, and every request
@@ -772,6 +782,7 @@
         ;; budget that live page-one answers compete for.
         historical? (= :at-exact-snapshot mode)
         answer {:basis-t basis-t
+                :epoch cache-epoch
                 :cache-scope cache-scope
                 :result (portable-result kind result)}]
     (when (and store schema-version)
@@ -793,6 +804,7 @@
          (latest-result-cache-key cache-prefix)
          :latest-result
          {:basis-t basis-t
+          :epoch cache-epoch
           :exact-key exact-key
           :kind kind}
          192
@@ -810,6 +822,7 @@
            (and (map? value)
                 (integer? (:basis-t value))
                 (not (neg? (:basis-t value)))
+                (integer? (:epoch value))
                 (vector? (:exact-key value))
                 (= kind (:kind value)))))]
     (when (and pointer
@@ -817,14 +830,18 @@
                    (<= minimum-t (:basis-t pointer)))
                (or (nil? maximum-t)
                    (<= (:basis-t pointer) maximum-t))
+               ;; The pointer names its own entry's key, which is derived from
+               ;; the epoch. Recomputing it here is what stops a malformed or
+               ;; foreign pointer redirecting a read at another entry.
                (= (:exact-key pointer)
-                  (exact-result-cache-key cache-prefix (:basis-t pointer))))
+                  (exact-result-cache-key cache-prefix (:epoch pointer))))
       (cached-answer opts (:exact-key pointer) kind valid-result?
-                     {:basis-t (:basis-t pointer)}))))
+                     {:basis-t (:basis-t pointer)
+                      :epoch (:epoch pointer)}))))
 
 (defn- cached-authorization-result
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
-  (let [{:keys [mode basis-t requested-t cache-scope]}
+  (let [{:keys [mode basis-t cache-epoch requested-t cache-scope]}
         consistency-context
         live? (:cache-live-results? opts)
         exact? (:cache-exact-results? opts)]
@@ -843,7 +860,7 @@
             live-key (when (and live? cache-scope)
                        (result-cache-key cache-prefix cache-scope))
             exact-key (when exact?
-                        (exact-result-cache-key cache-prefix basis-t))
+                        (exact-result-cache-key cache-prefix cache-epoch))
             current-hit #(when live-key
                            (some-> (cached-answer
                                     opts live-key kind valid-result?
@@ -854,8 +871,15 @@
                                    (assoc :basis-t basis-t
                                           :cache-scope cache-scope)))
             exact-hit #(when exact-key
-                         (cached-answer opts exact-key kind valid-result?
-                                        {:basis-t basis-t}))
+                         (some-> (cached-answer opts exact-key kind valid-result?
+                                                {:epoch cache-epoch})
+                                 ;; The epoch proves no EACL-relevant datom
+                                 ;; changed between the answer's basis and this
+                                 ;; one, so the answer IS current: stamp the
+                                 ;; caller's basis so external ids coerce
+                                 ;; against the database they asked for rather
+                                 ;; than sending the caller to d/as-of.
+                                 (assoc :basis-t basis-t)))
             latest-hit #(when exact?
                           (latest-cached-answer
                            opts cache-prefix kind valid-result?
@@ -1191,6 +1215,10 @@
                :mode :at-exact-snapshot
                :requested-t requested-t
                :basis-t historical-t
+               ;; A cursor or exact-snapshot read pins a historical basis and
+               ;; is its own epoch. EACL targets the current database; keeping
+               ;; a cache warm for every point in time is a non-goal.
+               :cache-epoch historical-t
                :cache-scope (:cache-scope decoded)
                :cursor-scope (:cache-scope decoded)
                :schema-cache schema-cache
@@ -1239,6 +1267,12 @@
                :mode mode
                :requested-t requested-t
                :basis-t observed-t
+               ;; Verified against the transaction log, so an unrelated
+               ;; application write leaves the exact cache hot while any EACL
+               ;; write — from this process, another process, or a raw
+               ;; d/transact — moves it.
+               :cache-epoch (watermark/safe-epoch-for
+                             (:cache-epoch-state opts) observed-t)
                :cache-scope cache-scope
                :schema-version (client-schema-version opts))))))
 
@@ -1936,6 +1970,23 @@
         schema-state       (atom (impl.indexed/make-schema-cache initial-db))
         cache-config       (normalize-cache-config cache
                                                    page-token-ttl-seconds)
+        ;; Log-verified cache epochs, built only when results can be retained.
+        ;; With :cache false the connection is never asked for its log.
+        cache-epoch-state  (when (:exact-results? cache-config)
+                             (try
+                               (watermark/log-cache-epoch conn)
+                               (catch Exception _ nil)))
+        ;; Without a usable transaction log an exact entry can only be keyed by
+        ;; basis-t, which any transaction invalidates — measured WORSE than no
+        ;; cache at all (49us vs 24us for can? under churn), because every read
+        ;; pays a publication it can never read back. Turn it off rather than
+        ;; ship a cache that costs more than it saves. Live results are
+        ;; unaffected: they key on the coordinator proof, not the epoch.
+        cache-config       (cond-> cache-config
+                             (and (:exact-results? cache-config)
+                                  (nil? cache-epoch-state)
+                                  (not (:live-results? cache-config)))
+                             (assoc :exact-results? false))
         timeout-ms         (if (contains? config-opts
                                           :consistency-sync-timeout-ms)
                              consistency-sync-timeout-ms
@@ -2000,6 +2051,7 @@
                             :cache-live-results? (:live-results? cache-config)
                             :cache-exact-results? (:exact-results? cache-config)
                             :relationship-coordinator (:coordinator cache-config)
+                            :cache-epoch-state cache-epoch-state
                             :revision-checkpoints (:checkpoints cache-config)
                             :opaque-cache-token (Object.)
                             :entid->object-id entid->object-id

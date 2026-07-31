@@ -108,6 +108,14 @@ All of these were found in this candidate and fixed before release.
 - The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
   reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
   went from ~2.3x slower than `{:cache false}` to ~2.3x faster.
+- Exact result entries are keyed by a log-verified cache epoch instead of Datomic `basis-t`, so an
+  unrelated application write no longer invalidates them. Under one unrelated transaction per read,
+  `can?` went from 320 evaluations per 300 reads to 1 (26.9us -> 12.1us, and 13.9us with no cache at
+  all); `lookup-resources` 101.8us -> 49.2us. The epoch is verified against the transaction log, so
+  it observes writes from another connection, another process, and raw `d/transact` of
+  `tx-relationship` output — none of which a coordinator can see. A connection without a usable log
+  disables exact retention rather than reverting to basis keying, which measured worse than no
+  cache.
 - Forward acyclic pages resume from cached per-intermediate stream heads. Every page previously
   opened an index scan for each of the subject's intermediates just to learn where each stream
   starts; a page now re-opens only the streams it actually drew from. A full walk over 4000

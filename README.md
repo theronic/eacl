@@ -553,6 +553,24 @@ Capacity and lifetime are consumer-controlled:
             :ttl-ms 300000}}))
 ```
 
+Exact entries are keyed by a **cache epoch** rather than Datomic's `basis-t`. An epoch changes only
+when EACL-relevant data changes — relationship tuples, relation/permission definitions, or the
+schema generation — and is verified against Datomic's transaction log, so it sees writes from any
+connection, any process, and raw `d/transact` of `tx-relationship` output. Keying on `basis-t` meant
+any unrelated application write minted a new key: measured at a 0% hit rate, and slower than running
+with no cache at all. Keying on a *process-local* counter instead would be faster but unsound —
+another app server's write leaves it untouched and the cache serves a stale answer.
+
+Verification costs one log scan per newly observed basis, amortised across every read at that
+basis: ~0.3µs for a quiet window, ~0.1µs per intervening transaction, and independent of database
+size. Past `:max-scanned-transactions` (256) the window is abandoned and the epoch advances — a
+miss, never a wrong answer. A connection with no usable transaction log disables exact retention
+rather than falling back to `basis-t` keying, which measured worse than no cache.
+
+Reads pinned to a historical basis — cursors and `at-exact-snapshot` — are their own epoch and are
+deliberately not made hot. EACL targets the current database; a cache per point in time is a
+non-goal.
+
 Cache TTL is clamped to the page-token TTL. Entry admission includes a conservative estimate of
 the retained key and result/traversal shape; the weight settings are estimates, not literal JVM
 bytes or a heap guarantee. Oversized entries are rejected rather than allowed to threaten the
