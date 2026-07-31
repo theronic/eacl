@@ -108,3 +108,8 @@ All of these were found in this candidate and fixed before release.
 - The relationship barrier covers only the coordinator-snapshot/database pair and uses optimistic
   reads, and the reader catch-up loop is bounded. Under 8 threads `can?` with `:live-results? true`
   went from ~2.3x slower than `{:cache false}` to ~2.3x faster.
+- Page tokens moved from EDN to a compact binary payload (`eacl.datomic.codec`) with a reused
+  AES-GCM cipher: encode ~41us -> ~2.4us, decode ~24us -> ~2.6us. A page mints two cursors and
+  reads one, so `lookup-resources`/`lookup-subjects` are roughly 2x faster uncached and 3x faster
+  with live results. The prefix is now `eacl4_`; `eacl3_` cursors from an earlier build are
+  rejected as `:eacl.pagination/invalid-cursor`, the same way an expired cursor already is.

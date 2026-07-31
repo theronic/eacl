@@ -207,8 +207,8 @@ The other primary API call is `lookup-resources`, e.g.
 	page1
 	=> {:data [{:type :server :id "server-1"}
 	           {:type :server :id "server-2"}]
-	    :page-info {:start-cursor "eacl3_..."
-	                :end-cursor "eacl3_..."
+	    :page-info {:start-cursor "eacl4_..."
+	                :end-cursor "eacl4_..."
 	                :has-next-page? true
 	                :has-previous-page? false}}
 ```
@@ -225,8 +225,8 @@ To query the next page, pass the `:end-cursor` from page1 as `:after`:
 => {:data [{:type :server :id "server-3"}
            {:type :server :id "server-4"}
            {:type :server :id "server-5"}]
-    :page-info {:start-cursor "eacl3_..."
-                :end-cursor "eacl3_..."
+    :page-info {:start-cursor "eacl4_..."
+                :end-cursor "eacl4_..."
                 :has-next-page? true
                 :has-previous-page? true}}
 ```
@@ -324,8 +324,8 @@ Add the EACL dependency to your `deps.edn` file:
    :resource/type :product
    :first         1000})
 ; => {:data [{:type :product, :id "product-1"}]
-;     :page-info {:start-cursor "eacl3_..."
-;                 :end-cursor "eacl3_..."
+;     :page-info {:start-cursor "eacl4_..."
+;                 :end-cursor "eacl4_..."
 ;                 :has-next-page? false
 ;                 :has-previous-page? false}}
 ```

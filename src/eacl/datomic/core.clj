@@ -1,7 +1,6 @@
 (ns eacl.datomic.core
   "Reifies eacl.core/IAuthorization for Datomic-backed EACL in eacl.datomic.impl."
-  (:require [clojure.edn :as edn]
-            [clojure.tools.logging :as log]
+  (:require [clojure.tools.logging :as log]
             [com.rpl.specter :as S]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [IAuthorization
@@ -10,21 +9,29 @@
                                         ->RelationshipUpdate
                                         map->Relationship]]
             [eacl.datomic.cache :as cache]
+            [eacl.datomic.codec :as codec]
             [eacl.datomic.consistency :as revision]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.spicedb.consistency :as consistency])
-  (:import [java.nio.charset StandardCharsets]
+  (:import [java.io ByteArrayInputStream ByteArrayOutputStream DataInputStream
+            DataOutputStream]
+           [java.nio.charset StandardCharsets]
            [java.security MessageDigest SecureRandom]
-           [java.util Base64]
+           [java.util Arrays Base64]
            [java.util.concurrent.locks Lock ReentrantReadWriteLock]
+           [java.util.function Supplier]
            [javax.crypto Cipher]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
-(def ^:private page-token-prefix "eacl3_")
-(def ^:private page-token-version 5)
+;; eacl4_ tokens carry a binary envelope; the eacl3_ EDN format they replace is
+;; not read. Cursors are short-lived (300s by default) and every caller already
+;; handles :eacl.pagination/invalid-cursor on expiry, so a rolling deploy
+;; degrades to "restart your pagination", not to wrong answers.
+(def ^:private page-token-prefix "eacl4_")
+(def ^:private page-token-version 6)
 (def ^:private maximum-page-token-length
   "Bounds decode work on an unauthenticated caller-supplied cursor. Real EACL
   cursors are well under this even with per-path frontiers for a wide
@@ -61,6 +68,18 @@
 
 (defn- sha-256 [^bytes bytes]
   (.digest (MessageDigest/getInstance "SHA-256") bytes))
+
+(defn- invalid-page-token!
+  "Every page-token rejection carries one type so callers can match cursor
+  failures uniformly. The token itself is never echoed back."
+  ([reason]
+   (invalid-page-token! reason {}))
+  ([reason data]
+   (throw (ex-info "Invalid page token."
+                   (assoc data
+                          :type :eacl.pagination/invalid-cursor
+                          :eacl/error :eacl.pagination/invalid-cursor
+                          :reason reason)))))
 
 (defn- normalize-token-key [key-material]
   (cond
@@ -130,23 +149,73 @@
   [x]
   (b64url-encode (sha-256 (utf8-bytes (pr-str (canonicalize x))))))
 
-(defn- encrypt-aead
-  [^bytes key ^bytes nonce ^bytes aad ^bytes plaintext]
-  (let [cipher (Cipher/getInstance "AES/GCM/NoPadding")]
-    (.init cipher Cipher/ENCRYPT_MODE
+(def ^:private ^ThreadLocal aead-cipher
+  "Cipher instances are not thread-safe, but Cipher/getInstance costs ~0.77us
+  per call — a JCA provider lookup on the hottest pagination path. `init`
+  fully resets state, including after a failed `doFinal`, so one instance per
+  thread is safe to reuse."
+  (ThreadLocal/withInitial
+   (reify Supplier
+     (get [_] (Cipher/getInstance "AES/GCM/NoPadding")))))
+
+(defn- aead
+  [mode ^bytes key ^bytes nonce ^bytes aad ^bytes input]
+  (let [^Cipher cipher (.get aead-cipher)]
+    (.init cipher (int mode)
            (SecretKeySpec. key "AES")
            (GCMParameterSpec. 128 nonce))
     (.updateAAD cipher aad)
-    (.doFinal cipher plaintext)))
+    (.doFinal cipher input)))
+
+(defn- encrypt-aead
+  [^bytes key ^bytes nonce ^bytes aad ^bytes plaintext]
+  (aead Cipher/ENCRYPT_MODE key nonce aad plaintext))
 
 (defn- decrypt-aead
   [^bytes key ^bytes nonce ^bytes aad ^bytes ciphertext]
-  (let [cipher (Cipher/getInstance "AES/GCM/NoPadding")]
-    (.init cipher Cipher/DECRYPT_MODE
-           (SecretKeySpec. key "AES")
-           (GCMParameterSpec. 128 nonce))
-    (.updateAAD cipher aad)
-    (.doFinal cipher ciphertext)))
+  (aead Cipher/DECRYPT_MODE key nonce aad ciphertext))
+
+;; --- Page token envelope ----------------------------------------------------
+;;
+;; Layout, all big-endian, everything before :ciphertext is the AAD:
+;;
+;;   u8    envelope format tag (always envelope-format-tag)
+;;   u8    page token version
+;;   u8    kid kind (0 = keyword, 1 = string)
+;;   u32   kid byte length, then those UTF-8 bytes
+;;   u8    nonce length (always 12)
+;;   bytes nonce
+;;   ---- end of AAD ----
+;;   u32   ciphertext length, then those bytes
+;;
+;; The AAD is the header bytes exactly as written rather than a reconstruction
+;; of them, so encrypt and decrypt cannot disagree about canonical form.
+
+(def ^:private envelope-format-tag 1)
+(def ^:private nonce-length 12)
+(def ^:private maximum-kid-bytes 1024)
+
+(defn- write-kid!
+  [^DataOutputStream out kid]
+  (let [^String text (if (keyword? kid) (subs (str kid) 1) (str kid))
+        bytes (.getBytes text StandardCharsets/UTF_8)]
+    (.writeByte out (if (keyword? kid) 0 1))
+    (.writeInt out (alength bytes))
+    (.write out bytes 0 (alength bytes))))
+
+(defn- read-kid
+  [^DataInputStream in]
+  (let [kind (int (.readByte in))
+        n (.readInt in)]
+    (when (or (neg? n) (> n maximum-kid-bytes))
+      (invalid-page-token! :malformed))
+    (let [bytes (byte-array n)
+          _ (.readFully in bytes)
+          text (String. bytes StandardCharsets/UTF_8)]
+      (case kind
+        0 (keyword text)
+        1 text
+        (invalid-page-token! :malformed)))))
 
 (defn encrypt-page-token
   [opts payload]
@@ -154,59 +223,64 @@
     (let [{:keys [page-token-current-kid page-token-keyring]} opts
           kid page-token-current-kid
           key (get page-token-keyring kid)
-          nonce (random-bytes 12)
-          header {:v page-token-version
-                  :kid kid
-                  :nonce (b64url-encode nonce)}
-          aad (utf8-bytes (pr-str (canonicalize header)))
-          plaintext (utf8-bytes (pr-str (canonicalize payload)))
-          ciphertext (encrypt-aead key nonce aad plaintext)]
-      (str page-token-prefix
-           (b64url-encode
-            (utf8-bytes
-             (pr-str (assoc header :ciphertext (b64url-encode ciphertext)))))))))
-
-(defn- invalid-page-token!
-  "Every page-token rejection carries one type so callers can match cursor
-  failures uniformly. The token itself is never echoed back."
-  ([reason]
-   (invalid-page-token! reason {}))
-  ([reason data]
-   (throw (ex-info "Invalid page token."
-                   (assoc data
-                          :type :eacl.pagination/invalid-cursor
-                          :eacl/error :eacl.pagination/invalid-cursor
-                          :reason reason)))))
+          nonce (random-bytes nonce-length)
+          buffer (ByteArrayOutputStream. 512)
+          out (DataOutputStream. buffer)]
+      (.writeByte out envelope-format-tag)
+      (.writeByte out page-token-version)
+      (write-kid! out kid)
+      (.writeByte out nonce-length)
+      (.write out nonce 0 nonce-length)
+      (.flush out)
+      (let [aad (.toByteArray buffer)
+            ciphertext (encrypt-aead key nonce aad (codec/encode payload))]
+        (.writeInt out (alength ^bytes ciphertext))
+        (.write out ^bytes ciphertext 0 (alength ^bytes ciphertext))
+        (.flush out)
+        (str page-token-prefix (b64url-encode (.toByteArray buffer)))))))
 
 (defn decrypt-page-token
   [opts token]
   (when token
-    ;; Length is checked before any decoding: the envelope is Base64-decoded
-    ;; and EDN-parsed before its AES-GCM tag can be verified, so an unbounded
-    ;; token is unauthenticated CPU and allocation amplification.
+    ;; Length is checked before any decoding: the envelope is decoded before
+    ;; its AES-GCM tag can be verified, so an unbounded token would be
+    ;; unauthenticated CPU and allocation amplification.
     (when-not (and (string? token)
                    (<= (count token) maximum-page-token-length)
                    (.startsWith ^String token page-token-prefix))
       (invalid-page-token! :malformed))
     (try
       (let [{:keys [page-token-keyring]} opts
-            envelope (edn/read-string
-                      (String. (b64url-decode (subs token (count page-token-prefix)))
-                               StandardCharsets/UTF_8))
-            {:keys [v kid nonce ciphertext]} envelope
-            key (get page-token-keyring kid)]
-        (when-not (= page-token-version v)
-          (invalid-page-token! :unsupported-version {:version v}))
-        (when-not key
-          (invalid-page-token! :unknown-key-id {:kid kid}))
-        (let [header {:v v :kid kid :nonce nonce}
-              aad (utf8-bytes (pr-str (canonicalize header)))
-              plaintext (decrypt-aead key
-                                      (b64url-decode nonce)
-                                      aad
-                                      (b64url-decode ciphertext))
-              payload (edn/read-string (String. plaintext StandardCharsets/UTF_8))
+            envelope (b64url-decode (subs token (count page-token-prefix)))
+            in (DataInputStream. (ByteArrayInputStream. envelope))]
+        (when-not (= envelope-format-tag (int (.readByte in)))
+          (invalid-page-token! :malformed))
+        (let [version (int (.readByte in))
+              _ (when-not (= page-token-version version)
+                  (invalid-page-token! :unsupported-version {:version version}))
+              kid (read-kid in)
+              key (get page-token-keyring kid)
+              _ (when-not key
+                  (invalid-page-token! :unknown-key-id {:kid kid}))
+              declared-nonce-length (int (.readByte in))
+              _ (when-not (= nonce-length declared-nonce-length)
+                  (invalid-page-token! :malformed))
+              nonce (byte-array nonce-length)
+              _ (.readFully in nonce)
+              ;; Everything consumed so far — up to and including the nonce —
+              ;; is the AAD, byte-for-byte as encrypt wrote it.
+              aad-length (- (alength ^bytes envelope) (.available in))
+              aad (Arrays/copyOfRange ^bytes envelope 0 (int aad-length))
+              ciphertext-length (.readInt in)
+              _ (when-not (and (not (neg? ciphertext-length))
+                               (<= ciphertext-length (.available in)))
+                  (invalid-page-token! :malformed))
+              ciphertext (byte-array ciphertext-length)
+              _ (.readFully in ciphertext)
+              payload (codec/decode (decrypt-aead key nonce aad ciphertext))
               now (now-seconds)]
+          (when-not (map? payload)
+            (invalid-page-token! :malformed))
           (when-not (= page-token-version (:v payload))
             (invalid-page-token! :unsupported-version {:version (:v payload)}))
           (when (and (:exp payload) (<= (:exp payload) now))
@@ -214,8 +288,8 @@
           payload))
       (catch clojure.lang.ExceptionInfo e
         (throw e))
-      ;; edn/read-string on hostile nesting overflows the stack, and a
-      ;; StackOverflowError is an Error: it walked straight out of
+      ;; A StackOverflowError is an Error, not an Exception: before the codec
+      ;; replaced edn/read-string here, hostile nesting walked straight out of
       ;; lookup-resources past every `catch Exception` in the request stack.
       (catch StackOverflowError _
         (invalid-page-token! :malformed))

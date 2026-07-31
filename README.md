@@ -80,7 +80,15 @@ construct the DB yourself, apply the EACL schema to a prospective DB when needed
 for the operation, and perform the internal EID coercion yourself. Those calls do not publish into
 a connection-backed client's schema or result cache.
 
-Public `eacl3_` cursors are string-safe AES-GCM envelopes. Authentication is required so a caller cannot alter a result boundary, query binding, basis, or per-path frontier. Encryption is not required for pagination correctness, but it prevents internal Datomic eids and basis metadata from leaking through an otherwise merely Base64-encoded token. Token cryptography runs once when a page cursor is encoded or decoded; it is not part of each relationship-index traversal.
+Public `eacl4_` cursors are string-safe AES-GCM envelopes. Authentication is required so a caller cannot alter a result boundary, query binding, basis, or per-path frontier. Encryption is not required for pagination correctness, but it prevents internal Datomic eids and basis metadata from leaking through an otherwise merely Base64-encoded token. Token cryptography runs once when a page cursor is encoded or decoded; it is not part of each relationship-index traversal.
+
+The payload uses a compact binary encoding (`eacl.datomic.codec`) rather than EDN. Profiling put
+roughly half of a cached page's wall time in cursor serialisation — and only ~3% of that in the
+cryptography; the rest was Clojure's printer and reader running three to four times per token.
+Encoding a cursor costs ~2.4µs and decoding ~2.6µs, down from ~41µs and ~24µs. Cursors are opaque
+and short-lived (5 minutes by default), so the format is not a compatibility surface: `eacl3_`
+tokens minted by an earlier build are rejected as `:eacl.pagination/invalid-cursor`, which every
+caller already handles for expiry.
 
 ## Project Status
 
@@ -205,8 +213,8 @@ The other primary API call is `lookup-resources`, e.g.
 page1
 => {:data [{:type :server :id "server-1"}
            {:type :server :id "server-2"}]
-    :page-info {:start-cursor "eacl3_..."
-                :end-cursor "eacl3_..."
+    :page-info {:start-cursor "eacl4_..."
+                :end-cursor "eacl4_..."
                 :has-next-page? true
                 :has-previous-page? false}}
 ```
@@ -223,8 +231,8 @@ To query the next page, pass the `:end-cursor` from page1 as `:after`:
 => {:data [{:type :server :id "server-3"}
            {:type :server :id "server-4"}
            {:type :server :id "server-5"}]
-    :page-info {:start-cursor "eacl3_..."
-                :end-cursor "eacl3_..."
+    :page-info {:start-cursor "eacl4_..."
+                :end-cursor "eacl4_..."
                 :has-next-page? true
                 :has-previous-page? true}}
 ```
@@ -333,8 +341,8 @@ Add the EACL dependency to your `deps.edn` file:
    :resource/type :product
    :first         1000})
 ; => {:data [{:type :product, :id "product-1"}]
-;     :page-info {:start-cursor "eacl3_..."
-;                 :end-cursor "eacl3_..."
+;     :page-info {:start-cursor "eacl4_..."
+;                 :end-cursor "eacl4_..."
 ;                 :has-next-page? false
 ;                 :has-previous-page? false}}
 ```
@@ -722,7 +730,7 @@ Keys you omit keep their defaults (`eacl.datomic.impl.indexed/default-recursive-
 These are heap-protection limits, not ordinary page-size controls. Prefer `:count-limit` for
 situated authorization counts; raise traversal ceilings only after load-testing the host JVM.
 
-For multi-peer deployments, configure stable shared page- and Zed-token keys so `eacl3_...`
+For multi-peer deployments, configure stable shared page- and Zed-token keys so `eacl4_...`
 cursors and frontend-returned `eacl_z2_...` tokens survive restarts and can be verified by every
 backend:
 

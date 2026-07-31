@@ -36,7 +36,7 @@
             token (spiceomic/page-token opts payload)
             decoded (spiceomic/token->page-bound opts token)]
         (is (string? token))
-        (is (.startsWith ^String token "eacl3_"))
+        (is (.startsWith ^String token "eacl4_"))
         (is (= (dissoc payload :ttl-seconds)
                (select-keys decoded [:op :query-shape :basis :basis-t :edge])))))
 
@@ -75,7 +75,7 @@
 
     (testing "invalid input is rejected"
       (is (thrown? Throwable (spiceomic/token->page-bound opts "garbage")))
-      (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl3_not-valid-base64!!!"))))))
+      (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl4_not-valid-base64!!!"))))))
 
 (deftest protocol-completeness-tests
   ;; Audit §13: write-relationship!/delete-relationship! were declared on the
@@ -478,7 +478,7 @@
         (is (= (:data page1) (:data previous-page)))
         (is (string? (page-start-cursor page1)))
         (is (string? (page-end-cursor page1)))
-        (is (.startsWith ^String (page-end-cursor page1) "eacl3_"))
+        (is (.startsWith ^String (page-end-cursor page1) "eacl4_"))
         (is (true? (get-in page1 [:page-info :has-next-page?])))
         (is (false? (get-in page1 [:page-info :has-previous-page?])))
         (is (true? (get-in previous-page [:page-info :has-next-page?])))))
@@ -510,7 +510,7 @@
           (is (nil? (:cursor page1)))
           (is (string? (page-start-cursor page1)))
           (is (string? page1-end-cursor))
-          (is (.startsWith ^String page1-end-cursor "eacl3_")))
+          (is (.startsWith ^String page1-end-cursor "eacl4_")))
 
         (testing "reverse pagination can get the previous page without a cursor stack"
           (is (= page1-data (:data previous-page)))

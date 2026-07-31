@@ -218,7 +218,7 @@
 
 (defn- forged-token
   [^String payload]
-  (str "eacl3_" (.encodeToString (Base64/getUrlEncoder)
+  (str "eacl4_" (.encodeToString (Base64/getUrlEncoder)
                                  (.getBytes payload StandardCharsets/UTF_8))))
 
 (deftest hostile-page-tokens-are-typed-cursor-errors-test
@@ -247,10 +247,10 @@
 
       (testing "an oversized token is rejected before any decoding"
         (is (= :eacl.pagination/invalid-cursor
-               (reject (str "eacl3_" (str/join (repeat 4000000 "A")))))))
+               (reject (str "eacl4_" (str/join (repeat 4000000 "A")))))))
 
       (testing "ordinary garbage is also a typed cursor error"
-        (is (= :eacl.pagination/invalid-cursor (reject "eacl3_not-base64!!")))
+        (is (= :eacl.pagination/invalid-cursor (reject "eacl4_not-base64!!")))
         (is (= :eacl.pagination/invalid-cursor (reject (forged-token "{:v 5}"))))
         (is (= :eacl.pagination/invalid-cursor (reject "not-an-eacl-token"))))
 
