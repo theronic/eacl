@@ -458,11 +458,13 @@
 (def ^:private known-relationship-filter-keys
   "Filter + pagination keys read-relationships accepts. :cursor and :limit are
   included so normalize-page-request can reject them with their specific
-  errors; :consistency and :page/basis are validated by the client layer."
+  errors; :consistency, :page/basis and :cache? are validated and consumed by
+  the client layer but must be listed here, since an unknown key is a hard
+  error rather than something to ignore."
   #{:subject/type :subject/id
     :resource/type :resource/id :resource/relation
     :first :last :after :before :cursor :limit
-    :page/basis :consistency})
+    :page/basis :consistency :cache?})
 
 (def ^:private relationship-anchor-keys
   #{:subject/type :subject/id :resource/type :resource/id :resource/relation})

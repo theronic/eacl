@@ -19,10 +19,13 @@ it exists, exact-result retention is simply off.
   and are not cached.
 - Older cached lookup answers resolve those EIDs against the answer's own historical basis, so a
   later live entity deletion does not break `minimize-latency` or freshness-floor reads.
-- The consumer-facing surface is `:cache true` (default) or `:cache false`, plus a per-request
-  `:cache false` to bypass one call. There is nothing else to decide and nothing to coordinate
-  between clients or processes: invalidation rides on the `:eacl/relation-version` stamps EACL's
-  own write helpers transact, so every reader of the database observes every write.
+- `make-client` takes `:cache <adapter>` — any `CacheStore` implementation. Omitted builds a
+  default client-local adapter; `false` or `nil` disables caching. A single call bypasses the
+  configured cache with `:cache? false` on the request. `:cache` names WHICH cache, `:cache?` says
+  WHETHER to use it, so the two are deliberately different keys. There is nothing else to decide
+  and nothing to coordinate between clients or processes: invalidation rides on the
+  `:eacl/relation-version` stamps EACL's own write helpers transact, so every reader of the
+  database observes every write.
 - Turn it off when the same check is essentially never asked twice; a read then pays for a lookup
   it cannot benefit from. Measured on entirely distinct checks: 7.9us off against 11.8us on. When
   checks recur it inverts — 8.0us against 4.3us for an arrow permission.
@@ -30,7 +33,7 @@ it exists, exact-result retention is simply off.
   (`false` | `true` | `:on-repeat`, default `:on-repeat`) lives there. `:on-repeat` keeps a
   finished answer only once the same check has been seen twice and measured no slower than `true`
   in any workload tested, which is why it is the default rather than a consumer decision.
-- A single read can opt out with a per-request `:cache false` — on the map arity of `can?`, and in
+- A single read can opt out with a per-request `:cache? false` — on the map arity of `can?`, and in
   the query map for lookups, counts and `read-relationships`.
 - Relationship helpers publish exactly which relations they changed; unrelated application
   transactions, no-op writes, and unrelated relation changes do not invalidate hot entries.
@@ -198,7 +201,7 @@ made through a client sharing it; a stamp is transacted with the relationship da
 reader of the database observes it.
 
 Migration: replace `:cache (assoc (cache/local-context) :live-results? true)` with
-`:cache true`, and delete any coordinator plumbing. A writer-only client
+`:cache <adapter>` (or just omit it), and delete any coordinator plumbing. A writer-only client
 configured as `{:store false :coordinator shared}` becomes `{:cache false}` — it no longer needs to
 participate in anything. `:eacl.consistency/coordinator-floor-unreachable` can no longer be raised.
 

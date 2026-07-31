@@ -610,48 +610,54 @@ included in admission weight without walking that graph for every page. Recursiv
 include `:cache :namespace`, so clients sharing a provider cannot read or overwrite another
 namespace's pages or continuations, and targeted cleanup cannot remove another namespace's state.
 
-The cache is on by default. There is one decision:
+`:cache` names the cache adapter the client uses. Omit it and EACL builds a default client-local
+one; that is what most consumers want.
 
 ```clojure
-(make-client conn {:cache true})    ; default
-(make-client conn {:cache false})   ; off
+(make-client conn {})                                      ; default adapter
+(make-client conn {:cache false})                          ; no caching
+(make-client conn {:cache (eacl-cache/local-store
+                           {:max-weight (* 64 1024 1024)})}) ; your own adapter
 ```
 
-Everything else is EACL's business. There is nothing to coordinate between clients or processes,
-no entry types to configure, and no coherence scope to wire up: invalidation rides on the
-`:eacl/relation-version` stamps described above, which are transacted with the relationship datoms
-themselves, so every reader of the database observes every write.
+Any `eacl.datomic.cache/CacheStore` implementation is a valid adapter, so a custom or shared store
+needs no backend dependency in EACL core.
 
-Turn it **off** when the same permission check is essentially never asked twice — a batch job
-sweeping distinct resources, say. A read then pays for a cache lookup it can never benefit from.
-Measured on entirely distinct checks, the cache off is 7.9µs against 11.8µs on. When checks do
-recur it is the other way round: 8.0µs off against 4.3µs on for an arrow permission, 4.9µs against
-3.9µs for a direct one.
+Pass `false` when the same permission check is essentially never asked twice — a batch job sweeping
+distinct resources, say. A read then pays for a cache lookup it can never benefit from: measured
+7.9µs with the cache off against 11.8µs with it on for entirely distinct checks. When checks do
+recur it is the other way round, 8.0µs off against 4.3µs on for an arrow permission.
 
-A single read can opt out without building another client:
+To bypass the configured cache for a **single call**, pass `:cache? false` on the request:
 
 ```clojure
-(eacl/can? acl {:subject alice :permission :view :resource doc :cache false})
+(eacl/can? acl {:subject alice :permission :view :resource doc :cache? false})
 
 (eacl/lookup-resources acl {:subject alice
                             :permission :view
                             :resource/type :doc
-                            :cache false})
+                            :cache? false})
 ```
 
-`:cache false` on a request neither reads from nor writes to the cache for that call. It is
-accepted on the map arity of `can?` and in the query map for `lookup-resources`,
-`lookup-subjects`, `count-resources`, `count-subjects` and `read-relationships`. Cursors are
-unaffected: a page token is minted and validated from the request, so a cursor minted with the
-override is usable without it and vice versa.
+Note the two different keys. `:cache` on the client says *which* cache — a thing. `:cache?` on a
+request says *whether* to use it — a boolean. It is accepted on the map arity of `can?` and in the
+query map for `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects` and
+`read-relationships`, and it skips both reading and writing for that call only. Cursors are
+unaffected: a page token is minted and validated from the request rather than from the cache, so a
+cursor minted with the bypass is usable without it and vice versa.
 
-A map may be supplied in place of `true` for capacity tuning and tests — `:store`, `:max-weight`,
-`:max-entry-weight`, `:max-entries`, `:ttl-ms`, `:namespace`, `:kind-max-weight`,
-`:two-hit-kinds`, `:admission-entries`, `:checkpoints`, `:remember-answers`. These are not part of
-the API most consumers need. `:remember-answers` in particular defaults to `:on-repeat`, which
-keeps a finished answer only once the same check has been seen twice; it measured no slower than
-always keeping them in any workload tested, so it is a testing knob rather than a decision worth
-handing to consumers.
+There is nothing to coordinate between clients or processes, no entry types to configure, and no
+coherence scope to wire up. Invalidation rides on the `:eacl/relation-version` stamps described
+above, which are transacted with the relationship datoms themselves, so every reader of the
+database observes every write.
+
+A configuration map may be supplied in place of an adapter for capacity tuning and tests —
+`:store`, `:max-weight`, `:max-entry-weight`, `:max-entries`, `:ttl-ms`, `:namespace`,
+`:kind-max-weight`, `:two-hit-kinds`, `:admission-entries`, `:checkpoints`, `:remember-answers`.
+These are deliberately not part of the API most consumers need. `:remember-answers` defaults to
+`:on-repeat`, which keeps a finished answer only once the same check has been seen twice; it
+measured no slower than always keeping them in every workload tested, so it is a default rather
+than a question worth asking consumers.
 
 Earlier builds of this candidate offered `:live-results? true` plus an explicit `:coordinator`
 shared by every participating reader and writer, along with a read barrier, a mutation barrier and

@@ -500,6 +500,13 @@
                  (core/make-client conn {:cache {:namespace ""}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:checkpoints :yes}})))
+    (testing "a cache adapter is accepted directly"
+      (is (some? (core/make-client
+                  conn {:cache (cache/local-store {:max-entries 8})}))))
+    (testing "an explicit nil disables, an absent key does not"
+      (is (nil? (:lookup-cache-store
+                 (:opts (core/make-client conn {:cache nil})))))
+      (is (some? (:lookup-cache-store (:opts (core/make-client conn {}))))))
     (testing ":live-results? and :coordinator are gone, not ignored"
       (is (thrown? clojure.lang.ExceptionInfo
                    (core/make-client conn {:cache {:live-results? true}})))
@@ -547,7 +554,7 @@
 
 ;; --- per-request cache override ----------------------------------------------
 
-(deftest per-request-cache-false-bypasses-the-cache-test
+(deftest per-request-cache-flag-bypasses-the-cache-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {:cache {:remember-answers true}})
           _ (seed-direct! conn client)
@@ -578,8 +585,8 @@
           (is (true? (eacl/can? client {:subject alice
                                         :permission :admin
                                         :resource account
-                                        :cache false})))
-          (is (= 2 @calls) ":cache false does not read the cached answer"))
+                                        :cache? false})))
+          (is (= 2 @calls) ":cache? false does not read the cached answer"))
 
         (testing "the bypassed call also wrote nothing"
           (is (true? (eacl/can? client {:subject alice
@@ -594,11 +601,11 @@
             (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources client query)))))
             (is (= after-first @lookups) "second identical lookup is a hit")
             (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources
-                                             client (assoc query :cache false))))))
+                                             client (assoc query :cache? false))))))
             (is (= (inc after-first) @lookups)
-                ":cache false recomputes")))))))
+                ":cache? false recomputes")))))))
 
-(deftest per-request-cache-override-does-not-break-cursors-test
+(deftest per-request-cache-flag-does-not-break-cursors-test
   ;; :cache is excluded from the cursor's query identity. Leaving it in would
   ;; make a page-2 request that omits it fail against a page-1 token minted
   ;; with it — the same failure :consistency once caused.
@@ -615,7 +622,7 @@
                    :permission :admin
                    :resource/type :account
                    :first 2}
-            page-1 (eacl/lookup-resources client (assoc query :cache false))
+            page-1 (eacl/lookup-resources client (assoc query :cache? false))
             cursor (get-in page-1 [:page-info :end-cursor])]
         (is (= 2 (count (:data page-1))))
         (testing "a cursor minted with the override is usable without it"
@@ -626,11 +633,58 @@
                            [:page-info :end-cursor])]
             (is (= 2 (count (:data (eacl/lookup-resources
                                     client (assoc query :after c2
-                                                  :cache false)))))))))
+                                                  :cache? false)))))))))
       (testing "a non-boolean override is rejected rather than ignored"
         (is (thrown? clojure.lang.ExceptionInfo
                      (eacl/lookup-resources
                       client {:subject (spice-object :user "alice")
                               :permission :admin
                               :resource/type :account
-                              :cache :sometimes})))))))
+                              :cache? :sometimes})))))))
+
+(deftest per-request-cache-flag-covers-every-operation-test
+  ;; read-relationships validates its filter keys strictly — an unknown key is
+  ;; a hard error, not something to ignore — so :cache? had to be added to the
+  ;; accepted set. This test is why that was caught: an operation-by-operation
+  ;; sweep rather than a spot check on can? and lookup-resources.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:page-token-key "bypass-all"})
+          _ (seed-direct! conn client)
+          alice (spice-object :user "alice")
+          account (spice-object :account "a-1")
+          store (get-in client [:opts :lookup-cache-store])
+          puts #(:puts (cache/stats store))
+          calls [[:can? #(eacl/can? client (assoc % :subject alice
+                                                 :permission :admin
+                                                 :resource account))]
+                 [:lookup-resources #(eacl/lookup-resources
+                                      client (assoc % :subject alice
+                                                    :permission :admin
+                                                    :resource/type :account))]
+                 [:lookup-subjects #(eacl/lookup-subjects
+                                     client (assoc % :resource account
+                                                   :permission :admin
+                                                   :subject/type :user))]
+                 [:count-resources #(eacl/count-resources
+                                     client (assoc % :subject alice
+                                                   :permission :admin
+                                                   :resource/type :account))]
+                 [:count-subjects #(eacl/count-subjects
+                                    client (assoc % :resource account
+                                                  :permission :admin
+                                                  :subject/type :user))]
+                 [:read-relationships #(eacl/read-relationships
+                                        client (assoc % :resource/type :account))]]]
+      ;; warm every operation so there is something to bypass
+      (dotimes [_ 2] (doseq [[_ f] calls] (f {})))
+      (doseq [[label f] calls]
+        (testing (str label " accepts :cache? false")
+          (let [before (puts)
+                result (f {:cache? false})]
+            (is (some? result) (str label " still answers"))
+            (is (= before (puts))
+                (str label " with :cache? false wrote nothing to the store")))))
+      (testing "and a non-boolean is rejected on each"
+        (doseq [[label f] calls]
+          (is (thrown? clojure.lang.ExceptionInfo (f {:cache? :maybe}))
+              (str label " rejects a non-boolean :cache?")))))))

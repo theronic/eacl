@@ -440,13 +440,13 @@
   (canonicalize
    {:op op
     :basis :stable
-    ;; :cache is excluded for the same reason as :consistency: it selects HOW
+    ;; :cache? is excluded for the same reason as :consistency: it selects HOW
     ;; the answer is obtained, not WHICH answer. Leaving it in would make a
     ;; page-2 request that omits it fail validation against a page-1 token
     ;; minted with it — which is the exact failure :consistency already caused.
     :query (dissoc query
                    :first :last :after :before
-                   :cursor :limit :page/basis :consistency :cache)}))
+                   :cursor :limit :page/basis :consistency :cache?)}))
 
 (defn- list-query-shape
   [op query]
@@ -1167,12 +1167,15 @@
                (:lookup-cache-store opts))))
 
 (defn- request-cache-opts
-  "Validates and applies a per-request `:cache` override to the client's opts.
+  "Validates and applies a per-request `:cache?` override to the client's opts.
 
   `false` bypasses the cache for this one call: nothing is read from it and
   nothing is written to it, exactly as if the client had been built with
-  `{:cache false}`. Any other value (including absent) uses the client's own
-  configuration.
+  `{:cache false}`. Absent or true uses the client's configured cache.
+
+  Note the key is `:cache?`, not `:cache`: the client option names WHICH cache
+  (an adapter), the request option says WHETHER to use it (a boolean). Two
+  different kinds of thing, so two different names.
 
   Everything downstream is already guarded on the store and the
   :cache-remember-answers? flag, so clearing those two is the whole mechanism —
@@ -1180,9 +1183,9 @@
   token is minted and validated from the request, not from the cache."
   [opts cache-option]
   (when-not (or (nil? cache-option) (boolean? cache-option))
-    (throw (ex-info "EACL Error: per-request :cache must be true or false."
+    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
                     {:type :eacl/invalid-request
-                     :key :cache
+                     :key :cache?
                      :value cache-option})))
   (if (false? cache-option)
     (assoc opts
@@ -1602,12 +1605,12 @@
     (with-client-schema-read conn schema-lock schema-state
       (spiceomic-can? conn opts subject permission resource consistency)))
 
-  ;; The map arity is where a per-request :cache override lands. The
+  ;; The map arity is where a per-request :cache? override lands. The
   ;; positional arities keep their signatures and always use the client's own
-  ;; cache configuration.
-  (can? [_ {:keys [subject permission resource consistency cache]}]
+  ;; configured cache.
+  (can? [_ {:keys [subject permission resource consistency] cache? :cache?}]
     (with-client-schema-read conn schema-lock schema-state
-      (spiceomic-can? conn (request-cache-opts opts cache)
+      (spiceomic-can? conn (request-cache-opts opts cache?)
                       subject permission resource
                       (or consistency consistency/fully-consistent))))
 
@@ -1631,7 +1634,7 @@
   (read-relationships [_ filters]
     (with-client-schema-read conn schema-lock schema-state
       (spiceomic-read-relationships
-       conn (request-cache-opts opts (:cache filters)) filters)))
+       conn (request-cache-opts opts (:cache? filters)) filters)))
 
   (write-relationships! [_ updates]
     (with-client-schema-read conn schema-lock schema-state
@@ -1691,25 +1694,25 @@
   (lookup-resources [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-lookup-resources conn (request-cache-opts opts (:cache query))
+        (spiceomic-lookup-resources conn (request-cache-opts opts (:cache? query))
                            query))))
 
   (count-resources [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-count-resources conn (request-cache-opts opts (:cache query))
+        (spiceomic-count-resources conn (request-cache-opts opts (:cache? query))
                            query))))
 
   (lookup-subjects [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-lookup-subjects conn (request-cache-opts opts (:cache query))
+        (spiceomic-lookup-subjects conn (request-cache-opts opts (:cache? query))
                            query))))
 
   (count-subjects [_ query]
     (with-client-schema-read conn schema-lock schema-state
       (with-recursive-limits opts
-        (spiceomic-count-subjects conn (request-cache-opts opts (:cache query))
+        (spiceomic-count-subjects conn (request-cache-opts opts (:cache? query))
                            query))))
 
   (expand-permission-tree [_ _]
@@ -1747,17 +1750,40 @@
     :two-hit-kinds
     :admission-entries})
 
+(defn- cache-adapter?
+  "Whether `x` is a cache adapter rather than a config map.
+
+  Checked BEFORE map?, and that order is load-bearing: the built-in adapter is
+  a defrecord, so it satisfies map? too and would otherwise be read as a
+  configuration map whose every key is unknown."
+  [x]
+  (and (some? x) (satisfies? cache/CacheStore x)))
+
 (defn- normalize-cache-config
+  "Normalizes the :cache client option.
+
+    absent / true  a default client-local adapter
+    false / nil    no cache
+    <adapter>      any CacheStore implementation
+    {...}          advanced tuning and test options; see make-client
+
+  The adapter is the cache. Everything else in the map is policy EACL applies
+  around it, and consumers should not need any of it."
   [cache-option page-token-ttl-seconds]
   (when-not (or (nil? cache-option)
+                (= ::default cache-option)
                 (boolean? cache-option)
+                (cache-adapter? cache-option)
                 (map? cache-option))
-    (throw (ex-info (str "EACL Config Error: :cache must be true, false, or a"
-                         " configuration map.")
+    (throw (ex-info (str "EACL Config Error: :cache must be a cache adapter,"
+                         " true, false, or a configuration map.")
                     {:type :eacl/invalid-config
                      :key :cache
                      :value cache-option})))
-  (let [config (if (map? cache-option) cache-option {})
+  (let [config (cond
+                 (cache-adapter? cache-option) {:store cache-option}
+                 (map? cache-option) cache-option
+                 :else {})
         unknown-keys (seq (remove known-cache-opt-keys (keys config)))]
     (when unknown-keys
       (throw (ex-info "EACL Config Error: unknown :cache option(s)."
@@ -1788,7 +1814,11 @@
                       {:type :eacl/invalid-config
                        :key :cache
                        :value (:checkpoints config)})))
-    (let [enabled? (not (false? cache-option))
+    (let [enabled? (not (or (false? cache-option) (nil? cache-option)))
+          ;; nil is "no cache" when passed EXPLICITLY, but :cache absent from
+          ;; the options map is the default-on case. make-client distinguishes
+          ;; them and passes ::default when the key is absent.
+          enabled? (or enabled? (= ::default cache-option))
           ;; Consumers choose :cache true or false; they should not have to
           ;; understand entry kinds to get a good outcome. :on-repeat is the
           ;; default because it DOMINATES always-remember in every workload
@@ -1853,36 +1883,39 @@
   - :entid->object-id  (fn [db eid] external-id) — canonical ID coercion, as documented in the README.
   - :entity->object-id (fn [entity] external-id) — deprecated alias; do not combine with the above.
   - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
-  - :cache — true (default) or false.
+  - :cache — the cache adapter this client uses.
 
-    false turns caching off entirely. true lets EACL cache whatever it can;
-    how it does that is EACL's business and is not something you configure.
-    Turning it off is worth doing when the same permission check is essentially
-    never asked twice, because a read then pays for a cache lookup it can never
-    benefit from — measured 7.9us with the cache off against 11.8us with it on
-    for a workload of entirely distinct checks. When checks do recur it is the
-    other way round: 8.0us off against 4.3us on for an arrow permission.
+      omitted     a default client-local in-memory adapter (this is the norm)
+      false, nil  no caching at all
+      <adapter>   any eacl.datomic.cache/CacheStore implementation, e.g.
+                  (eacl.datomic.cache/local-store {:max-weight ...})
 
-    A single read can opt out with a per-request :cache false — on the map
-    arity of can?, and in the query map for lookups, counts and
-    read-relationships. It bypasses reading and writing for that call only;
-    cursors still work, because a page token is minted and validated from the
-    request rather than from the cache.
+    Pass false when the same permission check is essentially never asked twice
+    — a batch job sweeping distinct resources, say. A read then pays for a
+    cache lookup it can never benefit from: measured 7.9us with the cache off
+    against 11.8us on for entirely distinct checks. When checks recur it is the
+    other way round, 8.0us against 4.3us for an arrow permission.
 
-    A map may be supplied instead of true for advanced tuning and tests. These
-    are not part of the API most consumers need:
-      :store             a CacheStore implementation, or false for no store
-      :max-weight, :max-entry-weight, :max-entries, :ttl-ms   capacity bounds
-      :namespace         isolates entries between clients sharing a store
-      :kind-max-weight, :two-hit-kinds, :admission-entries    per-kind tuning
+    To bypass the configured cache for ONE call, pass :cache? false on the
+    request — on the map arity of can?, and in the query map for lookups,
+    counts and read-relationships. It skips both reading and writing for that
+    call only. Cursors are unaffected: a page token is minted and validated
+    from the request, not from the cache, so a cursor minted with the bypass is
+    usable without it and vice versa.
+
+    A configuration map may be supplied in place of an adapter for tuning and
+    tests. It is deliberately not part of the API consumers need:
+      :store             adapter, or false for none (same as :cache false)
+      :max-weight, :max-entry-weight, :max-entries, :ttl-ms  capacity bounds
+      :namespace         isolates entries between clients sharing an adapter
+      :kind-max-weight, :two-hit-kinds, :admission-entries   per-kind tuning
       :checkpoints       bounded revision checkpoints
       :remember-answers  false | true | :on-repeat (default) — whether a
                          finished answer is kept so an identical later check
                          skips evaluation. :on-repeat keeps it only once the
                          same check has been seen twice, and measured no slower
-                         than true in any workload tested, which is why it is
-                         the default and why this is a testing knob rather than
-                         a decision to hand to consumers.
+                         than true in every workload tested, which is why it is
+                         a default rather than a question for consumers.
 
     Cache failures are contained as misses or rejected publications. Missing
     exact pages and recursive continuations replay against the authenticated
@@ -1978,8 +2011,9 @@
   (migrations/assert-storage-compatible! conn {:auto-migrate-v6 auto-migrate-v6})
   (let [initial-db         (d/db conn)
         schema-state       (atom (impl.indexed/make-schema-cache initial-db))
-        cache-config       (normalize-cache-config cache
-                                                   page-token-ttl-seconds)
+        cache-config       (normalize-cache-config
+                            (if (contains? config-opts :cache) cache ::default)
+                            page-token-ttl-seconds)
         ;; Per-relation epoch state, built only when results can be retained.
         ;; Holds one memoised attribute eid and no db value. Whether an epoch
         ;; can actually be established is decided per read, not here: a client
