@@ -411,7 +411,8 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           token-key "shared-store-opaque-continuation"
-          first-client (core/make-client conn {:cache {:store store}
+          first-client (core/make-client conn {:cache {:store store
+                                                       :remember-answers false}
                                                :page-token-key token-key})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
@@ -428,7 +429,11 @@
        first-client
        [(->Relationship alice :reader root)
         (->Relationship root :parent child)])
-      (let [second-client (core/make-client conn {:cache {:store store}
+      ;; :remember-answers false so this observes the recursive PAGE cache;
+      ;; otherwise the answer cache serves the repeat and the engine, whose
+      ;; stats this asserts on, is never entered.
+      (let [second-client (core/make-client conn {:cache {:store store
+                                                          :remember-answers false}
                                                   :page-token-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])

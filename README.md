@@ -49,7 +49,8 @@ Situated AuthZ offers some advantages for typical use-cases:
   unavailable, EACL reconstructs the cursor's authenticated historical Datomic basis and safely
   recomputes the deterministic prefix. Relevant relationship or schema changes after page one do
   not alter later pages.
-- Completed `can?`, lookup, and count answers can use the same store with `:remember-answers`.
+- Completed `can?`, lookup, and count answers are kept once the same check recurs, keyed by the
+  change stamps of only the relations that permission actually reads.
   Keys use the schema generation and the change stamps of only the relation definitions the
   permission actually reads—not every Datomic `basis-t`—so unrelated application transactions and
   relationship writes outside that dependency set leave entries hot. No coordination between
@@ -538,14 +539,13 @@ changing authorization answers:
 (def acl (eacl.datomic.core/make-client conn {:cache false}))
 ```
 
-Capacity and lifetime are consumer-controlled:
+Capacity and lifetime can be tuned, though most consumers do not need to:
 
 ```clojure
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:remember-answers true
-            :max-weight (* 64 1024 1024)
+   {:cache {:max-weight (* 64 1024 1024)
             :max-entry-weight (* 8 1024 1024)
             :max-entries 4096
             :kind-max-weight {:can? (* 16 1024 1024)}
@@ -610,39 +610,54 @@ included in admission weight without walking that graph for every page. Recursiv
 include `:cache :namespace`, so clients sharing a provider cannot read or overwrite another
 namespace's pages or continuations, and targeted cleanup cannot remove another namespace's state.
 
-`:remember-answers` says whether EACL should remember the answer to a permission check, so that
-asking the **same** check again skips evaluation:
+The cache is on by default. There is one decision:
 
 ```clojure
-(def acl
-  (eacl.datomic.core/make-client
-   conn
-   {:cache {:remember-answers true}}))     ; false (default) | true | :on-repeat
+(make-client conn {:cache true})    ; default
+(make-client conn {:cache false})   ; off
 ```
 
-Pagination and traversal state are cached either way — that is what makes walking a result set
-cheap, and it costs nothing on traffic that never repeats a check. `:remember-answers` governs only
-the finished answers.
-
-Which value to pick depends on your traffic, not on EACL. When the same checks recur, remembering
-took a direct permission from 4.3µs to 3.7µs and an arrow permission from 7.6µs to 3.9µs. When
-every check is different it went from 9.1µs to 24.8µs, because each read pays a store write that
-nothing ever reads back, and those writes evict entries that would have been useful. `:on-repeat`
-is the hedge: an answer is stored only once the same check has been seen twice, which on a mixed
-workload cut stores 3x and evictions 3.7x while keeping the win on the checks that do recur.
-
-There is nothing to coordinate between clients or processes. Invalidation rides on the
+Everything else is EACL's business. There is nothing to coordinate between clients or processes,
+no entry types to configure, and no coherence scope to wire up: invalidation rides on the
 `:eacl/relation-version` stamps described above, which are transacted with the relationship datoms
-themselves, so every reader of the database observes every write — from another client, another
-connection, another process, or a raw `d/transact` of `tx-relationship` output.
+themselves, so every reader of the database observes every write.
 
-Earlier builds of this candidate offered `:live-results? true` plus an explicit
-`:coordinator` shared by every participating reader and writer, along with a read barrier, a
-mutation barrier and a bounded reader catch-up loop. All of it is gone. Per-relation stamps give
-the same per-relation precision without the wiring, and unlike a coordinator they cannot miss a
-write made outside the process — a live entry was consulted *before* the epoch-keyed one, so a
-coordinator that had missed a write served a stale answer where an epoch-keyed read would correctly
-have missed. `:cache {:live-results? ...}` and `:cache {:coordinator ...}` now throw
+Turn it **off** when the same permission check is essentially never asked twice — a batch job
+sweeping distinct resources, say. A read then pays for a cache lookup it can never benefit from.
+Measured on entirely distinct checks, the cache off is 7.9µs against 11.8µs on. When checks do
+recur it is the other way round: 8.0µs off against 4.3µs on for an arrow permission, 4.9µs against
+3.9µs for a direct one.
+
+A single read can opt out without building another client:
+
+```clojure
+(eacl/can? acl {:subject alice :permission :view :resource doc :cache false})
+
+(eacl/lookup-resources acl {:subject alice
+                            :permission :view
+                            :resource/type :doc
+                            :cache false})
+```
+
+`:cache false` on a request neither reads from nor writes to the cache for that call. It is
+accepted on the map arity of `can?` and in the query map for `lookup-resources`,
+`lookup-subjects`, `count-resources`, `count-subjects` and `read-relationships`. Cursors are
+unaffected: a page token is minted and validated from the request, so a cursor minted with the
+override is usable without it and vice versa.
+
+A map may be supplied in place of `true` for capacity tuning and tests — `:store`, `:max-weight`,
+`:max-entry-weight`, `:max-entries`, `:ttl-ms`, `:namespace`, `:kind-max-weight`,
+`:two-hit-kinds`, `:admission-entries`, `:checkpoints`, `:remember-answers`. These are not part of
+the API most consumers need. `:remember-answers` in particular defaults to `:on-repeat`, which
+keeps a finished answer only once the same check has been seen twice; it measured no slower than
+always keeping them in any workload tested, so it is a testing knob rather than a decision worth
+handing to consumers.
+
+Earlier builds of this candidate offered `:live-results? true` plus an explicit `:coordinator`
+shared by every participating reader and writer, along with a read barrier, a mutation barrier and
+a bounded reader catch-up loop. All of it is gone. Per-relation stamps give the same per-relation
+precision without the wiring, and unlike a coordinator they cannot miss a write made outside the
+process. `:cache {:live-results? ...}` and `:cache {:coordinator ...}` now throw
 `:eacl/invalid-config` rather than being silently ignored.
 
 Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached

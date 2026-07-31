@@ -83,8 +83,13 @@
 (defn seed-multipath!
   "Seeds a multi-path permission graph. Returns the acl client."
   [conn {:keys [num-accounts teams-per-acct vpcs-per-acct servers-per-acct]}]
+  ;; :remember-answers false so these benchmarks observe the TRAVERSAL layer.
+  ;; With answers remembered (the default), a repeated identical page is served
+  ;; from the answer cache and the engine is never entered, so traversal-call
+  ;; counts read as zero and prove nothing.
   (let [acl (spiceomic/make-client conn {:entity->object-id (fn [ent] (:eacl/id ent))
-                                         :object-id->ident  (fn [obj-id] [:eacl/id obj-id])})]
+                                         :object-id->ident  (fn [obj-id] [:eacl/id obj-id])
+                                         :cache {:remember-answers false}})]
     @(d/transact conn basic-attrs)
     @(d/transact conn schema/v7-schema)
     (eacl/write-schema! acl multipath-schema-dsl)
@@ -654,7 +659,9 @@
                      client-opts
                      {:entity->object-id (fn [ent] (:eacl/id ent))
                       :object-id->ident (fn [obj-id] [:eacl/id obj-id])
-                      :page-token-key "recursive-scaling-benchmark"}
+                      :page-token-key "recursive-scaling-benchmark"
+                      ;; measures the continuation/page layer, not answers
+                      :cache {:remember-answers false}}
                      query {:subject (->user "user-1")
                             :permission :read
                             :resource/type :account
@@ -798,7 +805,12 @@
             client-opts
             {:entity->object-id (fn [ent] (:eacl/id ent))
              :object-id->ident (fn [obj-id] [:eacl/id obj-id])
-             :page-token-key "recursive-cost-breakdown"}
+             :page-token-key "recursive-cost-breakdown"
+             ;; This breaks down the cost of the recursive PAGE path, where a
+             ;; completed page is read back and nothing new is published.
+             ;; Remembering answers adds its own publications on top and would
+             ;; make the "no publications" assertion measure the wrong layer.
+             :cache {:remember-answers false}}
             query {:subject (->user "user-1")
                    :permission :read
                    :resource/type :account

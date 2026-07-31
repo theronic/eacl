@@ -243,8 +243,11 @@
           (core/make-client
            conn
            {:page-token-key token-key
+            ;; asserts on recursive-page-hits, so the answer cache must not
+            ;; short-circuit the engine before it records them
             :cache {:store store
-                    :namespace :tenant-a}})
+                    :namespace :tenant-a
+                    :remember-answers false}})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -255,7 +258,8 @@
              conn
              {:page-token-key token-key
               :cache {:store store
-                      :namespace :tenant-b}})
+                      :namespace :tenant-b
+                      :remember-answers false}})
             page-a (eacl/lookup-resources client-a query)
             first-b-stats (atom {})
             page-b

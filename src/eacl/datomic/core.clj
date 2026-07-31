@@ -1750,9 +1750,10 @@
 (defn- normalize-cache-config
   [cache-option page-token-ttl-seconds]
   (when-not (or (nil? cache-option)
-                (false? cache-option)
+                (boolean? cache-option)
                 (map? cache-option))
-    (throw (ex-info "EACL Config Error: :cache must be false or a configuration map."
+    (throw (ex-info (str "EACL Config Error: :cache must be true, false, or a"
+                         " configuration map.")
                     {:type :eacl/invalid-config
                      :key :cache
                      :value cache-option})))
@@ -1788,15 +1789,21 @@
                        :key :cache
                        :value (:checkpoints config)})))
     (let [enabled? (not (false? cache-option))
-          remember (when enabled? (:remember-answers config))
-          ;; Off by default, because whether it pays depends on something only
-          ;; the consumer knows: whether the same check gets asked twice. On a
-          ;; workload that repeats, remembering answers is a 4.3->3.7us win for
-          ;; a direct permission and 7.6->3.9us for an arrow. On one that never
-          ;; repeats it is a 9.1->24.8us LOSS, because every read pays a store
-          ;; write that nothing ever reads back. :on-repeat is the middle
-          ;; ground: an answer is only stored once the same check has been seen
-          ;; twice, which halves the cost of guessing wrong.
+          ;; Consumers choose :cache true or false; they should not have to
+          ;; understand entry kinds to get a good outcome. :on-repeat is the
+          ;; default because it DOMINATES always-remember in every workload
+          ;; measured — never slower, sometimes faster — so there is nothing
+          ;; to trade off:
+          ;;   repeating, direct   none 4.9-6.7us  always 4.0-4.2  on-repeat 3.9-4.1
+          ;;   repeating, arrow    none 8.0-9.5us  always 4.3      on-repeat 4.3
+          ;;   never repeating     none 7.9-8.6us  always 13.3+    on-repeat 11.8+
+          ;; The last row is why `:cache false` remains the meaningful choice:
+          ;; on traffic that never asks the same check twice, the key build and
+          ;; lookup cost on every read is unrecoverable no matter the admission
+          ;; policy. That is a decision about traffic, which consumers can make.
+          remember (if (contains? config :remember-answers)
+                     (when enabled? (:remember-answers config))
+                     (when enabled? :on-repeat))
           remember-answers? (boolean remember)
           token-ttl-ms (* 1000 (or page-token-ttl-seconds
                                    default-page-token-ttl-seconds))
@@ -1846,39 +1853,45 @@
   - :entid->object-id  (fn [db eid] external-id) — canonical ID coercion, as documented in the README.
   - :entity->object-id (fn [entity] external-id) — deprecated alias; do not combine with the above.
   - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
-  - :cache — false disables all lookup caching. A map configures the bounded
-    ephemeral store with :max-weight, :max-entry-weight, :max-entries and
-    :ttl-ms, or supplies your own :store (any CacheStore implementation);
-    :store false disables the store while leaving the rest of the client
-    intact.
+  - :cache — true (default) or false.
 
-    :remember-answers says whether EACL should remember the answer to a
-    permission check so that asking the SAME check again skips evaluation.
-    Pagination and traversal state are cached either way — that is what makes
-    walking a result set cheap, and it costs nothing on a workload that never
-    repeats a check.
-      false      (default) never remember answers.
-      true       remember every answer.
-      :on-repeat remember an answer only once the same check has been asked
-                 twice.
-    Which to pick depends on your traffic, not on EACL: when checks repeat,
-    remembering took a direct permission from 4.3us to 3.7us and an arrow from
-    7.6us to 3.9us. When they never repeat it went from 9.1us to 24.8us,
-    because every read pays a store write nothing reads back. :on-repeat is
-    the hedge.
+    false turns caching off entirely. true lets EACL cache whatever it can;
+    how it does that is EACL's business and is not something you configure.
+    Turning it off is worth doing when the same permission check is essentially
+    never asked twice, because a read then pays for a cache lookup it can never
+    benefit from — measured 7.9us with the cache off against 11.8us with it on
+    for a workload of entirely distinct checks. When checks do recur it is the
+    other way round: 8.0us off against 4.3us on for an arrow permission.
+
+    A single read can opt out with a per-request :cache false — on the map
+    arity of can?, and in the query map for lookups, counts and
+    read-relationships. It bypasses reading and writing for that call only;
+    cursors still work, because a page token is minted and validated from the
+    request rather than from the cache.
+
+    A map may be supplied instead of true for advanced tuning and tests. These
+    are not part of the API most consumers need:
+      :store             a CacheStore implementation, or false for no store
+      :max-weight, :max-entry-weight, :max-entries, :ttl-ms   capacity bounds
+      :namespace         isolates entries between clients sharing a store
+      :kind-max-weight, :two-hit-kinds, :admission-entries    per-kind tuning
+      :checkpoints       bounded revision checkpoints
+      :remember-answers  false | true | :on-repeat (default) — whether a
+                         finished answer is kept so an identical later check
+                         skips evaluation. :on-repeat keeps it only once the
+                         same check has been seen twice, and measured no slower
+                         than true in any workload tested, which is why it is
+                         the default and why this is a testing knob rather than
+                         a decision to hand to consumers.
+
     Cache failures are contained as misses or rejected publications. Missing
     exact pages and recursive continuations replay against the authenticated
     historical basis rather than falling forward.
 
-    A single read can opt out with a per-request :cache false — on the map
-    arity of can?, and in the query map for lookups, counts and
-    read-relationships. It bypasses both reading and writing for that call
-    only; cursors still work, because a page token is minted and validated
-    from the request rather than from the cache.
-
     There is no cross-process cache coordination to configure. Invalidation
     rides on :eacl/relation-version stamps written into the transaction that
     changes a relationship, so every reader of the database observes it.
+
   - :page-token-key / :page-token-keys / :page-token-keyring / :page-token-kid —
     AES-GCM page-token key material. Default: a random per-client key, meaning
     page tokens do not survive restarts and are not portable across clients;
