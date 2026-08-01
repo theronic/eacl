@@ -1,0 +1,148 @@
+(ns eacl.datahike.backend-test
+  "Datahike-specific tests for the paths the shared contract does not reach.
+
+   `assert-seeded-contracts!` goes through `make-client`, which serves relation
+   definitions from a prebuilt schema catalog — a full index scan. So the
+   contract suite never exercises the tuple SEEK, which is where datahike's
+   length-first vector ordering bites, nor cache invalidation on a schema
+   change, which is where the numeric attribute representation bites.
+
+   They fail in OPPOSITE directions, and neither is visible without a test that
+   names it: a mispositioned seek finds no relation definition and DENIES, while
+   a listener that fails to recognise a schema change keeps answering from
+   pre-change permission paths and so GRANTS what the schema has just revoked.
+
+   Every test runs in both attribute representations. The stale-cache failure
+   appears ONLY under :attribute-refs?, where a datom's :a is a number."
+  (:require [clojure.test :refer [deftest is testing]]
+            [datahike.api :as d]
+            [eacl.contract-support :as contract]
+            [eacl.core :as eacl]
+            [eacl.datahike.core :as datahike]
+            [eacl.datahike.db :as ddb]
+            [eacl.datahike.impl :as impl]
+            [eacl.datahike.schema :as schema]))
+
+(def ^:private modes
+  {"attributes as keywords"          nil
+   "attributes as numeric refs"      {:attribute-refs? true}})
+
+(defn- seeded-conn
+  "The contract's schema, objects and relationships, so these tests describe the
+   same world the contract does."
+  [config]
+  (let [conn   (datahike/create-conn nil config)
+        client (datahike/make-client conn {})]
+    (eacl/write-schema! client contract/smoke-schema)
+    (d/transact conn
+                (vec (map-indexed (fn [idx {:keys [id]}]
+                                    {:db/id (- (inc idx)) :eacl/id id})
+                                  contract/smoke-objects)))
+    (eacl/create-relationships! client contract/smoke-relationships)
+    [conn client]))
+
+(deftest seek-positions-at-the-prefix-not-the-head-of-the-attribute
+  (doseq [[label config] modes]
+    (testing label
+      (let [[conn _] (seeded-conn config)
+            db       (d/db conn)
+            defs     (impl/relation-datoms db :server :account)]
+        (is (= 1 (count defs))
+            "the exact [resource-type relation-name] prefix, and nothing else")
+        (is (= [[:server :account :account]] (mapv :v defs)))
+        ;; The head of this attribute sorts BEFORE the wanted prefix
+        ;; ([:account :owner :user] < [:server :account :account]), so an
+        ;; unpadded seek bound is ignored, the scan starts at the head, and the
+        ;; prefix take-while stops immediately with zero results.
+        (is (not= [:server :account]
+                  (vec (take 2 (:v (first (ddb/avet-datoms db schema/relation-key-attr))))))
+            "precondition: the wanted relation is not the first datom of the attribute")))))
+
+(deftest can-answers-without-a-prebuilt-schema-catalog
+  ;; impl/can? on a bare db takes relation-defs straight from the index, which
+  ;; is the seek path make-client's catalog bypasses.
+  (doseq [[label config] modes]
+    (testing label
+      (let [[conn _] (seeded-conn config)
+            db       (d/db conn)
+            user     (fn [id] (eacl/spice-object :user [:eacl/id id]))
+            server   (fn [id] (eacl/spice-object :server [:eacl/id id]))]
+        (is (true? (impl/can? db (user "user-1") :reboot (server "server-1"))))
+        (is (true? (impl/can? db (user "super-user") :reboot (server "server-2"))))
+        (is (false? (impl/can? db (user "user-2") :reboot (server "server-1"))))))))
+
+(deftest a-relation-in-use-cannot-be-dropped-from-the-schema
+  ;; The guard counts via the forward-partial seek, so an under-counting seek
+  ;; would let a schema write orphan live relationships.
+  (doseq [[label config] modes]
+    (testing label
+      (let [[conn client] (seeded-conn config)
+            db            (d/db conn)]
+        (is (= 1 (schema/count-relationships-using-relation
+                  db
+                  {:eacl.relation/resource-type :account
+                   :eacl.relation/relation-name :owner
+                   :eacl.relation/subject-type  :user}))
+            "user-1 owns account-1")
+        (is (= 2 (schema/count-relationships-using-relation
+                  db
+                  {:eacl.relation/resource-type :server
+                   :eacl.relation/relation-name :account
+                   :eacl.relation/subject-type  :account}))
+            "account-1 holds both servers")
+        (is (= 0 (schema/count-relationships-using-relation
+                  db
+                  {:eacl.relation/resource-type :account
+                   :eacl.relation/relation-name :owner
+                   :eacl.relation/subject-type  :account}))
+            "a relation that exists in neither the schema nor the data")
+        (is (thrown-with-msg?
+             clojure.lang.ExceptionInfo #"because it is used by 1 relationships"
+             (eacl/write-schema!
+              client
+              "definition user {}
+               definition platform { relation super_admin: user }
+               definition account {
+                 relation platform: platform
+                 permission admin = platform->super_admin
+                 permission view = admin
+               }
+               definition server {
+                 relation account: account
+                 permission view = account->view
+                 permission reboot = account->admin
+               }")))))))
+
+(deftest a-schema-change-invalidates-cached-permission-paths
+  ;; Permission paths are cached per conn and evicted by a tx listener that
+  ;; recognises EACL's schema attributes in the tx-data. Under
+  ;; :attribute-refs? a datom's :a is a NUMBER, so a listener comparing :a
+  ;; against a keyword set recognises nothing, and can? keeps answering from the
+  ;; pre-change paths — granting access the new schema does not.
+  (doseq [[label config] modes]
+    (testing label
+      (let [[_ client] (seeded-conn config)
+            user-1     (eacl/spice-object :user "user-1")
+            server-1   (eacl/spice-object :server "server-1")]
+        (is (true? (eacl/can? client user-1 :reboot server-1))
+            "user-1 reboots as the account owner, and the path is now cached")
+        ;; admin no longer follows from ownership, only from platform super-admin.
+        (eacl/write-schema!
+         client
+         "definition user {}
+          definition platform { relation super_admin: user }
+          definition account {
+            relation platform: platform
+            relation owner: user
+            permission admin = platform->super_admin
+            permission view = admin
+          }
+          definition server {
+            relation account: account
+            permission view = account->view
+            permission reboot = account->admin
+          }")
+        (is (false? (eacl/can? client user-1 :reboot server-1))
+            "the owner path is gone from the schema, so the cached answer must not stand")
+        (is (true? (eacl/can? client (eacl/spice-object :user "super-user") :reboot server-1))
+            "and the surviving path still resolves")))))
