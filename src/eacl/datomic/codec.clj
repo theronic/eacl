@@ -63,8 +63,10 @@
     (false? value) (.writeByte out tag-false)
 
     (integer? value)
-    (do (.writeByte out tag-long)
-        (.writeLong out (long value)))
+    (if (<= Long/MIN_VALUE value Long/MAX_VALUE)
+      (do (.writeByte out tag-long)
+          (.writeLong out (long value)))
+      (unencodable! value))
 
     (string? value)
     (do (.writeByte out tag-string)
@@ -173,4 +175,10 @@
 (defn decode
   "Reads one cursor payload value from bytes."
   [^bytes bytes]
-  (read-value (DataInputStream. (ByteArrayInputStream. bytes))))
+  (let [in (DataInputStream. (ByteArrayInputStream. bytes))
+        value (read-value in)]
+    (when (pos? (.available in))
+      (throw (ex-info "Trailing bytes in EACL page token value."
+                      {:type :eacl.codec/malformed
+                       :trailing-bytes (.available in)})))
+    value))

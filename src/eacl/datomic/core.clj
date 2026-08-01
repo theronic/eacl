@@ -40,6 +40,11 @@
   tokens."
   16384)
 (def ^:private default-page-token-ttl-seconds 300)
+(def ^:private maximum-page-token-ttl-seconds
+  ;; Keep both the cache's millisecond lifetime and the cursor's second-based
+  ;; expiry representable as signed longs. This is intentionally enormous
+  ;; (about 292 million years); it is a numeric-safety bound, not policy.
+  (quot Long/MAX_VALUE 1000))
 (def ^:private default-consistency-sync-timeout-ms 30000)
 (def ^:private maximum-token-key-id-length 128)
 (def ^:private secure-random (SecureRandom.))
@@ -232,7 +237,15 @@
         (.writeInt out (alength ^bytes ciphertext))
         (.write out ^bytes ciphertext 0 (alength ^bytes ciphertext))
         (.flush out)
-        (str page-token-prefix (b64url-encode (.toByteArray buffer)))))))
+        (let [token (str page-token-prefix
+                         (b64url-encode (.toByteArray buffer)))]
+          (when (> (count token) maximum-page-token-length)
+            (throw
+             (ex-info "EACL page token exceeds the maximum encoded length."
+                      {:type :eacl.pagination/cursor-too-large
+                       :encoded-length (count token)
+                       :maximum-length maximum-page-token-length})))
+          token)))))
 
 (defn decrypt-page-token
   [opts token]
@@ -272,6 +285,12 @@
                   (invalid-page-token! :malformed))
               ciphertext (byte-array ciphertext-length)
               _ (.readFully in ciphertext)
+              _ (when (pos? (.available in))
+                  ;; The GCM tag authenticates `ciphertext-length` bytes, not an
+                  ;; arbitrary suffix. Accepting a suffix made the public token
+                  ;; encoding non-canonical and left attacker-controlled bytes
+                  ;; outside authentication.
+                  (invalid-page-token! :malformed))
               payload (codec/decode (decrypt-aead key nonce aad ciphertext))
               now (now-seconds)]
           (when-not (map? payload)
@@ -291,13 +310,35 @@
       (catch Exception _
         (invalid-page-token! :malformed)))))
 
+(defn- valid-page-token-ttl?
+  [ttl-seconds]
+  (and (integer? ttl-seconds)
+       (pos? ttl-seconds)
+       (<= ttl-seconds maximum-page-token-ttl-seconds)))
+
+(defn- validate-page-token-ttl!
+  [ttl-seconds]
+  (when-not (valid-page-token-ttl? ttl-seconds)
+    (throw
+     (ex-info
+      "EACL Config Error: :page-token-ttl-seconds must be a positive bounded integer."
+      {:type :eacl/invalid-config
+       :key :page-token-ttl-seconds
+       :value ttl-seconds
+       :maximum maximum-page-token-ttl-seconds})))
+  ttl-seconds)
+
 (defn page-token
-  [opts {:keys [ttl-seconds] :or {ttl-seconds default-page-token-ttl-seconds} :as payload}]
-  (encrypt-page-token opts
-                      (-> payload
-                          (dissoc :ttl-seconds)
-                          (assoc :v page-token-version
-                                 :exp (+ (now-seconds) ttl-seconds)))))
+  [opts {:keys [ttl-seconds]
+         :or {ttl-seconds default-page-token-ttl-seconds}
+         :as payload}]
+  (let [ttl-seconds (validate-page-token-ttl! ttl-seconds)]
+    (encrypt-page-token opts
+                        (-> payload
+                            (dissoc :ttl-seconds)
+                            (assoc :v page-token-version
+                                   :exp (+ (now-seconds)
+                                           (long ttl-seconds)))))))
 
 (defn token->page-bound
   [opts token]
@@ -519,7 +560,7 @@
 (defn- internal-page-query
   [query page-req decoded]
   (let [edge (:edge decoded)]
-    (cond-> (dissoc query :after :before :page/basis :consistency)
+    (cond-> (dissoc query :after :before :page/basis :consistency :cache?)
       (and edge (= :asc (:direction page-req))) (assoc :after edge)
       (and edge (= :desc (:direction page-req))) (assoc :before edge))))
 
@@ -843,7 +884,7 @@
 
 (defn- cached-authorization-result
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
-  (let [{:keys [mode basis-t cache-epoch requested-t cache-scope]}
+  (let [{:keys [mode basis-t cache-epoch requested-t]}
         consistency-context
         exact? (:cache-remember-answers? opts)]
     (cond
@@ -852,7 +893,10 @@
       ;; data was SpiceObject records with caching off and plain maps with it
       ;; on — a trap for any consumer that comes to rely on record type.
       (not exact?)
-      (assoc consistency-context :result (portable-result kind (compute)))
+      (assoc consistency-context
+             :result (portable-result kind (compute))
+             :cached? false
+             :cache-basis basis-t)
 
       :else
       (let [cache-prefix (result-cache-prefix
@@ -860,9 +904,19 @@
                           (:schema-version consistency-context))
             exact-key (when (and exact? cache-epoch)
                         (exact-result-cache-key cache-prefix cache-epoch))
+            tag-hit (fn [answer]
+                      ;; :cache-basis is the basis the answer was COMPUTED at,
+                      ;; captured before :basis-t is overwritten with the
+                      ;; caller's. For a fully-consistent hit the two differ
+                      ;; only because nothing the answer depends on changed in
+                      ;; between — the answer is provably current, not stale.
+                      ;; Under :minimize-latency they differ by real staleness.
+                      (assoc answer :cached? true
+                             :cache-basis (:basis-t answer)))
             exact-hit #(when exact-key
                          (some-> (cached-answer opts exact-key kind valid-result?
                                                 {:epoch cache-epoch})
+                                 (tag-hit)
                                  ;; The epoch proves no EACL-relevant datom
                                  ;; changed between the answer's basis and this
                                  ;; one, so the answer IS current: stamp the
@@ -871,9 +925,10 @@
                                  ;; than sending the caller to d/as-of.
                                  (assoc :basis-t basis-t)))
             latest-hit #(when exact?
-                          (latest-cached-answer
-                           opts cache-prefix kind valid-result?
-                           % basis-t))
+                          (some-> (latest-cached-answer
+                                   opts cache-prefix kind valid-result?
+                                   % basis-t)
+                                  (tag-hit)))
             hit (case mode
                   ;; exact-hit is a sound fallback here, not a staleness
                   ;; window: exact-key pins database-id, schema generation,
@@ -892,9 +947,11 @@
 
           :else
           (let [result (compute)]
-            (store-cached-answer!
-             opts cache-prefix kind result (weight-fn result)
-             consistency-context)))))))
+            (assoc (store-cached-answer!
+                    opts cache-prefix kind result (weight-fn result)
+                    consistency-context)
+                   :cached? false
+                   :cache-basis basis-t)))))))
 
 (defn- continuation-context
   "Cache handles for one list operation: recursive traversal continuations and
@@ -1055,17 +1112,6 @@
   [db]
   (into #{} (keep #(d/entid db %)) relationship-attrs))
 
-(defn- relationship-changes
-  [db-after tx-data]
-  (let [attr-eids (relationship-attr-eids db-after)]
-    (into #{}
-          (keep (fn [{:keys [a v]}]
-                  (when (and (contains? attr-eids a)
-                             (vector? v)
-                             (<= 2 (count v)))
-                    (nth v 1))))
-          tx-data)))
-
 (defn- relationship-retraction-count
   [db-after tx-data]
   (let [attr-eids (relationship-attr-eids db-after)]
@@ -1074,6 +1120,16 @@
                (and (false? added)
                     (contains? attr-eids a)))
              tx-data))))
+
+(def ^:private maximum-relationship-write-attempts 8)
+
+(defn- datomic-cas-failure?
+  [throwable]
+  (loop [cause throwable]
+    (when cause
+      (if (= :db.error/cas-failed (:db/error (ex-data cause)))
+        true
+        (recur (.getCause ^Throwable cause))))))
 
 (defn spiceomic-write-relationships!
   "Writes relationships and returns a zed token for the committed revision.
@@ -1086,17 +1142,42 @@
   stamps, so a transaction that never commits announces nothing by
   construction."
   [conn opts updates]
+  (let [updates (vec updates)]
   (doseq [{:keys [operation]} updates]
     (impl/validate-relationship-operation! operation))
-  (let [db (d/db conn)
-        tx-data (->> updates
-                     (S/transform [S/ALL :relationship]
-                                  #(spice-relationship->internal db opts %))
-                     (mapcat #(impl/tx-update-relationship db %))
-                     (remove nil?))
-        {:keys [db-after]} @(d/transact conn tx-data)]
-    {:zed/token (revision/zed-token opts (:database-id opts)
-                                    (d/basis-t db-after))}))
+    (loop [attempt 1]
+      (let [db (d/db conn)
+            tx-data
+            (->> updates
+                 (S/transform [S/ALL :relationship]
+                              #(spice-relationship->internal db opts %))
+                 (mapcat #(impl/tx-update-relationship db %))
+                 (remove nil?)
+                 (impl/optimistic-relationship-tx-data db))
+            submission
+            (try
+              {:report @(d/transact conn tx-data)}
+              (catch Throwable throwable
+                {:error throwable}))]
+        (if-let [throwable (:error submission)]
+          (if (and (datomic-cas-failure? throwable)
+                   (< attempt maximum-relationship-write-attempts))
+            ;; Re-resolve the endpoints and relationship existence from the
+            ;; winner's db. A duplicate :create becomes the documented
+            ;; relationship-conflict here; unrelated same-relation writes
+            ;; simply rebuild their CAS expectation and retry.
+            (recur (inc attempt))
+            (if (datomic-cas-failure? throwable)
+              (throw
+               (ex-info
+                "EACL relationship write could not obtain a stable schema/relation generation."
+                {:type :eacl/relationship-contention
+                 :attempts attempt}
+                throwable))
+              (throw throwable)))
+          (let [db-after (get-in submission [:report :db-after])]
+            {:zed/token (revision/zed-token opts (:database-id opts)
+                                            (d/basis-t db-after))}))))))
 
 (defmacro ^:private with-recursive-limits
   "Applies the client's :recursive-traversal-limits, if configured, for the
@@ -1133,11 +1214,15 @@
   preserved for every normal client."
   [conn schema-state schema-lock]
   (when (nil? (:schema-version @schema-state))
-    (when-let [version (impl.indexed/schema-version (d/db conn))]
-      (with-client-schema-write schema-lock
-        (when (nil? (:schema-version @schema-state))
-          (reset! schema-state
-                  (impl.indexed/make-schema-cache (d/db conn) version))))))
+    (with-client-schema-write schema-lock
+      (when (nil? (:schema-version @schema-state))
+        ;; The stamp and the cache generation must come from the SAME immutable
+        ;; DB value. Reading the version before acquiring this lock and the
+        ;; definitions afterwards could label V2's paths with V1's UUID.
+        (let [db (d/db conn)]
+          (when-let [version (impl.indexed/schema-version db)]
+            (reset! schema-state
+                    (impl.indexed/make-schema-cache db version)))))))
   nil)
 
 (defmacro ^:private with-client-schema-read
@@ -1279,6 +1364,37 @@
                               [:basis observed-t])
                :schema-version (client-schema-version opts))))))
 
+(defn basis-instant
+  "Wall-clock time of a Datomic basis `t`, for interpreting the `:cache-basis`
+  on a lookup or count response.
+
+    (let [{:keys [cached? cache-basis]} (eacl/lookup-resources acl query)]
+      (when cached?
+        (- (System/currentTimeMillis)
+           (.getTime (eacl.datomic.core/basis-instant acl cache-basis)))))
+
+  Returns nil for a nil basis. This is one entity read against the transaction
+  entity, so it is not on any hot path — call it only when you want the age."
+  [client t]
+  (when t
+    (let [conn (:conn client)]
+      (:db/txInstant (d/entity (d/db conn) (d/t->tx t))))))
+
+(defn- with-cache-info
+  "Adds cache provenance to a map-shaped response.
+
+  :cached?     whether this exact response came from the cache.
+  :cache-basis the Datomic `t` the response was COMPUTED at. Resolve it to a
+               wall-clock time with `basis-instant` to answer \"how old is
+               this?\". On a hit in the default consistency mode it is older
+               than the read's own basis and the answer is still provably
+               current — nothing it depends on changed in between. Only the
+               staleness-tolerant modes can return one that is genuinely old."
+  [response answer]
+  (assoc response
+         :cached? (boolean (:cached? answer))
+         :cache-basis (:cache-basis answer)))
+
 (defn- with-result-schema
   [{:keys [schema-cache]} f]
   (if schema-cache
@@ -1287,6 +1403,32 @@
     (f)))
 
 (def ^:private delete-object-batch-size 1000)
+
+(defn- transact-delete-object-batch!
+  [conn batch]
+  (loop [attempt 1]
+    (let [db (d/db conn)
+          guarded (impl/optimistic-relationship-tx-data
+                   db
+                   (impl/stamp-relation-versions batch))
+          submission
+          (try
+            {:report @(d/transact conn guarded)}
+            (catch Throwable throwable
+              {:error throwable}))]
+      (if-let [throwable (:error submission)]
+        (if (and (datomic-cas-failure? throwable)
+                 (< attempt maximum-relationship-write-attempts))
+          (recur (inc attempt))
+          (if (datomic-cas-failure? throwable)
+            (throw
+             (ex-info
+              "EACL object deletion could not obtain a stable schema/relation generation."
+              {:type :eacl/relationship-contention
+               :attempts attempt}
+              throwable))
+            (throw throwable)))
+        (:report submission)))))
 
 (defn spiceomic-delete-object!
   "Retracts every relationship touching `object`, in both directions, in
@@ -1310,7 +1452,7 @@
                       ;; A retracted entity no longer resolves through the
                       ;; caller's id coercion, but its raw eid still cleans up.
                       (when (number? object-id) object-id))
-        tx-data   (impl/tx-delete-object db eid)]
+        tx-data   (impl/tx-delete-object-stream db eid)]
     (if (empty? tx-data)
       {:zed/token (revision/zed-token opts (:database-id opts) (d/basis-t db))
        :retracted-datoms 0}
@@ -1323,7 +1465,7 @@
           ;; without this a later batch retracts relationships while announcing
           ;; nothing.
           (let [{:keys [db-after tx-data]}
-                @(d/transact conn (impl/stamp-relation-versions batch))]
+                (transact-delete-object-batch! conn batch)]
             (recur (next batches)
                    (+ retracted
                       (relationship-retraction-count db-after tx-data))
@@ -1404,7 +1546,7 @@
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-subject))
       ;; Unknown subjects match nothing and never enter the cache.
-      empty-page
+      (assoc empty-page :cached? false :cache-basis nil)
       (let [compute
             #(with-result-schema
                result-context
@@ -1433,16 +1575,18 @@
             token-scope (or (:cursor-scope result-context)
                             (:cache-scope answer)
                             cache-scope)]
-        (coerce-lookup-page
-         selected-db selected-opts :lookup-resources query-shape
-         selected-basis token-scope
-         ;; Historical when a cursor/exact request pinned an older basis, or
-         ;; when a staleness mode selected an older cached answer to coerce
-         ;; against. Only then is an unresolvable eid a snapshot-age question
-         ;; rather than a live data-integrity fault.
-         (or (not same-basis?)
-             (= :at-exact-snapshot (:mode result-context)))
-         internal-page)))))
+        (with-cache-info
+         (coerce-lookup-page
+          selected-db selected-opts :lookup-resources query-shape
+          selected-basis token-scope
+          ;; Historical when a cursor/exact request pinned an older basis, or
+          ;; when a staleness mode selected an older cached answer to coerce
+          ;; against. Only then is an unresolvable eid a snapshot-age question
+          ;; rather than a live data-integrity fault.
+          (or (not same-basis?)
+              (= :at-exact-snapshot (:mode result-context)))
+          internal-page)
+         answer)))))
 
 (defn- empty-count-response
   [query]
@@ -1464,7 +1608,7 @@
           (let [subject-ent (spice-object->internal db subject)
                 query' (-> query
                            (assoc :subject subject-ent)
-                           (dissoc :consistency))]
+                           (dissoc :consistency :cache?))]
             {:db db
              :subject-ent subject-ent
              :query' query'
@@ -1477,15 +1621,15 @@
         (capture-result-context
          conn opts (:consistency query) prepare :count-resources nil)]
     (if (nil? (:id subject-ent))
-      (empty-count-response query)
-      (:result
-       (cached-authorization-result
-        opts result-context :count-resources query'
-        :count count-response? (constantly 256)
-        #(with-result-schema
-           result-context
-           (fn []
-             (impl/count-resources db query'))))))))
+      (assoc (empty-count-response query) :cached? false :cache-basis nil)
+      (let [answer (cached-authorization-result
+                    opts result-context :count-resources query'
+                    :count count-response? (constantly 256)
+                    #(with-result-schema
+                       result-context
+                       (fn []
+                         (impl/count-resources db query'))))]
+        (with-cache-info (:result answer) answer)))))
 
 (defn spiceomic-lookup-subjects
   [conn
@@ -1523,7 +1667,7 @@
         selected-opts (assoc opts :selected-schema-version schema-version)]
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-resource))
-      empty-page
+      (assoc empty-page :cached? false :cache-basis nil)
       (let [compute
             #(with-result-schema
                result-context
@@ -1552,16 +1696,18 @@
             token-scope (or (:cursor-scope result-context)
                             (:cache-scope answer)
                             cache-scope)]
-        (coerce-lookup-page
-         selected-db selected-opts :lookup-subjects query-shape
-         selected-basis token-scope
-         ;; Historical when a cursor/exact request pinned an older basis, or
-         ;; when a staleness mode selected an older cached answer to coerce
-         ;; against. Only then is an unresolvable eid a snapshot-age question
-         ;; rather than a live data-integrity fault.
-         (or (not same-basis?)
-             (= :at-exact-snapshot (:mode result-context)))
-         internal-page)))))
+        (with-cache-info
+         (coerce-lookup-page
+          selected-db selected-opts :lookup-subjects query-shape
+          selected-basis token-scope
+          ;; Historical when a cursor/exact request pinned an older basis, or
+          ;; when a staleness mode selected an older cached answer to coerce
+          ;; against. Only then is an unresolvable eid a snapshot-age question
+          ;; rather than a live data-integrity fault.
+          (or (not same-basis?)
+              (= :at-exact-snapshot (:mode result-context)))
+          internal-page)
+         answer)))))
 
 (defn spiceomic-count-subjects
   [conn
@@ -1573,7 +1719,7 @@
                 (spice-object->internal db (:resource query))
                 query' (-> query
                            (assoc :resource resource-ent)
-                           (dissoc :consistency))]
+                           (dissoc :consistency :cache?))]
             {:db db
              :resource-ent resource-ent
              :query' query'
@@ -1586,15 +1732,15 @@
         (capture-result-context
          conn opts (:consistency query) prepare :count-subjects nil)]
     (if (nil? (:id resource-ent))
-      (empty-count-response query)
-      (:result
-       (cached-authorization-result
-        opts result-context :count-subjects query'
-        :count count-response? (constantly 256)
-        #(with-result-schema
-           result-context
-           (fn []
-             (impl/count-subjects db query'))))))))
+      (assoc (empty-count-response query) :cached? false :cache-basis nil)
+      (let [answer (cached-authorization-result
+                    opts result-context :count-subjects query'
+                    :count count-response? (constantly 256)
+                    #(with-result-schema
+                       result-context
+                       (fn []
+                         (impl/count-subjects db query'))))]
+        (with-cache-info (:result answer) answer)))))
 
 (defrecord Spiceomic [conn opts schema-state schema-lock]
   IAuthorization
@@ -1829,8 +1975,9 @@
     (let [;; nil and absent both mean "the default adapter" now, so there is
           ;; nothing to distinguish and no sentinel to thread through.
           enabled? (not (cache/no-cache? cache-option))
-          ;; Consumers choose :cache true or false; they should not have to
-          ;; understand entry kinds to get a good outcome. :on-repeat is the
+          ;; Consumers choose an adapter (or explicit no-cache); they should
+          ;; not have to understand entry kinds to get a good outcome.
+          ;; :on-repeat is the
           ;; default because it DOMINATES always-remember in every workload
           ;; measured — never slower, sometimes faster — so there is nothing
           ;; to trade off:
@@ -1847,9 +1994,17 @@
           remember-answers? (boolean remember)
           token-ttl-ms (* 1000 (or page-token-ttl-seconds
                                    default-page-token-ttl-seconds))
-          ttl-ms (or (:ttl-ms config) token-ttl-ms)
-          _ (when-not (and (integer? ttl-ms) (pos? ttl-ms))
-              (throw (ex-info "EACL Config Error: :cache :ttl-ms must be a positive integer."
+          ;; No expiry by default. A ttl was originally a staleness bound;
+          ;; relation stamps are that bound now, and they are exact rather than
+          ;; approximate. What remains is capacity, which :max-weight and
+          ;; :max-entries already handle by evicting the least recently used
+          ;; entry — a better rule than age, since an entry that is still being
+          ;; read is exactly the one a timer would throw away.
+          ttl-ms (:ttl-ms config)
+          _ (when-not (or (nil? ttl-ms)
+                          (and (integer? ttl-ms) (pos? ttl-ms)))
+              (throw (ex-info (str "EACL Config Error: :cache :ttl-ms must be a"
+                                   " positive integer, or absent for no expiry.")
                               {:type :eacl/invalid-config
                                :key :cache
                                :value ttl-ms})))
@@ -1890,7 +2045,7 @@
           (if (map? (:checkpoints config))
             (:checkpoints config)
             {})))
-       :ttl-ms (min ttl-ms token-ttl-ms)
+       :ttl-ms (when ttl-ms (min ttl-ms token-ttl-ms))
        :remember-answers? (and remember-answers? (some? store))})))
 
 (defn make-client
@@ -1904,15 +2059,17 @@
   - :cache — the cache adapter this client uses.
 
       omitted     a default client-local in-memory adapter (this is the norm)
-      false, nil  no caching at all
+      nil         the same default client-local adapter as omission
+      cache/no-cache
+                  no caching at all
       <adapter>   any eacl.datomic.cache/CacheStore implementation, e.g.
                   (eacl.datomic.cache/local-store {:max-weight ...})
 
-    Pass false when the same permission check is essentially never asked twice
-    — a batch job sweeping distinct resources, say. A read then pays for a
-    cache lookup it can never benefit from: measured 7.9us with the cache off
-    against 11.8us on for entirely distinct checks. When checks recur it is the
-    other way round, 8.0us against 4.3us for an arrow permission.
+    Pass cache/no-cache when the same permission check is essentially never
+    asked twice — a batch job sweeping distinct resources, say. A read then
+    pays for a cache lookup it can never benefit from: measured 7.9us with the
+    cache off against 11.8us on for entirely distinct checks. When checks recur
+    it is the other way round, 8.0us against 4.3us for an arrow permission.
 
     To bypass the configured cache for ONE call, pass :cache? false on the
     request — on the map arity of can?, and in the query map for lookups,
@@ -1992,6 +2149,8 @@
     (throw (ex-info "EACL Config Error: supply only one of :entid->object-id (canonical) or :entity->object-id (deprecated alias)."
              {:type :eacl/invalid-config
               :conflicting-keys [:entid->object-id :entity->object-id]})))
+  (when (contains? config-opts :page-token-ttl-seconds)
+    (validate-page-token-ttl! page-token-ttl-seconds))
   (when-not (fn? object-id->ident)
     (throw (ex-info "EACL Config Error: object-id->ident must be a fn that coerces a Spice Object ID to a Datomic ident resolvable by d/entid."
              {:type :eacl/invalid-config

@@ -8,7 +8,6 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl :refer [Permission Relation Relationship]]
@@ -183,6 +182,41 @@
         (eacl/write-schema! acl schema-v1)
         (is (some? (idx/schema-version (d/db conn))))
         (is (true? (eacl/can? acl u :admin a)))))))
+
+(deftest schema-generation-adoption-uses-one-database-value-test
+  ;; The adopted generation label and the cache-generation object must derive
+  ;; from one immutable db value. Today construction is cheap metadata; keeping
+  ;; the snapshot boundary explicit prevents future eager schema state from
+  ;; being mislabeled and removes a redundant d/db call.
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema! conn schema-v1)
+    (let [db-v1 (d/db conn)
+          v1 (idx/schema-version db-v1)]
+      (schema/write-schema! conn schema-viewer-only)
+      (let [db-v2 (d/db conn)
+            v2 (idx/schema-version db-v2)
+            state (atom {:schema-version nil})
+            lock (java.util.concurrent.locks.ReentrantReadWriteLock.)
+            reads (atom [db-v1 db-v2])
+            built-from (atom nil)
+            make-schema-cache idx/make-schema-cache
+            adopt (ns-resolve 'eacl.datomic.core
+                              'adopt-schema-generation!)]
+        (with-redefs [d/db
+                      (fn [_]
+                        (let [db (first @reads)]
+                          (swap! reads rest)
+                          db))
+                      idx/make-schema-cache
+                      (fn [db version]
+                        (reset! built-from (idx/schema-version db))
+                        (make-schema-cache db version))]
+          (adopt conn state lock))
+        (is (contains? #{v1 v2} (:schema-version @state)))
+        (is (= (:schema-version @state) @built-from)
+            "the generation UUID and the db used to build it are one snapshot")
+        (is (= 1 (- 2 (count @reads)))
+            "adoption needs one immutable Datomic value, not a torn pair")))))
 
 (deftest unstamped-client-does-not-cache-lookup-results-test
   (with-mem-conn [conn schema/v7-schema]

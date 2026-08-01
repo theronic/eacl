@@ -50,6 +50,28 @@
   :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (def ^:private relation-version-attr :eacl/relation-version)
+(def ^:private schema-version-attr :eacl/schema-version)
+
+(defn tx-schema-version-guard
+  "Commit-time assertion that relationship tx-data is applied under the same
+  schema generation it was resolved against.
+
+  This prevents a delayed relationship transaction from resurrecting a
+  relation entity after a concurrent write-schema! removed it."
+  [db]
+  (when-let [version (impl.indexed/schema-version db)]
+    [:db.fn/cas [:eacl/id "schema-string"]
+     schema-version-attr version version]))
+
+(defn guard-schema-version
+  "Appends one schema-generation CAS guard to `ops`, when the db is stamped."
+  [db ops]
+  (let [ops (vec ops)]
+    (if-let [guard (tx-schema-version-guard db)]
+      (if (some #(= guard %) ops)
+        ops
+        (conj ops guard))
+      ops)))
 
 (defn tx-relation-version-stamp
   "Stamps the relation with the transaction that is changing it.
@@ -431,18 +453,29 @@
                               relations)
         relation-eids (set (keys relation-by-eid))]
     (validate-relationship-bound! plan bound)
-    (let [matching-items (->> (relationship-datoms db plan direction bound)
-                              (filter #(contains? relation-eids (relation-eid %)))
-                              (map #(relationship-item db relation-by-eid (:key plan) (:decode plan) %))
-                              (filter #(relationship-matches-filters? filters (:node %))))
-          realized (doall (take (inc size) matching-items))
-          items (mapv identity
-                      (case direction
-                        :asc (take size realized)
-                        :desc (reverse (take size realized))))]
-      ;; An empty page carries no cursors, so it can advertise neither
-      ;; direction — see eacl.datomic.impl.indexed/page-response.
-      (let [any? (boolean (seq items))]
+    (if (empty? relation-eids)
+      ;; A valid relation-name/type filter that resolves to no schema relation
+      ;; is a proved-empty query. Falling into the generic plan here scanned
+      ;; the entire global relationship index only to reject every datom.
+      {:data []
+       :page-info {:start-cursor nil
+                   :end-cursor nil
+                   :has-next-page? false
+                   :has-previous-page? false}}
+      (let [matching-items
+            (->> (relationship-datoms db plan direction bound)
+                 (filter #(contains? relation-eids (relation-eid %)))
+                 (map #(relationship-item db relation-by-eid
+                                          (:key plan) (:decode plan) %))
+                 (filter #(relationship-matches-filters? filters (:node %))))
+            realized (doall (take (inc size) matching-items))
+            items (mapv identity
+                        (case direction
+                          :asc (take size realized)
+                          :desc (reverse (take size realized))))
+            any? (boolean (seq items))]
+        ;; An empty page carries no cursors, so it can advertise neither
+        ;; direction — see eacl.datomic.impl.indexed/page-response.
         {:data (mapv :node items)
          :page-info {:start-cursor (some-> items first :cursor)
                      :end-cursor (some-> items last :cursor)
@@ -453,7 +486,8 @@
                      :has-previous-page? (and any?
                                               (case direction
                                                 :asc (boolean bound)
-                                                :desc (> (count realized) size)))}}))))
+                                                :desc (> (count realized)
+                                                         size)))}}))))
 
 (def ^:private known-relationship-filter-keys
   "Filter + pagination keys read-relationships accepts. :cursor and :limit are
@@ -568,8 +602,7 @@
   [[:db/retract subject-eid forward-relationship-attr
     [subject-type relation-eid resource-type resource-eid]]
    [:db/retract resource-eid reverse-relationship-attr
-    [resource-type relation-eid subject-type subject-eid]]
-   (tx-relation-version-stamp relation-eid)])
+    [resource-type relation-eid subject-type subject-eid]]])
 
 (defn- op-attr
   "The attribute of a list-form tx op, or nil for a map form or anything else.
@@ -617,24 +650,134 @@
       (into ops (map tx-relation-version-stamp) missing)
       ops)))
 
-(defn tx-delete-object
-  "Retraction tx-data removing every EACL relationship that touches `object-id`,
-  in BOTH directions — including the halves stored on the peer entities.
+(defn- schema-version-guard?
+  [op]
+  (and (vector? op)
+       (= :db.fn/cas (first op))
+       (= schema-version-attr (nth op 2 nil))))
+
+(defn- relation-version-stamp?
+  [op]
+  (and (vector? op)
+       (= :db/add (first op))
+       (= relation-version-attr (nth op 2 nil))))
+
+(defn optimistic-relationship-tx-data
+  "Turns ordinary idempotent relation stamps into commit-time CAS stamps.
+
+  Public relationship writes use this to serialize competing mutations of the
+  same relation. A CAS loser rebuilds from a fresh db: duplicate :create then
+  observes the winner and throws :eacl/relationship-conflict, while unrelated
+  writes simply retry. The schema guard is deduplicated at the same boundary."
+  [db ops]
+  (let [ops (vec ops)
+        relation-eids (into #{} (comp (filter relation-version-stamp?)
+                                      (map second))
+                            ops)
+        ordinary-ops (into []
+                           (remove #(or (relation-version-stamp? %)
+                                        (schema-version-guard? %)))
+                           ops)
+        relation-cases
+        (mapv
+         (fn [relation-eid]
+           (when-not (:eacl.relation/relation-name
+                      (d/entity db relation-eid))
+             (throw
+              (ex-info
+               "A relationship transaction names a relation removed by a concurrent schema write."
+               {:type :eacl/schema-changed
+                :relation-eid relation-eid})))
+           (let [current (some-> ^datomic.Datom
+                                 (first (d/datoms db :eavt relation-eid
+                                                  relation-version-attr))
+                                 (.v))]
+             [:db.fn/cas relation-eid relation-version-attr
+              current "datomic.tx"]))
+         (sort relation-eids))]
+    (into (guard-schema-version db ordinary-ops) relation-cases)))
+
+(defn tx-delete-object-stream
+  "Lazy retraction ops removing every EACL relationship touching `object-id`.
 
   `object-id` is resolved the same way reads resolve object ids (string ->
   [:eacl/id ...], anything else -> d/entid), so it also accepts the raw eid of
-  an entity that was already retracted the bare Datomic way. Returns [] for an
-  id that does not resolve.
+  an entity already retracted the bare Datomic way. Returns an empty sequence
+  for an id that does not resolve.
 
-  Finds relationships two ways, so it is complete whether or not the object's
-  own datoms still exist:
-    - the object's own halves, via :eavt on the object; and
-    - the peers' halves that NAME the object, via one exact :avet lookup per
-      Relation in the schema (both indexes are :db/index true).
-  Retracting a datom that is already absent is a no-op, so the overlap between
-  the two is harmless and this is idempotent.
+  Healthy relationships are emitted from the peer halves that NAME this
+  object. The object's own halves are emitted only when their peer is absent,
+  preserving cleanup of corrupt/orphan data without emitting every healthy
+  relationship twice. A self-relationship is emitted once from its forward
+  half. The resulting stream therefore needs no whole-result `distinct` set.
 
-  Retracts relationships only; retracting the entity itself is yours to do.
+  This low-level stream intentionally contains only tuple retractions. Every
+  transaction-sized slice MUST pass through `stamp-relation-versions`; the
+  public delete-object! does this automatically. Keeping stamps batch-local is
+  what makes discovery and heap use bounded by the batch size."
+  [db object-id]
+  (if-let [eid (impl.indexed/object-eid db object-id)]
+    (let [triples (relation-triples db)]
+      (concat
+       ;; Orphaned forward halves, plus the canonical copy of a self-edge.
+       (mapcat
+        (fn [datom]
+          (let [[subject-type relation-eid resource-type resource-eid] (:v datom)
+                reverse-value [resource-type relation-eid subject-type eid]]
+            (when (or (= eid resource-eid)
+                      (empty? (d/datoms db :eavt resource-eid
+                                        reverse-relationship-attr
+                                        reverse-value)))
+              (relationship-pair-retractions subject-type eid relation-eid
+                                             resource-type resource-eid))))
+        (d/datoms db :eavt eid forward-relationship-attr))
+
+       ;; Orphaned reverse halves. Healthy self-edges were emitted above.
+       (mapcat
+        (fn [datom]
+          (let [[resource-type relation-eid subject-type subject-eid] (:v datom)
+                forward-value [subject-type relation-eid resource-type eid]]
+            (when (empty? (d/datoms db :eavt subject-eid
+                                    forward-relationship-attr
+                                    forward-value))
+              (relationship-pair-retractions subject-type subject-eid
+                                             relation-eid resource-type eid))))
+        (d/datoms db :eavt eid reverse-relationship-attr))
+
+       ;; Peer halves naming this object as the SUBJECT.
+       (mapcat
+        (fn [[resource-type relation-eid subject-type]]
+          (mapcat
+           (fn [datom]
+             ;; Self-edges are canonicalized to the own-forward scan above.
+             (when (not= eid (:e datom))
+               (relationship-pair-retractions subject-type eid relation-eid
+                                              resource-type (:e datom))))
+           (d/datoms db :avet reverse-relationship-attr
+                     [resource-type relation-eid subject-type eid])))
+        triples)
+
+       ;; Peer halves naming this object as the RESOURCE.
+       (mapcat
+        (fn [[resource-type relation-eid subject-type]]
+          (mapcat
+           (fn [datom]
+             (when (not= eid (:e datom))
+               (relationship-pair-retractions subject-type (:e datom)
+                                              relation-eid resource-type eid)))
+           (d/datoms db :avet forward-relationship-attr
+                     [subject-type relation-eid resource-type eid])))
+        triples)))
+    ()))
+
+(defn tx-delete-object
+  "Materialized transaction data removing every EACL relationship touching
+  `object-id`, in both directions, without retracting the object itself.
+
+  This compatibility helper returns one vector suitable for ONE transaction.
+  `delete-object!` uses `tx-delete-object-stream` instead, partitions it before
+  realization, and stamps every batch, so a high-degree object does not require
+  retaining its complete retraction vector in heap.
 
   Large results are transacted in batches by delete-object!, so use
   `stamp-relation-versions` on any slice of this output before transacting it
@@ -642,40 +785,11 @@
   relation, which would otherwise leave later batches retracting relationships
   without publishing that they changed."
   [db object-id]
-  (if-let [eid (impl.indexed/object-eid db object-id)]
-    (let [triples (relation-triples db)]
-      (vec
-       (distinct
-        (concat
-         ;; The object's own halves. Needed on top of the index lookups below
-         ;; because a half whose peer is already missing is only visible here.
-         (mapcat (fn [datom]
-                   (let [[subject-type relation-eid resource-type resource-eid] (:v datom)]
-                     (relationship-pair-retractions subject-type eid relation-eid
-                                                    resource-type resource-eid)))
-                 (d/datoms db :eavt eid forward-relationship-attr))
-         (mapcat (fn [datom]
-                   (let [[resource-type relation-eid subject-type subject-eid] (:v datom)]
-                     (relationship-pair-retractions subject-type subject-eid relation-eid
-                                                    resource-type eid)))
-                 (d/datoms db :eavt eid reverse-relationship-attr))
-         ;; Peers naming this object as the SUBJECT (halves stored on resources).
-         (mapcat (fn [[resource-type relation-eid subject-type]]
-                   (mapcat (fn [datom]
-                             (relationship-pair-retractions subject-type eid relation-eid
-                                                            resource-type (:e datom)))
-                           (d/datoms db :avet reverse-relationship-attr
-                                     [resource-type relation-eid subject-type eid])))
-                 triples)
-         ;; Peers naming this object as the RESOURCE (halves stored on subjects).
-         (mapcat (fn [[resource-type relation-eid subject-type]]
-                   (mapcat (fn [datom]
-                             (relationship-pair-retractions subject-type (:e datom) relation-eid
-                                                            resource-type eid))
-                           (d/datoms db :avet forward-relationship-attr
-                                     [subject-type relation-eid resource-type eid])))
-                 triples)))))
-    []))
+  (->> (tx-delete-object-stream db object-id)
+       distinct
+       vec
+       stamp-relation-versions
+       (guard-schema-version db)))
 
 (defn orphaned-relationship-halves
   "Lazy seq of relationship halves whose peer half is absent — the residue of
@@ -736,7 +850,9 @@
   ([db relationship]
    (tx-relationship db relationship {}))
   ([db relationship opts]
-   (add-relationship-txes (resolve-relationship db relationship opts))))
+   (guard-schema-version
+    db
+    (add-relationship-txes (resolve-relationship db relationship opts)))))
 
 (def ^:private supported-relationship-operations
   #{:create :touch :delete})
@@ -763,20 +879,23 @@
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
   (let [resolved (resolve-relationship db relationship {})
-        exists?  (relationship-exists? db resolved)]
-    (case operation
-      :touch
-      (when-not exists?
-        (add-relationship-txes resolved))
+        exists?  (relationship-exists? db resolved)
+        ops
+        (case operation
+          :touch
+          (when-not exists?
+            (add-relationship-txes resolved))
 
-      :create
-      (if exists?
-        (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-                 {:type :eacl/relationship-conflict
-                  :relationship relationship}))
-        (add-relationship-txes resolved))
+          :create
+          (if exists?
+            (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+                            {:type :eacl/relationship-conflict
+                             :relationship relationship}))
+            (add-relationship-txes resolved))
 
-      ;; Unconditional: Datomic ignores retraction of an absent datom, and
-      ;; skipping on a not-exists? check left a surviving half-pair in place.
-      :delete
-      (retract-relationship-txes resolved))))
+          ;; Unconditional: Datomic ignores retraction of an absent datom, and
+          ;; skipping on a not-exists? check left a surviving half-pair in place.
+          :delete
+          (retract-relationship-txes resolved))]
+    (when ops
+      (guard-schema-version db ops))))

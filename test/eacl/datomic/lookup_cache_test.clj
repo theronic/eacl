@@ -702,3 +702,76 @@
         (doseq [[label f] calls]
           (is (thrown? clojure.lang.ExceptionInfo (f {:cache? :maybe}))
               (str label " rejects a non-boolean :cache?")))))))
+
+;; --- cache provenance on responses -------------------------------------------
+
+(deftest responses-report-whether-they-came-from-cache-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:page-token-key "provenance"
+                                         :cache {:remember-answers true}})
+          _ (seed-direct! conn client)
+          alice (spice-object :user "alice")
+          account (spice-object :account "a-1")
+          query {:subject alice :permission :admin :resource/type :account}]
+      (testing "a computed answer reports its own basis and no hit"
+        (let [r (eacl/lookup-resources client query)]
+          (is (false? (:cached? r)))
+          (is (integer? (:cache-basis r)))))
+
+      (testing "a repeat is a hit at the basis it was computed at"
+        (let [r (eacl/lookup-resources client query)]
+          (is (true? (:cached? r)))
+          (is (integer? (:cache-basis r)))))
+
+      (testing "counts too"
+        (is (false? (:cached? (eacl/count-resources client query))))
+        (is (true? (:cached? (eacl/count-resources client query)))))
+
+      (testing "a write to a dependency moves the basis and clears the hit"
+        (let [before (:cache-basis (eacl/lookup-resources client query))]
+          (eacl/create-relationship!
+           client (->Relationship alice :owner (spice-object :account "a-2")))
+          (let [r (eacl/lookup-resources client query)]
+            (is (false? (:cached? r)))
+            (is (> (:cache-basis r) before)
+                "recomputed against a newer basis"))))
+
+      (testing "the basis resolves to a wall-clock instant"
+        (let [r (eacl/lookup-resources client query)]
+          (is (inst? (core/basis-instant client (:cache-basis r))))
+          (is (nil? (core/basis-instant client nil)))))
+
+      (testing "a bypassed call never reports a hit"
+        (is (false? (:cached? (eacl/lookup-resources
+                               client (assoc query :cache? false))))))
+
+      (testing "and neither does a client with no cache"
+        (let [plain (core/make-client conn {:cache cache/no-cache
+                                            :page-token-key "provenance"})]
+          (is (false? (:cached? (eacl/lookup-resources plain query))))
+          (is (false? (:cached? (eacl/count-resources plain query)))))))))
+
+(deftest cache-entries-do-not-expire-on-a-timer-test
+  ;; Relation stamps are the staleness bound, so age is not a reason to drop an
+  ;; entry. A ttl used to be applied by default and silently capped to the
+  ;; page-token lifetime, which meant a hot entry was discarded on a clock.
+  (let [now (atom 0)
+        store (cache/local-store {:clock (fn [] @now)})]
+    (is (true? (cache/store! store [:k] {:eacl.cache/kind :can? :v 1} 10 nil)))
+    (swap! now + (* 1000 60 60 24 365))
+    (is (some? (cache/lookup store [:k]))
+        "a year later the entry is still there")
+    (testing "an explicit :ttl-ms still expires"
+      (let [ttl-store (cache/local-store {:clock (fn [] @now)})]
+        (is (true? (cache/store! ttl-store [:k] {:eacl.cache/kind :can? :v 1} 10 1000)))
+        (is (some? (cache/lookup ttl-store [:k])))
+        (swap! now + 1001)
+        (is (nil? (cache/lookup ttl-store [:k])))))))
+
+(deftest default-client-cache-has-no-ttl-test
+  (with-mem-conn [conn schema/v7-schema]
+    (is (nil? (:lookup-cache-ttl-ms
+               (:opts (core/make-client conn {}))))
+        "no expiry unless the caller asks for one")
+    (is (= 5000 (:lookup-cache-ttl-ms
+                 (:opts (core/make-client conn {:cache {:ttl-ms 5000}})))))))

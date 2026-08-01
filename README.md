@@ -49,12 +49,11 @@ Situated AuthZ offers some advantages for typical use-cases:
   unavailable, EACL reconstructs the cursor's authenticated historical Datomic basis and safely
   recomputes the deterministic prefix. Relevant relationship or schema changes after page one do
   not alter later pages.
-- Completed `can?`, lookup, and count answers are kept once the same check recurs, keyed by the
-  change stamps of only the relations that permission actually reads.
-  Keys use the schema generation and the change stamps of only the relation definitions the
-  permission actually reads—not every Datomic `basis-t`—so unrelated application transactions and
-  relationship writes outside that dependency set leave entries hot. No coordination between
-  clients or processes is needed or configurable.
+- Completed `can?`, lookup, and count answers are kept once the same check recurs. Keys use the
+  schema generation and the change stamps of only the relations that permission actually reads —
+  not every Datomic `basis-t` — so unrelated application transactions and relationship writes
+  outside that dependency set leave entries hot. No coordination between clients or processes is
+  needed or configurable.
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
@@ -86,7 +85,7 @@ Public `eacl4_` cursors are string-safe AES-GCM envelopes. Authentication is req
 The payload uses a compact binary encoding (`eacl.datomic.codec`) rather than EDN. Profiling put
 roughly half of a cached page's wall time in cursor serialisation — and only ~3% of that in the
 cryptography; the rest was Clojure's printer and reader running three to four times per token.
-Encoding a cursor costs ~2.4µs and decoding ~2.6µs, down from ~41µs and ~24µs. Cursors are opaque
+Cursors are opaque
 and short-lived (5 minutes by default), so the format is not a compatibility surface: `eacl3_`
 tokens minted by an earlier build are rejected as `:eacl.pagination/invalid-cursor`, which every
 caller already handles for expiry.
@@ -580,11 +579,10 @@ freely `concat` the output of several helpers into a single transaction. The att
 Relation and permission **definitions** are not covered by stamps; they move only through
 `write-schema!`, which bumps `:eacl/schema-version` — already a cache-key component.
 
-Reading an epoch costs one index seek per relation in the dependency set (~0.8µs each, typically
-one to four), independent of database size. A database without `:eacl/relation-version` — a v7
-database created before stamps existed — retains nothing rather than falling back to `basis-t`
-keying, which measured worse than no cache; its next `write-schema!` installs the attribute and
-caching begins.
+Reading an epoch costs one index seek per relation in the dependency set — typically one to four —
+and is independent of database size. A database without `:eacl/relation-version`, meaning a v7
+database created before stamps existed, retains nothing rather than falling back to `basis-t`
+keying; its next `write-schema!` installs the attribute and caching begins.
 
 Reads pinned to a historical basis — cursors and `at-exact-snapshot` — key on that basis instead,
 and are deliberately not made hot. Stamps are `:db/noHistory`, so `d/as-of` resolves them only
@@ -621,17 +619,30 @@ one; that is what most consumers want.
                            {:max-weight (* 64 1024 1024)})}) ; your own adapter
 ```
 
-Any `eacl.datomic.cache/CacheStore` implementation is a valid adapter, so a custom or shared store
-needs no backend dependency in EACL core. Whatever you pass must *be* a cache — a real adapter or
-the explicit `no-cache` one. There is no boolean form: `:cache true` and `:cache false` throw
-`:eacl/invalid-config` rather than being interpreted, because a boolean in an adapter slot reads as
-a flag and left `nil` ambiguous between "the default" and "none". `nil` and an absent `:cache` both
-mean the default adapter.
+`:cache` takes a `eacl.datomic.cache/CacheStore`. Any implementation is a valid adapter, so a
+custom or shared store needs no backend dependency in EACL core.
+`eacl.datomic.cache/no-cache` is the adapter that caches nothing. `nil`, or omitting `:cache`
+entirely, gives you the default in-memory adapter.
 
-Pass `no-cache` when the same permission check is essentially never asked twice — a batch job sweeping
-distinct resources, say. A read then pays for a cache lookup it can never benefit from: measured
-7.9µs with the cache off against 11.8µs with it on for entirely distinct checks. When checks do
-recur it is the other way round, 8.0µs off against 4.3µs on for an arrow permission.
+Reach for `no-cache` when the same permission check is essentially never asked twice — a batch job
+sweeping distinct resources, say. A read then pays for a cache lookup it can never benefit from.
+When checks do recur, the cache is the faster path.
+
+Lookups and counts report where their answer came from:
+
+```clojure
+(let [{:keys [data cached? cache-basis]} (eacl/lookup-resources acl query)]
+  (when cached?
+    ;; how old is this answer?
+    (- (System/currentTimeMillis)
+       (.getTime (eacl.datomic.core/basis-instant acl cache-basis)))))
+```
+
+`:cached?` says whether this response came from the cache. `:cache-basis` is the Datomic `t` the
+answer was computed at, and `basis-instant` resolves it to a wall-clock time. In the default
+consistency mode a hit's basis is older than the read's own and the answer is still exactly current
+— nothing it depends on changed in between; only the staleness-tolerant modes can return an answer
+that is genuinely behind. `can?` returns a plain boolean and carries neither.
 
 To bypass the configured cache for a **single call**, pass `:cache? false` on the request:
 
@@ -660,9 +671,12 @@ A configuration map may be supplied in place of an adapter for capacity tuning a
 `:store`, `:max-weight`, `:max-entry-weight`, `:max-entries`, `:ttl-ms`, `:namespace`,
 `:kind-max-weight`, `:two-hit-kinds`, `:admission-entries`, `:checkpoints`, `:remember-answers`.
 These are deliberately not part of the API most consumers need. `:remember-answers` defaults to
-`:on-repeat`, which keeps a finished answer only once the same check has been seen twice; it
-measured no slower than always keeping them in every workload tested, so it is a default rather
-than a question worth asking consumers.
+`:on-repeat`, which keeps a finished answer only once the same check has been asked twice.
+
+Entries do not expire on a timer. A cached answer stops being usable because a relation it depends
+on was written, not because time passed, so the only reason to remove one is capacity — which
+`:max-weight` and `:max-entries` handle by evicting the least recently used entry. Set `:ttl-ms` if
+you want an expiry anyway.
 
 Earlier builds of this candidate offered `:live-results? true` plus an explicit `:coordinator`
 shared by every participating reader and writer, along with a read barrier, a mutation barrier and

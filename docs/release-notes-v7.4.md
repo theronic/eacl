@@ -3,7 +3,8 @@
 This change may ship as a v7.3 patch while v7.3 is still recent. It preserves the public
 connection-oriented authorization API and adds an optional, bounded, ephemeral cache.
 
-It adds exactly one Datomic schema attribute, `:eacl/relation-version`, and no permanent tuples.
+It adds one Datomic schema attribute, `:eacl/relation-version`, one small
+transactor-side relation-removal guard, and no permanent cache tuples.
 The attribute holds one `:db/noHistory` datom per relation naming the transaction that last changed
 a relationship using it; this is what lets a cached answer survive writes to relations it does not
 read. `write-schema!` installs it when a database predates it, so there is no migration step. Until
@@ -31,14 +32,27 @@ it exists, exact-result retention is simply off.
 - Turn it off when the same check is essentially never asked twice; a read then pays for a lookup
   it cannot benefit from. Measured on entirely distinct checks: 7.9us off against 11.8us on. When
   checks recur it inverts — 8.0us against 4.3us for an arrow permission.
-- A map may be supplied instead of `true` for capacity tuning and tests. `:remember-answers`
+- A map may be supplied instead of an adapter for capacity tuning and tests. `:remember-answers`
   (`false` | `true` | `:on-repeat`, default `:on-repeat`) lives there. `:on-repeat` keeps a
   finished answer only once the same check has been seen twice and measured no slower than `true`
   in any workload tested, which is why it is the default rather than a consumer decision.
 - A single read can opt out with a per-request `:cache? false` — on the map arity of `can?`, and in
   the query map for lookups, counts and `read-relationships`.
+- `lookup-resources`, `lookup-subjects`, `count-resources` and `count-subjects` report `:cached?`
+  and `:cache-basis` — the Datomic `t` the answer was computed at. `eacl.datomic.core/basis-instant`
+  resolves that to a wall-clock time, so a caller can say how old an answer is. `can?` returns a
+  bare boolean and carries neither; that would be a breaking change to its return type.
+- Cache entries no longer expire on a timer. Relation stamps are the staleness bound, so age is not
+  a reason to drop an entry; capacity is, and `:max-weight`/`:max-entries` handle it by evicting the
+  least recently used. The previous default applied a ttl capped to the page-token lifetime, which
+  discarded hot entries on a clock. `:ttl-ms` is still available for callers who want an expiry.
 - Relationship helpers publish exactly which relations they changed; unrelated application
   transactions, no-op writes, and unrelated relation changes do not invalidate hot entries.
+- Public relationship writes use per-relation compare-and-swap stamps and bounded retry, so
+  concurrent `:create` calls preserve the promised single-winner/conflict result. Schema
+  replacements compare-and-swap the schema generation, and relation removal is rechecked inside
+  the transactor transaction, preventing concurrent schema writers from merging and preventing
+  relationship creation from racing a relation out of existence.
 - The built-in memory store has hard total-weight, entry-weight, entry-count, TTL, per-kind, and
   optional two-hit admission limits.
 - Custom portable stores can be implemented without adding backend dependencies to EACL core.

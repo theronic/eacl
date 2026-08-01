@@ -79,6 +79,24 @@
         (is (= :eacl.filters/missing-anchor
                (:eacl/error (ex-data-of #(impl/read-relationships db {:first 5})))))))))
 
+(deftest missing-relation-filter-does-not-scan-relationship-tuples-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [{:keys [db]} (seed-acyclic! conn 3)
+          seeks (atom 0)
+          seek-datoms d/seek-datoms]
+      (with-redefs [d/seek-datoms
+                    (fn [& args]
+                      (swap! seeks inc)
+                      (apply seek-datoms args))]
+        (is (= []
+               (:data
+                (impl/read-relationships
+                 db
+                 {:resource/relation :does-not-exist
+                  :first 10}))))
+        (is (zero? @seeks)
+            "an empty relation-definition set proves the result is empty")))))
+
 ;; --- page cursors ------------------------------------------------------------
 
 (deftest nil-page-cursors-are-rejected-test
@@ -157,6 +175,46 @@
              (impl/can? db {:subject (spice-object :user u)
                             :permission :admin
                             :resource (spice-object :account a)}))))))
+
+(deftest concurrent-create-preserves-conflict-semantics-test
+  ;; Both writers used to check absence against the same immutable db and then
+  ;; submit idempotent cardinality-many adds. Both calls returned success even
+  ;; though :create promises exactly one winner and one conflict.
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema! conn acyclic-schema)
+    @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
+    (let [client-a (core/make-client conn {})
+          client-b (core/make-client conn {})
+          relationship
+          (Relationship (spice-object :user "u")
+                        :owner
+                        (spice-object :account "a"))
+          ready (java.util.concurrent.CountDownLatch. 2)
+          transact d/transact
+          relationship-transaction?
+          (fn [tx-data]
+            (some #(and (vector? %)
+                        (= :db.fn/cas (first %))
+                        (= :eacl/relation-version (nth % 2 nil)))
+                  tx-data))]
+      (with-redefs [d/transact
+                    (fn [connection tx-data]
+                      (when (relationship-transaction? tx-data)
+                        (.countDown ready)
+                        (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+                      (transact connection tx-data))]
+        (let [write
+              (fn [client]
+                (future
+                  (try
+                    (eacl/create-relationship! client relationship)
+                    :ok
+                    (catch clojure.lang.ExceptionInfo e
+                      (:type (ex-data e))))))
+              results (mapv deref [(write client-a)
+                                   (write client-b)])]
+          (is (= #{:ok :eacl/relationship-conflict}
+                 (set results))))))))
 
 (deftest write-errors-are-typed-test
   (with-mem-conn [conn schema/v7-schema]
@@ -304,11 +362,12 @@
 
       (testing "count-subjects is exposed on the public client"
         (is (= {:count 1 :limit 1 :truncated? false}
-               (eacl/count-subjects
-                client
-                (-> reverse-query
-                    (assoc :resource (spice-object :folder "root"))
-                    (assoc :count-limit 1))))))
+               (dissoc (eacl/count-subjects
+                        client
+                        (-> reverse-query
+                            (assoc :resource (spice-object :folder "root"))
+                            (assoc :count-limit 1)))
+                       :cached? :cache-basis))))
 
       (testing "invalid limits are typed"
         (is (= :eacl.count/invalid-limit

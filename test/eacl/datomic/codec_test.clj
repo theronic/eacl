@@ -28,6 +28,19 @@
   (is (= 42 (round-trip (short 42))))
   (is (instance? Long (round-trip (int 42)))))
 
+(deftest integers-outside-the-wire-range-are-rejected-test
+  ;; Clojure's `long` conversion rejects out-of-range BigInt values with a raw
+  ;; IllegalArgumentException. The public codec must reject them deliberately
+  ;; and with a stable typed error instead.
+  (doseq [value [(inc (bigint Long/MAX_VALUE))
+                 (dec (bigint Long/MIN_VALUE))]]
+    (is (= :eacl.codec/unencodable
+           (try
+             (codec/encode value)
+             ::no-error
+             (catch clojure.lang.ExceptionInfo e
+               (:type (ex-data e))))))))
+
 (deftest collections-round-trip-test
   (testing "empty"
     (is (= [] (round-trip [])))
@@ -120,6 +133,17 @@
       (is (thrown? Exception
                    (codec/decode (java.util.Arrays/copyOfRange bytes 0 n)))
           (str "truncated to " n " bytes")))))
+
+(deftest trailing-input-is-rejected-test
+  (let [encoded (codec/encode {:a 1})
+        tainted (java.util.Arrays/copyOf encoded (inc (alength encoded)))]
+    (aset-byte tainted (alength encoded) (byte 0))
+    (is (= :eacl.codec/malformed
+           (try
+             (codec/decode tainted)
+             ::no-error
+             (catch clojure.lang.ExceptionInfo e
+               (:type (ex-data e))))))))
 
 (deftest unknown-tag-is-rejected-test
   (is (= :eacl.codec/malformed

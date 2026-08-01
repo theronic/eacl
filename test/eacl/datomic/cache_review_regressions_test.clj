@@ -50,6 +50,74 @@
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
+;; --- Follow-up review -------------------------------------------------------
+
+(deftest explicit-cache-true-does-not-fragment-answer-keys-test
+  ;; :cache? selects how to obtain an answer, not which answer was requested.
+  ;; It was removed from cursor identity but accidentally retained in finished
+  ;; lookup/count keys, so an explicit true recomputed an answer already cached
+  ;; by the equivalent request with the option omitted.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [acl (core/make-client conn {:page-token-key token-key
+                                      :cache {:remember-answers true}})
+          _ (seed-direct! conn acl 3)
+          query {:subject (spice-object :user "alice")
+                 :permission :admin
+                 :resource/type :account}
+          lookup-calls (atom 0)
+          count-calls (atom 0)
+          lookup-resources impl/lookup-resources
+          count-resources impl/count-resources]
+      (with-redefs [impl/lookup-resources
+                    (fn [& args]
+                      (swap! lookup-calls inc)
+                      (apply lookup-resources args))
+                    impl/count-resources
+                    (fn [& args]
+                      (swap! count-calls inc)
+                      (apply count-resources args))]
+        (is (= 3 (count (:data (eacl/lookup-resources acl query)))))
+        (is (= 3 (count (:data (eacl/lookup-resources
+                               acl (assoc query :cache? true))))))
+        (is (= 1 @lookup-calls))
+
+        (is (= 3 (:count (eacl/count-resources acl query))))
+        (is (= 3 (:count (eacl/count-resources
+                         acl (assoc query :cache? true)))))
+        (is (= 1 @count-calls))))))
+
+(defn- append-token-byte
+  [token byte-value]
+  (let [prefix "eacl4_"
+        decoder (Base64/getUrlDecoder)
+        encoder (.withoutPadding (Base64/getUrlEncoder))
+        raw (.decode decoder (subs token (count prefix)))
+        tainted (byte-array (inc (alength raw)))]
+    (System/arraycopy raw 0 tainted 0 (alength raw))
+    (aset-byte tainted (alength raw) (byte byte-value))
+    (str prefix (.encodeToString encoder tainted))))
+
+(deftest page-token-envelope-rejects-unauthenticated-trailing-bytes-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [acl (core/make-client conn {:page-token-key token-key})
+          opts (:opts acl)
+          token (core/page-token opts {:op :test})]
+      (is (= :eacl.pagination/invalid-cursor
+             (:eacl/error
+              (ex-data-of
+               #(core/token->page-bound
+                 opts (append-token-byte token 42)))))))))
+
+(deftest page-token-encoder-never-mints-a-token-its-decoder-refuses-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [opts (:opts (core/make-client
+                       conn {:page-token-key token-key}))
+          data (ex-data-of
+                #(core/page-token
+                  opts {:oversized (apply str (repeat 20000 "x"))}))]
+      (is (= :eacl.pagination/cursor-too-large (:type data)))
+      (is (< (:maximum-length data) (:encoded-length data))))))
+
 ;; --- H2 ---------------------------------------------------------------------
 
 (deftest client-built-before-the-first-schema-write-can-paginate-test

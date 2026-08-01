@@ -84,7 +84,11 @@
   retraction and the :eacl/relation-version stamp that publishes it always land
   in the same transaction. Partitioning the ops instead would let a batch
   boundary fall between them, and the batch holding the bare retraction would
-  change relationship data while announcing nothing."
+  change relationship data while announcing nothing.
+
+  Each batch also carries the source database's schema-generation guard. A
+  batch prepared before a concurrent relation removal therefore fails instead
+  of recreating the retracted relation eid with only a version stamp."
   ([db]
    (repair-tx-batches db {}))
   ([db {:keys [batch-size] :or {batch-size 1000}}]
@@ -92,5 +96,5 @@
      (throw (ex-info ":batch-size must be a positive integer."
                      {:type :eacl.integrity/invalid-options
                       :batch-size batch-size})))
-   (map #(vec (repair-tx-data %))
+   (map #(impl/guard-schema-version db (repair-tx-data %))
         (partition-all batch-size (dangling-relationship-halves db)))))

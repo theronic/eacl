@@ -87,8 +87,12 @@
   ((:clock config)))
 
 (defn- expired?
+  "Entries stored without a ttl have no expiry and are only ever displaced by
+  capacity eviction. Time-based expiry is not what keeps EACL's cache correct —
+  relation stamps are — so a ttl is an optional capacity tool, not a staleness
+  bound."
   [now {:keys [expires-at]}]
-  (<= expires-at now))
+  (and expires-at (<= (long expires-at) (long now))))
 
 (defn- update-metric
   [state kind metric]
@@ -198,8 +202,9 @@
               (not (integer? weight))
               (not (pos? weight))
               (> weight max-entry-weight)
-              (not (integer? ttl-ms))
-              (not (pos? ttl-ms)))
+              (and (some? ttl-ms)
+                   (or (not (integer? ttl-ms))
+                       (not (pos? ttl-ms)))))
         (do
           (swap! state update-metric kind :rejections)
           false)
@@ -218,7 +223,7 @@
                 (.put entries k {:value value
                                  :weight weight
                                  :kind kind
-                                 :expires-at (+ now ttl-ms)})
+                                 :expires-at (when ttl-ms (+ now (long ttl-ms)))})
                 (swap! state
                        (fn [s]
                          (-> s

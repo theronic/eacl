@@ -54,12 +54,19 @@
     (is (= (page-answer (eacl/lookup-subjects uncached reverse))
            (page-answer (eacl/lookup-subjects cached reverse)))
         (str label " lookup-subjects"))
-    (is (= (eacl/count-resources uncached (dissoc forward :first))
-           (eacl/count-resources cached (dissoc forward :first)))
-        (str label " count-resources"))
-    (is (= (eacl/count-subjects uncached (dissoc reverse :first))
-           (eacl/count-subjects cached (dissoc reverse :first)))
-        (str label " count-subjects"))))
+    ;; Cache provenance is about HOW an answer was obtained, so it is excluded
+    ;; from the comparison — a cached and an uncached client are supposed to
+    ;; differ there. What must not differ is the answer.
+    (let [answer #(dissoc % :cached? :cache-basis)]
+      (is (= (answer (eacl/count-resources uncached (dissoc forward :first)))
+             (answer (eacl/count-resources cached (dissoc forward :first))))
+          (str label " count-resources"))
+      (is (= (answer (eacl/count-subjects uncached (dissoc reverse :first)))
+             (answer (eacl/count-subjects cached (dissoc reverse :first))))
+          (str label " count-subjects")))
+    (testing (str label " — an uncached client never reports a cache hit")
+      (is (false? (:cached? (eacl/count-resources uncached (dissoc forward :first)))))
+      (is (false? (:cached? (eacl/lookup-resources uncached forward)))))))
 
 (deftest randomized-cache-and-mutation-differential-test
   (doseq [seed (range 5)]

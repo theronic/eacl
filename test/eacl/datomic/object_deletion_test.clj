@@ -169,6 +169,50 @@
                   (d/db conn)
                   (d/entid (d/db conn) [:eacl/id "u"])))))))
 
+(deftest delete-object-discovery-is-lazy-and-nonduplicating-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [relationship-count 20
+          acl (core/make-client conn {})
+          user (spice-object :user "u")]
+      (schema/write-schema! conn test-schema)
+      @(d/transact
+        conn
+        (into [{:eacl/id "u"}]
+              (map (fn [n] {:eacl/id (str "a-" n)})
+                   (range relationship-count))))
+      (eacl/create-relationships!
+       acl
+       (mapv (fn [n]
+               (Relationship user
+                             :owner
+                             (spice-object :account (str "a-" n))))
+             (range relationship-count)))
+      (let [ops (impl/tx-delete-object-stream (d/db conn) "u")]
+        (is (not (vector? ops))
+            "the public batching path must not materialize the whole delete")
+        (is (= (* 2 relationship-count) (count ops))
+            "each relationship contributes two tuple retractions exactly once")))))
+
+(deftest delete-object-stream-handles-self-relationships-once-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema!
+     conn
+     "definition folder {
+        relation parent: folder
+        permission read = parent
+      }")
+    @(d/transact conn [{:eacl/id "f"}])
+    (let [folder (spice-object :folder "f")
+          relationship (Relationship folder :parent folder)
+          acl (core/make-client conn {})]
+      (eacl/create-relationship! acl relationship)
+      (is (= 2 (count (impl/tx-delete-object-stream (d/db conn) "f"))))
+      (is (= 2 (:retracted-datoms (eacl/delete-object! acl folder))))
+      (is (empty? (:data
+                   (impl/read-relationships
+                    (d/db conn)
+                    {:subject/id "f" :first 10})))))))
+
 (deftest orphan-detection-and-repair-test
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [u a]} (seed! conn)]
@@ -207,10 +251,29 @@
               :sample []}
              (integrity/dangling-relationship-report (d/db conn) {:sample-size 0})))
 
-      (let [batches (integrity/repair-tx-batches (d/db conn) {:batch-size 1})]
+      (let [batches (integrity/repair-tx-batches (d/db conn) {:batch-size 1})
+            batch (first batches)
+            relation-eid (:relation-eid
+                          (first
+                           (impl/orphaned-relationship-halves (d/db conn))))]
         (is (= 1 (count batches)))
-        (doseq [batch batches]
-          @(d/transact conn batch)))
+        @(d/transact conn batch)
+
+        (schema/write-schema!
+         conn
+         "definition user {}
+          definition account {}")
+        (let [error-data
+              (try
+                @(d/transact conn batch)
+                nil
+                (catch Throwable throwable
+                  (some-> throwable .getCause ex-data)))]
+          (is (= :db.error/cas-failed (:db/error error-data))
+              "a repair batch cannot run under a removed schema generation")
+          (is (nil? (:eacl/relation-version
+                     (d/entity (d/db conn) relation-eid)))
+              "the stale stamp cannot recreate the removed relation eid")))
 
       (is (= {:valid? true
               :dangling-count 0
