@@ -12,10 +12,17 @@ Responsibilities:
 
 This module must not depend on Datomic or a logging backend.
 
-## Backend SPI
+## Backend contracts
 
-Backends supply a map consumed through `eacl.backend.spi` with exactly these
-functions:
+New v8 backends supply the validated operation map consumed through
+`eacl.backend.v8`. It declares consistency, snapshot, cursor, transaction,
+cache-proof, and runtime capabilities and implements normalized operations for
+snapshot identity, object ID conversion, schema definitions, adjacency,
+direct matches, recursive permission nodes, cursor frontier identity, and
+schema/relation proofs.
+
+The original six-function `eacl.backend.spi` contract remains supported for v7
+third-party adapters:
 
 - `cache-stamp`
 - `relation-defs`
@@ -24,37 +31,16 @@ functions:
 - `resource->subjects`
 - `direct-match?`
 
-The SPI arguments describe logical types, relation/permission identifiers, and
-cursor boundaries. Datoms, attribute ids, and backend-specific index APIs stay
-inside each adapter.
+Both contracts use logical types and identifiers. Datoms, attribute ids,
+database values, and raw index tuples stay inside each adapter. See the
+[v8 adapter boundary](../../docs/v8-backend-adapter-boundary.md) for the full
+inventory.
 
 The shared contract fixture is
-`modules/eacl/test/eacl/contract_support.cljc`. `assert-seeded-contracts!`
-retains the contract used by the DataScript adapter and Datahike PR #81;
-`assert-v8-seeded-contracts!` expresses the current Datomic pagination surface.
+`modules/eacl/test/eacl/contract_support.cljc`. It exercises the same v8 public
+API and recursive/cache behavior for Datomic, DataScript, and Datahike and
+compares authorization sets with the independent evaluator in
+`eacl.authorization-oracle`.
 
-## Upgrading Datahike PR #81
-
-PR #81 can keep its `modules/eacl-datahike` source, database primitive layer,
-and six-function SPI implementation. Rebase its three Datahike commits from
-the old modular base onto this branch:
-
-```shell
-git fetch origin codex/v8-modular-backends fix/audit-root-causes-datascript
-git switch feat/datahike-backend
-git rebase --onto origin/codex/v8-modular-backends \
-  origin/fix/audit-root-causes-datascript
-```
-
-The first two commits both touch the root `deps.edn`. Resolve those conflicts
-by keeping the v8 dependency versions and logging removals, then add only the
-Datahike source/test paths, `org.replikativ/datahike`, and its build alias. In
-the Datahike module itself, align Clojure to `1.11.4`, add the directly used
-`com.rpl/specter` dependency, and drop the unused
-`org.clojure/tools.logging` dependency.
-
-The v8 protocol adds `delete-object!`; implement that method in
-`eacl.datahike.core`. No redesign of `eacl.datahike.db`,
-`eacl.datahike.impl`, or the six SPI functions is required. The complete
-`modules/eacl-datahike` patch from PR #81 applies to this workspace without
-source-file conflicts.
+Application-facing module selection and upgrade notes live in the
+[v8 backend and upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

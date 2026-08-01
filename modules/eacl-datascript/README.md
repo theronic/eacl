@@ -2,20 +2,27 @@
 
 DataScript adapter for EACL.
 
-This module carries the EACL v7.3 behavior into the v8 shared CLJ/CLJS core,
-including direction-scoped cursor frontiers, exhausted-path pruning, and
-fail-closed schema/query validation. The adapter retains its existing
-`:limit`/`:cursor` API so current browser consumers can upgrade by changing
-only their Git SHA pins. It implements the v8 `delete-object!` protocol method,
-but Datomic-specific basis consistency and authorization caching remain in
-`eacl-datomic`.
+This module implements the EACL v8 public contract in Clojure and
+ClojureScript. Permission compilation, recursive fixed-point traversal,
+direction-scoped frontiers, Relay windowing, counts, cache validation, and
+common errors live in `eacl`; this adapter contains DataScript access and
+transaction mechanics.
 
 Responsibilities:
 
 - DataScript schema installation and canonical schema storage
 - DataScript SPI implementation for CLJ and CLJS
-- adapter-local tx stamp/token support
+- current immutable-snapshot selection and object/reference conversion
+- snapshot-bound opaque Relay cursors
+- database-visible schema and relation cache proofs
+- portable authorization caching and recursive continuations
 - DataScript contract tests and adapter-specific edge cases
+
+Only `:fully-consistent` current-snapshot reads are supported. Unsupported
+consistency or historical promises fail with `:eacl/unsupported-capability`.
+The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
+`:last`/`:before`; see the
+[upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
 
 Useful workspace test commands:
 

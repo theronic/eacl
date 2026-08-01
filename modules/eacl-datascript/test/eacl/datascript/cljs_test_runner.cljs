@@ -1,6 +1,7 @@
 (ns eacl.datascript.cljs-test-runner
   (:require [cljs.nodejs :as nodejs]
             [cljs.test :as t]
+            [eacl.cache-test]
             [eacl.datascript.contract-test]))
 
 (nodejs/enable-util-print!)
@@ -15,6 +16,7 @@
     (js/process.exit failures)))
 
 (defn -main []
-  (t/run-tests 'eacl.datascript.contract-test))
+  (t/run-tests 'eacl.cache-test
+               'eacl.datascript.contract-test))
 
 (set! *main-cli-fn* -main)

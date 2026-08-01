@@ -4,17 +4,17 @@ A port of `modules/eacl-datascript`. DataScript was the right template rather
 than Datomic, because DataScript and Datahike diverge from Datomic in the *same*
 place — see "Tuple seek bounds" below.
 
-Status: `eacl.datahike.contract-test` runs the shared `eacl.contract-support`
-suite (the same one the DataScript backend runs, 23 assertions) **twice**, once
-per attribute representation, and passes. `eacl.datahike.backend-test` covers
-the datahike-specific paths the shared contract does not reach.
+Status: `eacl.datahike.contract-test` runs the shared v8 public API,
+recursive, cache, and independent-oracle contracts **twice**, once per
+attribute representation, and passes. `eacl.datahike.backend-test` covers the
+Datahike-specific paths the shared contract does not reach.
 
 The module is **JVM-only** (`.clj`, not `.cljc`): datahike's ClojureScript API is
 asynchronous and the backend SPI is synchronous.
 
 ## Layout
 
-Four namespaces, where DataScript has three. `eacl.datahike.db` holds the
+Five namespaces. `eacl.datahike.db` holds the
 adapter primitives — `entid`, attribute representation, and the three index
 accessors — so that everything above it reads like the DataScript source and
 every datahike divergence lives in one file:
@@ -23,8 +23,9 @@ every datahike divergence lives in one file:
 |---|---|
 | `db.clj` | adapter primitives (no eacl concepts) |
 | `schema.clj` | attribute declarations, `create-conn`, `write-schema!` |
-| `impl.clj` | the SPI implementation and relationship scans |
-| `core.clj` | `IAuthorization`, `make-client`, cursor coercion |
+| `impl.clj` | the legacy SPI compatibility implementation and relationship scans |
+| `backend.clj` | the validated v8 snapshot adapter and cache proofs |
+| `core.clj` | `IAuthorization`, v8 Relay/cache integration, and `make-client` |
 
 ## What differs from the DataScript source
 
@@ -53,8 +54,9 @@ are tested; three consequences are load-bearing.
 
 1. A composite tuple attribute under `:attribute-refs?` needs datahike
    **>= 0.8.1759** (replikativ/datahike#921). Before that fix the tuples were
-   silently never derived and never validated, and since the tuples ARE the v7
-   engine, every permission check denied.
+   silently never derived and never validated. The adapter's ordered
+   relationship access depends on those tuples, so every permission check
+   denied.
 
 2. `index-range`'s `:attrid` is the one accessor that does **not** accept the
    attribute keyword in both modes: under `:attribute-refs?` it demands the
@@ -92,24 +94,30 @@ O(log n) — do not replace it with a scan of the whole attribute segment.
 
 ## A coverage trap worth knowing about
 
-The shared contract goes through `make-client`, which serves relation
-definitions from a prebuilt schema catalog — a full index scan. So **the
-contract suite never exercises the tuple seek at all**: removing the nil
-padding entirely leaves it green. The seek is reached only by the bare-db path
-(`impl/can?` with no options) and by the relation-retraction guard, which is
-what `backend-test` tests directly.
+The shared contract goes through `make-client`, whose v8 adapter serves
+relation definitions from a prebuilt schema catalog — a full index scan. So
+**the contract suite does not exercise every legacy tuple seek**. The seek is
+also reached by the bare-db v7 compatibility path and by the
+relation-retraction guard, which is why `backend-test` tests it directly.
 
 Both mechanisms above were verified non-vacuously by breaking them:
 removing the padding fails 12 assertions in both modes; comparing `:a` raw
 fails exactly 1, only under `:attribute-refs?`.
 
-## SPI surface
+## Adapter surfaces
 
-`eacl.backend.spi` is six fns supplied as a map (see
-`modules/eacl/src/eacl/backend/spi.cljc`):
+`eacl.backend.spi` remains a six-function compatibility map:
 
 `cache-stamp` · `relation-defs` · `permission-defs` · `subject->resources` ·
 `resource->subjects` · `direct-match?`
 
 None of them mention datoms, seeks, or attribute ids — those are all private to
 this module.
+
+The public v8 client uses `eacl.datahike.backend/snapshot-adapter`. Its
+validated operation map adds snapshot identity, object ID conversion,
+permission-node discovery, cursor frontier identity, and scoped schema/relation
+proofs. Capabilities explicitly limit Datahike to current
+`:fully-consistent` snapshots and synchronous CLJ cursors. Authorization graph
+compilation, SCC/fixed-point traversal, Relay behavior, and cache validation
+stay in `modules/eacl`.

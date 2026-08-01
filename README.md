@@ -1,6 +1,6 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure with a backend-neutral core and Datomic and DataScript adapters.
+EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure with a backend-neutral core and Datomic, DataScript, and Datahike adapters.
 
 _Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
@@ -50,10 +50,10 @@ Situated AuthZ offers some advantages for typical use-cases:
   recomputes the deterministic prefix. Relevant relationship or schema changes after page one do
   not alter later pages.
 - Completed `can?`, lookup, and count answers are kept once the same check recurs. Keys use the
-  schema generation and the change stamps of only the relations that permission actually reads —
-  not every Datomic `basis-t` — so unrelated application transactions and relationship writes
-  outside that dependency set leave entries hot. No coordination between clients or processes is
-  needed or configurable.
+  definitions in the compiled permission graph and the change stamps of only the relations that
+  permission actually reads — not every Datomic `basis-t` — so unrelated application
+  transactions, schema definitions, and relationship writes outside that dependency set leave
+  entries hot. No coordination between clients or processes is needed or configurable.
 - EACL caches resolved *permission paths* for one client schema generation. `make-client` reads `:eacl/schema-version` once from the schema entity; ordinary authorization calls do not reread it, scan definitions, key by `db`, or retain Datomic database values. Unrelated transactions therefore leave a hot client cache untouched even when the connection advances for every request.
   - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
   - If another client or process changes schema, recreate existing clients. `eacl.datomic.integrity/client-schema-status` is an explicit one-entity diagnostic for detecting an outdated client; it is never invoked on the authorization hot path.
@@ -92,16 +92,17 @@ caller already handles for expiry.
 > [!WARNING]
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> The changes on this branch are the [v8.0 candidate](docs/release-notes-v8.0.md). The major version increments because v8.0 adds a Datomic schema attribute, `:eacl/relation-version`. The pagination API is unchanged, and `write-schema!` installs the new attribute, so there is no migration step from v7. Releases are not tagged yet, so pin the Git SHA.
+> The changes on this branch are the [v8.0 candidate](docs/release-notes-v8.0.md). The major version increments because v8.0 adds a Datomic schema attribute, `:eacl/relation-version`, and upgrades the DataScript and Datahike list/count APIs to the v8 Relay contract. `write-schema!` installs the Datomic attribute, so there is no persisted-data migration from v7. DataScript/Datahike callers must migrate pagination requests and responses as described in the [v8 backend and upgrade guide](docs/v8-backend-modules-and-upgrade.md). Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## Modules
 
-The repository is a workspace with three independently consumable modules:
+The repository is a workspace with four independently consumable modules:
 
 - `modules/eacl`: public protocol and records, schema model/parser, consistency descriptors, shared authorization engine, and six-function backend SPI.
 - `modules/eacl-datomic`: the complete v8 Datomic adapter, including consistency, encrypted cursors, object deletion, migrations, and authorization caching.
 - `modules/eacl-datascript`: the CLJ/CLJS DataScript adapter and its backend contract tests.
+- `modules/eacl-datahike`: the CLJ Datahike adapter, including both keyword and numeric attribute-reference representations.
 
 Choose the adapter you use:
 
@@ -118,6 +119,12 @@ Choose the adapter you use:
   ;;  :git/sha "REPLACE_WITH_SHA"
   ;;  :deps/root "modules/eacl-datascript"}
 
+  ;; Or, for Datahike:
+  ;; theronic/eacl-datahike
+  ;; {:git/url "git@github.com:theronic/eacl.git"
+  ;;  :git/sha "REPLACE_WITH_SHA"
+  ;;  :deps/root "modules/eacl-datahike"}
+
   ;; Core-only/backend authors:
   ;; theronic/eacl
   ;; {:git/url "git@github.com:theronic/eacl.git"
@@ -126,11 +133,11 @@ Choose the adapter you use:
   }}
 ```
 
-The root `deps.edn` is a development workspace, not the consumer artifact boundary. Build or install modules independently with `clojure -T:build-eacl install`, `clojure -T:build-eacl-datomic install`, or `clojure -T:build-eacl-datascript install`.
+The root `deps.edn` is a development workspace, not the consumer artifact boundary. Build or install modules independently with `clojure -T:build-eacl install`, `clojure -T:build-eacl-datomic install`, `clojure -T:build-eacl-datascript install`, or `clojure -T:build-eacl-datahike install`.
 
 EACL does not select a logging implementation. Applications remain responsible for their own logging backend and configuration.
 
-Backend authors should follow the [core module SPI and Datahike upgrade guide](modules/eacl/README.md).
+For module selection, capability differences, cache mutation rules, recursive controls, and DataScript/Datahike migration details, see the [v8 backend and upgrade guide](docs/v8-backend-modules-and-upgrade.md). Backend authors should also read the [v8 adapter boundary](docs/v8-backend-adapter-boundary.md).
 
 ## ReBAC: Relationship-based Access Control
 
@@ -207,7 +214,7 @@ Pass `:count-limit n` to either count operation to bound work. The result then i
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
 - `(eacl/delete-object! acl object) => {:zed/token "eacl_z2_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
-All list APIs use the v7.3 pagination contract:
+All list APIs use the v8 Relay pagination contract:
 
 - Forward: pass `:first` and optionally `:after`.
 - Backward: pass `:last` and optionally `:before`.

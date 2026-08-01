@@ -1,7 +1,11 @@
 (ns build
-  (:require [clojure.tools.build.api :as b]))
+  (:require [clojure.java.io :as io]
+            [clojure.tools.build.api :as b]))
 
-(def module-dir "modules/eacl-datomic")
+(def module-dir
+  (if (.exists (io/file "modules/eacl-datomic/src"))
+    "modules/eacl-datomic"
+    "."))
 (def lib 'cloudafrica/eacl-datomic)
 (def version "8.0.0-SNAPSHOT")
 (def class-dir (str module-dir "/target/classes"))

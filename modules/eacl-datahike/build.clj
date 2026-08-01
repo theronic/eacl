@@ -8,7 +8,7 @@
     "."))
 
 (def lib 'cloudafrica/eacl-datahike)
-(def version "0.0.1-SNAPSHOT")
+(def version "8.0.0-SNAPSHOT")
 (def class-dir (str module-dir "/target/classes"))
 (def jar-file (format "%s/target/%s-%s.jar" module-dir (name lib) version))
 (def pom-basis

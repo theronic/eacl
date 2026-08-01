@@ -15,3 +15,7 @@ Responsibilities:
 
 Depending on this module keeps existing `eacl.core` and `eacl.datomic.*`
 require forms unchanged.
+
+For the cross-backend capability matrix, recursive controls, and cache
+mutation rules, see the
+[v8 backend and upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

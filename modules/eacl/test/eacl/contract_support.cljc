@@ -1,5 +1,7 @@
 (ns eacl.contract-support
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
+            [clojure.string :as str]
+            [eacl.authorization-oracle :as oracle]
             [eacl.core :as eacl]))
 
 (def ->user (partial eacl/spice-object :user))
@@ -48,6 +50,34 @@
 (defn- read-relationships-data
   [client query]
   (:data (eacl/read-relationships client query)))
+
+(defn- actual-authorization-set
+  [client objects rules]
+  (into
+   #{}
+   (for [[[resource-type permission]] rules
+         resource objects
+         :when (= resource-type (:type resource))
+         subject objects
+         :when (eacl/can? client subject permission resource)]
+     [subject permission resource])))
+
+(defn- assert-authorization-oracle!
+  [client fixture]
+  (let [expected (oracle/authorization-set fixture)
+        actual (actual-authorization-set client (:objects fixture) (:rules fixture))]
+    (is (= expected actual)
+        (str "authorization oracle mismatch; seed=" oracle/fixture-seed
+             " fixture=" (pr-str fixture)))))
+
+(defn- error-category
+  [f]
+  (try
+    (f)
+    nil
+    (catch #?(:clj Exception :cljs :default) error
+      (let [data (ex-data error)]
+        (or (:eacl/error data) (:type data))))))
 
 (defn assert-seeded-contracts!
   [client]
@@ -170,6 +200,13 @@
   The legacy contract above remains stable for the existing DataScript and
   Datahike adapters while they adopt the v8 pagination surface."
   [client]
+  (testing "authorization results match the independent curated oracle"
+    (assert-authorization-oracle!
+     client
+     {:objects smoke-objects
+      :relationships smoke-relationships
+      :rules oracle/smoke-rules}))
+
   (testing "schema round-trips through the logical representation"
     (let [{:keys [relations permissions]} (eacl/read-schema client)]
       (is (= 4 (count relations)))
@@ -190,6 +227,15 @@
           page-2 (eacl/lookup-resources
                   client
                   (assoc query :after (get-in page-1 [:page-info :end-cursor])))
+          page-1-hit (eacl/lookup-resources client query)
+          previous (eacl/lookup-resources
+                    client
+                    (-> query
+                        (dissoc :first :after)
+                        (assoc
+                         :last 1
+                         :before
+                         (get-in page-2 [:page-info :start-cursor]))))
           count-result
           (eacl/count-resources client
                                 {:subject       (->user "user-1")
@@ -197,8 +243,65 @@
                                  :resource/type :server})]
       (is (= [(->server "server-1")] (:data page-1)))
       (is (= [(->server "server-2")] (:data page-2)))
+      (is (= (:data page-1) (:data previous)))
       (is (string? (get-in page-1 [:page-info :end-cursor])))
-      (is (= 2 (:count count-result)))))
+      (is (= 2 (:count count-result)))
+      (when (contains? page-1 :cached?)
+        (is (boolean? (:cached? page-1)))
+        (is (boolean? (:cached? page-1-hit))))))
+
+  (testing "opaque cursors reject malformed data and a changed query scope"
+    (let [query {:subject (->user "user-1")
+                 :permission :view
+                 :resource/type :server
+                 :first 1}
+          cursor (get-in (eacl/lookup-resources client query)
+                         [:page-info :end-cursor])]
+      (is (= :eacl.pagination/invalid-cursor
+             (error-category
+              #(eacl/lookup-resources
+                client
+                (assoc query :after "not-an-eacl-cursor")))))
+      (is (= :eacl.pagination/invalid-cursor
+             (error-category
+              #(eacl/lookup-resources
+                client
+                (assoc query
+                       :subject (->user "user-2")
+                       :after cursor)))))))
+
+  (testing "unknown anchors and bounded counts use canonical v8 shapes"
+    (let [forward
+          (eacl/lookup-resources
+           client
+           {:subject (->user "missing-user")
+            :permission :view
+            :resource/type :server
+            :first 10})
+          reverse
+          (eacl/lookup-subjects
+           client
+           {:resource (->server "missing-server")
+            :permission :view
+            :subject/type :user
+            :first 10})
+          bounded
+          (eacl/count-resources
+           client
+           {:subject (->user "user-1")
+            :permission :view
+            :resource/type :server
+            :count-limit 1})]
+      (is (= [] (:data forward)))
+      (is (= [] (:data reverse)))
+      (is (= {:start-cursor nil
+              :end-cursor nil
+              :has-next-page? false
+              :has-previous-page? false}
+             (:page-info forward)
+             (:page-info reverse)))
+      (is (= {:count 1 :limit 1 :truncated? true}
+             (select-keys bounded [:count :limit :truncated?])))))
 
   (testing "lookup-subjects and count-subjects enumerate reverse access"
     (let [query {:resource     (->server "server-1")
@@ -256,3 +359,236 @@
                                             :subject/id        "user-2"
                                             :first             10})))
     (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))
+
+(def recursive-schema
+  "definition user {}
+
+   definition folder {
+     relation parent: folder
+     relation reader: user
+     relation editor: user
+     relation auditor: user
+
+     permission selfread = reader + parent->selfread
+     permission read = reader + editor + parent->write
+     permission write = read
+     permission duplicate = read + reader + parent->read
+   }")
+
+(def recursive-schema-with-audit
+  (str recursive-schema
+       "
+
+        definition audit_log {
+          relation folder: folder
+          permission view = folder->duplicate
+        }"))
+
+(def recursive-schema-with-relevant-audit
+  (str
+   (str/replace
+    recursive-schema
+    "permission read = reader + editor + parent->write"
+    "permission read = reader + editor + auditor + parent->write")
+   "
+
+    definition audit_log {
+      relation folder: folder
+      permission view = folder->duplicate
+    }"))
+
+(def recursive-connected-folder-count 12)
+
+(def recursive-objects
+  (into [(->user "recursive-user")
+         (->user "denied-user")]
+        (map #(eacl/spice-object :folder (str "folder-" %))
+             (range (inc recursive-connected-folder-count)))))
+
+(def recursive-relationships
+  (into
+   [(eacl/->Relationship
+     (->user "recursive-user")
+     :reader
+     (eacl/spice-object :folder "folder-0"))
+    (eacl/->Relationship
+     (->user "recursive-user")
+     :editor
+     (eacl/spice-object :folder "folder-0"))]
+   (map (fn [index]
+          (eacl/->Relationship
+           (eacl/spice-object :folder (str "folder-" index))
+           :parent
+           (eacl/spice-object :folder (str "folder-" (inc index)))))
+        (range (dec recursive-connected-folder-count)))))
+
+(defn- lookup-all-resource-pages
+  [client query]
+  (loop [pages []
+         after nil]
+    (let [page
+          (eacl/lookup-resources
+           client
+           (cond-> query
+             after (assoc :after after)))
+          pages (conj pages page)]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur pages (get-in page [:page-info :end-cursor]))
+        pages))))
+
+(defn assert-v8-recursive-contracts!
+  [client]
+  (let [subject (->user "recursive-user")
+        denied (->user "denied-user")
+        folder #(eacl/spice-object :folder (str "folder-" %))
+        query {:subject subject
+               :permission :read
+               :resource/type :folder
+               :first 2}
+        pages (lookup-all-resource-pages client query)]
+    (testing "recursive results match an independent least-fixed-point oracle"
+      (assert-authorization-oracle!
+       client
+       {:objects recursive-objects
+        :relationships recursive-relationships
+        :rules oracle/recursive-rules}))
+
+    (testing "self and mutual cycles reach a deterministic fixed point"
+      (is (true?
+           (eacl/can?
+            client subject :selfread
+            (folder (dec recursive-connected-folder-count)))))
+      (is (true?
+           (eacl/can?
+            client subject :read
+            (folder (dec recursive-connected-folder-count)))))
+      (is (false?
+           (eacl/can?
+            client denied :read
+            (folder (dec recursive-connected-folder-count)))))
+      (is (= (mapv folder (range recursive-connected-folder-count))
+             (into [] cat (map :data pages)))))
+
+    (testing "recursive forward/reverse pages and duplicate paths deduplicate"
+      (is (= recursive-connected-folder-count
+             (:count
+              (eacl/count-resources
+               client
+               (dissoc query :first)))))
+      (is (= [subject]
+             (:data
+              (eacl/lookup-subjects
+               client
+               {:resource (folder (dec recursive-connected-folder-count))
+                :permission :duplicate
+                :subject/type :user
+                :first 10}))))
+      (is (= recursive-connected-folder-count
+             (:count
+              (eacl/count-resources
+               client
+               {:subject subject
+                :permission :duplicate
+                :resource/type :folder})))))
+
+    (testing "relevant writes invalidate proof-validated cached answers"
+      (let [all-query (assoc query :first 20)
+            miss (eacl/lookup-resources client all-query)
+            hit (eacl/lookup-resources client all-query)]
+        (is (false? (:cached? miss)))
+        (is (true? (:cached? hit)))
+
+        (eacl/create-relationship!
+         client denied :auditor (folder 0))
+        (let [after-unrelated-write
+              (eacl/lookup-resources client all-query)]
+          (is (true? (:cached? after-unrelated-write)))
+          (is (= (mapv folder (range recursive-connected-folder-count))
+                 (:data after-unrelated-write))))
+
+        (eacl/create-relationship!
+         client
+         (folder (dec recursive-connected-folder-count))
+         :parent
+         (folder recursive-connected-folder-count))
+
+        (let [stale-cursor
+              (get-in (last pages) [:page-info :end-cursor])
+              stale-result
+              (try
+                (eacl/lookup-resources
+                 client
+                 (assoc query :after stale-cursor))
+                (catch #?(:clj Exception :cljs :default) error
+                  error))]
+          (if #?(:clj (instance? Exception stale-result)
+                 :cljs (instance? js/Error stale-result))
+            (is (= :eacl.pagination/invalid-cursor
+                   (let [data (ex-data stale-result)]
+                     (or (:eacl/error data) (:type data)))))
+            (is (= [] (:data stale-result))
+                "historical backends must resume the pre-mutation snapshot")))
+
+        (let [after-write (eacl/lookup-resources client all-query)]
+          (is (false? (:cached? after-write)))
+          (is (= (mapv folder
+                       (range (inc recursive-connected-folder-count)))
+                 (:data after-write))))
+
+        (eacl/write-schema! client recursive-schema-with-audit)
+        (let [after-unrelated-schema-write
+              (eacl/lookup-resources client all-query)]
+          (is (true? (:cached? after-unrelated-schema-write)))
+          (is (= (mapv folder
+                       (range (inc recursive-connected-folder-count)))
+                 (:data after-unrelated-schema-write))))
+
+        (eacl/write-schema! client recursive-schema-with-relevant-audit)
+        (let [after-relevant-schema-write
+              (eacl/lookup-resources client all-query)]
+          (is (false? (:cached? after-relevant-schema-write)))
+          (is (= (mapv folder
+                       (range (inc recursive-connected-folder-count)))
+                 (:data after-relevant-schema-write)))))
+
+      (eacl/delete-object! client (folder recursive-connected-folder-count))
+      (let [after-delete
+            (eacl/lookup-resources client (assoc query :first 20))]
+        (is (false? (:cached? after-delete)))
+        (is (= (mapv folder (range recursive-connected-folder-count))
+               (:data after-delete))))
+      (is (false?
+           (eacl/can?
+            client subject :read
+            (folder recursive-connected-folder-count)))))))
+
+(defn assert-v8-recursive-safety-limit!
+  [client]
+  (let [data
+        (try
+          (eacl/lookup-resources
+           client
+           {:subject (->user "recursive-user")
+            :permission :read
+            :resource/type :folder
+            :first 10})
+          nil
+          (catch #?(:clj Exception :cljs :default) error
+            (ex-data error)))]
+    (is (= :eacl.recursive-traversal/limit-exceeded
+           (:eacl/error data)))
+    (is (#{:derived-grants :advanced-datoms :queued-work}
+         (:limit-kind data)))))
+
+(defn assert-v8-cache-disabled!
+  [client]
+  (let [query {:subject (->user "user-1")
+               :permission :view
+               :resource/type :server
+               :first 10}
+        first-result (eacl/lookup-resources client query)
+        repeated-result (eacl/lookup-resources client query)]
+    (testing "cache-disable mode never retains an authorization answer"
+      (is (false? (:cached? first-result)))
+      (is (false? (:cached? repeated-result)))
+      (is (= (:data first-result) (:data repeated-result))))))

@@ -1,10 +1,10 @@
 (ns eacl.datascript.contract-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.cache :as cache]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
-            [eacl.datascript.core :as datascript]
-            [eacl.datascript.impl :as impl]))
+            [eacl.datascript.core :as datascript]))
 
 (defn- seed-objects!
   [conn]
@@ -20,7 +20,30 @@
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
-    (contract/assert-seeded-contracts! client)))
+    (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-cache-disabled!
+     (datascript/make-client conn {:cache cache/no-cache}))))
+
+(deftest datascript-recursive-v8-contract-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (eacl/write-schema! client contract/recursive-schema)
+    (ds/transact! conn
+                  (map-indexed
+                   (fn [index {:keys [id]}]
+                     {:db/id (- (inc index))
+                      :eacl/id id})
+                   contract/recursive-objects))
+    (eacl/create-relationships! client contract/recursive-relationships)
+    (contract/assert-v8-recursive-contracts! client)
+    (doseq [limit-key [:max-derived-grants
+                       :max-advanced-datoms
+                       :max-queued-work]]
+      (contract/assert-v8-recursive-safety-limit!
+       (datascript/make-client
+        conn
+        {:cache cache/no-cache
+         :recursive-traversal-limits {limit-key 1}})))))
 
 (deftest datascript-delete-object-contract-test
   (let [conn   (datascript/create-conn)
@@ -115,7 +138,7 @@
                               :resource/id-prefix "server-"}))))))
 
     (testing "list operations reject consistency and subject filters they cannot honor"
-      (is (= :eacl/unsupported-consistency
+      (is (= :eacl/unsupported-capability
              (:type
               (thrown-data #(eacl/lookup-resources
                              client
@@ -138,78 +161,53 @@
         query  {:subject (contract/->user "user-1")
                 :permission :view
                 :resource/type :server
-                :limit 100}]
+                :first 100}]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
     (testing "an empty first page does not mint a boundary-less cursor"
-      (is (= {:data [] :cursor nil}
-             (eacl/lookup-resources client query)))
-      (is (= {:count 0 :limit 100 :cursor nil}
-             (eacl/count-resources client query))))))
+      (let [page (eacl/lookup-resources client query)]
+        (is (= [] (:data page)))
+        (is (= {:start-cursor nil
+                :end-cursor nil
+                :has-next-page? false
+                :has-previous-page? false}
+               (:page-info page))))
+      (is (= {:count 0 :limit -1}
+             (select-keys
+              (eacl/count-resources client (dissoc query :first))
+              [:count :limit]))))))
 
 (deftest v7-3-direction-scoped-frontier-test
   (let [client (seeded-client)
         query {:subject (contract/->user "user-1")
                :permission :view
                :resource/type :server
-               :limit 1}
+               :first 1}
         page-1 (eacl/lookup-resources client query)
-        cursor-1 (datascript/token->cursor (:cursor page-1))
+        cursor-1 (get-in page-1 [:page-info :end-cursor])
+        envelope (datascript/token->cursor cursor-1)
         page-2 (eacl/lookup-resources client
-                                      (assoc query :cursor (:cursor page-1)))
+                                      (assoc query :after cursor-1))
         page-3 (eacl/lookup-resources client
-                                      (assoc query :cursor (:cursor page-2)))
-        exhausted-path-page
-        (eacl/lookup-resources client
-                               {:subject (contract/->user "user-1")
-                                :permission :admin
-                                :resource/type :account
-                                :limit 1})
-        exhausted-path-cursor
-        (datascript/token->cursor (:cursor exhausted-path-page))]
-    (testing "frontiers use stable path identities and record exhaustion"
+                                      (assoc query
+                                             :after
+                                             (get-in page-2
+                                                     [:page-info :end-cursor])))]
+    (testing "v8 cursors retain direction-scoped shared-engine state"
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= (:cursor page-2) (:cursor page-3)))
-      (is (= 1 (:frontier-version cursor-1)))
-      (is (= :forward (:frontier-direction cursor-1)))
-      (is (every? string? (keys (:p cursor-1))))
-      (is (contains? (set (vals (:p exhausted-path-cursor))) :exhausted)))
-
-    (testing "exhausted paths are skipped on later pages"
-      (let [calls (atom 0)
-            original impl/subject->resources]
-        (with-redefs [impl/subject->resources
-                      (fn [& args]
-                        (swap! calls inc)
-                        (apply original args))]
-          (eacl/lookup-resources
-           client
-           {:subject (contract/->user "user-1")
-            :permission :admin
-            :resource/type :account
-            :limit 1
-            :cursor (:cursor exhausted-path-page)})
-          ;; Only the direct :owner path scans. The exhausted platform arrow is
-          ;; pruned before it reaches the backend.
-          (is (= 1 @calls)))))
+      (is (= 8 (:v envelope)))
+      (is (= :lookup-eid (get-in envelope [:edge :kind])))
+      (is (= :asc (get-in envelope [:edge :frontier-direction]))))
 
     (testing "a forward cursor cannot be reused for reverse traversal"
-      (is (= :wrong-frontier-direction
+      (is (= :query-mismatch
              (:reason
               (thrown-data #(eacl/lookup-subjects
                              client
                              {:resource (contract/->server "server-1")
                               :permission :view
                               :subject/type :user
-                              :cursor (:cursor page-1)}))))))
-
-    (testing "pre-v7.3 positional cursor frontiers remain resumable"
-      (let [legacy-cursor (-> cursor-1
-                              (dissoc :frontier-version :frontier-direction)
-                              (assoc :p {0 (first (vals (:p cursor-1)))}))
-            legacy-page (eacl/lookup-resources
-                         client
-                         (assoc query :cursor legacy-cursor))]
-        (is (= [(contract/->server "server-2")] (:data legacy-page)))))))
+                              :first 1
+                              :after cursor-1}))))))))

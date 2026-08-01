@@ -1,14 +1,21 @@
 (ns eacl.datascript.core
   (:require [com.rpl.specter :as S]
             [datascript.core :as ds]
+            [eacl.backend.v8 :as backend]
+            [eacl.cache :as cache]
             [eacl.cursor :as cursor]
             [eacl.core :as eacl :refer [IAuthorization
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate
                                         map->Relationship]]
+            [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.schema :as schema]
+            [eacl.engine.v8 :as engine]
+            [eacl.relay :as relay]
+            [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.relay :as relationship-relay]
             [eacl.spicedb.consistency :as consistency]))
 
 (def cursor->token cursor/cursor->token)
@@ -81,15 +88,48 @@
     :relation relation
     :resource (object->spice db opts resource)}))
 
-(defn- validate-consistency!
-  "EACL is always fully consistent. nil means the default, which is
-  fully-consistent; every other value must be rejected instead of ignored."
-  [{:keys [consistency]}]
-  (when (and (some? consistency)
-             (not= consistency/fully-consistent consistency))
-    (throw (ex-info "EACL only supports consistency/fully-consistent at this time."
-             {:type :eacl/unsupported-consistency
-              :consistency consistency}))))
+(defn- snapshot-adapter
+  [db opts]
+  (datascript-backend/snapshot-adapter db opts))
+
+(defn- require-consistency!
+  [adapter value]
+  (backend/require-consistency! adapter value))
+
+(defn- permission-dependencies
+  [adapter resource-type permission]
+  (let [relation-ids
+        (engine/permission-relationship-eids
+         adapter resource-type permission)]
+    {:relation-ids relation-ids
+     :schema-scope
+     {:permission-nodes
+      (engine/permission-schema-nodes
+       adapter resource-type permission)
+      :relation-ids relation-ids}}))
+
+(defn- cached-engine-result
+  [adapter opts operation query resource-type permission
+   valid-value? compute]
+  (let [{:keys [schema-scope relation-ids]}
+        (permission-dependencies adapter resource-type permission)]
+    (binding [engine/*recursive-traversal-limits*
+              (:recursive-traversal-limits opts)]
+      (cache/resolve!
+       adapter
+       (:cache-store opts)
+       [operation query]
+       operation
+       schema-scope
+       relation-ids
+       valid-value?
+       compute))))
+
+(defn- with-cache-info
+  [value {:keys [cached? cache-basis]}]
+  (if (map? value)
+    (assoc value :cached? cached? :cache-basis cache-basis)
+    value))
 
 (defn datascript-read-relationships
   [db
@@ -98,36 +138,52 @@
            internal-cursor->spice
            spice-cursor->internal]}
    filters]
-  (validate-consistency! filters)
-  (impl/validate-relationship-filters! filters)
-  (let [subject-id   (:subject/id filters)
+  (let [adapter (snapshot-adapter db opts)
+        _ (require-consistency! adapter (:consistency filters))
+        base-filters (apply dissoc filters
+                            [:first :last :after :before :consistency])
+        _ (relationship-filters/validate! base-filters)
+        subject-id   (:subject/id base-filters)
         resource-id  (:resource/id filters)
         subject-eid  (when subject-id (object-id->entid db subject-id))
         resource-eid (when resource-id (object-id->entid db resource-id))
         missing-id?  (or (and subject-id (nil? subject-eid))
                          (and resource-id (nil? resource-eid)))]
     (if missing-id?
-      {:data [] :cursor nil}
-      (let [filters' (cond-> filters
+      relay/empty-page
+      (let [filters' (cond-> base-filters
                        subject-id (assoc :subject/id subject-eid)
                        resource-id (assoc :resource/id resource-eid))
-            filters'' (S/transform [:cursor]
-                                   (fn [token-or-cursor]
-                                     (some->> (token->cursor token-or-cursor opts)
-                                              (spice-cursor->internal db opts)))
-                                   filters')
-            result    (impl/read-relationships db filters'')]
-        (-> result
-            ((fn [page]
-               (S/transform [:data S/ALL]
-                            #(relationship->spice db opts %)
-                            page)))
-            ((fn [page]
-               (S/transform [:cursor]
-                            (fn [internal-cursor]
-                              (some-> (internal-cursor->spice db opts internal-cursor)
-                                      (cursor->token opts)))
-                            page))))))))
+            internal-relationships
+            (loop [cursor nil
+                   result []]
+              (let [page
+                    (impl/read-relationships
+                     db
+                     (cond-> (assoc filters' :limit 10000)
+                       cursor (assoc :cursor cursor)))
+                    result' (into result (:data page))
+                    next-cursor (:cursor page)]
+                (if (and next-cursor
+                         (not= cursor next-cursor)
+                         (seq (:data page)))
+                  (recur next-cursor result')
+                  result')))
+            public-relationships
+            (->> internal-relationships
+                 (sort-by
+                  (fn [{:keys [subject relation resource]}]
+                    [(:type subject) (:id subject)
+                     relation
+                     (:type resource) (:id resource)]))
+                 (map #(relationship->spice db opts %))
+                 vec)]
+        (relationship-relay/paginate
+         opts
+         :read-relationships
+         filters
+         (backend/invoke adapter :snapshot-id)
+         public-relationships)))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -175,22 +231,23 @@
     relationships))
 
 (defn datascript-can?
-  [db {:keys [object->entid] :as opts} subject permission resource consistency]
-  (when-not (= consistency/fully-consistent consistency)
-    (throw (ex-info "EACL only supports consistency/fully-consistent at this time."
-                    {:type :eacl/unsupported-consistency
-                     :consistency consistency})))
-  (let [subject-type (:type subject)
-        subject-id   (object->entid db subject)
-        resource-type (:type resource)
-        resource-id   (object->entid db resource)]
-    (if-not (and subject-id resource-id)
+  [db {:keys [spice-object->internal] :as opts}
+   subject permission resource consistency]
+  (let [adapter (snapshot-adapter db opts)
+        _ (require-consistency! adapter consistency)
+        internal-subject (spice-object->internal db subject)
+        internal-resource (spice-object->internal db resource)]
+    (if-not (and (:id internal-subject) (:id internal-resource))
       false
-      (impl/can? db
-                 opts
-                 (spice-object subject-type subject-id)
-                 permission
-                 (spice-object resource-type resource-id)))))
+      (:value
+       (cached-engine-result
+        adapter opts :can?
+        [internal-subject permission internal-resource]
+        (:type internal-resource)
+        permission
+        boolean?
+        #(engine/can?
+          adapter internal-subject permission internal-resource))))))
 
 (defn datascript-lookup-resources
   [db
@@ -201,25 +258,29 @@
            internal-cursor->spice
            spice-cursor->internal]}
    {:as query :keys [subject]}]
-  (validate-consistency! query)
-  (let [internal-subject (spice-object->internal db subject)]
+  (let [adapter (snapshot-adapter db opts)
+        _ (require-consistency! adapter (:consistency query))
+        internal-subject (spice-object->internal db subject)]
     (if (nil? (:id internal-subject))
-      ;; Unknown subjects match nothing (SpiceDB-consistent; can? is false).
-      {:data [] :cursor nil}
-      (->> query
-           (S/setval [:subject] internal-subject)
-           (S/transform [:cursor]
-                        (fn [token-or-cursor]
-                          (some->> (token->cursor token-or-cursor opts)
-                                   (spice-cursor->internal db opts))))
-           (impl/lookup-resources db opts)
-           (S/transform [:data S/ALL]
-                        (fn [{:keys [type id]}]
-                          (spice-object type (entid->object-id db id))))
-           (S/transform [:cursor]
-                        (fn [internal-cursor]
-                          (some-> (internal-cursor->spice db opts internal-cursor)
-                                  (cursor->token opts))))))))
+      (assoc relay/empty-page :cached? false :cache-basis nil)
+      (let [internal-query
+            (-> query
+                (dissoc :consistency)
+                (#(relay/internalize-page-query
+                   adapter opts :lookup-resources %))
+                (assoc :subject internal-subject))
+            answer
+            (cached-engine-result
+             adapter opts :lookup-resources internal-query
+             (:resource/type internal-query)
+             (:permission internal-query)
+             #(and (map? %) (vector? (:data %))
+                   (map? (:page-info %)))
+             #(engine/lookup-resources adapter internal-query))]
+        (with-cache-info
+          (relay/externalize-page
+           adapter opts :lookup-resources query (:value answer))
+          answer)))))
 
 (defn datascript-count-resources
   [db
@@ -228,19 +289,26 @@
            spice-cursor->internal
            internal-cursor->spice]}
    {:as query :keys [subject]}]
-  (validate-consistency! query)
-  (let [subject-ent (spice-object->internal db subject)]
-    (->> query
-         (S/setval [:subject] subject-ent)
-         (S/transform [:cursor]
-                      (fn [token-or-cursor]
-                        (some->> (token->cursor token-or-cursor opts)
-                                 (spice-cursor->internal db opts))))
-         (impl/count-resources db opts)
-         (S/transform [:cursor]
-                      (fn [internal-cursor]
-                        (some-> (internal-cursor->spice db opts internal-cursor)
-                                (cursor->token opts)))))))
+  (let [adapter (snapshot-adapter db opts)
+        _ (require-consistency! adapter (:consistency query))
+        internal-subject (spice-object->internal db subject)]
+    (if-not (:id internal-subject)
+      (assoc
+       (cond-> {:count 0 :limit (or (:count-limit query) -1)}
+         (contains? query :count-limit) (assoc :truncated? false))
+       :cached? false :cache-basis nil)
+      (let [internal-query
+            (-> query
+                (assoc :subject internal-subject)
+                (dissoc :consistency))
+            answer
+            (cached-engine-result
+             adapter opts :count-resources internal-query
+             (:resource/type internal-query)
+             (:permission internal-query)
+             #(and (map? %) (integer? (:count %)))
+             #(engine/count-resources adapter internal-query))]
+        (with-cache-info (:value answer) answer)))))
 
 (defn datascript-lookup-subjects
   [db
@@ -250,25 +318,33 @@
            spice-cursor->internal
            internal-cursor->spice]}
    query]
-  (validate-consistency! query)
-  (when (contains? query :subject/relation)
-    (throw (ex-info ":subject/relation is not supported by lookup-subjects."
-             {:eacl/error :eacl.pagination/unsupported-filter
-              :filter :subject/relation})))
-  (->> query
-       (S/transform [:resource] #(spice-object->internal db %))
-       (S/transform [:cursor]
-                    (fn [token-or-cursor]
-                      (some->> (token->cursor token-or-cursor opts)
-                               (spice-cursor->internal db opts))))
-       (impl/lookup-subjects db opts)
-       (S/transform [:data S/ALL]
-                    (fn [{:keys [type id]}]
-                      (spice-object type (entid->object-id db id))))
-       (S/transform [:cursor]
-                    (fn [internal-cursor]
-                      (some-> (internal-cursor->spice db opts internal-cursor)
-                              (cursor->token opts))))))
+  (let [adapter (snapshot-adapter db opts)
+        _ (require-consistency! adapter (:consistency query))
+        internal-resource (spice-object->internal db (:resource query))]
+    (when (contains? query :subject/relation)
+      (throw (ex-info ":subject/relation is not supported by lookup-subjects."
+                      {:eacl/error :eacl.pagination/unsupported-filter
+                       :filter :subject/relation})))
+    (if-not (:id internal-resource)
+      (assoc relay/empty-page :cached? false :cache-basis nil)
+      (let [internal-query
+            (-> query
+                (dissoc :consistency)
+                (#(relay/internalize-page-query
+                   adapter opts :lookup-subjects %))
+                (assoc :resource internal-resource))
+            answer
+            (cached-engine-result
+             adapter opts :lookup-subjects internal-query
+             (:type (:resource internal-query))
+             (:permission internal-query)
+             #(and (map? %) (vector? (:data %))
+                   (map? (:page-info %)))
+             #(engine/lookup-subjects adapter internal-query))]
+        (with-cache-info
+          (relay/externalize-page
+           adapter opts :lookup-subjects query (:value answer))
+          answer)))))
 
 (defn datascript-count-subjects
   [db
@@ -277,18 +353,26 @@
            spice-cursor->internal
            internal-cursor->spice]}
    query]
-  (validate-consistency! query)
-  (->> query
-       (S/transform [:resource] #(spice-object->internal db %))
-       (S/transform [:cursor]
-                    (fn [token-or-cursor]
-                      (some->> (token->cursor token-or-cursor opts)
-                               (spice-cursor->internal db opts))))
-       (impl/count-subjects db opts)
-       (S/transform [:cursor]
-                    (fn [internal-cursor]
-                      (some-> (internal-cursor->spice db opts internal-cursor)
-                              (cursor->token opts))))))
+  (let [adapter (snapshot-adapter db opts)
+        _ (require-consistency! adapter (:consistency query))
+        internal-resource (spice-object->internal db (:resource query))]
+    (if-not (:id internal-resource)
+      (assoc
+       (cond-> {:count 0 :limit (or (:count-limit query) -1)}
+         (contains? query :count-limit) (assoc :truncated? false))
+       :cached? false :cache-basis nil)
+      (let [internal-query
+            (-> query
+                (assoc :resource internal-resource)
+                (dissoc :consistency))
+            answer
+            (cached-engine-result
+             adapter opts :count-subjects internal-query
+             (:type (:resource internal-query))
+             (:permission internal-query)
+             #(and (map? %) (integer? (:count %)))
+             #(engine/count-subjects adapter internal-query))]
+        (with-cache-info (:value answer) answer)))))
 
 (defrecord DataScriptAuthorization [conn opts]
   IAuthorization
@@ -412,7 +496,9 @@
     :object-id->lookup-ref
     :internal-cursor->spice
     :spice-cursor->internal
-    :cursor-ttl-seconds})
+    :cursor-ttl-seconds
+    :cache
+    :recursive-traversal-limits})
 
 (defn make-client
   "Builds an IAuthorization client over a DataScript conn.
@@ -431,7 +517,9 @@
            object-id->lookup-ref
            internal-cursor->spice
            spice-cursor->internal
-           cursor-ttl-seconds]
+           cursor-ttl-seconds
+           cache
+           recursive-traversal-limits]
     :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -463,6 +551,10 @@
                           :entid->object-id entid->object-id
                           :object-id->entid object-id->entid
                           :cursor-ttl-seconds cursor-ttl-seconds
+                          :cache-store (eacl.cache/cache-store cache)
+                          :recursive-traversal-limits
+                          (engine/normalize-recursive-traversal-limits
+                           recursive-traversal-limits)
                           :object->entid (fn [db {:keys [id]}]
                                            (object-id->entid db id))
                           :internal-object->spice (fn [db {:keys [type id]}]

@@ -1,7 +1,11 @@
 (ns build
-  (:require [clojure.tools.build.api :as b]))
+  (:require [clojure.java.io :as io]
+            [clojure.tools.build.api :as b]))
 
-(def module-dir "modules/eacl")
+(def module-dir
+  (if (.exists (io/file "modules/eacl/src"))
+    "modules/eacl"
+    "."))
 (def lib 'cloudafrica/eacl)
 (def version "8.0.0-SNAPSHOT")
 (def class-dir (str module-dir "/target/classes"))
