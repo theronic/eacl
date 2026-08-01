@@ -256,3 +256,44 @@
                                              definition group { relation lead: user permission mgmt = lead }
                                              definition account { relation owner: user | group
                                                                   permission admin = owner->mgmt }")))))))
+(deftest keyword-prefix-identifier-tests
+  (testing "identifiers that merely START with a reserved word parse (SpiceDB-compatible)"
+    (doseq [permission-name ["allowed" "anytime" "selfie" "nilable" "without_x" "definitely"]]
+      (is (not (insta/failure?
+                 (parser/parse-schema
+                   (str "definition user {}
+                         definition doc { relation owner: user permission " permission-name " = owner }"))))
+          (str "permission '" permission-name "' should parse")))
+    (doseq [relation-name ["allocation" "relationship" "anywhere" "self_serve"]]
+      (is (not (insta/failure?
+                 (parser/parse-schema
+                   (str "definition user {}
+                         definition doc { relation " relation-name ": user permission view = " relation-name " }"))))
+          (str "relation '" relation-name "' should parse"))))
+
+  (testing "exact reserved words are still rejected as identifiers"
+    (doseq [reserved ["nil" "self" "definition" "relation" "permission" "with" "any" "all"]]
+      (is (insta/failure?
+            (parser/parse-schema
+              (str "definition user {}
+                    definition doc { relation owner: user permission " reserved " = owner }")))
+          (str "reserved word '" reserved "' should not parse as a permission name")))))
+
+(deftest duplicate-permission-declaration-tests
+  (testing "duplicate permission names on one definition throw instead of silently unioning"
+    (is (= :eacl.schema/duplicate-permission
+           (ex-type #(parser/->eacl-schema
+                       (parser/parse-schema
+                         "definition user {}
+                          definition doc {
+                            relation owner: user
+                            relation editor: user
+                            permission view = owner
+                            permission view = editor
+                          }"))))))
+  (testing "the same permission name on different definitions is fine"
+    (is (some? (parser/->eacl-schema
+                 (parser/parse-schema
+                   "definition user {}
+                    definition doc { relation owner: user permission view = owner }
+                    definition folder { relation owner: user permission view = owner }"))))))

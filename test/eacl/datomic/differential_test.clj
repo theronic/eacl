@@ -62,20 +62,45 @@
 (defn- eid-of [db id] (d/entid db [:eacl/id id]))
 
 (defn- collect-paged
-  "Collects a full paginated enumeration at the given page size."
+  "Collects a full paginated enumeration at the given page size via :first/:after."
   [db query page-size]
-  (loop [cursor nil
-         acc    []]
-    (let [page (idx/lookup-resources db (assoc query :limit page-size :cursor cursor))
+  (loop [after nil
+         acc   []]
+    (let [page (idx/lookup-resources db (cond-> (assoc query :first page-size)
+                                          after (assoc :after after)))
           acc' (into acc (map :id (:data page)))]
-      (if (seq (:data page))
-        (recur (:cursor page) acc')
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (get-in page [:page-info :end-cursor]) acc')
+        acc'))))
+
+(defn- collect-paged-backward
+  "Collects a full nonrecursive lookup in ascending result order via
+  :last/:before. This also exercises descending cursor frontiers."
+  [lookup-fn db query page-size]
+  (loop [before nil
+         acc    ()]
+    (let [page (lookup-fn db (cond-> (assoc query :last page-size)
+                               before (assoc :before before)))
+          acc' (concat (map :id (:data page)) acc)]
+      (if (get-in page [:page-info :has-previous-page?])
+        (recur (get-in page [:page-info :start-cursor]) acc')
+        (vec acc')))))
+
+(defn- collect-subjects-paged
+  [db query page-size]
+  (loop [after nil
+         acc   []]
+    (let [page (idx/lookup-subjects db (cond-> (assoc query :first page-size)
+                                         after (assoc :after after)))
+          acc' (into acc (map :id (:data page)))]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (get-in page [:page-info :end-cursor]) acc')
         acc'))))
 
 (defn- check-forward-invariants!
   [db label subject permission resource-type all-resource-eids sorted?]
   (let [query {:subject subject :permission permission :resource/type resource-type}
-        full  (mapv :id (:data (idx/lookup-resources db (assoc query :limit -1))))
+        full  (collect-paged db query 500)
         truth (set (filter #(idx/can? db subject permission (spice-object resource-type %))
                            all-resource-eids))]
     (is (= truth (set full))
@@ -88,27 +113,39 @@
     (doseq [page-size [1 3 7]]
       (is (= full (collect-paged db query page-size))
           (str label ": paginated union at page size " page-size " must equal the full enumeration")))
+    (when sorted?
+      (doseq [page-size [1 3 7]]
+        (is (= full (collect-paged-backward idx/lookup-resources db query page-size))
+            (str label ": reverse-paginated union at page size " page-size
+                 " must equal the full enumeration"))))
     (is (= (count full)
-           (:count (idx/count-resources db (assoc query :limit -1))))
+           (:count (idx/count-resources db query)))
         (str label ": count-resources must agree"))
     full))
 
 (defn- check-reverse-invariants!
   [db label resource permission subject-type all-subject-eids]
-  (let [subjects (mapv :id (:data (idx/lookup-subjects db {:resource resource
-                                                           :permission permission
-                                                           :subject/type subject-type
-                                                           :limit -1})))
+  (let [query    {:resource resource
+                  :permission permission
+                  :subject/type subject-type}
+        subjects (mapv :id (:data (idx/lookup-subjects db (assoc query :first 500))))
         truth    (set (filter #(idx/can? db (spice-object subject-type %) permission resource)
                               all-subject-eids))]
     (is (= truth (set subjects))
         (str label ": lookup-subjects set must equal can? ground truth"))
     (is (= (count subjects) (count (distinct subjects)))
-        (str label ": no duplicate subjects"))))
+        (str label ": no duplicate subjects"))
+    (doseq [page-size [1 3]]
+      (is (= subjects (collect-subjects-paged db query page-size))
+          (str label ": forward subject pagination at page size " page-size
+               " must equal the full enumeration"))
+      (is (= subjects (collect-paged-backward idx/lookup-subjects db query page-size))
+          (str label ": reverse subject pagination at page size " page-size
+               " must equal the full enumeration")))))
 
 (deftest differential-nonrecursive-test
   (doseq [seed [7 23 42 1337]]
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [rng       (java.util.Random. (long seed))
             users     (mapv #(str "user-" %) (range 3))
             accounts  (mapv #(str "acct-" %) (range 3))
@@ -159,7 +196,7 @@
 
 (deftest differential-recursive-test
   (doseq [seed [11 99]]
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       (let [rng     (java.util.Random. (long seed))
             folders (mapv #(str "folder-" %) (range 10))
             users   ["reader-1" "reader-2"]]

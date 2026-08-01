@@ -17,6 +17,12 @@
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
 
+(defn- transform-frontier
+  [f frontier]
+  (if (= :exhausted frontier)
+    frontier
+    (f frontier)))
+
 (defn default-internal-cursor->spice
   [db {:keys [entid->object-id]} cursor]
   (when cursor
@@ -32,7 +38,10 @@
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
-                                    (map (fn [[k v]] [k (entid->object-id db v)]))
+                                    (map (fn [[k v]]
+                                           [k (transform-frontier
+                                               #(entid->object-id db %)
+                                               v)]))
                                     p))))
       :else
       (cond
@@ -54,7 +63,10 @@
         (:p cursor) (update :p
                             (fn [p]
                               (into {}
-                                    (map (fn [[k v]] [k (object-id->entid db v)]))
+                                    (map (fn [[k v]]
+                                           [k (transform-frontier
+                                               #(object-id->entid db %)
+                                               v)]))
                                     p))))
       :else
       (cond
