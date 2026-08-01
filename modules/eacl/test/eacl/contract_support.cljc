@@ -62,6 +62,24 @@
     (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))
     (is (false? (eacl/can? client (->user "missing-user") :reboot (->server "server-1")))))
 
+  (testing "unknown lookup anchors return canonical empty pages"
+    (let [forward-query {:subject       (->user "missing-user")
+                         :permission    :view
+                         :resource/type :server
+                         :limit         100}
+          reverse-query {:resource     (->server "missing-server")
+                         :permission   :view
+                         :subject/type :user
+                         :limit        100}]
+      (is (= {:data [] :cursor nil}
+             (eacl/lookup-resources client forward-query)))
+      (is (= {:count 0 :limit 100 :cursor nil}
+             (eacl/count-resources client forward-query)))
+      (is (= {:data [] :cursor nil}
+             (eacl/lookup-subjects client reverse-query)))
+      (is (= {:count 0 :limit 100 :cursor nil}
+             (eacl/count-subjects client reverse-query)))))
+
   (testing "lookup-resources and count-resources share cursor semantics"
     (let [{page1-data :data page1-cursor :cursor}
           (eacl/lookup-resources client {:subject       (->user "user-1")

@@ -630,7 +630,7 @@
                           (take limit results)
                           results)
         result-type (result-type-fn query)
-        items       (doall (map #(spice-object result-type %) limited-results))
+        items       (into [] (map #(spice-object result-type %)) limited-results)
         last-id     (:id (last items))]
     {:data items
      ;; The legacy limit/cursor API signals exhaustion with no cursor on an
