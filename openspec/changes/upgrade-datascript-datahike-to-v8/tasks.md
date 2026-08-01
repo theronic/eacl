@@ -75,4 +75,4 @@
 - [x] 9.3 Confirm no shared engine namespace imports Datomic, DataScript, or Datahike implementation namespaces and no adapter contains a copied recursive traversal or cache-validation engine.
 - [x] 9.4 Run OpenSpec strict validation, reconcile every requirement scenario with an automated test or documented verification, and mark all completed tasks.
 - [x] 9.5 Review the final diff and commit history for obsolete v7 core imports, unintended Datomic storage/cursor changes, undeclared dependencies, generated artifacts, and unrelated changes.
-- [ ] 9.6 Push the integration branch, open a pull request targeting `release/v8.0` (the head branch of PR #84), include PR #81 provenance and the cross-backend test evidence, and wait for required checks to pass.
+- [x] 9.6 Push the integration branch, open a pull request targeting `release/v8.0` (the head branch of PR #84), include PR #81 provenance and the cross-backend test evidence, and wait for required checks to pass.

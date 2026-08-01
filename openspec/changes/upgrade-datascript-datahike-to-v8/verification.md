@@ -48,3 +48,16 @@
 - Isolated `eacl-datahike`: 12 tests, 190 assertions.
 - All four isolated jars built successfully.
 - Benchmark/load tests were intentionally excluded according to `AGENTS.md`.
+
+## Pull request verification
+
+- Integration PR: [theronic/eacl#89](https://github.com/theronic/eacl/pull/89),
+  targeting `release/v8.0`.
+- Push workflow
+  [30703932804](https://github.com/theronic/eacl/actions/runs/30703932804)
+  passed the combined JVM suite, the Node/ClojureScript suite, every isolated
+  module suite, and every isolated artifact build.
+- Pull-request workflow
+  [30703934482](https://github.com/theronic/eacl/actions/runs/30703934482)
+  passed all four isolated module suites and builds; the duplicate combined
+  job was intentionally skipped for the same-repository branch.
