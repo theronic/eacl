@@ -2,7 +2,7 @@
 
 EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
 
-_Situated_ here means that your permission data lives _next to_ your application data in Datomic, which has some benefits:
+_Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
 2. One less external dependency to deploy & sync relationships.
 3. Fully consistent queries – an external authz system necessitates eventual consistency.
@@ -95,6 +95,7 @@ caller already handles for expiry.
 > The changes on this branch are the [v8.0 candidate](docs/release-notes-v8.0.md). The major version increments because v8.0 adds a Datomic schema attribute, `:eacl/relation-version`. The pagination API is unchanged, and `write-schema!` installs the new attribute, so there is no migration step from v7. Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
+
 ## ReBAC: Relationship-based Access Control
 
 In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, objects (_Subjects_ & _Resources_) are related via _Relationships_.
@@ -148,7 +149,7 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 
 ## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
+The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/src/eacl/core.cljc) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 ### Queries
 
@@ -247,11 +248,11 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
 
 Forward and backward pages return results in the same order for the query. Acyclic lookup uses Datomic eid order; recursive lookup uses deterministic traversal order. Backward pagination returns the previous window; it does not reverse the result order. Bare `:last` without `:before` is not supported for recursive lookup because it requires traversing the full closure.
 
-## Quickstart
+## Datomic Quickstart
 
 The following example is contained in [eacl-example](https://github.com/theronic/eacl-example).
 
-Add the EACL dependency to your `deps.edn` file:
+Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
 {:deps {theronic/eacl {:git/url "git@github.com:theronic/eacl.git" 
@@ -343,6 +344,56 @@ Add the EACL dependency to your `deps.edn` file:
 ;                 :has-next-page? false
 ;                 :has-previous-page? false}}
 ```
+
+## DataScript Quickstart
+
+For server-side or browser demos, use the DataScript adapter:
+
+```clojure
+(ns my-eacl-datascript-demo
+  (:require [datascript.core :as ds]
+            [eacl.core :as eacl]
+            [eacl.datascript.core :as eacl.datascript]))
+
+(def conn (eacl.datascript/create-conn))
+(def acl (eacl.datascript/make-client conn {}))
+
+(ds/transact! conn
+  [{:db/id -1 :eacl/id "user-1"}
+   {:db/id -2 :eacl/id "account-1"}])
+
+(eacl/write-schema! acl
+  "definition user {}
+
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }")
+
+(eacl/create-relationship! acl
+  (eacl/spice-object :user "user-1")
+  :owner
+  (eacl/spice-object :account "account-1"))
+
+(eacl/can? acl
+  (eacl/spice-object :user "user-1")
+  :admin
+  (eacl/spice-object :account "account-1"))
+; => true
+```
+
+Run the shared CLJS contract suite with:
+
+```clojure
+clojure -M:datascript-cljs-test
+```
+
+## Migration Notes
+
+- Existing Datomic `require` forms remain valid: `eacl.datomic.core`, `eacl.datomic.impl`, and `eacl.datomic.schema`.
+- `count-subjects` is now part of the public `IAuthorization` protocol and is implemented by both adapters.
+- `Relation` and `Permission` now live in the backend-neutral schema model, with Datomic compatibility re-exports still available.
+- The repository root is a development workspace now. Consumers should depend on the module they actually need.
 
 ## EACL Schema
 
