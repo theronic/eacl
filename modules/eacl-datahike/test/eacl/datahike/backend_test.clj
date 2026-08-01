@@ -146,3 +146,27 @@
             "the owner path is gone from the schema, so the cached answer must not stand")
         (is (true? (eacl/can? client (eacl/spice-object :user "super-user") :reboot server-1))
             "and the surviving path still resolves")))))
+
+(deftest exhausted-path-frontiers-survive-cursor-coercion
+  (doseq [[label config] modes]
+    (testing label
+      (let [[_ client] (seeded-conn config)
+            query      {:subject (contract/->user "user-1")
+                        :permission :admin
+                        :resource/type :account
+                        :limit 1}
+            page       (eacl/lookup-resources client query)
+            cursor     (datahike/token->cursor (:cursor page))]
+        (is (contains? (set (vals (:p cursor))) :exhausted)
+            "an exhausted path must remain exhausted in the public cursor")
+        (let [calls    (atom 0)
+              original impl/subject->resources]
+          (with-redefs [impl/subject->resources
+                        (fn [& args]
+                          (swap! calls inc)
+                          (apply original args))]
+            (eacl/lookup-resources
+             client
+             (assoc query :cursor (:cursor page))))
+          (is (= 1 @calls)
+              "only the live path is scanned when the page resumes"))))))
