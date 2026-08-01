@@ -38,4 +38,4 @@
 - [x] 7.1 Run focused core, DataScript contract, Datomic contract, cache, pagination, schema, and migration tests through nREPL
 - [x] 7.2 Run the complete non-benchmark workspace test suite through nREPL
 - [x] 7.3 Review the final diff for v8 parity and PR #81 compatibility, then validate the OpenSpec change
-- [ ] 7.4 Commit, push, and open a draft PR into `release/v8.0` referencing issue #82 and PR #81
+- [x] 7.4 Commit, push, and open a draft PR into `release/v8.0` referencing issue #82 and PR #81
