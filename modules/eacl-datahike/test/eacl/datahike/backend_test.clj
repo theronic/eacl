@@ -2,18 +2,12 @@
   "Datahike-specific tests for the paths the shared contract does not reach.
 
    `assert-seeded-contracts!` goes through `make-client`, which serves relation
-   definitions from a prebuilt schema catalog — a full index scan. So the
-   contract suite never exercises the tuple SEEK, which is where datahike's
-   length-first vector ordering bites, nor cache invalidation on a schema
-   change, which is where the numeric attribute representation bites.
+   definitions from a prebuilt schema catalog. So the contract suite never
+   exercises the schema tuple-prefix path or the relation-in-use range directly.
 
-   They fail in OPPOSITE directions, and neither is visible without a test that
-   names it: a mispositioned seek finds no relation definition and DENIES, while
-   a listener that fails to recognise a schema change keeps answering from
-   pre-change permission paths and so GRANTS what the schema has just revoked.
-
-   Every test runs in both attribute representations. The stale-cache failure
-   appears ONLY under :attribute-refs?, where a datom's :a is a number."
+   Every test runs in both attribute representations. Datahike reports `:a` as
+   a keyword by default and as a numeric ref under `:attribute-refs?`, and an
+   adapter that assumes only one representation can silently deny access."
   (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.contract-support :as contract]
@@ -72,7 +66,7 @@
         (is (false? (impl/can? db (user "user-2") :reboot (server "server-1"))))))))
 
 (deftest a-relation-in-use-cannot-be-dropped-from-the-schema
-  ;; The guard counts via the forward-partial seek, so an under-counting seek
+  ;; The guard counts the Datomic-layout forward tuple range. Under-counting
   ;; would let a schema write orphan live relationships.
   (doseq [[label config] modes]
     (testing label
@@ -114,11 +108,9 @@
                }")))))))
 
 (deftest a-schema-change-invalidates-cached-permission-paths
-  ;; Permission paths are cached per conn and evicted by a tx listener that
-  ;; recognises EACL's schema attributes in the tx-data. Under
-  ;; :attribute-refs? a datom's :a is a NUMBER, so a listener comparing :a
-  ;; against a keyword set recognises nothing, and can? keeps answering from the
-  ;; pre-change paths — granting access the new schema does not.
+  ;; A schema write replaces the adapter's derived-schema generation. The
+  ;; authorization result must not reuse permission paths compiled from the
+  ;; previous generation in either attribute representation.
   (doseq [[label config] modes]
     (testing label
       (let [[_ client] (seeded-conn config)

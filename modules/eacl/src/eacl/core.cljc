@@ -60,11 +60,11 @@
 
   (delete-object! [this object])
   ; delete-object! removes every relationship touching `object` in both
-  ; directions, including the halves stored on the peer entities. Datomic's
-  ; :db.fn/retractEntity does NOT do this — v7 relationships name their peer
-  ; inside a tuple value, which retractEntity does not follow — so retracting a
-  ; permissioned entity without calling this first leaves relationship halves
-  ; that keep answering can?/lookup-resources/lookup-subjects.
+  ; directions, including the halves stored on the peer entities. Datomic and
+  ; Datahike retractEntity operations do NOT do this — v7 relationships name
+  ; their peer inside a tuple value, which retractEntity does not follow — so
+  ; retracting a permissioned entity without calling this first leaves
+  ; relationship halves that keep answering authorization queries.
   ; Call it before retracting the entity. It does not retract the entity itself.
 
   (delete-relationship!

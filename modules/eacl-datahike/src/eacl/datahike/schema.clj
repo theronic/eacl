@@ -7,19 +7,10 @@
             [eacl.spicedb.parser :as parser]))
 
 (def forward-relationship-attr
-  :eacl.v7.relationship/subject-type+subject+relation+resource-type+resource)
+  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
 
 (def reverse-relationship-attr
-  :eacl.v7.relationship/resource-type+resource+relation+subject-type+subject)
-
-(def forward-partial-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject)
-
-(def reverse-partial-relationship-attr
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource)
-
-(def relationship-full-key-attr
-  :eacl.relationship/full-key)
+  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (def relation-key-attr
   :eacl.relation/resource-type+relation-name+subject-type)
@@ -29,24 +20,11 @@
 
 (def max-entid Long/MAX_VALUE)
 
-(def schema-change-attrs
-  #{:eacl.relation/resource-type
-    :eacl.relation/relation-name
-    :eacl.relation/subject-type
-    :eacl.relation/resource-type+relation-name+subject-type
-    :eacl.permission/resource-type
-    :eacl.permission/permission-name
-    :eacl.permission/source-relation-name
-    :eacl.permission/target-type
-    :eacl.permission/target-name
-    :eacl.permission/resource-type+permission-name
-    :eacl.permission/full-key
-    :eacl/schema-string})
-
 (def ^:private component-schema
-  "The attributes composite tuples are derived FROM. Datahike's `:write`
-   flexibility needs a declared `:db/valueType` and `:db/cardinality` on every
-   attribute, which DataScript's schema map leaves implicit."
+  "The attributes schema-definition composite tuples are derived FROM.
+   Datahike's `:write` flexibility needs a declared `:db/valueType` and
+   `:db/cardinality` on every attribute, which DataScript's schema map leaves
+   implicit."
   [{:db/ident       :eacl/id
     :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one
@@ -132,32 +110,13 @@
    {:db/ident       :eacl.dependency/mutation-id
     :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.relationship/subject
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.relationship/relation
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.relationship/resource
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.relationship/subject-type
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.relationship/resource-type
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
     :db/index       true}])
 
 (def ^:private tuple-schema
-  "The composite tuples. These ARE the v7 engine: every relationship traversal
-   is a bounded range over one of the four orderings below, so each must be
-   indexed. Deriving them requires datahike >= 0.8.1759 (replikativ/datahike#921)
-   under `:attribute-refs?`; before that fix they were silently never derived,
-   and every permission check denied."
+  "Schema-definition composite tuples plus Datomic-compatible heterogeneous
+   relationship tuples. A relationship is stored as exactly two datoms: its
+   forward tuple on the subject entity and reverse tuple on the resource
+   entity."
   [{:db/ident       :eacl.relation/resource-type+relation-name+subject-type
     :db/valueType   :db.type/tuple
     :db/tupleAttrs  [:eacl.relation/resource-type
@@ -182,50 +141,22 @@
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
 
-   {:db/ident       :eacl.relationship/full-key
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/subject
-                     :eacl.relationship/relation
-                     :eacl.relationship/resource-type
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
    {:db/ident       forward-relationship-attr
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/subject
-                     :eacl.relationship/relation
-                     :eacl.relationship/resource-type
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
+    :db/tupleTypes  [:db.type/keyword
+                     :db.type/ref
+                     :db.type/keyword
+                     :db.type/ref]
+    :db/cardinality :db.cardinality/many
     :db/index       true}
+
    {:db/ident       reverse-relationship-attr
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource-type
-                     :eacl.relationship/resource
-                     :eacl.relationship/relation
-                     :eacl.relationship/subject-type
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       forward-partial-relationship-attr
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/subject-type
-                     :eacl.relationship/relation
-                     :eacl.relationship/resource-type
-                     :eacl.relationship/resource
-                     :eacl.relationship/subject]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       reverse-partial-relationship-attr
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.relationship/resource-type
-                     :eacl.relationship/relation
-                     :eacl.relationship/subject-type
-                     :eacl.relationship/subject
-                     :eacl.relationship/resource]
-    :db/cardinality :db.cardinality/one
+    :db/tupleTypes  [:db.type/keyword
+                     :db.type/ref
+                     :db.type/keyword
+                     :db.type/ref]
+    :db/cardinality :db.cardinality/many
     :db/index       true}])
 
 (def datahike-schema
@@ -304,17 +235,18 @@
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
-  "Counts relationships that reference the given relation, exactly.
-  Scans the forward-partial index whose leading components are
-  [subject-type relation]; a range over the forward index with varying middle
-  components would span other relations of the same subject-type and overcount."
+  "Counts forward relationship tuples that reference the given relation."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   (let [relation-id  (model/->relation-id resource-type relation-name subject-type)
         relation-eid (ddb/entid db [:eacl/id relation-id])]
     (if-not relation-eid
       0
-      (count (ddb/seek-tuple-prefix db forward-partial-relationship-attr 5
-                                    [subject-type relation-eid])))))
+      (count
+       (ddb/avet-range
+        db
+        forward-relationship-attr
+        [subject-type relation-eid resource-type 0]
+        [subject-type relation-eid resource-type max-entid])))))
 
 (defn write-schema!
   "Parses, validates, diffs and transacts a SpiceDB schema string.

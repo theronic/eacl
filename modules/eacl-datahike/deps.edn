@@ -3,8 +3,8 @@
         cloudafrica/eacl {:local/root "../eacl"}
         com.rpl/specter {:mvn/version "1.1.4"}
         ;; 0.8.1759 is the first release carrying replikativ/datahike#921. Below it
-        ;; EVERY relation and permission tuple silently fails to derive under
-        ;; :attribute-refs? — and the tuples ARE the v7 engine, so every check denies.
+        ;; relation and permission composite tuples silently fail to derive under
+        ;; :attribute-refs?, making the authorization schema invisible.
         org.replikativ/datahike {:mvn/version "0.8.1759"}}
  :aliases {:build {:extra-paths ["."]
                    :ns-default build

@@ -926,6 +926,12 @@ API (it scans both relationship indexes):
   @(d/transact conn tx-data))
 ```
 
+Datahike uses the same two endpoint tuple datoms and therefore has the same
+deletion contract. Its offline detector is
+`eacl.datahike.integrity/dangling-relationship-report`; repair a reported
+endpoint through `eacl/delete-object!` with its raw eid so the v3 mutation
+journal and cache dependencies are advanced atomically.
+
 ## Schema Syntax
 
 EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema:
@@ -1032,7 +1038,11 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   follows that protocol. Mixed or hand-written writers must use the default
   `:unknown` authority, where `:proof-mode :auto` selects complete content
   proofs and detects database-visible changes without listener coordination.
-- *Deleting entities:* `:db.fn/retractEntity` does not remove an entity's relationships. Consumers should delete relationships first; `delete-object!` is a convenience helper, and `eacl.datomic.integrity` provides explicit detection/repair — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- *Deleting entities:* Datomic and Datahike entity retraction does not remove
+  peer relationship tuples. Consumers should delete relationships first;
+  `delete-object!` is a convenience helper, and the backend integrity
+  namespaces provide explicit detection — see
+  [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 - *Recursive cursors benefit from their continuation:* a permission that transitively depends on itself
   (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
   hits resume the traversal and avoid `O(N²/page-size)` enumeration. An evicted, expired, rejected,

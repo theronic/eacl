@@ -6,11 +6,10 @@
 
    The suite runs TWICE, once per attribute representation. Datahike reports a
    datom's `:a` as the attribute keyword by default and as a numeric ref under
-   `:attribute-refs? true` (Datomic's representation), and the second mode is
-   the one that fails silently rather than loudly: composite tuples need
-   replikativ/datahike#921 to be derived at all, and any code comparing `:a`
-   against a keyword simply stops matching. Both are permission DENIALS, so a
-   single-mode suite would go green while every check answered false."
+   `:attribute-refs? true` (Datomic's representation). Composite relation and
+   permission tuples need replikativ/datahike#921 to derive in the latter mode,
+   and code comparing `:a` directly against a keyword stops matching. Both
+   failures deny permissions, so both representations remain mandatory."
   (:require [clojure.test :refer [deftest testing]]
             [datahike.api :as d]
             [eacl.cache :as cache]
