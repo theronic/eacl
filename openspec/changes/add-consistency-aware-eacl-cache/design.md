@@ -371,7 +371,7 @@ supplied DB. This keeps tests and non-Datomic adapters decoupled from process-gl
 10. Verify regular behavior through nREPL tests, then run cache-disabled equivalence, randomized
     model, mutation-race, schema-rotation, provider-fault, cursor-expiry, memory-retention, and
     backend contract tests.
-11. Benchmark v7.3 against cold and warm v7.4 paths for `can?`, recursive and non-recursive
+11. Benchmark v7.3 against cold and warm v8.0 paths for `can?`, recursive and non-recursive
     lookups, counts, pagination, relevant writes, and unrelated application transactions. Treat a
     meaningful fast-path regression or retained-memory growth as release-blocking.
 12. Document cache coherence boundaries and staged rollout. Consumers can enable a small local

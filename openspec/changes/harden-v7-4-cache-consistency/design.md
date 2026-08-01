@@ -1,6 +1,6 @@
 ## Context
 
-The v7.4 branch introduces a relationship-aware result cache, an explicit relationship
+The v8.0 branch introduces a relationship-aware result cache, an explicit relationship
 coordinator, consistency descriptors, Zed tokens, and retained recursive continuations. Adversarial
 tests exposed a gap between the coordinator's latest published proof and the database value
 observed by another Datomic connection: the reader can pair a pre-mutation DB with a post-mutation
@@ -127,7 +127,7 @@ cannot enforce that property, and correctness should not depend on third-party o
 
 ### 4. Zed tokens use a domain-separated HMAC envelope
 
-The unsigned `eacl_z1_` format will be replaced before v7.4 release. A v2 token will contain a
+The unsigned `eacl_z1_` format will be replaced before v8.0 release. A v2 token will contain a
 bounded, versioned envelope with a key identifier, a base64url canonical payload, and an
 HMAC-SHA-256 tag. The payload contains exactly the semantic version, database identity, and Long
 basis `t`. The tag covers a fixed EACL Zed-token domain separator, envelope version, key identifier,
@@ -276,7 +276,7 @@ page. The estimate remains an admission heuristic rather than a measured JVM hea
     validating performance.
 
 No Datomic data migration is required. Rollback is code-only; if a rollout must revert before a
-corrected build is available, disable v7.4 result caching and avoid issuing cross-transaction v7.4
+corrected build is available, disable v8.0 result caching and avoid issuing cross-transaction v8.0
 cursors rather than relying on the known-bad paths.
 
 ## Open Questions

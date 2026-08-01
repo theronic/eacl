@@ -48,4 +48,4 @@ None.
 - Keeps RocksDB, Apache Kvrocks, Redis client, and serialization libraries optional and outside the
   core dependency graph.
 - Supersedes the narrower cache design with a single consistency-aware contract suitable for the
-  v7.4 implementation while remaining eligible for a v7.3 patch release.
+  v8.0 implementation while remaining eligible for a v7.3 patch release.

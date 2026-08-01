@@ -1,5 +1,5 @@
 (ns eacl.datomic.schema-basis-test
-  "Pins the v7.4 client-lifecycle schema-cache contract.
+  "Pins the v8.0 client-lifecycle schema-cache contract.
 
   A connection-backed client reads :eacl/schema-version once at construction
   and owns exactly one cache generation. New Datomic db values never trigger a

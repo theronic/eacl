@@ -180,7 +180,7 @@
           (is (= 3 (count (:permissions schema)))))))))
 
 (deftest invalid-schema-does-not-install-cache-stamp-attributes-test
-  ;; ADR 012 says an invalid write makes no changes. The v7.4 compatibility
+  ;; ADR 012 says an invalid write makes no changes. The v8.0 compatibility
   ;; installer used to transact these attributes before parsing or validating
   ;; the proposed schema.
   (let [without-stamps

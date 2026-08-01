@@ -180,7 +180,7 @@
   cache-disabled operation
 - [x] 12.7 Document reverse-ghost detection and the required order of
   `delete-relationships!` followed by entity retraction
-- [x] 12.8 Record release notes as v7.4 behavior while keeping the change eligible for a v7.3 patch
+- [x] 12.8 Record release notes as v8.0 behavior while keeping the change eligible for a v7.3 patch
   release if compatibility and benchmark evidence support it
 
 ## 13. Adversarially verify performance and release value

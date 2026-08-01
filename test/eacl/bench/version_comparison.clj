@@ -178,7 +178,7 @@
                                                  warmup-iterations
                                                  sample-iterations)]))
                            sample-pages)
-             result {:implementation :v7.4
+             result {:implementation :v8.0
                      :cache cache-key
                      :config config
                      :intermediate-resources

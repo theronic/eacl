@@ -1,6 +1,6 @@
 ## Why
 
-The prospective v7.4 cache and consistency implementation can return stale authorization results,
+The prospective v8.0 cache and consistency implementation can return stale authorization results,
 invalidate otherwise valid pagination, leak cache-observability failures into authorization calls,
 and report inaccurate mutation outcomes even though its regular test suite passes. These defects
 must be resolved before release while preserving v7.3's snapshot-stable pagination and keeping
@@ -41,7 +41,7 @@ cache acceleration optional.
 
 - `v7-4-cache-consistency-hardening`: Defines coherent snapshot capture, cache-independent
   pagination, authenticated-token boundaries, provider-failure isolation, and precise mutation
-  behavior required for the v7.4 authorization cache.
+  behavior required for the v8.0 authorization cache.
 
 ### Modified Capabilities
 
@@ -51,7 +51,7 @@ None.
 
 - Affects `eacl.datomic.core`, `eacl.datomic.cache`, `eacl.datomic.consistency`,
   `eacl.datomic.impl.indexed`, their public configuration and error data, and associated tests.
-- Restores pagination behavior compatible with v7.3 while retaining v7.4 cache acceleration.
+- Restores pagination behavior compatible with v7.3 while retaining v8.0 cache acceleration.
 - Adds Zed-token signing-key configuration, key rotation, bounded freshness waits, and frontend
   round-trip security documentation.
 - Uses JCA HMAC-SHA-256 and adds no third-party cryptographic or cache-provider dependency and no

@@ -82,12 +82,9 @@ a connection-backed client's schema or result cache.
 
 Public `eacl4_` cursors are string-safe AES-GCM envelopes. Authentication is required so a caller cannot alter a result boundary, query binding, basis, or per-path frontier. Encryption is not required for pagination correctness, but it prevents internal Datomic eids and basis metadata from leaking through an otherwise merely Base64-encoded token. Token cryptography runs once when a page cursor is encoded or decoded; it is not part of each relationship-index traversal.
 
-The payload uses a compact binary encoding (`eacl.datomic.codec`) rather than EDN. Profiling put
-roughly half of a cached page's wall time in cursor serialisation — and only ~3% of that in the
-cryptography; the rest was Clojure's printer and reader running three to four times per token.
-Cursors are opaque
-and short-lived (5 minutes by default), so the format is not a compatibility surface: `eacl3_`
-tokens minted by an earlier build are rejected as `:eacl.pagination/invalid-cursor`, which every
+The payload uses a compact binary encoding (`eacl.datomic.codec`) rather than EDN. Cursors are
+opaque and short-lived (5 minutes by default), so the format is not a compatibility surface:
+a token EACL does not recognise is rejected as `:eacl.pagination/invalid-cursor`, which every
 caller already handles for expiry.
 
 ## Project Status
@@ -95,7 +92,7 @@ caller already handles for expiry.
 > [!WARNING]
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> The changes on this branch are the [v7.4 candidate](docs/release-notes-v7.4.md) (they may be released as a v7.3 patch because v7.3 is recent). They retain the pagination API, replace per-`db` schema fingerprints with client-lifecycle caches, and add bounded ephemeral authorization caching and consistency tokens. Releases are not tagged yet, so pin the Git SHA.
+> The changes on this branch are the [v8.0 candidate](docs/release-notes-v8.0.md). The major version increments because v8.0 adds a Datomic schema attribute, `:eacl/relation-version`. The pagination API is unchanged, and `write-schema!` installs the new attribute, so there is no migration step from v7. Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## ReBAC: Relationship-based Access Control
@@ -564,12 +561,10 @@ stamp over the relations that answer actually depends on, so it moves for a writ
 the answer and stays put for one that cannot.
 
 Three properties make that sound. The stamp is transacted **with** the relationship datoms, so no
-db value shows one without the other and it does not matter which connection or process wrote them
-— a *process-local* counter would be faster but unsound here, because another app server's write
-leaves it untouched and the cache serves a stale answer. The stamp's value is the transaction
-entity, whose id increases monotonically with `t`, so any new write to a dependency is strictly
-greater and a max can never miss it. And the dependency set is fixed for a schema generation, which
-is already part of every cache key.
+db value can show one without the other, whichever connection or process wrote them. Its value is
+the transaction entity, whose id increases monotonically with `t`, so any new write to a dependency
+is strictly greater and a max can never miss it. And the dependency set is fixed for a schema
+generation, which is already part of every cache key.
 
 Because the value is the transaction rather than a fresh id, the assertion is idempotent: a
 transaction touching a thousand relationships of one relation emits one datom, and callers may
@@ -580,9 +575,8 @@ Relation and permission **definitions** are not covered by stamps; they move onl
 `write-schema!`, which bumps `:eacl/schema-version` — already a cache-key component.
 
 Reading an epoch costs one index seek per relation in the dependency set — typically one to four —
-and is independent of database size. A database without `:eacl/relation-version`, meaning a v7
-database created before stamps existed, retains nothing rather than falling back to `basis-t`
-keying; its next `write-schema!` installs the attribute and caching begins.
+and is independent of database size. A database that predates `:eacl/relation-version` retains no
+answers until its next `write-schema!` installs the attribute, after which caching begins.
 
 Reads pinned to a historical basis — cursors and `at-exact-snapshot` — key on that basis instead,
 and are deliberately not made hot. Stamps are `:db/noHistory`, so `d/as-of` resolves them only
@@ -590,7 +584,7 @@ until the database indexes and collects the superseded values; after that every 
 would read "no stamp" and collide on one key. EACL targets the current database, and a cache per
 point in time is a non-goal.
 
-Cache TTL is clamped to the page-token TTL. Entry admission includes a conservative estimate of
+Entry admission includes a conservative estimate of
 the retained key and result/traversal shape; the weight settings are estimates, not literal JVM
 bytes or a heap guarantee. Oversized entries are rejected rather than allowed to threaten the
 host heap. `:kind-max-weight` and `:two-hit-kinds` keep high-cardinality permission checks from
@@ -677,13 +671,6 @@ Entries do not expire on a timer. A cached answer stops being usable because a r
 on was written, not because time passed, so the only reason to remove one is capacity — which
 `:max-weight` and `:max-entries` handle by evicting the least recently used entry. Set `:ttl-ms` if
 you want an expiry anyway.
-
-Earlier builds of this candidate offered `:live-results? true` plus an explicit `:coordinator`
-shared by every participating reader and writer, along with a read barrier, a mutation barrier and
-a bounded reader catch-up loop. All of it is gone. Per-relation stamps give the same per-relation
-precision without the wiring, and unlike a coordinator they cannot miss a write made outside the
-process. `:cache {:live-results? ...}` and `:cache {:coordinator ...}` now throw
-`:eacl/invalid-config` rather than being silently ignored.
 
 Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
 permission's dependency set do not expire an entry.

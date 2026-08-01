@@ -664,7 +664,7 @@ the second run is reported because the first is JIT-dominated.
 
 `multipath-pagination-benchmark`, 15 000 servers over a 4-arrow-path permission:
 
-| | v7.3 | v7.4 candidate |
+| | v7.3 | v8.0 candidate |
 |---|---|---|
 | First page (`:first 50`) median / p95 | 1.18 / 1.92 ms | 1.21 / 1.90 ms |
 | Forward pagination, early / late / max page | 1.40 / 1.34 / 1.51 ms | 1.29 / 1.26 / 1.51 ms |
@@ -680,7 +680,7 @@ on the second warmed run. The moving-connection figures are the median of 1,000 
 authorization calls, each made immediately after an unrelated transaction; transaction time is
 excluded. The larger schema has 311 relation/permission definition-index rows.
 
-| definition rows | workload | v7.3 | v7.4 candidate | change |
+| definition rows | workload | v7.3 | v8.0 candidate | change |
 |---|---|---:|---:|---:|
 | 11 | hot public `eacl/can?` | 16.66 µs | 9.70 µs | **−42%** |
 | 311 | hot public `eacl/can?` | 16.95 µs | 9.43 µs | **−44%** |

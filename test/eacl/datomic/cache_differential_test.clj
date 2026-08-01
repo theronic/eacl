@@ -1,5 +1,5 @@
 (ns eacl.datomic.cache-differential-test
-  "Differential tests for the v7.4 cache, run THROUGH eacl.datomic.core/make-client.
+  "Differential tests for the v8.0 cache, run THROUGH eacl.datomic.core/make-client.
 
   eacl.datomic.differential-test encodes the same invariants but evaluates raw
   eacl.datomic.impl against a bare db, so it never enters the cache or the

@@ -1,0 +1,55 @@
+{:recorded-at "2026-07-31"
+ :implementation :v8.0
+ :baseline-ref "bc93756"
+ :environment {:os "Darwin arm64"
+               :cpu "Apple M3 Pro"
+               :memory-bytes 19327352832
+               :java "Temurin OpenJDK 24.0.1"
+               :heap "-Xmx8g"}
+ :methodology {:fresh-jvm true
+               :jvm-per-configuration true
+               :debug-logging :warn
+               :seeding-excluded true
+               :warmup-iterations 20
+               :walk-iterations 3
+               :sample-iterations 31
+               :runner "eacl.bench.version-comparison/run-reference!"}
+ :graph {:accounts 300
+         :teams-per-account 4
+         :vpcs-per-account 2
+         :servers-per-account 500
+         :intermediate-resources 2100
+         :terminal-resources 150000
+         :permission-paths 4}
+ :pagination {:page-size 50
+              :page-count 3000
+              :result-count 150000
+              :unique-result-count 150000}
+ :configurations
+ {:off {:cache false
+        :full-walk-samples-ms [39057.113665 38195.851241 38185.776324]
+        :full-walk-median-ms 38195.851241
+        :pages-per-second 78.542562
+        :sample-page-medians-ms {1 20.696667 500 18.441916 1000 16.676750
+                                 2000 10.056500 3000 2.704959}}
+  :default {:cache :enabled-defaults
+            :full-walk-samples-ms [16810.480364 15608.492904 14748.809945]
+            :full-walk-median-ms 15608.492904
+            :pages-per-second 192.203054
+            :sample-page-medians-ms {1 20.839250 500 18.444917 1000 15.701083
+                                     2000 9.656208 3000 2.561000}}
+  :live-results {:cache :live-results
+                 :full-walk-samples-ms [15745.983593 14239.636737 14523.581936]
+                 :full-walk-median-ms 14523.581936
+                 :pages-per-second 206.560614
+                 :sample-page-medians-ms {1 0.047875 500 0.155417 1000 0.158209
+                                          2000 0.150375 3000 0.154542}}}
+ :v6-comparison
+ {:baseline-ref "f8a1a98"
+  :measured-same-session {:full-walk-samples-ms [43830.972837 44717.945394 44392.372450]
+                          :full-walk-median-ms 44392.372450
+                          :pages-per-second 67.579177
+                          :sample-page-medians-ms {1 28.679208 500 23.536583 1000 19.110666
+                                                   2000 9.931834 3000 1.052208}}
+  :recorded-2026-07-28 {:full-walk-median-ms 41041.253639
+                        :pages-per-second 73.097182}}}

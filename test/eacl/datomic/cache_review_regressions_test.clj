@@ -1,7 +1,7 @@
 (ns eacl.datomic.cache-review-regressions-test
-  "One test per finding of the 2026-07-31 v7.4 adversarial review.
+  "One test per finding of the 2026-07-31 v8.0 adversarial review.
 
-  See docs/reports/2026-07-31-eacl-v7.4-cache-adversarial-review.md. The
+  See docs/reports/2026-07-31-eacl-v8.0-cache-adversarial-review.md. The
   critical pagination finding (C1) is covered by
   eacl.datomic.cache-differential-test."
   (:require [clojure.set]

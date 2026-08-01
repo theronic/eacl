@@ -45,9 +45,10 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> The current branch is the [v7.4 cache candidate](release-notes-v7.4.md), which may ship as a
-> v7.3 patch while v7.3 is recent. It adds bounded ephemeral authorization caching, resumable
-> recursive continuations, and explicit consistency tokens without permanent Datomic cache data.
+> The current branch is the [v8.0 cache candidate](release-notes-v8.0.md). It adds bounded
+> ephemeral authorization caching, resumable recursive continuations, and explicit consistency
+> tokens. The major version increments because it adds a Datomic schema attribute,
+> `:eacl/relation-version`; `write-schema!` installs it, so there is no migration step from v7.
 > Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](migration-v6-to-v7.md).
 
