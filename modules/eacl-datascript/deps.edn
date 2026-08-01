@@ -14,8 +14,10 @@
            :cljs-test {:extra-paths ["test" "../eacl/test"]
                        :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}
                        :main-opts ["-m" "cljs.main"
-                                   "-re" "node"
-                                   "-m" "eacl.datascript.cljs-test-runner"]}
+                                   "-t" "node"
+                                   "-O" "none"
+                                   "-o" "target/datascript-cljs-test.js"
+                                   "-c" "eacl.datascript.cljs-test-runner"]}
            :nrepl {:extra-paths ["test" "../eacl/test"]
                    :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}
                    :main-opts ["-m" "nrepl.cmdline"]}}}

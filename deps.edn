@@ -40,8 +40,10 @@
                                                 "modules/eacl-datascript/test"]
                                   :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}
                                   :main-opts ["-m" "cljs.main"
-                                              "-re" "node"
-                                              "-m" "eacl.datascript.cljs-test-runner"]}
+                                              "-t" "node"
+                                              "-O" "none"
+                                              "-o" "target/datascript-cljs-test.js"
+                                              "-c" "eacl.datascript.cljs-test-runner"]}
            :test {:extra-paths ["modules/eacl/test"
                                 "modules/eacl-datomic/test"
                                 "modules/eacl-datascript/test"

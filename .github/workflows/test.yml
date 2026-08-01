@@ -42,7 +42,10 @@ jobs:
         run: clojure -X:test :excludes '[:benchmark]'
 
       - name: Run DataScript ClojureScript tests
-        run: clojure -M:datascript-cljs-test
+        run: |
+          mkdir -p target
+          clojure -M:datascript-cljs-test
+          node target/datascript-cljs-test.js
 
   isolated-modules:
     strategy:
