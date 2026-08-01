@@ -14,9 +14,8 @@
 
 ;; SpiceDB schemas may contain // line comments and /* */ block comments
 ;; anywhere whitespace is legal. Modelled as auto-whitespace per the
-;; instaparse whitespace-or-comments idiom. NOTE: the block-comment regex
-;; uses [\s\S]*? rather than (?s).*? because JavaScript RegExp has no
-;; inline dotall flag (CLJS compatibility).
+;; instaparse whitespace-or-comments idiom. [\s\S] is portable to JavaScript,
+;; whose RegExp does not support Java's inline (?s) dotall flag.
 (def ^:private whitespace-or-comments
   (insta/parser
     "ws-or-comments = ws | comments
@@ -148,7 +147,8 @@
 
 (defn extract-relations
   "Extract relations from definition body.
-   Returns a map where each key is a relation name and value is a vector of type refs."
+   Returns a map where each key is a relation name and value is a vector of type refs.
+   Throws on duplicate relation declarations (multi-type via `|` is a single declaration)."
   [definition-body]
   (if (and (vector? definition-body) (= :definition-body (first definition-body)))
     (->> (rest definition-body)
@@ -194,7 +194,10 @@
 
 (defn extract-definitions
   "Extract definitions from parse tree.
-   Returns map of {type-path {:relations {...}, :permissions [...]}}"
+   Returns map of {type-path {:relations {...}, :permissions [...]}}.
+   Throws on duplicate definition blocks and on a permission sharing a name
+   with a relation on the same definition (SpiceDB rejects both; silently
+   letting the last one win produces destructive write-schema! deltas)."
   [parse-tree]
   (->> parse-tree
     (filter #(and (vector? %) (= :definition (first %))))
@@ -290,7 +293,7 @@
   (let [parsed (parse-schema schema-str)]
     (when-not (insta/failure? parsed)
       ;; extract-definitions returns a map of type-path -> spec; the previous
-      ;; filter over map entries could never match :name.
+      ;; (filter #(= def-name (:name %)) ...) over map entries never matched.
       (let [definitions (extract-definitions (rest parsed))
             target-def  (get definitions def-name)]
         (when target-def
@@ -542,7 +545,10 @@
 
 (defn- transform-arrow-expr
   "Transform an arrow expression to component maps.
-   Returns vector of {:type :identifier/:arrow, ...} maps."
+   Returns vector of {:type :identifier/:arrow, ...} maps.
+   Parenthesized union operands flatten (EACL is union-only, so `(a + b)` == `a + b`);
+   parens as arrow bases/targets are rejected during validation, with a defensive
+   throw here in case transform is called directly."
   [node]
   (cond
     ;; Arrow function expression: rel.any(perm) or rel.all(perm)
@@ -561,7 +567,7 @@
       (if (= 1 (count base-exprs))
         (let [base-expr (first base-exprs)]
           (if-let [inner-permission-expr (base-expr-paren-child base-expr)]
-            ;; Parenthesized union operand: flatten to its components (EACL is union-only).
+            ;; Parenthesized union operand: flatten to its components.
             (vec (transform-union-expr (second inner-permission-expr)))
             ;; Single identifier - direct permission/relation reference
             [{:type :identifier :name (extract-base-expr-identifier base-expr)}]))
@@ -646,9 +652,9 @@
       (if (empty? subject-types)
         (throw (ex-info (str "Unknown relation for arrow base: " base-name " on " resource-type)
                  {:component component :resource-type resource-type}))
-        ;; Resolve the target kind against ALL subject types of the base relation,
-        ;; never just the first/last declared one - otherwise resolution and
-        ;; validation become declaration-order-dependent.
+        ;; The target kind must be resolved against ALL subject types of the base
+        ;; relation, never just the first/last declared one — otherwise resolution
+        ;; and validation become declaration-order-dependent.
         (let [kinds   (set (map (fn [subject-type]
                                   (let [target-info (get schema-info subject-type)]
                                     (cond
@@ -669,8 +675,9 @@
             (= present #{:relation})
             {:arrow (keyword base-name) :relation (keyword path)}
 
-            ;; :permission on all types that have it, or missing everywhere -
-            ;; validate-schema-references produces the per-type missing errors.
+            ;; :permission on all types that have it, or missing everywhere —
+            ;; construct a permission target and let validate-schema-references
+            ;; produce the per-type missing-target errors.
             :else
             {:arrow (keyword base-name) :permission (keyword path)}))))
 
@@ -684,14 +691,13 @@
   "Convert parsed SpiceDB schema to EACL internal representation.
 
    Steps:
-   1. Transform parse tree to intermediate representation
-   2. Validate EACL restrictions (throws on unsupported features)
-   3. Convert to EACL Relations and Permissions
+   1. Reject instaparse failures (a failed parse must never become an empty schema —
+      write-schema! diffs against the existing schema, so an empty result retracts everything)
+   2. Transform parse tree to intermediate representation
+   3. Validate EACL restrictions (throws on unsupported features)
+   4. Convert to EACL Relations and Permissions
 
-   Returns {:definitions [...] :relations [...] :permissions [...]}.
-   Throws :eacl.schema/parse-error on instaparse failure input - a failed parse
-   must never become an empty schema (write-schema! diffs against the existing
-   schema, so an empty result would retract everything)."
+   Returns {:definitions [...] :relations [...] :permissions [...]}"
   [parse-tree]
   (when (insta/failure? parse-tree)
     (let [failure (insta/get-failure parse-tree)]

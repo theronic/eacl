@@ -22,6 +22,30 @@
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-seeded-contracts! client)))
 
+(deftest datascript-delete-object-contract-test
+  (let [conn   (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (eacl/write-schema! client contract/smoke-schema)
+    (seed-objects! conn)
+    (eacl/create-relationships! client contract/smoke-relationships)
+    (eacl/delete-object! client (contract/->user "user-1"))
+
+    (testing "delete-object! removes touching relationships but retains the object"
+      (is (some? (ds/entid (ds/db conn) [:eacl/id "user-1"])))
+      (is (false? (eacl/can? client
+                             (contract/->user "user-1")
+                             :reboot
+                             (contract/->server "server-1"))))
+      (is (= []
+             (:data
+              (eacl/read-relationships client {:subject/id "user-1"})))))
+
+    (testing "unrelated grants remain intact"
+      (is (true? (eacl/can? client
+                            (contract/->user "super-user")
+                            :reboot
+                            (contract/->server "server-1")))))))
+
 (defn- seeded-client
   []
   (let [conn   (datascript/create-conn)

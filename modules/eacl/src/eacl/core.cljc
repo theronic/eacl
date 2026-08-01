@@ -27,20 +27,20 @@
   (read-relationships [this query])
   ; where query is a map with the following keys (defprotocol does not support multiple :namespaced/keys):
   ; {:as            query
-  ;  :keys          [limit cursor]
+  ;  :keys          [first last after before]
   ;  :subject/keys  [type id]
   ;  :resource/keys [type id relation]}
   ;
   ; at least one anchor filter is required: :resource/type, :subject/type,
   ; :resource/relation, :subject/id or :resource/id. Unknown filter keys are
-  ; rejected because a silently dropped filter broadens the result set.
+  ; rejected (a silently dropped filter would broaden the result set).
   ;
   ; :subject/relation and :resource/id-prefix are not supported and throw
   ; :eacl.pagination/unsupported-filter.
 
   (write-relationships! [this updates])
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
-  ; operation is one of #{:create :touch :delete :unspecified} and Relationship has {:keys [subject relation resource]}.
+  ; operation is one of #{:create :touch :delete} and Relationship has {:keys [subject relation resource]}.
   ; Note :touch is like :create but does not throw if a relationship already exists.
 
   (write-relationship!
@@ -58,6 +58,15 @@
   ; construct a seq using ->Relationship.
   (delete-relationships! [this relationships])
 
+  (delete-object! [this object])
+  ; delete-object! removes every relationship touching `object` in both
+  ; directions, including the halves stored on the peer entities. Datomic's
+  ; :db.fn/retractEntity does NOT do this — v7 relationships name their peer
+  ; inside a tuple value, which retractEntity does not follow — so retracting a
+  ; permissioned entity without calling this first leaves relationship halves
+  ; that keep answering can?/lookup-resources/lookup-subjects.
+  ; Call it before retracting the entity. It does not retract the entity itself.
+
   (delete-relationship!
     [this subject relation resource]
     [this {:as relationship :keys [subject relation resource]}])
@@ -68,11 +77,14 @@
   ; - :resource/type – keyword, required.
   ; - :permission - keyword, required.
   ; - :subject has {:keys [type id]}. Required.
-  ; - limit - optional number.
-  ; - offset - optional number.
+  ; - :first with optional :after for forward pagination.
+  ; - :last with optional :before for backward pagination.
+  ; Returns {:data [...] :page-info {:start-cursor ... :end-cursor ...
+  ;                                  :has-next-page? ... :has-previous-page? ...}}.
 
   (count-resources [this {:as query :keys [consistency]}])
-  ; counting can be slow because it enumerates lookup-resources from cursor
+  ; counting can be slow because it enumerates the full lookup-resources result
+  ; set. Pass :count-limit to bound work and receive :truncated? in the result.
 
   (lookup-subjects [this {:as query :keys [consistency]}])
   ; lookup-subjects (formerly 'who-can?') accepts:
@@ -80,10 +92,11 @@
   ; - :permission (keyword) required.
   ; - :subject/type (keyword) required.
   ; - :subject/relation is NOT supported and throws :eacl.pagination/unsupported-filter.
+  ; - :first/:after or :last/:before pagination, as above.
 
   (count-subjects [this {:as query :keys [consistency]}])
-  ; count-subjects mirrors lookup-subjects pagination semantics but only returns
-  ; {:count n :limit limit :cursor cursor}.
+  ; Mirrors count-resources for lookup-subjects. Pass :count-limit to bound
+  ; work and receive :truncated? in the result.
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
 

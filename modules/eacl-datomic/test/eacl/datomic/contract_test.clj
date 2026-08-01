@@ -16,9 +16,9 @@
        contract/smoke-objects)))
 
 (deftest datomic-contract-test
-  (with-mem-conn [conn schema/v6-schema]
-    (let [client (datomic/make-client conn {})]
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (datomic/make-client conn {:page-token-key "datomic-contract-test"})]
       (eacl/write-schema! client contract/smoke-schema)
       (seed-objects! conn)
       (eacl/create-relationships! client contract/smoke-relationships)
-      (contract/assert-seeded-contracts! client))))
+      (contract/assert-v8-seeded-contracts! client))))

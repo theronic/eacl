@@ -19,7 +19,7 @@ Every run returned exactly 150,000 results with no duplicates.
 Reproduce:
 
 ```shell
-clojure -J-Xmx8g -J-Dlogback.configurationFile=logback.xml -M:dev:nrepl
+clojure -J-Xmx8g -M:dev:nrepl
 ```
 ```clojure
 (require 'eacl.bench.version-comparison)

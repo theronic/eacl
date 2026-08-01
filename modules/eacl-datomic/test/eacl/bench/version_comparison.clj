@@ -13,9 +13,7 @@
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [eacl.datomic.fixtures :refer [->user]])
-  (:import [ch.qos.logback.classic Level Logger]
-           [org.slf4j LoggerFactory]))
+            [eacl.datomic.fixtures :refer [->user]]))
 
 (def default-config
   {:num-accounts 300
@@ -45,10 +43,6 @@
         value (f)]
     {:elapsed-ms (/ (double (- (System/nanoTime) started-at)) 1e6)
      :value value}))
-
-(defn- silence-debug-logging!
-  []
-  (.setLevel ^Logger (LoggerFactory/getLogger "eacl.datomic.core") Level/WARN))
 
 (defn- public-query
   [page-size cursor]
@@ -145,7 +139,6 @@
                       walk-iterations
                       sample-iterations]
                :as config}]
-   (silence-debug-logging!)
    (with-mem-conn [conn []]
      (let [total-resources (* num-accounts servers-per-acct)
            seed-config (select-keys config

@@ -2,11 +2,13 @@
 
 DataScript adapter for EACL.
 
-This branch carries the EACL v7.3 behavior into the shared CLJ/CLJS engine,
+This module carries the EACL v7.3 behavior into the v8 shared CLJ/CLJS core,
 including direction-scoped cursor frontiers, exhausted-path pruning, and
 fail-closed schema/query validation. The adapter retains its existing
 `:limit`/`:cursor` API so current browser consumers can upgrade by changing
-only their Git SHA pins.
+only their Git SHA pins. It implements the v8 `delete-object!` protocol method,
+but Datomic-specific basis consistency and authorization caching remain in
+`eacl-datomic`.
 
 Responsibilities:
 

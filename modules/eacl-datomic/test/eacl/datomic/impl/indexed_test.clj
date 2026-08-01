@@ -1,6 +1,6 @@
 (ns eacl.datomic.impl.indexed-test
-  (:require [clojure.test :as t :refer [deftest testing is]]
-            [clojure.tools.logging :as log]
+  (:require [clojure.java.io :as io]
+            [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :as fixtures :refer [->user ->group ->server ->account ->vpc ->nic ->network ->lease ->backup ->backup-schedule]]
@@ -11,7 +11,6 @@
              :refer [Relation Relationship Permission
                      can?
                      read-relationships]]
-    ;[eacl.datomic.impl.datalog :as impl.datalog :refer [lookup-subjects]]
             [eacl.datomic.impl.indexed :as impl.indexed :refer [count-resources lookup-resources lookup-subjects]]))
 
 ; Test grouping & cleanup is in progress.
@@ -27,15 +26,15 @@
 
 ;; Load schema from SpiceDB DSL file
 (def fixtures-schema-string
-  (slurp "test/eacl/fixtures.schema"))
+  (slurp (io/resource "eacl/fixtures.schema")))
 
 (defn eacl-schema-fixture [f]
-  (with-mem-conn [conn schema/v6-schema]
+  (with-mem-conn [conn schema/v7-schema]
     ;; Use write-schema! with SpiceDB DSL instead of direct Relation/Permission fixtures
     (schema/write-schema! conn fixtures-schema-string)
     ;; Transact entity fixtures and relationship fixtures together (tempids reference each other)
     (is @(d/transact conn (concat fixtures/entity-fixtures
-                             (fixtures/relationship-fixtures (d/db conn)))))
+                                  (fixtures/relationship-fixtures (d/db conn)))))
     (is @(d/transact conn (fixtures/txes-additional-account3+server (d/db conn))))
     (binding [*conn* conn]
       (doall (f)))))
@@ -57,15 +56,14 @@
 
       (when created?
         (prn 'transacting 'schema)
-        @(d/transact conn schema/v6-schema)
+        @(d/transact conn schema/v7-schema)
         @(d/transact conn (fixtures/base-fixtures (d/db conn))))
 
       (->> (lookup-resources (d/db conn)
                              {:subject (->vpc :test/vpc1)
                               :permission :view
                               :resource/type :server
-                              :limit 1000
-                              :cursor nil})
+                              :first 1000})
            (:data)))))
 
 (defn paginated-data->spice
@@ -78,17 +76,137 @@
 
 (defn paginated->spice
   "To make tests pass after we moved to eids in internals."
-  [db {:as page :keys [data cursor]}]
+  [db {:as page :keys [data]}]
   (paginated-data->spice db data))
 
 (defn paginated->spice-set
   "To make tests pass after we moved to eids in internals."
-  [db {:as page :keys [data cursor]}]
+  [db {:as page}]
   (set (paginated->spice db page)))
 
-(defn read-relationships-data
-  [db query]
-  (:data (read-relationships db query)))
+(defn page-start-cursor
+  [page]
+  (get-in page [:page-info :start-cursor]))
+
+(defn page-end-cursor
+  [page]
+  (get-in page [:page-info :end-cursor]))
+
+(defn lookup-cursor
+  [db eacl-id]
+  {:kind :lookup-eid
+   :result-eid (d/entid db [:eacl/id eacl-id])})
+
+(def ^:private forward-relationship-attr
+  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
+
+(defn- relationship-eid-pair
+  [{:keys [subject resource]}]
+  [(:id subject) (:id resource)])
+
+(defn- relationship-sort-key
+  [{:keys [subject relation resource]}]
+  [(:type subject) (:id subject) (:type resource) relation (:id resource)])
+
+(def recursive-parent-schema-string
+  "definition user {}
+
+   definition account {
+     relation parent: account
+     relation reader: user
+
+     permission read = reader + parent->read
+   }")
+
+(def recursive-document-schema-string
+  "definition user {}
+
+   definition folder {
+     relation parent: folder
+     relation reader: user
+
+     permission read = reader + parent->read
+   }
+
+   definition document {
+     relation folder: folder
+     relation viewer: user
+
+     permission view = viewer + folder->read
+   }")
+
+(defn- load-recursive-parent-db!
+  [conn]
+  (schema/write-schema! conn recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1"
+                      :eacl/id "user-1"}
+                     {:db/id "root"
+                      :eacl/id "root"}
+                     {:db/id "child"
+                      :eacl/id "child"}
+                     {:db/id "grandchild"
+                      :eacl/id "grandchild"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :account "root") :parent (spice-object :account "child"))
+                      (Relationship (spice-object :account "child") :parent (spice-object :account "grandchild"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :account "root"))]))
+  (d/db conn))
+
+(defn- recursive-user-ref
+  [eacl-id]
+  (spice-object :user [:eacl/id eacl-id]))
+
+(defn- recursive-account-ref
+  [eacl-id]
+  (spice-object :account [:eacl/id eacl-id]))
+
+(defn- load-recursive-document-db!
+  [conn]
+  (schema/write-schema! conn recursive-document-schema-string)
+  @(d/transact conn [{:db/id "user-1"
+                      :eacl/id "user-1"}
+                     {:db/id "root-folder"
+                      :eacl/id "root-folder"}
+                     {:db/id "child-folder"
+                      :eacl/id "child-folder"}
+                     {:db/id "doc-1"
+                      :eacl/id "doc-1"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :folder "root-folder") :parent (spice-object :folder "child-folder"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :folder "root-folder"))
+                      (Relationship (spice-object :folder "child-folder") :folder (spice-object :document "doc-1"))]))
+  (d/db conn))
+
+(defn- load-recursive-out-of-eid-order-db!
+  [conn]
+  (schema/write-schema! conn recursive-parent-schema-string)
+  @(d/transact conn [{:db/id "user-1"
+                      :eacl/id "user-1"}
+                     {:db/id "child"
+                      :eacl/id "child"}
+                     {:db/id "grandchild"
+                      :eacl/id "grandchild"}
+                     {:db/id "root"
+                      :eacl/id "root"}])
+  @(d/transact conn
+               (into []
+                     (mapcat #(impl/tx-relationship (d/db conn) %))
+                     [(Relationship (spice-object :account "root") :parent (spice-object :account "child"))
+                      (Relationship (spice-object :account "child") :parent (spice-object :account "grandchild"))
+                      (Relationship (spice-object :user "user-1") :reader (spice-object :account "root"))]))
+  (d/db conn))
+
+(defn- thrown-ex-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo e
+      (ex-data e))))
 
 (deftest permission-helper-tests
   (testing "Permission helper with new unified API"
@@ -123,9 +241,7 @@
     (testing "we can count resources (materializes full index)"
       (is (= 3 (:count (count-resources db {:subject (->user super-user-eid)
                                             :permission :view
-                                            :resource/type :server
-                                            :limit 1000
-                                            :cursor nil})))))
+                                            :resource/type :server})))))
 
     (testing ":test/user1 can :view, :reboot or :share server1"
       (is (can? db (->user :test/user1) :view (->server :test/server1)))
@@ -200,8 +316,8 @@
 
       (testing "Adding :test/user2 as a :viewer of a backup schedule, lets them view related backups:"
         (let [rx (d/with db
-                   (impl/tx-relationship db
-                     (Relationship (->user :test/user2) :viewer (->backup-schedule :test/backup-schedule1))))]
+                         (impl/tx-relationship db
+                                               (Relationship (->user :test/user2) :viewer (->backup-schedule :test/backup-schedule1))))]
           (is (can? (:db-after rx) (->user :test/user2) :view (->backup-schedule :test/backup-schedule1)))
           (is (can? (:db-after rx) (->user :test/user2) :view (->backup :test/backup1)))))
 
@@ -213,8 +329,7 @@
                                       {:subject (->vpc vpc-eid)
                                        :permission :view
                                        :resource/type :server
-                                       :limit 1000
-                                       :cursor nil})
+                                       :first 1000})
                     (paginated->spice db))))))))
 
 (deftest read-relationships-tests
@@ -242,40 +357,49 @@
     (testing "read-relationships filters"
       ;(is (= [] (read-relationships db {})))
       ; need better tests here.
-      (is (= #{:server} (set (map (comp :type :resource) (read-relationships-data db {:resource/type :server})))))
-      (is (= #{:owner} (set (map :relation (read-relationships-data db {:resource/relation :owner})))))
-      (is (= #{:account} (set (map :relation (read-relationships-data db {:resource/type :server
-                                                                          :resource/relation :account}))))))))
+      (is (= #{:server} (set (map (comp :type :resource)
+                                  (:data (read-relationships db {:resource/type :server}))))))
+      (is (= #{:owner} (set (map :relation
+                                 (:data (read-relationships db {:resource/relation :owner}))))))
+      (is (= #{:account} (set (map :relation
+                                   (:data (read-relationships db {:resource/type :server
+                                                                  :resource/relation :account})))))))
 
-(deftest read-relationships-default-limit-test
-  (let [db         (d/db *conn*)
-        bulk-ids   (mapv #(str "bulk-user-" %) (range 1005))
-        tx-data    (concat
-                    (map (fn [id]
-                           {:db/id id
-                            :eacl/id id})
-                         bulk-ids)
-                    (mapcat (fn [id]
-                              (impl/tx-relationship db
-                                (Relationship (->user id) :owner (->account :test/account1))
-                                {:allow-tempids? true}))
-                            bulk-ids))
-        db'        (:db-after (d/with db tx-data))
-        {page-1 :data cursor :cursor}
-        (read-relationships db' {:resource/type     :account
-                                 :resource/id       :test/account1
-                                 :resource/relation :owner
-                                 :subject/type      :user})
-        {page-2 :data}
-        (read-relationships db' {:resource/type     :account
-                                 :resource/id       :test/account1
-                                 :resource/relation :owner
-                                 :subject/type      :user
-                                 :cursor            cursor})]
-    (is (= 1000 (count page-1)))
-    (is (= 6 (count page-2)))
-    (is (= 3 (:v cursor)))
-    (is (number? (:subject cursor)))))
+    (testing "read-relationships returns storage order instead of sorting decoded relationships"
+      (is @(d/transact *conn*
+                       (concat
+                        (impl/tx-relationship db
+                                              (Relationship (->user :test/user1)
+                                                            :owner
+                                                            (->account :test/account2)))
+                        (impl/tx-relationship db
+                                              (Relationship (->user :test/user2)
+                                                            :owner
+                                                            (->account :test/account1))))))
+      (let [db' (d/db *conn*)
+            attr-eid (d/entid db' forward-relationship-attr)
+            relation-eids (set (d/q '[:find [?relation ...]
+                                       :in $ ?relation-name ?subject-type
+                                       :where
+                                       [?relation :eacl.relation/relation-name ?relation-name]
+                                       [?relation :eacl.relation/subject-type ?subject-type]]
+                                     db' :owner :user))
+            page (read-relationships db' {:subject/type :user
+                                          :resource/relation :owner
+                                          :first 20})
+            expected-storage-order (->> (d/seek-datoms db' :avet attr-eid [:user])
+                                        (take-while #(= :user (first (:v %))))
+                                        (filter #(contains? relation-eids (nth (:v %) 1)))
+                                        (map (fn [datom]
+                                               [(:e datom) (nth (:v datom) 3)]))
+                                        vec)
+            actual-order (mapv relationship-eid-pair (:data page))
+            synthetic-sorted-order (->> (:data page)
+                                        (sort-by relationship-sort-key)
+                                        (mapv relationship-eid-pair))]
+        (is (= expected-storage-order actual-order))
+        (is (not= synthetic-sorted-order actual-order))
+        (is (= :global-forward (get-in page [:page-info :start-cursor :scan])))))))
 
 (deftest lookup-subjects-tests
   (let [db (d/db *conn*)]
@@ -304,7 +428,6 @@
                     (paginated->spice-set db))))))))
 
 (deftest eacl3-tests
-
   (let [db (d/db *conn*)
         super-user-eid (d/entid db :user/super-user)
         user1-eid (d/entid db :test/user1)
@@ -313,21 +436,19 @@
     (testing "lookup-resources: super-user can view all servers"
       ; note: the return order of `lookup-resources` depends on the tuple index, or any sort operation.
       ; currently we sort, which is super slow. this needs to revert to the tuple-index order.
-      (let [{:as page1
-             page1-data :data
-             page1-cursor :cursor} (lookup-resources db {:subject (->user super-user-eid)
-                                                         :permission :view
-                                                         :resource/type :server
-                                                         :limit 1000
-                                                         :cursor nil})
+      (let [page1 (lookup-resources db {:subject (->user super-user-eid)
+                                        :permission :view
+                                        :resource/type :server
+                                        :first 1000})
+            page1-end-cursor (page-end-cursor page1)
             resources (paginated->spice db page1)]
         (is (= [(spice-object :server "account1-server1")
                 (spice-object :server "account1-server2")
                 (spice-object :server "account2-server1")]
                resources))
-        (testing "cursor should be the last resource"
-          (is page1-cursor)
-          (let [last-resource-ent (d/entity db (:e page1-cursor))
+        (testing "end cursor should be the last resource"
+          (is page1-end-cursor)
+          (let [last-resource-ent (d/entity db (:result-eid page1-end-cursor))
                 last-resource-internal (spice-object :server (:eacl/id last-resource-ent))]
             (is (= (spice-object :server "account2-server1") last-resource-internal))))))
 
@@ -337,8 +458,7 @@
              (->> (lookup-resources db {:subject (->user super-user-eid)
                                         :permission :view_via_arrow_relation
                                         :resource/type :account
-                                        :limit 1000
-                                        :cursor nil})
+                                        :first 1000})
                   (paginated->spice db)
                   (set))))
 
@@ -349,8 +469,7 @@
              (->> (lookup-resources db {:subject (->user super-user-eid)
                                         :permission :view_server_via_arrow_relation
                                         :resource/type :server
-                                        :limit 1000
-                                        :cursor nil})
+                                        :first 1000})
                   (paginated->spice db)
                   (set)))))
 
@@ -362,7 +481,7 @@
                                         :permission :view
                                         :resource/type :server})
                   (:data)
-                  (map (fn [{:as obj :keys [type id]}] (spice-object type (:eacl/id (d/entity db id)))))
+                  (map (fn [{:keys [type id]}] (spice-object type (:eacl/id (d/entity db id)))))
                   (set))))
 
       (testing "count-resources returns 3 as above"
@@ -374,7 +493,6 @@
         (is (= [(->server "account1-server1")
                 (->server "account1-server2")
                 (->server "account3-server3.1")]
-              ; todo cursor
                (->> (lookup-resources db {:subject (->user user1-eid)
                                           :permission :reboot
                                           :resource/type :server})
@@ -404,8 +522,8 @@
 
     (testing "Make user-1 a shared_admin of server-2"
       (is @(d/transact *conn*
-             (impl/tx-relationship (d/db *conn*)
-               (Relationship (->user :test/user1) :shared_admin (->server :test/server2)))))) ; this shouldn't be working. no schema for it.
+                       (impl/tx-relationship (d/db *conn*)
+                                             (Relationship (->user :test/user1) :shared_admin (->server :test/server2)))))) ; this shouldn't be working. no schema for it.
 
     (let [db (d/db *conn*)]
       (testing "As a :shared_admin, :test/user1 can also :server/delete server 2"
@@ -417,8 +535,7 @@
                  (spice-object :server "account3-server3.1")}
                (->> (lookup-resources db {:subject (->user user1-eid)
                                           :permission :view
-                                          :resource/type :server
-                                          :cursor nil})
+                                          :resource/type :server})
                     (paginated->spice-set db))))
 
         (is (= #{(->user "super-user")
@@ -427,69 +544,69 @@
                (->> (lookup-subjects db {:resource (->server (d/entid db [:eacl/id "account2-server1"])) ; todo fix
                                          :permission :delete
                                          :subject/type :user})
-                    (paginated->spice-set db))))))
+                    (paginated->spice-set db)))))
 
-    (testing "Now let's delete all :server/owner Relationships for :test/user2"
-      (let [db-for-delete (d/db *conn*)
-            rels (:data (impl/read-relationships db-for-delete {:subject/id :test/user2
-                                                                :resource/relation :owner}))
-            txes (mapcat #(impl/tx-update-relationship db-for-delete
-                             {:operation :delete
-                              :relationship %})
-                         rels)]
-        (is @(d/transact *conn* txes))))
+      (testing "Now let's delete all :server/owner Relationships for :test/user2"
+        (let [db-for-delete (d/db *conn*)
+              rels (:data (impl/read-relationships db-for-delete {:subject/id :test/user2
+                                                                  :resource/relation :owner}))
+              txes (mapcat #(impl/tx-update-relationship db-for-delete
+                                                         {:operation :delete
+                                                          :relationship %})
+                           rels)]
+          (is @(d/transact *conn* txes))))
 
-    (testing "Now only user-1 can :view all 3 servers, including those in account2."
-      (let [db' (d/db *conn*)]
-        (is (= [(spice-object :user "user-1")
-                (spice-object :user "super-user")]
-               (->> (lookup-subjects db' {:resource (->server (d/entid db' [:eacl/id "account2-server1"]))
-                                          :permission :view
-                                          :subject/type :user})
-                    (paginated->spice db'))))
+      (testing "Now only user-1 can :view all 3 servers, including those in account2."
+        (let [db' (d/db *conn*)]
+          (is (= [(spice-object :user "user-1")
+                  (spice-object :user "super-user")]
+                 (->> (lookup-subjects db' {:resource (->server (d/entid db' [:eacl/id "account2-server1"]))
+                                            :permission :view
+                                            :subject/type :user})
+                      (paginated->spice db'))))
 
-        (is (can? db' (->user (d/entid db' [:eacl/id "user-1"])) :view (->server [:eacl/id "account2-server1"])))
-        (is (can? db' (->user (d/entid db' [:eacl/id "super-user"])) :view (->server [:eacl/id "account2-server1"])))
-        (is (not (can? db' (->user (d/entid db' [:eacl/id "user-2"])) :view (->server [:eacl/id "account2-server1"]))))
+          (is (can? db' (->user (d/entid db' [:eacl/id "user-1"])) :view (->server [:eacl/id "account2-server1"])))
+          (is (can? db' (->user (d/entid db' [:eacl/id "super-user"])) :view (->server [:eacl/id "account2-server1"])))
+          (is (not (can? db' (->user (d/entid db' [:eacl/id "user2"])) :view (->server [:eacl/id "account2-server1"]))))
 
-        (testing ":test/user2 cannot access any servers" ; is this correct?
-          (is (= #{} (->> (lookup-resources db' {:resource/type :server
-                                                 :permission :view
-                                                 :subject (->user [:eacl/id "user-2"])})
-                          (:data)
-                          (set))))
-          (testing "count-resources also zero"
-            (is (zero? (:count (count-resources db' {:resource/type :server
-                                                     :permission :view
-                                                     :subject (->user [:eacl/id "user-2"])}))))))
+          (testing ":test/user2 cannot access any servers" ; is this correct?
+            (is (= #{} (->> (lookup-resources db' {:resource/type :server
+                                                   :permission :view
+                                                   :subject (->user [:eacl/id "user-2"])})
+                            (:data)
+                            (set))))
+            (testing "count-resources also zero"
+              (is (zero? (:count (count-resources db' {:resource/type :server
+                                                       :permission :view
+                                                       :subject (->user [:eacl/id "user-2"])}))))))
 
-        (is (false? (can? db' (->user :test/user2) :delete (->server :test/server2))))
+          (is (false? (can? db' (->user :test/user2) :delete (->server :test/server2))))
 
-        (testing ":test/user1 permissions remain unchanged"
-          (is (= #{(spice-object :server "account1-server1")
-                   (spice-object :server "account1-server2")
-                   (spice-object :server "account2-server1")
-                   (spice-object :server "account3-server3.1")}
-                 (->> (lookup-resources db' {:resource/type :server
-                                             :permission :reboot
-                                             :subject (->user user1-eid)})
-                      (paginated->spice-set db))))
-
-          (testing "super-user can still view all servers"
+          (testing ":test/user1 permissions remain unchanged"
             (is (= #{(spice-object :server "account1-server1")
                      (spice-object :server "account1-server2")
-                     (spice-object :server "account2-server1")}
+                     (spice-object :server "account2-server1")
+                     (spice-object :server "account3-server3.1")}
                    (->> (lookup-resources db' {:resource/type :server
                                                :permission :reboot
-                                               :subject (->user super-user-eid)})
-                        (paginated->spice-set db)))))
+                                               :subject (->user user1-eid)})
+                        (paginated->spice-set db))))
 
-          (is (= #{(spice-object :account "account-1")
-                   (spice-object :account "account-3")}
-                 (->> (lookup-resources db' {:resource/type :account
-                                             :permission :view
-                                             :subject (->user user1-eid)})
-                      (paginated->spice-set db)))))))))
+            (testing "super-user can still view all servers"
+              (is (= #{(spice-object :server "account1-server1")
+                       (spice-object :server "account1-server2")
+                       (spice-object :server "account2-server1")}
+                     (->> (lookup-resources db' {:resource/type :server
+                                                 :permission :reboot
+                                                 :subject (->user super-user-eid)})
+                          (paginated->spice-set db)))))
+
+            (is (= #{(spice-object :account "account-1")
+                     (spice-object :account "account-3")}
+                   (->> (lookup-resources db' {:resource/type :account
+                                               :permission :view
+                                               :subject (->user user1-eid)})
+                        (paginated->spice-set db))))))))))
 
 (deftest lookup-resources-tests
   (let [db (d/db *conn*)
@@ -517,16 +634,16 @@
                                      :permission :via_self_admin
                                      :resource/type :server}))))
 
-    (testing "pagination: limit & offset are handled correctly for arrow permissions"
+    (testing "pagination: :first/:after and :last/:before are handled correctly for arrow permissions"
       (testing "add a 3rd server. make super-user a direct shared_admin of server1 and server 3 to try and trip up pagination"
         (is @(d/transact *conn* [{:db/id "server3"
                                   :db/ident :test/server3
                                   :eacl/id "server-3"}
                                  (first (impl/tx-relationship (d/db *conn*)
-                                          (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
+                                                              (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
                                  (second (impl/tx-relationship (d/db *conn*)
                                            (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
-                                 ; We can use tempids in Relationship because tuple tx-data keeps the tempid.
+                                 ; Tempids in Relationship require explicit opt-in now (audit §12).
                                  (first (impl/tx-relationship (d/db *conn*)
                                           (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
                                           {:allow-tempids? true}))
@@ -541,17 +658,15 @@
                   (spice-object :server "account3-server3.1")]
                  (->> (lookup-resources db' {:subject (->user :test/user1)
                                              :permission :view
-                                             :resource/type :server
-                                             :cursor nil})
+                                             :resource/type :server})
                       (paginated->spice db')))))
 
-        (testing "enumerate super-user servers with limit: 10 & nil cursor should return all 4 servers"
+        (testing "enumerate super-user servers with :first 10 should return all 4 servers"
           (is (= [(spice-object :server "account1-server1")
                   (spice-object :server "account1-server2")
                   (spice-object :server "account2-server1")
                   (spice-object :server "server-3")]
-                 (->> (lookup-resources db' {:limit 10
-                                             :cursor nil ; no cursor should return all 4 servers
+                 (->> (lookup-resources db' {:first 10
                                              :resource/type :server
                                              :permission :view
                                              :subject (->user super-user-eid)})
@@ -561,314 +676,356 @@
             (is (= 4 (:count (count-resources db' {:resource/type :server
                                                    :permission :view
                                                    :subject (->user super-user-eid)}))))))
-        (testing "limit: 10 with cursor set to 1st result should exclude the first result"
-          ; test failing because return order is oriented towards how it's stored in index
+
+        (testing ":after the first result should exclude the first result"
           (is (= [(spice-object :server "account1-server2") ; (spice-object :server "account1-server1") is excludced.
                   (spice-object :server "account2-server1")
                   (spice-object :server "server-3")]
-                ; cursor seems weird here. shouldn't it be exclusive?
-                 (->> (lookup-resources db' {:limit 10
-                                             :cursor {:resource {:type :account
-                                                                 :id (d/entid db' [:eacl/id "account1-server1"])}}
+                 (->> (lookup-resources db' {:first 10
+                                             :after (lookup-cursor db' "account1-server1")
                                              :resource/type :server
                                              :permission :view
                                              :subject (->user super-user-eid)})
                       (paginated->spice db')))))
 
-        ; Note that return order of Spice resources is not defined, because we do not sort during lookup.
-        ; We assume order will be: [server-1, server-3, server-2].
-        (testing "limit 1 with cursor set to 2nd result should skip first two and return only 3rd result"
+        (testing ":first 1 after the second result should skip the first two and return only the third result"
           (is (= [(spice-object :server "account2-server1")]
-                ;(spice-object :server "server-3")] excluded because of limit.
-                 (->> (lookup-resources db' {:cursor {:resource {:type :server
-                                                                 :id (d/entid db' [:eacl/id "account1-server2"])}}
-                                             :limit 1
+                 (->> (lookup-resources db' {:after (lookup-cursor db' "account1-server2")
+                                             :first 1
                                              :resource/type :server
                                              :permission :view
                                              :subject (->user super-user-eid)})
                       (paginated->spice db)))))
 
-        (testing "limit 1, 3rd cursor offset should return 2nd result, server-3"
+        (testing ":first 1 after the third result should return the fourth result"
           (is (= [(spice-object :server "server-3")]
-                 (->> (lookup-resources db' {:cursor {:resource {:type :server
-                                                                 :id (d/entid db' [:eacl/id "account2-server1"])}}
-                                             :limit 1
+                 (->> (lookup-resources db' {:after (lookup-cursor db' "account2-server1")
+                                             :first 1
                                              :resource/type :server
                                              :permission :view
                                              :subject (->user super-user-eid)})
                       (paginated->spice db')))))
 
-        (testing "limit: 10, cursor at 3rd result only the 4th result"
+        (testing ":first 10 after the third result returns only the fourth result"
           (is (= [(spice-object :server "server-3")]
-                 (->> (lookup-resources db' {:cursor {:resource {:type :server
-                                                                 :id (d/entid db' [:eacl/id "account2-server1"])}}
-                                             :limit 10
+                 (->> (lookup-resources db' {:after (lookup-cursor db' "account2-server1")
+                                             :first 10
                                              :resource/type :server
                                              :permission :view
                                              :subject (->user super-user-eid)})
                       (paginated->spice db')))))
 
-        (testing "offset: last cursor, limit: 10 should be empty"
-          (is (empty? (->> (lookup-resources db' {:limit 10
-                                                  :cursor {:resource {:type :server
-                                                                      :id (d/entid db' [:eacl/id "server-3"])}}
+        (testing ":after the last cursor should be empty"
+          (let [empty-page (lookup-resources db' {:first 10
+                                                  :after (lookup-cursor db' "server-3")
+                                                  :resource/type :server
+                                                  :permission :view
+                                                  :subject (->user super-user-eid)})]
+            (is (empty? (paginated->spice db' empty-page)))
+            (is (nil? (page-start-cursor empty-page)))
+            (is (nil? (page-end-cursor empty-page)))
+            ;; A page with no items carries no cursors, so it can advertise
+            ;; neither direction: has-*-page? true alongside a nil cursor gave
+            ;; clients a loop with no exit (and :after nil silently restarted
+            ;; at page 1). Both flags are clamped to false on an empty page.
+            (is (false? (get-in empty-page [:page-info :has-next-page?])))
+            (is (false? (get-in empty-page [:page-info :has-previous-page?])))))
+
+        (testing "forward pages compose with :after end-cursor"
+          (let [both-pages (lookup-resources db' {:first 5
                                                   :resource/type :server
                                                   :permission :view
                                                   :subject (->user super-user-eid)})
-                           (paginated->spice db'))))))
-
-      (let [db' (d/db *conn*)]
-        (testing "ask for 5 results (there are only 4), and ensure page1 & page2 are subsequences with matching cursor"
-          (let [both-pages (lookup-resources db' {:limit 5
-                                                  :cursor nil ; :cursor nil = first page.
-                                                  :resource/type :server
-                                                  :permission :view
-                                                  :subject (->user super-user-eid)})
-
                 both-pages-resolved (paginated-data->spice db' (:data both-pages))
-                [page1-expected
-                 page2-expected
-                 page3-expected] (partition-all 2 both-pages-resolved)
+                [page1-expected page2-expected page3-expected] (partition-all 2 both-pages-resolved)
+                page1 (lookup-resources db' {:first 2
+                                             :resource/type :server
+                                             :permission :view
+                                             :subject (->user super-user-eid)})
+                page2 (lookup-resources db' {:first 2
+                                             :after (page-end-cursor page1)
+                                             :resource/type :server
+                                             :permission :view
+                                             :subject (->user super-user-eid)})
+                page3-empty (lookup-resources db' {:first 2
+                                                   :after (page-end-cursor page2)
+                                                   :resource/type :server
+                                                   :permission :view
+                                                   :subject (->user super-user-eid)})]
+            (is (page-start-cursor page1))
+            (is (page-end-cursor page1))
+            (is (page-start-cursor page2))
+            (is (page-end-cursor page2))
+            (is (= [(spice-object :server "account1-server1")
+                    (spice-object :server "account1-server2")
+                    (spice-object :server "account2-server1")
+                    (spice-object :server "server-3")]
+                   both-pages-resolved))
+            (is (= page1-expected (paginated-data->spice db' (:data page1))))
+            (is (= page2-expected (paginated-data->spice db' (:data page2))))
+            (is (nil? page3-expected))
+            (is (empty? (paginated-data->spice db' (:data page3-empty))))
+            (is (true? (get-in page1 [:page-info :has-next-page?])))
+            (is (false? (get-in page1 [:page-info :has-previous-page?])))
+            (is (false? (get-in page2 [:page-info :has-next-page?])))
+            (is (true? (get-in page2 [:page-info :has-previous-page?])))))
 
-                {:as page1
-                 page1-data :data
-                 page1-cursor :cursor} (lookup-resources db' {:limit 2
-                                                              :cursor nil ; no cursor should the first page.
-                                                              :resource/type :server
-                                                              :permission :view
-                                                              :subject (->user super-user-eid)})
-                ;_                   (prn 'page1 'cursor (:cursor page1))
-                {:as page2
-                 page2-data :data
-                 page2-cursor :cursor} (lookup-resources db' {:limit 2
-                                                              :cursor (:cursor page1)
-                                                              :resource/type :server
-                                                              :permission :view
-                                                              :subject (->user super-user-eid)})
-                {:as page3-empty
-                 page3-data :data
-                 page3-cursor :cursor} (->> (lookup-resources db' {:limit 2
-                                                                   :cursor (:cursor page2)
-                                                                   :resource/type :server
-                                                                   :permission :view
-                                                                   :subject (->user super-user-eid)}))]
-
-            ;_                   (prn 'page2 'cursor (:cursor page2))]
-
-            (testing "page1 cursor points to next page"
-              (is page1-cursor)
-              (is (:e page1-cursor)))
-
-            (testing "page2 cursor points to next page"
-              (is page2-cursor)
-              (is (:e page2-cursor)))
-
-            (testing "page3 cursor matches page 2 because we exhausted results on page 2"
-              ; TODO: figure out what this should return. The previous cursor?
-              ; we probably need a flag for empty, but empty :data implies that.
-              (is (= page2-cursor page3-cursor)))
-
-            (testing "limit 5 should include all 4 results, in sorted order" ; (depends on tuple index or costly sort)
-              (is (= [(spice-object :server "account1-server1")
-                      (spice-object :server "account1-server2")
-                      (spice-object :server "account2-server1")
-                      (spice-object :server "server-3")]
-                     (paginated-data->spice db' (:data both-pages)))))
-
-            (testing "page1 with 1-2 of 4 should match the first 2 results"
-              (is (= page1-expected (paginated-data->spice db' page1-data))))
-
-            (testing "page2 with 3-4 of 4 should match the second two results"
-              (is (= page2-expected (paginated-data->spice db' page2-data))))
-
-            (testing "page3 with 5-6 of 4 should be empty (results exhausted)"
-              (is (nil? page3-expected))
-              (is (empty? (paginated-data->spice db' page3-data))))
-
-            (testing "repeating page2 query with limit: 1 should return only the first result on that page"
-              (is (= (take 1 page2-expected)
-                     (->> (lookup-resources db' {:limit 1
-                                                 :cursor page1-cursor
+        (testing "backward pages compose with :before start-cursor"
+          (let [last-page (lookup-resources db' {:last 2
                                                  :resource/type :server
                                                  :permission :view
                                                  :subject (->user super-user-eid)})
-                          (paginated->spice db')))))
+                previous-page (lookup-resources db' {:last 2
+                                                     :before (page-start-cursor last-page)
+                                                     :resource/type :server
+                                                     :permission :view
+                                                     :subject (->user super-user-eid)})]
+            (is (= [(spice-object :server "account2-server1")
+                    (spice-object :server "server-3")]
+                   (paginated->spice db' last-page)))
+            (is (= [(spice-object :server "account1-server1")
+                    (spice-object :server "account1-server2")]
+                   (paginated->spice db' previous-page)))
+            (is (false? (get-in last-page [:page-info :has-next-page?])))
+            (is (true? (get-in last-page [:page-info :has-previous-page?])))
+            (is (true? (get-in previous-page [:page-info :has-next-page?])))
+            (is (false? (get-in previous-page [:page-info :has-previous-page?])))))
 
-            (testing "repeat page2 query with limit: 10 should return remainder"
-              (is (= (drop 2 both-pages-resolved)
-                     (->> (lookup-resources db' {:limit 10
-                                                 :cursor page1-cursor
-                                                 :resource/type :server
+        (testing "count-resources should return the full count independent of list page boundaries"
+          (is (= 4 (:count (count-resources db' {:resource/type :server
                                                  :permission :view
-                                                 :subject (->user super-user-eid)})
-                          (paginated->spice db')))))
+                                                 :subject (->user super-user-eid)})))))
 
-            (testing "lookup-resources returns cursor input when looking beyond any values"
-              (let [page3-empty (lookup-resources db' {:limit 100
-                                                       :cursor page2-cursor
-                                                       :resource/type :server
-                                                       :permission :view
-                                                       :subject (->user super-user-eid)})]
-                (is (empty? (:data page3-empty)))
-                (is (= page2-cursor (:cursor page3-empty)))))
-
-            (testing "count-resources should return count of all result"
-              (is (= 4 (:count (count-resources db' {:resource/type :server
-                                                     :permission :view
-                                                     :subject (->user super-user-eid)})))))
-
-            (testing "count-resources is also cursor-sensitive"
-              (is (= 2 (:count (count-resources db' {:resource/type :server
-                                                     :permission :view
-                                                     :cursor page1-cursor
-                                                     :subject (->user super-user-eid)}))))
-
-              (is (zero? (:count (count-resources db' {:resource/type :server
-                                                       :permission :view
-                                                       :subject (->user super-user-eid)
-                                                       :cursor page2-cursor}))))))
-
-          (testing "now test pagination for :view permission on :account for  account->super_admin with {:arrow :account :relation :super_admin}"
-            (let [both-pages (lookup-resources db' {:limit 3
-                                                    :cursor nil ; :cursor nil = first page.
+        (testing "account pagination supports forward and backward traversal"
+          (let [all-accounts (lookup-resources db' {:first 3
                                                     :resource/type :account
                                                     :permission :view
                                                     :subject (->user super-user-eid)})
+                page1 (lookup-resources db' {:first 1
+                                             :resource/type :account
+                                             :permission :view
+                                             :subject (->user super-user-eid)})
+                page2 (lookup-resources db' {:first 1
+                                             :after (page-end-cursor page1)
+                                             :resource/type :account
+                                             :permission :view
+                                             :subject (->user super-user-eid)})
+                previous-page (lookup-resources db' {:last 1
+                                                     :before (page-start-cursor page2)
+                                                     :resource/type :account
+                                                     :permission :view
+                                                     :subject (->user super-user-eid)})]
+            (is (= [(spice-object :account "account-1")
+                    (spice-object :account "account-2")]
+                   (paginated->spice db' all-accounts)))
+            (is (= [(spice-object :account "account-1")]
+                   (paginated->spice db' page1)))
+            (is (= [(spice-object :account "account-2")]
+                   (paginated->spice db' page2)))
+            (is (= [(spice-object :account "account-1")]
+                   (paginated->spice db' previous-page)))
 
-                  both-pages-resolved (paginated-data->spice db' (:data both-pages))
-                  [page1-expected page2-expected] (partition-all 1 both-pages-resolved)
-                  page3-expected [] ; empty.
+            (testing "cursor-tree state is versioned, stable per path, and scoped to its scan direction"
+              (let [forward-edge (page-end-cursor page1)
+                    next-forward-edge (page-end-cursor page2)
+                    reverse-edge (page-start-cursor previous-page)]
+                (is (= 1 (:frontier-version forward-edge)))
+                (is (= :asc (:frontier-direction forward-edge)))
+                (is (seq (:path-frontiers forward-edge)))
+                (is (= (set (keys (:path-frontiers forward-edge)))
+                       (set (keys (:path-frontiers next-forward-edge)))))
+                ;; page2's ascending frontier must be ignored when it is used
+                ;; as a descending :before boundary; the result assertion above
+                ;; proves that switching direction remains correct.
+                (is (= :desc (:frontier-direction reverse-edge)))
+                (is (seq (:path-frontiers reverse-edge)))))
 
-                  {:as page1
-                   page1-data :data
-                   page1-cursor :cursor} (lookup-resources db' {:limit 1
-                                                                :cursor nil ; no cursor should the first page.
-                                                                :resource/type :account
-                                                                :permission :view
-                                                                :subject (->user super-user-eid)})
-                  ;_                   (prn 'page1 'cursor (:cursor page1))
-                  {:as page2
-                   page2-data :data
-                   page2-cursor :cursor} (lookup-resources db' {:limit 1
-                                                                :cursor (:cursor page1)
-                                                                :resource/type :account
-                                                                :permission :view
-                                                                :subject (->user super-user-eid)})
-                  {:as page3-empty
-                   page3-data :data
-                   page3-cursor :cursor} (->> (lookup-resources db' {:limit 2
-                                                                     :cursor (:cursor page2)
-                                                                     :resource/type :account
-                                                                     :permission :view
-                                                                     :subject (->user super-user-eid)}))]
+            (testing "malformed frontier state is rejected"
+              (is (= :eacl.pagination/invalid-cursor
+                     (:eacl/error
+                      (thrown-ex-data
+                       #(lookup-resources
+                         db'
+                         {:first 1
+                          :after {:kind :lookup-eid
+                                  :result-eid (d/entid db' [:eacl/id "account-1"])
+                                  :frontier-version 1
+                                  :frontier-direction :asc
+                                  :path-frontiers {"path" {:not "an eid"}}}
+                          :resource/type :account
+                          :permission :view
+                          :subject (->user super-user-eid)}))))))))))))
 
-              ;_                   (prn 'page2 'cursor (:cursor page2))]
+(deftest aliased-permission-cursor-frontier-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema!
+     conn
+     "definition user {}
 
-              (testing "page1 cursor points to next page"
-                (is page1-cursor)
-                (is (:e page1-cursor)))
+      definition account {
+        relation owner: user
+        permission admin = owner
+      }
 
-              (testing "page2 cursor points to next page"
-                (is page2-cursor)
-                (is (:e page2-cursor)))
+      definition server {
+        relation account: account
+        permission admin = account->admin
+        permission view = admin
+      }")
+    @(d/transact conn
+                 (concat [{:db/id "user" :eacl/id "user"}]
+                         (mapcat (fn [n]
+                                   [{:db/id (str "account-" n)
+                                     :eacl/id (str "account-" n)}
+                                    {:db/id (str "server-" n)
+                                     :eacl/id (str "server-" n)}])
+                                 (range 8))))
+    (let [db-before-relationships (d/db conn)
+          relationships (mapcat
+                         (fn [n]
+                           [(Relationship (spice-object :user "user")
+                                          :owner
+                                          (spice-object :account (str "account-" n)))
+                            (Relationship (spice-object :account (str "account-" n))
+                                          :account
+                                          (spice-object :server (str "server-" n)))])
+                         (range 8))]
+      @(d/transact conn
+                   (into []
+                         (mapcat #(impl/tx-relationship db-before-relationships %))
+                         relationships)))
+    (let [db (d/db conn)
+          user-eid (d/entid db [:eacl/id "user"])
+          original-subject->resources impl.indexed/subject->resources
+          {:keys [result-eids calls-by-page frontier-counts]}
+          (loop [after nil
+                 result-eids []
+                 calls-by-page []
+                 frontier-counts []]
+            (let [calls (atom 0)
+                  page (with-redefs [impl.indexed/subject->resources
+                                    (fn [& args]
+                                      (swap! calls inc)
+                                      (apply original-subject->resources args))]
+                         (lookup-resources
+                          db
+                          (cond-> {:subject (spice-object :user user-eid)
+                                   :permission :view
+                                   :resource/type :server
+                                   :first 1}
+                            after (assoc :after after))))
+                  end-cursor (page-end-cursor page)
+                  result-eids' (into result-eids (map :id (:data page)))
+                  calls-by-page' (conj calls-by-page @calls)
+                  frontier-counts' (conj frontier-counts
+                                         (count (:path-frontiers end-cursor)))]
+              (if (get-in page [:page-info :has-next-page?])
+                (recur end-cursor
+                       result-eids'
+                       calls-by-page'
+                       frontier-counts')
+                {:result-eids result-eids'
+                 :calls-by-page calls-by-page'
+                 :frontier-counts frontier-counts'})))
+          reverse-page (lookup-subjects
+                        db
+                        {:resource (spice-object
+                                    :server
+                                    (d/entid db [:eacl/id "server-0"]))
+                         :permission :view
+                         :subject/type :user
+                         :first 1})]
+      (testing "self-permission aliases retain nested arrow frontiers"
+        (is (= 8 (count result-eids)))
+        (is (= 8 (count (distinct result-eids))))
+        (is (every? pos? frontier-counts))
+        (is (< (last calls-by-page) (first calls-by-page))))
+      (testing "reverse lookup aliases retain nested arrow frontiers"
+        (is (seq (:path-frontiers (page-end-cursor reverse-page))))))))
 
-              (testing "page3 cursor matches page 2 because we exhausted results on page 2"
-                ; TODO: figure out what this should return. The previous cursor?
-                ; we probably need a flag for empty, but empty :data implies that.
-                (is (= page2-cursor page3-cursor)))
+(deftest lookup-cursor-eid-validation-test
+  (let [db (d/db *conn*)
+        subject (->user (d/entid db :user/super-user))
+        valid-result-eid (d/entid db [:eacl/id "account-1"])
+        invalid-eid 999999999999999999999999N
+        query {:resource/type :account
+               :permission :view
+               :subject subject
+               :first 1}]
+    (doseq [cursor [{:kind :lookup-eid
+                     :result-eid invalid-eid}
+                    {:kind :lookup-eid
+                     :result-eid valid-result-eid
+                     :frontier-version 1
+                     :frontier-direction :asc
+                     :path-frontiers {"path" invalid-eid}}]]
+      (is (= :eacl.pagination/invalid-cursor
+             (:eacl/error
+              (thrown-ex-data
+               #(lookup-resources db (assoc query :after cursor)))))))))
 
-              ;(prn 'both-pages both-pages)
+(deftest tx-relationship-strictness-test
+  ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn [(Relation :account :owner :user)])
+    @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"}])
+    (let [db (d/db conn)]
+      (testing "a typo'd string id throws :eacl/unknown-object instead of minting a ghost entity"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
+              (impl/tx-relationship db
+                (Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1x"))))))
 
-              (testing "both-pages :limit 3 should include both results, in sorted order" ; (depends on tuple index or costly sort)
-                (is (= [(spice-object :account "account-1")
-                        (spice-object :account "account-2")]
-                       (paginated-data->spice db' (:data both-pages)))))
+      (testing "unallocated positive numeric eids are rejected with the typed error, not a raw transactor error"
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
+              (impl/tx-relationship db
+                (Relationship (spice-object :user 17592186999999) :owner (spice-object :account [:eacl/id "acct-1"]))))))
 
-              (testing "page1 contains first result only (no. 1 of 2"
-                (is (= page1-expected (paginated-data->spice db' page1-data))))
+      (testing "{:allow-tempids? true} supports same-transaction entity+relationship creation"
+        (let [tx (concat [{:db/id "new-user" :eacl/id "new-user"}]
+                         (impl/tx-relationship db
+                           (Relationship (spice-object :user "new-user") :owner (spice-object :account [:eacl/id "acct-1"]))
+                           {:allow-tempids? true}))
+              {:keys [db-after]} @(d/transact conn tx)]
+          (is (impl/find-one-relationship-id db-after
+                {:subject  (spice-object :user [:eacl/id "new-user"])
+                 :relation :owner
+                 :resource (spice-object :account [:eacl/id "acct-1"])})))))))
 
-              (testing "page2 contains second result only (no. 2 of 2)"
-                (is (= page2-expected (paginated-data->spice db' page2-data))))
+(deftest relation-datoms-keyword-collation-test
+  ;; Audit §2: the old [:a]..[:z] index-range made relations whose subject-type
+  ;; keyword collates outside that window invisible to permission evaluation.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn [(Relation :zone :owner :zebra)       ; sorts after :z
+                       (Relation :zone :editor :Admin)      ; sorts before :a
+                       (Relation :zone :viewer :my.app/user) ; namespaced
+                       (Relation :zone :ownerx :user)       ; prefix-isolation foil for :owner
+                       (Permission :zone :admin {:relation :owner})])
+    @(d/transact conn [{:db/id "z1" :eacl/id "zebra-1"}
+                       {:db/id "zone1" :eacl/id "zone-1"}])
+    @(d/transact conn (impl/tx-relationship (d/db conn)
+                        (Relationship (spice-object :zebra [:eacl/id "zebra-1"])
+                                      :owner
+                                      (spice-object :zone [:eacl/id "zone-1"]))))
+    (let [db (d/db conn)]
+      (testing "relations are visible for any legal subject-type keyword"
+        (is (= [[:zone :editor :Admin]] (mapv :v (impl.indexed/relation-datoms db :zone :editor))))
+        (is (= [[:zone :viewer :my.app/user]] (mapv :v (impl.indexed/relation-datoms db :zone :viewer)))))
 
-              (testing "page3 should be empty (results exhausted)"
-                (is (empty? page3-expected))
-                (is (empty? (paginated-data->spice db' page3-data))))
+      (testing "prefix isolation: (:zone :owner) does not match (:zone :ownerx) or later attributes"
+        (is (= [[:zone :owner :zebra]] (mapv :v (impl.indexed/relation-datoms db :zone :owner)))))
 
-              (testing "lookup-resources returns cursor input when looking beyond any values"
-                (let [page3-empty (lookup-resources db' {:limit 100
-                                                         :cursor page2-cursor
-                                                         :resource/type :account
-                                                         :permission :view
-                                                         :subject (->user super-user-eid)})]
-                  (is (empty? (:data page3-empty)))
-                  (is (= page2-cursor (:cursor page3-empty)))))
-
-              ;; server.view tests follow
-              (testing "count-resources & cursors"
-                (testing "count-resources should return count of all servers"
-                  (is (= 4 (:count (count-resources db' {:resource/type :server
-                                                         :permission :view
-                                                         :subject (->user super-user-eid)}))))
-
-                  (let [{all-servers :data} (lookup-resources db' {:subject (->user super-user-eid) ; all results.
-                                                                   :permission :view
-                                                                   :resource/type :server
-                                                                   :limit -1
-                                                                   :cursor nil})]
-                    (is (= [(spice-object :server "account1-server1")
-                            (spice-object :server "account1-server2")
-                            (spice-object :server "account2-server1")
-                            (spice-object :server "server-3")]
-                           (paginated-data->spice db' all-servers))))
-
-                  (let [{page1-servers :data
-                         page1-cursor :cursor} (lookup-resources db' {:subject (->user super-user-eid) ; all results.
-                                                                      :permission :view
-                                                                      :resource/type :server
-                                                                      :limit 2
-                                                                      :cursor nil})]
-                    (is (:e page1-cursor))
-                    (is (= [(spice-object :server "account1-server1")
-                            (spice-object :server "account1-server2")]
-                           (paginated-data->spice db' page1-servers)))
-
-                    (let [{page2-servers :data
-                           page2-cursor :cursor} (lookup-resources db' {:subject (->user super-user-eid) ; all results.
-                                                                        :permission :view
-                                                                        :resource/type :server
-                                                                        :limit 2
-                                                                        :cursor page1-cursor})]
-                      (is (:e page2-cursor))
-                      (is (= [(spice-object :server "account2-server1")
-                              (spice-object :server "server-3")]
-                             (paginated-data->spice db' page2-servers)))
-
-                      ; these are broken because we are passing account cursors in tests.
-                      (testing "count-resources should respect limit & cursors"
-                        (is (:e page1-cursor))
-                        (is (:e page2-cursor))
-                        (is (not= page1-cursor page2-cursor))
-
-                        (is (= 2 (:count (count-resources db'
-                                                          {:resource/type :server
-                                                           :permission :view
-                                                           :limit 2
-                                                           :cursor nil
-                                                           :subject (->user super-user-eid)}))))
-
-                        (is (= 2 (:count (count-resources db'
-                                                          {:resource/type :server
-                                                           :permission :view
-                                                           :limit 2
-                                                           :cursor page1-cursor
-                                                           :subject (->user super-user-eid)}))))
-
-                        (is (= 0 (:count (count-resources db'
-                                                          {:resource/type :server
-                                                           :permission :view
-                                                           :limit 10
-                                                           :subject (->user super-user-eid)
-                                                           :cursor page2-cursor}))))))))))))))))
+      (testing "end-to-end: permission evaluation works for a :zebra subject"
+        (let [zebra (spice-object :zebra (d/entid db [:eacl/id "zebra-1"]))
+              zone  (spice-object :zone (d/entid db [:eacl/id "zone-1"]))]
+          (is (true? (can? db zebra :admin zone)))
+          (is (= [(spice-object :zone "zone-1")]
+                 (paginated->spice db (lookup-resources db {:subject zebra
+                                                            :permission :admin
+                                                            :resource/type :zone}))))
+          (is (= [(spice-object :zebra "zebra-1")]
+                 (paginated->spice db (lookup-subjects db {:resource zone
+                                                           :permission :admin
+                                                           :subject/type :zebra})))))))))
 
 (deftest permission-schema-helper-tests
   (let [db (d/db *conn*)]
@@ -915,12 +1072,11 @@
         (is (some #(and (= (:type %) :arrow)
                         (= (:via %) :account)
                         (= (:target-type %) :account)
-                        (> (count (:sub-paths %)) 0))
+                        (= (:target-permission %) :admin))
                   paths))
-        ;; The sub-paths should eventually lead to relations
+        ;; Permission edges stay symbolic and are evaluated at runtime.
         (let [arrow-path (first (filter #(= (:via %) :account) paths))]
-          (is (vector? (:sub-paths arrow-path)))
-          (is (pos? (count (:sub-paths arrow-path)))))))
+          (is (= :admin (:target-permission arrow-path))))))
 
     (testing "Complex nested paths"
       (let [paths (impl.indexed/get-permission-paths db :server :view)]
@@ -928,8 +1084,8 @@
         (let [nic-path (first (filter #(= (:via %) :nic) paths))]
           (is nic-path)
           (is (= :network_interface (:target-type nic-path)))
-          ;; The sub-paths should show NIC->view paths
-          (is (pos? (count (:sub-paths nic-path)))))))
+          ;; Nested permission edges stay symbolic and resolve against concrete resources at runtime.
+          (is (= :view (:target-permission nic-path))))))
 
     (testing "Empty paths for non-existent permission"
       (is (empty? (impl.indexed/get-permission-paths db :server :nonexistent))))))
@@ -980,26 +1136,26 @@
             result (lookup-resources db {:subject (->user user1-eid)
                                          :permission :view
                                          :resource/type :server
-                                         :limit 10})]
+                                         :first 10})]
         ; this replicates bug where find-relation-def is called with resource-type = nil.
         (is (= [(->server "account1-server1")
                 (->server "account1-server2")
                 (->server "account3-server3.1")]
                (paginated->spice db result)))))
 
-    (testing "Pagination with cursor"
+    (testing "Pagination with :after"
       (let [user1-eid (d/entid db :test/user1)
             ;; Get first page
             page1 (lookup-resources db {:subject (->user user1-eid)
                                         :permission :view
                                         :resource/type :server
-                                        :limit 1})
-            ;; Get second page using cursor
+                                        :first 1})
+            ;; Get second page using the first page end cursor.
             page2 (lookup-resources db {:subject (->user user1-eid)
                                         :permission :view
                                         :resource/type :server
-                                        :limit 1
-                                        :cursor (:cursor page1)})
+                                        :first 1
+                                        :after (page-end-cursor page1)})
             ;; Convert for comparison
             page1-converted (paginated->spice db page1)
             page2-converted (paginated->spice db page2)]
@@ -1012,7 +1168,7 @@
             result (lookup-resources db {:subject (->user super-user-eid)
                                          :permission :view
                                          :resource/type :server
-                                         :limit 100})]
+                                         :first 100})]
         ;; Should see servers from both accounts
         (is (>= (count (:data result)) 3))))))
 
@@ -1021,14 +1177,14 @@
     (testing "Merge handles duplicate resources from multiple paths"
       ;; Add a direct relation that overlaps with arrow permission
       @(d/transact *conn*
-         (impl/tx-relationship (d/db *conn*)
-           (Relationship (->user :test/user1) :shared_admin (->server :test/server1))))
+                   (impl/tx-relationship (d/db *conn*)
+                                         (Relationship (->user :test/user1) :shared_admin (->server :test/server1))))
       (let [db' (d/db *conn*)
             user1-eid (d/entid db' :test/user1)
             result (impl.indexed/lookup-resources db' {:subject (->user user1-eid)
                                                        :permission :view
                                                        :resource/type :server
-                                                       :limit 10})]
+                                                       :first 10})]
         ;; Should still only see each server once
         (is (= [(->server "account1-server1")
                 (->server "account1-server2")
@@ -1040,26 +1196,26 @@
             result (impl.indexed/lookup-resources db {:subject (->user super-user-eid)
                                                       :permission :view
                                                       :resource/type :server
-                                                      :limit 100})
+                                                      :first 100})
             eids (map :id (:data result))]
         ;; Entity IDs should be in ascending order
         (is (= eids (sort eids)))))
 
-    (testing "Cursor works with merged results"
+    (testing "Page cursors work with merged results"
       (let [super-user-eid (d/entid db :user/super-user)
             both-pages (impl.indexed/lookup-resources db {:subject (->user super-user-eid)
                                                           :permission :view
                                                           :resource/type :server
-                                                          :limit 4})
+                                                          :first 4})
             page1 (impl.indexed/lookup-resources db {:subject (->user super-user-eid)
                                                      :permission :view
                                                      :resource/type :server
-                                                     :limit 2})
+                                                     :first 2})
             page2 (impl.indexed/lookup-resources db {:subject (->user super-user-eid)
                                                      :permission :view
                                                      :resource/type :server
-                                                     :limit 2
-                                                     :cursor (:cursor page1)})
+                                                     :first 2
+                                                     :after (page-end-cursor page1)})
             page1+page2-data (apply concat (map :data [page1 page2]))
             all-eids (map :id page1+page2-data)]
         ;; No duplicates across pages
@@ -1091,13 +1247,188 @@
       (is (impl.indexed/can? db (->vpc :test/vpc1) :view (->server :test/server1)))
       (is (not (impl.indexed/can? db (->vpc :test/vpc2) :view (->server :test/server1)))))))
 
-; uncommented because server :owner relation went away.
-;(testing "Performance - early termination"
-;  ;; Add multiple paths that grant the same permission
-;  @(d/transact *conn* [(Relationship (->user :test/user1) :owner (->server :test/server1))])
-;  (let [db' (d/db *conn*)]
-;    ;; Should still be fast even with multiple valid paths
-;    (is (impl.indexed/can? db' (->user :test/user1) :view (->server :test/server1)))))))
+(deftest recursive-arrow-permission-path-tests
+  (with-mem-conn [conn schema/v7-schema]
+    (let [db    (load-recursive-parent-db! conn)
+          paths (impl.indexed/get-permission-paths db :account :read)]
+      (testing "recursive parent->permission should retain the arrow path on an acyclic tree"
+        (is (= 2 (count paths)))
+        (is (some #(= :relation (:type %)) paths))
+        (is (some #(and (= :arrow (:type %))
+                        (= :parent (:via %))
+                        (= :account (:target-type %))
+                        (= :read (:target-permission %)))
+                  paths))))))
+
+(deftest recursive-arrow-permission-can-and-lookup-subjects-tests
+  (with-mem-conn [conn schema/v7-schema]
+    (let [db   (load-recursive-parent-db! conn)
+          user (recursive-user-ref "user-1")]
+      (testing "can? should climb an acyclic parent tree"
+        (is (can? db user :read (recursive-account-ref "root")))
+        (is (can? db user :read (recursive-account-ref "child")))
+        (is (can? db user :read (recursive-account-ref "grandchild"))))
+
+      (testing "lookup-subjects should include inherited readers on descendants"
+        (is (= #{(spice-object :user "user-1")}
+               (paginated->spice-set db
+                                     (lookup-subjects db {:resource     (recursive-account-ref "child")
+                                                          :permission   :read
+                                                          :subject/type :user
+                                                          :first        100}))))
+        (is (= #{(spice-object :user "user-1")}
+               (paginated->spice-set db
+                                     (lookup-subjects db {:resource     (recursive-account-ref "grandchild")
+                                                          :permission   :read
+                                                          :subject/type :user
+                                                          :first        100})))))
+
+      (testing "recursive lookup-resources should page in deterministic traversal order"
+        (is (impl.indexed/traversal-permission? db :account :read))
+        (let [page1 (lookup-resources db {:subject       user
+                                          :permission    :read
+                                          :resource/type :account
+                                          :first         2})
+              page2 (lookup-resources db {:subject       user
+                                          :permission    :read
+                                          :resource/type :account
+                                          :first         2
+                                          :after         (page-end-cursor page1)})
+              previous (lookup-resources db {:subject       user
+                                             :permission    :read
+                                             :resource/type :account
+                                             :last          2
+                                             :before        (page-start-cursor page2)})]
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")]
+                 (paginated->spice db page1)))
+          (is (= [(spice-object :account "grandchild")]
+                 (paginated->spice db page2)))
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")]
+                 (paginated->spice db previous))))))))
+
+(deftest recursive-arrow-permission-lookup-resources-visited-state-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [db                  (load-recursive-parent-db! conn)
+          user                (recursive-user-ref "user-1")
+          reader-relation-eid (:db/id (impl.indexed/find-relation-def db :account :reader))
+          parent-relation-eid (:db/id (impl.indexed/find-relation-def db :account :parent))
+          reader-path         {:type :relation
+                               :name :reader
+                               :subject-type :user
+                               :relation-eid reader-relation-eid}
+          recursive-paths     [reader-path
+                               {:type :arrow
+                                :via :parent
+                                :target-type :account
+                                :via-relation-eid parent-relation-eid
+                                :target-permission :read
+                                :sub-paths [reader-path]}]]
+      (testing "lookup-resources should not stop recursion only because the permission name repeats on a different resource"
+        (with-redefs [impl.indexed/get-permission-paths
+                      (fn [_db resource-type permission-name]
+                        (if (and (= :account resource-type)
+                                 (= :read permission-name))
+                          recursive-paths
+                          []))]
+          (is (= #{(spice-object :account "root")
+                   (spice-object :account "child")
+                   (spice-object :account "grandchild")}
+                 (paginated->spice-set db
+                                       (lookup-resources db {:subject       user
+                                                             :permission    :read
+                                                             :resource/type :account
+                                                             :first         100}))))
+          (is (= 3 (:count (count-resources db {:subject       user
+                                                :permission    :read
+                                                :resource/type :account})))))))))
+
+(deftest recursive-dependency-closure-traversal-tests
+  (with-mem-conn [conn schema/v7-schema]
+    (let [db   (load-recursive-document-db! conn)
+          user (spice-object :user [:eacl/id "user-1"])]
+      (testing "acyclic roots that depend on recursive permissions should use traversal"
+        (is (impl.indexed/traversal-permission? db :folder :read))
+        (is (impl.indexed/traversal-permission? db :document :view))
+        (is (can? db user :view (spice-object :document [:eacl/id "doc-1"])))
+        (is (= [(spice-object :document "doc-1")]
+               (paginated->spice db
+                                 (lookup-resources db {:subject       user
+                                                       :permission    :view
+                                                       :resource/type :document
+                                                       :first         10}))))
+        (is (= 1 (:count (count-resources db {:subject       user
+                                              :permission    :view
+                                              :resource/type :document}))))))))
+
+(deftest recursive-traversal-pagination-contract-tests
+  (with-mem-conn [conn schema/v7-schema]
+    (let [db   (load-recursive-out-of-eid-order-db! conn)
+          user (recursive-user-ref "user-1")]
+      (testing "recursive lookup-resources uses traversal order, not global eid order"
+        (let [page (lookup-resources db {:subject       user
+                                         :permission    :read
+                                         :resource/type :account
+                                         :first         10})
+              eids (map :id (:data page))]
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")
+                  (spice-object :account "grandchild")]
+                 (paginated->spice db page)))
+          (is (not= (sort eids) eids))
+          (is (= :recursive-traversal (get-in page [:page-info :start-cursor :kind])))
+          (is (= 0 (get-in page [:page-info :start-cursor :ordinal])))))
+
+      (testing "recursive lookup does not call public can? while paging"
+        (with-redefs [impl.indexed/can? (fn [& _]
+                                          (throw (ex-info "can? should not be called by pagination" {})))]
+          (is (= 2 (count (:data (lookup-resources db {:subject       user
+                                                       :permission    :read
+                                                       :resource/type :account
+                                                       :first         2})))))))
+
+      (testing "bare recursive :last rejects its implicit full-closure traversal"
+        (is (= :eacl.pagination/unsupported-recursive-last
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-resources db {:subject       user
+                                        :permission    :read
+                                        :resource/type :account
+                                        :last          2}))))))
+
+      (testing "wrong cursor kind is rejected by recursive lookup"
+        (is (= :eacl.pagination/wrong-cursor-kind
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-resources db {:subject       user
+                                        :permission    :read
+                                        :resource/type :account
+                                        :first         2
+                                        :after         {:kind :lookup-eid
+                                                        :result-eid (d/entid db [:eacl/id "root"])}}))))))
+
+      (testing "recursive traversal guardrails throw typed errors"
+        (binding [impl.indexed/*recursive-traversal-limits* {:max-derived-grants 1
+                                                            :max-advanced-datoms 100
+                                                            :max-queued-work 100}]
+          (is (= :eacl.recursive-traversal/limit-exceeded
+                 (:eacl/error
+                  (thrown-ex-data
+                   #(lookup-resources db {:subject       user
+                                          :permission    :read
+                                          :resource/type :account
+                                          :first         10})))))))
+
+      (testing "recursive lookup-subjects rejects unsupported subject relation filters"
+        (is (= :eacl.pagination/unsupported-filter
+               (:eacl/error
+                (thrown-ex-data
+                 #(lookup-subjects db {:resource         (recursive-account-ref "child")
+                                       :permission       :read
+                                       :subject/type     :user
+                                       :subject/relation :member
+                                       :first            10})))))))))
 
 (deftest reproduce-infinite-recursion-test
   (testing "lookup-resources should handle cyclic permissions without throwing"
@@ -1112,8 +1443,7 @@
     ;; 3. Create a relationship connecting a specific account and server.
     @(d/transact *conn*
                  (impl/tx-relationship (d/db *conn*)
-                   (Relationship (->server :test/server1) :server-cycle (->account :test/account1))))
-
+                                       (Relationship (->server :test/server1) :server-cycle (->account :test/account1))))
     (let [db' (d/db *conn*)]
       ;; This call will trigger the infinite recursion in get-permission-paths
       ;; when checking for :view on a :server. The expected behavior is an exception,
@@ -1130,110 +1460,134 @@
 
 (deftest permission-paths-caching-test
   (let [db (d/db *conn*)]
-    (testing "Caching of permission paths"
-      (impl.indexed/evict-permission-paths-cache!)
-
+    (testing "A client generation caches permission paths"
       (let [calc-calls (atom 0)
-            orig-calc impl.indexed/calc-permission-paths]
-        (with-redefs [impl.indexed/calc-permission-paths (fn [& args]
-                                                           (swap! calc-calls inc)
-                                                           (apply orig-calc args))]
-          ;; First call - should compute
-          (let [paths1 (impl.indexed/get-permission-paths db :account :view)]
-            (is (pos? (count paths1)))
-            (is (pos? @calc-calls) "Should have called calc-permission-paths")
+            orig-calc impl.indexed/calc-permission-paths
+            client-cache (assoc (impl.indexed/make-schema-cache db)
+                                :schema-version (d/squuid))]
+        (binding [impl.indexed/*schema-cache* client-cache]
+          (with-redefs [impl.indexed/calc-permission-paths (fn [& args]
+                                                             (swap! calc-calls inc)
+                                                             (apply orig-calc args))]
+            ;; First call - should compute
+            (let [paths1 (impl.indexed/get-permission-paths db :account :view)]
+              (is (pos? (count paths1)))
+              (is (pos? @calc-calls) "Should have called calc-permission-paths")
 
-            (reset! calc-calls 0)
+              (reset! calc-calls 0)
 
-            ;; Second call - should be cached
-            (let [paths2 (impl.indexed/get-permission-paths db :account :view)]
-              (is (pos? (count paths2)))
-              (is (= paths1 paths2))
-              (is (zero? @calc-calls) "Should use cache, not call calc-permission-paths")
+              ;; Second call - should be cached
+              (let [paths2 (impl.indexed/get-permission-paths db :account :view)]
+                (is (pos? (count paths2)))
+                (is (= paths1 paths2))
+                (is (zero? @calc-calls) "Should use cache, not call calc-permission-paths")
 
-              ;; Evict cache
-              (impl.indexed/evict-permission-paths-cache!)
+                ;; Evict this client generation
+                (impl.indexed/evict-permission-paths-cache!)
 
-              ;; Third call - should recompute
-              (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
-                (is (pos? (count paths3)))
-                (is (pos? @calc-calls) "Should call calc-permission-paths after eviction")))))))))
+                ;; Third call - should recompute
+                (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
+                  (is (pos? (count paths3)))
+                  (is (pos? @calc-calls) "Should call calc-permission-paths after eviction"))))))))))
 
 (deftest permission-paths-cache-is-scoped-per-database-test
-  (with-mem-conn [conn1 schema/v6-schema]
-    (with-mem-conn [conn2 schema/v6-schema]
+  (with-mem-conn [conn1 schema/v7-schema]
+    (with-mem-conn [conn2 schema/v7-schema]
       @(d/transact conn1 fixtures/relations+permissions)
       @(d/transact conn1 fixtures/entity-fixtures)
       @(d/transact conn2 fixtures/relations+permissions)
       @(d/transact conn2 fixtures/entity-fixtures)
 
-      (impl.indexed/evict-permission-paths-cache!)
+      (let [db1 (d/db conn1)
+            db2 (d/db conn2)
+            cache1 (assoc (impl.indexed/make-schema-cache db1) :schema-version (d/squuid))
+            cache2 (assoc (impl.indexed/make-schema-cache db2) :schema-version (d/squuid))
+            paths1 (binding [impl.indexed/*schema-cache* cache1]
+                     (impl.indexed/get-permission-paths db1 :server :view))
+            paths2 (binding [impl.indexed/*schema-cache* cache2]
+                     (impl.indexed/get-permission-paths db2 :server :view))]
+        (is (= (count paths1) (count paths2)))
+        (is (not= (:database-id cache1) (:database-id cache2)))
+        (is (not (identical? (:permission-paths cache1)
+                             (:permission-paths cache2)))
+            "separate clients own separate cache generations")))))
 
-      (impl.indexed/get-permission-paths (d/db conn1) :server :view)
-      (impl.indexed/get-permission-paths (d/db conn2) :server :view)
+(deftest permission-paths-cache-is-scoped-per-schema-test
+  ;; Each client owns one generation. A client write swaps that generation;
+  ;; historic db values are evaluated only with an explicitly matching cache
+  ;; (or uncached through the low-level API).
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema! conn "definition user {}
+       definition account { relation owner: user  relation viewer: user
+                            permission view = owner + viewer }")
+    (let [db-before    (d/db conn)
+          cache-before (impl.indexed/make-schema-cache db-before)
+          before-paths (binding [impl.indexed/*schema-cache* cache-before]
+                         (impl.indexed/get-permission-paths db-before :account :view))]
+      (schema/write-schema! conn "definition user {}
+         definition account { relation owner: user  relation viewer: user  relation auditor: user
+                              permission view = owner + viewer + auditor }")
+      (let [db-after         (d/db conn)
+            cache-after      (impl.indexed/make-schema-cache db-after)
+            after-paths      (binding [impl.indexed/*schema-cache* cache-after]
+                               (impl.indexed/get-permission-paths db-after :account :view))
+            historical-paths (binding [impl.indexed/*schema-cache* cache-before]
+                               (impl.indexed/get-permission-paths db-before :account :view))]
+        (is (< (count before-paths) (count after-paths)))
+        (is (= before-paths historical-paths))
+        (is (not= (:schema-version cache-before) (:schema-version cache-after))
+            "write-schema! created a new generation stamp")))))
 
-      (is (= 2 (count @impl.indexed/permission-paths-cache))
-          "Permission path caching must not leak DB-specific relation eids across databases"))))
+(deftest string-object-id-resolution-test
+  ;; d/entid on a bare string throws a raw IllegalArgumentException, which
+  ;; leaked out of impl-level reads. Strings now resolve via the canonical
+  ;; [:eacl/id ...] identity; unresolvable ids read as unknown objects.
+  (let [db (d/db *conn*)]
+    (testing "string ids resolve via :eacl/id on impl-level reads"
+      (is (true? (can? db (->user "super-user") :view (->account "account-1"))))
+      (is (= (mapv :id (:data (lookup-resources db {:subject (->user (d/entid db :user/super-user))
+                                                    :permission :view
+                                                    :resource/type :account
+                                                    :first 100})))
+             (mapv :id (:data (lookup-resources db {:subject (->user "super-user")
+                                                    :permission :view
+                                                    :resource/type :account
+                                                    :first 100}))))))
+    (testing "unknown string ids read as unknown objects, not raw Datomic errors"
+      (is (false? (can? db (->user "no-such-user") :view (->account "account-1"))))
+      (is (= [] (:data (lookup-resources db {:subject (->user "no-such-user")
+                                             :permission :view
+                                             :resource/type :account
+                                             :first 10})))))))
 
-(deftest tx-relationship-strictness-test
-  ;; Audit 12: silent tempid pass-through minted ghost entities on typo'd ids.
-  (with-mem-conn [conn schema/v6-schema]
-    @(d/transact conn [(Relation :account :owner :user)])
-    @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"}])
-    (let [db (d/db conn)]
-      (testing "a typo'd string id throws :eacl/unknown-object instead of minting a ghost entity"
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
-              (impl/tx-relationship db
-                (Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1x"))))))
+(deftest lookup-subjects-rejects-subject-relation-test
+  ;; The recursive path has rejected :subject/relation since v7.2; the
+  ;; non-recursive path silently ignored the filter and returned subjects the
+  ;; caller did not ask for.
+  (let [db (d/db *conn*)]
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (thrown-ex-data
+             #(lookup-subjects db {:resource (->account (d/entid db [:eacl/id "account-1"]))
+                                   :permission :view
+                                   :subject/type :user
+                                   :subject/relation :member
+                                   :first 5})))))))
 
-      (testing "unallocated positive numeric eids are rejected with the typed error"
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
-              (impl/tx-relationship db
-                (Relationship (spice-object :user 17592186999999) :owner (spice-object :account [:eacl/id "acct-1"]))))))
-
-      (testing "{:allow-tempids? true} supports same-transaction entity+relationship creation"
-        (let [tx (concat [{:db/id "new-user" :eacl/id "new-user"}]
-                         (impl/tx-relationship db
-                           (Relationship (spice-object :user "new-user") :owner (spice-object :account [:eacl/id "acct-1"]))
-                           {:allow-tempids? true}))
-              {:keys [db-after]} @(d/transact conn tx)]
-          (is (impl/find-one-relationship-id db-after
-                {:subject  (spice-object :user [:eacl/id "new-user"])
-                 :relation :owner
-                 :resource (spice-object :account [:eacl/id "acct-1"])})))))))
-
-(deftest relation-datoms-keyword-collation-test
-  ;; Audit 2: the old [:a]..[:z] index-range made relations whose subject-type
-  ;; keyword collates outside that window invisible to permission evaluation.
-  (with-mem-conn [conn schema/v6-schema]
-    @(d/transact conn [(Relation :zone :owner :zebra)
-                       (Relation :zone :editor :Admin)
-                       (Relation :zone :viewer :my.app/user)
-                       (Relation :zone :ownerx :user)
-                       (Permission :zone :admin {:relation :owner})])
-    @(d/transact conn [{:db/id "z1" :eacl/id "zebra-1"}
-                       {:db/id "zone1" :eacl/id "zone-1"}])
-    @(d/transact conn (impl/tx-relationship (d/db conn)
-                        (Relationship (spice-object :zebra [:eacl/id "zebra-1"])
-                                      :owner
-                                      (spice-object :zone [:eacl/id "zone-1"]))))
-    (let [db (d/db conn)]
-      (testing "relations are visible for any legal subject-type keyword"
-        (is (= [[:zone :editor :Admin]] (mapv :v (impl.indexed/relation-datoms db :zone :editor))))
-        (is (= [[:zone :viewer :my.app/user]] (mapv :v (impl.indexed/relation-datoms db :zone :viewer)))))
-
-      (testing "prefix isolation: (:zone :owner) does not match (:zone :ownerx) or later attributes"
-        (is (= [[:zone :owner :zebra]] (mapv :v (impl.indexed/relation-datoms db :zone :owner)))))
-
-      (testing "end-to-end: permission evaluation works for a :zebra subject"
-        (let [zebra (spice-object :zebra (d/entid db [:eacl/id "zebra-1"]))
-              zone  (spice-object :zone (d/entid db [:eacl/id "zone-1"]))]
-          (is (true? (impl.indexed/can? db zebra :admin zone)))
-          (is (= [(spice-object :zone "zone-1")]
-                 (paginated->spice db (lookup-resources db {:subject zebra
-                                                            :permission :admin
-                                                            :resource/type :zone}))))
-          (is (= [(spice-object :zebra "zebra-1")]
-                 (paginated->spice db (lookup-subjects db {:resource zone
-                                                           :permission :admin
-                                                           :subject/type :zebra})))))))))
+(deftest read-relationships-filter-validation-test
+  (let [db (d/db *conn*)]
+    (testing "an empty filter map is rejected instead of scanning the entire index"
+      (is (= :eacl.filters/missing-anchor
+             (:eacl/error (thrown-ex-data #(read-relationships db {}))))))
+    (testing "misspelled filter keys are rejected instead of broadening the scan"
+      (is (= :eacl.filters/unknown-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:subject-type :user}))))))
+    (testing "documented-but-unsupported filters throw typed errors"
+      (is (= :eacl.pagination/unsupported-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:resource/type :account
+                                                                   :resource/id-prefix "acc"})))))
+      (is (= :eacl.pagination/unsupported-filter
+             (:eacl/error (thrown-ex-data #(read-relationships db {:resource/type :account
+                                                                   :subject/relation :member}))))))
+    (testing "anchored filters still work"
+      (is (seq (:data (read-relationships db {:resource/type :account})))))))

@@ -10,7 +10,7 @@
 
 (deftest eacl-config-tests
   (testing ""
-    (with-mem-conn [conn schema/v6-schema]
+    (with-mem-conn [conn schema/v7-schema]
       @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
       @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
       ;@(d/transact conn [{:db/ident :my/id
@@ -21,8 +21,7 @@
       ; Q: do we want lookups to fail if entity does not exist?
       (testing "we can override EACL's object ID to Datomic ident resolution"
         (let [client (eacl.datomic.core/make-client conn
-                                                    {
-                                                     ;:entity->object-id (fn [ent] (:))
+                                                    {                                                     ;:entity->object-id (fn [ent] (:))
                                                      ;:object-id->ident (fn [obj-id] [:my/id obj-id])})]
                                                      :object-id->ident (fn [obj-id] [:db/ident obj-id])})]
 
@@ -32,9 +31,7 @@
             (is (= [] (:data (eacl/lookup-resources client
                                                     {:subject       (->user :missing-ident)
                                                      :permission    :view
-                                                     :resource/type :server
-                                                     :limit         1000
-                                                     :cursor        nil})))))
+                                                     :resource/type :server})))))
 
           (testing "basic can? works when passing :db/ident"
             (is (true? (eacl/can? client (->user :test/user1) :view (->server :test/server1))))
@@ -46,9 +43,21 @@
                                                                 :resource/type :server})))))
 
           (is (= 2 (:count (eacl/count-resources client {:subject       (->user :test/user1)
-                                                                :permission    :view
-                                                                :resource/type :server}))))
+                                                         :permission    :view
+                                                         :resource/type :server}))))
 
           (is (= 2 (count (:data (eacl/lookup-subjects client {:resource     (->server :test/server1)
                                                                :permission   :view
                                                                :subject/type :user}))))))))))
+
+(deftest page-token-ttl-is-validated-at-the-client-boundary-test
+  (with-mem-conn [conn schema/v7-schema]
+    (doseq [value [nil "300" 0 -1 (inc (quot Long/MAX_VALUE 1000))]]
+      (let [data (try
+                   (eacl.datomic.core/make-client
+                    conn {:page-token-ttl-seconds value})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e
+                     (ex-data e)))]
+        (is (= :eacl/invalid-config (:type data)) (pr-str value))
+        (is (= :page-token-ttl-seconds (:key data)) (pr-str value))))))

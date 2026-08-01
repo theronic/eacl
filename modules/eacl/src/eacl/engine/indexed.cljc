@@ -2,8 +2,7 @@
   (:require [eacl.backend.spi :as spi]
             [eacl.core :refer [spice-object]]
             [eacl.lazy-merge-sort :as lazy-sort]
-            #?@(:clj [[clojure.tools.logging :as log]]
-                :cljs [[goog.crypt :as gcrypt]]))
+            #?@(:cljs [[goog.crypt :as gcrypt]]))
   #?(:cljs (:import [goog.crypt Sha256])))
 
 (def ^:private lookup-frontier-version 1)
@@ -11,7 +10,8 @@
 (defn- warn
   [message data]
   #?(:clj
-     (log/warn message data)
+     (binding [*out* *err*]
+       (println message (pr-str data)))
      :cljs
      (.warn js/console (str message " " (pr-str data)))))
 

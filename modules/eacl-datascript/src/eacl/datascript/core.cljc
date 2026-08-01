@@ -148,6 +148,26 @@
       (ds/transact! conn tx-data))
     {:zed/token (str @tx-stamp)}))
 
+(defn datascript-delete-object!
+  "Removes every relationship that references `object`, without retracting the
+  object entity itself."
+  [conn {:keys [object->entid tx-stamp]} object]
+  (let [db (ds/db conn)]
+    (when-let [object-eid (object->entid db object)]
+      (let [relationship-eids
+            (ds/q '[:find [?relationship ...]
+                    :in $ ?object
+                    :where
+                    (or [?relationship :eacl.relationship/subject ?object]
+                        [?relationship :eacl.relationship/resource ?object])]
+                  db object-eid)]
+        (when (seq relationship-eids)
+          (ds/transact! conn
+                        (mapv (fn [relationship-eid]
+                                [:db/retractEntity relationship-eid])
+                              relationship-eids))))))
+  {:zed/token (str @tx-stamp)})
+
 (defn- relationship-seq
   [relationships]
   (if (map? relationships)
@@ -311,6 +331,8 @@
     (datascript-write-relationships! conn opts
                                      (for [rel (relationship-seq relationships)]
                                        (->RelationshipUpdate :delete rel))))
+  (delete-object! [_ object]
+    (datascript-delete-object! conn opts object))
   (delete-relationship! [_ {:as relationship :keys [subject relation resource]}]
     (datascript-write-relationships! conn opts
                                      [(->RelationshipUpdate :delete

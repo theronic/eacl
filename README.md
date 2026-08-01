@@ -1,6 +1,6 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
+EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure with a backend-neutral core and Datomic and DataScript adapters.
 
 _Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
@@ -95,6 +95,42 @@ caller already handles for expiry.
 > The changes on this branch are the [v8.0 candidate](docs/release-notes-v8.0.md). The major version increments because v8.0 adds a Datomic schema attribute, `:eacl/relation-version`. The pagination API is unchanged, and `write-schema!` installs the new attribute, so there is no migration step from v7. Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
+## Modules
+
+The repository is a workspace with three independently consumable modules:
+
+- `modules/eacl`: public protocol and records, schema model/parser, consistency descriptors, shared authorization engine, and six-function backend SPI.
+- `modules/eacl-datomic`: the complete v8 Datomic adapter, including consistency, encrypted cursors, object deletion, migrations, and authorization caching.
+- `modules/eacl-datascript`: the CLJ/CLJS DataScript adapter and its backend contract tests.
+
+Choose the adapter you use:
+
+```clojure
+{:deps
+ {theronic/eacl-datomic
+  {:git/url "git@github.com:theronic/eacl.git"
+   :git/sha "REPLACE_WITH_SHA"
+   :deps/root "modules/eacl-datomic"}
+
+  ;; Or, for DataScript:
+  ;; theronic/eacl-datascript
+  ;; {:git/url "git@github.com:theronic/eacl.git"
+  ;;  :git/sha "REPLACE_WITH_SHA"
+  ;;  :deps/root "modules/eacl-datascript"}
+
+  ;; Core-only/backend authors:
+  ;; theronic/eacl
+  ;; {:git/url "git@github.com:theronic/eacl.git"
+  ;;  :git/sha "REPLACE_WITH_SHA"
+  ;;  :deps/root "modules/eacl"}
+  }}
+```
+
+The root `deps.edn` is a development workspace, not the consumer artifact boundary. Build or install modules independently with `clojure -T:build-eacl install`, `clojure -T:build-eacl-datomic install`, or `clojure -T:build-eacl-datascript install`.
+
+EACL does not select a logging implementation. Applications remain responsible for their own logging backend and configuration.
+
+Backend authors should follow the [core module SPI and Datahike upgrade guide](modules/eacl/README.md).
 
 ## ReBAC: Relationship-based Access Control
 
@@ -255,8 +291,10 @@ The following example is contained in [eacl-example](https://github.com/theronic
 Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {theronic/eacl {:git/url "git@github.com:theronic/eacl.git" 
-                       :git/sha "f8c3c1cf67646236ca538942120a03edde40fee7"}}}
+{:deps {theronic/eacl-datomic
+        {:git/url "git@github.com:theronic/eacl.git"
+         :git/sha "REPLACE_WITH_SHA"
+         :deps/root "modules/eacl-datomic"}}}
 ```
 
 ```clojure
@@ -350,6 +388,13 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 For server-side or browser demos, use the DataScript adapter:
 
 ```clojure
+{:deps {theronic/eacl-datascript
+        {:git/url "git@github.com:theronic/eacl.git"
+         :git/sha "REPLACE_WITH_SHA"
+         :deps/root "modules/eacl-datascript"}}}
+```
+
+```clojure
 (ns my-eacl-datascript-demo
   (:require [datascript.core :as ds]
             [eacl.core :as eacl]
@@ -390,10 +435,11 @@ clojure -M:datascript-cljs-test
 
 ## Migration Notes
 
+- Replace the monolithic/root Git dependency with `:deps/root "modules/eacl-datomic"`; no source namespace changes are required.
 - Existing Datomic `require` forms remain valid: `eacl.datomic.core`, `eacl.datomic.impl`, and `eacl.datomic.schema`.
-- `count-subjects` is now part of the public `IAuthorization` protocol and is implemented by both adapters.
 - `Relation` and `Permission` now live in the backend-neutral schema model, with Datomic compatibility re-exports still available.
 - The repository root is a development workspace now. Consumers should depend on the module they actually need.
+- DataScript keeps its existing `:limit`/`:cursor` list API while sharing the v8 protocol and schema/parser core; Datomic retains the v8 Relay-style pagination API documented above.
 
 ## EACL Schema
 
@@ -1056,7 +1102,7 @@ clojure -M:test -v my.namespace/test-name
 
 v7 changed how Relationships are stored in Datomic (one entity per relationship → two tuple datoms on your subject & resource entities). The public API is unchanged, but stored relationship data must be migrated once. To protect you, `eacl.datomic.core/make-client` checks the storage version recorded in Datomic and **refuses to start against unmigrated v6 data** with `{:type :eacl/storage-version}` — v7 code reading a v6 database would otherwise silently answer every permission check with `false`/empty.
 
-Migrate with the batteries-included, idempotent [`eacl.migrations.v6-to-v7`](src/eacl/migrations/v6_to_v7.clj) namespace:
+Migrate with the batteries-included, idempotent [`eacl.migrations.v6-to-v7`](modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj) namespace:
 
 ```clojure
 (require '[eacl.migrations.v6-to-v7 :as migrations])
@@ -1069,7 +1115,7 @@ or opt into automatic migration at client construction:
 (eacl.datomic.core/make-client conn {:auto-migrate-v6 {:schema "definition user {} ..."}})
 ```
 
-The migration is additive and rollback-friendly (v6 data is kept until you explicitly retract it) and end-to-end tested in [test/eacl/migrations/v6_to_v7_test.clj](test/eacl/migrations/v6_to_v7_test.clj). For the full sequence — write-pause window, verification, soak, cleanup, rollback — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
+The migration is additive and rollback-friendly (v6 data is kept until you explicitly retract it) and end-to-end tested in [modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj](modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj). For the full sequence — write-pause window, verification, soak, cleanup, rollback — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
 
 ## Funding
 

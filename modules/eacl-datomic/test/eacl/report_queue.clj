@@ -2,8 +2,12 @@
   (:require [datomic.api :as d]
             [clojure.test :as t :refer [deftest testing is]]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [clojure.core.async :as a]
-            [clojure.tools.logging :as log]))
+            [clojure.core.async :as a]))
+
+(defn- diagnostic
+  [& values]
+  (binding [*out* *err*]
+    (apply println values)))
 
 (defn missing-entity?
   "Returns true if no :eavt datoms for this eid.
@@ -24,7 +28,7 @@
                             (loop []
                               (if @!stop-signal
                                 (do
-                                  (log/debug "Stopping managed tx-report-queue listener.")
+                                  (diagnostic "Stopping managed tx-report-queue listener.")
                                   (on-stop))
                                 (let [timeout-chan (a/timeout timeout-ms)
                                       report-chan  (a/thread (.take report-queue))]
@@ -34,14 +38,14 @@
                                                    (try
                                                      (handler report)
                                                      (catch Exception ex
-                                                       (log/error "Error processing tx-report:" ex))))
+                                                       (diagnostic "Error processing tx-report:" ex))))
                                                  (recur))
                                     ; timeout is expected.
                                     timeout-chan (recur)))))
                             (catch InterruptedException ex
-                              (log/warn "Listener interrupted: " (.getMessage ex)))
+                              (diagnostic "Listener interrupted: " (.getMessage ex)))
                             (catch Exception ex
-                              (log/warn "Unexpected error in listener: " (.getMessage ex)))))]
+                              (diagnostic "Unexpected error in listener: " (.getMessage ex)))))]
     {:listener-future listener-future
      :stop-fn         stop-fn}))
 
@@ -74,16 +78,16 @@
                                          ; If you want to loop over datoms:
                                          ;(doall
                                          ;  (for [datom tx-data]
-                                         ;    (log/info "datom:" (pr-str datom))))
+                                         ;    (diagnostic "datom:" (pr-str datom))))
 
                                          ; We can use this to inform our projection layer and no diffing would be required.
                                          ; and no diffing will be required.
 
-                                         (log/info "Created:" new-entity-eids)
-                                         (log/info "Updated:" updated-eids) ; todo check logic here.
-                                         (log/info "Deleted:" fully-retracted-eids)
-                                         (log/info "Fully retracted entities:" fully-retracted-eids)))
-                                     ;(log/info "tx-data: " tx-data))
+                                         (diagnostic "Created:" new-entity-eids)
+                                         (diagnostic "Updated:" updated-eids) ; todo check logic here.
+                                         (diagnostic "Deleted:" fully-retracted-eids)
+                                         (diagnostic "Fully retracted entities:" fully-retracted-eids)))
+                                     ;(diagnostic "tx-data: " tx-data))
                                      (fn [] (deliver !stopped? true))
                                      5000)]
 

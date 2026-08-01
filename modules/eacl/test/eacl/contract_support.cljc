@@ -146,3 +146,95 @@
                                                :subject/type      :user
                                                :subject/id        "user-2"})))
     (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))
+
+(defn assert-v8-seeded-contracts!
+  "The shared contract expressed through the v8 Relay-style pagination API.
+  The legacy contract above remains stable for the existing DataScript and
+  Datahike adapters while they adopt the v8 pagination surface."
+  [client]
+  (testing "schema round-trips through the logical representation"
+    (let [{:keys [relations permissions]} (eacl/read-schema client)]
+      (is (= 4 (count relations)))
+      (is (= 5 (count permissions)))))
+
+  (testing "permission checks traverse direct and arrow relations"
+    (is (true? (eacl/can? client (->user "user-1") :reboot (->server "server-1"))))
+    (is (true? (eacl/can? client (->user "super-user") :reboot (->server "server-2"))))
+    (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))
+    (is (false? (eacl/can? client (->user "missing-user") :reboot (->server "server-1")))))
+
+  (testing "lookup-resources and count-resources share v8 behavior"
+    (let [query {:subject       (->user "user-1")
+                 :permission    :view
+                 :resource/type :server
+                 :first         1}
+          page-1 (eacl/lookup-resources client query)
+          page-2 (eacl/lookup-resources
+                  client
+                  (assoc query :after (get-in page-1 [:page-info :end-cursor])))
+          count-result
+          (eacl/count-resources client
+                                {:subject       (->user "user-1")
+                                 :permission    :view
+                                 :resource/type :server})]
+      (is (= [(->server "server-1")] (:data page-1)))
+      (is (= [(->server "server-2")] (:data page-2)))
+      (is (string? (get-in page-1 [:page-info :end-cursor])))
+      (is (= 2 (:count count-result)))))
+
+  (testing "lookup-subjects and count-subjects enumerate reverse access"
+    (let [query {:resource     (->server "server-1")
+                 :permission   :reboot
+                 :subject/type :user}
+          subjects (->> (eacl/lookup-subjects client (assoc query :first 10))
+                        :data
+                        set)
+          count-result (eacl/count-subjects client query)]
+      (is (= #{(->user "user-1") (->user "super-user")} subjects))
+      (is (= 2 (:count count-result)))))
+
+  (testing "relationship writes and Relay-style reads remain part of the contract"
+    (let [initial
+          (eacl/read-relationships client {:resource/type     :account
+                                           :resource/id       "account-1"
+                                           :resource/relation :owner
+                                           :subject/type      :user
+                                           :subject/id        "user-1"
+                                           :first             10})]
+      (is (= [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))]
+             (:data initial))))
+
+    (let [query {:subject/type      :account
+                 :subject/id        "account-1"
+                 :resource/type     :server
+                 :resource/relation :account
+                 :first             1}
+          page-1 (eacl/read-relationships client query)
+          page-2 (eacl/read-relationships
+                  client
+                  (assoc query :after (get-in page-1 [:page-info :end-cursor])))]
+      (is (= [(eacl/->Relationship (->account "account-1") :account (->server "server-1"))]
+             (:data page-1)))
+      (is (= [(eacl/->Relationship (->account "account-1") :account (->server "server-2"))]
+             (:data page-2))))
+
+    (eacl/create-relationship! client (->user "user-2") :owner (->account "account-1"))
+    (is (true? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))
+    (let [read-result
+          (eacl/read-relationships client {:resource/type     :account
+                                           :resource/id       "account-1"
+                                           :resource/relation :owner
+                                           :subject/type      :user
+                                           :subject/id        "user-2"
+                                           :first             10})]
+      (is (= [(eacl/->Relationship (->user "user-2") :owner (->account "account-1"))]
+             (:data read-result)))
+      (eacl/delete-relationships! client (:data read-result)))
+    (is (= []
+           (read-relationships-data client {:resource/type     :account
+                                            :resource/id       "account-1"
+                                            :resource/relation :owner
+                                            :subject/type      :user
+                                            :subject/id        "user-2"
+                                            :first             10})))
+    (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))
