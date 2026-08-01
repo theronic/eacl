@@ -1,4 +1,9 @@
 .clj-kondo/
 .idea/
 .cpcache/
-/spicedb
+/spicedb.autopilot.json
+.claude/
+.clojure-mcp/
+.codex/
+.lsp/
+*.iml
