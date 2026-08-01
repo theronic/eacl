@@ -202,6 +202,10 @@
     (when existing
       resolved)))
 
+(defn relationship-relation-id
+  [db relationship]
+  (:relation-id (resolve-relationship db relationship)))
+
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
   (let [resolved  (resolve-relationship db relationship)

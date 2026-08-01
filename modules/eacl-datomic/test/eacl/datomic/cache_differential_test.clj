@@ -319,16 +319,13 @@
            (acyclic-mutations 6)
            20260732 40))))))
 
-(deftest acyclic-pages-resume-from-cached-stream-heads-test
-  ;; Every page of an arrow lookup used to open an index scan for each of the
-  ;; subject's intermediates just to learn where each stream starts. The
-  ;; continuation now carries the heads that the previous page proved were
-  ;; beyond its boundary, so a page only re-opens the streams it actually drew
-  ;; from.
-  ;;
-  ;; Correctness of the resumed pages is covered by the differential test
-  ;; above; this asserts the mechanism is reached at all, so that silently
-  ;; losing it does not leave a green suite.
+(deftest acyclic-pages-replay-without-unauthenticated-stream-heads-test
+  ;; v7 used a process-local side cache of per-intermediate stream heads. Those
+  ;; values were not covered by the v3 causal/proof envelope, so v8 deliberately
+  ;; refuses to read them. A cursor page instead replays deterministically from
+  ;; the authenticated cursor against the proof-equivalent selected snapshot.
+  ;; The optimization can return only after its state is authenticated by the
+  ;; same contract as completed answers.
   (with-mem-conn [conn schema/v7-schema]
     (let [boot (client conn {:cache cache/no-cache})
           _ (seed-acyclic! conn boot 12)
@@ -343,12 +340,12 @@
               _ (is (get-in page-1 [:page-info :has-next-page?]))
               cursor (get-in page-1 [:page-info :end-cursor])
               page-2 (eacl/lookup-resources acl (assoc query :first 3 :after cursor))]
-          (is (pos? (:lookup-head-hits @stats 0))
-              "page two resumed from the heads page one published")
+          (is (zero? (:lookup-head-hits @stats 0))
+              "page two did not trust the unauthenticated v7 heads side cache")
           (is (= (mapv :id (:data (eacl/lookup-resources
                                    oracle (assoc query :first 3 :after cursor))))
                  (mapv :id (:data page-2)))
-              "and still agrees with an uncached client")))
+              "cursor replay still agrees with an uncached client")))
 
       (testing "a walk with the continuation matches one without it"
         (is (= (walk-forward oracle query 3)

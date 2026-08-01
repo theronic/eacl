@@ -242,16 +242,16 @@
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
         @(d/transact conn [{:eacl/id "unrelated"}])
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
-        (is (= 2 @calls)
-            "an unstamped schema remains uncached even when live lookups are requested")
+        (is (= 1 @calls)
+            "a complete content schema proof safely caches an unstamped schema")
 
         (eacl/write-schema! acl schema-v1)
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
-        (is (= 3 @calls)
-            "the first supported schema write enables the client result cache")))))
+        (is (= 1 @calls)
+            "a semantically equal stamped schema preserves the proof")))))
 
-(deftest out-of-band-schema-write-requires-a-new-client-test
+(deftest out-of-band-schema-write-is-observed-by-existing-client-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
@@ -263,13 +263,14 @@
       (is (false? (eacl/can? old-client viewer :admin account)))
       (is (= :current (:status (integrity/client-schema-status old-client))))
 
-      ;; Deliberately bypass the client. The lifecycle contract requires
-      ;; recreating other clients/processes after such a schema write.
+      ;; Deliberately bypass the client. v3 rederives the selected snapshot's
+      ;; complete schema proof, so an existing client cannot keep using a
+      ;; latched permission graph.
       (schema/write-schema! conn schema-v2)
       (is (= :outdated (:status (integrity/client-schema-status old-client)))
           "the optional one-datom diagnostic detects the mismatch")
       (let [writer (core/make-client conn {})]
         (eacl/create-relationship! writer viewer :viewer account))
 
-      (is (false? (eacl/can? old-client viewer :admin account)))
+      (is (true? (eacl/can? old-client viewer :admin account)))
       (is (true? (eacl/can? (core/make-client conn {}) viewer :admin account))))))

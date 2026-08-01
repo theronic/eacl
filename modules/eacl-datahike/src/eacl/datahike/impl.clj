@@ -186,6 +186,10 @@
     (when existing
       resolved)))
 
+(defn relationship-relation-id
+  [db relationship]
+  (:relation-id (resolve-relationship db relationship)))
+
 (defn- relationship-entity
   [resolved]
   {:eacl.relationship/subject-type  (:subject-type resolved)

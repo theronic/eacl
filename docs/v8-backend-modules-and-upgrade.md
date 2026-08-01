@@ -9,17 +9,20 @@ the core module.
 
 | Module | Runtime | Consistency and snapshots | Cursors | Cache proof |
 | --- | --- | --- | --- | --- |
-| `eacl-datomic` | Clojure/JVM | current, minimized-latency, freshness floor, and exact/historical | authenticated and encrypted; reconstructs the pinned historical basis | scoped schema definitions and per-relation transaction stamps |
-| `eacl-datascript` | Clojure and ClojureScript | `:fully-consistent` current immutable DB only | synchronous opaque token; query- and snapshot-bound | exact schema and relevant relationship content in the selected DB |
-| `eacl-datahike` | Clojure/JVM | `:fully-consistent` current immutable DB only | synchronous opaque token; query- and snapshot-bound | exact schema and relevant relationship content visible across connections |
+| `eacl-datomic` | Clojure/JVM | authoritative barrier, local current, causal floor, and exact `d/as-of` | authenticated and encrypted; proof-equivalent current continuation with exact fallback | mutation identity or canonical content over scoped schema and both relationship halves |
+| `eacl-datascript` | Clojure and ClojureScript | serialized local head, local current, causal-anchor wait; optional bounded exact registry | authenticated synchronous cursor; proof-equivalent continuation and optional exact fallback | mutation identity or canonical selected-DB content |
+| `eacl-datahike` | Clojure/JVM | authoritative direct branch head, local current, causal-anchor wait, retained commit/temporal exact | authenticated synchronous cursor; proof-equivalent continuation and exact fallback | mutation identity or canonical store-visible content |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | supplied by an adapter | portable store/entry validation contract |
 
-DataScript and Datahike reject unsupported consistency or historical promises
-with `:eacl/unsupported-capability` before running authorization. Their cursors
-cannot reconstruct history: after the database snapshot changes, a cursor
-raises `:eacl.pagination/invalid-cursor` with reason `:snapshot-changed`.
-Datomic instead evaluates a valid cursor against its authenticated historical
-basis.
+Capabilities are configuration-specific. DataScript exact reads require
+`:exact-snapshot-registry-size`; Datahike exact reads require a retained commit
+graph or temporal history; a lagging Datahike source without a branch-head
+barrier rejects `:fully-consistent`. All adapters continue a cursor on a newer
+proof-equivalent snapshot and use the authenticated original exact snapshot
+only after a proof mismatch.
+
+See [the consistency and cache operations guide](v8-consistency-cache-operations.md)
+for authority, retention, token, cursor, cache, and failure-diagnostic rules.
 
 ## DataScript and Datahike v7-to-v8 API migration
 
@@ -98,19 +101,12 @@ object deletion force a miss. A missing, throwing, or corrupt store and any
 proof/decoding failure safely recompute from the DB.
 
 Prefer `write-schema!`, `create-relationship!`, `write-relationships!`,
-`delete-relationships!`, and `delete-object!`. DataScript/Datahike proofs are
-derived from canonical database contents, so a raw transaction is visible
-only if it atomically maintains every canonical schema or relationship datom
-and tuple the adapter reads. If application code cannot make that guarantee,
-use `cache/no-cache` for all clients that may observe those out-of-band
-writes.
-
-Datomic uses database-visible relation-version stamps instead. Raw Datomic
-relationship transactions must come from EACL transaction helpers or include
-the corresponding `eacl.datomic.impl/stamp-relation-versions` data in the same
-transaction. A custom raw writer that cannot publish those stamps must use
-`eacl.datomic.cache/no-cache`. See the Datomic-specific lifecycle section in
-the [v8 release notes](release-notes-v8.0.md#schema-and-mutation-lifecycle).
+`delete-relationships!`, and `delete-object!`. Configure
+`:coherence-authority :managed` only when every answer-affecting writer uses
+the v3 atomic mutation protocol. Otherwise keep authority `:unknown`; the
+default `:proof-mode :auto` then uses canonical full-content proof. Disabling
+the cache is sufficient for answer reuse, but it does not manufacture the
+causal ancestry required to issue or consume at-least/exact tokens.
 
 ## Recursive permissions and safety controls
 

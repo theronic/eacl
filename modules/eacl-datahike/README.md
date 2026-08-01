@@ -12,12 +12,15 @@ Responsibilities:
 - Datahike schema installation and relationship transactions
 - current immutable-snapshot selection and object/reference conversion
 - ordered adjacency in both keyword and numeric `:attribute-refs?` modes
-- snapshot-bound opaque Relay cursors
-- database-visible schema and relation cache proofs across connections
+- proof-equivalent authenticated Relay cursors with exact fallback
+- database-visible mutation identities plus schema/relation proofs
 - `delete-object!` relationship cleanup
 
-Only `:fully-consistent` current-snapshot reads are supported. Unsupported
-consistency or historical promises fail with `:eacl/unsupported-capability`.
+Datahike supports local `:minimize-latency`, managed causal at-least selection,
+and exact reconstruction from retained commits or temporal history. It
+advertises `:fully-consistent` only for a direct `:self` writer with an
+authoritative branch-head barrier; lagging/replicated sources reject it.
+Unsupported configuration/mode combinations fail before authorization.
 The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
 `:last`/`:before`; see the
 [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

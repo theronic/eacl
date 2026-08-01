@@ -13,13 +13,16 @@ Responsibilities:
 - DataScript schema installation and canonical schema storage
 - DataScript SPI implementation for CLJ and CLJS
 - current immutable-snapshot selection and object/reference conversion
-- snapshot-bound opaque Relay cursors
-- database-visible schema and relation cache proofs
-- portable authorization caching and recursive continuations
+- proof-equivalent authenticated Relay cursors with optional exact fallback
+- database-visible mutation identities plus schema/relation content proofs
+- portable authenticated completed-answer caching
 - DataScript contract tests and adapter-specific edge cases
 
-Only `:fully-consistent` current-snapshot reads are supported. Unsupported
-consistency or historical promises fail with `:eacl/unsupported-capability`.
+DataScript supports serialized connection-head `:fully-consistent`, local
+`:minimize-latency`, and managed causal at-least selection. Exact selection is
+advertised only when `:exact-snapshot-registry-size` configures a bounded
+immutable-DB registry. It does not claim an external replication mechanism.
+Unsupported configuration/mode combinations fail before authorization.
 The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
 `:last`/`:before`; see the
 [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

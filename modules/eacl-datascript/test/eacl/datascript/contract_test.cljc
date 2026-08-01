@@ -137,15 +137,14 @@
                              {:resource/type :server
                               :resource/id-prefix "server-"}))))))
 
-    (testing "list operations reject consistency and subject filters they cannot honor"
-      (is (= :eacl/unsupported-capability
-             (:type
-              (thrown-data #(eacl/lookup-resources
-                             client
-                             {:subject (contract/->user "user-1")
-                              :permission :view
-                              :resource/type :server
-                              :consistency :minimize-latency})))))
+    (testing "list operations honor consistency but reject unsupported filters"
+      (is (map?
+           (eacl/lookup-resources
+            client
+            {:subject (contract/->user "user-1")
+             :permission :view
+             :resource/type :server
+             :consistency :minimize-latency})))
       (is (= :eacl.pagination/unsupported-filter
              (:eacl/error
               (thrown-data #(eacl/lookup-subjects
@@ -197,7 +196,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 8 (:v envelope)))
+      (is (= 9 (:v envelope)))
       (is (= :lookup-eid (get-in envelope [:edge :kind])))
       (is (= :asc (get-in envelope [:edge :frontier-direction]))))
 

@@ -51,11 +51,15 @@
     (let [token-key "v8-extraction-characterization"
           client (core/make-client
                   conn
-                  {:page-token-key token-key
+                  {:coherence-authority :managed
+                   :proof-mode :content
+                   :page-token-key token-key
                    :cache {:remember-answers true}})
           uncached-client (core/make-client
                            conn
-                           {:page-token-key token-key
+                           {:coherence-authority :managed
+                            :proof-mode :content
+                            :page-token-key token-key
                             :cache cache/no-cache})
           query {:subject (user "user-1")
                  :permission :read

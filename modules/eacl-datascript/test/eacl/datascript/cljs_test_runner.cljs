@@ -1,8 +1,15 @@
 (ns eacl.datascript.cljs-test-runner
   (:require [cljs.nodejs :as nodejs]
             [cljs.test :as t]
+            [eacl.backend.v8-test]
             [eacl.cache-test]
-            [eacl.datascript.contract-test]))
+            [eacl.causal-model-test]
+            [eacl.consistency-test]
+            [eacl.mutation-test]
+            [eacl.secure-format-test]
+            [eacl.datascript.consistency-v3-test]
+            [eacl.datascript.contract-test]
+            [eacl.datascript.mutation-test]))
 
 (nodejs/enable-util-print!)
 
@@ -16,7 +23,14 @@
     (js/process.exit failures)))
 
 (defn -main []
-  (t/run-tests 'eacl.cache-test
-               'eacl.datascript.contract-test))
+  (t/run-tests 'eacl.backend.v8-test
+               'eacl.cache-test
+               'eacl.causal-model-test
+               'eacl.consistency-test
+               'eacl.mutation-test
+               'eacl.secure-format-test
+               'eacl.datascript.consistency-v3-test
+               'eacl.datascript.contract-test
+               'eacl.datascript.mutation-test))
 
 (set! *main-cli-fn* -main)

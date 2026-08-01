@@ -1,6 +1,8 @@
 (ns eacl.datahike.schema
   (:require [datahike.api :as d]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.mutation :as journal]
+            [eacl.mutation :as mutation]
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
@@ -84,6 +86,51 @@
     :db/index       true}
    {:db/ident       :eacl.permission/target-name
     :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.mutation/id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique      :db.unique/identity
+    :db/index       true}
+   {:db/ident       :eacl.mutation/fingerprint
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.mutation/kind
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.mutation/issued-at
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.mutation/expires-at
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.graph/family-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.graph/head-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.graph/head-order
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.schema/mutation-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.relation/mutation-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.dependency/mutation-id
+    :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
@@ -277,7 +324,8 @@
   {:allow-empty-schema? true} to wipe intentionally."
   ([conn schema-string]
    (write-schema! conn schema-string {}))
-  ([conn schema-string {:keys [allow-empty-schema?]}]
+  ([conn schema-string
+    {:keys [allow-empty-schema? token-ttl-seconds retention-grace-seconds]}]
    (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
          _               (validate-schema-references new-schema-map)
          db              (d/db conn)
@@ -301,19 +349,56 @@
            (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                 " because it is used by " cnt " relationships.")
                            {:relation rel :count cnt})))))
-     (d/transact conn
-                 (vec
-                  (concat
-                   (:additions relations)
-                   (:additions permissions)
-                   (for [rel relation-retractions
-                         :let [eid (ddb/entid db [:eacl/id (:eacl/id rel)])]
-                         :when eid]
-                     [:db/retractEntity eid])
-                   (for [perm permission-retractions
-                         :let [eid (ddb/entid db [:eacl/id (:eacl/id perm)])]
-                         :when eid]
-                     [:db/retractEntity eid])
-                   [{:eacl/id "schema-string"
-                     :eacl/schema-string schema-string}])))
-     deltas)))
+     (let [tx-data
+           (vec
+            (concat
+             (:additions relations)
+             (:additions permissions)
+             (for [rel relation-retractions
+                   :let [eid (ddb/entid db [:eacl/id (:eacl/id rel)])]
+                   :when eid]
+               [:db/retractEntity eid])
+             (for [perm permission-retractions
+                   :let [eid (ddb/entid db [:eacl/id (:eacl/id perm)])]
+                   :when eid]
+               [:db/retractEntity eid])
+             [{:eacl/id "schema-string"
+               :eacl/schema-string schema-string}]))
+           stored-string
+           (some-> (d/entity db [:eacl/id "schema-string"])
+                   :eacl/schema-string)
+           changed?
+           (or (not= stored-string schema-string)
+               (some seq
+                     [(:additions relations)
+                      (:retractions relations)
+                      (:additions permissions)
+                      (:retractions permissions)]))
+           mutation-id (mutation/new-id)
+           report
+           (if changed?
+             (journal/transact!
+              conn
+              {:mutation-id mutation-id
+               :kind :schema
+               :canonical-data
+               {:operation :write-schema
+                :schema-string schema-string
+                :deltas deltas}
+               :schema-change? true
+               :token-ttl-seconds token-ttl-seconds
+               :retention-grace-seconds retention-grace-seconds
+               :relation-ids
+               (mapv (fn [relation]
+                       [:eacl/id (:eacl/id relation)])
+                     (:additions relations))
+               :tx-data tx-data})
+             {:db-before db
+              :db-after db
+              :tx-data []
+              :mutation-id (:head-id (journal/ensure-migrated! conn))
+              :no-op? true})]
+       (assoc deltas
+              :eacl.mutation/id (:mutation-id report)
+              :eacl.mutation/db-after (:db-after report)
+              :eacl.mutation/no-op? (boolean (:no-op? report)))))))

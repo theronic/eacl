@@ -523,9 +523,11 @@
                   error))]
           (if #?(:clj (instance? Exception stale-result)
                  :cljs (instance? js/Error stale-result))
-            (is (= :eacl.pagination/invalid-cursor
-                   (let [data (ex-data stale-result)]
-                     (or (:eacl/error data) (:type data)))))
+            (is (contains?
+                 #{:eacl.pagination/stale-cursor
+                   :eacl.consistency/snapshot-expired}
+                 (let [data (ex-data stale-result)]
+                   (or (:eacl/error data) (:type data)))))
             (is (= [] (:data stale-result))
                 "historical backends must resume the pre-mutation snapshot")))
 

@@ -4,6 +4,7 @@
   Cache availability never changes a recomputable authorization answer. Store
   failures, eviction, and disabled caches fall back to indexed/traversal work
   against the selected live or historical Datomic value."
+  (:require [eacl.cache :as shared])
   (:import [java.util Iterator LinkedHashMap Map$Entry]))
 
 (def cache-entry-version 2)
@@ -509,3 +510,29 @@
        (when store
          (safe-record-provider-error! store :admission kind))
        false))))
+
+(defn authenticated-store
+  "Adapts the legacy weighted provider API to the shared authenticated v3
+  cache contract. The outer legacy wrapper is only capacity metadata; the
+  value it contains is a signed shared-cache envelope, so an externally
+  writable provider cannot influence authorization by forging either layer."
+  [store namespace ttl-ms]
+  (if (or (nil? store) (no-cache? store))
+    shared/no-cache
+    (reify
+      shared/CacheStore
+      (lookup [_ k]
+        (safe-entry-value store k :authenticated-v3 string?))
+      (store! [_ k value]
+        (safe-store-entry!
+         store namespace k :authenticated-v3 value
+         (+ 256 (* 2 (count value)))
+         ttl-ms))
+      (evict! [_ k]
+        (safe-evict! store k))
+      (clear! [_]
+        (if (contains? (safe-capabilities store) :namespaced-clear)
+          (clear-namespace! store namespace)
+          (clear! store)))
+      (stats [_]
+        (stats store)))))

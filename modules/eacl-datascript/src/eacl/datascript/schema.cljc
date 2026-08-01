@@ -1,5 +1,7 @@
 (ns eacl.datascript.schema
   (:require [datascript.core :as ds]
+            [eacl.datascript.mutation :as journal]
+            [eacl.mutation :as mutation]
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
@@ -66,6 +68,20 @@
                     :eacl.permission/target-name
                     :eacl.permission/permission-name]
     :db/unique :db.unique/identity}
+
+   :eacl.mutation/id
+   {:db/unique :db.unique/identity
+    :db/index true}
+   :eacl.mutation/fingerprint {:db/index true}
+   :eacl.mutation/kind {:db/index true}
+   :eacl.mutation/issued-at {:db/index true}
+   :eacl.mutation/expires-at {:db/index true}
+   :eacl.graph/family-id {:db/index true}
+   :eacl.graph/head-id {:db/index true}
+   :eacl.graph/head-order {:db/valueType :db.type/ref}
+   :eacl.schema/mutation-id {:db/index true}
+   :eacl.relation/mutation-id {:db/index true}
+   :eacl.dependency/mutation-id {:db/index true}
 
    :eacl.relationship/subject {:db/valueType :db.type/ref}
    :eacl.relationship/relation {:db/valueType :db.type/ref}
@@ -183,7 +199,8 @@
   {:allow-empty-schema? true} to wipe intentionally."
   ([conn schema-string]
    (write-schema! conn schema-string {}))
-  ([conn schema-string {:keys [allow-empty-schema?]}]
+  ([conn schema-string
+    {:keys [allow-empty-schema? token-ttl-seconds retention-grace-seconds]}]
    (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
          _               (validate-schema-references new-schema-map)
          db              (ds/db conn)
@@ -207,18 +224,56 @@
            (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                 " because it is used by " cnt " relationships.")
                            {:relation rel :count cnt})))))
-     (ds/transact! conn
-                   (concat
-                    (:additions relations)
-                    (:additions permissions)
-                    (for [rel relation-retractions
-                          :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
-                          :when eid]
-                      [:db/retractEntity eid])
-                    (for [perm permission-retractions
-                          :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
-                          :when eid]
-                      [:db/retractEntity eid])
-                    [{:eacl/id "schema-string"
-                      :eacl/schema-string schema-string}]))
-     deltas)))
+     (let [tx-data
+           (vec
+            (concat
+             (:additions relations)
+             (:additions permissions)
+             (for [rel relation-retractions
+                   :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
+                   :when eid]
+               [:db/retractEntity eid])
+             (for [perm permission-retractions
+                   :let [eid (ds/entid db [:eacl/id (:eacl/id perm)])]
+                   :when eid]
+               [:db/retractEntity eid])
+             [{:eacl/id "schema-string"
+               :eacl/schema-string schema-string}]))
+           stored-string
+           (some-> (ds/entity db [:eacl/id "schema-string"])
+                   :eacl/schema-string)
+           changed?
+           (or (not= stored-string schema-string)
+               (some seq
+                     [(:additions relations)
+                      (:retractions relations)
+                      (:additions permissions)
+                      (:retractions permissions)]))
+           mutation-id (mutation/new-id)
+           report
+           (if changed?
+             (journal/transact!
+              conn
+              {:mutation-id mutation-id
+               :kind :schema
+               :canonical-data
+               {:operation :write-schema
+                :schema-string schema-string
+                :deltas deltas}
+               :schema-change? true
+               :token-ttl-seconds token-ttl-seconds
+               :retention-grace-seconds retention-grace-seconds
+               :relation-ids
+               (mapv (fn [relation]
+                       [:eacl/id (:eacl/id relation)])
+                     (:additions relations))
+               :tx-data tx-data})
+             {:db-before db
+              :db-after db
+              :tx-data []
+              :mutation-id (:head-id (journal/ensure-migrated! conn))
+              :no-op? true})]
+       (assoc deltas
+              :eacl.mutation/id (:mutation-id report)
+              :eacl.mutation/db-after (:db-after report)
+              :eacl.mutation/no-op? (boolean (:no-op? report)))))))

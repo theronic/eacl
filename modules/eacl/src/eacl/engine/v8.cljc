@@ -3,6 +3,8 @@
             [eacl.core :refer [spice-object]]
             [eacl.lazy-merge-sort :as lazy-sort]))
 
+(def engine-version 8)
+
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
 (def ^:private count-page-size 16384)
@@ -306,6 +308,33 @@
     :traversal-permissions (atom {})
     :relationship-dependencies (atom {})
     :direct-grant-relations (atom {})}))
+
+(defn schema-cache-key
+  "Identity of schema-derived state for one selected immutable snapshot.
+
+  The key deliberately contains no listener/client counter. A missed callback
+  cannot make a cache entry cross a source or schema proof boundary."
+  [snapshot]
+  [(backend/backend-id snapshot)
+   (backend/invoke snapshot :source-scope)
+   (backend/invoke snapshot :schema-proof)])
+
+(defn schema-cache-for!
+  "Returns a derived-schema generation keyed by selected source and proof."
+  [registry snapshot]
+  (let [key (schema-cache-key snapshot)
+        existing (get @registry key)]
+    (if existing
+      existing
+      (let [created
+            (make-schema-cache
+             snapshot
+             (backend/invoke snapshot :schema-proof))]
+        (get (swap! registry
+                    #(if (contains? % key)
+                       %
+                       (assoc % key created)))
+             key)))))
 
 (defn- permission-paths-cache-key
   [resource-type permission-name]

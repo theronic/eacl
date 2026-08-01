@@ -1,8 +1,11 @@
 (ns eacl.datomic.schema
   (:require [clojure.set]
             [datomic.api :as d]
-            [eacl.spicedb.parser :as parser]
-            [eacl.datomic.impl.indexed :as impl.indexed]))
+            [eacl.datomic.impl.indexed :as impl.indexed]
+            [eacl.datomic.mutation :as journal]
+            [eacl.datomic.mutation-schema :as mutation-schema]
+            [eacl.mutation :as mutation]
+            [eacl.spicedb.parser :as parser]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -71,6 +74,8 @@
    :db/valueType   :db.type/ref
    :db/cardinality :db.cardinality/one
    :db/noHistory   true})
+
+(def mutation-schema mutation-schema/attributes)
 
 (def assert-relation-unused-fn-definition
   "Commit-time guard for relation removal.
@@ -468,27 +473,33 @@
   generation still in the database. Without it, two replacement writers can
   both commit additions calculated from the same old generation and leave the
   UNION of their schemas behind."
-  [conn tx-data expected-version]
-  (try
-    @(d/transact conn tx-data)
-    (catch Throwable throwable
-      (if-let [relation-in-use
-               (caused-by-type throwable
-                               :eacl.schema/relation-in-use)]
-        (throw
-         (ex-info (.getMessage ^Throwable relation-in-use)
-                  (ex-data relation-in-use)
-                  throwable))
-        (if-let [cause-data (cas-failure-data throwable)]
-          (throw
-           (ex-info
-            "The EACL schema changed concurrently; retry against a new client or database value."
-            {:type :eacl.schema/concurrent-write
-             :expected-version expected-version
-             :actual-version (impl.indexed/schema-version (d/db conn))
-             :datomic-error cause-data}
-            throwable))
-          (throw throwable))))))
+  ([conn tx-data expected-version]
+   (transact-schema! conn tx-data expected-version nil))
+  ([conn tx-data expected-version journal-options]
+   (try
+     (if journal-options
+       (journal/transact!
+        conn
+        (assoc journal-options :tx-data (vec tx-data)))
+       @(d/transact conn tx-data))
+     (catch Throwable throwable
+       (if-let [relation-in-use
+                (caused-by-type throwable
+                                :eacl.schema/relation-in-use)]
+         (throw
+          (ex-info (.getMessage ^Throwable relation-in-use)
+                   (ex-data relation-in-use)
+                   throwable))
+         (if-let [cause-data (cas-failure-data throwable)]
+           (throw
+            (ex-info
+             "The EACL schema changed concurrently; retry against a new client or database value."
+             {:type :eacl.schema/concurrent-write
+              :expected-version expected-version
+              :actual-version (impl.indexed/schema-version (d/db conn))
+              :datomic-error cause-data}
+             throwable))
+           (throw throwable)))))))
 
 (defn write-schema!
   "Computes delta between existing schema and
@@ -504,7 +515,9 @@
    (write-schema! conn schema-string {}))
   ([conn schema-string opts]
    (write-schema! conn schema-string opts ::read-current-version))
-  ([conn schema-string {:keys [allow-empty-schema?]} known-schema-version]
+  ([conn schema-string
+    {:keys [allow-empty-schema? token-ttl-seconds retention-grace-seconds]}
+    known-schema-version]
    (let [new-schema-map (parser/->eacl-schema
                          (parser/parse-schema schema-string))
          ;; ADR 012 says an invalid schema makes NO database changes. This must
@@ -582,10 +595,15 @@
                  (d/entid db [:eacl/id (:eacl/id relation)])
                  (:eacl.relation/subject-type relation)])
               relation-retractions)
+             relation-addition-entities
+             (mapv (fn [relation]
+                     (assoc relation
+                            :db/id (d/tempid :db.part/user)))
+                   (:additions relations))
              tx-data
              (concat
               ;; Additions
-              (:additions relations)
+              relation-addition-entities
               (:additions permissions)
               ;; Retractions
               (for [rel relation-retractions]
@@ -605,5 +623,34 @@
                 :eacl/schema-string schema-string}
                [:db.fn/cas schema-entity
                 :eacl/schema-version current-version next-version]])]
-         (transact-schema! conn tx-data current-version)
-         (with-meta deltas {:eacl/schema-version next-version}))))))
+         (let [report
+               (if stamp-schema?
+                 (transact-schema!
+                  conn
+                  tx-data
+                  current-version
+                  {:mutation-id (mutation/new-id)
+                   :kind :schema
+                   :canonical-data
+                   {:operation :write-schema
+                    :schema-string schema-string
+                    :expected-schema-version
+                    (some-> current-version str)}
+                   :schema-change? true
+                   :relation-ids
+                   (mapv :db/id relation-addition-entities)
+                   :token-ttl-seconds token-ttl-seconds
+                   :retention-grace-seconds retention-grace-seconds})
+                 (let [db (d/db conn)]
+                   {:db-before db
+                    :db-after db
+                    :tx-data []
+                    :mutation-id
+                    (:head-id (journal/ensure-migrated! conn))
+                    :no-op? true}))]
+           (with-meta
+             deltas
+             {:eacl/schema-version next-version
+              :eacl.mutation/id (:mutation-id report)
+              :eacl.mutation/db-after (:db-after report)
+              :eacl.mutation/no-op? (boolean (:no-op? report))})))))))

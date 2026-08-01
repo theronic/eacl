@@ -1,9 +1,9 @@
 (ns eacl.datomic.consistency-cache-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.causal-token :as causal-token]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
-            [eacl.datomic.consistency :as revision]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl]
@@ -21,9 +21,27 @@
   [conn]
   (core/make-client
    conn
-   {:zed-token-key "consistency-cache-test-key"
+   {:coherence-authority :managed
+    :zed-token-key "consistency-cache-test-key"
     :cache {:checkpoints true
             :remember-answers true}}))
+
+(defn- token-payload
+  [client token]
+  (causal-token/token-data
+   (get-in client [:opts :format-options])
+   token))
+
+(defn- token-with-order-hint
+  [client order-hint]
+  (let [format-options (get-in client [:opts :format-options])
+        payload
+        (token-payload client (core/current-zed-token client))]
+    (causal-token/issue
+     format-options
+     (assoc payload
+            :order-hint order-hint
+            :exact-locator order-hint))))
 
 (defn- seed!
   [conn client]
@@ -57,10 +75,7 @@
       (with-redefs [impl/can?
                     (fn [db subject permission resource]
                       (swap! calls inc)
-                      (original db subject permission resource))
-                    d/sync
-                    (fn [& _]
-                      (throw (ex-info "unexpected sync" {})))]
+                      (original db subject permission resource))]
         (testing "fully-consistent reuses only the current dependency proof"
           (is (true? (eacl/can? client alice :admin account)))
           (is (true? (eacl/can? client alice :admin account)))
@@ -68,42 +83,32 @@
 
         (let [{deleted-token :zed/token}
               (eacl/delete-relationship! client relationship)]
-          (testing "minimize-latency may use the last coherent cached answer"
-            (is (true? (eacl/can? client alice :admin account
-                                  consistency/minimize-latency)))
-            (is (= 1 @calls)))
+          (testing "minimize-latency validates against its selected snapshot"
+            (is (false? (eacl/can? client alice :admin account
+                                   consistency/minimize-latency)))
+            (is (= 2 @calls)))
 
-          ;; A historical read is keyed by the basis it pins, while a current
-          ;; read is keyed by the relation stamps it observed, so the two no
-          ;; longer share an entry by coincidence of both being a `t`. That
-          ;; costs this one evaluation and is deliberate: relation stamps are
-          ;; :db/noHistory, so reading them through d/as-of is only reliable
-          ;; until the database indexes and collects them — at which point two
-          ;; different historical bases would both read "no stamp" and collide
-          ;; on one cache key. Pinning the basis cannot go wrong that way.
-          ;; Repeat requests for the SAME cursor or snapshot still hit, which
-          ;; is what pagination depends on.
           (testing "exact mode returns the authenticated historical snapshot"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 2 @calls)))
+            (is (= 3 @calls)))
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 3 @calls)))
+            (is (= 4 @calls)))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 3 @calls)))
+            (is (= 4 @calls)))
 
-          (testing "and the same historical snapshot is served from cache"
+          (testing "and repeated exact selection remains snapshot-correct"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 3 @calls))))))))
+            (is (= 5 @calls))))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -150,11 +155,10 @@
             decoded (core/token->page-bound
                      (get client :opts)
                      cursor)
-            opts (get client :opts)
-            database-id (:database-id opts)]
+            opts (get client :opts)]
         (is (= ["acct"] (mapv :id (:data exact-page))))
-        (is (= (revision/token-revision
-                opts database-id created-token)
+        (is (= (:exact-locator
+                (token-payload client created-token))
                (:basis-t decoded))
             "a cursor names the exact snapshot that produced its page"))
       (is (= ["acct"]
@@ -177,7 +181,8 @@
     (let [client
           (core/make-client
            conn
-           {:cache {:remember-answers true}})
+           {:coherence-authority :managed
+            :cache {:remember-answers true}})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           relationship (->Relationship alice :owner account)
@@ -189,18 +194,20 @@
                       (consistency/at-exact-snapshot created-token))))
       (is (false? (eacl/can? client alice :admin account)))))
 
-  ;; Retention stays opt-in after :live-results? was removed. A default client
-  ;; caches pagination and traversal state but retains no answers.
+  ;; The v3 default retains authenticated answers; correctness still does not
+  ;; depend on a hit because exact replay can reconstruct the selected value.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {})
+    (let [client (core/make-client
+                  conn
+                  {:coherence-authority :managed})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           {created-token :zed/token} (seed! conn client)]
       (is (true? (eacl/can? client alice :admin account)))
-      (is (zero?
+      (is (pos?
            (:entries
             (cache/stats (get-in client [:opts :lookup-cache-store]))))
-          "the default fast path does not publish completed can? results")
+          "the default fast path publishes an authenticated answer envelope")
       (is (true?
            (eacl/can? client alice :admin account
                       (consistency/at-exact-snapshot created-token)))
@@ -237,7 +244,7 @@
                (mapv :id (:data (eacl/lookup-resources client query)))))
         (eacl/delete-relationship! client relationship)
         @(d/transact conn [[:db.fn/retractEntity [:eacl/id "acct"]]])
-        (is (= ["acct"]
+        (is (= []
                (mapv
                 :id
                 (:data
@@ -246,7 +253,7 @@
                   (assoc query
                          :consistency
                          consistency/minimize-latency)))))
-            "the selected stale page resolves IDs at its own historical basis"))))
+            "minimize-latency never bypasses selected-snapshot proof validation"))))
 
   (testing "lookup-subjects with at-least-as-fresh"
     (with-mem-conn [conn schema/v7-schema]
@@ -263,7 +270,7 @@
                (mapv :id (:data (eacl/lookup-subjects client query)))))
         (eacl/delete-relationship! client relationship)
         @(d/transact conn [[:db.fn/retractEntity [:eacl/id "alice"]]])
-        (is (= ["alice"]
+        (is (= []
                (mapv
                 :id
                 (:data
@@ -273,7 +280,7 @@
                          :consistency
                          (consistency/at-least-as-fresh
                           created-token))))))
-            "the freshness floor may select an older cached page whose subject is now deleted")))))
+            "at-least selects a current dominating snapshot, not an old cached value")))))
 
 (deftest exact-query-preserves-historical-unknown-object-semantics-test
   (with-mem-conn [conn schema/v7-schema]
@@ -312,24 +319,24 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
-          current-token (core/current-zed-token client)
-          age-token (core/zed-token-at-least-seconds-ago client 30)
-          database-id (get-in client [:opts :database-id])]
-      (is (integer?
-           (revision/token-revision
-            (:opts client) database-id current-token)))
-      (is (integer?
-           (revision/token-revision
-            (:opts client) database-id age-token)))
-      (with-redefs [d/sync
-                    (fn [& _]
-                      (throw (ex-info "unexpected sync" {})))]
-        (is (true?
-             (eacl/can? client
-                        (spice-object :user "alice")
-                        :admin
-                        (spice-object :account "acct")
-                        (consistency/at-least-as-fresh age-token))))))))
+          [current-token age-token]
+          (with-redefs [d/sync
+                        (fn [& _]
+                          (throw (ex-info "token helpers must not sync" {})))]
+            [(core/current-zed-token client)
+             (core/zed-token-at-least-seconds-ago client 30)])
+          current-payload (token-payload client current-token)
+          age-payload (token-payload client age-token)]
+      (is (integer? (:order-hint current-payload)))
+      (is (integer? (:order-hint age-payload)))
+      (is (= (:source-id current-payload)
+             (:source-id age-payload)))
+      (is (true?
+           (eacl/can? client
+                      (spice-object :user "alice")
+                      :admin
+                      (spice-object :account "acct")
+                      (consistency/at-least-as-fresh age-token)))))))
 
 (deftest cross-database-zed-token-is-rejected-test
   (with-mem-conn [conn-a schema/v7-schema]
@@ -347,7 +354,10 @@
                      (consistency/at-least-as-fresh token))
           (is false "a token cannot cross databases")
           (catch clojure.lang.ExceptionInfo e
-            (is (= :database-mismatch (:reason (ex-data e))))))))))
+            (is (= :eacl.consistency/incomparable-scope
+                   (:type (ex-data e))))
+            (is (= :incomparable-scope
+                   (:reason (ex-data e))))))))))
 
 (deftest cross-database-page-cursor-is-rejected-before-history-test
   (with-mem-conn [conn-a schema/v7-schema]
@@ -419,19 +429,22 @@
           new-key "new-stable-zed-token-key"
           old-client
           (core/make-client conn
-                            {:zed-token-keyring {:old old-key}
+                            {:coherence-authority :managed
+                             :zed-token-keyring {:old old-key}
                              :zed-token-kid :old})
           _ (seed! conn old-client)
           old-token (core/current-zed-token old-client)
           overlap-client
           (core/make-client conn
-                            {:zed-token-keyring {:old old-key
+                            {:coherence-authority :managed
+                             :zed-token-keyring {:old old-key
                                                  :new new-key}
                              :zed-token-kid :new})
           new-token (core/current-zed-token overlap-client)
           new-only-client
           (core/make-client conn
-                            {:zed-token-keyring {:new new-key}
+                            {:coherence-authority :managed
+                             :zed-token-keyring {:new new-key}
                              :zed-token-kid :new})
           demand [(spice-object :user "alice")
                   :admin
@@ -594,10 +607,8 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
-          database-id (get-in client [:opts :database-id])
           future-t (inc (d/basis-t (d/db conn)))
-          future-token (revision/zed-token
-                        (:opts client) database-id future-t)
+          future-token (token-with-order-hint client future-t)
           sync-calls (atom [])]
       (with-redefs [d/sync
                     (fn [_conn t]
@@ -612,7 +623,10 @@
           (is false "the Peer did not actually reach the future revision")
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl.consistency/freshness-unavailable
-                   (:type (ex-data e)))))))
+                   (:type (ex-data e))))
+            (is (= :head-behind (:reason (ex-data e))))
+            (is (= future-t
+                   (:requested-order-hint (ex-data e)))))))
       (is (= [future-t] @sync-calls)
           "EACL waits for the caller's exact lower bound, not transactor head"))))
 
@@ -622,10 +636,8 @@
                            [:opts :consistency-sync-timeout-ms]
                            1)
           _ (seed! conn client)
-          database-id (get-in client [:opts :database-id])
           future-t (inc (d/basis-t (d/db conn)))
-          token (revision/zed-token
-                 (:opts client) database-id future-t)]
+          token (token-with-order-hint client future-t)]
       (with-redefs [d/sync
                     (fn [_conn _t]
                       (future
@@ -641,18 +653,17 @@
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl.consistency/freshness-unavailable
                    (:type (ex-data e))))
-            (is (= :timeout (:reason (ex-data e))))
-            (is (= future-t (:requested-t (ex-data e))))
+            (is (= :freshness-timeout (:reason (ex-data e))))
+            (is (= future-t
+                   (:requested-order-hint (ex-data e))))
             (is (= 1 (:timeout-ms (ex-data e))))))))))
 
 (deftest at-least-as-fresh-normalizes-targeted-sync-failures-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
-          database-id (get-in client [:opts :database-id])
           future-t (inc (d/basis-t (d/db conn)))
-          token (revision/zed-token
-                 (:opts client) database-id future-t)]
+          token (token-with-order-hint client future-t)]
       (with-redefs [d/sync
                     (fn [_conn _t]
                       (throw (ex-info "peer unavailable" {})))]
@@ -667,7 +678,8 @@
             (is (= :eacl.consistency/freshness-unavailable
                    (:type (ex-data e))))
             (is (= :sync-failed (:reason (ex-data e))))
-            (is (= future-t (:requested-t (ex-data e))))))))))
+            (is (= future-t
+                   (:requested-order-hint (ex-data e))))))))))
 
 (deftest exact-provider-failure-falls-back-to-history-test
   (with-mem-conn [conn schema/v7-schema]
@@ -692,8 +704,11 @@
               (cache/clear-namespace! delegate namespace))
             (record-provider-error! [_ operation kind]
               (cache/record-provider-error! delegate operation kind)))
-          client (core/make-client conn {:cache {:store store
-                                                 :remember-answers true}})
+          client (core/make-client
+                  conn
+                  {:coherence-authority :managed
+                   :cache {:store store
+                           :remember-answers true}})
           {token :zed/token} (seed! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")]

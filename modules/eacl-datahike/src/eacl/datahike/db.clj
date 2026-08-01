@@ -53,24 +53,22 @@
   "Datoms of composite-tuple attribute `attr` (of `arity` components) whose
    value begins with `prefix`.
 
-   Two datahike facts make the obvious spelling silently wrong. A partial tuple
-   is not a valid seek bound: datahike sorts vectors length-first (as DataScript
-   does — Datomic is the outlier here), so a short bound lands at the head of
-   the whole attribute and the seek returns everything. Hence the pad to full
-   arity with `nil`, which sorts lowest and positions at the exact prefix. And
-   `seek-datoms` runs off the end of the attribute into the next one, hence the
-   `:a` guard rather than just a value check."
+   Restrict the scan to the exact AVET attribute first, then filter its tuple
+   values. Datahike 0.8.1759's `AsOfDB` delegates `seek-datoms` without applying
+   the temporal wrapper's seek context: a padded composite lower bound can skip
+   the wanted historical tuple and start in the following attribute. Exact
+   `datoms` does apply that context. Relation-definition cardinality is bounded
+   by the authorization schema, so this preserves correctness on temporal
+   snapshots without widening the scan to the database."
   [db attr arity prefix]
   (let [prefix (vec prefix)
-        n      (count prefix)
-        padded (into prefix (repeat (- arity n) nil))
-        a-repr (attr-repr db attr)]
-    (->> (d/seek-datoms db {:index :avet :components [attr padded]})
-         (take-while (fn [{:keys [a v]}]
-                       (and (= a-repr a)
-                            (vector? v)
-                            (<= n (count v))
-                            (= prefix (subvec v 0 n))))))))
+        n      (count prefix)]
+    (->> (d/datoms db {:index :avet :components [attr]})
+         (filter (fn [{:keys [v]}]
+                   (and (vector? v)
+                        (= arity (count v))
+                        (<= n arity)
+                        (= prefix (subvec v 0 n))))))))
 
 (defn avet-datoms
   "Datoms of `attr`, optionally restricted to an exact value."

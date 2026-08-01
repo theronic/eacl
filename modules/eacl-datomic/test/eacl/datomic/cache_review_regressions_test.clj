@@ -297,11 +297,9 @@
 ;; --- M4 ---------------------------------------------------------------------
 
 (deftest cursor-pages-do-not-write-unreachable-live-entries-test
-  ;; A cursor page is forced to :at-exact-snapshot and reads exact-key. Its live
-  ;; entry was keyed by a query identity containing an :after edge, and every
-  ;; request carrying such an edge takes the historical branch — so the entry
-  ;; could never be read while still consuming the weight and entry budget that
-  ;; live page-one answers compete for.
+  ;; v3 stores one authenticated proof envelope per answer. It has no separate
+  ;; unauthenticated latest-result pointer, and a cursor page contributes only
+  ;; its own independently authenticated answer.
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           context {:store store}
@@ -318,12 +316,12 @@
           stats (cache/stats store)]
       (is (= ["acct0" "acct1" "acct2"] (mapv :id (:data page-1))))
       (is (= ["acct3" "acct4" "acct5"] (mapv :id (:data page-2))))
-      (is (= 2 puts-after-page-1)
-          "page one publishes the exact entry + the latest-result pointer")
+      (is (= 1 puts-after-page-1)
+          "page one publishes one authenticated answer envelope")
       (is (= 1 (- (:puts stats) puts-after-page-1))
-          "a cursor page publishes only its exact entry")
-      (is (= 1 (get-in stats [:by-kind :latest-result :puts]))
-          "and no second latest-result pointer under the cursor prefix"))))
+          "a cursor page publishes one independently authenticated envelope")
+      (is (nil? (get-in stats [:by-kind :latest-result :puts]))
+          "the retired unauthenticated latest-result pointer is never written"))))
 
 ;; --- L2 ---------------------------------------------------------------------
 

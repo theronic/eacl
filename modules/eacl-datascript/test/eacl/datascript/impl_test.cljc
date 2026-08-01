@@ -4,7 +4,8 @@
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as impl]
-            [eacl.datascript.schema :as schema]))
+            [eacl.datascript.schema :as schema]
+            [eacl.engine.v8 :as engine]))
 
 (def scan-schema
   "definition user {}
@@ -172,72 +173,53 @@
     {:conn conn
      :client client}))
 
-(defn- backend-for-client
-  [client db]
-  (impl/indexed-backend db (:opts client)))
-
 (deftest permission-path-cache-lifecycle-test
   (let [{:keys [conn client]} (seed-permission-db)
         calc-calls            (atom 0)
-        schema-builds         (atom 0)
-        orig-calc             impl/calc-permission-paths
-        orig-build            impl/build-schema-catalog
-        cache-stamp           (:cache-stamp (:opts client))]
-    (with-redefs [impl/calc-permission-paths (fn [& args]
-                                               (swap! calc-calls inc)
-                                               (apply orig-calc args))
-                  impl/build-schema-catalog (fn [db]
-                                              (swap! schema-builds inc)
-                                              (orig-build db))]
+        orig-calc             engine/calc-permission-paths
+        subject               (spice-object :user "user-1")
+        resource              (spice-object :server "server-1")]
+    (with-redefs [engine/calc-permission-paths
+                  (fn [& args]
+                    (swap! calc-calls inc)
+                    (apply orig-calc args))]
       (testing "permission paths and schema catalog stay warm across relationship writes"
-        (let [db-before      (ds/db conn)
-              backend-before (backend-for-client client db-before)
-              stamp-before   (cache-stamp)]
-          (is (seq (impl/get-permission-paths backend-before :server :view)))
-          (is (= 1 @calc-calls))
-          (is (= 1 @schema-builds))
+        (is (false? (eacl/can? client subject :view resource)))
+        (is (= 1 @calc-calls))
 
-          (reset! calc-calls 0)
-          (eacl/create-relationship! client
-                                     (spice-object :group "group-1")
-                                     :group
-                                     (spice-object :server "server-1"))
-          (let [db-after      (ds/db conn)
-                backend-after (backend-for-client client db-after)]
-            (is (= stamp-before (cache-stamp)))
-            (is (seq (impl/get-permission-paths backend-after :server :view)))
-            (is (zero? @calc-calls))
-            (is (= 1 @schema-builds)))))
+        (reset! calc-calls 0)
+        (eacl/create-relationship! client
+                                   (spice-object :group "group-1")
+                                   :group
+                                   resource)
+        (is (false? (eacl/can? client subject :view resource)))
+        (is (zero? @calc-calls)))
 
       (testing "schema writes invalidate permission paths and compiled schema catalog"
-        (let [stamp-before (cache-stamp)]
-          (reset! calc-calls 0)
-          (eacl/write-schema! client permission-schema-v2)
-          (let [db-after      (ds/db conn)
-                backend-after (backend-for-client client db-after)]
-            (is (not= stamp-before (cache-stamp)))
-            (is (seq (impl/get-permission-paths backend-after :server :view)))
-            (is (= 1 @calc-calls))
-            (is (= 2 @schema-builds))))))))
+        (reset! calc-calls 0)
+        (eacl/write-schema! client permission-schema-v2)
+        (is (false? (eacl/can? client subject :view resource)))
+        (is (= 1 @calc-calls))))))
 
 (deftest permission-path-cache-is-connection-local-test
-  (let [{conn-1 :conn client-1 :client} (seed-permission-db)
-        {conn-2 :conn client-2 :client} (seed-permission-db)
-        calc-calls                      (atom 0)
-        orig-calc                       impl/calc-permission-paths]
-    (with-redefs [impl/calc-permission-paths (fn [& args]
-                                               (swap! calc-calls inc)
-                                               (apply orig-calc args))]
-      (let [backend-1a (backend-for-client client-1 (ds/db conn-1))
-            backend-2a (backend-for-client client-2 (ds/db conn-2))]
-        (is (not= (:permission-paths-cache (:opts client-1))
-                  (:permission-paths-cache (:opts client-2))))
-        (impl/get-permission-paths backend-1a :server :view)
-        (impl/get-permission-paths backend-2a :server :view)
+  (let [{client-1 :client} (seed-permission-db)
+        {client-2 :client} (seed-permission-db)
+        calc-calls (atom 0)
+        orig-calc engine/calc-permission-paths]
+    (with-redefs [engine/calc-permission-paths
+                  (fn [& args]
+                    (swap! calc-calls inc)
+                    (apply orig-calc args))]
+      (let [subject (spice-object :user "user-1")
+            resource (spice-object :server "server-1")]
+        (is (not= (:derived-schema-caches (:opts client-1))
+                  (:derived-schema-caches (:opts client-2))))
+        (eacl/can? client-1 subject :view resource)
+        (eacl/can? client-2 subject :view resource)
         (is (= 2 @calc-calls))
         (reset! calc-calls 0)
-        (impl/get-permission-paths (backend-for-client client-1 (ds/db conn-1)) :server :view)
-        (impl/get-permission-paths (backend-for-client client-2 (ds/db conn-2)) :server :view)
+        (eacl/can? client-1 subject :view resource)
+        (eacl/can? client-2 subject :view resource)
         (is (zero? @calc-calls))))))
 
 (deftest read-relationships-query-matrix-test
@@ -281,4 +263,5 @@
     (is (= 5 (count page-2)))
     (is (string? cursor))
     (is (= "bulk-user-0" (get-in (first page-1) [:subject :id])))
-    (is (= "bulk-user-1000" (get-in (first page-2) [:subject :id])))))
+    (is (= "bulk-user-995" (get-in (first page-2) [:subject :id]))
+        "portable relationship order is lexicographic by public object id")))

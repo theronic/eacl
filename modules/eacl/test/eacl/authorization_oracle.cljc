@@ -50,6 +50,55 @@
     [:relation :reader]
     [:arrow :parent [:permission :read]]]})
 
+(defn canonical-value
+  "Returns a portable, totally ordered representation of EDN-shaped test data.
+
+  The reference model intentionally does not reuse production serialization or
+  proof code. Keeping this oracle structurally independent makes differential
+  tests capable of detecting canonicalization and dependency-scope bugs in the
+  implementation under test."
+  [value]
+  (cond
+    (map? value)
+    [:map
+     (->> value
+          (map (fn [[k v]]
+                 [(canonical-value k) (canonical-value v)]))
+          (sort-by pr-str)
+          vec)]
+
+    (set? value)
+    [:set (->> value (map canonical-value) (sort-by pr-str) vec)]
+
+    (sequential? value)
+    [:sequential (mapv canonical-value value)]
+
+    :else
+    [:scalar value]))
+
+(defn canonical-schema-proof
+  "Canonical full-content schema proof for a reference fixture."
+  [rules]
+  (canonical-value rules))
+
+(defn canonical-relation-proof
+  "Canonical full-content relationship proof for a reference fixture.
+
+  Relationship maps are normalized as values rather than relying on set or map
+  iteration order. This deliberately treats content that changes away and back
+  as equivalent, which is the conservative full-content proof contract."
+  [relationships]
+  (->> relationships
+       (map canonical-value)
+       (sort-by pr-str)
+       vec))
+
+(defn full-content-proof
+  "Independent schema-and-relationship proof used as the differential oracle."
+  [{:keys [rules relationships]}]
+  {:schema (canonical-schema-proof rules)
+   :relationships (canonical-relation-proof relationships)})
+
 (defn- direct-subjects
   [relationships resource relation]
   (into #{}

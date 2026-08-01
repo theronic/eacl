@@ -264,6 +264,10 @@
     (when (and resolved (relationship-exists? db resolved))
       resolved)))
 
+(defn relationship-relation-id
+  [db relationship]
+  (:relation-eid (resolve-relationship db relationship {})))
+
 (defn- find-relations
   [db filters]
   (let [resource-type     (:resource/type filters)
@@ -283,6 +287,14 @@
                             (= resource-relation (:eacl.relation/relation-name relation)))
                         (or (nil? subject-type)
                             (= subject-type (:eacl.relation/subject-type relation)))))))))
+
+(defn relationship-relation-ids
+  "The complete schema relation-id scope that can match a relationship read."
+  [db filters]
+  (->> (find-relations db filters)
+       (map :db/id)
+       sort
+       vec))
 
 (defn- decode-forward-datom
   [db relation-by-eid datom]
@@ -676,6 +688,19 @@
     (if (seq missing)
       (into ops (map tx-relation-version-stamp) missing)
       ops)))
+
+(defn affected-relation-ids
+  "Returns every relation whose relationship tuples are changed by `ops`."
+  [ops]
+  (into #{}
+        (keep
+         (fn [op]
+           (or (relation-eid-of-retraction op)
+               (when (and (vector? op)
+                          (= :db/add (first op))
+                          (= relation-version-attr (nth op 2 nil)))
+                 (nth op 1 nil)))))
+        ops))
 
 (defn- schema-version-guard?
   [op]

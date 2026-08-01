@@ -128,16 +128,17 @@
         (is (= (:data hit-page2) (:data retry-page2))
             "a cursor retry returns its immutable cached page")
         (is (= (:data page1) (:data previous-page)))
-        (is (= 1 (:continuation-hits @hit-stats)))
+        (is (nil? (:continuation-hits @hit-stats))
+            "v3 does not read the unauthenticated continuation side cache")
         (is (nil? (:continuation-hits @miss-stats)))
         (is (= 1 (:continuation-misses @alternate-stats)))
-        (is (= 1 (:recursive-page-hits @retry-stats))
-            "a retry does not consume or replay the traversal frontier")
-        (is (= 1 (:recursive-page-hits @previous-stats))
-            "back navigation reuses the already produced immutable page")
-        (is (< (:derived-grants @hit-stats)
+        (is (nil? (:recursive-page-hits @retry-stats))
+            "a retry deterministically replays its authenticated cursor")
+        (is (nil? (:recursive-page-hits @previous-stats))
+            "back navigation does not trust a side-cache page")
+        (is (= (:derived-grants @hit-stats)
                (:derived-grants @miss-stats))
-            "cache hit advances only new work; cache miss replays the prefix")))))
+            "both cache configurations replay the same proven prefix")))))
 
 (deftest reverse-recursive-pagination-resumes-test
   (with-mem-conn [conn schema/v7-schema]
@@ -158,7 +159,7 @@
         (is (empty? (set/intersection
                      (set (map :id (:data page1)))
                      (set (map :id (:data page2))))))
-        (is (= 1 (:continuation-hits @stats)))
+        (is (nil? (:continuation-hits @stats)))
         (let [all-subjects (collect-reverse client query)]
           (is (= 130 (count all-subjects)))
           (is (= 130 (count (set (map :id all-subjects))))
@@ -224,15 +225,15 @@
                       (eacl/lookup-resources client (assoc query :after cursor)))]
           (is (= (mapv account-id (range 5 10))
                  (mapv :id (:data page2))))
-          (is (= 1 (:continuation-hits @stats))
-              "unrelated basis churn does not invalidate recursive state")
+          (is (nil? (:continuation-hits @stats))
+              "unrelated basis churn still avoids unauthenticated continuation state")
           (let [restart-stats (atom {})
                 restarted-page1
                 (binding [idx/*recursive-traversal-stats* restart-stats]
                   (eacl/lookup-resources client query))]
             (is (= (:data page1) (:data restarted-page1)))
-            (is (= 1 (:recursive-page-hits @restart-stats))
-                "a new identical lookup is keyed by relationship proof, not basis t")
+            (is (nil? (:recursive-page-hits @restart-stats))
+                "a completed authenticated answer, not a side-cache page, is reusable")
             (is (zero? (get @restart-stats :derived-grants 0)))))))))
 
 (deftest recursive-pages-are-isolated-by-cache-namespace-test
@@ -268,16 +269,17 @@
         (is (= (:data page-a) (:data page-b)))
         (is (nil? (:recursive-page-hits @first-b-stats))
             "tenant B cannot read tenant A's completed recursive page")
-        (is (pos? (cache/clear-namespace! store :tenant-a)))
+        (is (zero? (cache/clear-namespace! store :tenant-a))
+            "no unauthenticated recursive page was retained")
         (let [second-b-stats (atom {})
               page-b-again
               (binding [idx/*recursive-traversal-stats* second-b-stats]
                 (eacl/lookup-resources client-b query))]
           (is (= (:data page-b) (:data page-b-again)))
-          (is (= 1 (:recursive-page-hits @second-b-stats))
-              "clearing tenant A leaves tenant B's recursive page intact"))))))
+          (is (nil? (:recursive-page-hits @second-b-stats))
+              "tenant B also replays without a recursive page side cache"))))))
 
-(deftest reverse-continuation-weight-includes-retained-rule-graph-test
+(deftest reverse-continuation-side-state-is-not-retained-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           client
@@ -303,11 +305,12 @@
             retained-rule-count
             (reduce + 0 (map count (vals (:rules-by-node state))))
             weight #'idx/continuation-weight]
-        (is (pos? retained-rule-count))
-        (is (= retained-rule-count (:rule-count state)))
-        (is (> (weight state)
+        (is (nil? continuation))
+        (is (zero? retained-rule-count))
+        (is (nil? (:rule-count state)))
+        (is (= (weight state)
                (weight (assoc state :rule-count 0)))
-            "the admission estimate charges the retained reverse rule graph")))))
+            "no reverse rule graph reached the unauthenticated provider")))))
 
 (deftest recursive-cursor-replays-when-its-boundary-object-is-gone-live-test
   (with-mem-conn [conn schema/v7-schema]
@@ -361,7 +364,7 @@
         (is (> (:derived-grants @stats) 5)
             "an alternate cache recomputes the prefix instead of changing snapshots")))))
 
-(deftest recursive-continuation-retains-bounded-eid-chunks-not-db-values-test
+(deftest recursive-continuation-does-not-retain-opaque-runtime-values-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           client
@@ -394,8 +397,8 @@
             streams (->> continuations
                          (mapcat #(seq (get-in % [:state :queue])))
                          (filter #(= :stream (:kind %))))]
-        (is (seq continuations))
-        (is (seq streams))
+        (is (empty? continuations))
+        (is (empty? streams))
         (is (every? vector? (map :eids streams)))
         (is (every? #(<= (count (:eids %)) 64) streams))
         (is (not-any? #(instance? db-class %) retained-values))
@@ -432,7 +435,7 @@
         (is (> (:derived-grants @stats) 3)
             "the safe fallback replays the proven traversal prefix")))))
 
-(deftest complete-recursive-enumeration-is-linear-on-continuation-hits-test
+(deftest complete-recursive-enumeration-is-equal-with-or-without-cache-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-linear-walk"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -447,6 +450,6 @@
             replayed (collect-forward disabled-client query)]
         (is (= (:data replayed) (:data cached)))
         (is (= 80 (count (:data cached))))
-        (is (< (:derived-grants cached)
-               (/ (:derived-grants replayed) 2))
-            "cached traversal advances near-linearly while disabled mode remains correct")))))
+        (is (= (:derived-grants cached)
+               (:derived-grants replayed))
+            "authenticated replay performs the same traversal work")))))
