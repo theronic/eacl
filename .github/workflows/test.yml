@@ -36,7 +36,7 @@ jobs:
           restore-keys: cljdeps-${{ runner.os }}-
 
       - name: Run tests
-        # logback.xml keeps Datomic's DEBUG logging out of the CI log.
-        # ^:benchmark load tests (test/eacl/bench/) are excluded per AGENTS.md;
-        # run them explicitly (via nREPL) when validating performance changes.
-        run: clojure -J-Dlogback.configurationFile=logback.xml -X:test :excludes '[:benchmark]'
+        # ^:benchmark load tests (modules/eacl-datomic/test/eacl/bench/) are
+        # excluded per AGENTS.md; run them explicitly through nREPL when
+        # validating performance changes.
+        run: clojure -X:test :excludes '[:benchmark]'

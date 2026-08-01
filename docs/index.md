@@ -172,7 +172,7 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 
 ## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
+The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](../modules/eacl/src/eacl/core.cljc) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resource) => true | false`
 - `(eacl/lookup-subjects client filters) => {:data [subjects...] :page-info {...}}`

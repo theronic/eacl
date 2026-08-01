@@ -5,6 +5,23 @@ additive: the public connection-oriented authorization API is preserved, the rel
 model is unchanged (`:eacl/storage-version` stays at 7, and v8.0 reads a v7 database as-is), and
 there is no migration step — `write-schema!` installs the new attribute.
 
+## Modular artifacts
+
+EACL v8.0 is a workspace with independently consumable modules:
+
+- `modules/eacl` contains the backend-neutral protocol, schema/parser model,
+  shared engine, and stable six-function backend SPI.
+- `modules/eacl-datomic` contains the complete v8 Datomic implementation.
+- `modules/eacl-datascript` contains the CLJ/CLJS DataScript adapter.
+
+Existing Datomic namespace imports do not change. Consumers replace the root
+Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
+does not alter persisted schema or cursor formats. The DataScript/Datahike
+extension seam remains the same six-function SPI used by Datahike PR #81.
+
+Published module dependency maps do not select Logback or another logging
+implementation. Applications own their logging backend and configuration.
+
 It adds one Datomic schema attribute, `:eacl/relation-version`, one small
 transactor-side relation-removal guard, and no permanent cache tuples.
 The attribute holds one `:db/noHistory` datom per relation naming the transaction that last changed

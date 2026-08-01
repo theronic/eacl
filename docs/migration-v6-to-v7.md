@@ -1,11 +1,11 @@
 # EACL v6 → v7 Migration Guide
 
 **Status:** current as of 2026-07-14.
-**Applies to:** any EACL database written by a version pinned to a git SHA **before** commit `de9ebbc` (“Port EACL v7 to cursor-tree parity”, 2026-03-12). If your `deps.edn` pins an older SHA — including `884a1d0`, which README quickstarts have circulated — you are on v6 and this guide applies to you. (Not sure? [`eacl.migrations.v6-to-v7/detect-storage-version`](../src/eacl/migrations/v6_to_v7.clj) classifies your database directly.)
+**Applies to:** any EACL database written by a version pinned to a git SHA **before** commit `de9ebbc` (“Port EACL v7 to cursor-tree parity”, 2026-03-12). If your `deps.edn` pins an older SHA — including `884a1d0`, which README quickstarts have circulated — you are on v6 and this guide applies to you. (Not sure? [`eacl.migrations.v6-to-v7/detect-storage-version`](../modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj) classifies your database directly.)
 
 v7 changed **how Relationships are stored in Datomic**. The public API (`eacl.core/IAuthorization`), the SpiceDB schema DSL, and the Relation/Permission schema entities are unchanged. Your *stored relationship data* must be rewritten once, and a small number of internal call sites must be updated if you reached below the public API.
 
-EACL ships the migration as a namespace: [`eacl.migrations.v6-to-v7`](../src/eacl/migrations/v6_to_v7.clj). It is **additive, idempotent, and reversible** up to the final cleanup step, and it is end-to-end tested in [`test/eacl/migrations/v6_to_v7_test.clj`](../test/eacl/migrations/v6_to_v7_test.clj) against real v6-model databases.
+EACL ships the migration as a namespace: [`eacl.migrations.v6-to-v7`](../modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj). It is **additive, idempotent, and reversible** up to the final cleanup step, and it is end-to-end tested in [`modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj`](../modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj) against real v6-model databases.
 
 **v7 refuses to start against unmigrated v6 data.** `eacl.datomic.core/make-client` checks the storage version recorded in Datomic at construction time and throws `{:type :eacl/storage-version}` if the database still contains unmigrated v6 relationship entities — because v7 code reads only v7 tuples, starting up anyway would silently answer *every* permission check with `false`/empty. Migration is opt-in: run `migrate!` yourself, or pass `:auto-migrate-v6` to `make-client`.
 
@@ -69,7 +69,7 @@ Why v7: 2 datoms instead of 7 per relationship, better index locality for the cu
 
 Three notes:
 
-- **`make-client` now checks the storage version.** Construction throws `{:type :eacl/storage-version}` against unmigrated v6 relationship data (see the intro). Fresh databases and migrated databases are unaffected. Opt into automatic migration with `{:auto-migrate-v6 true}` or `{:auto-migrate-v6 {:schema "definition user {} ..."}}` (any [`migrate!`](../src/eacl/migrations/v6_to_v7.clj) options map).
+- **`make-client` now checks the storage version.** Construction throws `{:type :eacl/storage-version}` against unmigrated v6 relationship data (see the intro). Fresh databases and migrated databases are unaffected. Opt into automatic migration with `{:auto-migrate-v6 true}` or `{:auto-migrate-v6 {:schema "definition user {} ..."}}` (any [`migrate!`](../modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj) options map).
 - **`make-client` option rename.** `:entity->object-id (fn [entity] id)` is deprecated in favour of `:entid->object-id (fn [db eid] id)`. The old key still works as an alias; supplying both throws. Unknown option keys now throw `{:type :eacl/invalid-config}` instead of being silently ignored — if you had a typo'd option in v6, v7 will tell you about it at client construction.
 - **The pagination API changed.** `:cursor`/`:limit` are rejected with a typed error; paginate with `:first`/`:after` (forward) or `:last`/`:before` (backward). Lookups and `read-relationships` return `{:data [...] :page-info {:start-cursor ... :end-cursor ... :has-next-page? ... :has-previous-page? ...}}`.
 - **Discard persisted cursors.** v7.3 retains the v7.2 `eacl3_...` page-token format: tokens are AES-GCM-encrypted, bound to the query and its Datomic basis, and expire after 5 minutes by default (`:page-token-ttl-seconds` to tune; `:page-token-key`/`:page-token-keyring` for multi-peer deployments). V7.3 additionally carries authenticated per-path frontiers for deep acyclic pages. Any v6 cursor value you stored is rejected after the upgrade. Treat pagination sessions as ephemeral across the migration.
@@ -254,7 +254,7 @@ It is one indexed scan plus 2 datoms written per relationship. At the ~800k-rela
 Yes — it's idempotent. Re-running after an interruption or as a catch-up pass adds only whatever is missing, and re-verifies.
 
 **Is the migration itself tested?**
-Yes — [`test/eacl/migrations/v6_to_v7_test.clj`](../test/eacl/migrations/v6_to_v7_test.clj) builds real v6-model databases (entity-per-relationship storage) and exercises the full path end-to-end: `migrate!` with and without schema re-assertion, `make-client`'s refusal and `:auto-migrate-v6`, idempotency, cleanup, ancient no-`:eacl/id` schema entities, missing-Relation aborts, and the manual-migration-then-stamp flow.
+Yes — [`modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj`](../modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj) builds real v6-model databases (entity-per-relationship storage) and exercises the full path end-to-end: `migrate!` with and without schema re-assertion, `make-client`'s refusal and `:auto-migrate-v6`, idempotency, cleanup, ancient no-`:eacl/id` schema entities, missing-Relation aborts, and the manual-migration-then-stamp flow.
 
 **I never call `write-schema!` — do the caches work?**
 Yes. A database with no `:eacl/schema-version` stamp is valid; caches key on a nil stamp plus database identity. But only `write-schema!` bumps the stamp, so programmatic schema edits require a manual `evict-permission-paths-cache!` on every peer. Adopting `write-schema!` (which `migrate!`'s `:schema` option does for you) is the supported path.
