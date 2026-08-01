@@ -1,6 +1,7 @@
 (ns eacl.datomic.schema-test
   (:require [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
+            [eacl.core :as eacl]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.fixtures :as fixtures]
@@ -177,6 +178,207 @@
               schema (schema/read-schema db)]
           (is (= 3 (count (:relations schema))))
           (is (= 3 (count (:permissions schema)))))))))
+
+(deftest invalid-schema-does-not-install-cache-stamp-attributes-test
+  ;; ADR 012 says an invalid write makes no changes. The v8.0 compatibility
+  ;; installer used to transact these attributes before parsing or validating
+  ;; the proposed schema.
+  (let [without-stamps
+        (remove (fn [{:keys [db/ident]}]
+                  (contains? #{:eacl/schema-version
+                               :eacl/relation-version
+                               :eacl.fn/assert-relation-unused}
+                             ident))
+                schema/v7-schema)]
+    (with-mem-conn [conn without-stamps]
+      (is (nil? (d/entid (d/db conn) :eacl/schema-version)))
+      (is (nil? (d/entid (d/db conn) :eacl/relation-version)))
+      (is (nil? (d/entid (d/db conn)
+                         :eacl.fn/assert-relation-unused)))
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (schema/write-schema!
+                    conn
+                    "definition user {}
+                     definition account {
+                       permission admin = missing
+                     }")))
+      (is (nil? (d/entid (d/db conn) :eacl/schema-version)))
+      (is (nil? (d/entid (d/db conn) :eacl/relation-version)))
+      (is (nil? (d/entid (d/db conn)
+                         :eacl.fn/assert-relation-unused))))))
+
+(deftest concurrent-schema-replacements-do-not-merge-test
+  ;; Two writers diffing from the same generation previously submitted plain
+  ;; adds/retracts. Both transactions could commit, producing the UNION of two
+  ;; replacement schemas while :eacl/schema-string described only the winner.
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema! conn "definition user {}")
+    (let [schema-left
+          "definition user {}
+           definition account { relation left: user }"
+          schema-right
+          "definition user {}
+           definition account { relation right: user }"
+          ready (java.util.concurrent.CountDownLatch. 2)
+          transact d/transact
+          schema-transaction?
+          (fn [tx-data]
+            (some #(and (vector? %)
+                        (= :db.fn/cas (first %)))
+                  tx-data))]
+      (with-redefs [d/transact
+                    (fn [connection tx-data]
+                      (when (schema-transaction? tx-data)
+                        (.countDown ready)
+                        (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+                      (transact connection tx-data))]
+        (let [write (fn [text]
+                      (future
+                        (try
+                          (schema/write-schema! conn text)
+                          :ok
+                          (catch clojure.lang.ExceptionInfo e
+                            (:type (ex-data e)))
+                          (catch Throwable t
+                            (or (some-> t .getCause ex-data :db/error)
+                                (class t))))))
+              results (mapv deref [(write schema-left)
+                                   (write schema-right)])
+              relation-names
+              (into #{}
+                    (map :eacl.relation/relation-name)
+                    (:relations (schema/read-schema (d/db conn))))]
+          (is (= #{:ok :eacl.schema/concurrent-write}
+                 (set results)))
+          (is (contains? #{#{:left} #{:right}} relation-names)
+              "the committed schema is one complete replacement, never a union"))))))
+
+(deftest relation-removal-is-checked-again-at-commit-test
+  ;; Force a relationship into the window between the preflight count and
+  ;; schema transaction. The transactor-side guard must reject the replacement
+  ;; rather than orphaning a tuple whose relation definition was retracted.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [with-owner
+          "definition user {}
+           definition account { relation owner: user }"
+          without-owner
+          "definition user {}
+           definition account {}"]
+      (schema/write-schema! conn with-owner)
+      @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
+      (let [stale-db (d/db conn)
+            relationship
+            (impl/Relationship (eacl/spice-object :user "u")
+                               :owner
+                               (eacl/spice-object :account "a"))
+            relationship-tx (impl/tx-relationship stale-db relationship)
+            transact d/transact
+            inject? (atom true)
+            schema-transaction?
+            (fn [tx-data]
+              (some #(and (vector? %)
+                          (= :eacl.fn/assert-relation-unused (first %)))
+                    tx-data))]
+        (with-redefs [d/transact
+                      (fn [connection tx-data]
+                        (when (and @inject?
+                                   (schema-transaction? tx-data))
+                          (reset! inject? false)
+                          @(transact connection relationship-tx))
+                        (transact connection tx-data))]
+          (let [data (try
+                       (schema/write-schema! conn without-owner)
+                       nil
+                       (catch clojure.lang.ExceptionInfo e
+                         (ex-data e)))]
+            (is (= :eacl.schema/relation-in-use (:type data)))))
+        (is (= #{:owner}
+               (into #{}
+                     (map :eacl.relation/relation-name)
+                     (schema/read-relations (d/db conn))))
+            "the failed replacement leaves the relation definition intact")))))
+
+(deftest relationships-using-relation-count-uses-canonical-identity-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema!
+     conn
+     "definition user {}
+      definition account { relation owner: user }")
+    @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
+    @(d/transact
+      conn
+      (impl/tx-relationship
+       (d/db conn)
+       (impl/Relationship (eacl/spice-object :user "u")
+                          :owner
+                          (eacl/spice-object :account "a"))))
+    (let [db       (d/db conn)
+          relation (first (schema/read-relations db))]
+      (is (= "eacl.relation::account::owner::user"
+             (:eacl/id relation))
+          "the canonical identity includes keyword colons")
+      (is (= 1 (schema/count-relationships-using-relation db relation))))))
+
+(deftest stale-relationship-tx-cannot-resurrect-a-removed-relation-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [with-owner
+          "definition user {}
+           definition account { relation owner: user }"
+          without-owner
+          "definition user {}
+           definition account {}"]
+      (schema/write-schema! conn with-owner)
+      @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
+      (let [stale-tx
+            (impl/tx-relationship
+             (d/db conn)
+             (impl/Relationship (eacl/spice-object :user "u")
+                                :owner
+                                (eacl/spice-object :account "a")))]
+        (schema/write-schema! conn without-owner)
+        (let [data (try
+                     @(d/transact conn stale-tx)
+                     nil
+                     (catch Throwable throwable
+                       (some-> throwable .getCause ex-data)))]
+          (is (= :db.error/cas-failed (:db/error data))))
+        (is (empty? (schema/read-relations (d/db conn))))))))
+
+(deftest relation-removal-rejects-reverse-only-orphans-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [with-owner
+          "definition user {}
+           definition account { relation owner: user }"
+          without-owner
+          "definition user {}
+           definition account {}"]
+      (schema/write-schema! conn with-owner)
+      @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
+      (let [db            (d/db conn)
+            relationship  (impl/Relationship (eacl/spice-object :user "u")
+                                             :owner
+                                             (eacl/spice-object :account "a"))
+            tx-data       (impl/tx-relationship db relationship)
+            forward-op    (first
+                           (filter
+                            #(and (vector? %)
+                                  (= :db/add (first %))
+                                  (= :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                                     (nth % 2 nil)))
+                            tx-data))]
+        @(d/transact conn tx-data)
+        @(d/transact conn [(assoc forward-op 0 :db/retract)])
+        (let [data (try
+                     (schema/write-schema! conn without-owner)
+                     nil
+                     (catch clojure.lang.ExceptionInfo e
+                       (ex-data e)))]
+          (is (= :eacl.schema/relation-in-use (:type data))))
+        (is (= #{:owner}
+               (into #{}
+                     (map :eacl.relation/relation-name)
+                     (schema/read-relations (d/db conn))))
+            "a reverse-only orphan still keeps its relation definition alive")))))
 
 (deftest write-schema-parse-failure-test
   (testing "a malformed schema string throws a typed error and leaves the stored schema untouched"

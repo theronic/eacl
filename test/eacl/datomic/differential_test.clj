@@ -138,10 +138,22 @@
     (doseq [page-size [1 3]]
       (is (= subjects (collect-subjects-paged db query page-size))
           (str label ": forward subject pagination at page size " page-size
-               " must equal the full enumeration"))
-      (is (= subjects (collect-paged-backward idx/lookup-subjects db query page-size))
-          (str label ": reverse subject pagination at page size " page-size
-               " must equal the full enumeration")))))
+               " must equal the full enumeration")))
+    (if (idx/traversal-permission? db (:type resource) permission)
+      (is (= :eacl.pagination/unsupported-recursive-last
+             (:eacl/error
+              (try
+                (idx/lookup-subjects db (assoc query :last 1))
+                nil
+                (catch clojure.lang.ExceptionInfo e
+                  (ex-data e)))))
+          (str label ": recursive reverse pagination requires a :before boundary"))
+      (doseq [page-size [1 3]]
+        (is (= subjects (collect-paged-backward idx/lookup-subjects db query page-size))
+            (str label ": reverse subject pagination at page size " page-size
+                 " must equal the full enumeration"))))
+    (is (= (count subjects) (:count (idx/count-subjects db query)))
+        (str label ": count-subjects must agree"))))
 
 (deftest differential-nonrecursive-test
   (doseq [seed [7 23 42 1337]]
@@ -219,9 +231,17 @@
                       (Relationship (spice-object :user u) :reader (spice-object :folder f))))]
           @(d/transact conn (into [] (mapcat #(impl/tx-relationship db0 %)) rels)))
         (let [db          (d/db conn)
-              folder-eids (mapv #(eid-of db %) folders)]
+              folder-eids (mapv #(eid-of db %) folders)
+              user-eids   (mapv #(eid-of db %) users)]
           (testing (str "seed " seed ": recursive forward invariants (stable discovery order, exact dedup)")
             (doseq [u users]
               (check-forward-invariants! db (str "seed " seed " user " u " :read :folder")
                                          (spice-object :user (eid-of db u))
-                                         :read :folder folder-eids false))))))))
+                                         :read :folder folder-eids false)))
+          ;; The recursive REVERSE engine had no differential coverage at all —
+          ;; differential-recursive-test only checked lookup-resources.
+          (testing (str "seed " seed ": recursive reverse invariants for every folder")
+            (doseq [f folders]
+              (check-reverse-invariants! db (str "seed " seed " folder " f)
+                                         (spice-object :folder (eid-of db f))
+                                         :read :user user-eids))))))))

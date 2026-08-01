@@ -36,7 +36,7 @@
             token (spiceomic/page-token opts payload)
             decoded (spiceomic/token->page-bound opts token)]
         (is (string? token))
-        (is (.startsWith ^String token "eacl3_"))
+        (is (.startsWith ^String token "eacl4_"))
         (is (= (dissoc payload :ttl-seconds)
                (select-keys decoded [:op :query-shape :basis :basis-t :edge])))))
 
@@ -75,7 +75,7 @@
 
     (testing "invalid input is rejected"
       (is (thrown? Throwable (spiceomic/token->page-bound opts "garbage")))
-      (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl3_not-valid-base64!!!"))))))
+      (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl4_not-valid-base64!!!"))))))
 
 (deftest protocol-completeness-tests
   ;; Audit §13: write-relationship!/delete-relationship! were declared on the
@@ -105,7 +105,7 @@
 
       (testing "unsupported consistency throws a typed error (not an assert)"
         (try
-          (eacl/can? client u1 :admin a1 (consistency/fresh "tok"))
+          (eacl/can? client u1 :admin a1 :unknown-consistency)
           (is false "should have thrown")
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl/unsupported-consistency (:type (ex-data e)))))))
@@ -342,8 +342,10 @@
                                          (->Relationship my-account :account my-server)])]
         (testing "All Spice operations returns a ZedToken that can be passed to subsequent read operations to guarantee consistent cache."
           (is (string? token))
-          (testing "passing anything but consistency/fully-consistent throws until we have a cache to support consistency/fresh."
-            (is (thrown? Throwable (eacl/can? *client my-user :reboot my-server (consistency/fresh token))))))))
+          (testing "a write token can be used as an at-least-as-fresh lower bound"
+            (is (true?
+                 (eacl/can? *client my-user :reboot my-server
+                            (consistency/fresh token))))))))
 
     (testing "assign joe as the owner of acme-account and joe's server to acme-account"
       (is (eacl/create-relationships! *client
@@ -476,7 +478,7 @@
         (is (= (:data page1) (:data previous-page)))
         (is (string? (page-start-cursor page1)))
         (is (string? (page-end-cursor page1)))
-        (is (.startsWith ^String (page-end-cursor page1) "eacl3_"))
+        (is (.startsWith ^String (page-end-cursor page1) "eacl4_"))
         (is (true? (get-in page1 [:page-info :has-next-page?])))
         (is (false? (get-in page1 [:page-info :has-previous-page?])))
         (is (true? (get-in previous-page [:page-info :has-next-page?])))))
@@ -508,7 +510,7 @@
           (is (nil? (:cursor page1)))
           (is (string? (page-start-cursor page1)))
           (is (string? page1-end-cursor))
-          (is (.startsWith ^String page1-end-cursor "eacl3_")))
+          (is (.startsWith ^String page1-end-cursor "eacl4_")))
 
         (testing "reverse pagination can get the previous page without a cursor stack"
           (is (= page1-data (:data previous-page)))
@@ -541,29 +543,28 @@
 	                                          :resource/type :server
 	                                          :first         2}))))
 
-	    (testing "stable page tokens keep using the page basis after live changes"
+	    (testing "page tokens replay their historical snapshot after live changes"
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
 	            page1 (eacl/lookup-resources *client (assoc base-query :first 2))
 	            page1-end-cursor (page-end-cursor page1)
-	            stable-rest-before-insert (:data (eacl/lookup-resources *client
-	                                                                    (assoc base-query
-	                                                                           :first 100
-	                                                                           :after page1-end-cursor)))
+	            expected-page2 (eacl/lookup-resources
+	                            *client
+	                            (assoc base-query
+	                                   :first 100
+	                                   :after page1-end-cursor))
 	            new-server (->server "stable-new-server")]
 	        @(d/transact conn [{:eacl/id (:id new-server)}])
 	        (is (eacl/create-relationship! *client my-account :account new-server))
-	        (is (= stable-rest-before-insert
-	               (:data (eacl/lookup-resources *client
-	                                            (assoc base-query
-	                                                   :first 100
-	                                                   :after page1-end-cursor)))))
-	        (is (not-any? #{new-server}
-	                      (:data (eacl/lookup-resources *client
-	                                                   (assoc base-query
-	                                                          :first 100
-	                                                          :after page1-end-cursor))))))
+	        (is (= (:data expected-page2)
+	               (:data
+	                (eacl/lookup-resources
+	                 *client
+	                 (assoc base-query
+	                        :first 100
+	                        :after page1-end-cursor)))))
+	        (is (not-any? #(= new-server %) (:data expected-page2))))
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -576,10 +577,12 @@
 	            victim (first (:data expected-page2))]
 	        @(d/transact conn [[:db/retract [:eacl/id (:id victim)] :eacl/id (:id victim)]])
 	        (is (= (:data expected-page2)
-	               (:data (eacl/lookup-resources *client
-	                                            (assoc base-query
-	                                                   :first 2
-	                                                   :after page1-end-cursor)))))))
+	               (:data
+	                (eacl/lookup-resources
+	                 *client
+	                 (assoc base-query
+	                        :first 2
+	                        :after page1-end-cursor)))))))
 
 	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
 	      (testing "transact the test entities we are about to use"
@@ -643,7 +646,7 @@
 
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
 
-(deftest consistency-validation-tests
+(deftest consistency-selection-tests
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client conn {})]
       (eacl/write-schema! client "definition user {}
@@ -653,23 +656,40 @@
         [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
          (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-2"))
          (->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-3"))])
-      (let [q {:subject (spice-object :user "alice") :permission :admin :resource/type :account :first 2}]
+      (let [q {:subject (spice-object :user "alice") :permission :admin :resource/type :account :first 2}
+            token (spiceomic/current-zed-token client)]
 
-        (testing "list & read APIs reject non-fully-consistent requests like can? does (previously silently ignored)"
-          (doseq [call [#(eacl/lookup-resources client (assoc q :consistency (consistency/fresh "tok")))
-                        #(eacl/lookup-subjects client {:resource (spice-object :account "acct-1")
-                                                       :permission :admin :subject/type :user
-                                                       :consistency :minimize-latency})
-                        #(eacl/read-relationships client {:resource/type :account
-                                                          :consistency :minimize-latency})
-                        #(eacl/count-resources client {:subject (spice-object :user "alice")
-                                                       :permission :admin :resource/type :account
-                                                       :consistency :minimize-latency})]]
-            (try
-              (call)
-              (is false "should have thrown :eacl/unsupported-consistency")
-              (catch clojure.lang.ExceptionInfo e
-                (is (= :eacl/unsupported-consistency (:type (ex-data e))))))))
+        (testing "list, relationship-read, and count APIs accept consistency descriptors"
+          (is (= 2
+                 (count
+                  (:data
+                   (eacl/lookup-resources
+                    client
+                    (assoc q :consistency (consistency/fresh token)))))))
+          (is (= ["alice"]
+                 (mapv :id
+                       (:data
+                        (eacl/lookup-subjects
+                         client
+                         {:resource (spice-object :account "acct-1")
+                          :permission :admin
+                          :subject/type :user
+                          :consistency :minimize-latency})))))
+          (is (= 3
+                 (count
+                  (:data
+                   (eacl/read-relationships
+                    client
+                    {:resource/type :account
+                     :consistency :minimize-latency})))))
+          (is (= 3
+                 (:count
+                  (eacl/count-resources
+                   client
+                   {:subject (spice-object :user "alice")
+                    :permission :admin
+                    :resource/type :account
+                    :consistency :minimize-latency})))))
 
         (testing "explicit fully-consistent is accepted and does not perturb page tokens"
           (let [page1 (eacl/lookup-resources client (assoc q :consistency fully-consistent))

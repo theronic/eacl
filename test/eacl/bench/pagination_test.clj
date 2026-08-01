@@ -10,6 +10,7 @@
             [clojure.set :as set]
             [datomic.api :as d]
             [eacl.core :as eacl]
+            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as impl.indexed]
@@ -75,15 +76,22 @@
 (defn- tx-relationships
   [db relationships]
   ; :allow-tempids? because entities are created in the same transaction.
-  (mapcat #(impl/tx-relationship db % {:allow-tempids? true}) relationships))
+  (impl/optimistic-relationship-tx-data
+   db
+   (mapcat #(impl/tx-relationship db % {:allow-tempids? true}) relationships)))
 
 ;; --- Seeding ---
 
 (defn seed-multipath!
   "Seeds a multi-path permission graph. Returns the acl client."
   [conn {:keys [num-accounts teams-per-acct vpcs-per-acct servers-per-acct]}]
+  ;; :remember-answers false so these benchmarks observe the TRAVERSAL layer.
+  ;; With answers remembered (the default), a repeated identical page is served
+  ;; from the answer cache and the engine is never entered, so traversal-call
+  ;; counts read as zero and prove nothing.
   (let [acl (spiceomic/make-client conn {:entity->object-id (fn [ent] (:eacl/id ent))
-                                         :object-id->ident  (fn [obj-id] [:eacl/id obj-id])})]
+                                         :object-id->ident  (fn [obj-id] [:eacl/id obj-id])
+                                         :cache {:remember-answers false}})]
     @(d/transact conn basic-attrs)
     @(d/transact conn schema/v7-schema)
     (eacl/write-schema! acl multipath-schema-dsl)
@@ -99,7 +107,7 @@
 
     ;; Seed accounts with teams, vpcs, servers
     (let [account-uuids (repeatedly num-accounts d/squuid)]
-      (doseq [[n account-uuid] (map-indexed vector account-uuids)]
+      (doseq [[_n account-uuid] (map-indexed vector account-uuids)]
         (let [account-tempid (d/tempid :db.part/user)
               owner-tempid   (d/tempid :db.part/user)
 
@@ -211,6 +219,32 @@
     {:elapsed-ms (/ (double (- end start)) 1e6)
      :value value}))
 
+(defn- recursive-walk
+  [client query]
+  (let [stats (atom {})
+        start (System/nanoTime)
+        {:keys [ids pages]}
+        (binding [impl.indexed/*recursive-traversal-stats* stats]
+          (loop [after nil
+                 ids []
+                 pages 0]
+            (let [page (eacl/lookup-resources
+                        client
+                        (cond-> query after (assoc :after after)))
+                  ids' (into ids (map :id) (:data page))
+                  pages' (inc pages)]
+              (if (get-in page [:page-info :has-next-page?])
+                (recur (get-in page [:page-info :end-cursor])
+                       ids'
+                       pages')
+                {:ids ids'
+                 :pages pages'}))))
+        end (System/nanoTime)]
+    {:elapsed-ms (/ (double (- end start)) 1e6)
+     :ids ids
+     :pages pages
+     :stats @stats}))
+
 (defn- median [coll]
   (let [sorted (sort coll)
         n      (count sorted)
@@ -224,6 +258,25 @@
         idx    (min (dec (count sorted))
                     (int (Math/ceil (* (/ p 100.0) (count sorted)))))]
     (nth sorted idx)))
+
+(defn- profile-var
+  [target-var iterations f]
+  (let [original @target-var
+        calls (atom 0)
+        elapsed-ns (atom 0)
+        wrapped
+        (fn [& args]
+          (let [start (System/nanoTime)]
+            (try
+              (apply original args)
+              (finally
+                (swap! calls inc)
+                (swap! elapsed-ns + (- (System/nanoTime) start))))))]
+    (with-redefs-fn {target-var wrapped}
+      #(dotimes [_ iterations] (f)))
+    {:calls @calls
+     :ns-per-call (/ (double @elapsed-ns) (max 1 @calls))
+     :ns-per-operation (/ (double @elapsed-ns) iterations)}))
 
 ;; --- Regression thresholds ---
 ;;
@@ -488,10 +541,77 @@
                 "Intermediate frontiers should reduce traversal work by the middle page")
             (is (< last-page-calls middle-page-calls)
                 "Exhausted path markers should reduce traversal work further near exhaustion")
-            (is (false? (get-in last-page [:page-info :has-next-page?])))))))))
+            (is (false? (get-in last-page [:page-info :has-next-page?])))))
+
+        (testing "live lookup/count hits share one dependency-aware cache"
+          (let [live-acl
+                (spiceomic/make-client
+                 conn
+                 {:entity->object-id (fn [ent] (:eacl/id ent))
+                  :object-id->ident (fn [obj-id] [:eacl/id obj-id])
+                  :cache {:remember-answers true}})
+                count-resources-query (dissoc base-query :first)
+                first-server
+                (first (:data (eacl/lookup-resources live-acl base-query)))
+                count-subjects-query {:resource first-server
+                                      :permission :view
+                                      :subject/type :user}
+                disabled-acl
+                (spiceomic/make-client conn {:cache cache/no-cache})
+                resource-calls (atom 0)
+                subject-calls (atom 0)
+                original-count-resources impl/count-resources
+                original-count-subjects impl/count-subjects]
+            (with-redefs [impl/count-resources
+                          (fn [db query]
+                            (swap! resource-calls inc)
+                            (original-count-resources db query))
+                          impl/count-subjects
+                          (fn [db query]
+                            (swap! subject-calls inc)
+                            (original-count-subjects db query))]
+              (let [resource-cold (timed #(eacl/count-resources
+                                           live-acl
+                                           count-resources-query))
+                    resource-hot (run-timed
+                                  30
+                                  #(eacl/count-resources
+                                    live-acl
+                                    count-resources-query))
+                    subject-cold (timed #(eacl/count-subjects
+                                          live-acl
+                                          count-subjects-query))
+                    subject-hot (run-timed
+                                 30
+                                 #(eacl/count-subjects
+                                   live-acl
+                                   count-subjects-query))
+                    resource-live-calls @resource-calls
+                    subject-live-calls @subject-calls
+                    disabled-resource-times
+                    (run-timed
+                     10
+                     #(eacl/count-resources
+                       disabled-acl
+                       count-resources-query))]
+                (println
+                 (format
+                  "Count cache: resources cold=%.2fms/hot=%.3fms; subjects cold=%.2fms/hot=%.3fms; disabled median=%.2fms"
+                  (:elapsed-ms resource-cold)
+                  (median resource-hot)
+                  (:elapsed-ms subject-cold)
+                  (median subject-hot)
+                  (median disabled-resource-times)))
+                (is (= total-servers
+                       (get-in resource-cold [:value :count])))
+                (is (pos? (get-in subject-cold [:value :count])))
+                (is (= 1 resource-live-calls)
+                    "resource count computes once, then uses completed results")
+                (is (= 1 subject-live-calls)
+                    "subject count computes once, then uses completed results")))))))))
 
 (deftest ^:benchmark recursive-traversal-prefix-benchmark
-  (testing "Recursive traversal pagination does reachable-prefix work, not candidate-universe work"
+  (testing "Recursive continuation pagination advances reachable work without prefix replay"
     (with-mem-conn [conn []]
       (let [acl (seed-recursive-chain! conn {:chain-length 250
                                              :unrelated-count 2000})
@@ -518,8 +638,395 @@
         (is (<= (:emitted-results @stats1) 26))
         (is (< (:advanced-stream-datoms @stats1) 100)
             "first page should not scan the unrelated candidate universe")
-        (is (> (:advanced-stream-datoms @stats2)
-               (:advanced-stream-datoms @stats1))
-            "second page replays a deeper traversal prefix")
+        (is (= 1 (:continuation-hits @stats2))
+            "second page resumes the first page's bounded continuation")
+        (is (<= (:advanced-stream-datoms @stats2)
+                (:advanced-stream-datoms @stats1))
+            "second page advances new work instead of replaying a deeper prefix")
         (is (< (:advanced-stream-datoms @stats2) 200)
             "second page work should still be bounded by the reachable prefix")))))
+
+(deftest ^:benchmark recursive-traversal-scaling-benchmark
+  (testing "Recursive continuations scale linearly, replay is quadratic, and completed pages are reusable"
+    (let [page-size 25
+          trials 3
+          measurements
+          (mapv
+           (fn [chain-length]
+             (with-mem-conn [conn []]
+               (let [_ (seed-recursive-chain!
+                        conn
+                        {:chain-length chain-length
+                         :unrelated-count 0})
+                     client-opts
+                     {:entity->object-id (fn [ent] (:eacl/id ent))
+                      :object-id->ident (fn [obj-id] [:eacl/id obj-id])
+                      :page-token-key "recursive-scaling-benchmark"
+                      ;; measures the continuation/page layer, not answers
+                      :cache {:remember-answers false}}
+                     query {:subject (->user "user-1")
+                            :permission :read
+                            :resource/type :account
+                            :first page-size}
+                     runs
+                     (mapv
+                      (fn [_]
+                        (let [cached-client
+                              (spiceomic/make-client conn client-opts)
+                              replay-client
+                              (spiceomic/make-client
+                               conn
+                               (assoc client-opts :cache cache/no-cache))
+                              cached (recursive-walk cached-client query)
+                              completed-hit
+                              (recursive-walk cached-client query)
+                              replayed (recursive-walk replay-client query)]
+                          (is (= (:ids replayed) (:ids cached)))
+                          (is (= (:ids cached) (:ids completed-hit)))
+                          {:cached cached
+                           :completed-hit completed-hit
+                           :replayed replayed}))
+                      (range trials))
+                     cached-work
+                     (get-in (first runs) [:cached :stats :derived-grants] 0)
+                     replay-work
+                     (get-in (first runs) [:replayed :stats :derived-grants] 0)
+                     completed-hit-work
+                     (get-in (first runs)
+                             [:completed-hit :stats :derived-grants] 0)
+                     cached-ms
+                     (median (map #(get-in % [:cached :elapsed-ms]) runs))
+                     completed-hit-ms
+                     (median
+                      (map #(get-in % [:completed-hit :elapsed-ms]) runs))
+                     replayed-ms
+                     (median (map #(get-in % [:replayed :elapsed-ms]) runs))
+                     measurement
+                     {:chain-length chain-length
+                      :pages (get-in (first runs) [:cached :pages])
+                      :cached-ms cached-ms
+                      :completed-hit-ms completed-hit-ms
+                      :replayed-ms replayed-ms
+                      :cached-work cached-work
+                      :completed-hit-work completed-hit-work
+                      :replayed-work replay-work
+                      :work-ratio (/ (double replay-work)
+                                     (max 1.0 cached-work))
+                      :time-ratio (/ replayed-ms
+                                     (max 0.001 cached-ms))
+                      :completed-hit-time-ratio
+                      (/ replayed-ms (max 0.001 completed-hit-ms))}]
+                 (is (= chain-length
+                        (count (get-in (first runs) [:cached :ids]))))
+                 (println "Recursive scaling:" measurement)
+                 measurement)))
+           [250 500 1000 2000 4000])]
+      (let [largest (peek measurements)]
+        (is (< (:cached-work largest)
+               (* 2 (:chain-length largest)))
+            "continuation work must remain linear in the result count")
+        (is (zero? (:completed-hit-work largest))
+            "a repeated exact page walk performs no graph traversal")
+        (is (> (:work-ratio largest) 50.0)
+            "the large graph must expose the eliminated prefix replay")
+        (is (> (:time-ratio largest) 10.0)
+            "the large graph should show a material wall-clock gain")))))
+
+(deftest ^:benchmark recursive-page-size-work-benchmark
+  (testing "Replay work follows N-squared/page-size while continuation work remains linear"
+    (with-mem-conn [conn []]
+      (let [chain-length 2000
+            _ (seed-recursive-chain!
+               conn
+               {:chain-length chain-length
+                :unrelated-count 0})
+            client-opts
+            {:entity->object-id (fn [ent] (:eacl/id ent))
+             :object-id->ident (fn [obj-id] [:eacl/id obj-id])
+             :page-token-key "recursive-page-size-benchmark"}
+            measurements
+            (mapv
+             (fn [page-size]
+               (let [query {:subject (->user "user-1")
+                            :permission :read
+                            :resource/type :account
+                            :first page-size}
+                     runs
+                     (mapv
+                      (fn [_]
+                        (let [cached-client
+                              (spiceomic/make-client conn client-opts)
+                              cached (recursive-walk cached-client query)]
+                          {:cached cached
+                           :completed-hit
+                           (recursive-walk cached-client query)
+                           :replayed
+                           (recursive-walk
+                            (spiceomic/make-client
+                             conn
+                             (assoc client-opts :cache cache/no-cache))
+                            query)}))
+                      (range 3))
+                     cached (:cached (first runs))
+                     completed-hit (:completed-hit (first runs))
+                     replayed (:replayed (first runs))
+                     measurement
+                     {:page-size page-size
+                      :pages (:pages cached)
+                      :cached-work (get-in cached [:stats :derived-grants] 0)
+                      :replayed-work (get-in replayed [:stats :derived-grants] 0)
+                      :cached-ms
+                      (median (map #(get-in % [:cached :elapsed-ms]) runs))
+                      :completed-hit-ms
+                      (median
+                       (map #(get-in % [:completed-hit :elapsed-ms]) runs))
+                      :replayed-ms
+                      (median (map #(get-in % [:replayed :elapsed-ms]) runs))}]
+                 (is (every? #(= (get-in % [:cached :ids])
+                                  (get-in % [:completed-hit :ids])
+                                  (get-in % [:replayed :ids]))
+                             runs))
+                 (is (zero? (get-in completed-hit
+                                    [:stats :derived-grants] 0)))
+                 (println "Recursive page-size scaling:" measurement)
+                 measurement))
+             [10 25 100 250 1000])]
+        (is (every? #(< (:cached-work %) (* 2 chain-length))
+                    measurements))
+        (is (apply > (map :replayed-work measurements))
+            "larger pages reduce the number of prefixes replayed")))))
+
+(deftest ^:benchmark recursive-cache-cost-breakdown-benchmark
+  (testing "Recursive timing separates traversal, cache I/O, tokens, and boundary coercion"
+    (with-mem-conn [conn []]
+      (let [chain-length 1000
+            _ (seed-recursive-chain!
+               conn
+               {:chain-length chain-length
+                :unrelated-count 0})
+            client-opts
+            {:entity->object-id (fn [ent] (:eacl/id ent))
+             :object-id->ident (fn [obj-id] [:eacl/id obj-id])
+             :page-token-key "recursive-cost-breakdown"
+             ;; This breaks down the cost of the recursive PAGE path, where a
+             ;; completed page is read back and nothing new is published.
+             ;; Remembering answers adds its own publications on top and would
+             ;; make the "no publications" assertion measure the wrong layer.
+             :cache {:remember-answers false}}
+            query {:subject (->user "user-1")
+                   :permission :read
+                   :resource/type :account
+                   :first 25}
+            targets
+            [[:recursive-engine
+              #'impl.indexed/lookup-resources]
+             [:cache-entry-lookup
+              #'cache/safe-entry-value]
+             [:cache-entry-store
+              #'cache/safe-store-entry!]
+             [:token-decrypt
+              #'spiceomic/decrypt-page-token]
+             [:token-encrypt
+              #'spiceomic/encrypt-page-token]
+             [:boundary-entity
+              #'d/entity]
+             [:boundary-coercion
+              (ns-resolve 'eacl.datomic.core 'coerce-lookup-page)]]
+            continuation-breakdown
+            (into {}
+                  (map
+                   (fn [[label target-var]]
+                     (let [client (spiceomic/make-client conn client-opts)]
+                       [label
+                        (profile-var
+                         target-var
+                         1
+                         #(recursive-walk client query))])))
+                  targets)
+            hot-breakdown
+            (into {}
+                  (map
+                   (fn [[label target-var]]
+                     (let [client (spiceomic/make-client conn client-opts)]
+                       (recursive-walk client query)
+                       [label
+                        (profile-var
+                         target-var
+                         1
+                         #(recursive-walk client query))])))
+                  targets)]
+        (println "Recursive continuation breakdown:" continuation-breakdown)
+        (println "Recursive completed-page breakdown:" hot-breakdown)
+        (is (every? (comp pos? :calls val) continuation-breakdown))
+        (is (zero? (get-in hot-breakdown
+                           [:cache-entry-store :calls]))
+            "completed recursive pages need lookups but no publications")))))
+
+(deftest ^:benchmark count-miss-retained-memory-benchmark
+  (testing "Broad count misses retain at most one bounded page"
+    (with-mem-conn [conn []]
+      (let [retention-config (assoc bench-config :num-accounts 40)
+            total-servers
+            (* (:num-accounts retention-config)
+               (:servers-per-acct retention-config))
+            _ (seed-multipath! conn retention-config)
+            rejecting-store
+            (cache/local-store {:max-weight 256
+                                :max-entry-weight 256
+                                :max-entries 8})
+            provider-calls (atom 0)
+            failing-store
+            (reify cache/CacheStore
+              (lookup [_ _]
+                (swap! provider-calls inc)
+                (throw (ex-info "provider unavailable" {})))
+              (store! [_ _ _ _ _]
+                (swap! provider-calls inc)
+                (throw (ex-info "provider unavailable" {})))
+              (evict! [_ _] false)
+              (clear! [_] nil)
+              (stats [_] {}))
+            clients
+            [[:disabled (spiceomic/make-client conn {:cache cache/no-cache})]
+             [:admission-rejected
+              (spiceomic/make-client
+               conn
+               {:cache {:store rejecting-store
+                        :remember-answers true}})]
+             [:provider-failure
+              (spiceomic/make-client
+               conn
+               {:cache {:store failing-store
+                        :remember-answers true}})]]
+            query {:subject (->user "super-user")
+                   :permission :view
+                   :resource/type :server}]
+        (doseq [[label client] clients]
+          (let [stats (atom {})
+                result
+                (binding [impl.indexed/*count-stats* stats]
+                  (eacl/count-resources client query))]
+            (println
+             (format
+              "Broad count %s: count=%d, pages=%d, max retained page=%d EIDs"
+              (name label)
+              (:count result)
+              (:pages @stats)
+              (:max-page-eids @stats)))
+            (is (= total-servers (:count result)))
+            (is (= 2 (:pages @stats)))
+            (is (<= (:max-page-eids @stats) 16384)
+                "count misses never retain the full 20,000-result head")))
+        (is (zero? (:entries (cache/stats rejecting-store)))
+            "a rejected count answer leaves no retained cache entry")
+        (is (pos? @provider-calls)
+            "provider failures exercise recomputation rather than changing the result")))))
+
+;; --- Permission-check hot path ----------------------------------------------
+;;
+;; can? is the highest-frequency EACL call. A connection-backed client reads
+;; its schema generation once at construction, then new db values caused by
+;; unrelated transactions do no schema reads or definition scans.
+;;
+;; Two numbers matter and both are reported:
+;;   warm — repeated checks against the client generation
+;;   cold — explicit cache eviction before each call (path-resolution cost)
+
+(def ^:private can-warm-threshold-us 25)
+(def ^:private can-cold-threshold-us 250)
+
+(deftest ^:benchmark permission-check-benchmark
+  (testing "can? throughput, warm and cold permission paths"
+    (with-mem-conn [conn []]
+      (let [acl     (seed-multipath! conn {:num-accounts     5
+                                           :teams-per-acct   2
+                                           :vpcs-per-acct    1
+                                           :servers-per-acct 20})
+            subject (->user "super-user")
+            server-id
+            (d/q '[:find ?id .
+                   :where
+                   [?server :server/name _]
+                   [?server :eacl/id ?id]]
+                 (d/db conn))
+            server  (->server server-id)
+            check   #(eacl/can? acl subject :view server)
+            live-acl
+            (spiceomic/make-client
+             conn
+             {:cache {:kind-max-weight {:can? (* 2 1024 1024)}
+                      :two-hit-kinds #{:can?}
+                      :remember-answers true}})
+            live-check #(eacl/can? live-acl subject :view server)]
+
+        (run-timed 2000 check)                              ; warm JIT + caches
+
+        (let [warm-us (* 1000.0 (median (run-timed 5000 check)))]
+          (println (format "can? warm: median=%.2fus" warm-us))
+          (is (< warm-us can-warm-threshold-us)
+              (format "REGRESSION: warm can? median %.2fus exceeds %dus" warm-us can-warm-threshold-us)))
+
+        (testing "with permission paths forced cold on every call"
+          (let [cold-us (* 1000.0
+                           (median (run-timed 500
+                                              (fn []
+                                                (impl.indexed/evict-permission-paths-cache!
+                                                 @(:schema-state acl))
+                                                (check)))))]
+            (println (format "can? cold paths: median=%.2fus" cold-us))
+            (is (< cold-us can-cold-threshold-us)
+                (format "REGRESSION: cold can? median %.2fus exceeds %dus; path calculation got more expensive"
+                        cold-us can-cold-threshold-us))))
+
+        (testing "completed Boolean cache"
+          (let [calls (atom 0)
+                original impl/can?]
+            (with-redefs [impl/can?
+                          (fn [db internal-subject permission internal-resource]
+                            (swap! calls inc)
+                            (original db internal-subject permission internal-resource))]
+              ;; Two-hit admission computes twice; the third and later calls
+              ;; reuse the same typed store as lookup/count entries.
+              (is (true? (live-check)))
+              (is (true? (live-check)))
+              (run-timed 2000 live-check)
+              (let [live-us
+                    (* 1000.0 (median (run-timed 5000 live-check)))]
+                (println
+                 (format "can? completed-cache hit: median=%.2fus" live-us))
+                (is (= 2 @calls))
+                (is (< live-us can-cold-threshold-us))))))
+
+        (testing "completed Boolean cache cost breakdown"
+          ;; Measurements overlap by construction: capture-result-context
+          ;; contains DB resolution/coordinator work, and the authorization
+          ;; cache layer contains key construction and store lookup.
+          (dotimes [_ 2000]
+            (live-check))
+          (let [iterations 5000
+                targets
+                [[:db
+                  #'d/db]
+                 [:entid
+                  #'d/entid]
+                 [:relationship-dependencies
+                  #'impl.indexed/permission-relationship-eids]
+                 [:capture-context
+                  (ns-resolve 'eacl.datomic.core
+                              'capture-result-context)]
+                 [:canonicalize
+                  (ns-resolve 'eacl.datomic.core 'canonicalize)]
+                 [:store-entry-lookup
+                  #'cache/safe-entry-value]
+                 [:authorization-cache
+                  (ns-resolve 'eacl.datomic.core
+                              'cached-authorization-result)]]
+                breakdown
+                (into {}
+                      (map (fn [[label target-var]]
+                             [label
+                              (profile-var
+                               target-var iterations live-check)]))
+                      targets)]
+            (println "can? completed-cache breakdown:" breakdown)
+            (is (every? (comp pos? :calls val) breakdown))))))))

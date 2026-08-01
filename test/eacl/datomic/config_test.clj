@@ -49,3 +49,15 @@
           (is (= 2 (count (:data (eacl/lookup-subjects client {:resource     (->server :test/server1)
                                                                :permission   :view
                                                                :subject/type :user}))))))))))
+
+(deftest page-token-ttl-is-validated-at-the-client-boundary-test
+  (with-mem-conn [conn schema/v7-schema]
+    (doseq [value [nil "300" 0 -1 (inc (quot Long/MAX_VALUE 1000))]]
+      (let [data (try
+                   (eacl.datomic.core/make-client
+                    conn {:page-token-ttl-seconds value})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e
+                     (ex-data e)))]
+        (is (= :eacl/invalid-config (:type data)) (pr-str value))
+        (is (= :page-token-ttl-seconds (:key data)) (pr-str value))))))

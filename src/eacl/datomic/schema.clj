@@ -1,8 +1,6 @@
 (ns eacl.datomic.schema
   (:require [clojure.set]
             [datomic.api :as d]
-            [com.rpl.specter :as S]
-            [malli.core :as m]
             [eacl.spicedb.parser :as parser]
             [eacl.datomic.impl.indexed :as impl.indexed]))
 
@@ -37,17 +35,80 @@
 ;  [:or DirectPermission ArrowPermission])
 
 (def schema-version-attr-definition
-  "Cache-invalidation stamp. write-schema! asserts a fresh squuid here in the
-  same transaction as any definition change; EACL's permission-path caches and
-  cursor fingerprints key on it, so ONLY write-schema! invalidates them (#74).
-  A squuid (not a counter) so two concurrent writers can never assert the same
-  value and elide each other's invalidation. Do not edit EACL definitions
-  outside write-schema! — the stamp will not change and caches will be stale."
+  "Schema-generation stamp. write-schema! asserts a fresh squuid here in the
+  same transaction as any definition change. A connection-backed EACL client
+  reads it once at construction and replaces its one cached generation when
+  write-schema! is invoked through that client. Do not edit EACL definitions
+  outside write-schema!."
   {:db/ident       :eacl/schema-version
-   :db/doc         "Squuid bumped by write-schema! whenever definitions change. Path caches and cursor fingerprints key on it."
+   :db/doc         "Squuid bumped by write-schema! whenever definitions change. EACL clients latch one generation at construction."
    :db/valueType   :db.type/uuid
    :db/cardinality :db.cardinality/one
    :db/index       true})
+
+(def relation-version-attr-definition
+  "Per-relation change stamp: a ref to the transaction that last added or
+  retracted a relationship using this relation.
+
+  EACL's relationship write helpers append
+  `[:db/add <relation-eid> :eacl/relation-version \"datomic.tx\"]` to their own
+  tx-data, so a writer publishes exactly which relations moved, atomically with
+  the move itself. A reader takes the max stamp over the relations a permission
+  actually depends on, which is why an unrelated relation's churn cannot
+  invalidate a cached answer.
+
+  The value is the tx entity, not a fresh squuid, so the assertion is
+  IDEMPOTENT: a transaction touching a thousand relationships of one relation
+  emits one identical datom rather than a thousand conflicting ones, and
+  callers may freely concat the output of several helpers into one transaction.
+  Tx entity ids increase monotonically with `t`, so a max over a dependency set
+  is strictly increasing on any write to it.
+
+  :db/noHistory because only the current stamp is ever read; without it every
+  EACL write would accumulate a permanent datom per relation."
+  {:db/ident       :eacl/relation-version
+   :db/doc         "Ref to the transaction that last changed a relationship using this relation. Bumped by EACL's relationship tx-data helpers; read by the result cache to scope invalidation to affected relations."
+   :db/valueType   :db.type/ref
+   :db/cardinality :db.cardinality/one
+   :db/noHistory   true})
+
+(def assert-relation-unused-fn-definition
+  "Commit-time guard for relation removal.
+
+  The ordinary preflight count provides a useful error with a count, but it is
+  necessarily stale by commit time. This transactor-side check closes the race
+  where a relationship is created after that count and before the relation
+  entity is retracted."
+  {:db/ident :eacl.fn/assert-relation-unused
+   :db/fn
+   (d/function
+    {:lang "clojure"
+     :params '[db resource-type relation-eid subject-type]
+     :code
+     '(if (or
+           (seq
+            (datomic.api/index-range
+             db
+             :eacl.v7.relationship/subject-type+relation+resource-type+resource
+             [subject-type relation-eid resource-type 0]
+             [subject-type relation-eid resource-type Long/MAX_VALUE]))
+           ;; Healthy relationships have both tuple halves. Check the reverse
+           ;; index too so relation removal cannot strand a reverse-only tuple
+           ;; after an interrupted legacy write or manual data corruption.
+           (seq
+            (datomic.api/index-range
+             db
+             :eacl.v7.relationship/resource-type+relation+subject-type+subject
+             [resource-type relation-eid subject-type 0]
+             [resource-type relation-eid subject-type Long/MAX_VALUE])))
+        (throw
+         (ex-info
+          "Cannot delete an EACL relation that is used by relationships."
+          {:type :eacl.schema/relation-in-use
+           :relation-eid relation-eid
+           :resource-type resource-type
+           :subject-type subject-type}))
+        [])})})
 
 (def v7-schema
   [; :eacl/id is now optional.
@@ -63,6 +124,8 @@
     :db/cardinality :db.cardinality/one}
 
    schema-version-attr-definition
+   relation-version-attr-definition
+   assert-relation-unused-fn-definition
 
    {:db/ident       :eacl/storage-version
     :db/doc         "EACL relationship storage-model major version (7 = tuple relationships). Stamped by eacl.migrations.v6-to-v7 on completed migration; eacl.datomic.core/make-client refuses to start against unmigrated v6 relationship data without it."
@@ -196,20 +259,21 @@
 
 (defn count-relationships-using-relation
   "Counts v7 forward relationship tuples that reference the given relation."
-  [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
+  [db {:eacl.relation/keys [resource-type relation-name subject-type] :as relation}]
   {:pre [(keyword? resource-type)
          (keyword? relation-name)
          (keyword? subject-type)]}
-  (let [relation-id  (str "eacl.relation:" resource-type ":" relation-name ":" subject-type)
-        relation-eid (d/entid db [:eacl/id relation-id])]
+  ;; Reuse the canonical identity stored by the parser rather than duplicating
+  ;; its formatting contract here.
+  (let [relation-eid (d/entid db [:eacl/id (:eacl/id relation)])]
     (if-not relation-eid
       0
       (reduce (fn [n _] (inc n))
-        0
-        (d/index-range db
-          :eacl.v7.relationship/subject-type+relation+resource-type+resource
-          [subject-type relation-eid resource-type 0]
-          [subject-type relation-eid resource-type Long/MAX_VALUE])))))
+              0
+              (d/index-range db
+                             :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                             [subject-type relation-eid resource-type 0]
+                             [subject-type relation-eid resource-type Long/MAX_VALUE])))))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
@@ -220,7 +284,7 @@
                                  :eacl.relation/relation-name]) ...]
          :where
          [?relation :eacl.relation/relation-name ?relation-name]]
-    db))
+       db))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -233,7 +297,7 @@
                              :eacl.permission/target-name]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
-    db))
+       db))
 
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -259,25 +323,25 @@
         permissions-by-type (group-by :eacl.permission/resource-type permissions)
 
         relation-names-by-type
-                            (into {} (for [[rt rels] relations-by-type]
-                                       [rt (set (map :eacl.relation/relation-name rels))]))
+        (into {} (for [[rt rels] relations-by-type]
+                   [rt (set (map :eacl.relation/relation-name rels))]))
 
         permission-names-by-type
-                            (into {} (for [[rt perms] permissions-by-type]
-                                       [rt (set (map :eacl.permission/permission-name perms))]))
+        (into {} (for [[rt perms] permissions-by-type]
+                   [rt (set (map :eacl.permission/permission-name perms))]))
 
         ;; Subject types for each relation as full SETS (for arrow target validation).
         ;; Multi-type relations (relation owner: user | group) expand to one entry per
         ;; type; keeping a set makes validation independent of declaration order.
         relation-subject-types
-                            (reduce (fn [acc rel]
-                                      (update acc
-                                        [(:eacl.relation/resource-type rel)
-                                         (:eacl.relation/relation-name rel)]
-                                        (fnil conj #{})
-                                        (:eacl.relation/subject-type rel)))
-                              {}
-                              relations)
+        (reduce (fn [acc rel]
+                  (update acc
+                          [(:eacl.relation/resource-type rel)
+                           (:eacl.relation/relation-name rel)]
+                          (fnil conj #{})
+                          (:eacl.relation/subject-type rel)))
+                {}
+                relations)
 
         errors              (atom [])]
 
@@ -294,30 +358,30 @@
             ;; Self -> relation: validate relation exists on this resource type
             (when-not (contains? (get relation-names-by-type res-type) target-name)
               (swap! errors conj
-                {:type       :invalid-self-relation
-                 :permission (str (name res-type) "/" (name perm-name))
-                 :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name)
-                              " references non-existent relation: " (name target-name))}))
+                     {:type       :invalid-self-relation
+                      :permission (str (name res-type) "/" (name perm-name))
+                      :target     target-name
+                      :message    (str "Permission " (name res-type) "/" (name perm-name)
+                                       " references non-existent relation: " (name target-name))}))
             ;; Self -> permission: validate permission exists on this resource type
             (when-not (contains? (get permission-names-by-type res-type) target-name)
               (swap! errors conj
-                {:type       :invalid-self-permission
-                 :permission (str (name res-type) "/" (name perm-name))
-                 :target     target-name
-                 :message    (str "Permission " (name res-type) "/" (name perm-name)
-                              " references non-existent permission: " (name target-name))})))
+                     {:type       :invalid-self-permission
+                      :permission (str (name res-type) "/" (name perm-name))
+                      :target     target-name
+                      :message    (str "Permission " (name res-type) "/" (name perm-name)
+                                       " references non-existent permission: " (name target-name))})))
 
           ;; For arrow permissions (source-rel != :self)
           (do
             ;; Validate source relation exists on this resource type
             (when-not (contains? (get relation-names-by-type res-type) source-rel)
               (swap! errors conj
-                {:type       :missing-source-relation
-                 :permission (str (name res-type) "/" (name perm-name))
-                 :relation   source-rel
-                 :message    (str "Permission " (name res-type) "/" (name perm-name)
-                              " references non-existent relation: " (name source-rel))}))
+                     {:type       :missing-source-relation
+                      :permission (str (name res-type) "/" (name perm-name))
+                      :relation   source-rel
+                      :message    (str "Permission " (name res-type) "/" (name perm-name)
+                                       " references non-existent relation: " (name source-rel))}))
 
             ;; If source relation exists, validate the target exists on EVERY subject
             ;; type of the source relation. Anything else is declaration-order-dependent,
@@ -328,30 +392,30 @@
                   ;; Arrow to relation: validate relation exists on target type
                   (when-not (contains? (get relation-names-by-type target-res-type) target-name)
                     (swap! errors conj
-                      {:type        :invalid-arrow-target-relation
-                       :permission  (str (name res-type) "/" (name perm-name))
-                       :arrow-via   source-rel
-                       :target-type target-res-type
-                       :target      target-name
-                       :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                     " arrow via " (name source-rel) "->" (name target-name)
-                                     " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
+                           {:type        :invalid-arrow-target-relation
+                            :permission  (str (name res-type) "/" (name perm-name))
+                            :arrow-via   source-rel
+                            :target-type target-res-type
+                            :target      target-name
+                            :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                              " arrow via " (name source-rel) "->" (name target-name)
+                                              " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
                   ;; Arrow to permission: validate permission exists on target type
                   (when-not (contains? (get permission-names-by-type target-res-type) target-name)
                     (swap! errors conj
-                      {:type        :invalid-arrow-target-permission
-                       :permission  (str (name res-type) "/" (name perm-name))
-                       :arrow-via   source-rel
-                       :target-type target-res-type
-                       :target      target-name
-                       :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                     " arrow via " (name source-rel) "->" (name target-name)
-                                     " - permission '" (name target-name) "' does not exist on " (name target-res-type))})))))))))
+                           {:type        :invalid-arrow-target-permission
+                            :permission  (str (name res-type) "/" (name perm-name))
+                            :arrow-via   source-rel
+                            :target-type target-res-type
+                            :target      target-name
+                            :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                              " arrow via " (name source-rel) "->" (name target-name)
+                                              " - permission '" (name target-name) "' does not exist on " (name target-res-type))})))))))))
 
     (when (seq @errors)
       (throw (ex-info "Invalid schema: reference validation failed"
-               {:errors      @errors
-                :error-count (count @errors)})))
+                      {:errors      @errors
+                       :error-count (count @errors)})))
     nil))
 
 ; now we have to do a diff of relations and permissions
@@ -366,29 +430,65 @@
 
 (defn compare-schema
   "Compares before & after schema (without DB IDs) and returns a diff via clojure.set/difference."
-  [{:as                before
-    before-relations   :relations
+  [{before-relations   :relations
     before-permissions :permissions}
-   {:as               after
-    after-relations   :relations
+   {after-relations   :relations
     after-permissions :permissions}]
   ; how to get a nice left vs. right diff?
   ; when can we ditch the setval :db/id?
-  (let [before-relations-set   (->> before-relations
-                                 ;(S/setval [S/ALL :db/id] S/NONE) ; no longer needed.
-                                   (set))
-        after-relations-set    (->> after-relations
-                                    ;(S/setval [S/ALL :db/id] S/NONE)
-                                    (set))
-
-        before-permissions-set (->> before-permissions
-                                 ;(S/setval [S/ALL :db/id] S/NONE)
-                                 (set))
-        after-permissions-set  (->> after-permissions
-                                 ;(S/setval [S/ALL :db/id] S/NONE)
-                                  (set))]
+  (let [before-relations-set   (set before-relations)
+        after-relations-set    (set after-relations)
+        before-permissions-set (set before-permissions)
+        after-permissions-set  (set after-permissions)]
     {:relations   (calc-set-deltas before-relations-set after-relations-set)
      :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
+
+(defn- cas-failure-data
+  [throwable]
+  (loop [cause throwable]
+    (when cause
+      (let [data (ex-data cause)]
+        (if (= :db.error/cas-failed (:db/error data))
+          data
+          (recur (.getCause ^Throwable cause)))))))
+
+(defn- caused-by-type
+  [throwable type]
+  (loop [cause throwable]
+    (when cause
+      (if (= type (:type (ex-data cause)))
+        cause
+        (recur (.getCause ^Throwable cause))))))
+
+(defn- transact-schema!
+  "Submits a schema replacement, translating Datomic's generic CAS failure
+  into a stable EACL concurrency error.
+
+  The CAS is the commit-time assertion that the diff was calculated from the
+  generation still in the database. Without it, two replacement writers can
+  both commit additions calculated from the same old generation and leave the
+  UNION of their schemas behind."
+  [conn tx-data expected-version]
+  (try
+    @(d/transact conn tx-data)
+    (catch Throwable throwable
+      (if-let [relation-in-use
+               (caused-by-type throwable
+                               :eacl.schema/relation-in-use)]
+        (throw
+         (ex-info (.getMessage ^Throwable relation-in-use)
+                  (ex-data relation-in-use)
+                  throwable))
+        (if-let [cause-data (cas-failure-data throwable)]
+          (throw
+           (ex-info
+            "The EACL schema changed concurrently; retry against a new client or database value."
+            {:type :eacl.schema/concurrent-write
+             :expected-version expected-version
+             :actual-version (impl.indexed/schema-version (d/db conn))
+             :datomic-error cause-data}
+            throwable))
+          (throw throwable))))))
 
 (defn write-schema!
   "Computes delta between existing schema and
@@ -402,58 +502,108 @@
   {:allow-empty-schema? true} to explicitly wipe the stored schema."
   ([conn schema-string]
    (write-schema! conn schema-string {}))
-  ([conn schema-string {:keys [allow-empty-schema?]}]
-   ;; Upgrade path: databases installed before :eacl/schema-version existed.
-   (when-not (d/entid (d/db conn) :eacl/schema-version)
-     @(d/transact conn [schema-version-attr-definition]))
-   (let [new-schema-map         (parser/->eacl-schema (parser/parse-schema schema-string))
-         ;; Validate schema references before proceeding (ADR 012 requirement)
-         _                      (validate-schema-references new-schema-map)
-         db                     (d/db conn)
-         existing-schema        (read-schema db)
-         _                      (when (and (empty? (:definitions new-schema-map))
+  ([conn schema-string opts]
+   (write-schema! conn schema-string opts ::read-current-version))
+  ([conn schema-string {:keys [allow-empty-schema?]} known-schema-version]
+   (let [new-schema-map (parser/->eacl-schema
+                         (parser/parse-schema schema-string))
+         ;; ADR 012 says an invalid schema makes NO database changes. This must
+         ;; therefore precede even the compatibility installation below.
+         _ (validate-schema-references new-schema-map)]
+     ;; Fresh/partially installed v7 databases may not have the stamp
+     ;; attributes yet. This is schema installation, not a v6 compatibility
+     ;; path. :eacl/relation-version is installed the same way so a database
+     ;; created before per-relation stamps picks it up on its next valid schema
+     ;; write rather than silently running without result caching.
+     (let [db (d/db conn)
+           missing (cond-> []
+                     (not (d/entid db :eacl/schema-version))
+                     (conj schema-version-attr-definition)
+
+                     (not (d/entid db :eacl/relation-version))
+                     (conj relation-version-attr-definition)
+
+                     (not (d/entid db :eacl.fn/assert-relation-unused))
+                     (conj assert-relation-unused-fn-definition))]
+       (when (seq missing)
+         @(d/transact conn missing)))
+     (let [db                     (d/db conn)
+           existing-schema        (read-schema db)
+           _                      (when (and (empty? (:definitions new-schema-map))
                                            (not allow-empty-schema?)
                                            (or (seq (:relations existing-schema))
                                                (seq (:permissions existing-schema))))
                                   (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                        " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard
-                                            :existing {:relations (count (:relations existing-schema))
-                                                       :permissions (count (:permissions existing-schema))}})))
-         deltas                 (compare-schema existing-schema new-schema-map)
-         {:keys [relations permissions]} deltas
-         relation-retractions   (:retractions relations)
-         permission-retractions (:retractions permissions)]
+                                                  {:type :eacl.schema/empty-schema-guard
+                                                   :existing {:relations (count (:relations existing-schema))
+                                                              :permissions (count (:permissions existing-schema))}})))
+           deltas                 (compare-schema existing-schema new-schema-map)
+           {:keys [relations permissions]} deltas
+           relation-retractions   (:retractions relations)
+           permission-retractions (:retractions permissions)]
 
-    ;; Check for orphaned relationships
-    (doseq [rel relation-retractions]
-      (let [cnt (count-relationships-using-relation db rel)]
-        (when (pos? cnt)
-          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                            " because it is used by " cnt " relationships.")
-                   {:relation rel :count cnt})))))
+       ;; Check for orphaned relationships.
+       (doseq [rel relation-retractions]
+         (let [cnt (count-relationships-using-relation db rel)]
+           (when (pos? cnt)
+             (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                                  " because it is used by " cnt " relationships.")
+                             {:type :eacl.schema/relation-in-use
+                              :relation rel
+                              :count cnt})))))
 
-    ;; Transact changes
-    (let [schema-changed? (boolean (or (seq (:additions relations))
-                                       (seq relation-retractions)
-                                       (seq (:additions permissions))
-                                       (seq permission-retractions)))
-          tx-data (concat
-                    ;; Additions
-                    (:additions relations)
-                    (:additions permissions)
-                     ;; Retractions
-                    (for [rel relation-retractions]
-                      [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
-                    (for [perm permission-retractions]
-                      [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
-                     ;; Store schema string + bump the version stamp when
-                     ;; definitions changed. The stamp is what invalidates the
-                     ;; path caches and cursor fingerprints — on every peer,
-                     ;; and correctly for d/as-of views (issue #74).
-                    [(cond-> {:eacl/id            "schema-string"
-                              :eacl/schema-string schema-string}
-                       schema-changed? (assoc :eacl/schema-version (d/squuid)))])]
-      @(d/transact conn tx-data)
-      (impl.indexed/evict-permission-paths-cache!)
-      deltas))))
+       ;; Transact changes.
+       (let [schema-changed? (boolean
+                              (or (seq (:additions relations))
+                                  (seq relation-retractions)
+                                  (seq (:additions permissions))
+                                  (seq permission-retractions)))
+             ;; A connection-backed client passes the version its generation
+             ;; was built from. A direct caller uses the version in this exact
+             ;; db snapshot. Either value becomes the CAS expectation; a stale
+             ;; client therefore fails closed instead of relabeling a new diff.
+             current-version (if (= ::read-current-version
+                                    known-schema-version)
+                               (impl.indexed/schema-version db)
+                               known-schema-version)
+             stamp-missing? (nil? current-version)
+             stamp-schema? (or schema-changed? stamp-missing?)
+             next-version (if stamp-schema?
+                            (d/squuid)
+                            current-version)
+             schema-entity (or (d/entid db [:eacl/id "schema-string"])
+                               (d/tempid :db.part/user))
+             relation-commit-guards
+             (mapv
+              (fn [relation]
+                [:eacl.fn/assert-relation-unused
+                 (:eacl.relation/resource-type relation)
+                 (d/entid db [:eacl/id (:eacl/id relation)])
+                 (:eacl.relation/subject-type relation)])
+              relation-retractions)
+             tx-data
+             (concat
+              ;; Additions
+              (:additions relations)
+              (:additions permissions)
+              ;; Retractions
+              (for [rel relation-retractions]
+                [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
+              (for [perm permission-retractions]
+                [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
+              ;; Close the orphan-check race in the transactor's db value. A
+              ;; relationship committed after the count above makes this
+              ;; transaction fail instead of deleting an in-use definition.
+              relation-commit-guards
+              ;; The schema text and generation rotate atomically. CAS with
+              ;; old==new is deliberate for a structural no-op: it still
+              ;; asserts that another replacement did not commit after the
+              ;; diff above was calculated.
+              [{:db/id schema-entity
+                :eacl/id "schema-string"
+                :eacl/schema-string schema-string}
+               [:db.fn/cas schema-entity
+                :eacl/schema-version current-version next-version]])]
+         (transact-schema! conn tx-data current-version)
+         (with-meta deltas {:eacl/schema-version next-version}))))))

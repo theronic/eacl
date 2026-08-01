@@ -40,7 +40,7 @@
 
   (write-relationships! [this updates])
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
-  ; operation is one of #{:create :touch :delete :unspecified} and Relationship has {:keys [subject relation resource]}.
+  ; operation is one of #{:create :touch :delete} and Relationship has {:keys [subject relation resource]}.
   ; Note :touch is like :create but does not throw if a relationship already exists.
 
   (write-relationship!
@@ -58,6 +58,15 @@
   ; construct a seq using ->Relationship.
   (delete-relationships! [this relationships])
 
+  (delete-object! [this object])
+  ; delete-object! removes every relationship touching `object` in both
+  ; directions, including the halves stored on the peer entities. Datomic's
+  ; :db.fn/retractEntity does NOT do this — v7 relationships name their peer
+  ; inside a tuple value, which retractEntity does not follow — so retracting a
+  ; permissioned entity without calling this first leaves relationship halves
+  ; that keep answering can?/lookup-resources/lookup-subjects.
+  ; Call it before retracting the entity. It does not retract the entity itself.
+
   (delete-relationship!
     [this subject relation resource]
     [this {:as relationship :keys [subject relation resource]}])
@@ -74,7 +83,8 @@
 	  ;                                  :has-next-page? ... :has-previous-page? ...}}.
 
   (count-resources [this {:as query :keys [consistency]}])
-  ; counting can be slow because it enumerates the full lookup-resources result set
+  ; counting can be slow because it enumerates the full lookup-resources result
+  ; set. Pass :count-limit to bound work and receive :truncated? in the result.
 
   (lookup-subjects [this {:as query :keys [consistency]}])
 	  ; lookup-subjects (formerly 'who-can?') accepts:
@@ -83,6 +93,10 @@
 	  ; - :subject/type (keyword) required.
 	  ; - :subject/relation is NOT supported and throws :eacl.pagination/unsupported-filter.
 	  ; - :first/:after or :last/:before pagination, as above.
+
+  (count-subjects [this {:as query :keys [consistency]}])
+  ; Mirrors count-resources for lookup-subjects. Pass :count-limit to bound
+  ; work and receive :truncated? in the result.
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
 
