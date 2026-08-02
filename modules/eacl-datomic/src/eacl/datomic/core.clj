@@ -1956,17 +1956,11 @@
           enabled? (not (cache/no-cache? cache-option))
           ;; Consumers choose an adapter (or explicit no-cache); they should
           ;; not have to understand entry kinds to get a good outcome.
-          ;; :on-repeat is the
-          ;; default because it DOMINATES always-remember in every workload
-          ;; measured — never slower, sometimes faster — so there is nothing
-          ;; to trade off:
-          ;;   repeating, direct   none 4.9-6.7us  always 4.0-4.2  on-repeat 3.9-4.1
-          ;;   repeating, arrow    none 8.0-9.5us  always 4.3      on-repeat 4.3
-          ;;   never repeating     none 7.9-8.6us  always 13.3+    on-repeat 11.8+
-          ;; The last row is why `cache/no-cache` remains a meaningful choice:
-          ;; on traffic that never asks the same check twice, the key build and
-          ;; lookup cost on every read is unrecoverable no matter the admission
-          ;; policy. That is a decision about traffic, which consumers can make.
+          ;; :on-repeat avoids retaining a completed answer until its query has
+          ;; demonstrated reuse. `cache/no-cache` remains a meaningful choice:
+          ;; on traffic that never repeats, or whose direct evaluation is
+          ;; cheaper than authenticated cache validation, lookup/proof cost is
+          ;; unrecoverable regardless of admission policy.
           remember (if (contains? config :remember-answers)
                      (when enabled? (:remember-answers config))
                      (when enabled? :on-repeat))
@@ -2045,10 +2039,11 @@
                   (eacl.datomic.cache/local-store {:max-weight ...})
 
     Pass cache/no-cache when the same permission check is essentially never
-    asked twice — a batch job sweeping distinct resources, say. A read then
-    pays for a cache lookup it can never benefit from: measured 7.9us with the
-    cache off against 11.8us on for entirely distinct checks. When checks recur
-    it is the other way round, 8.0us against 4.3us for an arrow permission.
+    asked twice — a batch job sweeping distinct resources, say — or when direct
+    evaluation is cheaper than authenticated completed-answer validation.
+    Proofed caching has a fixed cost and is not a universal latency
+    optimization; benchmark representative permissions before enabling it for
+    latency alone. See docs/reports/2026-08-02-eacl-v8-cache-proof-cost.md.
 
     To bypass the configured cache for ONE call, pass :cache? false on the
     request — on the map arity of can?, and in the query map for lookups,
@@ -2066,10 +2061,8 @@
       :checkpoints       bounded revision checkpoints
       :remember-answers  false | true | :on-repeat (default) — whether a
                          finished answer is kept so an identical later check
-                         skips evaluation. :on-repeat keeps it only once the
-                         same check has been seen twice, and measured no slower
-                         than true in every workload tested, which is why it is
-                         a default rather than a question for consumers.
+                         skips evaluation. :on-repeat retains it only after the
+                         same check has demonstrated reuse.
 
     Cache failures are contained as misses or rejected publications. Missing
     exact pages and recursive continuations replay against the authenticated
