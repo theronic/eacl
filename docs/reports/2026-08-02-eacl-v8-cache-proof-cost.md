@@ -79,18 +79,46 @@ A synthetic permission chain measured the first
 | 200 | 42,753.2 | 0.113 |
 | 400 | 83,726.8 | 0.113 |
 
-The implementation computes a reachability closure for each reachable node, so
-its cold upper bound is `O(V(V+E))`. The benchmark confirms that this is
-generation compilation, not per-call proof work: after compilation, lookup is
-constant-time at measurement resolution.
+The measured implementation computed a reachability closure for each permission
+node, so its cold upper bound was `O(V(V+E))`. The review also found that this
+result was memoized per root, allowing different first-read roots to repeat the
+quadratic calculation. The follow-up implementation replaces the closure matrix
+with iterative strongly connected component and reverse-reachability passes:
+`O(V+E)` graph-analysis time and memory once permission paths are materialized,
+once per schema generation. Adapter path materialization and its deterministic
+sorting are additional backend-dependent work. A shared delay makes concurrent
+first reads single-flight. After compilation, any root lookup is constant-time.
+The earlier intermediate fix (still using the quadratic compiler) took 21,789.5
+µs for a warmed 200-node generation and 607.5 µs to read all 200 roots
+afterward; it is retained here only as audit history, not as a measurement of
+the final linear compiler.
+
+The final implementation was then measured with nine fresh-generation samples
+per size in the same warmed JVM:
+
+| Permission nodes | Final cold median (µs) | Warm root median (µs) |
+| ---: | ---: | ---: |
+| 10 | 587.3 | 0.075 |
+| 25 | 907.0 | 0.088 |
+| 50 | 1,478.8 | 0.075 |
+| 100 | 3,291.0 | 0.075 |
+| 200 | 7,206.0 | 0.071 |
+| 400 | 18,249.5 | 0.071 |
+| 1,000 | 73,856.9 | 0.088 |
+
+These end-to-end cold numbers include adapter schema-path materialization and
+do not empirically claim linear wall-clock scaling. The important bound is that
+the graph proof no longer constructs a quadratic closure matrix or repeats it
+per root. The measured steady lookup is constant at this resolution.
 
 ## Conclusions
 
 1. The redesigned managed proof system does not have graph- or schema-wide
    proof cost per call. Its backend proof work is dependency-sized and remained
    flat in this benchmark.
-2. Recursive classification has a potentially quadratic cold compilation cost,
-   but it is memoized per permission root and schema generation.
+2. Recursive classification uses `O(V+E)` graph analysis once for all
+   permission roots in a schema generation after permission-path
+   materialization, and constant-time lookups afterward.
 3. Unknown-writer content mode is intentionally conservative and is not
    constant-time. It pays complete-schema and relationship-content work because
    it refuses to trust writer-maintained mutation identities.

@@ -64,11 +64,12 @@ Situated AuthZ offers some advantages for typical use-cases:
     complete schema read; content mode is the conservative interoperability
     path, not the low-latency configuration.
   - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. Connection-backed cursor and exact reads build request-scoped schema state from their historical DB; they do not publish paths into the client's live schema cache.
-  - Permission paths, dependency closures, and recursive routing are compiled
-    lazily and memoized within a schema-proof generation. Recursive
-    classification has an `O(V(V+E))` cold upper bound for `V` reachable
-    permission nodes and `E` permission edges, but the cached decision is not
-    recomputed on each authorization call.
+  - Permission paths and dependency closures are compiled lazily and memoized
+    within a schema-proof generation. Recursive routing for all permission
+    nodes shares one generation analysis. Iterative SCC and reverse-reachability
+    passes make the graph-analysis portion `O(V+E)` cold work for `V` permission
+    nodes and `E` permission edges once their paths are materialized; another
+    first-read permission root reuses the result.
   - Managed proof reads are dependency-sized. Unknown-writer content proofs
     currently perform graph-wide collection/filtering before hashing the
     dependency relations. See the
