@@ -69,6 +69,50 @@
                             :reboot
                             (contract/->server "server-1")))))))
 
+(deftest datascript-large-relationship-cursor-proof-test
+  (let [relationship-count 1505
+        conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        user-ids (mapv #(str "bulk-user-" %) (range relationship-count))
+        server-ids (mapv #(str "bulk-server-" %) (range relationship-count))
+        object-ids (into user-ids server-ids)]
+    (eacl/write-schema!
+     client
+     "definition user {}
+
+      definition server {
+        relation owner: user
+      }")
+    (ds/transact!
+     conn
+     (map-indexed
+      (fn [index object-id]
+        {:db/id (- (inc index))
+         :eacl/id object-id})
+      object-ids))
+    (eacl/create-relationships!
+     client
+     (mapv (fn [index]
+             (eacl/->Relationship
+              (contract/->user (nth user-ids index))
+              :owner
+              (contract/->server (nth server-ids index))))
+           (range relationship-count)))
+    (let [page-1
+          (eacl/read-relationships
+           client
+           {:subject/type :user
+            :first 1000})
+          page-2
+          (eacl/read-relationships
+           client
+           {:subject/type :user
+            :first 1000
+            :after (get-in page-1 [:page-info :end-cursor])})]
+      (is (= 1000 (count (:data page-1))))
+      (is (= 505 (count (:data page-2))))
+      (is (false? (get-in page-2 [:page-info :has-next-page?]))))))
+
 (defn- seeded-client
   []
   (let [conn   (datascript/create-conn)

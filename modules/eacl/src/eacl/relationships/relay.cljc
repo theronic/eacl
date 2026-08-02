@@ -49,18 +49,14 @@
 
 (defn- items-proof
   [items]
-  (secure/canonical-digest
-   "eacl/cursor/relationship-items/v3"
-   {:count (count items)
-    ;; Digest each bounded relationship independently before committing the
-    ;; ordered vector. A legal 10k-item page otherwise exceeds the secure
-    ;; format's global entry bound even though no individual value is large.
-    ;; Count plus ordered leaf digests preserves multiplicity and order.
-    :leaf-digests
-    (mapv #(secure/canonical-digest
-            "eacl/cursor/relationship-item/v3"
-            %)
-          items)}))
+  ;; Relationship scans may legally contain more canonical data than the
+  ;; secure format accepts in one bounded value. Stream the ordered records
+  ;; into a length-framed digest so the proof still commits to every item,
+  ;; including its order and multiplicity, without constructing an oversized
+  ;; intermediate leaf-digest vector.
+  (secure/canonical-records-digest
+   "eacl/cursor/relationship-items/v4"
+   items))
 
 (defn- decode-envelope
   [opts operation filters snapshot-context token]

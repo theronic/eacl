@@ -283,17 +283,27 @@
              (set (map (comp :id :resource) server-relations)))))))
 
 (deftest read-relationships-default-limit-test
-  (let [{:keys [client]} (seed-bulk-read-db 1005)
+  (let [{:keys [client]} (seed-bulk-read-db 2005)
         {page-1 :data page-info :page-info}
         (eacl/read-relationships client {:subject/type :user})
-        cursor (:end-cursor page-info)
-        {page-2 :data}
+        cursor-1 (:end-cursor page-info)
+        {page-2 :data page-2-info :page-info}
         (eacl/read-relationships client {:subject/type :user
                                          :first        1000
-                                         :after        cursor})]
+                                         :after        cursor-1})
+        cursor-2 (:end-cursor page-2-info)
+        {page-3 :data}
+        (eacl/read-relationships client {:subject/type :user
+                                         :first        1000
+                                         :after        cursor-2})
+        all-pages (into [] (concat page-1 page-2 page-3))
+        subject-ids (mapv #(get-in % [:subject :id]) all-pages)]
     (is (= 1000 (count page-1)))
-    (is (= 5 (count page-2)))
-    (is (string? cursor))
+    (is (= 1000 (count page-2)))
+    (is (= 5 (count page-3)))
+    (is (= 2005 (count (distinct subject-ids))))
+    (is (string? cursor-1))
+    (is (string? cursor-2))
     (is (= "bulk-user-0" (get-in (first page-1) [:subject :id])))
-    (is (= "bulk-user-995" (get-in (first page-2) [:subject :id]))
+    (is (= subject-ids (vec (sort subject-ids)))
         "portable relationship order is lexicographic by public object id")))
