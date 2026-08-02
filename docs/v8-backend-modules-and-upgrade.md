@@ -10,7 +10,7 @@ the core module.
 | Module | Runtime | Consistency and snapshots | Cursors | Cache proof |
 | --- | --- | --- | --- | --- |
 | `eacl-datomic` | Clojure/JVM | authoritative barrier, local current, causal floor, and exact `d/as-of` | authenticated and encrypted; proof-equivalent current continuation with exact fallback | mutation identity or canonical content over scoped schema and both relationship halves |
-| `eacl-datascript` | Clojure and ClojureScript | serialized local head, local current, causal-anchor wait; optional bounded exact registry | authenticated synchronous cursor; proof-equivalent continuation and optional exact fallback | mutation identity or canonical selected-DB content |
+| `eacl-datascript` | Clojure and ClojureScript | serialized local head, local current, causal-anchor wait; optional bounded exact registry | authenticated synchronous cursor; proof-equivalent continuation and optional exact fallback | mutation identity or canonical selected-DB content over both endpoint halves |
 | `eacl-datahike` | Clojure/JVM | authoritative direct branch head, local current, causal-anchor wait, retained commit/temporal exact | authenticated synchronous cursor; proof-equivalent continuation and exact fallback | mutation identity or canonical store-visible content |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | supplied by an adapter | portable store/entry validation contract |
 
@@ -78,6 +78,16 @@ Unknown anchors return an empty page or a zero count rather than an unusable
 continuation cursor. `delete-object!` is available on all three v8 adapters and
 removes relationships touching the object without retracting the object
 entity itself.
+
+DataScript's prerelease relationship storage also changes in this candidate.
+It no longer creates a relationship entity with five components and five
+derived tuples. It stores exactly two indexed ordinary vector values, one on
+each endpoint, using Datomic/Datahike component order. There is deliberately no
+dual read or automatic migration for an unreleased representation: recreate
+DataScript explorer/demo databases or reload their relationships through EACL.
+Direct endpoint retraction can leave a ghost peer value, so call
+`delete-object!` first and use
+`eacl.datascript.integrity/dangling-relationship-report` for offline checks.
 
 ## Portable cache and mutation rules
 

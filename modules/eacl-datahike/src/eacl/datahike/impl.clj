@@ -5,6 +5,7 @@
             [eacl.datahike.schema :as schema]
             [eacl.engine.indexed :as engine]
             [eacl.engine.relationships :as relationship-engine]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.schema.model :as model]))
 
 (def Relation model/Relation)
@@ -118,11 +119,13 @@
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]
-  [subject-type relation-id resource-type resource-id])
+  (endpoint-pair/forward-value
+   subject-type relation-id resource-type resource-id))
 
 (defn- reverse-relationship-tuple
   [{:keys [resource-type relation-id subject-type subject-id]}]
-  [resource-type relation-id subject-type subject-id])
+  (endpoint-pair/reverse-value
+   resource-type relation-id subject-type subject-id))
 
 (defn- internal-id
   [db value]

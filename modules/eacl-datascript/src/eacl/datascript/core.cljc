@@ -285,7 +285,10 @@
 
 (defn datascript-write-relationships!
   [conn opts updates]
-  (let [db      (ds/db conn)
+  (let [updates (vec updates)
+        _ (doseq [{:keys [operation]} updates]
+            (impl/validate-relationship-operation! operation))
+        db      (ds/db conn)
         internal-updates
         (S/transform [S/ALL :relationship]
                      #(spice-relationship->internal db opts %)
@@ -320,44 +323,54 @@
         (journal/ensure-migrated! conn)
         (write-response (ds/db conn) opts)))))
 
+(def ^:private relationship-attrs
+  #{schema/forward-relationship-attr
+    schema/reverse-relationship-attr})
+
+(defn- relationship-retraction-count
+  [tx-data]
+  (count
+   (filter
+    (fn [{:keys [a added]}]
+      (and (false? added)
+           (contains? relationship-attrs a)))
+    tx-data)))
+
 (defn datascript-delete-object!
   "Removes every relationship that references `object`, without retracting the
   object entity itself."
   [conn {:keys [object->entid] :as opts} object]
-  (let [db (ds/db conn)]
-    (when-let [object-eid (object->entid db object)]
-      (let [relationship-eids
-            (ds/q '[:find [?relationship ...]
-                    :in $ ?object
-                    :where
-                    (or [?relationship :eacl.relationship/subject ?object]
-                        [?relationship :eacl.relationship/resource ?object])]
-                  db object-eid)
-            relation-ids
-            (ds/q '[:find [?relation ...]
-                    :in $ [?relationship ...]
-                    :where
-                    [?relationship :eacl.relationship/relation ?relation]]
-                  db relationship-eids)]
-        (when (seq relationship-eids)
-          (journal/transact!
-           conn
-           {:mutation-id (mutation/new-id)
-            :kind :object-deletion
-            :canonical-data
-            {:operation :delete-object
-             :object object
-            :relationship-eids (vec (sort relationship-eids))}
-            :relation-ids relation-ids
-            :token-ttl-seconds (:token-ttl-seconds opts)
-            :retention-grace-seconds
-            (:retention-grace-seconds opts)
-            :tx-data
-            (mapv (fn [relationship-eid]
-                    [:db/retractEntity relationship-eid])
-                  relationship-eids)})))))
-  (journal/ensure-migrated! conn)
-  (write-response (ds/db conn) opts))
+  (let [db (ds/db conn)
+        object-eid
+        (or (try
+              (object->entid db object)
+              (catch #?(:clj Exception :cljs :default) _
+                nil))
+            (when (number? (:id object))
+              (:id object)))
+        tx-data (impl/tx-delete-object db object-eid)]
+    (if (seq tx-data)
+      (let [report
+            (journal/transact!
+             conn
+             {:mutation-id (mutation/new-id)
+              :kind :object-deletion
+              :canonical-data
+              {:operation :delete-object
+               :object object
+               :tx-data tx-data}
+              :relation-ids (impl/affected-relation-ids tx-data)
+              :token-ttl-seconds (:token-ttl-seconds opts)
+              :retention-grace-seconds
+              (:retention-grace-seconds opts)
+              :tx-data tx-data})]
+        (assoc (write-response (:db-after report) opts)
+               :retracted-datoms
+               (relationship-retraction-count (:tx-data report))))
+      (do
+        (journal/ensure-migrated! conn)
+        (assoc (write-response (ds/db conn) opts)
+               :retracted-datoms 0)))))
 
 (defn- relationship-seq
   [relationships]

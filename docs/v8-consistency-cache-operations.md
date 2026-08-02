@@ -77,7 +77,10 @@ Mutation and content proofs have deliberately different cost models:
   Their worst-case work is `O(G + M log M)`, where `G` is total relationship
   storage scanned and `M` is the matching proof record count. The digest output
   is fixed-size and hashing is incremental; that is a size/memory property, not
-  a constant-time claim.
+  a constant-time claim. Datomic Pro, Datahike, and DataScript all commit both
+  physical endpoint halves plus endpoint public identities; DataScript's
+  halves are indexed ordinary vectors rather than declared heterogeneous
+  tuples.
 
 Permission paths and relation dependencies are memoized within a selected
 schema-proof generation. Recursive routing for all permission nodes shares one
