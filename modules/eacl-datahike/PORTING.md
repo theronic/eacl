@@ -98,7 +98,9 @@ are tested; three consequences are load-bearing.
    resolves the attribute representation where Datahike's `index-range`
    requires it.
 
-MEASURED, both modes: `(:attribute-refs? (:config db))` is the reliable flag.
+MEASURED, both modes: `(:attribute-refs? (dbi/-config db))` is the reliable
+flag. Concrete DB records also expose `:config` directly; temporal/filter
+wrappers do not, and instead delegate `IDB/-config` to their origin database.
 
 ## Composite schema-tuple seek bounds
 

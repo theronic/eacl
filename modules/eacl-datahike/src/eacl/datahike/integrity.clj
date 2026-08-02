@@ -13,8 +13,10 @@
 (defn dangling-relationship-report
   "Returns total and per-half dangling counts plus a bounded sample.
 
-   `:sample-size` defaults to 20. This is an offline
-   O(number-of-relationship-datoms) operation."
+   `:sample-size` defaults to 20. This is an offline operation that scans every
+   relationship half and performs one exact peer-half index probe per half.
+   With a logarithmic persistent index lookup, its expected cost is
+   O(H log D) for H relationship halves in a database of D datoms."
   ([db]
    (dangling-relationship-report db {}))
   ([db {:keys [sample-size] :or {sample-size 20}}]
