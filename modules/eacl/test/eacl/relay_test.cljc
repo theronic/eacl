@@ -2,7 +2,8 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
-            [eacl.relay :as relay]))
+            [eacl.relay :as relay]
+            [eacl.relationships.relay :as relationships-relay]))
 
 (defn- operation-map
   [snapshot-id proof]
@@ -68,3 +69,19 @@
            dependencies)]
       (is (not= (:proof-digest first-context)
                 (:proof-digest later-context))))))
+
+(deftest relationship-pagination-rejects-nil-cursors-test
+  (doseq [query [{:first 1 :after nil}
+                 {:last 1 :before nil}]]
+    (is (= :eacl.pagination/invalid-cursor
+           (try
+             (relationships-relay/paginate
+              {}
+              :read-relationships
+              query
+              {}
+              [])
+             nil
+             (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+               (:eacl/error (ex-data error)))))
+        (pr-str query))))

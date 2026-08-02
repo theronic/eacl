@@ -33,7 +33,9 @@
     (when (or (and first? last?)
               (and after? before?)
               (and after? (not first?))
-              (and before? (not last?)))
+              (and before? (not last?))
+              (and after? (nil? (:after filters)))
+              (and before? (nil? (:before filters))))
       (page-error! "Invalid Relay relationship pagination arguments."
                    (select-keys filters [:first :last :after :before])))
     (let [direction (if last? :desc :asc)

@@ -653,8 +653,10 @@
            (select-keys opts
                         [:token-ttl-seconds
                          :retention-grace-seconds]))]
-      (when-let [store (:current-cache-store opts)]
-        (cache/expire-current! store))
+      (when-not (:eacl.mutation/no-op? result)
+        (reset! (:derived-schema-caches opts) {})
+        (when-let [store (:current-cache-store opts)]
+          (cache/expire-current! store)))
       (merge result
              (write-response (:eacl.mutation/db-after result) opts))))
 

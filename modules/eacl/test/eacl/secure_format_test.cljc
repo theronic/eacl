@@ -106,8 +106,57 @@
            (:reason
             (error-data
              #(secure/decode-canonical
+               "{:allowed 1} {:forged 2}"))))
+        "a second top-level form is never ignored")
+    (is (= :malformed
+           (:reason
+            (error-data
+             #(secure/decode-canonical
+               "{:allowed 1} #_{:forged 2}"))))
+        "reader-discard cannot hide trailing input")
+    (is (= :malformed
+           (:reason
+            (error-data
+             #(secure/decode-canonical
                "#eacl/unknown {:value true}"))))
-        "unknown tagged values are outside the accepted wire language")))
+        "unknown tagged values are outside the accepted wire language")
+    (let [unicode "hé😀"
+          bytes (secure/utf8-bytes unicode)]
+      (is (every? #(<= 0 % 255) bytes)
+          "UTF-8 has the same unsigned byte representation on every runtime")
+      (is (= unicode (secure/bytes->utf8 bytes))))
+    #?(:clj
+       (let [ambiguous-keyword (keyword "a/b" "c")
+             ordinary-keyword (keyword "a" "b/c")]
+         (is (not= ambiguous-keyword ordinary-keyword))
+         (is (= :ambiguous-keyword
+                (:reason
+                 (error-data
+                  #(secure/encode-canonical
+                    {ambiguous-keyword 1
+                     ordinary-keyword 2}))))
+             "distinct keyword keys must never collapse to one wire spelling")))
+    #?(:clj
+       (let [unpaired-surrogate (str (char 0xD800))]
+         (is (= :invalid-unicode
+                (:reason
+                 (error-data
+                  #(secure/utf8-bytes unpaired-surrogate)))))
+         (is (= :invalid-unicode
+                (:reason
+                 (error-data
+                  #(secure/encode-canonical unpaired-surrogate)))))
+         (is (= :malformed-utf8
+                (:reason
+                 (error-data
+                  #(secure/bytes->utf8 [0xC3 0x28])))))
+         (is (= "😀"
+                (secure/bytes->utf8
+                 (byte-array (map unchecked-byte [0xF0 0x9F 0x98 0x80]))))
+             "legacy JVM signed byte arrays remain accepted")
+         (is (= "\"😀\""
+                (secure/encode-canonical "😀"))
+             "valid surrogate pairs remain portable")))))
 
 (deftest domain-separation-and-key-rotation-test
   (let [payload {:v 1 :answer true}

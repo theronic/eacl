@@ -253,6 +253,30 @@
     (is (false? (:cached? (resolve))))
     (is (= 2 @calls))))
 
+(deftest current-generation-two-hit-admission-test
+  (let [store (cache/current-cache {:admit-on-repeat? true})
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
+        calls (atom 0)
+        resolve
+        #(cache/resolve-current!
+          store context :key :decision boolean?
+          (fn [] (swap! calls inc) true))]
+    (is (false? (:cached? (resolve)))
+        "the first sighting is not retained")
+    (is (false? (:cached? (resolve)))
+        "the second sighting demonstrates reuse and is retained")
+    (is (true? (:cached? (resolve))))
+    (is (= 2 @calls))
+    (is (= 1 (:exact-entries (cache/current-cache-stats store))))
+    (cache/expire-current! store)
+    (is (false? (:cached? (resolve)))
+        "explicit expiry also resets admission history")
+    (is (= 0 (:exact-entries (cache/current-cache-stats store))))))
+
 (deftest exact-proof-validation-test
   (let [proofs (atom {:basis 1
                       :source "source"

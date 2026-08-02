@@ -60,7 +60,8 @@
 (defrecord ExactGeneration [snapshot order entries])
 (defrecord ManagedGeneration [schema-stamp installed-order entries])
 (defrecord CacheLifecycle [exact managed])
-(defrecord CurrentGenerationCache [lifecycle metrics max-entries])
+(defrecord CurrentGenerationCache [lifecycle metrics max-entries admissions
+                                   admit-on-repeat?])
 
 (defn- new-lifecycle
   []
@@ -74,12 +75,17 @@
   contract. Neither tier is a portable provider or a historical cache."
   ([]
    (current-cache {}))
-  ([{:keys [max-entries]
-     :or {max-entries 1024}}]
+  ([{:keys [max-entries admit-on-repeat?]
+     :or {max-entries 1024
+          admit-on-repeat? false}}]
    (when-not (and (integer? max-entries) (pos? max-entries))
      (throw (ex-info "Current cache :max-entries must be positive."
                      {:type :eacl/invalid-config
                       :max-entries max-entries})))
+   (when-not (boolean? admit-on-repeat?)
+     (throw (ex-info "Current cache :admit-on-repeat? must be boolean."
+                     {:type :eacl/invalid-config
+                      :admit-on-repeat? admit-on-repeat?})))
    (->CurrentGenerationCache
     (atom (new-lifecycle))
     (atom {:exact-hits 0
@@ -89,7 +95,9 @@
            :stamp-failures 0
            :puts 0
            :expirations 0})
-    max-entries)))
+    max-entries
+    (atom {})
+    admit-on-repeat?)))
 
 (defn current-cache?
   [value]
@@ -130,7 +138,9 @@
            :exact-entries
            (if exact (count @(:entries exact)) 0)
            :managed-entries
-           (if managed (count @(:entries managed)) 0))))
+           (if managed (count @(:entries managed)) 0)
+           :admission-entries
+           (count @(:admissions store)))))
 
 (defn record-current-bypass!
   "Records that a configured native cache was deliberately skipped without
@@ -155,6 +165,7 @@
                     {:type :eacl/invalid-config
                      :cache store})))
   (reset! (:lifecycle store) (new-lifecycle))
+  (reset! (:admissions store) {})
   (swap! (:metrics store) update :expirations inc)
   nil)
 
@@ -169,6 +180,21 @@
         (if victim
           (dissoc updated victim)
           updated)))))
+
+(defn- admit-entry?
+  [store entry-key]
+  (if-not (:admit-on-repeat? store)
+    true
+    (let [repeated? (volatile! false)]
+      (swap! (:admissions store)
+             (fn [admissions]
+               (if (contains? admissions entry-key)
+                 (do
+                   (vreset! repeated? true)
+                   admissions)
+                 (bounded-assoc
+                  admissions entry-key true (:max-entries store)))))
+      @repeated?)))
 
 (defn- put-entry!
   [store entries key value]
@@ -336,15 +362,17 @@
                    :cache-basis (:cache-basis managed-entry)})
                 (let [value (compute)
                       entry {:value value
-                             :cache-basis cache-basis}]
-                  (put-entry!
-                   store (:entries generation) entry-key entry)
-                  (when managed-entry-key
+                             :cache-basis cache-basis}
+                      admit? (admit-entry? store entry-key)]
+                  (when admit?
                     (put-entry!
-                     store
-                     (:entries managed-generation)
-                     managed-entry-key
-                     entry))
+                     store (:entries generation) entry-key entry)
+                    (when managed-entry-key
+                      (put-entry!
+                       store
+                       (:entries managed-generation)
+                       managed-entry-key
+                       entry)))
                   (swap! (:metrics store) update :misses inc)
                   {:value value
                    :cached? false

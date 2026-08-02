@@ -63,6 +63,21 @@
         (is (= (inc (:misses before)) (:misses after)))
         (is (= (:exact-hits before) (:exact-hits after)))))))
 
+(deftest schema-no-op-keeps-completed-cache-hot-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)]
+    (seed! conn authorization)
+    (eacl/create-relationship! authorization relationship)
+    (is (true? (eacl/can? authorization user :view document)))
+    (is (true? (eacl/can? authorization user :view document)))
+    (let [before (datahike/cache-stats authorization)]
+      (eacl/write-schema! authorization schema)
+      (is (true? (eacl/can? authorization user :view document)))
+      (let [after (datahike/cache-stats authorization)]
+        (is (= (:expirations before) (:expirations after)))
+        (is (= (:misses before) (:misses after)))
+        (is (= (inc (:exact-hits before)) (:exact-hits after)))))))
+
 (deftest per-request-cache-bypass-covers-public-read-shapes-test
   (let [conn (datahike/create-conn)
         authorization (client conn)

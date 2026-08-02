@@ -43,6 +43,67 @@
   #?(:clj (int character)
      :cljs (.charCodeAt character 0)))
 
+(defn- string-code-unit-at
+  [value index]
+  #?(:clj (int (.charAt ^String value index))
+     :cljs (.charCodeAt value index)))
+
+(defn- well-formed-unicode?
+  [value]
+  (loop [index 0]
+    (if (= index (count value))
+      true
+      (let [code (string-code-unit-at value index)]
+        (cond
+          (<= 0xD800 code 0xDBFF)
+          (and (< (inc index) (count value))
+               (<= 0xDC00
+                   (string-code-unit-at value (inc index))
+                   0xDFFF)
+               (recur (+ index 2)))
+
+          (<= 0xDC00 code 0xDFFF)
+          false
+
+          :else
+          (recur (inc index)))))))
+
+(defn- hidden-reader-input?
+  [value]
+  (loop [index 0
+         in-string? false
+         escaped? false]
+    (if (= index (count value))
+      false
+      (let [code (string-code-unit-at value index)]
+        (if in-string?
+          (cond
+            escaped?
+            (recur (inc index) true false)
+
+            (= 92 code)
+            (recur (inc index) true true)
+
+            (= 34 code)
+            (recur (inc index) false false)
+
+            :else
+            (recur (inc index) true false))
+          (cond
+            (= 34 code)
+            (recur (inc index) true false)
+
+            (= 59 code)
+            true
+
+            (and (= 35 code)
+                 (< (inc index) (count value))
+                 (= 95 (string-code-unit-at value (inc index))))
+            true
+
+            :else
+            (recur (inc index) false false)))))))
+
 (defn- four-digit-hex
   [code]
   (let [hex #?(:clj (Integer/toHexString code)
@@ -105,6 +166,17 @@
     (sequential? value)
     (str "[" (str/join " " (map portable-render value)) "]")))
 
+(defn- unambiguous-keyword?
+  [value]
+  (and
+   (well-formed-unicode? (name value))
+   (or (nil? (namespace value))
+       (well-formed-unicode? (namespace value)))
+   (try
+     (= value (edn/read-string (portable-render value)))
+     (catch #?(:clj Exception :cljs :default) _
+       false))))
+
 (defn- canonical-comparator
   [left right]
   (compare (portable-render left) (portable-render right)))
@@ -128,10 +200,19 @@
   (let [entries
         (cond
           (or (nil? value)
-              (boolean? value)
-              (string? value)
-              (keyword? value))
+              (boolean? value))
           1
+
+          (string? value)
+          (if (well-formed-unicode? value)
+            1
+            (format-error! :invalid-unicode {}))
+
+          (keyword? value)
+          (if (unambiguous-keyword? value)
+            1
+            (format-error! :ambiguous-keyword
+                           {:value (portable-render value)}))
 
           (integer? value)
           (if (portable-integer? value)
@@ -219,8 +300,13 @@
    (when-not (and (string? encoded)
                   (<= (count encoded) maximum-size))
      (format-error! :too-large {:maximum-size maximum-size}))
+   (when (hidden-reader-input? encoded)
+     (format-error! :malformed {}))
    (try
-     (let [value (edn/read-string encoded)
+     (let [forms (edn/read-string (str "[" encoded "]"))
+           _ (when-not (= 1 (count forms))
+               (format-error! :malformed {}))
+           value (first forms)
            canonical (canonicalize value limits)]
        (when (and allowed-keys
                   (or (not (map? canonical))
@@ -243,18 +329,30 @@
 
 (defn utf8-bytes
   [value]
-  #?(:clj
-     (vec (.getBytes ^String (str value) StandardCharsets/UTF_8))
-     :cljs
-     (vec (gcrypt/stringToUtf8ByteArray (str value)))))
+  (let [value (str value)]
+    (when-not (well-formed-unicode? value)
+      (format-error! :invalid-unicode {}))
+    #?(:clj
+       (mapv #(bit-and (int %) 255)
+             (.getBytes ^String value StandardCharsets/UTF_8))
+       :cljs
+       (vec (gcrypt/stringToUtf8ByteArray value)))))
 
 (defn bytes->utf8
   [bytes]
-  #?(:clj
-     (String. (byte-array (map unchecked-byte bytes))
-              StandardCharsets/UTF_8)
-     :cljs
-     (gcrypt/utf8ByteArrayToString (clj->js bytes))))
+  (let [bytes (vec bytes)]
+    (when-not (every? #(and (integer? %) (<= -128 % 255)) bytes)
+      (format-error! :malformed-utf8 {}))
+    (let [unsigned-bytes (mapv #(bit-and (int %) 255) bytes)
+          decoded
+          #?(:clj
+             (String. (byte-array (map unchecked-byte unsigned-bytes))
+                      StandardCharsets/UTF_8)
+             :cljs
+             (gcrypt/utf8ByteArrayToString (clj->js unsigned-bytes)))]
+      (when-not (= unsigned-bytes (utf8-bytes decoded))
+        (format-error! :malformed-utf8 {}))
+      decoded)))
 
 (defn random-bytes
   [n]
