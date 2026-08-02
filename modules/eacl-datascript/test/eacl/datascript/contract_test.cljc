@@ -27,7 +27,10 @@
 
 (deftest datascript-recursive-v8-contract-test
   (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {})]
+        client
+        (datascript/make-client
+         conn
+         {:coherence-authority :managed})]
     (eacl/write-schema! client contract/recursive-schema)
     (ds/transact! conn
                   (map-indexed
@@ -253,7 +256,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 9 (:v envelope)))
+      (is (= 10 (:v envelope)))
       (is (= :lookup-eid (get-in envelope [:edge :kind])))
       (is (= :asc (get-in envelope [:edge :frontier-direction]))))
 

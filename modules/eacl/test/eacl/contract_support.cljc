@@ -491,7 +491,7 @@
                 :permission :duplicate
                 :resource/type :folder})))))
 
-    (testing "relevant writes invalidate proof-validated cached answers"
+    (testing "managed relation stamps retain unrelated writes and invalidate relevant writes"
       (let [all-query (assoc query :first 20)
             miss (eacl/lookup-resources client all-query)
             hit (eacl/lookup-resources client all-query)]
@@ -540,7 +540,8 @@
         (eacl/write-schema! client recursive-schema-with-audit)
         (let [after-unrelated-schema-write
               (eacl/lookup-resources client all-query)]
-          (is (true? (:cached? after-unrelated-schema-write)))
+          (is (false? (:cached? after-unrelated-schema-write))
+              "every schema write drops the managed generation")
           (is (= (mapv folder
                        (range (inc recursive-connected-folder-count)))
                  (:data after-unrelated-schema-write))))

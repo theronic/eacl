@@ -1,0 +1,9 @@
+{:cursor {:v 8
+          :edge {:kind :lookup-eid}
+          :position [1 "a"]}
+ :issued-at 100
+ :ttl-seconds 1
+ :expires-at 101
+ :decode-at 101
+ :observed :accepted
+ :affected-boundary :portable-cursor}

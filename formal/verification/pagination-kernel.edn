@@ -1,0 +1,66 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :proof-and-cross-runtime-tests-passed
+ :proof
+ {:source "formal/dafny/PageWindow.dfy"
+  :verified-obligations 25
+  :claims
+  [:total-page-normalization
+   :invalid-combinations-rejected
+   :nil-bound-rejected
+   :safe-page-size
+   :forward-window-exact
+   :backward-window-exact
+   :page-size-independent-sequence
+   :page-uniqueness
+   :complete-forward-walk
+   :current-proof-continuation
+   :at-least-conflict
+   :authenticated-exact-fallback
+   :history-divergence-rejection
+   :snapshot-unavailable-rejection
+   :expiry-rejection
+   :relationship-offset-page-exact]}
+ :generated-targets
+ {:java
+  {:status :passed
+   :tests 10
+   :assertions 7013
+   :failures 0
+   :errors 0}
+  :javascript
+  {:status :passed
+   :tests 5
+   :assertions 557
+   :failures 0
+   :errors 0}}
+ :production-regression
+ {:clj
+  {:namespaces
+   [eacl.relay-test
+    eacl.secure-format-test
+    eacl.datascript.contract-test]
+   :tests 15
+   :assertions 113
+   :status :passed}
+  :cljs
+  {:tests 58
+   :assertions 590
+   :status :passed}}
+ :production-generated-routing
+ {:clj-java
+  {:namespace eacl.formal.production-kernel-test
+   :tests 3
+   :assertions 13
+   :status :passed}
+  :cljs-javascript
+  {:namespace eacl.formal.production-kernel-test
+   :tests 3
+   :assertions 13
+   :status :passed}
+  :coverage
+  [:lookup-cursor-current-proof
+   :relationship-cursor-current-proof
+   :relationship-page-window
+   :strict-generated-result-validation]}
+ :remaining []}

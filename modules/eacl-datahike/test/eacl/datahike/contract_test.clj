@@ -41,7 +41,10 @@
 (defn- run-recursive-contract!
   [config]
   (let [conn (datahike/create-conn nil config)
-        client (datahike/make-client conn {})]
+        client
+        (datahike/make-client
+         conn
+         {:coherence-authority :managed})]
     (eacl/write-schema! client contract/recursive-schema)
     (d/transact
      conn

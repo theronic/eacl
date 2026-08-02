@@ -52,6 +52,45 @@
 
 ;; --- Follow-up review -------------------------------------------------------
 
+(deftest proofless-cursor-uses-exact-snapshot-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client
+          (core/make-client
+           conn
+           {:proof-mode :none
+            :page-token-key "proofless-exact-fallback"})
+          alice (spice-object :user "alice")
+          account #(spice-object :account %)
+          query {:subject alice
+                 :permission :admin
+                 :resource/type :account
+                 :first 1}]
+      (eacl/write-schema! client direct-schema)
+      @(d/transact conn [{:eacl/id "alice"}
+                         {:eacl/id "a1"}
+                         {:eacl/id "a2"}
+                         {:eacl/id "a3"}])
+      (eacl/create-relationships!
+       client
+       [(->Relationship alice :owner (account "a1"))
+        (->Relationship alice :owner (account "a3"))])
+      (let [page-1 (eacl/lookup-resources client query)]
+        (is (= ["a1"] (mapv :id (:data page-1))))
+        (eacl/create-relationship!
+         client
+         (->Relationship alice :owner (account "a2")))
+        (is (= ["a3"]
+               (mapv
+                :id
+                (:data
+                 (eacl/lookup-resources
+                  client
+                  (assoc query
+                         :after
+                         (get-in page-1
+                                 [:page-info :end-cursor]))))))
+            "without complete proofs, page 2 must use page 1's exact graph")))))
+
 (deftest explicit-cache-true-does-not-fragment-answer-keys-test
   ;; :cache? selects how to obtain an answer, not which answer was requested.
   ;; It was removed from cursor identity but accidentally retained in finished
@@ -296,10 +335,9 @@
 
 ;; --- M4 ---------------------------------------------------------------------
 
-(deftest cursor-pages-do-not-write-unreachable-live-entries-test
-  ;; v3 stores one authenticated proof envelope per answer. It has no separate
-  ;; unauthenticated latest-result pointer, and a cursor page contributes only
-  ;; its own independently authenticated answer.
+(deftest cursor-pages-bypass-the-current-answer-cache-test
+  ;; A cursor is exact-snapshot work. Page one may publish to the current
+  ;; generation, but continuation never writes a historical entry into it.
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           context {:store store}
@@ -310,18 +348,18 @@
                  :resource/type :account
                  :first 3}
           page-1 (eacl/lookup-resources acl query)
-          puts-after-page-1 (:puts (cache/stats store))
+          stats-after-page-1 (core/cache-stats acl)
           page-2 (eacl/lookup-resources
                   acl (assoc query :after (get-in page-1 [:page-info :end-cursor])))
-          stats (cache/stats store)]
+          stats (core/cache-stats acl)]
       (is (= ["acct0" "acct1" "acct2"] (mapv :id (:data page-1))))
       (is (= ["acct3" "acct4" "acct5"] (mapv :id (:data page-2))))
-      (is (= 1 puts-after-page-1)
-          "page one publishes one authenticated answer envelope")
-      (is (= 1 (- (:puts stats) puts-after-page-1))
-          "a cursor page publishes one independently authenticated envelope")
-      (is (nil? (get-in stats [:by-kind :latest-result :puts]))
-          "the retired unauthenticated latest-result pointer is never written"))))
+      (is (= 1 (:puts stats-after-page-1))
+          "page one publishes one private exact-current answer")
+      (is (= (:puts stats-after-page-1) (:puts stats))
+          "the exact continuation cannot publish into the current generation")
+      (is (= (inc (:bypasses stats-after-page-1))
+             (:bypasses stats))))))
 
 ;; --- L2 ---------------------------------------------------------------------
 

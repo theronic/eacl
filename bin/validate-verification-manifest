@@ -1,0 +1,161 @@
+#!/usr/bin/env bb
+
+(require '[clojure.edn :as edn]
+         '[clojure.java.io :as io])
+
+(def repo-root
+  (.getCanonicalFile
+   (io/file (or (System/getenv "EACL_REPO_ROOT") ".") )))
+
+(defn repo-file
+  [path]
+  (let [file (io/file path)]
+    (if (.isAbsolute file)
+      file
+      (io/file repo-root path))))
+
+(defn read-edn
+  [path]
+  (edn/read-string (slurp (repo-file path))))
+
+(def manifest-path
+  (or (System/getenv "EACL_VERIFICATION_MANIFEST")
+      "formal/verification/manifest.edn"))
+
+(def required-theorems
+  #{:semantic-foundation
+    :strict-wire-format
+    :abstract-snapshot-oracle
+    :direct-and-acyclic-engine
+    :recursive-engine
+    :ordered-merge
+    :frontier-foundation
+    :pagination-and-cursor-kernel
+    :cache-cursor-foundation
+    :cache-decision-kernel
+    :complete-public-engine})
+
+(defn fail!
+  [message data]
+  (binding [*out* *err*]
+    (println message)
+    (prn data))
+  (System/exit 1))
+
+(let [manifest
+      (read-edn manifest-path)
+      report
+      (read-edn
+       (get-in manifest [:adapter-certification :report]))
+      adapters [:datomic :datascript :datahike]
+      missing-certifications
+      (filterv
+       (fn [adapter]
+         (or
+          (not=
+           :certification-suite-passed
+           (get-in manifest [:adapter-certification adapter]))
+          (not= :passed
+                (get-in report [:adapters adapter :status]))))
+       adapters)
+      unmet
+      (vec
+       (concat
+        (get-in manifest
+                [:release-gate :unmet-required-obligations])
+        (map #(vector :adapter-certification %) missing-certifications)))
+      verified?
+      (= :verified (:assurance-status manifest))
+      allowed?
+      (true?
+       (get-in manifest
+               [:release-gate :verified-status-allowed?]))
+      incomplete-theorems
+      (merge
+       (zipmap
+        (remove #(contains? (:theorems manifest) %)
+                required-theorems)
+        (repeat {:status :missing}))
+       (into
+        {}
+        (remove (fn [[_ theorem]]
+                  (= :passed (:status theorem))))
+        (:theorems manifest)))
+      generated-digests
+      (:generated-artifact-digests manifest)
+      missing-generated
+      (into
+       []
+       (keep
+        (fn [[target digest]]
+          (when (= :not-built digest) target)))
+       generated-digests)
+      documented-assumptions
+      #{:verification-toolchain
+        :generated-code-compilers
+        :clj-cljs-runtimes
+        :ffi-boundaries
+        :adapter-contract
+        :cryptography
+        :canonicalization
+        :hash-collision-resistance
+        :entropy-and-key-management
+        :configured-limits}
+      undocumented-assumptions
+      (vec
+       (remove documented-assumptions
+               (:residual-assumptions manifest)))]
+  (when (and verified? (seq unmet))
+    (fail!
+     "Verification manifest refuses :verified: required obligations are unmet."
+     {:unmet-required-obligations unmet}))
+  (when (and verified? (not allowed?))
+    (fail!
+     "Verification manifest refuses :verified: the release gate is closed."
+     {:release-gate (:release-gate manifest)}))
+  (when (seq incomplete-theorems)
+    (fail!
+     "Verification status is withheld: theorem results are incomplete."
+     {:incomplete-theorems incomplete-theorems}))
+  (when (seq missing-generated)
+    (fail!
+     "Verification status is withheld: generated targets are missing."
+     {:missing-generated-artifacts missing-generated}))
+  (when (seq undocumented-assumptions)
+    (fail!
+     "Verification manifest contains undocumented assumptions."
+     {:undocumented-assumptions undocumented-assumptions}))
+  (when (empty? (:source-digests manifest))
+    (fail!
+     "Verification status is withheld: source digests are absent."
+     {}))
+  (when (and (seq unmet) allowed?)
+    (fail!
+     "Verification manifest is inconsistent: unmet obligations cannot allow verified status."
+     {:unmet-required-obligations unmet
+      :release-gate (:release-gate manifest)}))
+  (when (and (empty? unmet)
+             (not (every?
+                   #(= :passed
+                       (get-in report [:adapters % :status]))
+                   adapters)))
+    (fail!
+     "Adapter certification report is incomplete."
+     {:adapter-certification (:adapters report)}))
+  (when (seq unmet)
+    (fail!
+     "Verification status is withheld: required obligations are unmet."
+     {:assurance-status (:assurance-status manifest)
+      :verified-status-allowed? allowed?
+      :unmet-required-obligations unmet
+      :incomplete-theorems (set (keys incomplete-theorems))
+      :generated-artifacts generated-digests
+      :adapter-certification :passed}))
+  (println
+   (pr-str
+    {:assurance-status (:assurance-status manifest)
+     :verified-status-allowed? allowed?
+     :unmet-required-obligations unmet
+     :incomplete-theorems (set (keys incomplete-theorems))
+     :generated-artifacts generated-digests
+     :adapter-certification :passed})))

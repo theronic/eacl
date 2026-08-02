@@ -1,25 +1,26 @@
 # EACL v8 backend modules and upgrade guide
 
-EACL v8 keeps authorization semantics in `modules/eacl` and confines database
-access, snapshots, transactions, cursor protection, and cache proofs to an
-adapter. Applications depend on one adapter module; backend authors depend on
-the core module.
+EACL v8 keeps authorization semantics and the current-generation cache
+protocol in `modules/eacl`. Database access, immutable snapshot selection,
+transactions, exact-snapshot recovery, and cursor protection remain adapter
+responsibilities. Applications depend on one adapter module; backend authors
+depend on the core module.
 
 ## Choose a module
 
-| Module | Runtime | Consistency and snapshots | Cursors | Cache proof |
+| Module | Runtime | Consistency and snapshots | Cursors | Completed answers |
 | --- | --- | --- | --- | --- |
-| `eacl-datomic` | Clojure/JVM | authoritative barrier, local current, causal floor, and exact `d/as-of` | authenticated and encrypted; proof-equivalent current continuation with exact fallback | mutation identity or canonical content over scoped schema and both relationship halves |
-| `eacl-datascript` | Clojure and ClojureScript | serialized local head, local current, causal-anchor wait; optional bounded exact registry | authenticated synchronous cursor; proof-equivalent continuation and optional exact fallback | mutation identity or canonical selected-DB content over both endpoint halves |
-| `eacl-datahike` | Clojure/JVM | authoritative direct branch head, local current, causal-anchor wait, retained commit/temporal exact | authenticated synchronous cursor; proof-equivalent continuation and exact fallback | mutation identity or canonical store-visible content |
-| `eacl` | Clojure and ClojureScript | supplied by an adapter | supplied by an adapter | portable store/entry validation contract |
+| `eacl-datomic` | Clojure/JVM | local Peer DB by default; explicit sync barrier, causal floor, and exact `d/as-of` | authenticated and encrypted; exact-snapshot continuation | private exact-current plus optional managed relation stamps |
+| `eacl-datascript` | Clojure and ClojureScript | serialized local DB; optional bounded exact registry | authenticated synchronous cursor; exact-snapshot continuation | private immutable-DB generation plus optional managed stamps |
+| `eacl-datahike` | Clojure/JVM | local connection DB; explicit head barrier and retained exact selection | authenticated synchronous cursor; exact-snapshot continuation | private immutable-DB generation plus optional managed stamps |
+| `eacl` | Clojure and ClojureScript | supplied by an adapter | supplied by an adapter | shared private current-cache implementation |
 
 Capabilities are configuration-specific. DataScript exact reads require
-`:exact-snapshot-registry-size`; Datahike exact reads require a retained commit
-graph or temporal history; a lagging Datahike source without a branch-head
-barrier rejects `:fully-consistent`. All adapters continue a cursor on a newer
-proof-equivalent snapshot and use the authenticated original exact snapshot
-only after a proof mismatch.
+`:exact-snapshot-registry-size`; Datahike exact reads require retained
+commit/temporal history. Ordinary calls use the current local snapshot and do
+not perform historical selection. Cursors remain pinned to their authenticated
+original exact snapshot and never consult the completed-answer cache when
+recovery is required.
 
 See [the consistency and cache operations guide](v8-consistency-cache-operations.md)
 for authority, retention, token, cursor, cache, and failure-diagnostic rules.
@@ -89,11 +90,10 @@ Direct endpoint retraction can leave a ghost peer value, so call
 `delete-object!` first and use
 `eacl.datascript.integrity/dangling-relationship-report` for offline checks.
 
-## Portable cache and mutation rules
+## Current-generation cache and mutation rules
 
-DataScript and Datahike create a bounded local cache when `:cache` is omitted.
-Pass a shared `eacl.cache/CacheStore` implementation to share entries, or
-disable caching explicitly:
+All three adapters create a bounded client-private cache when `:cache` is
+omitted. Disable caching explicitly:
 
 ```clojure
 (require '[eacl.cache :as cache])
@@ -102,21 +102,26 @@ disable caching explicitly:
 (datahike/make-client conn {:cache cache/no-cache})
 ```
 
-Every portable entry is versioned and contains the exact schema proof and
-proof of only the relations its permission reads. A hit is returned only when
-both proofs match the same immutable DB used by authorization. Unrelated
-relationship writes and schema changes outside the compiled permission graph
-therefore retain a valid answer; relevant relationship/schema changes and
-object deletion force a miss. A missing, throwing, or corrupt store and any
-proof/decoding failure safely recompute from the DB.
+Exact-current entries are attached to one immutable selected DB generation.
+They need no content proof: a changed generation cannot hit the old
+generation. Under explicit `:coherence-authority :managed`, a second tier can
+survive unrelated forward transactions by keying complete answers with the
+schema generation and the maximum transaction stamp over the complete compiled
+relation dependency set. Relevant writes raise that maximum; unrelated writes
+do not.
 
 Prefer `write-schema!`, `create-relationship!`, `write-relationships!`,
 `delete-relationships!`, and `delete-object!`. Configure
 `:coherence-authority :managed` only when every answer-affecting writer uses
-the v3 atomic mutation protocol. Otherwise keep authority `:unknown`; the
-default `:proof-mode :auto` then uses canonical full-content proof. Disabling
-the cache is sufficient for answer reuse, but it does not manufacture the
-causal ancestry required to issue or consume at-least/exact tokens.
+the v8 atomic stamp protocol. Otherwise keep authority `:unknown`; EACL then
+uses exact-current caching and invalidates on every new immutable DB
+generation. Schema replacement drops all managed answers. Reset, restore,
+branch force, or unstamped bulk repair requires quiescence followed by the
+backend's `expire-cache!`.
+
+Caller-supplied portable stores are not trusted as an authority for completed
+native answers. Exact/historical cursor work and arbitrary low-level `db`
+operations bypass the completed-answer cache.
 
 ## Recursive permissions and safety controls
 
@@ -147,8 +152,8 @@ testing; model very broad permissions acyclically when possible.
 
 The v8 adapter operation map is validated when constructed. It normalizes
 object IDs, schema definitions, adjacency, direct matches, permission nodes,
-cursor frontier identity, and cache proofs. Backends declare consistency,
-snapshot, cursor, transaction, cache-proof, and runtime capabilities
+cursor frontier identity, and cache stamps. Backends declare consistency,
+snapshot, cursor, transaction, cache, and runtime capabilities
 explicitly.
 
 The legacy six-function SPI remains accepted for supported v7 third-party

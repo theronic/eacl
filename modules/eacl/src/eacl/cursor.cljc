@@ -12,10 +12,11 @@
 (def payload-keys #{:version :cursor :issued-at :expires-at})
 
 (defn- now-seconds
-  []
-  (quot (#?(:clj System/currentTimeMillis
-            :cljs js/Date.now))
-        1000))
+  [options]
+  (or (:now-seconds options)
+      (quot (#?(:clj System/currentTimeMillis
+                :cljs js/Date.now))
+            1000)))
 
 (defn- cursor-error!
   [reason data]
@@ -37,7 +38,7 @@
    (when cursor
      (when-not (map? cursor)
        (cursor-error! :malformed {}))
-     (let [issued-at (now-seconds)
+     (let [issued-at (now-seconds options)
            expires-at (when cursor-ttl-seconds
                         (+ issued-at cursor-ttl-seconds))]
        (secure/encode-authenticated
@@ -73,7 +74,7 @@
                       (integer? (:issued-at payload))
                       (or (nil? expires-at) (integer? expires-at)))
          (cursor-error! :undecodable {}))
-       (when (and expires-at (> (now-seconds) expires-at))
+       (when (and expires-at (>= (now-seconds options) expires-at))
          (cursor-error! :expired {:expired-at expires-at
                                   :type :eacl.pagination/expired-cursor
                                   :eacl/error

@@ -1,0 +1,39 @@
+{:schema-version 1
+ :status :partial-production-routing-passed
+ :portable-boundary eacl.verified-kernel
+ :modes
+ [:legacy-authoritative :verified-shadow :verified-authoritative]
+ :generated-providers
+ {:clj-java eacl.formal.production-kernel/GeneratedJavaKernel
+  :cljs-javascript
+  eacl.formal.production-kernel/GeneratedJavaScriptKernel}
+ :strict-input-coverage
+ [:unknown-tags
+  :unknown-fields
+  :duplicate-map-fields
+  :invalid-object-identities
+  :unsafe-integer-ranges
+  :oversized-values
+  :invalid-generated-result-variants]
+ :production-routed-decisions
+ [:relationship-page
+  :lookup-cursor-continuation
+  :relationship-cursor-continuation
+  :cache-validation]
+ :evidence
+ {:generated-java-wire
+  {:namespace eacl.formal.wire-format-bridge-test
+   :tests 1 :assertions 7 :status :passed}
+  :generated-javascript-wire
+  {:namespace eacl.formal.js-round-trip-test
+   :suite-tests 11 :suite-assertions 604 :status :passed}
+  :portable-clj-cljs-boundary
+  {:namespace eacl.verified-kernel-test
+   :clj {:tests 3 :assertions 10}
+   :cljs :passed-in-full-suite}
+  :production-routing
+  {:clj-java {:tests 3 :assertions 13}
+   :cljs-javascript {:tests 3 :assertions 13}}}
+ :remaining
+ [:complete-schema-query-and-adapter-callback-routing
+  :complete-public-traversal-result-routing]}

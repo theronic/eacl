@@ -1,0 +1,86 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :not-verified
+ :operations
+ [{:operation :can?
+   :entry-points ['eacl.core/can?]
+   :theorems [:authorization-membership-iff
+              :limit-fails-closed]
+   :dafny ["formal/dafny/AcyclicEngine.dfy"
+           "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/Semantics.dfy"]
+   :adapter-obligations [:immutable-snapshot :identity-round-trip
+                         :schema-completeness :direct-scan-equivalence]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :ci []}
+  {:operation :lookup
+   :entry-points ['eacl.core/lookup-resources
+                  'eacl.core/lookup-subjects]
+   :theorems [:forward-projection-exact
+              :reverse-projection-exact
+              :unique-deterministic-sequence
+              :page-walk-complete
+              :limit-fails-closed]
+   :dafny ["formal/dafny/AcyclicEngine.dfy"
+           "formal/dafny/OrderedMerge.dfy"
+           "formal/dafny/Pagination.dfy"
+           "formal/dafny/RecursiveEngine.dfy"]
+   :adapter-obligations [:immutable-snapshot :identity-round-trip
+                         :schema-completeness :ordered-complete-scans
+                         :permission-node-completeness]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :ci []}
+  {:operation :count
+   :entry-points ['eacl.core/count-resources
+                  'eacl.core/count-subjects]
+   :theorems [:count-equals-lookup-cardinality :bounded-count-law
+              :limit-fails-closed]
+   :dafny ["formal/dafny/AcyclicEngine.dfy"
+           "formal/dafny/RecursiveEngine.dfy"]
+   :adapter-obligations [:immutable-snapshot :identity-round-trip
+                         :schema-completeness :ordered-complete-scans]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :ci []}
+  {:operation :lookup-cursor-continuation
+   :entry-points ['eacl.relay]
+   :theorems [:cursor-scope-before-influence :page-walk-complete
+              :single-permitted-graph]
+   :dafny ["formal/dafny/PageWindow.dfy"
+           "formal/dafny/TemporalSafety.dfy"]
+   :adapter-obligations [:immutable-snapshot :exact-selection
+                         :source-fingerprint]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :ci [:generated-production-kernel
+        :cross-runtime-vectors
+        :cross-adapter-state-trace]}
+  {:operation :relationship-pagination
+   :entry-points ['eacl.relationships.relay]
+   :theorems [:relationship-window-exact :single-permitted-graph]
+   :dafny ["formal/dafny/PageWindow.dfy"
+           "formal/dafny/TemporalSafety.dfy"]
+   :adapter-obligations [:immutable-snapshot :ordered-complete-scans
+                         :exact-selection :source-fingerprint]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :ci [:generated-production-kernel
+        :cross-runtime-vectors
+        :cross-adapter-state-trace]}
+  {:operation :cache-reuse
+   :entry-points ['eacl.cache]
+   :theorems [:exact-current-same-snapshot
+              :managed-least-fixed-point-frame
+              :forward-scalar-stamp-invalidation
+              :late-publication-unreachable
+              :exact-and-arbitrary-db-bypass]
+   :dafny ["formal/dafny/CacheKernel.dfy"
+           "formal/dafny/CurrentCache.dfy"
+           "formal/dafny/TemporalSafety.dfy"]
+   :adapter-obligations [:immutable-snapshot
+                         :complete-compiled-dependencies
+                         :forward-stamped-writer-contract
+                         :selected-snapshot-rendering
+                         :source-fingerprint]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :ci [:generated-production-kernel
+        :authoritative-rejection-regression
+        :cross-runtime-vectors
+        :cross-adapter-state-trace]}]}

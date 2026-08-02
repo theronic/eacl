@@ -1,0 +1,129 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+lock_file="$repo_root/formal/toolchain.lock.json"
+cache_root="${EACL_FORMAL_CACHE:-$repo_root/target/formal-tools}"
+download_root="$cache_root/downloads"
+
+fail() {
+  printf '%s\n' "formal bootstrap: $*" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+lock_value() {
+  node -e '
+    const fs = require("fs");
+    const value = process.argv[2].split(".").reduce(
+      (current, key) => current === undefined ? undefined : current[key],
+      JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    );
+    if (value === undefined || typeof value === "object") process.exit(2);
+    process.stdout.write(String(value));
+  ' "$lock_file" "$1"
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+fetch_locked() {
+  url=$1
+  expected=$2
+  destination=$3
+
+  if [ -f "$destination" ]; then
+    actual=$(sha256 "$destination")
+    [ "$actual" = "$expected" ] ||
+      fail "checksum mismatch for existing $destination (expected $expected, got $actual)"
+    return
+  fi
+
+  temporary=$(mktemp "$download_root/.download.XXXXXX")
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  curl --fail --location --proto '=https' --tlsv1.2 \
+    --output "$temporary" "$url"
+  actual=$(sha256 "$temporary")
+  [ "$actual" = "$expected" ] ||
+    fail "checksum mismatch for $url (expected $expected, got $actual)"
+  mv "$temporary" "$destination"
+  trap - EXIT HUP INT TERM
+}
+
+need awk
+need curl
+need java
+need node
+need tar
+need unzip
+
+[ -f "$lock_file" ] || fail "missing lock file: $lock_file"
+mkdir -p "$download_root"
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) dafny_platform=darwin-arm64 ;;
+  Linux-x86_64) dafny_platform=linux-x86_64 ;;
+  *) fail "unsupported Dafny platform: $(uname -s)-$(uname -m)" ;;
+esac
+
+dafny_version=$(lock_value tools.dafny.version)
+dafny_file=$(lock_value "tools.dafny.artifacts.$dafny_platform.file")
+dafny_url=$(lock_value "tools.dafny.artifacts.$dafny_platform.url")
+dafny_sha=$(lock_value "tools.dafny.artifacts.$dafny_platform.sha256")
+dafny_archive="$download_root/$dafny_file"
+dafny_install="$cache_root/dafny-$dafny_version"
+
+apalache_version=$(lock_value tools.apalache.version)
+apalache_file=$(lock_value tools.apalache.artifact.file)
+apalache_url=$(lock_value tools.apalache.artifact.url)
+apalache_sha=$(lock_value tools.apalache.artifact.sha256)
+apalache_archive="$download_root/$apalache_file"
+apalache_install="$cache_root/apalache-$apalache_version"
+
+tla_version=$(lock_value tools.tla2tools.version)
+tla_file=$(lock_value tools.tla2tools.artifact.file)
+tla_url=$(lock_value tools.tla2tools.artifact.url)
+tla_sha=$(lock_value tools.tla2tools.artifact.sha256)
+tla_install="$cache_root/tla2tools-$tla_version.jar"
+
+fetch_locked "$dafny_url" "$dafny_sha" "$dafny_archive"
+fetch_locked "$apalache_url" "$apalache_sha" "$apalache_archive"
+fetch_locked "$tla_url" "$tla_sha" "$tla_install"
+
+if [ ! -x "$dafny_install/dafny/dafny" ]; then
+  temporary=$(mktemp -d "$cache_root/.dafny.XXXXXX")
+  trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+  unzip -q "$dafny_archive" -d "$temporary"
+  [ -x "$temporary/dafny/dafny" ] ||
+    fail "Dafny archive did not contain dafny/dafny"
+  rm -rf "$dafny_install"
+  mv "$temporary" "$dafny_install"
+  trap - EXIT HUP INT TERM
+fi
+
+if [ ! -x "$apalache_install/bin/apalache-mc" ]; then
+  temporary=$(mktemp -d "$cache_root/.apalache.XXXXXX")
+  trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+  tar -xzf "$apalache_archive" -C "$temporary"
+  [ -x "$temporary/apalache-$apalache_version/bin/apalache-mc" ] ||
+    fail "Apalache archive did not contain the expected launcher"
+  rm -rf "$apalache_install"
+  mv "$temporary/apalache-$apalache_version" "$apalache_install"
+  rmdir "$temporary"
+  trap - EXIT HUP INT TERM
+fi
+
+"$dafny_install/dafny/dafny" --version
+"$apalache_install/bin/apalache-mc" version
+java -cp "$tla_install" tla2sany.SANY >/dev/null
+
+printf '%s\n' "Formal tools are installed and checksum-verified in $cache_root"

@@ -1,8 +1,10 @@
 (ns eacl.spicedb.consistency
   "Consistency descriptors accepted by EACL clients.")
 
+(def local-snapshot :local-snapshot)
 (def minimize-latency :minimize-latency)
 (def fully-consistent :fully-consistent)
+(def synchronized-head :synchronized-head)
 
 (defn at-least-as-fresh
   [token]
@@ -22,8 +24,14 @@
   "Normalizes a caller value to {:mode keyword :token string-or-nil}."
   [value]
   (cond
-    (or (nil? value) (= fully-consistent value))
+    (or (nil? value) (= local-snapshot value))
+    {:mode :local-snapshot}
+
+    (= fully-consistent value)
     {:mode :fully-consistent}
+
+    (= synchronized-head value)
+    {:mode :synchronized-head}
 
     (= minimize-latency value)
     {:mode :minimize-latency}

@@ -35,16 +35,48 @@ jobs:
           key: cljdeps-${{ runner.os }}-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
           restore-keys: cljdeps-${{ runner.os }}-
 
-      - name: Run tests
+      - name: Start test nREPL
         # ^:benchmark load tests (modules/eacl-datomic/test/eacl/bench/) are
         # excluded per AGENTS.md; run them explicitly through nREPL when
         # validating performance changes.
-        run: clojure -X:test :excludes '[:benchmark]'
+        run: |
+          mkdir -p target
+          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+            > target/ci-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/ci-nrepl.log
+          exit 1
+
+      - name: Run tests through nREPL
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cognitect.test-runner.api :as runner] :reload)
+               (let [result
+                     (runner/test
+                      {:dirs [\"modules/eacl/test\"
+                              \"modules/eacl-datomic/test\"
+                              \"modules/eacl-datascript/test\"
+                              \"modules/eacl-datahike/test\"]
+                       :excludes [:benchmark]})]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"nREPL test suite failed\" result)))
+                 result))"
 
       - name: Run DataScript ClojureScript tests
         run: |
-          mkdir -p target
-          clojure -M:datascript-cljs-test
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.main :as cljs] :reload)
+               (cljs/-main
+                \"-t\" \"node\" \"-O\" \"none\"
+                \"-o\" \"target/datascript-cljs-test.js\"
+                \"-c\" \"eacl.datascript.cljs-test-runner\"))"
           node target/datascript-cljs-test.js
 
   isolated-modules:
@@ -76,9 +108,33 @@ jobs:
           key: cljdeps-${{ runner.os }}-${{ matrix.module }}-${{ hashFiles('modules/*/deps.edn') }}
           restore-keys: cljdeps-${{ runner.os }}-${{ matrix.module }}-
 
-      - name: Run isolated module tests
+      - name: Start isolated-module nREPL
         working-directory: modules/${{ matrix.module }}
-        run: clojure -X:test :excludes '[:benchmark]'
+        run: |
+          mkdir -p target
+          clojure -M:test:nrepl --port 7788 > target/ci-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/ci-nrepl.log
+          exit 1
+
+      - name: Run isolated module tests through nREPL
+        working-directory: modules/${{ matrix.module }}
+        run: |
+          sh ../../bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cognitect.test-runner.api :as runner] :reload)
+               (let [result
+                     (runner/test
+                      {:dirs [\"test\" \"../eacl/test\"]
+                       :excludes [:benchmark]})]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"isolated nREPL tests failed\" result)))
+                 result))"
 
       - name: Build isolated module artifact
         working-directory: modules/${{ matrix.module }}

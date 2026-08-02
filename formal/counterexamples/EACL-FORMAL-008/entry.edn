@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-008
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "cache/proof-provider-exception"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "cache/resolve! invoked adapter schema-proof and relation-proof callbacks before entering any provider-failure boundary. An exception escaped the cache and aborted authorization instead of treating cache validation as unavailable and recomputing."
+ :fix
+ "Both dependency-proof callbacks now execute through a fail-closed provider wrapper. Either exception records provider-failure telemetry, skips cache validation/admission, and returns an independently recomputed value."
+ :closing-evidence
+ ["eacl.cache-test/proof-provider-failure-fails-closed-test (CLJ and CLJS)"
+  "full DataScript CLJS suite: 51 tests, 328 assertions"
+  "formal/dafny/CacheKernel.dfy ProviderFailed branch"]}

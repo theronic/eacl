@@ -11,7 +11,9 @@
             [eacl.secure-format :as secure]))
 
 (def capabilities
-  {:consistency #{:fully-consistent
+  {:consistency #{:local-snapshot
+                  :fully-consistent
+                  :synchronized-head
                   :minimize-latency
                   :at-least-as-fresh
                   :at-exact-snapshot}
@@ -178,21 +180,43 @@
 (defn remember-snapshot!
   [registry limit db]
   (when registry
-    (let [handle (:head-id (journal/graph-state db))]
+    (let [selected-handle (volatile! nil)]
       (swap! registry
-             (fn [{:keys [order snapshots]}]
-               (if (contains? snapshots handle)
-                 {:order order :snapshots snapshots}
-                 (let [order' (conj (vec order) handle)
+             (fn [{:keys [order snapshots identities]}]
+               (if-let [handle
+                        (some (fn [[known-db known-handle]]
+                                (when (identical? known-db db)
+                                  known-handle))
+                              identities)]
+                 (do
+                   (vreset! selected-handle handle)
+                   {:order order
+                    :snapshots snapshots
+                    :identities identities})
+                 (let [handle (str (random-uuid))
+                       _ (vreset! selected-handle handle)
+                       order' (conj (vec order) handle)
                        snapshots' (assoc snapshots handle db)
+                       ;; Current snapshots dominate traffic. Keep the newest
+                       ;; immutable identity first so the ordinary path is
+                       ;; constant-time even though the portable CLJ/CLJS
+                       ;; registry uses identity pairs rather than equality
+                       ;; keys.
+                       identities' (into [[db handle]] identities)
                        overflow (- (count order') limit)
                        evicted (when (pos? overflow)
-                                 (take overflow order'))]
+                                 (set (take overflow order')))]
                    {:order (if (pos? overflow)
                              (vec (drop overflow order'))
                              order')
-                    :snapshots (apply dissoc snapshots' evicted)})))))
-    db))
+                    :snapshots (apply dissoc snapshots' evicted)
+                    :identities
+                    (if (seq evicted)
+                      (into []
+                            (remove (comp evicted second))
+                            identities')
+                      identities')}))))
+      @selected-handle)))
 
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable DataScript db value."
@@ -200,11 +224,12 @@
               coherence-authority proof-mode exact-registry]
        :or {proof-mode :content}
        :as opts}]
-  (let [_ (when exact-registry
-            (remember-snapshot!
-             exact-registry
-             (:exact-registry-limit opts)
-             db))]
+  (let [exact-handle
+        (when exact-registry
+          (remember-snapshot!
+           exact-registry
+           (:exact-registry-limit opts)
+           db))]
     (backend/make-adapter
      {:id :datascript
       :fingerprint (:adapter-fingerprint opts)
@@ -235,9 +260,7 @@
        (fn []
          {:graph-anchor (:head-id (journal/graph-state db))
           :order-hint (:max-tx db)
-          :exact-locator
-          (when exact-registry
-            (:head-id (journal/graph-state db)))})
+          :exact-locator exact-handle})
 
        :contains-anchor?
        (fn [anchor]
@@ -261,8 +284,7 @@
 
        :exact-locator
        (fn []
-         (when exact-registry
-           (:head-id (journal/graph-state db))))
+         exact-handle)
 
        :select-exact
        (fn [token-data _timeout-ms]

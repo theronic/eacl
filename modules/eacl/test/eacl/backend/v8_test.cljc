@@ -76,6 +76,112 @@
               :capabilities {:consistency #{:eventually-maybe}}
               :operations (operation-map)}))))))
 
+(deftest adapter-obligation-registry-test
+  (is (= backend/required-snapshot-operations
+         (set
+          (keys
+           (backend/certification-obligations)))))
+  (is (contains?
+       (backend/certification-obligations
+        :subject->resources)
+       :strict-order)))
+
+(deftest optional-runtime-guards-fail-closed-test
+  (let [operations
+        (assoc
+         (operation-map)
+         :subject->resources
+         (fn [& _] [1 3 2]))
+        guarded
+        (backend/make-adapter
+         {:id :dishonest
+          :capabilities {}
+          :runtime-guards? true
+          :operations operations})
+        unguarded
+        (backend/with-runtime-guards guarded false)]
+    (is (= :eacl/backend-contract-violation
+           (:type
+            (error-data
+             #(backend/invoke
+               guarded
+               :subject->resources
+               :user 1 2 :document
+               {:direction :asc})))))
+    (is (= [1 3 2]
+           (backend/invoke
+            unguarded
+            :subject->resources
+            :user 1 2 :document
+            {:direction :asc})))
+    (testing "inclusive and exclusive bounds are checked"
+      (let [bound-violator
+            (backend/make-adapter
+             {:id :bound-violator
+              :capabilities {}
+              :runtime-guards? true
+              :operations
+              (assoc
+               (operation-map)
+               :resource->subjects
+               (fn [& _] [2 3]))})]
+        (is (= :inclusive-exclusive-bound
+               (:obligation
+                (error-data
+                 #(backend/invoke
+                   bound-violator
+                   :resource->subjects
+                   :document 4 2 :user
+                   {:direction :asc
+                    :bound-eid 2
+                    :inclusive-bound? false})))))))
+    (testing "every locally checkable extern result fails closed"
+      (letfn [(violation [operation implementation args]
+                (let [adapter
+                      (backend/make-adapter
+                       {:id :extern-violator
+                        :capabilities {}
+                        :runtime-guards? true
+                        :operations
+                        (assoc (operation-map)
+                               operation implementation)})]
+                  (error-data
+                   #(apply backend/invoke adapter operation args))))]
+        (doseq [[operation implementation args obligation]
+                [[:object-id->internal
+                  (fn [& _] (inc backend/maximum-exact-integer)) [:external]
+                  :exact-integer]
+                 [:order-hint
+                  (fn [& _] (dec backend/minimum-exact-integer))
+                  [] :exact-integer]
+                 [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
+                 [:source-scope (fn [& _] nil) [] :map-shape]
+                 [:graph-head (fn [& _] []) [] :map-shape]
+                 [:relation-defs (fn [& _] [:not-a-map])
+                  [:document :reader] :finite-definition-sequence]
+                 [:permission-defs (fn [& _] [nil])
+                  [:document :view] :finite-definition-sequence]
+                 [:all-permission-nodes (fn [& _] [])
+                  [] :finite-node-set]
+                 [:contains-anchor? (fn [& _] :yes)
+                  ["anchor"] :boolean-result]
+                 [:direct-match? (fn [& _] nil)
+                  [:user 1 2 :document 3] :boolean-result]
+                 [:select-current (fn [& _] {})
+                  [] :adapter-or-unavailable]
+                 [:select-authoritative (fn [& _] :snapshot)
+                  [100] :adapter-or-unavailable]
+                 [:select-at-least (fn [& _] false)
+                  [{} 100] :adapter-or-unavailable]
+                 [:select-exact (fn [& _] [])
+                  [{} 100] :adapter-or-unavailable]
+                 [:frontier-key (fn [& _] nil)
+                  [{:id 1}] :non-nil-key]]]
+          (is (= obligation
+                 (:obligation
+                  (violation operation implementation args)))
+              (str "guard " operation)))))))
+
 (deftest legacy-six-function-spi-remains-compatible-test
   (let [calls (atom [])
         implementation

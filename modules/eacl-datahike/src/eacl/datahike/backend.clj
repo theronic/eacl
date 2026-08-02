@@ -12,7 +12,9 @@
   (:import [java.util UUID]))
 
 (def capabilities
-  {:consistency #{:fully-consistent
+  {:consistency #{:local-snapshot
+                  :fully-consistent
+                  :synchronized-head
                   :minimize-latency
                   :at-least-as-fresh
                   :at-exact-snapshot}
@@ -229,7 +231,7 @@
 
         (or (nil? conn)
             (not (direct-writer? db)))
-        (update :consistency disj :fully-consistent)
+        (update :consistency disj :fully-consistent :synchronized-head)
 
         (or (nil? conn)
             (not (exact-reconstruction? db)))

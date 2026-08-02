@@ -1,0 +1,184 @@
+(ns eacl.formal.production-kernel-test
+  (:require
+   [cljs.test :refer-macros [deftest is testing]]
+   [eacl.backend.v8 :as backend]
+   [eacl.cache :as cache]
+   [eacl.core :refer [spice-object]]
+   [eacl.formal.production-kernel :as production]
+   [eacl.relay :as relay]
+   [eacl.relationships.relay :as relationship-relay]
+   [eacl.verified-kernel :as verified]))
+
+(def selection
+  {:mode :verified-authoritative
+   :kernel production/generated-javascript-kernel})
+
+(defn- test-adapter
+  []
+  (backend/make-adapter
+   {:id :formal-production-test
+    :capabilities
+    {:consistency #{:minimize-latency}
+     :snapshots #{:current :exact}
+     :source #{:scoped}
+     :cursor #{:forward :backward}
+     :transactions #{}
+     :cache-proofs #{:schema :relations}
+     :runtime #{:cljs}}
+    :fingerprint {:adapter :formal-production-test}
+    :identity-contract :formal-production-test/v1
+    :operations
+    (merge
+     (into {}
+           (map (fn [operation]
+                  [operation (fn [& _] nil)]))
+           backend/required-snapshot-operations)
+     {:snapshot-id (constantly {:basis 1})
+      :source-scope (constantly {:source "source"})
+      :graph-head
+      (constantly
+       {:graph-anchor "graph-1"
+        :order-hint 1
+        :exact-locator "graph-1"})
+      :contains-anchor? #(= "graph-1" %)
+      :order-hint (constantly 1)
+      :exact-locator (constantly "graph-1")
+      :select-exact (fn [& _] nil)
+      :object-id->internal
+      #(case % "document-1" 1 "document-2" 2 nil)
+      :internal-id->object
+      #(case % 1 "document-1" 2 "document-2" nil)
+      :schema-proof (constantly "schema-proof")
+      :relation-proof
+      (fn [relation-ids]
+        (zipmap relation-ids (repeat "relation-proof")))})}))
+
+(deftest generated-javascript-production-decision-boundary
+  (is (= {:status :valid
+          :direction :asc
+          :size 2
+          :start 1
+          :end 3
+          :has-next? true
+          :has-previous? true}
+         (verified/decide
+          selection
+          :relationship-page
+          {:length 4
+           :request {:first 2
+                     :last :absent
+                     :after 0
+                     :before :absent
+                     :has-legacy-limit? false
+                     :has-legacy-cursor? false}
+           :default-size 1000
+           :maximum-size 10000}
+          #(throw (ex-info "legacy must not run" {})))))
+  (is (= :snapshot-unavailable
+         (verified/decide
+          selection
+          :cursor-continuation
+          {:authenticated? true
+           :scope-matches? true
+           :expired? false
+           :source "source"
+           :cursor-source "source"
+           :current-proof "new"
+           :cursor-proof "old"
+           :mode :minimize-latency
+           :cursor-graph 0
+           :exact nil}
+          #(throw (ex-info "legacy must not run" {})))))
+  (is (= {:status :miss :reason :future-or-sibling}
+         (verified/decide
+          selection
+          :cache-validation
+          {:deterministic? true
+           :dependency-scope-nonempty? true
+           :expected-key "key"
+           :expected-source "source"
+           :selected-graph 0
+           :ancestors #{1}
+           :selected-proof "proof"
+           :entry {:status :candidate
+                   :authenticated? true
+                   :key "key"
+                   :source "source"
+                   :graph 2
+                   :proof "proof"}}
+          #(throw (ex-info "legacy must not run" {}))))))
+
+(deftest production-relationship-pages-use-generated-javascript-decisions
+  (let [snapshot-context
+        {:source-scope {:backend :test :scope "source"}
+         :graph-head {:graph-anchor "graph-1"
+                      :order-hint 1
+                      :exact-locator "graph-1"}
+         :adapter-fingerprint {:adapter :test}
+         :identity-contract :test/v1}
+        opts {:engine-selection selection}
+        items [{:id 0} {:id 1} {:id 2} {:id 3}]
+        first-page
+        (relationship-relay/paginate
+         opts :read-relationships {:first 2}
+         snapshot-context items)
+        second-page
+        (relationship-relay/paginate
+         opts :read-relationships
+         {:first 2
+          :after (get-in first-page [:page-info :end-cursor])}
+         snapshot-context items)]
+    (is (= [{:id 0} {:id 1}] (:data first-page)))
+    (is (true? (get-in first-page [:page-info :has-next-page?])))
+    (is (= [{:id 2} {:id 3}] (:data second-page)))
+    (is (false? (get-in second-page [:page-info :has-next-page?])))
+    (is (true? (get-in second-page
+                       [:page-info :has-previous-page?])))))
+
+(deftest production-lookup-cursor-and-cache-use-generated-javascript-decisions
+  (let [adapter (test-adapter)
+        cursor-opts
+        {:engine-selection selection
+         :cursor-dependencies
+         {:schema-scope {:permission-nodes #{[:document :view]}}
+          :relation-ids [10]}
+         :cursor-consistency-mode :minimize-latency}
+        query {:subject (spice-object :user "user-1")
+               :permission :view
+               :resource/type :document
+               :first 1}
+        internal-page
+        {:data [{:type :document :id 1}]
+         :page-info
+         {:start-cursor {:kind :lookup-eid :result-eid 1}
+          :end-cursor {:kind :lookup-eid :result-eid 1}
+          :has-next-page? true
+          :has-previous-page? false}}
+        external
+        (relay/externalize-page
+         adapter cursor-opts :lookup-resources query internal-page)
+        token (get-in external [:page-info :end-cursor])
+        selected
+        (relay/select-continuation-adapter
+         adapter cursor-opts :lookup-resources
+         (assoc query :after token))
+        internal-query
+        (relay/internalize-page-query
+         selected cursor-opts :lookup-resources
+         (assoc query :after token))
+        store (cache/local-store)
+        calls (atom 0)
+        resolve-cache
+        #(cache/resolve!
+          adapter store :semantic-key :can?
+          {:permission-nodes #{[:document :view]}}
+          [10]
+          boolean?
+          (fn [] (swap! calls inc) true)
+          {:engine-selection selection})]
+    (is (identical? adapter selected))
+    (is (= {:kind :lookup-eid :result-eid 1}
+           (:after internal-query)))
+    (is (false? (:cached? (resolve-cache))))
+    (is (true? (:cached? (resolve-cache))))
+    (is (= 1 @calls))))

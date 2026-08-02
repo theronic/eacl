@@ -1,0 +1,311 @@
+name: Formal verification
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 2 * * 1'
+
+concurrency:
+  group: formal-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dafny-and-generated-boundaries:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked formal tools and language dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.npm
+          key: formal-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'deps.edn', 'formal/smoke/js/package-lock.json') }}
+
+      - name: Bootstrap checksum-locked tools
+        run: bin/formal bootstrap
+
+      - name: Verify and deterministically build Dafny targets
+        run: |
+          bin/formal format
+          bin/formal verify
+          bin/formal build-java
+          bin/formal build-js
+          bin/formal browser-bundle
+
+      - name: Start fresh generated-boundary nREPL
+        run: |
+          clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            > target/formal/ci-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/ci-nrepl.log
+          exit 1
+
+      - name: Run generated Java differential boundaries through nREPL
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.java-round-trip-test :reload)
+               (require 'eacl.formal.wire-format-bridge-test :reload)
+               (require 'eacl.formal.semantics-bridge-test :reload)
+               (require 'eacl.formal.page-window-bridge-test :reload)
+               (require 'eacl.formal.cache-kernel-bridge-test :reload)
+               (require 'eacl.formal.cross-runtime-vector-test :reload)
+               (require 'eacl.formal.production-kernel-test :reload)
+               (require 'eacl.formal.state-trace-differential-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.formal.java-round-trip-test
+                      'eacl.formal.wire-format-bridge-test
+                      'eacl.formal.semantics-bridge-test
+                      'eacl.formal.page-window-bridge-test
+                      'eacl.formal.cache-kernel-bridge-test
+                      'eacl.formal.cross-runtime-vector-test
+                      'eacl.formal.production-kernel-test
+                      'eacl.formal.state-trace-differential-test)]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"generated Java boundary failed\" result)))
+                 result))"
+
+      - name: Run generated JavaScript differential boundaries
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.main :as cljs] :reload)
+               (cljs/-main
+                \"-t\" \"node\" \"-O\" \"none\"
+                \"-o\" \"target/formal/cljs-smoke.js\"
+                \"-c\" \"eacl.formal.cljs-test-runner\"))"
+          node target/formal/cljs-smoke.js
+
+      - name: Assert verified status remains withheld while gates are unmet
+        run: |
+          if bin/formal manifest; then
+            echo "manifest unexpectedly allowed verified status" >&2
+            exit 1
+          fi
+
+      - name: Upload generated/campaign diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-boundary-diagnostics
+          path: |
+            target/formal/ci-nrepl.log
+            target/formal/campaign*.edn
+
+  temporal-models:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked formal tools
+        uses: actions/cache@v4
+        with:
+          path: target/formal-tools
+          key: temporal-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json') }}
+
+      - name: Bootstrap checksum-locked tools
+        run: bin/formal bootstrap
+
+      - name: Typecheck and check bounded/inductive temporal obligations
+        run: |
+          bin/formal tla-typecheck
+          bin/formal apalache-check
+          bin/formal apalache-invariant
+
+      - name: Run larger scheduled temporal bound
+        if: github.event_name == 'schedule'
+        run: bin/formal apalache-scheduled
+
+      - name: Upload model-checker run metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-model-runs
+          path: target/formal/apalache
+
+  parity-corpus-and-mutations:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: parity-${{ runner.os }}-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
+
+      - name: Start parity nREPL
+        run: |
+          mkdir -p target/formal
+          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+            > target/formal/parity-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/parity-nrepl.log
+          exit 1
+
+      - name: Run coherent generators and mutation controls
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.generators-test :reload)
+               (require 'eacl.formal.cache-strategy-adversarial-test :reload)
+               (require 'eacl.formal.mutation-control-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.formal.generators-test
+                      'eacl.formal.cache-strategy-adversarial-test
+                      'eacl.formal.mutation-control-test)]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"generator/mutation controls failed\" result)))
+                 result))"
+
+      - name: Replay minimized counterexample corpus
+        run: |
+          EACL_NREPL_PORT=7788 bin/formal counterexample-replay
+
+      - name: Compile and run CLJ/CLJS parity suite through nREPL
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.main :as cljs] :reload)
+               (cljs/-main
+                \"-t\" \"node\" \"-O\" \"none\"
+                \"-o\" \"target/datascript-cljs-test.js\"
+                \"-c\" \"eacl.datascript.cljs-test-runner\"))"
+          node target/datascript-cljs-test.js
+
+      - name: Upload parity diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-corpus-mutation-runs
+          path: target/formal
+
+  scheduled-generated-campaign:
+    if: github.event_name == 'schedule'
+    needs: dafny-and-generated-boundaries
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure CLI and Node
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked tools and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.m2/repository
+            ~/.gitlibs
+          key: scheduled-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'deps.edn') }}
+
+      - name: Build generated Java kernel
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+
+      - name: Start campaign nREPL
+        run: |
+          clojure -M:dev:formal-smoke:nrepl --port 7788 \
+            > target/formal/campaign-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/campaign-nrepl.log
+          exit 1
+
+      - name: Run 200-seed generated semantic campaign
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.generators :reload)
+               (require 'eacl.formal.semantics-bridge :reload)
+               (require 'eacl.formal.campaign :reload)
+               (eacl.formal.campaign/run-campaign!
+                {:start 1
+                 :count 200
+                 :output \"target/formal/campaign.edn\"}))"
+
+      - name: Upload retained seeds and minimized failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-semantic-campaign
+          path: |
+            target/formal/campaign.edn
+            target/formal/campaign-nrepl.log

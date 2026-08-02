@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-004
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "proof-mode-none/add-between-pages"
+ :minimized-fixture "fixture.edn"
+ :impact :mixed-snapshot
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "Cursor proof identity hashed nil schema/relation proofs when :proof-mode :none was selected. Cursor equivalence compared that constant digest while omitting graph head and exact locator, so page 2 could apply an old frontier to a changed current graph."
+ :fix
+ "Shared relay proof identity now distinguishes complete deterministic proofs from exact-snapshot-only identities. Missing proofs and nondeterministic adapters commit to snapshot id and graph head, preventing proofless lift; complete equal proofs remain liftable."
+ :closing-evidence
+ ["eacl.datomic.cache-review-regressions-test/proofless-cursor-uses-exact-snapshot-test"
+  "eacl.relay-test/cursor-proof-identity-test (CLJ and CLJS)"
+  "formal/dafny/TemporalSafety.dfy proof-availability lemmas"
+  "formal/tla/EaclTemporal.tla SingleGraphCursorWalk invariant"]}

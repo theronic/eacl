@@ -66,12 +66,26 @@
                :viewer
                (eacl/spice-object :folder "folder-2"))])
             db (d/db conn)
+            owner-eid (relation-eid db :owner)
+            viewer-eid (relation-eid db :viewer)
             owner-stamp
-            (get (d/entity db (relation-eid db :owner))
+            (get (d/entity db owner-eid)
                  mutation/relation-mutation-id-attr)
             viewer-stamp
-            (get (d/entity db (relation-eid db :viewer))
+            (get (d/entity db viewer-eid)
                  mutation/relation-mutation-id-attr)
+            owner-stamp-tx
+            (:tx
+             (first
+              (d/datoms
+               db :eavt owner-eid
+               mutation/relation-mutation-id-attr)))
+            viewer-stamp-tx
+            (:tx
+             (first
+              (d/datoms
+               db :eavt viewer-eid
+               mutation/relation-mutation-id-attr)))
             payload
             (causal-token/token-data
              (get-in client [:opts :format-options])
@@ -79,18 +93,36 @@
         (testing "one batched relationship write stamps every relation"
           (is (= owner-stamp viewer-stamp))
           (is (= owner-stamp (:graph-anchor payload)))
-          (is (= (d/basis-t db) (:order-hint payload))))
+          (is (= (d/basis-t db) (:order-hint payload)))
+          (is (= (d/basis-t db)
+                 (d/tx->t owner-stamp-tx)
+                 (d/tx->t viewer-stamp-tx))
+              "current datom transaction is the numeric cache stamp"))
         (let [delete-result
               (eacl/delete-object!
                client
                (eacl/spice-object :user "user-1"))
               db-after (d/db conn)
+              owner-after-eid (relation-eid db-after :owner)
+              viewer-after-eid (relation-eid db-after :viewer)
               owner-delete-stamp
-              (get (d/entity db-after (relation-eid db-after :owner))
+              (get (d/entity db-after owner-after-eid)
                    mutation/relation-mutation-id-attr)
               viewer-delete-stamp
-              (get (d/entity db-after (relation-eid db-after :viewer))
+              (get (d/entity db-after viewer-after-eid)
                    mutation/relation-mutation-id-attr)
+              owner-delete-tx
+              (:tx
+               (first
+                (d/datoms
+                 db-after :eavt owner-after-eid
+                 mutation/relation-mutation-id-attr)))
+              viewer-delete-tx
+              (:tx
+               (first
+                (d/datoms
+                 db-after :eavt viewer-after-eid
+                 mutation/relation-mutation-id-attr)))
               delete-payload
               (causal-token/token-data
                (get-in client [:opts :format-options])
@@ -98,6 +130,10 @@
           (testing "cascade deletion publishes all dependency stamps"
             (is (= owner-delete-stamp viewer-delete-stamp))
             (is (not= owner-stamp owner-delete-stamp))
+            (is (= (d/basis-t db-after)
+                   (d/tx->t owner-delete-tx)
+                   (d/tx->t viewer-delete-tx))
+                "cascade deletion advances every affected numeric stamp")
             (is (= owner-delete-stamp
                    (:graph-anchor delete-payload)))))))))
 

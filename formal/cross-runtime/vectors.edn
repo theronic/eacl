@@ -1,0 +1,72 @@
+{:schema-version 1
+ :graph
+ {:fixture
+  {:objects [{:type :user :id "u1"}
+             {:type :user :id "u2"}
+             {:type :document :id "d1"}
+             {:type :document :id "d2"}]
+   :relationships
+   [{:subject {:type :user :id "u1"}
+     :relation :reader
+     :resource {:type :document :id "d1"}}]
+   :rules {[:document :view] [:relation :reader]}}
+  :subject {:type :user :id "u1"}
+  :resource {:type :document :id "d1"}
+  :permission :view
+  :expected
+  {:grants
+   #{[{:type :user :id "u1"}
+      :view
+      {:type :document :id "d1"}]}
+   :forward ["d1"]
+   :reverse ["u1"]}}
+
+ :pages
+ [{:values [0 1 2 3] :request {:first 2}
+   :expected {:status :valid :items [0 1] :start 0 :end 2
+              :has-next? true :has-previous? false}}
+  {:values [0 1 2 3] :request {:first 2 :after 1}
+   :expected {:status :valid :items [2 3] :start 2 :end 4
+              :has-next? false :has-previous? true}}
+  {:values [0 1 2 3] :request {:last 2 :before 3}
+   :expected {:status :valid :items [1 2] :start 1 :end 3
+              :has-next? true :has-previous? true}}
+  {:values [0 1] :request {:first 1 :last 1}
+   :expected {:status :invalid}}]
+
+ :continuations
+ [{:input {:current-proof "p" :cursor-proof "p"}
+   :expected :current}
+  {:input {:current-proof "new" :cursor-proof "old"
+           :exact {:graph 7 :source "source" :proof "old"}}
+   :expected :exact}
+  {:input {:current-proof "new" :cursor-proof "old" :mode :at-least}
+   :expected :conflict}
+  {:input {:current-proof "p" :cursor-proof "p" :expired? true}
+   :expected :expired}
+  {:input {:current-proof "new" :cursor-proof "old"
+           :exact {:graph 8 :source "source" :proof "old"}}
+   :expected :divergence}]
+
+ :cache
+ [{:input {} :expected {:status :hit :provenance :exact-hit}}
+  {:input {:selected-graph 8 :ancestors [7] :candidate-graph 7}
+   :expected {:status :hit :provenance :causal-proof-lift}}
+  {:input {:selected-proof nil}
+   :expected {:status :miss :reason :no-proof-bypass}}
+  {:input {:selected-graph 8 :ancestors [6] :candidate-graph 7}
+   :expected {:status :miss :reason :future-or-sibling}}
+  {:input {:candidate-proof "other"}
+   :expected {:status :miss :reason :proof-mismatch}}
+  {:input {:authenticated? false}
+   :expected {:status :miss :reason :unauthenticated}}]
+
+ :round-trips
+ [{:tag "eacl.round-trip/v1" :values [0 7 42] :limit 3
+   :expected {:status :accepted :values [0 7 42]}}
+  {:tag "unknown" :values [1] :limit 1
+   :expected {:status :rejected}}
+  {:tag "eacl.round-trip/v1" :values [1 -1] :limit 2
+   :expected {:status :rejected}}
+  {:tag "eacl.round-trip/v1" :values [1 2] :limit 1
+   :expected {:status :rejected}}]}

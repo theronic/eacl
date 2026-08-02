@@ -38,9 +38,76 @@
   (and (integer? value)
        (<= minimum-safe-integer value maximum-safe-integer)))
 
+(defn- string-code-unit
+  [character]
+  #?(:clj (int character)
+     :cljs (.charCodeAt character 0)))
+
+(defn- four-digit-hex
+  [code]
+  (let [hex #?(:clj (Integer/toHexString code)
+               :cljs (.toString code 16))]
+    (str (apply str (repeat (- 4 (count hex)) "0")) hex)))
+
+(defn- render-string
+  [value]
+  (str
+   "\""
+   (apply
+    str
+    (map
+     (fn [character]
+       (let [code (string-code-unit character)]
+         (case code
+           8 "\\b"
+           9 "\\t"
+           10 "\\n"
+           12 "\\f"
+           13 "\\r"
+           34 "\\\""
+           92 "\\\\"
+           (if (< code 32)
+             (str "\\u" (four-digit-hex code))
+             (str character)))))
+     value))
+   "\""))
+
+(declare portable-render)
+
+(defn- render-map
+  [value]
+  (str
+   "{"
+   (str/join
+    ", "
+    (map
+     (fn [[k v]]
+       (str (portable-render k) " " (portable-render v)))
+     (sort-by (comp portable-render key) value)))
+   "}"))
+
+(defn- portable-render
+  [value]
+  (cond
+    (nil? value) "nil"
+    (true? value) "true"
+    (false? value) "false"
+    (string? value) (render-string value)
+    (keyword? value)
+    (str ":" (when-let [keyword-namespace (namespace value)]
+               (str keyword-namespace "/"))
+         (name value))
+    (integer? value) (str value)
+    (map? value) (render-map value)
+    (set? value)
+    (str "#{" (str/join " " (map portable-render
+                                  (sort-by portable-render value))) "}")
+    (sequential? value)
+    (str "[" (str/join " " (map portable-render value)) "]")))
+
 (defn- canonical-comparator
   [left right]
-  (compare (pr-str left) (pr-str right)))
+  (compare (portable-render left) (portable-render right)))
 
 (declare validate-value)
 
@@ -138,7 +205,7 @@
    (encode-canonical value {}))
   ([value {:keys [maximum-size] :as limits
            :or {maximum-size default-maximum-size}}]
-   (let [encoded (pr-str (canonicalize value limits))]
+   (let [encoded (portable-render (canonicalize value limits))]
      (when (> (count encoded) maximum-size)
        (format-error! :too-large {:maximum-size maximum-size}))
      encoded)))
@@ -164,8 +231,10 @@
                          (when (map? canonical)
                            (set (keys canonical)))}))
        canonical)
-     (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
-       (throw e))
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+      (if (= :eacl.format/invalid (:type (ex-data e)))
+        (throw e)
+        (format-error! :malformed {})))
      (catch #?(:clj StackOverflowError :cljs :default) _
        (format-error! :malformed {}))
      #?(:clj

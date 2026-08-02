@@ -4,7 +4,8 @@
             [eacl.consistency :as consistency]
             [eacl.core :refer [spice-object]]
             [eacl.cursor :as cursor]
-            [eacl.secure-format :as secure]))
+            [eacl.secure-format :as secure]
+            [eacl.verified-kernel :as verified]))
 
 (def empty-page
   {:data []
@@ -27,32 +28,34 @@
        (:subject query) (update :subject plain-object)
        (:resource query) (update :resource plain-object))]))
 
+(def ^:private exact-snapshot-scope-digest
+  (secure/canonical-digest
+   "eacl/cursor/dependency-scope/v4"
+   {:mode :exact-snapshot}))
+
 (defn dependency-context
-  "Builds bounded cursor metadata from a freshly rederived complete closure."
-  [adapter {:keys [schema-scope relation-ids]}]
-  (let [dependency-scope
-        {:schema schema-scope
-         :relations (vec (sort relation-ids))}
-        proof
-        {:schema (backend/invoke adapter :schema-proof schema-scope)
-         :relations
-         (backend/invoke adapter :relation-proof relation-ids)}]
+  "Builds bounded metadata that pins a cursor to one exact immutable snapshot.
+
+  `dependencies` is retained as an ignored argument for source compatibility
+  with callers compiled against the former proof-lifting strategy. Cursor
+  correctness no longer depends on proving that two revisions have equal
+  relationship projections: a continuation either uses the identical current
+  revision or reconstructs the authenticated original revision."
+  [adapter _dependencies]
+  (let [graph-head (backend/invoke adapter :graph-head)
+        snapshot-id (backend/invoke adapter :snapshot-id)]
     {:source-scope
      {:backend (backend/backend-id adapter)
       :scope (backend/invoke adapter :source-scope)}
-     :graph-head (backend/invoke adapter :graph-head)
+     :graph-head graph-head
      :adapter-fingerprint (backend/fingerprint adapter)
      :identity-contract (backend/identity-contract adapter)
-     ;; Store digests, never a truncated proof. Continuation rederives the
-     ;; complete closure and proof from its selected immutable snapshot.
-     :dependency-scope-digest
-     (secure/canonical-digest
-      "eacl/cursor/dependency-scope/v3"
-      dependency-scope)
+     :dependency-scope-digest exact-snapshot-scope-digest
      :proof-digest
      (secure/canonical-digest
-      "eacl/cursor/dependency-proof/v3"
-      proof)}))
+      "eacl/cursor/exact-snapshot/v4"
+      {:snapshot-id snapshot-id
+       :graph-head graph-head})}))
 
 (defn- transform-frontier-ids
   [f frontiers]
@@ -82,23 +85,15 @@
 (defn- encode-page-edge
   [adapter opts operation query edge]
   (when edge
-    (let [dependencies (:cursor-dependencies opts)]
-      (when-not dependencies
-        (throw
-         (ex-info
-          "Portable pagination requires a complete dependency closure."
-          {:type :eacl.pagination/dependency-proof-unavailable
-           :eacl/error
-           :eacl.pagination/dependency-proof-unavailable})))
-      (cursor/cursor->token
-       (merge
-        {:v 9
-         :scope (cursor-scope operation query)
-         :edge (transform-edge-ids
-                #(backend/invoke adapter :internal-id->object %)
-                edge)}
-        (dependency-context adapter dependencies))
-       opts))))
+    (cursor/cursor->token
+     (merge
+      {:v 10
+       :scope (cursor-scope operation query)
+       :edge (transform-edge-ids
+              #(backend/invoke adapter :internal-id->object %)
+              edge)}
+      (dependency-context adapter nil))
+     opts)))
 
 (defn- invalid-cursor!
   [message data cause]
@@ -122,7 +117,7 @@
                  "Invalid Relay cursor."
                  {:reason (:reason (ex-data error))}
                  error))))]
-      (when-not (and (= 9 (:v envelope))
+      (when-not (and (= 10 (:v envelope))
                      (map? (:edge envelope)))
         (invalid-cursor! "Invalid Relay cursor envelope."
                          {:reason :invalid-envelope}
@@ -133,43 +128,152 @@
                          nil))
       envelope)))
 
+(def ^:private execution-identity-fields
+  [:source-scope :adapter-fingerprint :identity-contract])
+
+(defn- execution-identity
+  [context]
+  (secure/canonical-digest
+   "eacl/cursor/execution-identity/v1"
+   (select-keys context execution-identity-fields)))
+
+(defn- identity-mismatch
+  [current envelope]
+  (some
+   (fn [field]
+     (when-not (= (secure/canonicalize (get current field))
+                  (secure/canonicalize (get envelope field)))
+       field))
+   execution-identity-fields))
+
+(defn- graph-code
+  [cursor-graph graph]
+  (if (= (secure/canonicalize cursor-graph)
+         (secure/canonicalize graph))
+    0
+    1))
+
+(defn- continuation-proof
+  [context]
+  (secure/canonical-digest
+   "eacl/cursor/continuation-proof/v1"
+   [(:dependency-scope-digest context)
+    (:proof-digest context)]))
+
+(defn- legacy-continuation-decision
+  [opts current envelope exact]
+  (cond
+    (identity-mismatch current envelope) :scope-mismatch
+    (= (continuation-proof current)
+       (continuation-proof envelope))
+    :current
+    (= :at-least-as-fresh (:cursor-consistency-mode opts)) :conflict
+    (nil? exact) :snapshot-unavailable
+    (or (identity-mismatch exact envelope)
+        (not= (:dependency-scope-digest exact)
+              (:dependency-scope-digest envelope))
+        (not= (continuation-proof exact)
+              (continuation-proof envelope))
+        (not= 0
+              (graph-code
+               (get-in envelope [:graph-head :graph-anchor])
+               (get-in exact [:graph-head :graph-anchor]))))
+    :history-divergence
+    :else :exact))
+
+(defn- continuation-decision
+  [opts current envelope exact]
+  (verified/decide
+   (:engine-selection opts)
+   :cursor-continuation
+   {:authenticated? true
+    :scope-matches? true
+    :expired? false
+    :source (execution-identity current)
+    :cursor-source (execution-identity envelope)
+    :current-proof (continuation-proof current)
+    :cursor-proof (continuation-proof envelope)
+    :mode
+    (if (= :at-least-as-fresh
+           (:cursor-consistency-mode opts))
+      :at-least-as-fresh
+      :minimize-latency)
+    :cursor-graph 0
+    :exact
+    (when exact
+      {:graph
+       (graph-code (get-in envelope
+                           [:graph-head :graph-anchor])
+       (get-in exact [:graph-head :graph-anchor]))
+       :source (execution-identity exact)
+       :proof (continuation-proof exact)})}
+   #(legacy-continuation-decision opts current envelope exact)))
+
+(defn- stale-context!
+  [message reason]
+  (throw
+   (ex-info
+    message
+    {:type :eacl.pagination/stale-cursor
+     :eacl/error :eacl.pagination/stale-cursor
+     :reason reason})))
+
+(defn- apply-continuation-decision!
+  [adapter current envelope decision]
+  (case decision
+    :current adapter
+    :exact adapter
+
+    :scope-mismatch
+    (if-let [field (identity-mismatch current envelope)]
+      (invalid-cursor!
+       "Relay cursor execution identity does not match."
+       {:reason field}
+       nil)
+      (invalid-cursor!
+       "Relay cursor belongs to a different execution scope."
+       {:reason :query-mismatch}
+       nil))
+
+    :conflict
+    (consistency/cursor-conflict!
+     {:cursor-graph-anchor
+      (get-in envelope [:graph-head :graph-anchor])
+      :selected-graph-anchor
+      (get-in current [:graph-head :graph-anchor])})
+
+    :snapshot-unavailable
+    (stale-context!
+     "Relay cursor dependency proof changed."
+     (if (= (:dependency-scope-digest current)
+            (:dependency-scope-digest envelope))
+       :dependency-proof-changed
+       :dependency-scope-changed))
+
+    :history-divergence
+    (throw
+     (ex-info
+      "The cursor exact locator resolved to another graph."
+      {:type :eacl.consistency/history-divergence
+       :eacl/error :eacl.consistency/history-divergence}))
+
+    (invalid-cursor!
+     "Generated cursor decision rejected the authenticated envelope."
+     {:reason decision}
+     nil)))
+
+(defn- current-context
+  [adapter _opts]
+  (dependency-context adapter nil))
+
 (defn- validate-context!
   [adapter opts envelope]
-  (let [dependencies (:cursor-dependencies opts)
-        current (when dependencies
-                  (dependency-context adapter dependencies))]
-    (when-not current
-      (throw
-       (ex-info
-        "Portable continuation cannot rederive its dependencies."
-        {:type :eacl.pagination/stale-cursor
-         :eacl/error :eacl.pagination/stale-cursor
-         :reason :dependency-proof-unavailable})))
-    (doseq [field [:source-scope
-                   :adapter-fingerprint
-                   :identity-contract]]
-      (when-not (= (secure/canonicalize (get current field))
-                   (secure/canonicalize (get envelope field)))
-        (invalid-cursor!
-         "Relay cursor execution identity does not match."
-         {:reason field}
-         nil)))
-    (when-not (= (:dependency-scope-digest current)
-                 (:dependency-scope-digest envelope))
-      (throw
-       (ex-info
-        "Relay cursor dependency closure changed."
-        {:type :eacl.pagination/stale-cursor
-         :eacl/error :eacl.pagination/stale-cursor
-         :reason :dependency-scope-changed})))
-    (when-not (= (:proof-digest current)
-                 (:proof-digest envelope))
-      (throw
-       (ex-info
-        "Relay cursor dependency proof changed."
-        {:type :eacl.pagination/stale-cursor
-         :eacl/error :eacl.pagination/stale-cursor
-         :reason :dependency-proof-changed})))
+  (let [current (current-context adapter opts)]
+    (apply-continuation-decision!
+     adapter
+     current
+     envelope
+     (continuation-decision opts current envelope nil))
     true))
 
 (defn select-continuation-adapter
@@ -180,54 +284,40 @@
         envelope (decode-envelope opts operation query token)]
     (if-not envelope
       adapter
-      (try
-        (validate-context! adapter opts envelope)
-        adapter
-        (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
-               error
-          (if-not (= :eacl.pagination/stale-cursor
-                     (:type (ex-data error)))
-            (throw error)
-            (if (= :at-least-as-fresh
-                   (:cursor-consistency-mode opts))
-              (consistency/cursor-conflict!
-               {:cursor-graph-anchor
-                (get-in envelope [:graph-head :graph-anchor])
-                :selected-graph-anchor
-                (:graph-anchor
-                 (backend/invoke adapter :graph-head))})
-              (let [exact
-                    (backend/invoke
-                     adapter
-                     :select-exact
-                     {:graph-anchor
-                      (get-in envelope [:graph-head :graph-anchor])
-                      :order-hint
-                      (get-in envelope [:graph-head :order-hint])
-                      :exact-locator
-                      (get-in envelope [:graph-head :exact-locator])}
-                     (:timeout-ms opts))]
-                (when-not exact
-                  (throw
-                   (ex-info
-                    "The cursor's exact snapshot is no longer retained."
-                    {:type :eacl.consistency/snapshot-expired
-                     :eacl/error
-                     :eacl.consistency/snapshot-expired})))
-                (when-not (and
-                           (= (backend/invoke adapter :source-scope)
-                              (backend/invoke exact :source-scope))
-                           (= (get-in envelope
-                                      [:graph-head :graph-anchor])
-                              (:graph-anchor
-                               (backend/invoke exact :graph-head))))
-                  (throw
-                   (ex-info
-                    "The cursor exact locator resolved to another graph."
-                    {:type :eacl.consistency/history-divergence
-                     :eacl/error
-                     :eacl.consistency/history-divergence})))
-                exact))))))))
+      (let [current (current-context adapter opts)]
+        (let [initial
+              (continuation-decision opts current envelope nil)]
+          (if (= :snapshot-unavailable initial)
+            (let [exact
+                  (backend/invoke
+                   adapter
+                   :select-exact
+                   {:graph-anchor
+                    (get-in envelope [:graph-head :graph-anchor])
+                    :order-hint
+                    (get-in envelope [:graph-head :order-hint])
+                    :exact-locator
+                    (get-in envelope [:graph-head :exact-locator])}
+                   (:timeout-ms opts))]
+              (when-not exact
+                (throw
+                 (ex-info
+                  "The cursor's exact snapshot is no longer retained."
+                  {:type :eacl.consistency/snapshot-expired
+                   :eacl/error
+                   :eacl.consistency/snapshot-expired})))
+              (let [exact-context
+                    (dependency-context exact nil)
+                    decision
+                    (continuation-decision
+                     opts current envelope exact-context)]
+                (apply-continuation-decision!
+                 exact exact-context envelope decision)
+                exact))
+            (do
+              (apply-continuation-decision!
+               adapter current envelope initial)
+              adapter)))))))
 
 (defn- decode-page-edge
   [adapter opts operation query token]

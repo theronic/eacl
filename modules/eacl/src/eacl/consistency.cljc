@@ -134,7 +134,7 @@
       error
       (if (= :eacl/unsupported-capability (:type (ex-data error)))
         (case mode
-          :fully-consistent
+          (:fully-consistent :synchronized-head)
           (fail! :unsupported-head-barrier
                  "The backend cannot establish an authoritative head."
                  {}
@@ -155,7 +155,7 @@
           (throw error))
         (throw error))))
   (case mode
-    :fully-consistent
+    (:fully-consistent :synchronized-head)
     {:adapter
      (selected-adapter!
       source
@@ -172,7 +172,7 @@
                    error)
             (throw error)))))}
 
-    :minimize-latency
+    (:local-snapshot :minimize-latency)
     {:adapter
      (selected-adapter!
       source

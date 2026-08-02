@@ -21,9 +21,9 @@ database mechanics; shared code must not import an adapter namespace.
 | Relay windowing and count limits | `normalize-page-request`, `page-response`, `count-*` | Shared engine |
 | Cursor traversal state | path frontiers and recursive continuation maps | Shared engine, versioned |
 | Cursor protection and runtime encoding | AES-GCM page tokens in `eacl.datomic.core` | Adapter/runtime |
-| Schema proof | v3 schema mutation identity or canonical content digest | Adapter, opaque to shared code |
-| Relationship proof | v3 per-relation mutation identities or canonical content digest including endpoint identities | Adapter, opaque to shared code |
-| Cache store, entries, and validation | Provider adaptation in `eacl.datomic.cache`; authenticated entries and proof lifting in `eacl.cache` | Shared cache contract |
+| Schema generation | current schema mutation datom transaction | Adapter, consumed by shared current cache |
+| Relationship stamps | current per-relation version/mutation datom transactions | Adapter, complete compiled dependency set |
+| Completed answers | private exact/managed generations in `eacl.cache`; exact/arbitrary-DB bypass | Shared current-cache contract |
 | Schema parsing/model validation | `eacl.spicedb.parser`, `eacl.schema.model` | Shared |
 | Schema persistence | `eacl.datomic.schema` | Adapter |
 | Relationship reads and transactions | `eacl.datomic.impl` | Adapter |
@@ -39,9 +39,9 @@ to one immutable backend snapshot. The mandatory operations are:
 - relation and permission definition reads;
 - ordered forward and reverse adjacency scans;
 - direct relationship matching;
-- opaque schema and relation proofs.
+- opaque schema generation and complete relation dependency stamps.
 
-Optional operations cover permission-node enumeration, dependency proofs,
+Optional operations cover permission-node enumeration, dependency metadata,
 relationship reads, and mutation transaction planning. Algorithms call these
 operations through `eacl.backend.v8/invoke`; they do not inspect Datomic
 `Database`, DataScript DB, Datahike DB, datom, or tuple implementation types.

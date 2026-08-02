@@ -48,6 +48,81 @@
       error
       (ex-data error))))
 
+(deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})]
+    (seed! conn client)
+    (eacl/create-relationship! client relationship)
+    (is (true? (eacl/can? client user :view document)))
+    (is (true? (eacl/can? client user :view document)))
+    (let [before (datascript/cache-stats client)]
+      (is (pos? (:exact-hits before)))
+      (datascript/expire-cache! client)
+      (is (true? (eacl/can? client user :view document)))
+      (let [after (datascript/cache-stats client)]
+        (is (= (inc (:expirations before)) (:expirations after)))
+        (is (= (inc (:misses before)) (:misses after)))
+        (is (= (:exact-hits before) (:exact-hits after)))))))
+
+(deftest per-request-cache-bypass-covers-public-read-shapes-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})
+        _ (seed! conn client)
+        _ (eacl/create-relationship! client relationship)
+        before (datascript/cache-stats client)
+        resources {:subject user
+                   :permission :view
+                   :resource/type :document
+                   :first 10
+                   :cache? false}
+        subjects {:resource document
+                  :permission :view
+                  :subject/type :user
+                  :first 10
+                  :cache? false}
+        resource-count (dissoc resources :first)
+        subject-count (dissoc subjects :first)]
+    (with-redefs [cache/resolve-current!
+                  (fn [& _]
+                    (throw
+                     (ex-info "cache resolution must be unreachable" {})))]
+      (dotimes [_ 2]
+        (is (true?
+             (eacl/can? client
+                        {:subject user
+                         :permission :view
+                         :resource document
+                         :cache? false})))
+        (is (false? (:cached?
+                     (eacl/lookup-resources client resources))))
+        (is (false? (:cached?
+                     (eacl/lookup-subjects client subjects))))
+        (is (false? (:cached?
+                     (eacl/count-resources client resource-count))))
+        (is (false? (:cached?
+                     (eacl/count-subjects client subject-count))))))
+    (is (= 1
+           (count
+            (:data
+             (eacl/read-relationships
+              client
+              {:resource/type :document
+               :first 10
+               :cache? false})))))
+    (is (= :eacl/invalid-request
+           (:type
+            (error-data
+             #(eacl/can? client
+                         {:subject user
+                          :permission :view
+                          :resource document
+                          :cache? :invalid})))))
+    (let [after (datascript/cache-stats client)]
+      (is (= (+ 10 (:bypasses before)) (:bypasses after)))
+      (doseq [metric [:exact-hits :managed-hits :misses :puts]]
+        (is (= (metric before) (metric after))
+            (str metric " must not change during request bypass"))))))
+
 (deftest causal-anchor-survives-restart-and-detects-reset-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})
@@ -87,10 +162,41 @@
     (is (true? (eacl/can? client user :view document)))
     (eacl/delete-relationship! client relationship)
     (is (false? (eacl/can? client user :view document)))
+    (let [before (datascript/cache-stats client)]
+      (is (true?
+           (eacl/can?
+            client user :view document
+            (consistency/at-exact-snapshot token))))
+      (is (true?
+           (eacl/can?
+            client user :view document
+            (consistency/at-exact-snapshot token))))
+      (let [after (datascript/cache-stats client)]
+        (is (= (+ 2 (:bypasses before))
+               (:bypasses after)))
+        (is (= (:exact-hits before)
+               (:exact-hits after))
+            "exact requests never consult the completed-answer cache")))))
+
+(deftest low-level-db-entry-point-bypasses-completed-cache-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})
+        _ (seed! conn client)
+        _ (eacl/create-relationship! client relationship)
+        before (datascript/cache-stats client)]
     (is (true?
-         (eacl/can?
-          client user :view document
-          (consistency/at-exact-snapshot token))))))
+         (datascript/datascript-can?
+          (ds/db conn) (:opts client)
+          user :view document consistency/fully-consistent)))
+    (is (true?
+         (datascript/datascript-can?
+          (ds/db conn) (:opts client)
+          user :view document consistency/fully-consistent)))
+    (let [after (datascript/cache-stats client)]
+      (is (= (+ 2 (:bypasses before))
+             (:bypasses after)))
+      (is (= (:exact-hits before)
+             (:exact-hits after))))))
 
 (deftest cloned-history-and-listener-independence-test
   (let [original-listen! ds/listen!
@@ -269,7 +375,7 @@
         cursor-data
         (datascript/token->cursor cursor (:opts authorization))]
     (ds/transact! conn [{:eacl/id "unrelated-cursor-churn"}])
-    (testing "an equal complete result proof rebases to the current snapshot"
+    (testing "an unrelated write still pins continuation to the original snapshot"
       (let [page-2
             (eacl/read-relationships
              authorization
@@ -279,8 +385,8 @@
              (get-in page-2 [:page-info :end-cursor])
              (:opts authorization))]
         (is (= [(second relationships)] (:data page-2)))
-        (is (< (get-in cursor-data [:graph-head :order-hint])
-               (get-in rebased [:graph-head :order-hint])))))
+        (is (= (get-in cursor-data [:graph-head :exact-locator])
+               (get-in rebased [:graph-head :exact-locator])))))
     (let [fresh-page-1
           (eacl/read-relationships authorization query)
           fresh-cursor
@@ -290,7 +396,7 @@
            (eacl/delete-relationship!
             authorization
             (second relationships)))]
-      (testing "a changed proof falls back to the retained original DB"
+      (testing "a relationship change uses the retained original DB"
         (is (= [(second relationships)]
                (:data
                 (eacl/read-relationships

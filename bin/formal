@@ -1,0 +1,274 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+lock_file="$repo_root/formal/toolchain.lock.json"
+cache_root="${EACL_FORMAL_CACHE:-$repo_root/target/formal-tools}"
+output_root="${EACL_FORMAL_OUTPUT:-$repo_root/target/formal}"
+
+lock_value() {
+  node -e '
+    const fs = require("fs");
+    const value = process.argv[2].split(".").reduce(
+      (current, key) => current === undefined ? undefined : current[key],
+      JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    );
+    if (value === undefined || typeof value === "object") process.exit(2);
+    process.stdout.write(String(value));
+  ' "$lock_file" "$1"
+}
+
+dafny_version=$(lock_value tools.dafny.version)
+apalache_version=$(lock_value tools.apalache.version)
+tla_version=$(lock_value tools.tla2tools.version)
+dafny="$cache_root/dafny-$dafny_version/dafny/dafny"
+apalache="$cache_root/apalache-$apalache_version/bin/apalache-mc"
+tla_jar="$cache_root/tla2tools-$tla_version.jar"
+
+usage() {
+  printf '%s\n' \
+    "usage: bin/formal <command>" \
+    "" \
+    "commands:" \
+    "  bootstrap             install and checksum-check locked tools" \
+    "  format                check Dafny source formatting" \
+    "  verify                verify every Dafny project" \
+    "  compile-java          translate the executable kernel to Java" \
+    "  compile-js            translate the executable kernel to JavaScript" \
+    "  build-java            compile the translated Java smoke boundary" \
+    "  build-js              execute the translated JavaScript smoke boundary" \
+    "  browser-bundle        bundle generated JavaScript for browsers" \
+    "  counterexample-replay replay every minimized bug through nREPL" \
+    "  mutation-control      run registered mutation controls via nREPL" \
+    "  manifest              validate the release assurance gate" \
+    "  tla-typecheck         parse and typecheck TLA+ models" \
+    "  apalache-check        run bounded temporal safety checks" \
+    "  apalache-scheduled    run the larger scheduled temporal bound" \
+    "  apalache-invariant    check inductive-invariant obligations" \
+    "  all                   run all proof and build checks"
+}
+
+need_tools() {
+  [ -x "$dafny" ] && [ -x "$apalache" ] && [ -f "$tla_jar" ] ||
+    "$repo_root/bin/bootstrap-formal-tools"
+}
+
+dafny_sources() {
+  find "$repo_root/formal/dafny" -type f -name '*.dfy' -print | sort
+}
+
+apalache_check() {
+  label=$1
+  model=$2
+  config=$3
+  length=$4
+  run_dir=$(mktemp -d "$output_root/apalache/$label.XXXXXX")
+  "$apalache" \
+    --out-dir="$output_root/apalache" \
+    --run-dir="$run_dir" \
+    check \
+    --config="$config" \
+    --inv=Safety \
+    --length="$length" \
+    "$model"
+}
+
+apalache_induction() {
+  label=$1
+  model=$2
+  config=$3
+  init_dir=$(mktemp -d "$output_root/apalache/$label-initiation.XXXXXX")
+  next_dir=$(mktemp -d "$output_root/apalache/$label-consecution.XXXXXX")
+  safety_dir=$(mktemp -d "$output_root/apalache/$label-implication.XXXXXX")
+  "$apalache" \
+    --out-dir="$output_root/apalache" \
+    --run-dir="$init_dir" \
+    check \
+    --config="$config" \
+    --init=Init \
+    --inv=InductiveInvariant \
+    --length=0 \
+    "$model"
+  "$apalache" \
+    --out-dir="$output_root/apalache" \
+    --run-dir="$next_dir" \
+    check \
+    --config="$config" \
+    --init=InductiveInvariant \
+    --inv=InductiveInvariant \
+    --length=1 \
+    "$model"
+  "$apalache" \
+    --out-dir="$output_root/apalache" \
+    --run-dir="$safety_dir" \
+    check \
+    --config="$config" \
+    --init=InductiveInvariant \
+    --inv=Safety \
+    --length=0 \
+    "$model"
+}
+
+command=${1:-}
+case "$command" in
+  bootstrap)
+    exec "$repo_root/bin/bootstrap-formal-tools"
+    ;;
+  format)
+    need_tools
+    # shellcheck disable=SC2046
+    exec "$dafny" format --check $(dafny_sources)
+    ;;
+  verify)
+    need_tools
+    for source in $(dafny_sources); do
+      "$dafny" verify \
+        --verification-time-limit 60 \
+        "$source"
+    done
+    ;;
+  compile-java)
+    need_tools
+    rm -rf "$output_root/java"
+    mkdir -p "$output_root/java"
+    exec "$dafny" translate java \
+      --include-runtime \
+      --output "$output_root/java/EaclKernel" \
+      "$repo_root/formal/dafny/EaclKernel.dfy"
+    ;;
+  compile-js)
+    need_tools
+    rm -rf "$output_root/js"
+    mkdir -p "$output_root/js"
+    exec "$dafny" translate js \
+      --include-runtime \
+      --output "$output_root/js/EaclKernel" \
+      "$repo_root/formal/dafny/EaclKernel.dfy"
+    ;;
+  build-java)
+    need_tools
+    "$repo_root/bin/formal" compile-java
+    exec "$repo_root/formal/smoke/java/run"
+    ;;
+  build-js)
+    need_tools
+    "$repo_root/bin/formal" compile-js
+    npm ci --ignore-scripts --prefix "$repo_root/formal/smoke/js"
+    exec node "$repo_root/formal/smoke/js/round_trip.mjs" \
+      "$output_root/js/EaclKernel.js"
+    ;;
+  browser-bundle)
+    need_tools
+    "$repo_root/bin/formal" compile-js
+    npm ci --ignore-scripts --prefix "$repo_root/formal/smoke/js"
+    node "$repo_root/formal/smoke/js/build_browser_bundle.mjs"
+    cp "$repo_root/formal/smoke/js/browser_smoke.html" \
+      "$output_root/browser/index.html"
+    ;;
+  mutation-control)
+    if [ -z "${EACL_NREPL_PORT:-}" ]; then
+      printf '%s\n' \
+        "EACL_NREPL_PORT must name a running dev nREPL." >&2
+      exit 2
+    fi
+    exec clj-nrepl-eval -p "$EACL_NREPL_PORT" --timeout 60000 \
+      "(do (require 'eacl.formal.generators :reload) (require 'eacl.formal.mutation-control-test :reload) (clojure.test/run-tests 'eacl.formal.mutation-control-test))"
+    ;;
+  counterexample-replay)
+    if [ -z "${EACL_NREPL_PORT:-}" ]; then
+      printf '%s\n' \
+        "EACL_NREPL_PORT must name a running dev nREPL." >&2
+      exit 2
+    fi
+    exec clj-nrepl-eval -p "$EACL_NREPL_PORT" --timeout 180000 \
+      "(do
+         ;; Persistent nREPLs may have reloaded the shared CacheStore protocol.
+         ;; Reload its Datomic implementation before constructing replay
+         ;; fixtures, then reload every lazily resolved regression namespace.
+         (require 'eacl.cache :reload)
+         (require 'eacl.datomic.cache :reload)
+         (doseq [test-ns
+                 '[eacl.bench.pagination-test
+                   eacl.datomic.lookup-cache-test
+                   eacl.datomic.cache-test
+                   eacl.datomic.cache-review-regressions-test
+                   eacl.secure-format-test
+                   eacl.cache-test]]
+           (require test-ns :reload))
+         (require 'eacl.formal.counterexample-replay-test :reload)
+         (clojure.test/run-tests 'eacl.formal.counterexample-replay-test))"
+    ;;
+  manifest)
+    EACL_REPO_ROOT="$repo_root" \
+      EACL_VERIFICATION_MANIFEST_OUTPUT="$output_root/verification-manifest.edn" \
+      bb "$repo_root/bin/generate-verification-manifest"
+    EACL_REPO_ROOT="$repo_root" \
+      EACL_VERIFICATION_MANIFEST="$output_root/verification-manifest.edn" \
+      exec "$repo_root/bin/validate-verification-manifest"
+    ;;
+  tla-typecheck)
+    need_tools
+    mkdir -p "$output_root/apalache/typecheck"
+    for model in \
+      "$repo_root/formal/tla/EaclTemporal.tla" \
+      "$repo_root/formal/tla/EaclTemporalDetailed.tla"
+    do
+      java -cp "$tla_jar" tla2sany.SANY "$model"
+      "$apalache" \
+        --out-dir="$output_root/apalache/typecheck" \
+        typecheck \
+        "$model"
+    done
+    ;;
+  apalache-check)
+    need_tools
+    mkdir -p "$output_root/apalache"
+    apalache_check \
+      "compact-bounded" \
+      "$repo_root/formal/tla/EaclTemporal.tla" \
+      "$repo_root/formal/tla/EaclTemporal.cfg" \
+      12
+    apalache_check \
+      "detailed-bounded" \
+      "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
+      "$repo_root/formal/tla/EaclTemporalDetailed.cfg" \
+      6
+    ;;
+  apalache-scheduled)
+    need_tools
+    mkdir -p "$output_root/apalache"
+    apalache_check \
+      "detailed-scheduled" \
+      "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
+      "$repo_root/formal/tla/EaclTemporalDetailedLarge.cfg" \
+      3
+    ;;
+  apalache-invariant)
+    need_tools
+    mkdir -p "$output_root/apalache"
+    apalache_induction \
+      "compact" \
+      "$repo_root/formal/tla/EaclTemporal.tla" \
+      "$repo_root/formal/tla/EaclTemporal.cfg"
+    apalache_induction \
+      "detailed" \
+      "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
+      "$repo_root/formal/tla/EaclTemporalDetailed.cfg"
+    ;;
+  all)
+    "$repo_root/bin/formal" format
+    "$repo_root/bin/formal" verify
+    "$repo_root/bin/formal" build-java
+    "$repo_root/bin/formal" build-js
+    "$repo_root/bin/formal" browser-bundle
+    "$repo_root/bin/formal" manifest
+    "$repo_root/bin/formal" tla-typecheck
+    "$repo_root/bin/formal" apalache-check
+    "$repo_root/bin/formal" apalache-invariant
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
