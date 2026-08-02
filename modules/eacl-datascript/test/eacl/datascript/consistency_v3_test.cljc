@@ -110,12 +110,12 @@
         (eacl/lookup-resources authorization previous-query)
         previous-hit
         (eacl/lookup-resources authorization previous-query)]
-    (testing "current forward and backward cursor pages miss once, then hit"
+    (testing "adjacent reverse navigation reuses the visited current page"
       (is (= [(second documents)] (:data page-2)))
       (is (false? (:cached? page-2)))
       (is (true? (:cached? page-2-hit)))
       (is (= [(first documents)] (:data previous-page)))
-      (is (false? (:cached? previous-page)))
+      (is (true? (:cached? previous-page)))
       (is (true? (:cached? previous-hit))))
     (testing "historical fallback never consults the current-answer cache"
       (eacl/delete-relationship! authorization (second relationships))

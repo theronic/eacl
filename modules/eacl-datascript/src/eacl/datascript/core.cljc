@@ -148,9 +148,11 @@
   (let [current-opts
         (cursor-options
          adapter opts selection resource-type permission)
-        page-adapter
-        (relay/select-continuation-adapter
+        prepared
+        (relay/prepare-page-query
          adapter current-opts operation query)
+        page-adapter
+        (:adapter prepared)
         page-opts
         (assoc
          (cursor-options
@@ -169,7 +171,8 @@
            (:db (backend/state page-adapter)))))]
     {:adapter page-adapter
      :db (:db (backend/state page-adapter))
-     :opts page-opts}))
+     :opts page-opts
+     :query (:query prepared)}))
 
 (defn- pagination-snapshot-context
   [adapter]
@@ -487,33 +490,39 @@
    {:as query :keys [subject]}]
   (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency query))
-        {adapter :adapter selected-db :db cursor-opts :opts}
+        {adapter :adapter selected-db :db cursor-opts :opts
+         page-query :query}
         (page-context
          source-adapter opts selection :lookup-resources query
          (:resource/type query) (:permission query))
         internal-subject (spice-object->internal selected-db subject)]
     (if (nil? (:id internal-subject))
       (assoc relay/empty-page :cached? false :cache-basis nil)
-      (let [internal-query
-            (-> query
-                (dissoc :consistency)
-                (#(relay/internalize-page-query
-                   adapter cursor-opts :lookup-resources %))
-                (assoc :subject internal-subject))
-            answer
-            (cached-engine-result
-             adapter cursor-opts :lookup-resources
-             {:public (dissoc query :consistency)
-              :internal internal-query}
-             (:resource/type internal-query)
-             (:permission internal-query)
-             #(and (map? %) (vector? (:data %))
-                   (map? (:page-info %)))
-             #(engine/lookup-resources adapter internal-query))]
-        (with-cache-info
-           (relay/externalize-page
-           adapter cursor-opts :lookup-resources query (:value answer))
-          answer)))))
+      (or
+       (relay/lookup-visited-page
+        adapter cursor-opts :lookup-resources query)
+       (let [internal-query
+             (-> page-query
+                 (dissoc :consistency)
+                 (assoc :subject internal-subject))
+             answer
+             (cached-engine-result
+              adapter cursor-opts :lookup-resources
+              {:public (dissoc query :consistency)
+               :internal internal-query}
+              (:resource/type internal-query)
+              (:permission internal-query)
+              #(and (map? %) (vector? (:data %))
+                    (map? (:page-info %)))
+              #(engine/lookup-resources adapter internal-query))
+             page
+             (with-cache-info
+               (relay/externalize-page
+                adapter cursor-opts :lookup-resources query
+                (:value answer))
+               answer)]
+         (relay/remember-visited-page!
+          adapter cursor-opts :lookup-resources query page))))))
 
 (defn datascript-count-resources
   [db
@@ -557,7 +566,8 @@
    query]
   (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency query))
-        {adapter :adapter selected-db :db cursor-opts :opts}
+        {adapter :adapter selected-db :db cursor-opts :opts
+         page-query :query}
         (page-context
          source-adapter opts selection :lookup-subjects query
          (:type (:resource query)) (:permission query))
@@ -569,26 +579,31 @@
                        :filter :subject/relation})))
     (if-not (:id internal-resource)
       (assoc relay/empty-page :cached? false :cache-basis nil)
-      (let [internal-query
-            (-> query
-                (dissoc :consistency)
-                (#(relay/internalize-page-query
-                   adapter cursor-opts :lookup-subjects %))
-                (assoc :resource internal-resource))
-            answer
-            (cached-engine-result
-             adapter cursor-opts :lookup-subjects
-             {:public (dissoc query :consistency)
-              :internal internal-query}
-             (:type (:resource internal-query))
-             (:permission internal-query)
-             #(and (map? %) (vector? (:data %))
-                   (map? (:page-info %)))
-             #(engine/lookup-subjects adapter internal-query))]
-        (with-cache-info
-           (relay/externalize-page
-           adapter cursor-opts :lookup-subjects query (:value answer))
-          answer)))))
+      (or
+       (relay/lookup-visited-page
+        adapter cursor-opts :lookup-subjects query)
+       (let [internal-query
+             (-> page-query
+                 (dissoc :consistency)
+                 (assoc :resource internal-resource))
+             answer
+             (cached-engine-result
+              adapter cursor-opts :lookup-subjects
+              {:public (dissoc query :consistency)
+               :internal internal-query}
+              (:type (:resource internal-query))
+              (:permission internal-query)
+              #(and (map? %) (vector? (:data %))
+                    (map? (:page-info %)))
+              #(engine/lookup-subjects adapter internal-query))
+             page
+             (with-cache-info
+               (relay/externalize-page
+                adapter cursor-opts :lookup-subjects query
+                (:value answer))
+               answer)]
+         (relay/remember-visited-page!
+          adapter cursor-opts :lookup-subjects query page))))))
 
 (defn datascript-count-subjects
   [db
@@ -740,6 +755,10 @@
                     {:type :eacl/invalid-client})))
   (when-let [store (get-in client [:opts :current-cache-store])]
     (cache/expire-current! store))
+  (cursor/clear-codec-cache!
+   (get-in client [:opts :cursor-codec-cache]))
+  (relay/clear-page-navigation-cache!
+   (get-in client [:opts :page-navigation-cache]))
   nil)
 
 (defn cache-stats
@@ -918,6 +937,25 @@
         cache-eligible? (or (not custom-codec?)
                             (and (some? adapter-fingerprint)
                                  (true? adapter-deterministic?)))
+        current-cache-store
+        (when cache-eligible?
+          (eacl.cache/current-cache-for-option cache))
+        cursor-codec-cache
+        (when current-cache-store
+          (cursor/codec-cache
+           {:max-entries
+            (if (and (map? cache)
+                     (integer? (:max-entries cache)))
+              (:max-entries cache)
+              2048)}))
+        page-navigation-cache
+        (when current-cache-store
+          (relay/page-navigation-cache
+           {:max-entries
+            (if (and (map? cache)
+                     (integer? (:max-entries cache)))
+              (:max-entries cache)
+              2048)}))
         entid->object-id (or entid->object-id
                              (when entity->object-id
                                (fn [db eid] (entity->object-id (ds/entity db eid))))
@@ -966,8 +1004,10 @@
                             (eacl.cache/cache-store cache)
                             eacl.cache/no-cache)
                           :current-cache-store
-                          (when cache-eligible?
-                            (eacl.cache/current-cache-for-option cache))
+                          current-cache-store
+                          :cursor-codec-cache cursor-codec-cache
+                          :page-navigation-cache
+                          page-navigation-cache
                           :managed-cache-enabled?
                           (and cache-eligible?
                                (not custom-codec?)
