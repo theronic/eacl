@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 25
+  :verified-obligations 26
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -21,6 +21,7 @@
    :snapshot-unavailable-rejection
    :expiry-rejection
    :relationship-offset-page-exact
+   :relationship-keyset-page-decision-exact
    :relationship-exact-snapshot-proof
    :no-linear-result-proof-per-page]}
  :generated-targets
@@ -42,27 +43,28 @@
    [eacl.relay-test
     eacl.secure-format-test
     eacl.datascript.contract-test]
-   :tests 15
-   :assertions 113
+   :tests 18
+   :assertions 136
    :status :passed}
   :cljs
-  {:tests 58
-   :assertions 590
+  {:tests 90
+   :assertions 1309
    :status :passed}}
  :production-generated-routing
  {:clj-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 3
-   :assertions 13
+   :tests 4
+   :assertions 19
    :status :passed}
   :cljs-javascript
   {:namespace eacl.formal.production-kernel-test
-   :tests 3
-   :assertions 13
+   :tests 4
+   :assertions 19
    :status :passed}
   :coverage
   [:lookup-cursor-current-proof
    :relationship-cursor-current-proof
    :relationship-page-window
+   :relationship-keyset-page-window
    :strict-generated-result-validation]}
  :remaining []}

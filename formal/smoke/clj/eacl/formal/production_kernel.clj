@@ -9,6 +9,7 @@
     ExactSelection
     Presence
     RawPageRequest)
+   (Pagination Direction)
    (RecursiveEngine TraversalLimits)
    (Semantics
     ObjectRef
@@ -337,6 +338,21 @@
        :has-next? (.dtor_hasNext page)
        :has-previous? (.dtor_hasPrevious page)})))
 
+(defn- keyset-page-decision
+  [{:keys [direction size bound? realized-count]}]
+  (let [decision
+        (PageWindow.__default/DecideKeysetPage
+         (if (= :asc direction)
+           (Direction/create_Ascending)
+           (Direction/create_Descending))
+         (dafny-nat size)
+         bound?
+         (dafny-nat realized-count))]
+    {:take-count (.longValue (.dtor_takeCount decision))
+     :reverse? (.dtor_reverseItems decision)
+     :has-next? (.dtor_hasNext decision)
+     :has-previous? (.dtor_hasPrevious decision)}))
+
 (defn- exact-selection
   [exact]
   (if exact
@@ -451,6 +467,7 @@
   (-decide [_ operation input]
     (case operation
       :relationship-page (page-decision input)
+      :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
       :cache-validation (cache-decision input)
       :authorization-evaluation (authorization-decision input))))

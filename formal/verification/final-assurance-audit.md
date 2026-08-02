@@ -65,18 +65,18 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 254 obligations across 12 files, zero
+- Clean checksum-locked Dafny cache: 255 obligations across 12 files, zero
   errors, warnings, timeouts, admitted lemmas, `assume`, `axiom`,
   `{:verify false}`, opaque, or extern declarations.
 - TLA+/Apalache: both models typechecked; compact length 12, detailed length 6,
   scheduled detailed length 3, and all six initiation/consecution/implication
   obligations passed.
-- Counterexample corpus: 10 tests, 107 assertions, zero failures/errors.
+- Counterexample corpus: 10 tests, 108 assertions, zero failures/errors.
 - Mutation controls: 1 test, 22 assertions, all 9 registered mutants killed.
-- Public non-benchmark CLJ suite: 371 tests, 13,115 assertions, zero failures/errors.
-- DataScript CLJS suite: 84 tests, 1,265 assertions, zero failures/errors.
-- Generated Java suite: 18 tests, 7,141 assertions, zero failures/errors.
-- Generated JavaScript suite: 12 tests, 609 assertions, zero failures/errors.
+- Public non-benchmark CLJ suite: 380 tests, 13,214 assertions, zero failures/errors.
+- DataScript CLJS suite: 90 tests, 1,309 assertions, zero failures/errors.
+- Generated Java suite: 18 tests, 7,142 assertions, zero failures/errors.
+- Generated JavaScript suite: 12 tests, 610 assertions, zero failures/errors.
 - OpenSpec strict validation: passed.
 - Heavy benchmark: 9 tests, 3,403 assertions, zero failures/errors; the
   current-cache measurements are recorded in

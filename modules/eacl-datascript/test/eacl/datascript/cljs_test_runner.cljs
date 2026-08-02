@@ -5,6 +5,7 @@
             [eacl.cache-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
+            [eacl.engine.relationships-test]
             [eacl.mutation-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
@@ -35,6 +36,7 @@
                'eacl.cache-test
                'eacl.causal-model-test
                'eacl.consistency-test
+               'eacl.engine.relationships-test
                'eacl.mutation-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test

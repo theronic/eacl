@@ -18,6 +18,7 @@
   :invalid-generated-result-variants]
  :production-routed-decisions
  [:relationship-page
+  :relationship-keyset-page
   :lookup-cursor-continuation
   :relationship-cursor-continuation
   :cache-validation]
@@ -33,21 +34,21 @@
    :tests 1 :assertions 7 :status :passed}
   :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 12 :suite-assertions 609 :status :passed}
+   :suite-tests 12 :suite-assertions 610 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
-   :clj {:tests 4 :assertions 23}
+   :clj {:tests 5 :assertions 28}
    :cljs :passed-in-full-suite}
   :production-routing
-  {:clj-java {:tests 4 :assertions 18}
-   :cljs-javascript {:tests 4 :assertions 18}}
+  {:clj-java {:tests 4 :assertions 19}
+   :cljs-javascript {:tests 4 :assertions 19}}
   :materialized-reference
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
-    :tests 4 :assertions 18 :status :passed}
+    :tests 4 :assertions 19 :status :passed}
    :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :suite-tests 12 :suite-assertions 609 :status :passed}}
+    :suite-tests 12 :suite-assertions 610 :status :passed}}
   :public-state-trace
   {:namespace eacl.formal.state-trace-differential-test
    :backends [:datomic :datahike :datascript]

@@ -1,6 +1,8 @@
 ## 1. Baseline and Assurance Boundary
 
-- [x] 1.1 Inventory every production decision path in `eacl.engine.v8`, `eacl.cache`, `eacl.relay`, and `eacl.relationships.relay`, and map it to the public API operations that can consume its result.
+- [x] 1.1 Inventory every production decision path in `eacl.engine.v8`,
+  `eacl.engine.relationships`, `eacl.cache`, and `eacl.relay`, and map it to
+  the public API operations that can consume its result.
 - [x] 1.2 Write the initial assurance matrix mapping `can?`, lookup, count, relationship pagination, cursor continuation, and cache reuse to planned Dafny theorems, adapter assumptions, runtime targets, and CI commands.
 - [x] 1.3 Write the trusted-computing-base document covering Dafny/Boogie/Z3, generated-code compilers, CLJ/CLJS runtimes, FFI boundaries, adapters, canonicalization, authentication, hashes, entropy, and configured limits.
 - [x] 1.4 Add versioned characterization fixtures for current direct, alias, arrow-to-relation, arrow-to-permission, multi-path, recursive-SCC, lookup/count, cursor, cache, and typed-error behavior.
@@ -92,14 +94,20 @@
 ## 8. Verified Pagination and Cursor Decisions
 
 - [x] 8.1 Define total normalization for list pagination arguments and prove invalid combinations, nil bounds, non-positive sizes, and oversize pages return typed errors.
-- [x] 8.2 Define deterministic acyclic, recursive, and relationship result sequences independently of page size and prove sequence uniqueness.
+- [x] 8.2 Define deterministic acyclic, recursive, and relationship result
+  sequences independently of page size for one fixed adapter/query/immutable
+  snapshot and prove sequence uniqueness without promising global or
+  cross-adapter order.
 - [x] 8.3 Implement forward and backward window functions and prove start/end boundaries, ordering, page flags, and empty-page laws.
 - [x] 8.4 Prove that concatenating a complete valid forward walk reproduces the full sequence without omission or duplication.
 - [x] 8.5 Prove every supported backward page is the exact preceding window of the same sequence.
-- [x] 8.6 Define and validate cursor scope, operation, query, direction, result kind, engine/semantics version, execution identity, dependency-scope digest, proof digest, and graph anchor.
-- [x] 8.7 Prove cross-operation/query/direction/result cursor reuse is rejected before the cursor influences traversal.
+- [x] 8.6 Define and validate cursor scope, operation, normalized non-page query, result kind, engine/semantics version, execution identity, dependency-scope digest, proof digest, graph anchor, and the exclusive direction semantics of a positional bound.
+- [x] 8.7 Prove cross-operation/query/result cursor reuse is rejected before the cursor influences traversal, and prove that a relationship position reused in the opposite page direction remains an exclusive stable bound.
 - [x] 8.8 Implement and prove current-proof continuation, at-least conflict, authenticated exact-snapshot fallback, divergence, stale, and expiry decisions.
-- [x] 8.9 Implement relationship offset pagination in the verified kernel and prove its authenticated exact-snapshot proof and exact-fallback behavior against the relationship sequence without hashing the result set per page.
+- [x] 8.9 Implement relationship physical-edge keyset pagination, route page
+  size/direction/flag decisions through the verified kernel, and prove its
+  authenticated exact-snapshot and exact-fallback behavior without hashing or
+  materializing the result set per page.
 - [x] 8.10 Route decoded lookup and relationship cursor decisions through the generated kernel while retaining existing authenticated token formats at the boundary.
 - [x] 8.11 Add cross-runtime cursor vectors and property tests for complete walks, random jumps, backward windows, tampering, scope confusion, proof changes, expiry, empty pages, and unavailable continuations.
 

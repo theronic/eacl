@@ -341,6 +341,7 @@
 (def ^:private known-relationship-filter-keys
   #{:subject/type :subject/id
     :resource/type :resource/id :resource/relation
+    :first :last :after :before
     :limit :cursor :consistency})
 
 (def ^:private relationship-anchor-keys
@@ -374,7 +375,9 @@
              {:eacl/error :eacl.filters/missing-anchor}))))
 
 (defn read-relationships
-  [db filters]
+  ([db filters]
+   (read-relationships db filters nil))
+  ([db filters engine-selection]
   (validate-relationship-filters! filters)
   (let [subject-id'  (when (contains? filters :subject/id)
                        (internal-id db (:subject/id filters)))
@@ -395,13 +398,22 @@
                   (spice-object (:subject-type spec) subject-id)
                   (:relation-name spec)
                   (spice-object (:resource-type spec) resource-id))})
-              (drop-until-after-cursor [spec cursor rows]
+              (normalized-cursor [cursor]
+                (when cursor
+                  {:subject-id (or (:subject-id cursor)
+                                   (:subject cursor))
+                   :resource-id (or (:resource-id cursor)
+                                    (:resource cursor))}))
+              (drop-until-beyond-cursor [spec cursor direction rows]
                 (drop-while
                  #(not
-                   (relationship-engine/after-cursor?
-                    (:scan-kind spec) cursor %))
+                   (relationship-engine/beyond-cursor?
+                    (:scan-kind spec)
+                    direction
+                    (normalized-cursor cursor)
+                    %))
                  rows))
-              (exact-match-row [spec cursor]
+              (exact-match-row [spec cursor direction]
                 (let [row
                       (when (and (:subject-id spec) (:resource-id spec))
                         (when
@@ -415,11 +427,12 @@
                           (relationship-row
                            spec (:subject-id spec) (:resource-id spec))))]
                   (if row
-                    (drop-until-after-cursor spec cursor [row])
+                    (drop-until-beyond-cursor
+                     spec cursor direction [row])
                     [])))
-              (scan-forward-anchored [spec cursor]
+              (scan-forward-anchored [spec cursor direction]
                 (if (:resource-id spec)
-                  (exact-match-row spec cursor)
+                  (exact-match-row spec cursor direction)
                   (->> (ddb/eavt-endpoint-prefix
                         db
                         (:subject-id spec)
@@ -427,16 +440,18 @@
                         [(:subject-type spec)
                          (:relation-id spec)
                          (:resource-type spec)]
-                        (:resource cursor)
-                        :asc)
+                        (or (:resource-id cursor)
+                            (:resource cursor))
+                        direction)
                        (map
                         (fn [{:keys [v]}]
                           (relationship-row
                            spec (:subject-id spec) (nth v 3))))
-                       (drop-until-after-cursor spec cursor))))
-              (scan-reverse-anchored [spec cursor]
+                       (drop-until-beyond-cursor
+                        spec cursor direction))))
+              (scan-reverse-anchored [spec cursor direction]
                 (if (:subject-id spec)
-                  (exact-match-row spec cursor)
+                  (exact-match-row spec cursor direction)
                   (->> (ddb/eavt-endpoint-prefix
                         db
                         (:resource-id spec)
@@ -444,55 +459,70 @@
                         [(:resource-type spec)
                          (:relation-id spec)
                          (:subject-type spec)]
-                        (:subject cursor)
-                        :asc)
+                        (or (:subject-id cursor)
+                            (:subject cursor))
+                        direction)
                        (map
                         (fn [{:keys [v]}]
                           (relationship-row
                            spec (nth v 3) (:resource-id spec))))
-                       (drop-until-after-cursor spec cursor))))
-              (scan-forward-partial [spec cursor]
+                       (drop-until-beyond-cursor
+                        spec cursor direction))))
+              (scan-forward-partial [spec cursor direction]
                 (->> (ddb/avet-endpoint-prefix
                       db
                       schema/forward-relationship-attr
                       [(:subject-type spec)
                        (:relation-id spec)
                        (:resource-type spec)]
-                      (:resource cursor)
-                      :asc)
+                      (or (:resource-id cursor)
+                          (:resource cursor))
+                      direction)
                      (map
                       (fn [{:keys [e v]}]
                         (relationship-row spec e (nth v 3))))
-                     (drop-until-after-cursor spec cursor)))
-              (scan-reverse-partial [spec cursor]
+                     (drop-until-beyond-cursor
+                      spec cursor direction)))
+              (scan-reverse-partial [spec cursor direction]
                 (->> (ddb/avet-endpoint-prefix
                       db
                       schema/reverse-relationship-attr
                       [(:resource-type spec)
                        (:relation-id spec)
                        (:subject-type spec)]
-                      (:subject cursor)
-                      :asc)
+                      (or (:subject-id cursor)
+                          (:subject cursor))
+                      direction)
                      (map
                       (fn [{:keys [e v]}]
                         (relationship-row spec (nth v 3) e)))
-                     (drop-until-after-cursor spec cursor)))
-              (scan-spec [spec cursor]
+                     (drop-until-beyond-cursor
+                      spec cursor direction)))
+              (scan-spec
+                ([spec cursor]
+                 (scan-spec spec cursor :asc))
+                ([spec cursor direction]
                 (case (:scan-kind spec)
                   :forward-anchored
-                  (scan-forward-anchored spec cursor)
+                  (scan-forward-anchored spec cursor direction)
 
                   :reverse-anchored
-                  (scan-reverse-anchored spec cursor)
+                  (scan-reverse-anchored spec cursor direction)
 
                   :forward-partial
-                  (scan-forward-partial spec cursor)
+                  (scan-forward-partial spec cursor direction)
 
-                  (scan-reverse-partial spec cursor)))]
-        (relationship-engine/execute-plan
-         (relationship-engine/plan-scans (all-relation-defs db) filters')
-         filters'
-         scan-spec)))))
+                  (scan-reverse-partial
+                   spec cursor direction))))]
+        (let [scan-specs
+              (relationship-engine/plan-scans
+               (all-relation-defs db) filters')]
+          (if-not (or (contains? filters' :limit)
+                      (contains? filters' :cursor))
+            (relationship-engine/execute-page
+             scan-specs filters' engine-selection scan-spec)
+            (relationship-engine/execute-plan
+             scan-specs filters' scan-spec))))))))
 
 (defn- relation-triples
   [db]

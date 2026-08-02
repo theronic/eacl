@@ -296,6 +296,8 @@
         (eacl/read-relationships client {:subject/type :user
                                          :first        1000
                                          :after        cursor-2})
+        repeated-page-1
+        (:data (eacl/read-relationships client {:subject/type :user}))
         all-pages (into [] (concat page-1 page-2 page-3))
         subject-ids (mapv #(get-in % [:subject :id]) all-pages)]
     (is (= 1000 (count page-1)))
@@ -304,6 +306,37 @@
     (is (= 2005 (count (distinct subject-ids))))
     (is (string? cursor-1))
     (is (string? cursor-2))
-    (is (= "bulk-user-0" (get-in (first page-1) [:subject :id])))
-    (is (= subject-ids (vec (sort subject-ids)))
-        "portable relationship order is lexicographic by public object id")))
+    (is (= page-1 repeated-page-1)
+        "one query and immutable snapshot must have deterministic page order")))
+
+(deftest read-relationships-resolves-only-the-requested-page-test
+  (let [{:keys [conn client]} (seed-bulk-read-db 100)
+        externalizations (atom 0)
+        default-entid->object-id
+        (:entid->object-id (:opts client))
+        counting-client
+        (datascript/make-client
+         conn
+         {:entid->object-id
+          (fn [db eid]
+            (swap! externalizations inc)
+            (default-entid->object-id db eid))
+          :adapter-fingerprint {:codec :counting-test}
+          :adapter-deterministic? true})
+        internal-queries (atom [])
+        read-relationships impl/read-relationships]
+    (with-redefs
+      [impl/read-relationships
+       (fn [& args]
+         (swap! internal-queries conj (second args))
+         (apply read-relationships args))]
+      (let [page (eacl/read-relationships counting-client
+                                          {:subject/type :user
+                                           :first 20})]
+        (is (= 20 (count (:data page))))
+        (is (= 44 @externalizations)
+            "20 relationships plus two 2-endpoint cursor edges are externalized")
+        (is (= 1 (count @internal-queries)))
+        (is (= 20 (:first (first @internal-queries))))
+        (is (not (contains? (first @internal-queries) :limit))
+            "the public wrapper must not drain an unbounded legacy page")))))
