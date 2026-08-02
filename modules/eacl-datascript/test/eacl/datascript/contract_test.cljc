@@ -4,7 +4,8 @@
             [eacl.cache :as cache]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
-            [eacl.datascript.core :as datascript]))
+            [eacl.datascript.core :as datascript]
+            [eacl.secure-format :as secure]))
 
 (defn- seed-objects!
   [conn]
@@ -98,20 +99,32 @@
               :owner
               (contract/->server (nth server-ids index))))
            (range relationship-count)))
-    (let [page-1
-          (eacl/read-relationships
-           client
-           {:subject/type :user
-            :first 1000})
-          page-2
-          (eacl/read-relationships
-           client
+    (let [proof-count (atom 0)
+          canonical-records-digest secure/canonical-records-digest
+          read-page
+          (fn [filters]
+            (reset! proof-count 0)
+            (let [page
+                  (with-redefs
+                    [secure/canonical-records-digest
+                     (fn [& args]
+                       (swap! proof-count inc)
+                       (apply canonical-records-digest args))]
+                    (eacl/read-relationships client filters))]
+              [page @proof-count]))
+          [page-1 page-1-proof-count]
+          (read-page {:subject/type :user
+                      :first 1000})
+          [page-2 page-2-proof-count]
+          (read-page
            {:subject/type :user
             :first 1000
             :after (get-in page-1 [:page-info :end-cursor])})]
       (is (= 1000 (count (:data page-1))))
       (is (= 505 (count (:data page-2))))
-      (is (false? (get-in page-2 [:page-info :has-next-page?]))))))
+      (is (false? (get-in page-2 [:page-info :has-next-page?])))
+      (is (= 1 page-1-proof-count))
+      (is (= 1 page-2-proof-count)))))
 
 (defn- seeded-client
   []
