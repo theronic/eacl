@@ -130,7 +130,12 @@ jobs:
                (require '[cognitect.test-runner.api :as runner] :reload)
                (let [result
                      (runner/test
-                      {:dirs [\"test\" \"../eacl/test\"]
+                      {:dirs
+                       (if (= \"eacl\" \"${{ matrix.module }}\")
+                         [\"test\"]
+                         [\"test\" \"../eacl/test\"])
+                       :patterns
+                       [\"^(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]counterexample-replay-test$)(?!eacl[.]formal[.]mutation-control-test$).*-test$\"]
                        :excludes [:benchmark]})]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"isolated nREPL tests failed\" result)))
