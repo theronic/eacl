@@ -20,7 +20,9 @@
    :history-divergence-rejection
    :snapshot-unavailable-rejection
    :expiry-rejection
-   :relationship-offset-page-exact]}
+   :relationship-offset-page-exact
+   :relationship-exact-snapshot-proof
+   :no-linear-result-proof-per-page]}
  :generated-targets
  {:java
   {:status :passed

@@ -99,7 +99,7 @@
 - [x] 8.6 Define and validate cursor scope, operation, query, direction, result kind, engine/semantics version, execution identity, dependency-scope digest, proof digest, and graph anchor.
 - [x] 8.7 Prove cross-operation/query/direction/result cursor reuse is rejected before the cursor influences traversal.
 - [x] 8.8 Implement and prove current-proof continuation, at-least conflict, authenticated exact-snapshot fallback, divergence, stale, and expiry decisions.
-- [x] 8.9 Implement relationship offset pagination in the verified kernel and prove its item-proof and exact-fallback behavior against the relationship sequence.
+- [x] 8.9 Implement relationship offset pagination in the verified kernel and prove its authenticated exact-snapshot proof and exact-fallback behavior against the relationship sequence without hashing the result set per page.
 - [x] 8.10 Route decoded lookup and relationship cursor decisions through the generated kernel while retaining existing authenticated token formats at the boundary.
 - [x] 8.11 Add cross-runtime cursor vectors and property tests for complete walks, random jumps, backward windows, tampering, scope confusion, proof changes, expiry, empty pages, and unavailable continuations.
 

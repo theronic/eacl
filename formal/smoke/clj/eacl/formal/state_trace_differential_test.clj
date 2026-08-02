@@ -18,7 +18,8 @@
    [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
    [eacl.datomic.schema :as datomic-schema]
    [eacl.formal.differential-runner :as differential]
-   [eacl.formal.production-kernel :as production]))
+   [eacl.formal.production-kernel :as production]
+   [eacl.verified-kernel :as verified]))
 
 (def authorization-schema
   "definition user {}
@@ -38,6 +39,184 @@
 (def engine-selection
   {:mode :verified-authoritative
    :kernel production/generated-java-kernel})
+
+(def formal-objects
+  [{:type "user" :id "user"}
+   {:type "document" :id "document-1"}
+   {:type "document" :id "document-2"}])
+
+(def formal-schema
+  {:relations
+   [{:resource-type "document"
+     :relation "reader"
+     :subject-type "user"}]
+   :permissions
+   [{:resource-type "document"
+     :permission "view"}]
+   :definitions
+   [{:kind :direct-relation
+     :resource-type "document"
+     :permission "view"
+     :relation "reader"
+     :subject-type "user"}]})
+
+(def formal-limits
+  {:max-derived-grants 1000
+   :max-advanced-datoms 1000
+   :max-queued-work 1000})
+
+(defn- formal-object
+  [object]
+  {:type (name (:type object))
+   :id (:id object)})
+
+(defn- formal-relationship
+  [{:keys [subject relation resource]}]
+  {:subject (formal-object subject)
+   :relation (name relation)
+   :resource (formal-object resource)})
+
+(defn- formal-evaluate
+  [relationships request]
+  (verified/decide
+   engine-selection
+   :authorization-evaluation
+   {:objects formal-objects
+    :schema formal-schema
+    :relationships (mapv formal-relationship relationships)
+    :request request
+    :limits formal-limits}
+   #(throw (ex-info "legacy authorization oracle must not run" {}))))
+
+(defn- public-object-set
+  [page]
+  (into #{} (map formal-object) (:data page)))
+
+(defn- assert-public-authorization!
+  [label cached uncached relationships]
+  (let [resource-query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 10}
+        formal-resource-query
+        {:operation :lookup-resources
+         :subject (formal-object user)
+         :permission "view"
+         :resource-type "document"}
+        reverse-query
+        {:resource document-2
+         :permission :view
+         :subject/type :user
+         :first 10}
+        formal-reverse-query
+        {:operation :lookup-subjects
+         :resource (formal-object document-2)
+         :permission "view"
+         :subject-type "user"}
+        formal-resources
+        (formal-evaluate relationships formal-resource-query)
+        formal-subjects
+        (formal-evaluate relationships formal-reverse-query)
+        formal-count-resources
+        (formal-evaluate
+         relationships
+         (assoc formal-resource-query
+                :operation :count-resources
+                :count-limit 1))
+        formal-count-subjects
+        (formal-evaluate
+         relationships
+         (assoc formal-reverse-query
+                :operation :count-subjects
+                :count-limit 1))]
+    (doseq [[mode client]
+            [[:cache-enabled cached]
+             [:cache-disabled uncached]]]
+      (let [actual-resources
+            (eacl/lookup-resources client resource-query)
+            actual-subjects
+            (eacl/lookup-subjects client reverse-query)
+            actual-count-resources
+            (eacl/count-resources
+             client
+             (-> resource-query
+                 (dissoc :first)
+                 (assoc :count-limit 1)))
+            actual-count-subjects
+            (eacl/count-subjects
+             client
+             (-> reverse-query
+                 (dissoc :first)
+                 (assoc :count-limit 1)))]
+        (is (= :passed
+               (:status
+                (differential/compare-values!
+                 {:seed 820084
+                  :case-id [label mode :lookup-resources]
+                  :values
+                  [[:verified-generated-java
+                    (set (:items formal-resources))]
+                   [:public-client
+                    (public-object-set actual-resources)]]}))))
+        (is (= :passed
+               (:status
+                (differential/compare-values!
+                 {:seed 820084
+                  :case-id [label mode :lookup-subjects]
+                  :values
+                  [[:verified-generated-java
+                    (set (:items formal-subjects))]
+                   [:public-client
+                    (public-object-set actual-subjects)]]}))))
+        (is (= :passed
+               (:status
+                (differential/compare-values!
+                 {:seed 820084
+                  :case-id [label mode :count-resources]
+                  :values
+                  [[:verified-generated-java
+                    (select-keys
+                     formal-count-resources
+                     [:count :truncated?])]
+                   [:public-client
+                    (select-keys
+                     actual-count-resources
+                     [:count :truncated?])]]}))))
+        (is (= :passed
+               (:status
+                (differential/compare-values!
+                 {:seed 820084
+                  :case-id [label mode :count-subjects]
+                  :values
+                  [[:verified-generated-java
+                    (select-keys
+                     formal-count-subjects
+                     [:count :truncated?])]
+                   [:public-client
+                    (select-keys
+                     actual-count-subjects
+                     [:count :truncated?])]]}))))))
+    (doseq [resource [document-1 document-2]]
+      (let [formal-result
+            (formal-evaluate
+             relationships
+             {:operation :can?
+              :subject (formal-object user)
+              :permission "view"
+              :resource (formal-object resource)})]
+        (is (= :passed
+               (:status
+                (differential/compare-values!
+                 {:seed 820084
+                  :case-id [label :can? (:id resource)]
+                  :values
+                  [[:verified-generated-java
+                    (:allowed? formal-result)]
+                   [:public-cache-enabled
+                    (eacl/can? cached user :view resource)]
+                   [:public-cache-disabled
+                    (eacl/can? uncached user :view resource)]]}))))))))
 
 (defn- ids
   [page]
@@ -99,6 +278,8 @@
                    [:public-cache-enabled (ids lifted)]
                    [:public-cache-disabled (ids fresh)]]}))))
         (is (true? (:cached? lifted))))
+      (assert-public-authorization!
+       label cached uncached [relationship-1 relationship-2])
       (eacl/delete-relationship! cached relationship-1)
       (let [after-revocation
             (eacl/lookup-resources cached all-query)
@@ -121,13 +302,16 @@
               cached user :view document-1)))
         (is (true?
              (eacl/can?
-              cached user :view document-2)))))))
+              cached user :view document-2))))
+      (assert-public-authorization!
+       label cached uncached [relationship-2]))))
 
 (deftest generated-cache-and-cursor-state-traces-across-jvm-adapters
   (testing "DataScript"
     (let [conn (datascript/create-conn)
           common
           {:engine-selection engine-selection
+           :coherence-authority :managed
            :security-key
            "01234567890123456789012345678901"
            :exact-snapshot-registry-size 16}
@@ -151,6 +335,7 @@
     (let [conn (datahike/create-conn)
           common
           {:engine-selection engine-selection
+           :coherence-authority :managed
            :security-key
            "01234567890123456789012345678901"}
           cached (datahike/make-client conn common)

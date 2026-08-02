@@ -4,7 +4,7 @@
  :scope :recursive-kernel
  :proof
  {:source "formal/dafny/RecursiveEngine.dfy"
-  :verified-obligations 34
+  :verified-obligations 46
   :claims
   [:least-dependency-closure
    :reachable-recursive-scc-detection
@@ -13,7 +13,11 @@
    :forward-soundness-and-completeness
    :finite-reverse-goal-worklist-termination
    :reverse-soundness-and-completeness
+   :typed-reverse-projection-soundness-and-completeness
    :result-de-duplication
+   :recursive-can-membership
+   :recursive-bounded-forward-count
+   :recursive-bounded-typed-reverse-count
    :derived-grant-limit-fails-closed
    :advanced-datom-limit-fails-closed
    :queued-work-limit-fails-closed

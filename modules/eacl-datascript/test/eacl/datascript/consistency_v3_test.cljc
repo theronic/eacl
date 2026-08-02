@@ -353,7 +353,7 @@
           (backend/invoke after-adapter :relation-proof [relation-id])]
       (is (not= before-proof after-proof)))))
 
-(deftest relationship-cursor-proof-equivalence-and-exact-fallback-test
+(deftest relationship-cursor-exact-snapshot-fallback-test
   (let [conn (datascript/create-conn)
         authorization
         (managed-client conn {:exact-snapshot-registry-size 16})

@@ -67,6 +67,86 @@ module RecursiveEngine {
         counters: WorkCounters
       )
 
+  datatype BooleanOutcome =
+    | BooleanComplete(
+        allowed: bool,
+        counters: WorkCounters
+      )
+    | BooleanLimitExceeded(
+        kind: LimitKind,
+        counters: WorkCounters
+      )
+
+  datatype CountOutcome =
+    | CountComplete(
+        count: nat,
+        truncated: bool,
+        counters: WorkCounters
+      )
+    | CountLimitExceeded(
+        kind: LimitKind,
+        counters: WorkCounters
+      )
+
+  function FilterObjectType(
+    objects: seq<Semantics.ObjectRef>,
+    typeName: string
+  ): seq<Semantics.ObjectRef>
+    decreases |objects|
+  {
+    if |objects| == 0 then
+      []
+    else
+      (if objects[0].typeName == typeName
+       then [objects[0]]
+       else []) +
+      FilterObjectType(objects[1..], typeName)
+  }
+
+  lemma FilterObjectTypeMembership(
+    objects: seq<Semantics.ObjectRef>,
+    typeName: string,
+    candidate: Semantics.ObjectRef
+  )
+    ensures candidate in FilterObjectType(objects, typeName) <==>
+            candidate in objects && candidate.typeName == typeName
+    decreases |objects|
+  {
+    if |objects| != 0 {
+      FilterObjectTypeMembership(
+        objects[1..],
+        typeName,
+        candidate
+      );
+    }
+  }
+
+  lemma FilterObjectTypeIsUnique(
+    objects: seq<Semantics.ObjectRef>,
+    typeName: string
+  )
+    requires AcyclicEngine.UniqueObjects(objects)
+    ensures AcyclicEngine.UniqueObjects(
+              FilterObjectType(objects, typeName)
+            )
+    decreases |objects|
+  {
+    if |objects| != 0 {
+      assert AcyclicEngine.UniqueObjects(objects[1..]);
+      FilterObjectTypeIsUnique(objects[1..], typeName);
+      if objects[0].typeName == typeName {
+        assert objects[0] !in objects[1..];
+        FilterObjectTypeMembership(
+          objects[1..],
+          typeName,
+          objects[0]
+        );
+        assert objects[0] !in
+          FilterObjectType(objects[1..], typeName);
+      }
+    }
+  }
+
   datatype OrdinalItem = OrdinalItem(
     ordinal: nat,
     value: Semantics.ObjectRef
@@ -1003,6 +1083,241 @@ module RecursiveEngine {
       );
     }
     return SequenceComplete(items, closure.counters);
+  }
+
+  method RecursiveReverseTyped(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    resource: Semantics.ObjectRef,
+    node: Semantics.PermissionNode,
+    subjectType: string,
+    limits: TraversalLimits
+  ) returns (outcome: SequenceOutcome)
+    requires AcyclicEngine.UniqueObjects(objects)
+    ensures outcome.SequenceComplete? ==>
+              AcyclicEngine.UniqueObjects(outcome.items)
+    ensures outcome.SequenceComplete? ==>
+              forall subject ::
+                subject in outcome.items <==>
+                           subject in objects &&
+                           subject.typeName == subjectType &&
+                           AcyclicEngine.SemanticallyAuthorized(
+                             objects,
+                             permissions,
+                             definitions,
+                             relationships,
+                             Semantics.Grant(subject, node, resource)
+                           )
+  {
+    var untyped := RecursiveReverse(
+      objects,
+      permissions,
+      definitions,
+      relationships,
+      resource,
+      node,
+      limits
+    );
+    if untyped.SequenceLimitExceeded? {
+      return SequenceLimitExceeded(
+          untyped.kind,
+          untyped.counters
+        );
+    }
+
+    var items := FilterObjectType(untyped.items, subjectType);
+    FilterObjectTypeIsUnique(untyped.items, subjectType);
+    forall subject
+      ensures subject in items <==>
+              subject in objects &&
+              subject.typeName == subjectType &&
+              AcyclicEngine.SemanticallyAuthorized(
+                objects,
+                permissions,
+                definitions,
+                relationships,
+                Semantics.Grant(subject, node, resource)
+              )
+    {
+      FilterObjectTypeMembership(
+        untyped.items,
+        subjectType,
+        subject
+      );
+    }
+    return SequenceComplete(items, untyped.counters);
+  }
+
+  method RecursiveCan(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    subject: Semantics.ObjectRef,
+    node: Semantics.PermissionNode,
+    resource: Semantics.ObjectRef,
+    limits: TraversalLimits
+  ) returns (outcome: BooleanOutcome)
+    requires AcyclicEngine.UniqueObjects(objects)
+    ensures outcome.BooleanComplete? ==>
+              (outcome.allowed <==>
+               resource in objects &&
+               AcyclicEngine.SemanticallyAuthorized(
+                 objects,
+                 permissions,
+                 definitions,
+                 relationships,
+                 Semantics.Grant(subject, node, resource)
+               ))
+  {
+    var sequence := RecursiveForward(
+      objects,
+      permissions,
+      definitions,
+      relationships,
+      subject,
+      node,
+      limits
+    );
+    if sequence.SequenceLimitExceeded? {
+      return BooleanLimitExceeded(
+          sequence.kind,
+          sequence.counters
+        );
+    }
+    return BooleanComplete(
+        resource in sequence.items,
+        sequence.counters
+      );
+  }
+
+  method BoundedCount(
+    items: seq<Semantics.ObjectRef>,
+    countLimit: nat
+  ) returns (count: nat, truncated: bool)
+    ensures count <= countLimit
+    ensures count <= |items|
+    ensures if countLimit < |items|
+            then count == countLimit && truncated
+            else count == |items| && !truncated
+  {
+    if countLimit < |items| {
+      return countLimit, true;
+    }
+    return |items|, false;
+  }
+
+  method RecursiveCountForward(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    subject: Semantics.ObjectRef,
+    node: Semantics.PermissionNode,
+    countLimit: nat,
+    limits: TraversalLimits
+  ) returns (outcome: CountOutcome)
+    requires AcyclicEngine.UniqueObjects(objects)
+    ensures outcome.CountComplete? ==>
+              exists items ::
+                AcyclicEngine.UniqueObjects(items) &&
+                (forall resource ::
+                   resource in items <==>
+                               resource in objects &&
+                               AcyclicEngine.SemanticallyAuthorized(
+                                 objects,
+                                 permissions,
+                                 definitions,
+                                 relationships,
+                                 Semantics.Grant(subject, node, resource)
+                               )) &&
+                (if countLimit < |items|
+                 then outcome.count == countLimit &&
+                      outcome.truncated
+                 else outcome.count == |items| &&
+                      !outcome.truncated)
+  {
+    var sequence := RecursiveForward(
+      objects,
+      permissions,
+      definitions,
+      relationships,
+      subject,
+      node,
+      limits
+    );
+    if sequence.SequenceLimitExceeded? {
+      return CountLimitExceeded(
+          sequence.kind,
+          sequence.counters
+        );
+    }
+    var count, truncated :=
+      BoundedCount(sequence.items, countLimit);
+    return CountComplete(
+        count,
+        truncated,
+        sequence.counters
+      );
+  }
+
+  method RecursiveCountReverseTyped(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    resource: Semantics.ObjectRef,
+    node: Semantics.PermissionNode,
+    subjectType: string,
+    countLimit: nat,
+    limits: TraversalLimits
+  ) returns (outcome: CountOutcome)
+    requires AcyclicEngine.UniqueObjects(objects)
+    ensures outcome.CountComplete? ==>
+              exists items ::
+                AcyclicEngine.UniqueObjects(items) &&
+                (forall subject ::
+                   subject in items <==>
+                              subject in objects &&
+                              subject.typeName == subjectType &&
+                              AcyclicEngine.SemanticallyAuthorized(
+                                objects,
+                                permissions,
+                                definitions,
+                                relationships,
+                                Semantics.Grant(subject, node, resource)
+                              )) &&
+                (if countLimit < |items|
+                 then outcome.count == countLimit &&
+                      outcome.truncated
+                 else outcome.count == |items| &&
+                      !outcome.truncated)
+  {
+    var sequence := RecursiveReverseTyped(
+      objects,
+      permissions,
+      definitions,
+      relationships,
+      resource,
+      node,
+      subjectType,
+      limits
+    );
+    if sequence.SequenceLimitExceeded? {
+      return CountLimitExceeded(
+          sequence.kind,
+          sequence.counters
+        );
+    }
+    var count, truncated :=
+      BoundedCount(sequence.items, countLimit);
+    return CountComplete(
+        count,
+        truncated,
+        sequence.counters
+      );
   }
 
   lemma LimitOutcomeContainsNoPartialSequence(

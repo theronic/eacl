@@ -13,6 +13,60 @@
   {:mode :verified-authoritative
    :kernel production/generated-java-kernel})
 
+(def authorization-input
+  {:objects [{:type "user" :id "u1"}
+             {:type "team" :id "t1"}
+             {:type "folder" :id "f0"}
+             {:type "folder" :id "f1"}]
+   :schema
+   {:relations
+    [{:resource-type "folder"
+      :relation "reader"
+      :subject-type "user"}
+     {:resource-type "folder"
+      :relation "parent"
+      :subject-type "folder"}
+     {:resource-type "folder"
+      :relation "team-reader"
+      :subject-type "team"}]
+    :permissions
+    [{:resource-type "folder"
+      :permission "read"}]
+    :definitions
+    [{:kind :direct-relation
+      :resource-type "folder"
+      :permission "read"
+      :relation "reader"
+      :subject-type "user"}
+     {:kind :arrow-permission
+      :resource-type "folder"
+      :permission "read"
+      :via-relation "parent"
+      :target-permission "read"}
+     {:kind :direct-relation
+      :resource-type "folder"
+      :permission "read"
+      :relation "team-reader"
+      :subject-type "team"}]}
+   :relationships
+   [{:resource {:type "folder" :id "f0"}
+     :relation "reader"
+     :subject {:type "user" :id "u1"}}
+    {:resource {:type "folder" :id "f1"}
+     :relation "parent"
+     :subject {:type "folder" :id "f0"}}
+    {:resource {:type "folder" :id "f1"}
+     :relation "team-reader"
+     :subject {:type "team" :id "t1"}}]
+   :request
+   {:operation :lookup-resources
+    :subject {:type "user" :id "u1"}
+    :permission "read"
+    :resource-type "folder"}
+   :limits {:max-derived-grants 1000
+            :max-advanced-datoms 1000
+            :max-queued-work 1000}})
+
 (defn- test-adapter
   []
   (backend/make-adapter
@@ -110,6 +164,55 @@
                      :graph 2
                      :proof "proof"}}
             #(throw (ex-info "legacy must not run" {})))))))
+
+(deftest generated-java-full-authorization-boundary
+  (let [evaluate
+        (fn [request]
+          (verified/decide
+           selection
+           :authorization-evaluation
+           (assoc authorization-input :request request)
+           #(throw (ex-info "legacy must not run" {}))))
+        lookup
+        (evaluate (:request authorization-input))
+        can-result
+        (evaluate
+         {:operation :can?
+          :subject {:type "user" :id "u1"}
+          :permission "read"
+          :resource {:type "folder" :id "f1"}})
+        reverse-result
+        (evaluate
+         {:operation :lookup-subjects
+          :resource {:type "folder" :id "f1"}
+          :permission "read"
+          :subject-type "user"})
+        count-result
+        (evaluate
+         {:operation :count-resources
+          :subject {:type "user" :id "u1"}
+          :permission "read"
+          :resource-type "folder"
+          :count-limit 1})
+        reverse-count-result
+        (evaluate
+         {:operation :count-subjects
+          :resource {:type "folder" :id "f1"}
+          :permission "read"
+          :subject-type "user"
+          :count-limit 1})]
+    (is (= [{:type "folder" :id "f0"}
+            {:type "folder" :id "f1"}]
+           (:items lookup)))
+    (is (true? (:allowed? can-result)))
+    (is (= [{:type "user" :id "u1"}]
+           (:items reverse-result)))
+    (is (= {:count 1 :truncated? true}
+           (select-keys count-result [:count :truncated?])))
+    (is (= {:count 1 :truncated? false}
+           (select-keys
+            reverse-count-result
+            [:count :truncated?])))))
 
 (deftest production-relationship-pages-use-generated-java-decisions
   (let [snapshot-context

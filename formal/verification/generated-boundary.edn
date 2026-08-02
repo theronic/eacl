@@ -1,5 +1,5 @@
 {:schema-version 1
- :status :partial-production-routing-passed
+ :status :materialized-reference-and-partial-production-routing-passed
  :portable-boundary eacl.verified-kernel
  :modes
  [:legacy-authoritative :verified-shadow :verified-authoritative]
@@ -12,6 +12,7 @@
   :unknown-fields
   :duplicate-map-fields
   :invalid-object-identities
+  :bounded-identity-strings
   :unsafe-integer-ranges
   :oversized-values
   :invalid-generated-result-variants]
@@ -20,20 +21,44 @@
   :lookup-cursor-continuation
   :relationship-cursor-continuation
   :cache-validation]
+ :materialized-reference-decisions
+ [:can?
+  :lookup-resources
+  :lookup-subjects
+  :count-resources
+  :count-subjects]
  :evidence
  {:generated-java-wire
   {:namespace eacl.formal.wire-format-bridge-test
    :tests 1 :assertions 7 :status :passed}
   :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 11 :suite-assertions 604 :status :passed}
+   :suite-tests 12 :suite-assertions 609 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
-   :clj {:tests 3 :assertions 10}
+   :clj {:tests 4 :assertions 23}
    :cljs :passed-in-full-suite}
   :production-routing
-  {:clj-java {:tests 3 :assertions 13}
-   :cljs-javascript {:tests 3 :assertions 13}}}
+  {:clj-java {:tests 4 :assertions 18}
+   :cljs-javascript {:tests 4 :assertions 18}}
+  :materialized-reference
+  {:clj-java
+   {:namespace eacl.formal.production-kernel-test
+    :tests 4 :assertions 18 :status :passed}
+   :cljs-javascript
+   {:namespace eacl.formal.production-kernel-test
+    :suite-tests 12 :suite-assertions 609 :status :passed}}
+  :public-state-trace
+  {:namespace eacl.formal.state-trace-differential-test
+   :backends [:datomic :datahike :datascript]
+   :cache-modes [:enabled :disabled]
+   :operations
+   [:can?
+    :lookup-resources
+    :lookup-subjects
+    :count-resources
+    :count-subjects]
+   :tests 1 :assertions 99 :status :passed}}
  :remaining
- [:complete-schema-query-and-adapter-callback-routing
-  :complete-public-traversal-result-routing]}
+ [:indexed-adapter-callback-routing
+  :complete-public-traversal-authority]}

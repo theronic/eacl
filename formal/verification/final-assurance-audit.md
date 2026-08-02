@@ -19,7 +19,10 @@ The implemented proof and runtime evidence supports narrower claims:
    tests for the exercised finite fixtures;
 4. decoded relationship-page, cursor-continuation, and authenticated
    cache-validation decisions are routed through the generated decision
-   kernels in the internal verified modes.
+   kernels in the internal verified modes; and
+5. strict generated Java and JavaScript boundaries evaluate complete
+   materialized `can?`, lookup, and count requests, and the Java reference
+   agrees with cached and uncached public state traces on all three backends.
 
 These claims remain conditional on the trusted toolchain, generated-code
 compilers, runtimes, FFI conversion, adapter contracts, canonicalization,
@@ -29,8 +32,8 @@ documents.
 
 ## Claims that are deliberately withheld
 
-- Complete CLJ and CLJS production schema/query/result conversion is not
-  implemented.
+- Complete materialized CLJ and CLJS schema/query/result conversion is
+  implemented, but an indexed generated-to-adapter callback boundary is not.
 - The generated direct, acyclic, and recursive traversal kernels do not yet
   drive every public `can?`, lookup, or count operation.
 - The current-generation cache, exact/arbitrary-DB bypass, scalar stamp law,
@@ -39,7 +42,9 @@ documents.
   refinement claim, not complete public-engine verification.
 - Production shadow comparison does not yet cover full traversal results,
   ordering, counts, typed errors, limits, and provenance at the required
-  rollout volumes.
+  rollout volumes. Existing shadow diagnostics are fail-open with respect to
+  legacy authority and redact request/result values without emitting
+  guessable hashes.
 - No independent security/formal-methods review has been obtained.
 - The current-cache performance gate passes. The verified-authoritative
   cutover remains pending complete public generated-kernel routing and shadow
@@ -60,7 +65,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 242 obligations across 12 files, zero
+- Clean checksum-locked Dafny cache: 254 obligations across 12 files, zero
   errors, warnings, timeouts, admitted lemmas, `assume`, `axiom`,
   `{:verify false}`, opaque, or extern declarations.
 - TLA+/Apalache: both models typechecked; compact length 12, detailed length 6,
@@ -68,10 +73,10 @@ that the complete v8.0 engine is formally verified.
   obligations passed.
 - Counterexample corpus: 10 tests, 107 assertions, zero failures/errors.
 - Mutation controls: 1 test, 22 assertions, all 9 registered mutants killed.
-- Public non-benchmark CLJ suite: 361 tests, 12,991 assertions, zero failures/errors.
-- DataScript CLJS suite: 74 tests, 1,148 assertions, zero failures/errors.
-- Generated Java suite: 17 tests, 7,076 assertions, zero failures/errors.
-- Generated JavaScript suite: 11 tests, 604 assertions, zero failures/errors.
+- Public non-benchmark CLJ suite: 371 tests, 13,115 assertions, zero failures/errors.
+- DataScript CLJS suite: 84 tests, 1,265 assertions, zero failures/errors.
+- Generated Java suite: 18 tests, 7,141 assertions, zero failures/errors.
+- Generated JavaScript suite: 12 tests, 609 assertions, zero failures/errors.
 - OpenSpec strict validation: passed.
 - Heavy benchmark: 9 tests, 3,403 assertions, zero failures/errors; the
   current-cache measurements are recorded in

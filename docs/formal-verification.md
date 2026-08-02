@@ -135,16 +135,27 @@ The internal `:engine-selection` client option now supports
 Generated Java and JavaScript providers implement the portable
 `eacl.verified-kernel/DecisionKernel` boundary. Cursor continuation,
 relationship page-window, and decoded cache-entry decisions are routed through
-that boundary in verified modes. Shadow mode reports only a canonical input
-digest and result variants; a generated exception, invalid result, or
-disagreement cannot alter the legacy decision.
+that boundary in verified modes. Shadow mode reports only the operation,
+changed field names, and non-sensitive result variants. It deliberately emits
+neither raw values nor hashes of low-entropy request/result data; a generated
+exception, invalid result, or disagreement cannot alter the legacy decision.
 
-This is not yet a full-engine cutover. Traversal, lookup, count, and permission
-checks still use the legacy Clojure engine as their public result source, and
-generated authority is used only by formal integration tests. The generated
-providers are reproducible build outputs under `formal/smoke/`; they are not
-yet shipped as a supported client option. The manifest therefore continues to
-report `not-verified`.
+The same boundary now converts complete materialized schema IR, objects,
+relationships, traversal limits, all five authorization request variants, and
+typed results to generated Java and JavaScript. This is the executable
+cache-free reference implementation used by differential tests. It is run
+against cached and uncached public-client state traces for Datomic, Datahike,
+and DataScript, including unrelated transactions and revocation.
+
+This is still not a full-engine cutover. Materializing an entire database is
+not an acceptable hot-path implementation for large EACL graphs. Public
+traversal, lookup, count, and permission checks therefore continue to use the
+indexed Clojure/CLJS engine as their result source. Complete assurance requires
+a proved generated engine that calls certified ordered adapter scans (or an
+equivalent non-circular refinement boundary), followed by full shadow and load
+gates. The generated providers are reproducible build outputs under
+`formal/smoke/`; they are not yet shipped as a supported client option. The
+manifest therefore continues to report `not-verified`.
 
 The planned rollout order is:
 

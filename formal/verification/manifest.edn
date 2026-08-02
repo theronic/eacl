@@ -41,7 +41,7 @@
    :claim :frontier-laws-only}
   :recursive-engine
   {:status :passed
-   :verified-obligations 34
+   :verified-obligations 46
    :source "formal/dafny/RecursiveEngine.dfy"
    :report "formal/verification/recursive-kernel.edn"}
   :pagination-and-cursor-kernel
@@ -130,7 +130,7 @@
   :seeds 200
   :unexplained-counterexamples 0}
  :generated-boundary
- {:status :partial-production-routing-passed
+ {:status :materialized-reference-and-partial-production-routing-passed
   :report "formal/verification/generated-boundary.edn"
   :complete-public-routing false}
  :release-gate

@@ -27,6 +27,243 @@
    (.-Seq (.-_dafny generated))
    (into-array values)))
 
+(defn- object->dafny
+  [{:keys [type id]}]
+  (js-invoke
+   (.-ObjectRef (.-Semantics generated))
+   "create_ObjectRef"
+   (dafny-string type)
+   (dafny-string id)))
+
+(defn- dafny-object->object
+  [object]
+  {:type (.toVerbatimString (.-dtor_typeName object) false)
+   :id (.toVerbatimString (.-dtor_objectId object) false)})
+
+(defn- permission-node
+  [{:keys [resource-type permission]}]
+  (js-invoke
+   (.-PermissionNode (.-Semantics generated))
+   "create_PermissionNode"
+   (dafny-string resource-type)
+   (dafny-string permission)))
+
+(defn- relation-node
+  [{:keys [resource-type relation subject-type]}]
+  (js-invoke
+   (.-RelationNode (.-Semantics generated))
+   "create_RelationNode"
+   (dafny-string resource-type)
+   (dafny-string relation)
+   (dafny-string subject-type)))
+
+(defn- rule-definition
+  [{:keys [kind resource-type permission relation subject-type
+           target-permission via-relation target-relation]}]
+  (let [rules (.-RuleDefinition (.-Semantics generated))
+        head
+        (permission-node
+         {:resource-type resource-type
+          :permission permission})]
+    (case kind
+      :direct-relation
+      (js-invoke
+       rules "create_DirectRelation"
+       head (dafny-string relation) (dafny-string subject-type))
+
+      :self-permission
+      (js-invoke
+       rules "create_SelfPermission"
+       head (dafny-string target-permission))
+
+      :arrow-relation
+      (js-invoke
+       rules "create_ArrowRelation"
+       head
+       (dafny-string via-relation)
+       (dafny-string target-relation)
+       (dafny-string subject-type))
+
+      :arrow-permission
+      (js-invoke
+       rules "create_ArrowPermission"
+       head
+       (dafny-string via-relation)
+       (dafny-string target-permission)))))
+
+(defn- relationship->dafny
+  [{:keys [resource relation subject]}]
+  (js-invoke
+   (.-Relationship (.-Semantics generated))
+   "create_Relationship"
+   (object->dafny resource)
+   (dafny-string relation)
+   (object->dafny subject)))
+
+(defn- authorization-inputs
+  [{:keys [objects schema relationships]}]
+  {:objects (dafny-sequence (map object->dafny objects))
+   :relations
+   (dafny-sequence (map relation-node (:relations schema)))
+   :permissions
+   (dafny-sequence (map permission-node (:permissions schema)))
+   :definitions
+   (dafny-sequence (map rule-definition (:definitions schema)))
+   :relationships
+   (dafny-sequence (map relationship->dafny relationships))})
+
+(defn- traversal-limits
+  [{:keys [max-derived-grants
+           max-advanced-datoms
+           max-queued-work]}]
+  (js-invoke
+   (.-TraversalLimits (.-RecursiveEngine generated))
+   "create_TraversalLimits"
+   (big-number max-derived-grants)
+   (big-number max-advanced-datoms)
+   (big-number max-queued-work)))
+
+(defn- limit-kind
+  [kind]
+  (cond
+    (.-is_DerivedGrants kind) :derived-grants
+    (.-is_AdvancedDatoms kind) :advanced-datoms
+    :else :queued-work))
+
+(defn- work-counters
+  [counters]
+  {:derived-grants
+   (.toNumber (.-dtor_derivedGrants counters))
+   :advanced-datoms
+   (.toNumber (.-dtor_advancedDatoms counters))
+   :queued-work
+   (.toNumber (.-dtor_queuedWork counters))})
+
+(defn- sequence-outcome
+  [operation outcome]
+  (if (.-is_SequenceComplete outcome)
+    {:status :complete
+     :operation operation
+     :items (mapv dafny-object->object (.-dtor_items outcome))
+     :counters (work-counters (.-dtor_counters outcome))}
+    {:status :limit-exceeded
+     :operation operation
+     :limit-kind (limit-kind (.-dtor_kind outcome))
+     :counters (work-counters (.-dtor_counters outcome))}))
+
+(defn- boolean-outcome
+  [operation outcome]
+  (if (.-is_BooleanComplete outcome)
+    {:status :complete
+     :operation operation
+     :allowed? (.-dtor_allowed outcome)
+     :counters (work-counters (.-dtor_counters outcome))}
+    {:status :limit-exceeded
+     :operation operation
+     :limit-kind (limit-kind (.-dtor_kind outcome))
+     :counters (work-counters (.-dtor_counters outcome))}))
+
+(defn- count-outcome
+  [operation outcome]
+  (if (.-is_CountComplete outcome)
+    {:status :complete
+     :operation operation
+     :count (.toNumber (.-dtor_count outcome))
+     :truncated? (.-dtor_truncated outcome)
+     :counters (work-counters (.-dtor_counters outcome))}
+    {:status :limit-exceeded
+     :operation operation
+     :limit-kind (limit-kind (.-dtor_kind outcome))
+     :counters (work-counters (.-dtor_counters outcome))}))
+
+(defn- authorization-outcome
+  [{:keys [objects permissions definitions relationships]}
+   request traversal-limit-values]
+  (let [node
+        (permission-node
+         {:resource-type
+          (or (:resource-type request)
+              (:type (:resource request)))
+          :permission (:permission request)})
+        recursive (.-RecursiveEngine generated)
+        kernel (.-__default recursive)
+        limits (traversal-limits traversal-limit-values)]
+    (case (:operation request)
+      :can?
+      (boolean-outcome
+       :can?
+       (js-invoke
+        kernel
+        "RecursiveCan"
+        objects permissions definitions relationships
+        (object->dafny (:subject request))
+        node
+        (object->dafny (:resource request))
+        limits))
+
+      :lookup-resources
+      (sequence-outcome
+       :lookup-resources
+       (js-invoke
+        kernel
+        "RecursiveForward"
+        objects permissions definitions relationships
+        (object->dafny (:subject request))
+        node
+        limits))
+
+      :lookup-subjects
+      (sequence-outcome
+       :lookup-subjects
+       (js-invoke
+        kernel
+        "RecursiveReverseTyped"
+        objects permissions definitions relationships
+        (object->dafny (:resource request))
+        node
+        (dafny-string (:subject-type request))
+        limits))
+
+      :count-resources
+      (count-outcome
+       :count-resources
+       (js-invoke
+        kernel
+        "RecursiveCountForward"
+        objects permissions definitions relationships
+        (object->dafny (:subject request))
+        node
+        (big-number (:count-limit request))
+        limits))
+
+      :count-subjects
+      (count-outcome
+       :count-subjects
+       (js-invoke
+        kernel
+        "RecursiveCountReverseTyped"
+        objects permissions definitions relationships
+        (object->dafny (:resource request))
+        node
+        (dafny-string (:subject-type request))
+        (big-number (:count-limit request))
+        limits)))))
+
+(defn- authorization-decision
+  [{:keys [request] :as input}]
+  (let [{:keys [objects relations permissions definitions relationships]
+         :as converted}
+        (authorization-inputs input)
+        well-formed?
+        (js-invoke
+         (.-__default (.-Semantics generated))
+         "WellFormedSchema"
+         objects relations permissions definitions relationships)]
+    (if-not well-formed?
+      {:status :invalid-schema
+       :errors [:not-well-formed]}
+      (authorization-outcome converted request (:limits input)))))
+
 (defn- page-presence
   [value]
   (let [presence (.-Presence (.-PageWindow generated))]
@@ -239,7 +476,8 @@
     (case operation
       :relationship-page (page-decision input)
       :cursor-continuation (continuation-decision input)
-      :cache-validation (cache-decision input))))
+      :cache-validation (cache-decision input)
+      :authorization-evaluation (authorization-decision input))))
 
 (def generated-javascript-kernel
   (->GeneratedJavaScriptKernel))

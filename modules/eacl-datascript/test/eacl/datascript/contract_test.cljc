@@ -73,7 +73,7 @@
                             :reboot
                             (contract/->server "server-1")))))))
 
-(deftest datascript-large-relationship-cursor-proof-test
+(deftest datascript-large-relationship-cursor-skips-item-proof-test
   (let [relationship-count 1505
         conn (datascript/create-conn)
         client (datascript/make-client conn {})
@@ -126,8 +126,10 @@
       (is (= 1000 (count (:data page-1))))
       (is (= 505 (count (:data page-2))))
       (is (false? (get-in page-2 [:page-info :has-next-page?])))
-      (is (= 1 page-1-proof-count))
-      (is (= 1 page-2-proof-count)))))
+      (is (zero? page-1-proof-count)
+          "v10 commits to the immutable snapshot, not every result item")
+      (is (zero? page-2-proof-count)
+          "continuation must not rebuild a linear relationship proof"))))
 
 (defn- seeded-client
   []
