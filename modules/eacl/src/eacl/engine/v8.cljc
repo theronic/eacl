@@ -255,26 +255,21 @@
                :relation-name target-relation-name})
         []))))
 
-;; --- Client-lifecycle permission-path cache (issue #74) ----------------------
+;; --- Selected-snapshot permission-path cache (issue #74) ---------------------
 ;;
-;; EACL has one supported schema mutation boundary: eacl/write-schema!. A
-;; connection-backed client reads :eacl/schema-version ONCE when it is created
-;; and owns one generation of resolved permission paths for its lifetime.
-;; Ordinary Datomic transactions may produce a new db value for every request;
-;; they do not cause a version read, definition scan, cache-key change or db
-;; value retention.
+;; A client owns derived-schema generations keyed by backend, source scope, and
+;; the schema proof visible in the selected immutable snapshot. Managed writer
+;; authority makes that proof one atomically published mutation identity.
+;; Unknown writer authority deliberately uses a complete content proof instead:
+;; detecting arbitrary out-of-band schema writes without trusting a listener or
+;; writer-maintained stamp requires reading the database-visible definitions.
 ;;
-;; write-schema! through that client replaces the entire generation under the
-;; client's schema write lock. Other clients/processes must be recreated after
-;; an out-of-band schema write. Low-level functions in this namespace are
-;; intentionally uncached unless a client binds *schema-cache*: arbitrary
-;; d/with/filter/as-of values therefore cannot publish paths into a live
-;; connection-backed client's cache.
-;;
-;; An unstamped snapshot (normally a fresh v7 database before its first schema
-;; write) is never latched: paths are resolved from the supplied db value on
-;; every call until write-schema! establishes a version. This is not a v6
-;; compatibility path.
+;; Permission paths, dependency closures, and recursive-routing decisions are
+;; memoized inside one proof generation. Their cold compilation cost is paid
+;; once per queried permission root and schema proof, then reused. Low-level
+;; functions remain uncached unless a client binds *schema-cache*, so arbitrary
+;; d/with/filter/as-of values cannot publish derived state into another
+;; snapshot's generation.
 
 (def ^:dynamic *schema-cache*
   "The client-owned schema cache bound by eacl.datomic.core.
@@ -289,16 +284,14 @@
   (backend/invoke snapshot :schema-proof))
 
 (defn schema-version-stamp
-  "String form of the version visible in a snapshot. This is an explicit diagnostic;
-  connection-backed authorization calls do not invoke it."
+  "String form of the schema proof visible in a snapshot."
   [snapshot]
   (some-> (schema-version snapshot) str))
 
 (defn make-schema-cache
-  "Creates the one schema generation owned by an EACL client.
+  "Creates a derived-schema generation for one selected schema proof.
 
-  This is the only automatic :eacl/schema-version read. A nil version marks a
-  fresh/unstamped database and deliberately disables latching/caching."
+  A nil proof deliberately disables derived-state latching."
   ([snapshot]
    (make-schema-cache snapshot (schema-version snapshot)))
   ([snapshot known-schema-version]
