@@ -59,6 +59,38 @@ Listeners are not part of any correctness argument. They may feed metrics, but
 listener counts never appear in tokens, schema keys, dependency proofs, cache
 validity, or freshness selection.
 
+### Proof cost and schema compilation
+
+Mutation and content proofs have deliberately different cost models:
+
+- Managed mutation schema proof is one indexed identity read. A relation proof
+  reads one mutation identity for each relation in the compiled dependency
+  closure, so it is `O(K log D + K log K)` for `K` dependent relations in a
+  database of `D` datoms. It does not grow with unrelated schema definitions or
+  relationships.
+- Unknown-writer content mode must detect arbitrary database-visible schema
+  changes without trusting an EACL-maintained stamp. The derived-schema
+  generation key therefore commits the complete schema. Its current worst-case
+  work is `O(S log S)` for `S` definition records.
+- Content relationship proofs are complete but currently collect/filter the
+  backend's relationship storage before hashing the dependency relations.
+  Their worst-case work is `O(G + M log M)`, where `G` is total relationship
+  storage scanned and `M` is the matching proof record count. The digest output
+  is fixed-size and hashing is incremental; that is a size/memory property, not
+  a constant-time claim.
+
+Permission paths, relation dependencies, and recursive-routing decisions are
+memoized within a selected schema-proof generation. The current recursive
+classification computes reachability closures iteratively and has an
+`O(V(V+E))` cold upper bound for `V` reachable permission nodes and `E`
+permission edges. It is not paid on every authorization call: the result is
+cached per permission root and schema generation. Schema writes are rare, but
+large recursive schemas should account for this first-read compilation latency.
+
+Use managed mutation proofs for the normal EACL-only writer contract. Content
+mode is the conservative interoperability fallback for unknown writers, not the
+low-latency configuration.
+
 ## Token keys, lifetime, and retention
 
 Portable DataScript/Datahike clients use `:security-key` or

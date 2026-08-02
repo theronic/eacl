@@ -54,13 +54,26 @@ Situated AuthZ offers some advantages for typical use-cases:
   can retain valid entries without treating `basis-t` or a listener as proof.
 - EACL derives permission paths from the one immutable snapshot selected for
   the request and keys compiled state by its complete schema proof.
-  - `eacl/write-schema!` is the required schema mutation boundary. Calling it through a client atomically swaps that client's generation after the schema transaction. An identical write keeps the existing generation hot.
-  - Schema writes from another client or process change the selected
-    snapshot's schema proof, so existing clients rederive the permission graph.
-    `eacl.datomic.integrity/client-schema-status` remains an optional
-    operational diagnostic.
+  - Under `:coherence-authority :managed`, `eacl/write-schema!` is the required
+    schema mutation boundary and atomically publishes the schema mutation
+    identity. An identical write keeps the existing generation hot.
+  - Under the default `:unknown` authority, schema writes from another client,
+    process, or low-level transaction change the selected snapshot's complete
+    content proof, so existing clients rederive the permission graph without
+    trusting a listener. Detecting arbitrary out-of-band writes requires a
+    complete schema read; content mode is the conservative interoperability
+    path, not the low-latency configuration.
   - Low-level calls against arbitrary `db`, `d/as-of`, `d/with`, or filtered values are deliberately uncached. Connection-backed cursor and exact reads build request-scoped schema state from their historical DB; they do not publish paths into the client's live schema cache.
-  - A fresh database with no schema stamp remains uncached until its first `write-schema!`; this is not a v6 compatibility mode. A client constructed against such a database adopts the generation the first time one is visible — including one written by another client or process — so it does not stay permanently uncached, and its cursors stay valid across that transition. That `:eacl/schema-version` read happens only while the client is still unstamped.
+  - Permission paths, dependency closures, and recursive routing are compiled
+    lazily and memoized within a schema-proof generation. Recursive
+    classification has an `O(V(V+E))` cold upper bound for `V` reachable
+    permission nodes and `E` permission edges, but the cached decision is not
+    recomputed on each authorization call.
+  - Managed proof reads are dependency-sized. Unknown-writer content proofs
+    currently perform graph-wide collection/filtering before hashing the
+    dependency relations. See the
+    [proof-cost review](docs/reports/2026-08-02-eacl-v8-cache-proof-cost.md)
+    for measured costs and exact methodology.
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a proof-equivalent miss is slower but correct because it replays the prefix. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
