@@ -79,13 +79,15 @@ Mutation and content proofs have deliberately different cost models:
   is fixed-size and hashing is incremental; that is a size/memory property, not
   a constant-time claim.
 
-Permission paths, relation dependencies, and recursive-routing decisions are
-memoized within a selected schema-proof generation. The current recursive
-classification computes reachability closures iteratively and has an
-`O(V(V+E))` cold upper bound for `V` reachable permission nodes and `E`
-permission edges. It is not paid on every authorization call: the result is
-cached per permission root and schema generation. Schema writes are rare, but
-large recursive schemas should account for this first-read compilation latency.
+Permission paths and relation dependencies are memoized within a selected
+schema-proof generation. Recursive routing for all permission nodes shares one
+generation analysis. Iterative strongly connected component and reverse
+reachability passes make the graph-analysis portion `O(V+E)` cold work and
+memory for `V` permission nodes and `E` permission edges once adapter permission
+paths are materialized. The analysis is published through one shared delay, so
+concurrent first readers do not duplicate it. Another permission root then
+performs a constant-time lookup. Schema writes are rare, but large recursive
+schemas should account for this first-read generation-compilation latency.
 
 Use managed mutation proofs for the normal EACL-only writer contract. Content
 mode is the conservative interoperability fallback for unknown writers, not the
