@@ -699,9 +699,13 @@ custom or shared store needs no backend dependency in EACL core.
 `eacl.datomic.cache/no-cache` is the adapter that caches nothing. `nil`, or omitting `:cache`
 entirely, gives you the default in-memory adapter.
 
-Reach for `no-cache` when the same permission check is essentially never asked twice — a batch job
-sweeping distinct resources, say. A read then pays for a cache lookup it can never benefit from.
-When checks do recur, the cache is the faster path.
+Reach for `no-cache` when the same permission check is essentially never asked
+twice — a batch job sweeping distinct resources, say — or when direct
+evaluation is cheaper than authenticated completed-answer validation. Repeated
+checks do not by themselves guarantee a latency win: the avoided authorization
+work must exceed the proof/envelope hit cost. See the
+[cache proof cost review](docs/reports/2026-08-02-eacl-v8-cache-proof-cost.md)
+for measured break-even examples.
 
 Lookups and counts report where their answer came from:
 

@@ -51,6 +51,56 @@ approximately 1.5–1.7 ms floor is not backend proof construction: it includes
 the redesigned consistency selection and authenticated token/cache-envelope
 path.
 
+## Proofed cache hit versus no completed-result cache
+
+The old/new comparison does not answer the most important operational question:
+whether a proofed completed-answer hit is faster than evaluating the
+authorization with result caching disabled. The same public `can?` call was
+therefore measured under both writer-authority modes, first with a warmed
+completed-answer cache and then through a client using `cache/no-cache`. Both
+clients used the same database and had their derived schema state warmed before
+measurement.
+
+For the benchmark's cheap one-relation permission, both the optimized managed
+mode and the default unknown-writer content mode were measured:
+
+| Backend / authority | Proofed cache hit (µs) | No cache (µs) | Cache / no-cache |
+| --- | ---: | ---: | ---: |
+| Datomic / managed | 1,625.5 | 1,580.0 | 1.03× |
+| Datahike / managed | 1,810.3 | 155.3 | 11.66× |
+| DataScript / managed | 1,694.1 | 202.8 | 8.35× |
+| Datomic / unknown | 1,923.7 | 1,821.1 | 1.06× |
+| Datahike / unknown | 1,813.9 | 69.6 | 26.05× |
+| DataScript / unknown | 1,642.7 | 111.4 | 14.74× |
+
+The proofed cache is not faster for this workload. Datomic is effectively at
+parity at this measurement scale; Datahike and DataScript are substantially
+slower because their uncached direct evaluation is much cheaper than the fixed
+authenticated cache path.
+
+A recursive folder chain demonstrates the break-even behavior. The cached
+answer still validates the same dependency-sized proof; the uncached call must
+traverse an increasing number of relationship edges:
+
+| Backend / chain depth | Proofed cache hit (µs) | No cache (µs) | Speedup |
+| --- | ---: | ---: | ---: |
+| Datahike / 100 | 1,733.4 | 1,018.2 | 0.59× |
+| Datahike / 200 | 1,765.2 | 1,720.0 | 0.97× |
+| Datahike / 400 | 1,726.7 | 4,260.6 | 2.47× |
+| Datahike / 800 | 1,799.3 | 6,346.4 | 3.53× |
+| DataScript / 50 | 1,629.4 | 729.9 | 0.45× |
+| DataScript / 100 | 1,623.7 | 1,837.1 | 1.13× |
+| DataScript / 400 | 1,594.8 | 11,275.8 | 7.07× |
+| DataScript / 800 | 1,578.6 | 24,857.4 | 15.75× |
+| Datomic / 50 | 1,618.0 | 1,622.8 | 1.00× |
+| Datomic / 400 | 1,654.5 | 1,742.0 | 1.05× |
+
+The exact crossover is hardware-, backend-, schema-, and query-dependent.
+These rows establish only the governing rule: completed-result caching wins
+when avoided authorization work exceeds the roughly 1.6–1.8 ms fixed
+proof/envelope hit cost. It is a correctness-preserving latency trade, not a
+universal optimization.
+
 ## Direct proof results
 
 | Backend | v3 content: complete schema at +200 defs | v3 content: scoped schema at +200 defs | v3 content: relation proof at +5,000 unrelated edges | v3 managed proof operations |
@@ -126,6 +176,8 @@ per root. The measured steady lookup is constant at this resolution.
    read as a claim that collecting, sorting, or reading proof records is
    constant-time or constant-memory end to end.
 5. The authenticated v3 path has a material fixed latency floor even in managed
-   mode. Further optimization should profile token and cache-envelope
-   encode/decode separately; weakening proof or authentication semantics is not
-   an acceptable benchmark optimization.
+   mode. It is slower than uncached direct evaluation on Datahike and DataScript
+   and only pays off for sufficiently expensive/repeated authorization work.
+   Further optimization should profile token and cache-envelope encode/decode
+   separately; weakening proof or authentication semantics is not an acceptable
+   benchmark optimization.
