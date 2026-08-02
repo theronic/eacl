@@ -147,9 +147,12 @@
          :completed-cache?
          (and
           (:completed-cache-request? opts)
-          (nil? (or (:after query) (:before query)))
           (not= :at-exact-snapshot
                 (get-in selection [:descriptor :mode]))
+          ;; Cursor authentication and snapshot selection happen before this
+          ;; decision. A continuation that still resolves to the selected
+          ;; current DB is therefore safe to cache; a historical continuation
+          ;; selects another immutable DB and continues to bypass this cache.
           (identical?
            (:db (backend/state adapter))
            (:db (backend/state page-adapter)))))]
