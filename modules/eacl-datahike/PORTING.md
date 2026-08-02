@@ -111,14 +111,23 @@ seek [:room :owner :party] → [:room :owner :party]  ; correct
 ```
 
 A partial composite tuple is therefore not a reliable seek bound. Datahike
-0.8.1759 also fails to apply an `AsOfDB` wrapper's temporal context to
-`seek-datoms`. `db/seek-tuple-prefix` consequently restricts `datoms` to the
-exact AVET attribute and filters its bounded schema-definition segment by
-prefix. Relation-definition cardinality is bounded by schema size.
+0.8.1759 does carry an `AsOfDB` wrapper's temporal context into
+`seek-datoms`, but its full-tuple temporal seek can position after a
+historically visible tuple that was retracted later. This was reproduced with
+an exact `(entity, attribute)` `datoms` read returning the old relationship
+while the equivalent lower-bound seek started in a later index segment.
 
-This issue does not force a DataScript-style relationship model. The hot
-relationship paths use explicit heterogeneous values through endpoint-local
-EAVT scans or full-length AVET range bounds.
+Concrete and retained-commit DB values consequently use padded prefix seeks.
+Temporal/filter wrappers use exact attribute- or endpoint-bounded `datoms`
+followed by prefix filtering. Those wrapper reads remain bounded by schema size
+for definitions and by one endpoint for relationships. Attribute guards on the
+seek path resolve the configured representation through Datahike's database
+protocol, which also works when attributes are numeric refs.
+
+The hot relationship paths use explicit heterogeneous values through
+endpoint-local EAVT seeks or full-length AVET range bounds. Every prefix seek
+checks the appropriate entity/attribute index boundary because Datahike seeks
+continue into the next segment when no value matches the requested prefix.
 
 ## A coverage trap worth knowing about
 

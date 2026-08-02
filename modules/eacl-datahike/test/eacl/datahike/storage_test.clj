@@ -4,6 +4,7 @@
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.impl :as impl]
             [eacl.datahike.integrity :as integrity]
             [eacl.datahike.schema :as schema]
             [eacl.schema.model :as model]))
@@ -13,6 +14,11 @@
    definition account {
      relation owner: user
      permission admin = owner
+   }")
+
+(def ^:private self-relationship-schema
+  "definition node {
+     relation peer: node
    }")
 
 (def ^:private modes
@@ -111,6 +117,58 @@
                        db-after
                        account-2-eid
                        schema/reverse-relationship-attr))))))
+          (finally
+            (d/release conn)))))))
+
+(deftest relationship-prefix-seeks-stay-within-the-requested-attribute-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [conn
+            (datahike/create-conn
+             nil
+             {:attribute-refs? attribute-refs?
+              :commit-graph? false
+              :keep-history? true})
+            client (datahike/make-client conn {})
+            node-a (eacl/spice-object :node "node-a")
+            node-b (eacl/spice-object :node "node-b")
+            relationship (eacl/->Relationship node-b :peer node-a)]
+        (try
+          (eacl/write-schema! client self-relationship-schema)
+          (d/transact conn [{:eacl/id "node-a"}
+                            {:eacl/id "node-b"}])
+          (eacl/create-relationship! client relationship)
+          (let [snapshot (d/db conn)
+                snapshot-tx (:max-tx snapshot)
+                node-a-eid (ddb/entid snapshot [:eacl/id "node-a"])
+                node-b-eid (ddb/entid snapshot [:eacl/id "node-b"])
+                relation-eid
+                (ddb/entid
+                 snapshot
+                 [:eacl/id
+                  (model/->relation-id :node :peer :node)])
+                assert-snapshot!
+                (fn [db]
+                  (is (= [node-a-eid]
+                         (vec
+                          (impl/subject->resources
+                           db :node node-b-eid relation-eid :node nil))))
+                  (is (empty?
+                       (impl/subject->resources
+                        db :node node-a-eid relation-eid :node nil))
+                      "an incoming edge must not be returned as outgoing")
+                  (is (= [node-b-eid]
+                         (vec
+                          (impl/resource->subjects
+                           db :node node-a-eid relation-eid :node nil))))
+                  (is (empty?
+                       (impl/resource->subjects
+                        db :node node-b-eid relation-eid :node nil))
+                      "an outgoing edge must not be returned as incoming"))]
+            (assert-snapshot! snapshot)
+            (eacl/delete-relationship! client relationship)
+            (assert-snapshot!
+             (d/as-of (d/db conn) snapshot-tx)))
           (finally
             (d/release conn)))))))
 
