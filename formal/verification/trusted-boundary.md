@@ -73,13 +73,17 @@ proof tests are evidence, not mathematical proofs of cryptography.
 Configured maximum input sizes, recursion work, queued work, derived grants,
 cursor age, retained snapshots, and continuation/cache capacity are trusted
 configuration inputs after range validation. The kernel proves that crossing a
-modeled traversal limit fails the entire operation; it does not prove that a
-chosen limit meets latency or availability objectives.
+modeled traversal limit fails the entire operation. `CursorCost.dfy` proves the
+compact framing model has one payload canonicalization and authentication pass;
+production exposes matching deterministic counters and tests that refinement
+boundary. Neither proof establishes wall-clock latency or the cost hidden
+inside a trusted canonicalization or cryptographic primitive.
 
 ## Excluded claims
 
 The verification does not establish that a customer's policy expresses their
 intent, that an adapter meets its assumptions without certification, that
-toolchain/runtime defects are impossible, or that performance targets hold.
+toolchain/runtime defects are impossible, or that wall-clock performance
+targets hold.
 The release manifest must list these exclusions and must never label an
 unmapped operation “formally verified.”

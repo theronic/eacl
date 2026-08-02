@@ -177,7 +177,7 @@
         (is (empty? (:data after-revocation)))
         (is (false? (:cached? after-revocation)))))))
 
-(deftest encrypted-cursor-proof-equivalence-and-exact-fallback-test
+(deftest encrypted-cursor-current-recovery-test
   (with-mem-conn [conn schema/v7-schema]
     (let [authorization (client conn)
           _ (eacl/write-schema! authorization authorization-schema)
@@ -205,7 +205,7 @@
         conn
         [{:db/id (d/tempid :db.part/user)
           :db/doc "unrelated cursor churn"}])
-      (testing "an unrelated write still pins continuation to the original basis"
+      (testing "an unrelated write rebases continuation to the current basis"
         (let [page-2
               (eacl/lookup-resources
                authorization
@@ -215,7 +215,9 @@
                (:opts authorization)
                (get-in page-2 [:page-info :end-cursor]))]
           (is (= ["doc-b"] (mapv :id (:data page-2))))
-          (is (= cursor-basis (:basis-t continued)))))
+          (is (= :rebased
+                 (get-in page-2 [:page-info :cursor-recovery])))
+          (is (not= cursor-basis (:basis-t continued)))))
       (let [fresh-page-1
             (eacl/lookup-resources authorization query)
             fresh-cursor
@@ -226,16 +228,16 @@
               authorization
               (eacl/->Relationship
                user :reader (second documents))))]
-        (testing "a relationship change continues on the original exact graph"
-          (is (= ["doc-b"]
-                 (mapv
-                  :id
-                  (:data
-                   (eacl/lookup-resources
-                    authorization
-                    (assoc query :after fresh-cursor)))))))
-        (testing "a newer causal floor forbids fallback to the old graph"
-          (is (= :eacl.consistency/cursor-consistency-conflict
+        (testing "a relationship change resumes on the current graph"
+          (let [page
+                (eacl/lookup-resources
+                 authorization
+                 (assoc query :after fresh-cursor))]
+            (is (= ["doc-c"] (mapv :id (:data page))))
+            (is (= :rebased
+                   (get-in page [:page-info :cursor-recovery])))))
+        (testing "a changed causal floor is a different query scope"
+          (is (= :eacl.pagination/invalid-cursor
                  (:type
                   (error-data
                    #(eacl/lookup-resources

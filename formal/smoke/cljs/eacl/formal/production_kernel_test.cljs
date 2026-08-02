@@ -128,7 +128,7 @@
            :default-size 1000
            :maximum-size 10000}
           #(throw (ex-info "legacy must not run" {})))))
-  (is (= :snapshot-unavailable
+  (is (= :rebase-current
          (verified/decide
           selection
           :cursor-continuation
@@ -139,7 +139,7 @@
            :cursor-source "source"
            :current-proof "new"
            :cursor-proof "old"
-           :mode :minimize-latency
+           :mode :recover-current
            :cursor-graph 0
            :exact nil}
           #(throw (ex-info "legacy must not run" {})))))

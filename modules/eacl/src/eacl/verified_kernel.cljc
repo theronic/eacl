@@ -143,7 +143,7 @@
     (doseq [field [:source :cursor-source :current-proof :cursor-proof]]
       (require-value! operation field bounded-string? (get input field)))
     (require-value!
-     operation :mode #{:minimize-latency :at-least-as-fresh} (:mode input))
+     operation :mode #{:recover-current :exact-snapshot} (:mode input))
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
@@ -469,6 +469,7 @@
 
 (def continuation-decisions
   #{:current
+    :rebase-current
     :exact
     :invalid-authentication
     :scope-mismatch

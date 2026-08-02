@@ -167,7 +167,7 @@
           (is (= 130 (count (set (map :id all-subjects))))
               "reverse scans resume correctly across 64-EID chunks"))))))
 
-(deftest recursive-cursor-replays-after-relevant-write-test
+(deftest recursive-cursor-restarts-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-historical-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -189,28 +189,22 @@
          (->Relationship (spice-object :account (account-id 14))
                          :parent
                          (spice-object :account "new-live-account")))
-        (is (= (:data page2)
-               (:data
-                (eacl/lookup-resources cached-client
-                                       (assoc query :after cursor))))
-            "an already produced exact page remains cache-resident")
-        (is (= (mapv account-id (range 10 15))
-               (mapv :id
-                     (:data
-                      (eacl/lookup-resources
-                       cached-client
-                       (assoc query :after uncomputed-cursor)))))
-            "an uncomputed page is replayed against the historical snapshot")
-        (is (= (:data page2)
-               (:data
-                (eacl/lookup-resources replay-client
-                                       (assoc query :after cursor))))
-            "cache-disabled replay does not fall forward after a relevant write")
+        (doseq [recovered
+                [(eacl/lookup-resources cached-client
+                                        (assoc query :after cursor))
+                 (eacl/lookup-resources cached-client
+                                        (assoc query :after uncomputed-cursor))
+                 (eacl/lookup-resources replay-client
+                                        (assoc query :after cursor))]]
+          (is (= (:data page1) (:data recovered))
+              "graph-specific recursive state restarts on the selected current graph")
+          (is (= :restarted
+                 (get-in recovered [:page-info :cursor-recovery]))))
         (is (= "new-live-account"
                (-> (collect-forward cached-client query) :data peek :id))
             "a new enumeration observes the relationship write")))))
 
-(deftest recursive-cursor-survives-unrelated-datomic-transactions-test
+(deftest recursive-cursor-restarts-after-unrelated-basis-churn-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -228,10 +222,11 @@
         (let [stats (atom {})
               page2 (binding [idx/*recursive-traversal-stats* stats]
                       (eacl/lookup-resources client (assoc query :after cursor)))]
-          (is (= (mapv account-id (range 5 10))
-                 (mapv :id (:data page2))))
-          (is (= 1 (:continuation-hits @stats))
-              "proof-equivalent basis churn can resume private continuation state")
+          (is (= (:data page1) (:data page2))
+              "recursive continuation state never crosses immutable DB values")
+          (is (= :restarted
+                 (get-in page2 [:page-info :cursor-recovery])))
+          (is (nil? (:continuation-hits @stats)))
           (let [restart-stats (atom {})
                 restarted-page1
                 (binding [idx/*recursive-traversal-stats* restart-stats]
@@ -317,7 +312,7 @@
                (weight (assoc state :rule-count 0)))
             "no reverse rule graph reached the unauthenticated provider")))))
 
-(deftest recursive-cursor-replays-when-its-boundary-object-is-gone-live-test
+(deftest recursive-cursor-recovers-when-its-boundary-object-is-gone-live-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {:page-token-key "recursive-deleted-boundary"})
           subject (spice-object :user (user-id 0))
@@ -331,12 +326,12 @@
             subject-eid (d/entid (d/db conn) [:eacl/id (user-id 0)])]
         (eacl/delete-object! client subject)
         @(d/transact conn [[:db.fn/retractEntity subject-eid]])
-        (is (= (mapv account-id (range 5 10))
-               (mapv :id
-                     (:data
-                      (eacl/lookup-resources client
-                                             (assoc query :after cursor)))))
-            "the cursor resolves its boundary object in the historical snapshot")))))
+        (let [recovered
+              (eacl/lookup-resources client (assoc query :after cursor))]
+          (is (empty? (:data recovered))
+              "ordinary continuation re-evaluates authorization on the live graph")
+          (is (= :restarted
+                 (get-in recovered [:page-info :cursor-recovery]))))))))
 
 (deftest alternate-cache-replays-a-cursor-when-the-relationship-proof-matches-test
   (with-mem-conn [conn schema/v7-schema]

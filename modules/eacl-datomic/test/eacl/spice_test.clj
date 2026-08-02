@@ -547,7 +547,7 @@
 	                                          :resource/type :server
 	                                          :first         2}))))
 
-	    (testing "page tokens replay their historical snapshot after live changes"
+	    (testing "non-exact page tokens recover against live changes"
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -561,14 +561,18 @@
 	            new-server (->server "stable-new-server")]
 	        @(d/transact conn [{:eacl/id (:id new-server)}])
 	        (is (eacl/create-relationship! *client my-account :account new-server))
-	        (is (= (:data expected-page2)
-	               (:data
-	                (eacl/lookup-resources
-	                 *client
-	                 (assoc base-query
-	                        :first 100
-	                        :after page1-end-cursor)))))
-	        (is (not-any? #(= new-server %) (:data expected-page2))))
+	        (let [recovered
+	              (eacl/lookup-resources
+	               *client
+	               (assoc base-query
+	                      :first 100
+	                      :after page1-end-cursor))]
+	          (is (not= (:data expected-page2)
+	                    (:data recovered)))
+	          (is (some #(= new-server %) (:data recovered)))
+	          (is (= :rebased
+	                 (get-in recovered
+	                         [:page-info :cursor-recovery])))))
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -579,14 +583,25 @@
 	                                                         :first 2
 	                                                         :after page1-end-cursor))
 	            victim (first (:data expected-page2))]
-	        @(d/transact conn [[:db/retract [:eacl/id (:id victim)] :eacl/id (:id victim)]])
-	        (is (= (:data expected-page2)
-	               (:data
-	                (eacl/lookup-resources
-	                 *client
-	                 (assoc base-query
-	                        :first 2
-	                        :after page1-end-cursor)))))))
+	        ;; Consumers must retract relationship halves through EACL before
+	        ;; retracting object identity.
+	        (eacl/delete-object! *client victim)
+	        @(d/transact
+	          conn
+	          [[:db/retract
+	            [:eacl/id (:id victim)]
+	            :eacl/id
+	            (:id victim)]])
+	        (let [recovered
+	              (eacl/lookup-resources
+	               *client
+	               (assoc base-query
+	                      :first 2
+	                      :after page1-end-cursor))]
+	          (is (not-any? #(= victim %) (:data recovered)))
+	          (is (= :rebased
+	                 (get-in recovered
+	                         [:page-info :cursor-recovery]))))))
 
 	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
 	      (testing "transact the test entities we are about to use"
@@ -698,10 +713,13 @@
                     :resource/type :account
                     :consistency :minimize-latency})))))
 
-        (testing "explicit fully-consistent is accepted and does not perturb page tokens"
+        (testing "explicit fully-consistent is part of the cursor query scope"
           (let [page1 (eacl/lookup-resources client (assoc q :consistency fully-consistent))
                 token (page-end-cursor page1)
-                ;; page 2 omits :consistency; the token query-shape must not care.
-                page2 (eacl/lookup-resources client (assoc q :after token))]
+                page2 (eacl/lookup-resources
+                       client
+                       (assoc q
+                              :after token
+                              :consistency fully-consistent))]
             (is (= ["acct-1" "acct-2"] (mapv :id (:data page1))))
             (is (= ["acct-3"] (mapv :id (:data page2))))))))))

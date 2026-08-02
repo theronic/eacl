@@ -34,7 +34,7 @@
     :cursor-source "source"
     :current-proof "proof"
     :cursor-proof "proof"
-    :mode :minimize-latency
+    :mode :exact-snapshot
     :cursor-graph 7}
    input))
 

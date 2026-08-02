@@ -95,6 +95,12 @@
                      :multipath-500-results-page-50])
             (get-in memory-and-token
                     [:cursor-token-utf8-bytes :regression-max])))
+    (is (= {:payload-canonical-passes-per-encode 1
+            :payload-canonical-passes-per-decode 1
+            :authentication-passes-per-encode 1
+            :authentication-passes-per-decode 1
+            :framing-growth :linear}
+           (:cursor-codec-work memory-and-token)))
     (is (zero? (:unexplained-differences-max shadow-rollout)))
     (is (zero? (:false-grants-max shadow-rollout)))
     (is (= [:ci :canary :ramp :pre-authority]

@@ -222,13 +222,19 @@ module TemporalSafety {
   datatype CursorDecision =
     | RejectCursor(rejectReason: CursorRejectReason)
     | ContinueCurrent(selectedGraph: Graph)
+    | RebaseCurrent(selectedGraph: Graph)
     | ContinueExact(exactGraph: Graph)
+
+  datatype CursorRecoveryMode =
+    | RecoverSelectedGraph
+    | RequireExactGraph
 
   function ValidateCursor(
     expectedScope: CursorScope,
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
     retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
     now: nat,
     token: CursorToken
   ): CursorDecision {
@@ -249,6 +255,8 @@ module TemporalSafety {
         RejectCursor(Expired)
       else if dependencyProof == selectedProof then
         ContinueCurrent(selectedGraph)
+      else if recoveryMode.RecoverSelectedGraph? then
+        RebaseCurrent(selectedGraph)
       else if graph in retainedGraphs then
         ContinueExact(graph)
       else
@@ -260,6 +268,7 @@ module TemporalSafety {
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
     retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
     now: nat,
     token: CursorToken
   )
@@ -271,6 +280,7 @@ module TemporalSafety {
               selectedGraph,
               selectedProof,
               retainedGraphs,
+              recoveryMode,
               now,
               token
             ) == RejectCursor(WrongScope)
@@ -282,6 +292,7 @@ module TemporalSafety {
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
     retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
     now: nat,
     token: CursorToken
   )
@@ -290,6 +301,7 @@ module TemporalSafety {
               selectedGraph,
               selectedProof,
               retainedGraphs,
+              recoveryMode,
               now,
               token
             ).ContinueCurrent? ==>
@@ -298,13 +310,14 @@ module TemporalSafety {
                 selectedGraph,
                 selectedProof,
                 retainedGraphs,
+                recoveryMode,
                 now,
                 token
               ).selectedGraph == selectedGraph
   {
   }
 
-  lemma ExactContinuationUsesRetainedAuthenticatedGraph(
+  lemma RebasedContinuationUsesAuthenticatedSelectedGraph(
     expectedScope: CursorScope,
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
@@ -317,6 +330,42 @@ module TemporalSafety {
               selectedGraph,
               selectedProof,
               retainedGraphs,
+              RecoverSelectedGraph,
+              now,
+              token
+            ).RebaseCurrent? ==>
+              token.DecodedCursor? &&
+              token.cursorAuthenticated &&
+              token.cursorScope == expectedScope &&
+              token.expiresAt > now &&
+              token.cursorProof != selectedProof &&
+              ValidateCursor(
+                expectedScope,
+                selectedGraph,
+                selectedProof,
+                retainedGraphs,
+                RecoverSelectedGraph,
+                now,
+                token
+              ).selectedGraph == selectedGraph
+  {
+  }
+
+  lemma ExactContinuationUsesRetainedAuthenticatedGraph(
+    expectedScope: CursorScope,
+    selectedGraph: Graph,
+    selectedProof: CursorProofIdentity,
+    retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
+    now: nat,
+    token: CursorToken
+  )
+    ensures ValidateCursor(
+              expectedScope,
+              selectedGraph,
+              selectedProof,
+              retainedGraphs,
+              recoveryMode,
               now,
               token
             ).ContinueExact? ==>
@@ -330,6 +379,7 @@ module TemporalSafety {
                 selectedGraph,
                 selectedProof,
                 retainedGraphs,
+                recoveryMode,
                 now,
                 token
               ).exactGraph == token.cursorGraph
@@ -537,6 +587,7 @@ module TemporalSafety {
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
     retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
     now: nat,
     token: CursorToken,
     decision: CursorDecision
@@ -549,10 +600,18 @@ module TemporalSafety {
       state.selectedGraph,
       state.selectedProof,
       state.retainedGraphs,
+      state.recoveryMode,
       state.now,
       state.token
     ) &&
     (state.decision.ContinueCurrent? ==>
+       state.decision.selectedGraph == state.selectedGraph) &&
+    (state.decision.RebaseCurrent? ==>
+       state.token.DecodedCursor? &&
+       state.token.cursorAuthenticated &&
+       state.token.cursorScope == state.expectedScope &&
+       state.token.expiresAt > state.now &&
+       state.recoveryMode.RecoverSelectedGraph? &&
        state.decision.selectedGraph == state.selectedGraph) &&
     (state.decision.ContinueExact? ==>
        state.token.DecodedCursor? &&
@@ -568,6 +627,7 @@ module TemporalSafety {
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
     retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
     now: nat,
     token: CursorToken
   ): CursorMachineState {
@@ -576,6 +636,7 @@ module TemporalSafety {
       selectedGraph,
       selectedProof,
       retainedGraphs,
+      recoveryMode,
       now,
       token,
       ValidateCursor(
@@ -583,6 +644,7 @@ module TemporalSafety {
         selectedGraph,
         selectedProof,
         retainedGraphs,
+        recoveryMode,
         now,
         token
       )
@@ -594,6 +656,7 @@ module TemporalSafety {
     selectedGraph: Graph,
     selectedProof: CursorProofIdentity,
     retainedGraphs: set<Graph>,
+    recoveryMode: CursorRecoveryMode,
     now: nat,
     token: CursorToken
   )
@@ -603,6 +666,7 @@ module TemporalSafety {
                 selectedGraph,
                 selectedProof,
                 retainedGraphs,
+                recoveryMode,
                 now,
                 token
               )
@@ -613,10 +677,20 @@ module TemporalSafety {
       selectedGraph,
       selectedProof,
       retainedGraphs,
+      recoveryMode,
       now,
       token
     );
     ExactContinuationUsesRetainedAuthenticatedGraph(
+      expectedScope,
+      selectedGraph,
+      selectedProof,
+      retainedGraphs,
+      recoveryMode,
+      now,
+      token
+    );
+    RebasedContinuationUsesAuthenticatedSelectedGraph(
       expectedScope,
       selectedGraph,
       selectedProof,

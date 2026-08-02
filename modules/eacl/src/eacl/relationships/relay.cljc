@@ -4,21 +4,30 @@
             [eacl.consistency :as consistency]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
+            [eacl.spicedb.consistency :as public-consistency]
             [eacl.verified-kernel :as verified]))
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
-(def ^:private page-keys #{:first :last :after :before :consistency})
+(def ^:private cursor-transport-keys
+  #{:first :last :after :before :cache?})
 
 (defn- page-error!
   [message data]
   (throw (ex-info message
-                  (merge {:eacl/error :eacl.pagination/invalid-cursor}
+                  (merge {:type :eacl.pagination/invalid-cursor
+                          :eacl/error :eacl.pagination/invalid-cursor}
                          data))))
 
 (defn- scope
   [operation filters]
-  [operation (apply dissoc filters page-keys)])
+  (secure/canonical-digest
+   "eacl/cursor/relationship-query-scope/v2"
+   [operation
+    (-> (apply dissoc filters cursor-transport-keys)
+        (assoc :consistency
+               (public-consistency/descriptor
+                (:consistency filters))))]))
 
 (defn- page-request
   [filters]
@@ -162,9 +171,9 @@
     (= (snapshot-proof (:snapshot-context current))
        (:snapshot-proof envelope))
     :current
-    (= :at-least-as-fresh
-       (:cursor-consistency-mode opts))
-    :conflict
+    (not= :at-exact-snapshot
+          (:cursor-consistency-mode opts))
+    :rebase-current
     (nil? exact) :snapshot-unavailable
     (or (identity-mismatch (:snapshot-context exact) envelope)
         (not= 0
@@ -190,10 +199,10 @@
     :current-proof (snapshot-proof (:snapshot-context current))
     :cursor-proof (:snapshot-proof envelope)
     :mode
-    (if (= :at-least-as-fresh
+    (if (= :at-exact-snapshot
            (:cursor-consistency-mode opts))
-      :at-least-as-fresh
-      :minimize-latency)
+      :exact-snapshot
+      :recover-current)
     :cursor-graph 0
     :exact
     (when exact
@@ -211,6 +220,8 @@
   [opts current envelope exact decision]
   (case decision
     :current current
+    :rebase-current
+    (assoc current :recovery :rebased)
     :exact exact
 
     :scope-mismatch
@@ -277,7 +288,8 @@
       (assoc selected :bound (:offset envelope)))
     {:snapshot-context snapshot-context
      :items items
-     :bound nil}))
+     :bound nil
+     :recovery nil}))
 
 (defn- encode-bound
   [opts operation filters snapshot-context _items offset]
@@ -338,7 +350,7 @@
   "Applies a Relay window to a canonical vector of public relationships."
   [opts operation filters snapshot-context items]
   (let [current-items (vec items)
-        {:keys [snapshot-context items bound]}
+        {:keys [snapshot-context items bound recovery]}
         (select-items
          opts
          operation
@@ -368,13 +380,16 @@
         end-offset (when any? (dec end))]
     {:data page-items
      :page-info
-     {:start-cursor
-      (when start-offset
-        (encode-bound
-         opts operation filters snapshot-context items start-offset))
-     :end-cursor
-      (when end-offset
-        (encode-bound
-         opts operation filters snapshot-context items end-offset))
-      :has-next-page? (boolean (and any? has-next?))
-      :has-previous-page? (boolean (and any? has-previous?))}}))
+     (cond->
+      {:start-cursor
+       (when start-offset
+         (encode-bound
+          opts operation filters snapshot-context items start-offset))
+       :end-cursor
+       (when end-offset
+         (encode-bound
+          opts operation filters snapshot-context items end-offset))
+       :has-next-page? (boolean (and any? has-next?))
+       :has-previous-page? (boolean (and any? has-previous?))}
+       recovery
+       (assoc :cursor-recovery recovery))}))

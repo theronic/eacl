@@ -23,8 +23,9 @@ no verified-release claim existed.
 - **Correction:** bounded client-private continuation state is keyed by the
   authenticated complete snapshot/proof identity, with deterministic exact
   replay on miss or eviction.
-- **Migration:** existing public cursor format remains valid; clients may see
-  lower work and fewer limit errors.
+- **Migration:** v8 release-candidate portable cursors are replaced by the
+  compact `eacl_c4_` format; no compatibility guarantee applies before the
+  first stable v8 release. Clients may see lower work and fewer limit errors.
 
 ## EACL-FORMAL-003 — authenticated cache loses logical admission kind
 
@@ -35,16 +36,20 @@ no verified-release claim existed.
 - **Migration:** custom providers should accept the logical kind rather than
   assuming the legacy `:authenticated-v3` bucket.
 
-## EACL-FORMAL-004 — proofless cursor mixes snapshots
+## EACL-FORMAL-004 — proofless cursor silently lifts across graphs
 
 - **Affected:** shared Relay cursor handling with proof mode disabled; Datomic
   regression witness.
-- **Impact:** a page walk could combine results from different graphs,
-  producing omissions or unexpected new items.
-- **Correction:** every cursor binds the exact snapshot id and graph head.
-  Continuation never rebases onto a newer merely proof-equivalent graph.
-- **Migration:** continuation may use retained exact fallback or return a typed
-  retention/conflict error instead of silently rebasing.
+- **Impact:** a page walk could change graphs without an explicit recovery
+  decision or client-visible recovery marker, producing unexplained omissions
+  or new items.
+- **Correction:** every cursor is authenticated to its complete semantic query
+  before its resume state can influence traversal. Non-exact recovery
+  re-evaluates against one selected current graph; it never treats proof
+  equivalence as sufficient authorization. Exact mode remains graph-pinned.
+- **Migration:** ordinary continuation reports `:rebased` or `:restarted`
+  instead of failing when history is unavailable. Consumers requiring a stable
+  walk must request `at-exact-snapshot`.
 
 ## EACL-FORMAL-005 — inconsistent cursor expiry boundary
 

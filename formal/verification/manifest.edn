@@ -14,7 +14,7 @@
    :source "formal/dafny/Semantics.dfy"}
   :cache-cursor-foundation
   {:status :passed
-   :verified-obligations 24
+   :verified-obligations 26
    :source "formal/dafny/TemporalSafety.dfy"}
   :strict-wire-format
   {:status :passed
@@ -46,10 +46,15 @@
    :report "formal/verification/recursive-kernel.edn"}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 25
+   :verified-obligations 26
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
+  :cursor-codec-cost-model
+  {:status :passed
+   :verified-obligations 3
+   :source "formal/dafny/CursorCost.dfy"
+   :claim :conditional-operation-count-bound}
   :cache-decision-kernel
   {:status :passed
    :verified-obligations 17

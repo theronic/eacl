@@ -366,13 +366,14 @@
          (dafny-string cursor-source)
          (dafny-string current-proof)
          (dafny-string cursor-proof)
-         (if (= :at-least-as-fresh mode)
-           (ConsistencyMode/create_AtLeastAsFresh)
-           (ConsistencyMode/create_MinimizeLatency))
+         (if (= :exact-snapshot mode)
+           (ConsistencyMode/create_ExactSnapshotMode)
+           (ConsistencyMode/create_RecoverCurrent))
          (dafny-nat cursor-graph)
          (exact-selection exact))]
     (cond
       (.is_UseCurrent decision) :current
+      (.is_RebaseCurrent decision) :rebase-current
       (.is_UseExact decision) :exact
       (.is_InvalidAuthentication (.dtor_reason decision))
       :invalid-authentication

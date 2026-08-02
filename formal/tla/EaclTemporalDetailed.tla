@@ -183,6 +183,7 @@ VARIABLES
   \* @type: Int;
   cursorSource,
   \* @type: Bool;
+  \* TRUE means non-exact continuation may recover on the selected head.
   cursorLiftable,
   \* @type: Int;
   cursorOffset,
@@ -321,10 +322,7 @@ CursorCurrentSafe ==
     /\ cursorResultKind = selectedResultKind
     /\ cursorScope = dependencyScope
     /\ now < cursorExpiresAt
-    /\ (cursorGraph = head \/
-        /\ cursorLiftable
-        /\ proofAvailable[head][dependencyScope]
-        /\ cursorProof = proof[head][dependencyScope])
+    /\ (cursorGraph = head \/ cursorLiftable)
     /\ (selectedConflict # AtLeastConflict \/
         cursorGraph \in ancestors[head] \union {head})
     /\ selectedGraph = head
@@ -771,7 +769,7 @@ CursorMint ==
     /\ cursorScope' = scope
     /\ cursorProof' = proof[head][scope]
     /\ cursorSource' = source
-    /\ cursorLiftable' = liftable /\ proofAvailable[head][scope]
+    /\ cursorLiftable' = liftable
     /\ cursorOffset' = 0
     /\ cursorExpiresAt' = expiry
     /\ selectedGraph' = head
@@ -852,15 +850,11 @@ CursorResume ==
           cursorGraph \in ancestors[head] \union {head}
         conflictAllows ==
           conflict # AtLeastConflict \/ causal
-        proofEquivalent ==
-          /\ cursorLiftable
-          /\ proofAvailable[head][scope]
-          /\ cursorProof = proof[head][scope]
         currentEligible ==
           /\ scopeMatches
           /\ unexpired
           /\ conflictAllows
-          /\ (cursorGraph = head \/ proofEquivalent)
+          /\ (cursorGraph = head \/ cursorLiftable)
         exactEligible ==
           /\ scopeMatches
           /\ unexpired

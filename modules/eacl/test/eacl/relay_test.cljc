@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.cursor :as cursor]
             [eacl.relay :as relay]
             [eacl.relationships.relay :as relationships-relay]
             [eacl.secure-format :as secure]))
@@ -33,6 +34,18 @@
     :fingerprint {:adapter :relay-test}
     :deterministic? deterministic?
     :operations (operation-map snapshot-id proof)}))
+
+(defn- adapter-with-exact
+  [snapshot-id exact]
+  (backend/make-adapter
+   {:id :relay-test
+    :capabilities {}
+    :fingerprint {:adapter :relay-test}
+    :deterministic? true
+    :operations
+    (assoc
+     (operation-map snapshot-id nil)
+     :select-exact (fn [& _] exact))}))
 
 (def dependencies
   {:schema-scope {:permission-nodes [[:document :view]]
@@ -132,17 +145,112 @@
          snapshot {} :lookup-resources lookup-query lookup-page)
         token (get-in first-page [:page-info :end-cursor])
         continuation-query (assoc lookup-query :after token)
-        original secure/decode-authenticated
-        calls (atom 0)]
-    (with-redefs [secure/decode-authenticated
-                  (fn [options token]
-                    (swap! calls inc)
-                    (original options token))]
+        work (atom {})]
+    (binding [cursor/*codec-work* work]
       (let [{:keys [adapter query]}
             (relay/prepare-page-query
              snapshot {} :lookup-resources continuation-query)]
         (is (identical? snapshot adapter))
         (is (= (:end-cursor (:page-info lookup-page))
                (:after query)))
-        (is (= 1 @calls)
+        (is (= 1 (:decode-calls @work))
             "selection and internalization must share one authenticated decode")))))
+
+(deftest cursor-is-bound-to-the-complete-semantic-query-test
+  (let [snapshot (adapter 1 nil true)
+        first-page
+        (relay/externalize-page
+         snapshot {} :lookup-resources lookup-query lookup-page)
+        token (get-in first-page [:page-info :end-cursor])]
+    (doseq [changed-query
+            [(assoc-in lookup-query [:subject :id] "other-user")
+             (assoc lookup-query :permission :edit)
+             (assoc lookup-query :consistency :fully-consistent)]]
+      (is (= :query-mismatch
+             (try
+               (relay/prepare-page-query
+                snapshot
+                {}
+                :lookup-resources
+                (assoc changed-query :after token))
+               nil
+               (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                   error
+                 (:reason (ex-data error)))))
+          (pr-str changed-query)))))
+
+(deftest non-exact-continuation-recovers-on-current-graph-test
+  (let [original (adapter 1 nil true)
+        current (adapter 2 nil true)
+        first-page
+        (relay/externalize-page
+         original {} :lookup-resources lookup-query lookup-page)
+        token (get-in first-page [:page-info :end-cursor])
+        prepared
+        (relay/prepare-page-query
+         current
+         {:cursor-consistency-mode :fully-consistent}
+         :lookup-resources
+         (assoc lookup-query :after token))]
+    (is (identical? current (:adapter prepared)))
+    (is (= :rebased (:recovery prepared)))
+    (is (= (:end-cursor (:page-info lookup-page))
+           (get-in prepared [:query :after])))
+    (is (= :rebased
+           (get-in
+            (relay/externalize-page
+             current
+             {:cursor-recovery (:recovery prepared)}
+             :lookup-resources
+             lookup-query
+             lookup-page)
+            [:page-info :cursor-recovery])))))
+
+(deftest recursive-continuation-restarts-after-graph-change-test
+  (let [original (adapter 1 nil true)
+        current (adapter 2 nil true)
+        recursive-page
+        (assoc-in
+         lookup-page
+         [:page-info :end-cursor]
+         {:kind :recursive-traversal
+          :engine-version 8
+          :direction :forward
+          :result-kind :resource
+          :ordinal 1
+          :result {:type :document :eid "document-1"}})
+        first-page
+        (relay/externalize-page
+         original {} :lookup-resources lookup-query recursive-page)
+        prepared
+        (relay/prepare-page-query
+         current
+         {:cursor-consistency-mode :minimize-latency}
+         :lookup-resources
+         (assoc lookup-query
+                :after
+                (get-in first-page [:page-info :end-cursor])))]
+    (is (= :restarted (:recovery prepared)))
+    (is (not (contains? (:query prepared) :after)))))
+
+(deftest exact-snapshot-continuation-never-rebases-test
+  (let [exact (adapter 1 nil true)
+        current (adapter-with-exact 2 exact)
+        exact-query
+        (assoc lookup-query
+               :consistency
+               {:consistency/mode :at-exact-snapshot
+                :zed/token "exact-token"})
+        page
+        (relay/externalize-page
+         exact {} :lookup-resources exact-query lookup-page)
+        prepared
+        (relay/prepare-page-query
+         current
+         {:cursor-consistency-mode :at-exact-snapshot}
+         :lookup-resources
+         (assoc exact-query
+                :after
+                (get-in page [:page-info :end-cursor])))]
+    (is (identical? exact (:adapter prepared)))
+    (is (nil? (:recovery prepared)))))

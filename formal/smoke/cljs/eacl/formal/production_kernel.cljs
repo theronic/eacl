@@ -355,13 +355,13 @@
            exact]}]
   (let [page-window (.-PageWindow generated)
         consistency-mode
-        (if (= :at-least-as-fresh mode)
+        (if (= :exact-snapshot mode)
           (js-invoke
            (.-ConsistencyMode page-window)
-           "create_AtLeastAsFresh")
+           "create_ExactSnapshotMode")
           (js-invoke
            (.-ConsistencyMode page-window)
-           "create_MinimizeLatency"))
+           "create_RecoverCurrent"))
         decision
         (js-invoke
          (.-__default page-window)
@@ -378,6 +378,7 @@
          (exact-selection exact))]
     (cond
       (.-is_UseCurrent decision) :current
+      (.-is_RebaseCurrent decision) :rebase-current
       (.-is_UseExact decision) :exact
       (.-is_InvalidAuthentication (.-dtor_reason decision))
       :invalid-authentication

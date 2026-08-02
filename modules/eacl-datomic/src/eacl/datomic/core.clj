@@ -480,20 +480,19 @@
 
 (defn- list-query-identity
   [op query]
-  ;; :consistency is excluded from the query binding because cursor-result-
-  ;; context validates its freshness/snapshot compatibility separately.
-  ;; Including the descriptor here also made page 2 fail when a caller passed
-  ;; it on page 1 but omitted the equivalent default on page 2.
+  ;; Only transport and cache-selection fields are excluded. The cursor is
+  ;; bound to the principal, permission, filters, and normalized consistency
+  ;; contract. Relay direction/size stay caller-controlled so the same boundary
+  ;; supports forward and backward navigation.
   (canonicalize
    {:op op
     :basis :stable
-    ;; :cache? is excluded for the same reason as :consistency: it selects HOW
-    ;; the answer is obtained, not WHICH answer. Leaving it in would make a
-    ;; page-2 request that omits it fail validation against a page-1 token
-    ;; minted with it — which is the exact failure :consistency already caused.
-    :query (dissoc query
-                   :first :last :after :before
-                   :cursor :limit :page/basis :consistency :cache?)}))
+    :query
+    (-> query
+        (dissoc :first :last :after :before
+                :cursor :limit :page/basis :cache?)
+        (assoc :consistency
+               (consistency/descriptor (:consistency query))))}))
 
 (defn- list-query-shape
   [op query]
@@ -567,7 +566,9 @@
 (defn- validate-page-token-schema!
   [opts decoded]
   (when decoded
-    (when-not (= (selected-schema-version opts) (:schema-version decoded))
+    (when-not (or (:cursor-recovery opts)
+                  (= (selected-schema-version opts)
+                     (:schema-version decoded)))
       (throw (ex-info "Page token was created under a different EACL schema generation."
                       {:type :eacl.pagination/stale-schema
                        :expected (selected-schema-version opts)
@@ -655,22 +656,32 @@
                             resolved)]
      (when (seq unresolvable)
        (unresolvable-objects! op basis-t historical? unresolvable))
-     (-> page
-         (assoc :data (mapv (fn [[type _ external-id]]
-                              (spice-object type external-id))
-                            resolved))
-         (update :page-info
-                 #(encode-page-info
-                   opts op query-shape basis-t cache-scope %))))))
+     (cond->
+      (-> page
+          (assoc :data (mapv (fn [[type _ external-id]]
+                               (spice-object type external-id))
+                             resolved))
+          (update :page-info
+                  #(encode-page-info
+                    opts op query-shape basis-t cache-scope %)))
+       (:cursor-recovery opts)
+       (assoc-in
+        [:page-info :cursor-recovery]
+        (:cursor-recovery opts))))))
 
 (defn- coerce-relationship-page
   [db opts op query-shape basis-t page]
-  (-> page
-      (update :data #(mapv (fn [relationship]
-                             (relationship->spice db opts relationship))
-                           %))
-      (update :page-info
-              #(encode-page-info opts op query-shape basis-t %))))
+  (cond->
+   (-> page
+       (update :data #(mapv (fn [relationship]
+                              (relationship->spice db opts relationship))
+                            %))
+       (update :page-info
+               #(encode-page-info opts op query-shape basis-t %)))
+    (:cursor-recovery opts)
+    (assoc-in
+     [:page-info :cursor-recovery]
+     (:cursor-recovery opts))))
 
 (def ^:private answer-cache-kinds
   "The entry kinds that hold a finished answer, as opposed to the traversal and
@@ -986,10 +997,11 @@
         decoded (decoded-page-bound opts page-req)
         _ (validate-page-token-identity!
            opts :read-relationships query-shape decoded)
-        {:keys [db basis-t schema-version cursor-context]}
+        {:keys [db basis-t schema-version cursor-context
+                cursor-recovery]}
         (capture-result-context
          conn opts (:consistency filters)
-         (fn [db]
+         (fn [db _decoded]
            (let [relation-ids
                  (impl/relationship-relation-ids db filters)]
              {:db db
@@ -1001,7 +1013,8 @@
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
-               :page-cursor-context cursor-context)
+               :page-cursor-context cursor-context
+               :cursor-recovery cursor-recovery)
         ;; Validated before the empty-page short-circuit, so a cursor from
         ;; another schema generation raises :eacl.pagination/stale-schema here
         ;; exactly as it does in the lookups, instead of quietly reading as an
@@ -1016,7 +1029,9 @@
       ;; A filter names an object that does not exist: nothing can match.
       ;; A supplied-but-unresolvable ID must not be conflated with an absent
       ;; filter — that conflation degraded this query to a global scan.
-      empty-page
+      (cond-> empty-page
+        cursor-recovery
+        (assoc-in [:page-info :cursor-recovery] cursor-recovery))
       (let [filters'     (cond-> filters
                            subject-id (assoc :subject/id subject-eid)
                            resource-id (assoc :resource/id resource-eid))
@@ -1333,7 +1348,7 @@
   [mode current cursor-envelope exact]
   (cond
     (cursor-context-equivalent? current cursor-envelope) :current
-    (= :at-least-as-fresh mode) :conflict
+    (not= :at-exact-snapshot mode) :rebase-current
     (nil? exact) :snapshot-unavailable
     (and (= 0 (cursor-graph-code cursor-envelope exact))
          (cursor-context-equivalent? exact cursor-envelope))
@@ -1355,9 +1370,9 @@
     :cursor-proof
     (cursor-continuation-proof cursor-envelope)
     :mode
-    (if (= :at-least-as-fresh mode)
-      :at-least-as-fresh
-      :minimize-latency)
+    (if (= :at-exact-snapshot mode)
+      :exact-snapshot
+      :recover-current)
     :cursor-graph 0
     :exact
     (when exact
@@ -1368,7 +1383,7 @@
      mode current cursor-envelope exact)))
 
 (defn- snapshot-result-context
-  [opts snapshot-adapter prepare]
+  [opts snapshot-adapter prepare decoded]
   (let [db (:db (backend/state snapshot-adapter))
         ;; `d/as-of` filters visibility but retains its backing DB's basis-t.
         ;; The adapter exact locator is the selected logical revision.
@@ -1378,7 +1393,7 @@
           (selected-schema-cache! opts snapshot-adapter db))
         {:keys [permission-dependency-key]
          :as prepared}
-        (prepare db)
+        (prepare db decoded)
         permission-dependencies
         (when permission-dependency-key
           (delay
@@ -1430,16 +1445,16 @@
         :timeout-ms (:consistency-sync-timeout-ms opts)}))))
 
 (defn- capture-result-context
-  "Selects one immutable request snapshot. A cursor continues only on its
-  authenticated exact snapshot; if current advanced, the original basis is
-  reconstructed and completed-answer caching is disabled."
+  "Selects one immutable request snapshot. Exact-snapshot requests reconstruct
+  the authenticated historical basis. Other consistency modes recover against
+  the selected current basis when a cursor's original snapshot is gone."
   [conn opts consistency-value prepare operation decoded]
   (let [selection
         (select-request-snapshot conn opts consistency-value)
         source-adapter (:adapter selection)
         selected-adapter (:adapter selection)
         selected-context
-        (snapshot-result-context opts selected-adapter prepare)
+        (snapshot-result-context opts selected-adapter prepare decoded)
         selected-current-basis (:basis-t selected-context)
         {:keys [mode]} (:descriptor selection)
         request-token (:request-token selection)
@@ -1466,13 +1481,15 @@
               :current
               selected-context
 
-              :conflict
-              (consistency-v3/cursor-conflict!
-               {:cursor-graph-anchor
-                (get-in decoded [:graph-head :graph-anchor])
-                :selected-graph-anchor
-                (:graph-anchor
-                 (backend/invoke selected-adapter :graph-head))})
+              :rebase-current
+              (if (= :recursive-traversal
+                     (get-in decoded [:edge :kind]))
+                (assoc
+                 (snapshot-result-context
+                  opts selected-adapter prepare nil)
+                 :cursor-recovery :restarted)
+                (assoc selected-context
+                       :cursor-recovery :rebased))
 
               :snapshot-unavailable
               (let [exact
@@ -1489,7 +1506,7 @@
                     _ (when-not exact
                         (cursor-snapshot-expired! operation decoded))
                     exact-context
-                    (snapshot-result-context opts exact prepare)
+                    (snapshot-result-context opts exact prepare decoded)
                     exact-decision
                     (generated-cursor-decision
                      opts mode current-cursor-context decoded
@@ -1515,15 +1532,14 @@
                          (d/basis-t (d/db conn))))
     (merge
      selected-context
-     {:mode (if decoded
-              :at-exact-snapshot
-              (or (:mode selected-context) mode))
+     {:mode (or (:mode selected-context) mode)
       ;; A cursor is authenticated before snapshot selection. It is cacheable
       ;; only when that selection retained the request's current immutable
       ;; basis. Historical reconstruction necessarily changes the basis and
       ;; must never publish into or read from the current completed cache.
       :completed-cache?
-      (and (not= :at-exact-snapshot mode)
+      (and (not= :at-exact-snapshot
+                 (or (:mode selected-context) mode))
            (= selected-current-basis (:basis-t selected-context)))
       :requested-t requested-t
       :selection selection
@@ -1775,7 +1791,7 @@
         _ (validate-page-token-identity!
            opts :lookup-resources query-shape decoded)
         prepare
-        (fn [db]
+        (fn [db decoded-bound]
           (let [internal-subject (spice-object->internal db subject)
                 query' (assoc query :subject internal-subject)]
             {:db db
@@ -1783,7 +1799,7 @@
              :query' query'
              :query-shape query-shape
              :internal-query
-             (internal-page-query query' page-req decoded)
+             (internal-page-query query' page-req decoded-bound)
              :permission-dependency-key
              [(:resource/type query') (:permission query')]}))
         captured
@@ -1797,11 +1813,16 @@
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
-               :page-cursor-context (:cursor-context captured))]
+               :page-cursor-context (:cursor-context captured)
+               :cursor-recovery (:cursor-recovery captured))]
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-subject))
       ;; Unknown subjects match nothing and never enter the cache.
-      (assoc empty-page :cached? false :cache-basis nil)
+      (cond-> (assoc empty-page :cached? false :cache-basis nil)
+        (:cursor-recovery captured)
+        (assoc-in
+         [:page-info :cursor-recovery]
+         (:cursor-recovery captured)))
       (let [compute
             #(with-result-schema
                result-context
@@ -1892,7 +1913,7 @@
         _ (validate-page-token-identity!
            opts :lookup-subjects query-shape decoded)
         prepare
-        (fn [db]
+        (fn [db decoded-bound]
           (let [internal-resource
                 (spice-object->internal db (:resource query))
                 query' (assoc query :resource internal-resource)]
@@ -1901,7 +1922,7 @@
              :query' query'
              :query-shape query-shape
              :internal-query
-             (internal-page-query query' page-req decoded)
+             (internal-page-query query' page-req decoded-bound)
              :permission-dependency-key
              [(:type internal-resource) (:permission query')]}))
         captured
@@ -1915,10 +1936,15 @@
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
-               :page-cursor-context (:cursor-context captured))]
+               :page-cursor-context (:cursor-context captured)
+               :cursor-recovery (:cursor-recovery captured))]
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-resource))
-      (assoc empty-page :cached? false :cache-basis nil)
+      (cond-> (assoc empty-page :cached? false :cache-basis nil)
+        (:cursor-recovery captured)
+        (assoc-in
+         [:page-info :cursor-recovery]
+         (:cursor-recovery captured)))
       (let [compute
             #(with-result-schema
                result-context
@@ -2369,9 +2395,9 @@
     To bypass the configured cache for ONE call, pass :cache? false on the
     request — on the map arity of can?, and in the query map for lookups,
     counts and read-relationships. It skips both reading and writing for that
-    call only. Cursors are unaffected: a page token is minted and validated
-    from the request, not from the cache, so a cursor minted with the bypass is
-    usable without it and vice versa.
+    call only. EACL's private cursor-codec memo remains enabled: it avoids
+    decoding tokens minted by this client and is a trust-preserving
+    implementation detail, not completed-answer reuse.
 
     A configuration map may be supplied in place of an adapter for tuning and
     tests. It is deliberately not part of the API consumers need:
@@ -2388,8 +2414,8 @@
     Legacy provider/capacity keys remain accepted during the v8 development
     window, but do not make portable provider values authoritative completed
     answers. Cursor continuation state is kept in a separate bounded private
-    store. Missing continuations replay against the cursor's authenticated
-    exact snapshot.
+    store. Missing graph-specific continuations restart on the selected current
+    graph for ordinary modes; explicit exact mode retains exact replay.
 
     There is no cross-process cache coordination to configure. Managed writers
     atomically update relation-version/mutation stamp datoms in the same

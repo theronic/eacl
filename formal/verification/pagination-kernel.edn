@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 25
+  :verified-obligations 26
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -15,10 +15,11 @@
    :page-uniqueness
    :complete-forward-walk
    :current-proof-continuation
-   :at-least-conflict
+   :authenticated-current-recovery
+   :recovery-does-not-require-retained-history
    :authenticated-exact-fallback
    :history-divergence-rejection
-   :snapshot-unavailable-rejection
+   :exact-snapshot-unavailable-rejection
    :expiry-rejection
    :relationship-offset-page-exact
    :relationship-exact-snapshot-proof

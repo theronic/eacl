@@ -81,7 +81,7 @@
          :cursor-source "source"
          :current-proof "proof"
          :cursor-proof "proof"
-         :mode :minimize-latency
+         :mode :exact-snapshot
          :cursor-graph 7}]
     (is (= :current
            (formal/continuation-decision base)))
@@ -93,11 +93,11 @@
              :exact {:graph 7
                      :source "source"
                      :proof "proof"}))))
-    (is (= :conflict
+    (is (= :rebase-current
            (formal/continuation-decision
             (assoc base
                    :current-proof "changed"
-                   :mode :at-least))))
+                   :mode :recover-current))))
     (is (= :expired
            (formal/continuation-decision
             (assoc base :expired? true))))
