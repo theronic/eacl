@@ -48,4 +48,4 @@
 - [x] 7.1 Run all changed Clojure and ClojureScript namespaces through clj-kondo and resolve every new warning or error; run `git diff --check`.
 - [x] 7.2 Run the full non-benchmark JVM suite and the DataScript ClojureScript suite, plus isolated `eacl`, `eacl-datomic`, `eacl-datahike`, and `eacl-datascript` module verification.
 - [x] 7.3 Run strict OpenSpec validation and mark each task complete only after its implementation and verification evidence exists.
-- [ ] 7.4 Commit and push a `codex/` feature branch, open a new PR targeting PR #92's head branch, and document the exact storage reduction, benchmark results, compatibility boundary, ghost-half contract, shared-code convergence, and validation counts without unsupported performance claims.
+- [x] 7.4 Commit and push a `codex/` feature branch, open a new PR targeting PR #92's head branch, and document the exact storage reduction, benchmark results, compatibility boundary, ghost-half contract, shared-code convergence, and validation counts without unsupported performance claims.
