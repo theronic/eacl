@@ -49,18 +49,14 @@
 
 (defn- items-proof
   [items]
-  (secure/canonical-digest
-   "eacl/cursor/relationship-items/v3"
-   {:count (count items)
-    ;; Digest each bounded relationship independently before committing the
-    ;; ordered vector. A legal 10k-item page otherwise exceeds the secure
-    ;; format's global entry bound even though no individual value is large.
-    ;; Count plus ordered leaf digests preserves multiplicity and order.
-    :leaf-digests
-    (mapv #(secure/canonical-digest
-            "eacl/cursor/relationship-item/v3"
-            %)
-          items)}))
+  ;; Relationship scans may legally contain more canonical data than the
+  ;; secure format accepts in one bounded value. Stream the ordered records
+  ;; into a length-framed digest so the proof still commits to every item,
+  ;; including its order and multiplicity, without constructing an oversized
+  ;; intermediate leaf-digest vector.
+  (secure/canonical-records-digest
+   "eacl/cursor/relationship-items/v4"
+   items))
 
 (defn- decode-envelope
   [opts operation filters snapshot-context token]
@@ -135,7 +131,8 @@
              :graph-head (backend/invoke exact :graph-head)
              :adapter-fingerprint (backend/fingerprint exact)
              :identity-contract (backend/identity-contract exact)}
-            exact-items (vec (materialize exact))]
+            exact-items (vec (materialize exact))
+            exact-items-proof (items-proof exact-items)]
         (when-not
          (and
           (= (secure/canonicalize (:source-scope current-context))
@@ -143,24 +140,26 @@
           (= (get-in envelope [:graph-head :graph-anchor])
              (get-in exact-context [:graph-head :graph-anchor]))
           (= (:items-proof envelope)
-             (items-proof exact-items)))
+             exact-items-proof))
          (throw
           (ex-info
            "The relationship cursor exact locator resolved to another graph."
            {:type :eacl.consistency/history-divergence
             :eacl/error :eacl.consistency/history-divergence})))
         {:snapshot-context exact-context
-         :items exact-items}))))
+         :items exact-items
+         :items-proof exact-items-proof}))))
 
 (defn- select-items
-  [opts operation filters snapshot-context items token]
+  [opts operation filters snapshot-context items current-items-proof token]
   (if-let [envelope
            (decode-envelope
             opts operation filters snapshot-context token)]
     (cond
-      (= (items-proof items) (:items-proof envelope))
+      (= current-items-proof (:items-proof envelope))
       {:snapshot-context snapshot-context
        :items items
+       :items-proof current-items-proof
        :bound (:offset envelope)}
 
       (= :at-least-as-fresh
@@ -176,17 +175,18 @@
              :bound (:offset envelope)))
     {:snapshot-context snapshot-context
      :items items
+     :items-proof current-items-proof
      :bound nil}))
 
 (defn- encode-bound
-  [opts operation filters snapshot-context items offset]
+  [opts operation filters snapshot-context proof offset]
   (cursor/cursor->token
    (merge
     snapshot-context
     {:v 9
      :kind :relationships
      :scope (scope operation filters)
-     :items-proof (items-proof items)
+     :items-proof proof
      :offset offset})
    opts))
 
@@ -194,13 +194,15 @@
   "Applies a Relay window to a canonical vector of public relationships."
   [opts operation filters snapshot-context items]
   (let [current-items (vec items)
-        {:keys [snapshot-context items bound]}
+        current-items-proof (items-proof current-items)
+        {:keys [snapshot-context items items-proof bound]}
         (select-items
          opts
          operation
          filters
          snapshot-context
          current-items
+         current-items-proof
          (:token (page-request filters)))
         n (count items)
         {:keys [direction size token]} (page-request filters)
@@ -221,10 +223,10 @@
      {:start-cursor
       (when start-offset
         (encode-bound
-         opts operation filters snapshot-context items start-offset))
+         opts operation filters snapshot-context items-proof start-offset))
       :end-cursor
       (when end-offset
         (encode-bound
-         opts operation filters snapshot-context items end-offset))
+         opts operation filters snapshot-context items-proof end-offset))
       :has-next-page? (boolean (and any? (< end n)))
       :has-previous-page? (boolean (and any? (pos? start)))}}))

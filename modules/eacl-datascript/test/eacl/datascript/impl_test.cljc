@@ -87,20 +87,24 @@
 
 (defn- forward-reference
   [db subject-type subject-id relation-id resource-type cursor-resource-id]
-  (->> (ds/index-range db
-                       schema/forward-relationship-attr
-                       [subject-type subject-id relation-id resource-type (if cursor-resource-id (inc cursor-resource-id) 0)]
-                       [subject-type subject-id relation-id resource-type schema/max-entid])
-       (map (fn [datom] (nth (:v datom) 4)))
+  (->> (ds/datoms db :eavt subject-id schema/forward-relationship-attr)
+       (keep (fn [{:keys [v]}]
+               (when (= [subject-type relation-id resource-type]
+                        (subvec v 0 3))
+                 (nth v 3))))
+       (filter #(or (nil? cursor-resource-id)
+                    (< cursor-resource-id %)))
        vec))
 
 (defn- reverse-reference
   [db resource-type resource-id relation-id subject-type cursor-subject-id]
-  (->> (ds/index-range db
-                       schema/reverse-relationship-attr
-                       [resource-type resource-id relation-id subject-type (if cursor-subject-id (inc cursor-subject-id) 0)]
-                       [resource-type resource-id relation-id subject-type schema/max-entid])
-       (map (fn [datom] (nth (:v datom) 4)))
+  (->> (ds/datoms db :eavt resource-id schema/reverse-relationship-attr)
+       (keep (fn [{:keys [v]}]
+               (when (= [resource-type relation-id subject-type]
+                        (subvec v 0 3))
+                 (nth v 3))))
+       (filter #(or (nil? cursor-subject-id)
+                    (< cursor-subject-id %)))
        vec))
 
 (deftest datascript-bounded-scan-parity-test
@@ -121,6 +125,27 @@
       (is (= (forward-reference db :account account-id account-relation :server server-1-id)
              (vec (impl/subject->resources db :account account-id account-relation :server server-1-id)))))
 
+    (testing "forward scans use native reverse seeks for descending windows"
+      (is (= [server-2-id server-1-id]
+             (vec
+              (impl/subject->resources
+               db :account account-id account-relation :server
+               {:direction :desc}))))
+      (is (= [server-1-id]
+             (vec
+              (impl/subject->resources
+               db :account account-id account-relation :server
+               {:direction :desc
+                :bound-eid server-2-id
+                :inclusive-bound? false}))))
+      (is (= [server-2-id server-1-id]
+             (vec
+              (impl/subject->resources
+               db :account account-id account-relation :server
+               {:direction :desc
+                :bound-eid server-2-id
+                :inclusive-bound? true})))))
+
     (testing "forward scans stop at tuple-prefix boundaries"
       (is (= [server-1-id server-2-id]
              (vec (impl/subject->resources db :account account-id account-relation :server nil))))
@@ -138,6 +163,13 @@
              (vec (impl/resource->subjects db :server server-1-id account-relation :account account-id))))
       (is (= (reverse-reference db :server server-1-id account-relation :account account-id)
              (vec (impl/resource->subjects db :server server-1-id account-relation :account account-id)))))
+
+    (testing "reverse scans use native reverse seeks"
+      (is (= [account-id]
+             (vec
+              (impl/resource->subjects
+               db :server server-1-id account-relation :account
+               {:direction :desc})))))
 
     (testing "reverse scans stop at tuple-prefix boundaries"
       (is (= [account-id]
@@ -251,17 +283,27 @@
              (set (map (comp :id :resource) server-relations)))))))
 
 (deftest read-relationships-default-limit-test
-  (let [{:keys [client]} (seed-bulk-read-db 1005)
+  (let [{:keys [client]} (seed-bulk-read-db 2005)
         {page-1 :data page-info :page-info}
         (eacl/read-relationships client {:subject/type :user})
-        cursor (:end-cursor page-info)
-        {page-2 :data}
+        cursor-1 (:end-cursor page-info)
+        {page-2 :data page-2-info :page-info}
         (eacl/read-relationships client {:subject/type :user
                                          :first        1000
-                                         :after        cursor})]
+                                         :after        cursor-1})
+        cursor-2 (:end-cursor page-2-info)
+        {page-3 :data}
+        (eacl/read-relationships client {:subject/type :user
+                                         :first        1000
+                                         :after        cursor-2})
+        all-pages (into [] (concat page-1 page-2 page-3))
+        subject-ids (mapv #(get-in % [:subject :id]) all-pages)]
     (is (= 1000 (count page-1)))
-    (is (= 5 (count page-2)))
-    (is (string? cursor))
+    (is (= 1000 (count page-2)))
+    (is (= 5 (count page-3)))
+    (is (= 2005 (count (distinct subject-ids))))
+    (is (string? cursor-1))
+    (is (string? cursor-2))
     (is (= "bulk-user-0" (get-in (first page-1) [:subject :id])))
-    (is (= "bulk-user-995" (get-in (first page-2) [:subject :id]))
+    (is (= subject-ids (vec (sort subject-ids)))
         "portable relationship order is lexicographic by public object id")))

@@ -6,20 +6,22 @@
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.mutation-test]
+            [eacl.relationships.endpoint-pair-test]
             [eacl.secure-format-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
-            [eacl.datascript.mutation-test]))
+            [eacl.datascript.mutation-test]
+            [eacl.datascript.storage-test]))
 
 (nodejs/enable-util-print!)
 
 (defmethod t/report [::t/default :end-run-tests] [m]
   (let [failures (+ (:fail m 0) (:error m 0))]
     (.log js/console
-      (str "EACL DataScript CLJS tests complete. failures="
-           (:fail m 0)
-           " errors="
-           (:error m 0)))
+          (str "EACL DataScript CLJS tests complete. failures="
+               (:fail m 0)
+               " errors="
+               (:error m 0)))
     (js/process.exit failures)))
 
 (defn -main []
@@ -28,9 +30,11 @@
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.mutation-test
+               'eacl.relationships.endpoint-pair-test
                'eacl.secure-format-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
-               'eacl.datascript.mutation-test))
+               'eacl.datascript.mutation-test
+               'eacl.datascript.storage-test))
 
 (set! *main-cli-fn* -main)

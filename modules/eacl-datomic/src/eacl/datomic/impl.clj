@@ -6,7 +6,8 @@
    [eacl.datomic.backend :as backend]
    [eacl.datomic.impl.base :as base]
    [eacl.datomic.impl.indexed :as impl.indexed]
-   [eacl.engine.v8 :as engine]))
+   [eacl.engine.v8 :as engine]
+   [eacl.relationships.endpoint-pair :as endpoint-pair]))
 
 (def Relation base/Relation)
 (def Permission base/Permission)
@@ -203,11 +204,13 @@
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-eid resource-type resource-eid]}]
-  [subject-type relation-eid resource-type resource-eid])
+  (endpoint-pair/forward-value
+   subject-type relation-eid resource-type resource-eid))
 
 (defn- reverse-relationship-tuple
   [{:keys [resource-type relation-eid subject-type subject-eid]}]
-  [resource-type relation-eid subject-type subject-eid])
+  (endpoint-pair/reverse-value
+   resource-type relation-eid subject-type subject-eid))
 
 (defn- add-relationship-txes
   [resolved]

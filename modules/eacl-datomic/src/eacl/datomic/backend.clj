@@ -5,7 +5,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.datomic.db :as ddb]
             [eacl.datomic.mutation :as journal]
-            [eacl.mutation :as mutation])
+            [eacl.mutation :as mutation]
+            [eacl.relationships.endpoint-pair :as endpoint-pair])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
            [java.util Base64]))
@@ -123,22 +124,24 @@
         (when (and (seq wanted) (d/entid db forward-attr))
           (for [{subject :e value :v}
                 (d/datoms db :aevt forward-attr)
-                :let [[subject-type relation-id
-                       resource-type resource] value]
-                :when (contains? wanted relation-id)]
-            [:forward relation-id
-             subject-type subject (external-id db subject)
-             resource-type resource (external-id db resource)]))
+                :let [decoded
+                      (endpoint-pair/decode-forward subject value)]
+                :when (contains? wanted (:relation-eid decoded))]
+            [:forward (:relation-eid decoded)
+             (:subject-type decoded) subject (external-id db subject)
+             (:resource-type decoded) (:resource-eid decoded)
+             (external-id db (:resource-eid decoded))]))
         reverse
         (when (and (seq wanted) (d/entid db reverse-attr))
           (for [{resource :e value :v}
                 (d/datoms db :aevt reverse-attr)
-                :let [[resource-type relation-id
-                       subject-type subject] value]
-                :when (contains? wanted relation-id)]
-            [:reverse relation-id
-             subject-type subject (external-id db subject)
-             resource-type resource (external-id db resource)]))]
+                :let [decoded
+                      (endpoint-pair/decode-reverse resource value)]
+                :when (contains? wanted (:relation-eid decoded))]
+            [:reverse (:relation-eid decoded)
+             (:subject-type decoded) (:subject-eid decoded)
+             (external-id db (:subject-eid decoded))
+             (:resource-type decoded) resource (external-id db resource)]))]
     ;; Preserve both physical halves. Direct/forward evaluation reads the
     ;; forward tuple and reverse lookup reads the reverse tuple, so a
     ;; corruption or out-of-band half-write must invalidate whichever

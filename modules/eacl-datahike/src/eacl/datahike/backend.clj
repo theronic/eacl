@@ -7,6 +7,7 @@
             [eacl.datahike.mutation :as journal]
             [eacl.datahike.schema :as schema]
             [eacl.mutation :as mutation]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.secure-format :as secure])
   (:import [java.util UUID]))
 
@@ -159,23 +160,25 @@
           (for [{subject :e value :v}
                 (ddb/avet-datoms
                  db schema/forward-relationship-attr)
-                :let [[subject-type relation-id
-                       resource-type resource] value]
-                :when (contains? wanted relation-id)]
-            [:forward relation-id
-             subject-type subject (external-id db subject)
-             resource-type resource (external-id db resource)]))
+                :let [decoded
+                      (endpoint-pair/decode-forward subject value)]
+                :when (contains? wanted (:relation-eid decoded))]
+            [:forward (:relation-eid decoded)
+             (:subject-type decoded) subject (external-id db subject)
+             (:resource-type decoded) (:resource-eid decoded)
+             (external-id db (:resource-eid decoded))]))
         reverse
         (when (seq wanted)
           (for [{resource :e value :v}
                 (ddb/avet-datoms
                  db schema/reverse-relationship-attr)
-                :let [[resource-type relation-id
-                       subject-type subject] value]
-                :when (contains? wanted relation-id)]
-            [:reverse relation-id
-             subject-type subject (external-id db subject)
-             resource-type resource (external-id db resource)]))]
+                :let [decoded
+                      (endpoint-pair/decode-reverse resource value)]
+                :when (contains? wanted (:relation-eid decoded))]
+            [:reverse (:relation-eid decoded)
+             (:subject-type decoded) (:subject-eid decoded)
+             (external-id db (:subject-eid decoded))
+             (:resource-type decoded) resource (external-id db resource)]))]
     {:content-digest
      (secure/canonical-records-digest
       "eacl/datahike/relationship-content-proof/v3"

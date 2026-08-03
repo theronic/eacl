@@ -2,10 +2,12 @@
   "DataScript storage operations for the shared v8 authorization engine."
   (:require [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
+            [eacl.datascript.db :as ddb]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.mutation :as journal]
             [eacl.datascript.schema :as schema]
             [eacl.mutation :as mutation]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.secure-format :as secure]))
 
 (def capabilities
@@ -75,25 +77,6 @@
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
 
-(defn- apply-scan-window
-  [ids {:keys [direction bound-eid inclusive-bound?]}]
-  (let [direction (or direction :asc)
-        ordered (sort ids)
-        within-bound?
-        (case direction
-          :asc (if bound-eid
-                 (if inclusive-bound?
-                   #(<= bound-eid %)
-                   #(< bound-eid %))
-                 (constantly true))
-          :desc (if bound-eid
-                  (if inclusive-bound?
-                    #(>= bound-eid %)
-                    #(> bound-eid %))
-                  (constantly true)))]
-    (cond->> (filter within-bound? ordered)
-      (= :desc direction) reverse)))
-
 (defn- schema-proof-records
   [db {:keys [permission-nodes relation-ids] :as scope}]
   (let [{:keys [relation-defs permission-defs]}
@@ -136,26 +119,45 @@
 
 (defn- content-relation-proof
   [db relation-ids external-id]
-  (let [wanted (set relation-ids)]
+  (let [wanted (set relation-ids)
+        forward
+        (when (seq wanted)
+          (for [{subject-eid :e value :v}
+                (ddb/avet-datoms
+                 db schema/forward-relationship-attr)
+                :let [decoded
+                      (endpoint-pair/decode-forward subject-eid value)]
+                :when (contains? wanted (:relation-eid decoded))]
+            [:forward
+             (:relation-eid decoded)
+             (:subject-type decoded)
+             subject-eid
+             (external-id db subject-eid)
+             (:resource-type decoded)
+             (:resource-eid decoded)
+             (external-id db (:resource-eid decoded))
+             (count value)]))
+        reverse
+        (when (seq wanted)
+          (for [{resource-eid :e value :v}
+                (ddb/avet-datoms
+                 db schema/reverse-relationship-attr)
+                :let [decoded
+                      (endpoint-pair/decode-reverse resource-eid value)]
+                :when (contains? wanted (:relation-eid decoded))]
+            [:reverse
+             (:relation-eid decoded)
+             (:subject-type decoded)
+             (:subject-eid decoded)
+             (external-id db (:subject-eid decoded))
+             (:resource-type decoded)
+             resource-eid
+             (external-id db resource-eid)
+             (count value)]))]
     {:content-digest
      (secure/canonical-records-digest
       "eacl/datascript/relationship-content-proof/v3"
-      (->> (ds/q '[:find ?relation ?subject-type ?subject
-                   ?resource-type ?resource
-                   :where
-                   [?relationship :eacl.relationship/relation ?relation]
-                   [?relationship :eacl.relationship/subject-type ?subject-type]
-                   [?relationship :eacl.relationship/subject ?subject]
-                   [?relationship :eacl.relationship/resource-type ?resource-type]
-                   [?relationship :eacl.relationship/resource ?resource]]
-                 db)
-           (filter #(contains? wanted (nth % 0)))
-           sort
-           (map (fn [[relation subject-type subject
-                      resource-type resource]]
-                  [:relationship relation
-                   subject-type subject (external-id db subject)
-                   resource-type resource (external-id db resource)]))))}))
+      (sort (concat forward reverse)))}))
 
 (defn- mutation-schema-proof
   [db]
@@ -297,25 +299,18 @@
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
-         (apply-scan-window
-          (impl/subject->resources
-           db subject-type subject-id relation-id resource-type nil)
-          options))
+         (impl/subject->resources
+          db subject-type subject-id relation-id resource-type options))
 
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type options]
-         (apply-scan-window
-          (impl/resource->subjects
-           db resource-type resource-id relation-id subject-type nil)
-          options))
+         (impl/resource->subjects
+          db resource-type resource-id relation-id subject-type options))
 
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]
-         (boolean
-          (ds/entid
-           db
-           [schema/relationship-full-key-attr
-            [subject-type subject-id relation-id resource-type resource-id]])))
+         (impl/direct-match?
+          db subject-type subject-id relation-id resource-type resource-id))
 
        :all-permission-nodes
        (fn []

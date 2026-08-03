@@ -7,6 +7,7 @@
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
+            [eacl.datascript.schema :as datascript-schema]
             [eacl.spicedb.consistency :as consistency]))
 
 (def schema
@@ -198,11 +199,42 @@
         schema-proof (backend/invoke before-adapter :schema-proof)
         before-proof
         (backend/invoke before-adapter :relation-proof [relation-id])
-        user-eid (ds/entid (ds/db conn) [:eacl/id "user"])]
+        user-eid (ds/entid (ds/db conn) [:eacl/id "user"])
+        document-eid (ds/entid (ds/db conn) [:eacl/id "document"])
+        reverse-datom
+        (first
+         (ds/datoms
+          (ds/db conn) :eavt document-eid
+          datascript-schema/reverse-relationship-attr))]
     (is (= #{:content-digest} (set (keys schema-proof))))
     (is (= 43 (count (:content-digest schema-proof))))
     (is (= #{:content-digest} (set (keys before-proof))))
     (is (= 43 (count (:content-digest before-proof))))
+    (testing "one out-of-band physical-half change invalidates the proof"
+      (ds/transact!
+       conn
+       [[:db/retract
+         document-eid
+         datascript-schema/reverse-relationship-attr
+         (:v reverse-datom)]])
+      (let [half-changed-adapter
+            (datascript-backend/snapshot-adapter
+             (ds/db conn) (:opts authorization))]
+        (is (not=
+             before-proof
+             (backend/invoke
+              half-changed-adapter :relation-proof [relation-id]))))
+      (ds/transact!
+       conn
+       [[:db/add
+         document-eid
+         datascript-schema/reverse-relationship-attr
+         (:v reverse-datom)]])
+      (is (= before-proof
+             (backend/invoke
+              (datascript-backend/snapshot-adapter
+               (ds/db conn) (:opts authorization))
+              :relation-proof [relation-id]))))
     ;; The stored relationship keeps the same endpoint eid. Only its public
     ;; identity changes, so this specifically proves the identity boundary is
     ;; part of full-content cache and cursor equivalence.

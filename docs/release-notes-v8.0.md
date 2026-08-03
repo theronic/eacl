@@ -4,10 +4,10 @@ The major version increments because v8.0 adds the database-visible v3 mutation
 journal and authenticated causal tokens/cache entries/cursors, and moves the
 DataScript/Datahike ports to the v8 Relay list/count contract. The relationship
 storage version stays at 7: Datomic keeps its v7 layout, Datahike now uses that
-same two-tuple physical layout, and DataScript keeps its backend-specific
-entity/composite representation. Client construction performs an idempotent
-additive migration that creates the graph family/head, schema mutation
-identity, and identities for existing relations.
+same two-tuple physical layout, and DataScript now uses the same logical
+two-endpoint representation with indexed ordinary vector values. Client
+construction performs an idempotent additive migration that creates the graph
+family/head, schema mutation identity, and identities for existing relations.
 
 ## Modular artifacts
 
@@ -20,7 +20,8 @@ EACL v8.0 is a workspace with independently consumable modules:
 - `modules/eacl-datahike` contains the CLJ Datahike adapter and supports both
   keyword and numeric attribute-reference representations. Its relationship
   storage now matches Datomic's two cardinality-many heterogeneous endpoint
-  tuples; DataScript retains its entity/composite-index storage adapter.
+  tuples. DataScript uses the same component order in ordinary vectors because
+  DataScript 1.7.8 does not support heterogeneous tuple declarations.
 
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
@@ -61,7 +62,8 @@ number equality.
   requires `:coherence-authority :managed`. `:proof-mode :content` commits
   canonical selected-snapshot content and remains safe with out-of-band
   writers. Datomic content proof includes both physical relationship halves
-  and endpoint identity mappings.
+  and endpoint identity mappings; DataScript and Datahike do the same over
+  their endpoint attributes.
 - Cache/provider corruption, races, format mismatch, or proof failure become a
   miss on the already selected immutable snapshot. Token/freshness/exact
   failures remain request errors.
@@ -143,8 +145,8 @@ number equality.
   writers must either use the v3 mutation builder or keep
   `:coherence-authority :unknown`.
 - Consumers should call `delete-relationships!` before retracting an entity.
-  The Datomic and Datahike integrity reports detect ghost tuple halves left by
-  an incorrect deletion sequence.
+  The Datomic, Datahike, and DataScript integrity reports detect ghost endpoint
+  halves left by an incorrect deletion sequence.
 - Relationship update operations are validated before endpoint resolution. `delete-object!`
   reports actual committed relationship-datom retractions across all batches.
 

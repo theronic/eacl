@@ -613,7 +613,11 @@ Now you can use `can?` to check those arrow permissions:
 => false ; if Bob is not the :owner of the Account for that Product.
 ```
 
-Internally, EACL models Relations, Permissions and Relationships as Datomic entities, along with several tuple indices for efficient querying.
+Internally, EACL models relation and permission definitions as entities.
+Relationships are two endpoint-local datoms: a forward value on the subject
+and a reverse value on the resource. Datomic Pro and Datahike declare
+heterogeneous tuples; DataScript indexes ordinary vectors with the same
+component order.
 
 ## EACL ID Configuration
 
@@ -949,6 +953,14 @@ deletion contract. Its offline detector is
 `eacl.datahike.integrity/dangling-relationship-report`; repair a reported
 endpoint through `eacl/delete-object!` with its raw eid so the v3 mutation
 journal and cache dependencies are advanced atomically.
+
+DataScript uses the same two endpoint values as indexed ordinary vectors, so
+its embedded peer eid is not a ref and has the same deletion contract. Its
+read-only detector is
+`eacl.datascript.integrity/dangling-relationship-report`. DataScript databases
+created from the unreleased relationship-entity v8 branch must be recreated or
+have their relationships reloaded through EACL; there is no dual-read or
+automatic migration.
 
 ## Schema Syntax
 

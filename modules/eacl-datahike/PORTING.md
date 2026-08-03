@@ -2,9 +2,9 @@
 
 The first Datahike port was derived from `modules/eacl-datascript`. The v8
 relationship layer now deliberately follows `modules/eacl-datomic`: Datahike
-supports heterogeneous tuples, so it does not need DataScript's relationship
-entity plus derived composite indexes. DataScript keeps that backend-specific
-layout until it gains heterogeneous tuples.
+supports heterogeneous tuples. DataScript cannot declare that tuple type, but
+now stores the same four components as an indexed ordinary vector on each
+endpoint instead of using a relationship entity.
 
 Status: `eacl.datahike.contract-test` runs the shared v8 public API,
 recursive, cache, and independent-oracle contracts **twice**, once per
@@ -59,6 +59,10 @@ branch. Databases created from that branch must be recreated; the adapter does
 not dual-read or migrate the obsolete physical model.
 
 ## What differs from DataScript
+
+The logical relationship value and two-half integrity contract are shared.
+Only the schema declaration and native index/temporal calls differ: Datahike
+declares heterogeneous tuples, while DataScript indexes ordinary vectors.
 
 | | DataScript | Datahike |
 |---|---|---|

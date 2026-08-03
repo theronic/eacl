@@ -6,19 +6,10 @@
             [eacl.spicedb.parser :as parser]))
 
 (def forward-relationship-attr
-  :eacl.v7.relationship/subject-type+subject+relation+resource-type+resource)
+  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
 
 (def reverse-relationship-attr
-  :eacl.v7.relationship/resource-type+resource+relation+subject-type+subject)
-
-(def forward-partial-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject)
-
-(def reverse-partial-relationship-attr
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource)
-
-(def relationship-full-key-attr
-  :eacl.relationship/full-key)
+  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (def max-entid
   #?(:clj Long/MAX_VALUE
@@ -83,50 +74,11 @@
    :eacl.relation/mutation-id {:db/index true}
    :eacl.dependency/mutation-id {:db/index true}
 
-   :eacl.relationship/subject {:db/valueType :db.type/ref}
-   :eacl.relationship/relation {:db/valueType :db.type/ref}
-   :eacl.relationship/resource {:db/valueType :db.type/ref}
-   :eacl.relationship/subject-type {:db/index true}
-   :eacl.relationship/resource-type {:db/index true}
-   :eacl.relationship/full-key
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/subject-type
-                    :eacl.relationship/subject
-                    :eacl.relationship/relation
-                    :eacl.relationship/resource-type
-                    :eacl.relationship/resource]
-    :db/unique :db.unique/identity}
-   :eacl.v7.relationship/subject-type+subject+relation+resource-type+resource
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/subject-type
-                    :eacl.relationship/subject
-                    :eacl.relationship/relation
-                    :eacl.relationship/resource-type
-                    :eacl.relationship/resource]
+   :eacl.v7.relationship/subject-type+relation+resource-type+resource
+   {:db/cardinality :db.cardinality/many
     :db/index true}
-   :eacl.v7.relationship/resource-type+resource+relation+subject-type+subject
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/resource-type
-                    :eacl.relationship/resource
-                    :eacl.relationship/relation
-                    :eacl.relationship/subject-type
-                    :eacl.relationship/subject]
-    :db/index true}
-   :eacl.v7.relationship/subject-type+relation+resource-type+resource+subject
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/subject-type
-                    :eacl.relationship/relation
-                    :eacl.relationship/resource-type
-                    :eacl.relationship/resource
-                    :eacl.relationship/subject]
-    :db/index true}
-   :eacl.v7.relationship/resource-type+relation+subject-type+subject+resource
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.relationship/resource-type
-                    :eacl.relationship/relation
-                    :eacl.relationship/subject-type
-                    :eacl.relationship/subject
-                    :eacl.relationship/resource]
+   :eacl.v7.relationship/resource-type+relation+subject-type+subject
+   {:db/cardinality :db.cardinality/many
     :db/index true}})
 
 (defn merge-schema
@@ -172,23 +124,25 @@
 
 (defn count-relationships-using-relation
   "Counts relationships that reference the given relation, exactly.
-  Scans the forward-partial index whose leading components are
-  [subject-type relation]; a range over the forward index with varying middle
-  components would span other relations of the same subject-type and overcount."
+  Scans the endpoint-pair forward index whose leading components are
+  [subject-type relation resource-type]."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   (let [relation-id  (str "eacl.relation:" resource-type ":" relation-name ":" subject-type)
         relation-eid (ds/entid db [:eacl/id relation-id])]
     (if-not relation-eid
       0
-      ;; nil-padded to full tuple arity: DataScript sorts vectors length-first.
+      ;; nil-padded to full value arity: DataScript sorts vectors length-first.
       (->> (ds/seek-datoms db :avet
-                           forward-partial-relationship-attr
-                           [subject-type relation-eid nil nil nil])
+                           forward-relationship-attr
+                           [subject-type relation-eid resource-type nil])
            (take-while (fn [datom]
-                         (and (= forward-partial-relationship-attr (:a datom))
+                         (and (= forward-relationship-attr (:a datom))
                               (let [v (:v datom)]
-                                (and (= subject-type (nth v 0))
-                                     (= relation-eid (nth v 1)))))))
+                                (and (vector? v)
+                                     (= 4 (count v))
+                                     (= subject-type (nth v 0))
+                                     (= relation-eid (nth v 1))
+                                     (= resource-type (nth v 2)))))))
            (count)))))
 
 (defn write-schema!
