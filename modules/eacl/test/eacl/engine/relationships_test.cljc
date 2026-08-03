@@ -158,3 +158,15 @@
                nil
                (catch #?(:clj Exception :cljs :default) error
                  (:eacl/error (ex-data error)))))))))
+
+(deftest keyset-pagination-rejects-present-nil-cursors-test
+  (doseq [query [{:first 1 :after nil}
+                 {:last 1 :before nil}]]
+    (is (= :eacl.pagination/invalid-cursor
+           (try
+             (relationships/execute-page
+              scan-specs query (scanner (atom 0)))
+             nil
+             (catch #?(:clj Exception :cljs :default) error
+               (:eacl/error (ex-data error)))))
+        (pr-str query))))

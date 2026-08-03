@@ -110,6 +110,19 @@ apalache_induction() {
     "$model"
 }
 
+nrepl_eval() {
+  eval_port=$1
+  eval_timeout_ms=$2
+  eval_form=$3
+  if command -v clj-nrepl-eval >/dev/null 2>&1; then
+    exec clj-nrepl-eval \
+      -p "$eval_port" \
+      --timeout "$eval_timeout_ms" \
+      "$eval_form"
+  fi
+  exec sh "$repo_root/bin/ci-nrepl-eval" "$eval_port" "$eval_form"
+}
+
 command=${1:-}
 case "$command" in
   bootstrap)
@@ -172,7 +185,7 @@ case "$command" in
         "EACL_NREPL_PORT must name a running dev nREPL." >&2
       exit 2
     fi
-    exec sh "$repo_root/bin/ci-nrepl-eval" "$EACL_NREPL_PORT" \
+    nrepl_eval "$EACL_NREPL_PORT" 60000 \
       "(do (require 'eacl.formal.generators :reload) (require 'eacl.formal.mutation-control-test :reload) (clojure.test/run-tests 'eacl.formal.mutation-control-test))"
     ;;
   counterexample-replay)
@@ -181,7 +194,7 @@ case "$command" in
         "EACL_NREPL_PORT must name a running dev nREPL." >&2
       exit 2
     fi
-    exec sh "$repo_root/bin/ci-nrepl-eval" "$EACL_NREPL_PORT" \
+    nrepl_eval "$EACL_NREPL_PORT" 180000 \
       "(do
          ;; Persistent nREPLs may have reloaded the shared CacheStore protocol.
          ;; Reload its Datomic implementation before constructing replay

@@ -81,6 +81,42 @@
           (is (= (inc (:misses before)) (:misses after)))
           (is (= (:exact-hits before) (:exact-hits after))))))))
 
+(deftest schema-no-op-keeps-completed-cache-hot-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (cached-client conn)
+          _ (seed! conn client)
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct")]
+      (is (true? (eacl/can? client alice :admin account)))
+      (is (true? (eacl/can? client alice :admin account)))
+      (let [before (core/cache-stats client)]
+        (eacl/write-schema! client direct-schema)
+        (is (true? (eacl/can? client alice :admin account)))
+        (let [after (core/cache-stats client)]
+          (is (= (:expirations before) (:expirations after)))
+          (is (= (:misses before) (:misses after)))
+          (is (= (inc (:exact-hits before)) (:exact-hits after))))))))
+
+(deftest native-on-repeat-admits-on-the-second-sighting-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client
+          (core/make-client
+           conn
+           {:cache {:remember-answers :on-repeat}})
+          _ (seed! conn client)
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct")
+          calls (atom 0)
+          original impl/can?]
+      (with-redefs [impl/can?
+                    (fn [db subject permission resource]
+                      (swap! calls inc)
+                      (original db subject permission resource))]
+        (is (true? (eacl/can? client alice :admin account)))
+        (is (true? (eacl/can? client alice :admin account)))
+        (is (true? (eacl/can? client alice :admin account)))
+        (is (= 2 @calls))))))
+
 (deftest can-results-obey-all-cache-consistency-modes-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)

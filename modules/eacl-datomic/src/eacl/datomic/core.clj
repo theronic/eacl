@@ -2016,8 +2016,10 @@
         (when-not (= (:schema-version @schema-state)
                      (:schema-version next-cache))
           (reset! schema-state next-cache))
-        (when-let [store (:current-cache-store opts)]
-          (shared-cache/expire-current! store))
+        (when-not (:eacl.mutation/no-op? (meta deltas))
+          (reset! (:derived-schema-caches opts) {})
+          (when-let [store (:current-cache-store opts)]
+            (shared-cache/expire-current! store)))
         (merge deltas
                (write-response
                 (:eacl.mutation/db-after (meta deltas))
@@ -2252,14 +2254,15 @@
           enabled? (not (cache/no-cache? cache-option))
           ;; Consumers choose an adapter (or explicit no-cache); they should
           ;; not have to understand entry kinds to get a good outcome.
-          ;; :on-repeat avoids retaining a completed answer until its query has
-          ;; demonstrated reuse. `cache/no-cache` remains a meaningful choice:
+          ;; Explicit :on-repeat avoids retaining a completed answer until its
+          ;; query has demonstrated reuse. `cache/no-cache` remains a
+          ;; meaningful choice:
           ;; on traffic that never repeats, or whose direct evaluation is
           ;; cheaper than authenticated cache validation, lookup/proof cost is
           ;; unrecoverable regardless of admission policy.
           remember (if (contains? config :remember-answers)
                      (when enabled? (:remember-answers config))
-                     (when enabled? :on-repeat))
+                     (when enabled? true))
           remember-answers? (boolean remember)
           token-ttl-ms (* 1000 (or page-token-ttl-seconds
                                    default-page-token-ttl-seconds))
@@ -2324,6 +2327,8 @@
        :ttl-ms (when ttl-ms (min ttl-ms token-ttl-ms))
        :native-max-entries
        (or (:max-entries config) 1024)
+       :native-admit-on-repeat?
+       (= :on-repeat remember)
        :remember-answers? (and remember-answers? (some? store))})))
 
 (defn make-client
@@ -2367,7 +2372,7 @@
       :namespace         isolates entries between clients sharing an adapter
       :kind-max-weight, :two-hit-kinds, :admission-entries   per-kind tuning
       :checkpoints       bounded revision checkpoints
-      :remember-answers  false | true | :on-repeat (default) — whether a
+      :remember-answers  false | true (default) | :on-repeat — whether a
                          finished answer is kept so an identical later check
                          skips evaluation. :on-repeat retains it only after the
                          same check has demonstrated reuse.
@@ -2653,7 +2658,9 @@
                                    adapter-deterministic?)
                               (shared-cache/current-cache
                                {:max-entries
-                                (:native-max-entries cache-config)}))
+                                (:native-max-entries cache-config)
+                                :admit-on-repeat?
+                                (:native-admit-on-repeat? cache-config)}))
                             :opaque-cache-token (Object.)
                             :cache-remember-answers? (:remember-answers? cache-config)
                             :managed-cache-enabled?

@@ -64,6 +64,21 @@
         (is (= (inc (:misses before)) (:misses after)))
         (is (= (:exact-hits before) (:exact-hits after)))))))
 
+(deftest schema-no-op-keeps-completed-cache-hot-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})]
+    (seed! conn client)
+    (eacl/create-relationship! client relationship)
+    (is (true? (eacl/can? client user :view document)))
+    (is (true? (eacl/can? client user :view document)))
+    (let [before (datascript/cache-stats client)]
+      (eacl/write-schema! client schema)
+      (is (true? (eacl/can? client user :view document)))
+      (let [after (datascript/cache-stats client)]
+        (is (= (:expirations before) (:expirations after)))
+        (is (= (:misses before) (:misses after)))
+        (is (= (inc (:exact-hits before)) (:exact-hits after)))))))
+
 (deftest per-request-cache-bypass-covers-public-read-shapes-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})
