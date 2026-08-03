@@ -50,7 +50,11 @@ The verified kernel SHALL establish:
 
 1. `can?(q)` is true if and only if `q ∈ Auth(S,R)`.
 2. Forward lookup enumerates exactly the resources granted to its subject; reverse lookup enumerates exactly the subjects granted on its resource.
-3. Each lookup sequence contains every semantic result once, follows its specified deterministic order, and its count operation equals the sequence cardinality unless a caller-supplied count limit reports truncation.
+3. Each lookup sequence contains every semantic result once, follows one
+   deterministic order for its fixed query, adapter, and immutable snapshot,
+   and its count operation equals the sequence cardinality unless a
+   caller-supplied count limit reports truncation. This is not a global,
+   lexical, domain, or cross-adapter order guarantee.
 4. A traversal safety limit produces a typed failure before returning an incomplete result as complete; it never converts exhausted proof work into `allow`.
 5. Page windows are subsequences of one semantic result sequence, and a valid complete page walk concatenates to that sequence without duplication or omission.
 6. A cache hit is returned only when its semantic key, execution identity, causal relation, complete dependency scope, and selected-snapshot proofs establish equality with recomputation.

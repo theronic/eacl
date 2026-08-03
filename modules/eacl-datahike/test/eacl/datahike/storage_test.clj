@@ -25,6 +25,30 @@
   {"attributes as keywords" false
    "attributes as numeric refs" true})
 
+(defn- walk-relationship-pages
+  [client query]
+  (loop [query query
+         pages []]
+    (let [page (eacl/read-relationships client query)
+          pages' (conj pages page)]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (assoc query
+                      :after (get-in page [:page-info :end-cursor]))
+               pages')
+        pages'))))
+
+(defn- walk-relationship-pages-backward
+  [client query]
+  (loop [query query
+         pages ()]
+    (let [page (eacl/read-relationships client query)
+          pages' (conj pages page)]
+      (if (get-in page [:page-info :has-previous-page?])
+        (recur (assoc query
+                      :before (get-in page [:page-info :start-cursor]))
+               pages')
+        pages'))))
+
 (defn- seeded
   [attribute-refs?]
   (let [conn (datahike/create-conn
@@ -169,6 +193,101 @@
             (eacl/delete-relationship! client relationship)
             (assert-snapshot!
              (d/as-of (d/db conn) snapshot-tx)))
+          (finally
+            (d/release conn)))))))
+
+(deftest relationship-keyset-pages-are-stable-and-duplicate-free-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [relationship-count 41
+            conn
+            (datahike/create-conn
+             nil
+             {:attribute-refs? attribute-refs?})
+            client (datahike/make-client conn {})
+            account (eacl/spice-object :account "account")
+            users
+            (mapv
+             #(eacl/spice-object :user (str "user-" %))
+             (range relationship-count))
+            accounts
+            (mapv
+             #(eacl/spice-object :account (str "account-" %))
+             (range relationship-count))
+            anchor-user (eacl/spice-object :user "anchor-user")
+            relationships
+            (into
+             (mapv #(eacl/->Relationship % :owner account) users)
+             (map #(eacl/->Relationship anchor-user :owner %) accounts))]
+        (try
+          (eacl/write-schema! client relationship-schema)
+          (d/transact
+           conn
+           (into
+            [{:eacl/id "account"}
+             {:eacl/id "anchor-user"}]
+            (map
+             (fn [{:keys [id]}] {:eacl/id id})
+             (concat users accounts))))
+          (eacl/create-relationships! client relationships)
+          (doseq [[base-query expected-count]
+                  [[{:subject/id "anchor-user"} relationship-count]
+                   [{:resource/id "account"} relationship-count]
+                   [{:subject/type :user} (* 2 relationship-count)]
+                   [{:resource/type :account} (* 2 relationship-count)]]]
+            (let [forward-pages
+                  (walk-relationship-pages
+                   client (assoc base-query :first 7))
+                  backward-pages
+                  (walk-relationship-pages-backward
+                   client (assoc base-query :last 7))
+                  forward (vec (mapcat :data forward-pages))
+                  backward (vec (mapcat :data backward-pages))
+                  first-page (first forward-pages)
+                  last-page (last backward-pages)
+                  backward-from-forward
+                  (eacl/read-relationships
+                   client
+                   (assoc
+                    base-query
+                    :last 3
+                    :before
+                    (get-in first-page [:page-info :end-cursor])))
+                  forward-from-backward
+                  (eacl/read-relationships
+                   client
+                   (assoc
+                    base-query
+                    :first 3
+                    :after
+                    (get-in last-page [:page-info :start-cursor])))]
+              (is (= expected-count (count forward)))
+              (is (= expected-count (count (distinct forward))))
+              (is (= forward backward))
+              (is (= (->> (:data first-page) butlast (take-last 3) vec)
+                     (:data backward-from-forward)))
+              (is (= (->> (:data last-page) rest (take 3) vec)
+                     (:data forward-from-backward)))
+              (is (=
+                   (mapv
+                    (fn [{:keys [data page-info]}]
+                      {:data data
+                       :page-info
+                       (select-keys
+                        page-info
+                        [:has-next-page?
+                         :has-previous-page?])})
+                    forward-pages)
+                   (mapv
+                    (fn [{:keys [data page-info]}]
+                      {:data data
+                       :page-info
+                       (select-keys
+                        page-info
+                        [:has-next-page?
+                         :has-previous-page?])})
+                    (walk-relationship-pages
+                     client (assoc base-query :first 7)))))))
           (finally
             (d/release conn)))))))
 

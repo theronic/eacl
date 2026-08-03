@@ -46,7 +46,7 @@
    :report "formal/verification/recursive-kernel.edn"}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 25
+   :verified-obligations 26
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}

@@ -49,6 +49,32 @@
        op))
    tx-data))
 
+(def ^:private migration-visibility-timeout-ms 30000)
+(def ^:private migration-visibility-poll-ms 2)
+
+(defn- cas-conflict?
+  [error]
+  (loop [cause error]
+    (cond
+      (nil? cause) false
+      (= :transact/cas (:error (ex-data cause))) true
+      :else (recur (.getCause ^Throwable cause)))))
+
+(defn- await-graph-state
+  [conn]
+  ;; Datahike validates queued transactions before it commits the batch. A
+  ;; losing migration therefore receives its CAS error just before the winning
+  ;; migration's committed db becomes visible through the shared connection.
+  (let [deadline
+        (+ (System/nanoTime)
+           (* 1000000 migration-visibility-timeout-ms))]
+    (loop []
+      (or
+       (graph-state (d/db conn))
+       (when (< (System/nanoTime) deadline)
+         (Thread/sleep migration-visibility-poll-ms)
+         (recur))))))
+
 (defn ensure-migrated!
   [conn]
   (or (graph-state (d/db conn))
@@ -60,11 +86,16 @@
               :family-id (mutation/new-id)
               :order-value :db/current-tx})]
         (try
-          (d/transact conn (native-tx-data db tx-data))
+          (or
+           (some-> (d/transact conn (native-tx-data db tx-data))
+                   :db-after
+                   graph-state)
+           (graph-state (d/db conn)))
           (catch Throwable error
-            (when-not (graph-state (d/db conn))
-              (throw error))))
-        (graph-state (d/db conn)))))
+            (if (cas-conflict? error)
+              (or (await-graph-state conn)
+                  (throw error))
+              (throw error)))))))
 
 (defn mutation-transaction-data
   [db {:keys [mutation-id kind canonical-data relation-ids dependency-ids

@@ -113,15 +113,25 @@
   ([db entity attr arity prefix]
    (eavt-tuple-prefix db entity attr arity prefix nil))
   ([db entity attr arity prefix lower-tail]
+   (eavt-tuple-prefix db entity attr arity prefix lower-tail :asc))
+  ([db entity attr arity prefix cursor-tail direction]
    (let [prefix (vec prefix)
          prefix-size (count prefix)
          missing (- arity prefix-size)]
-     (if (neg? missing)
+     (if (or (neg? missing)
+             (not (#{:asc :desc} direction)))
        []
-       (let [lower-bound
-             (if (and (some? lower-tail) (pos? missing))
+       (let [seek-tail
+             (or cursor-tail
+                 (when (= :desc direction) Long/MAX_VALUE))
+             seek-bound
+             (if (and (some? seek-tail) (pos? missing))
                (into prefix
-                     (cons lower-tail (repeat (dec missing) nil)))
+                     (cons seek-tail
+                           (repeat (dec missing)
+                                   (if (= :desc direction)
+                                     Long/MAX_VALUE
+                                     nil))))
                (into prefix (repeat missing nil)))
              matches-prefix?
              (fn [{:keys [v]}]
@@ -130,17 +140,68 @@
                     (= prefix (subvec v 0 prefix-size))))]
          (if (direct-db? db)
            (let [a-repr (attr-repr db attr)]
-             (->> (d/seek-datoms
-                   db
-                   {:index :eavt
-                    :components [entity attr lower-bound]})
+             (->> ((if (= :desc direction)
+                     d/rseek-datoms
+                     d/seek-datoms)
+                   db {:index :eavt
+                       :components [entity attr seek-bound]})
                   (take-while
                    (fn [{:keys [e a] :as datom}]
                      (and (= entity e)
-                          (= a-repr a)
+                         (= a-repr a)
+                         (matches-prefix? datom))))))
+           (cond->> (eavt-datoms db entity attr)
+             true (filter matches-prefix?)
+             true (sort-by (juxt :v :e))
+             (= :desc direction) reverse)))))))
+
+(defn avet-tuple-prefix
+  "Datoms across endpoint entities whose tuple value starts with `prefix`.
+
+  Current direct databases seek natively in either direction. Temporal/filter
+  wrappers use their exact visible datoms and sort only that historical fallback
+  result; current hot-path pagination never materializes the prefix."
+  ([db attr arity prefix]
+   (avet-tuple-prefix db attr arity prefix nil :asc))
+  ([db attr arity prefix cursor-tail direction]
+   (let [prefix (vec prefix)
+         prefix-size (count prefix)
+         missing (- arity prefix-size)]
+     (if (or (neg? missing)
+             (not (#{:asc :desc} direction)))
+       []
+       (let [seek-tail
+             (or cursor-tail
+                 (when (= :desc direction) Long/MAX_VALUE))
+             seek-bound
+             (if (and (some? seek-tail) (pos? missing))
+               (into prefix
+                     (cons seek-tail
+                           (repeat (dec missing)
+                                   (if (= :desc direction)
+                                     Long/MAX_VALUE
+                                     nil))))
+               (into prefix (repeat missing nil)))
+             matches-prefix?
+             (fn [{:keys [v]}]
+               (and (vector? v)
+                    (= arity (count v))
+                    (= prefix (subvec v 0 prefix-size))))]
+         (if (direct-db? db)
+           (let [a-repr (attr-repr db attr)]
+             (->> ((if (= :desc direction)
+                     d/rseek-datoms
+                     d/seek-datoms)
+                   db {:index :avet
+                       :components [attr seek-bound]})
+                  (take-while
+                   (fn [{:keys [a] :as datom}]
+                     (and (= a-repr a)
                           (matches-prefix? datom))))))
-           (filter matches-prefix?
-                   (eavt-datoms db entity attr))))))))
+           (cond->> (avet-datoms db attr)
+             true (filter matches-prefix?)
+             true (sort-by (juxt :v :e))
+             (= :desc direction) reverse)))))))
 
 (defn avet-range
   "Datoms of `attr` whose value falls in [`start`, `end`]. Datahike's

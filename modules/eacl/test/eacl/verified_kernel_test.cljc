@@ -96,6 +96,45 @@
             (constantly
              {:status :hit :provenance :exact-hit}))))))
 
+(deftest keyset-page-boundary-enforces-one-row-lookahead
+  (let [input {:direction :asc
+               :size 20
+               :bound? false
+               :realized-count 21}
+        result {:take-count 20
+                :reverse? false
+                :has-next? true
+                :has-previous? false}
+        kernel (->FunctionKernel (fn [_ _] result))
+        decide
+        #(verified/decide
+          {:mode :verified-authoritative :kernel kernel}
+          :relationship-keyset-page
+          %
+          (constantly nil))]
+    (is (= result (decide input)))
+    (doseq [invalid
+            [(assoc input :unknown true)
+             (assoc input :size 0)
+             (assoc input :realized-count 22)]]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (decide invalid))))
+    (let [oversized-result-kernel
+          (->FunctionKernel
+           (fn [_ _]
+             (assoc result :take-count 21)))]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (verified/decide
+            {:mode :verified-authoritative
+             :kernel oversized-result-kernel}
+            :relationship-keyset-page
+            input
+            (constantly nil)))))))
+
 (deftest full-authorization-boundary-is-strict
   (let [result {:status :complete
                 :operation :can?

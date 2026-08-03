@@ -56,16 +56,26 @@
                 #(or (str/ends-with? (.getName %) ".tla")
                      (str/ends-with? (.getName %) ".cfg")))
    (map repo-file
-        ["modules/eacl/src/eacl/backend/v8.cljc"
+        ["bin/formal"
+         "bin/generate-verification-manifest"
+         "bin/validate-verification-manifest"
+         "modules/eacl/src/eacl/backend/v8.cljc"
          "modules/eacl/src/eacl/cache.cljc"
+         "modules/eacl/src/eacl/engine/relationships.cljc"
          "modules/eacl/src/eacl/engine/v8.cljc"
          "modules/eacl/src/eacl/relay.cljc"
-         "modules/eacl/src/eacl/relationships/relay.cljc"
          "modules/eacl/src/eacl/secure_format.cljc"
          "modules/eacl/src/eacl/verified_kernel.cljc"
+         "modules/eacl-datomic/src/eacl/datomic/backend.clj"
          "modules/eacl-datomic/src/eacl/datomic/core.clj"
+         "modules/eacl-datascript/src/eacl/datascript/backend.cljc"
          "modules/eacl-datascript/src/eacl/datascript/core.cljc"
+         "modules/eacl-datascript/src/eacl/datascript/db.cljc"
+         "modules/eacl-datascript/src/eacl/datascript/impl.cljc"
+         "modules/eacl-datahike/src/eacl/datahike/backend.clj"
          "modules/eacl-datahike/src/eacl/datahike/core.clj"
+         "modules/eacl-datahike/src/eacl/datahike/db.clj"
+         "modules/eacl-datahike/src/eacl/datahike/impl.clj"
          "formal/smoke/clj/eacl/formal/production_kernel.clj"
          "formal/smoke/cljs/eacl/formal/production_kernel.cljs"
          "formal/toolchain.lock.json"])))
@@ -84,6 +94,7 @@
    "formal/verification/pagination-kernel.edn"
    "formal/verification/performance-gates.edn"
    "formal/verification/recursive-kernel.edn"
+   "docs/reports/2026-08-02-eacl-v8-keyset-relationship-pagination.md"
    "docs/reports/2026-08-02-eacl-v8-single-db-current-cache-design.md"])
 
 (defn aggregate-digest

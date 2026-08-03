@@ -317,7 +317,6 @@ CursorCurrentSafe ==
     /\ cursorSource = source
     /\ cursorOperation = selectedOperation
     /\ cursorQuery = selectedQuery
-    /\ cursorDirection = selectedDirection
     /\ cursorResultKind = selectedResultKind
     /\ cursorScope = dependencyScope
     /\ now < cursorExpiresAt
@@ -339,7 +338,6 @@ CursorExactSafe ==
     /\ cursorSource = source
     /\ cursorOperation = selectedOperation
     /\ cursorQuery = selectedQuery
-    /\ cursorDirection = selectedDirection
     /\ cursorResultKind = selectedResultKind
     /\ cursorScope = dependencyScope
     /\ now < cursorExpiresAt
@@ -844,7 +842,6 @@ CursorResume ==
           /\ cursorSource = source
           /\ cursorOperation = operation
           /\ cursorQuery = query
-          /\ cursorDirection = direction
           /\ cursorResultKind = resultKind
           /\ cursorScope = scope
         unexpired == now < cursorExpiresAt

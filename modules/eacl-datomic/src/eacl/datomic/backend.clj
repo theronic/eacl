@@ -181,9 +181,12 @@
                selected-exact-locator]
         :or {proof-mode :content}
         :as opts}]
-   (let [external-id (or entid->object-id
-                         (fn [snapshot eid]
-                           (:eacl/id (d/entity snapshot eid))))]
+   (let [external-id
+         (or entid->object-id
+             (fn [snapshot eid]
+               (:eacl/id (d/entity snapshot eid))))
+         graph-state
+         (delay (journal/graph-state db))]
      (backend/make-adapter
       {:id :datomic
        :fingerprint (:adapter-fingerprint opts)
@@ -215,15 +218,15 @@
         :source-scope
         (fn []
           {:source-id
-           {:database-id
+            {:database-id
             (or database-id
                 (str (.id ^datomic.Database db)))
-            :family-id (:family-id (journal/graph-state db))}
+            :family-id (:family-id @graph-state)}
            :branch nil})
 
         :graph-head
         (fn []
-          {:graph-anchor (:head-id (journal/graph-state db))
+          {:graph-anchor (:head-id @graph-state)
            :order-hint (or selected-order-hint
                            (d/basis-t db))
            :exact-locator (or selected-exact-locator

@@ -60,7 +60,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `RecursiveEngine.dfy` | SCC reachability, forward/reverse worklists, limits, continuation replay |
 | `OrderedMerge.dfy` | ordered union and uniqueness |
 | `Pagination.dfy` | frontier and direction laws |
-| `PageWindow.dfy` | total page normalization, windows, cursor continuation decisions |
+| `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
 | `CacheKernel.dfy` | dependency closure, cache validation, telemetry CAS laws |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
@@ -134,8 +134,13 @@ The internal `:engine-selection` client option now supports
 `:legacy-authoritative`, `:verified-shadow`, and `:verified-authoritative`.
 Generated Java and JavaScript providers implement the portable
 `eacl.verified-kernel/DecisionKernel` boundary. Cursor continuation,
-relationship page-window, and decoded cache-entry decisions are routed through
-that boundary in verified modes. Shadow mode reports only the operation,
+relationship request normalization, relationship keyset page flags/window
+size, and decoded cache-entry decisions are routed through that boundary in
+verified modes. The indexed relationship engine retains only an authenticated
+physical edge and consumes at most one page plus lookahead; executable
+forward/backward walk tests establish stable, complete, duplicate-free
+composition over certified adapter scans. This is deliberately not a theorem
+of a global or cross-backend result order. Shadow mode reports only the operation,
 changed field names, and non-sensitive result variants. It deliberately emits
 neither raw values nor hashes of low-entropy request/result data; a generated
 exception, invalid result, or disagreement cannot alter the legacy decision.
