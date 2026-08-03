@@ -301,6 +301,7 @@
     :traversal-permissions (atom {})
     :traversal-analysis (atom nil)
     :relationship-dependencies (atom {})
+    :recursive-plans (atom {})
     :direct-grant-relations (atom {})}))
 
 (defn schema-cache-key
@@ -350,6 +351,7 @@
    (reset! (:traversal-permissions schema-cache) {})
    (some-> (:traversal-analysis schema-cache) (reset! nil))
    (reset! (:relationship-dependencies schema-cache) {})
+   (some-> (:recursive-plans schema-cache) (reset! {}))
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
 
@@ -1019,6 +1021,58 @@
          (sort-by :id)
          vec)))
 
+(defn- forward-consumers
+  [rules]
+  (->> rules
+       (keep (fn [rule]
+               (case (:rule rule)
+                 :self-permission
+                 [(:target-node rule) rule]
+                 :arrow-permission
+                 [(:target-node rule) rule]
+                 nil)))
+       (group-by first)
+       (into {}
+             (map (fn [[node pairs]]
+                    [node (mapv second (sort-by (comp :id second) pairs))])))))
+
+(defn- rules-by-node
+  [rules]
+  (->> rules
+       (group-by :node)
+       (into {}
+             (map (fn [[node node-rules]]
+                    [node (vec (sort-by :id node-rules))])))))
+
+(defn- compile-recursive-plan
+  [db root-node]
+  (inc-stat! :compiled-recursive-plans)
+  (let [rules (compile-recursive-rules db root-node)]
+    {:rules rules
+     :forward-consumers (forward-consumers rules)
+     :rules-by-node (rules-by-node rules)}))
+
+(defn- recursive-plan
+  "Returns the immutable traversal plan for one permission root.
+
+  Compilation depends only on the schema proof, never on graph relationships,
+  subject, resource, direction, or page boundary. A client generation may
+  therefore share the plan across principals and requests without sharing an
+  authorization answer or request-local traversal state."
+  [db root-node]
+  (let [cache-atom (:recursive-plans *schema-cache*)]
+    (if-not (and cache-atom (some? (:schema-version *schema-cache*)))
+      (compile-recursive-plan db root-node)
+      (let [candidate (delay (compile-recursive-plan db root-node))
+            plan-delay
+            (get
+             (swap! cache-atom
+                    #(if (contains? % root-node)
+                       %
+                       (assoc % root-node candidate)))
+             root-node)]
+        @plan-delay))))
+
 (defn- recursive-edge
   [direction result-kind ordinal result-type result-eid]
   {:kind :recursive-traversal
@@ -1378,25 +1432,10 @@
           state'))
       state)))
 
-(defn- forward-consumers
-  [rules]
-  (->> rules
-       (keep (fn [rule]
-               (case (:rule rule)
-                 :self-permission
-                 [(:target-node rule) rule]
-                 :arrow-permission
-                 [(:target-node rule) rule]
-                 nil)))
-       (group-by first)
-       (into {}
-             (map (fn [[node pairs]]
-                    [node (mapv second (sort-by (comp :id second) pairs))])))))
-
 (defn- forward-seed-state
-  [db subject-type subject-eid rules]
-  (let [consumers (forward-consumers rules)]
-    (reduce
+  [db subject-type subject-eid
+   {:keys [rules forward-consumers]}]
+  (reduce
      (fn [state rule]
        (case (:rule rule)
          :relation
@@ -1438,9 +1477,9 @@
       :emitted-root #{}
       :ordinal 0
       :counters {}
-      :consumers consumers
-      :consumer-count (reduce + 0 (map count (vals consumers)))}
-     rules)))
+      :consumers forward-consumers
+      :consumer-count (reduce + 0 (map count (vals forward-consumers)))}
+     rules))
 
 (defn- forward-consumer-work
   [db grant rule]
@@ -1492,8 +1531,8 @@
 
 (defn- initial-forward-state
   [db subject-type subject-eid root-node]
-  (let [rules (compile-recursive-rules db root-node)]
-    (forward-seed-state db subject-type subject-eid rules)))
+  (forward-seed-state
+   db subject-type subject-eid (recursive-plan db root-node)))
 
 (defn- next-forward-item
   [db root-node result-type state]
@@ -1702,14 +1741,6 @@
               continuation-cache :forward :resource :desc bound size page)
              page)))))))
 
-(defn- rules-by-node
-  [rules]
-  (->> rules
-       (group-by :node)
-       (into {}
-             (map (fn [[node node-rules]]
-                    [node (vec (sort-by :id node-rules))])))))
-
 (defn- reverse-consumer-key
   [node resource-eid]
   [node resource-eid])
@@ -1853,8 +1884,7 @@
 
 (defn- initial-reverse-state
   [db subject-type root-node root-resource-eid]
-  (let [rules (compile-recursive-rules db root-node)
-        indexed-rules (rules-by-node rules)]
+  (let [{:keys [rules rules-by-node]} (recursive-plan db root-node)]
     (enqueue-reverse-goal
      {:queue empty-queue
       :seen-goals #{}
@@ -1865,7 +1895,7 @@
       :ordinal 0
       :counters {}
       :subject-type subject-type
-      :rules-by-node indexed-rules
+      :rules-by-node rules-by-node
       :rule-count (count rules)
       :consumer-count 0}
      root-node

@@ -314,4 +314,24 @@
                      adapter :node :edit)))
         (is (identical? analysis-delay
                         @(:traversal-analysis schema-cache))
-            "another permission root reuses the generation-wide analysis")))))
+            "another permission root reuses the generation-wide analysis"))
+      (let [stats (atom {})
+            query (fn [subject-eid]
+                    {:subject {:type :user :id subject-eid}
+                     :permission :read
+                     :resource/type :node
+                     :first 1})]
+        (binding [engine/*recursive-traversal-stats* stats]
+          (is (= [] (:data (engine/lookup-resources
+                            adapter (query 1001)))))
+          (is (= [] (:data (engine/lookup-resources
+                            adapter (query 1002))))))
+        (is (= 1 (:compiled-recursive-plans @stats))
+            "different principals share one immutable recursive plan")
+        (is (= 1 (count @(:recursive-plans schema-cache))))
+        (engine/evict-permission-paths-cache! schema-cache)
+        (binding [engine/*recursive-traversal-stats* stats]
+          (is (= [] (:data (engine/lookup-resources
+                            adapter (query 1003))))))
+        (is (= 2 (:compiled-recursive-plans @stats))
+            "schema-cache eviction forces plan recompilation")))))

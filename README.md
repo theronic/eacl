@@ -681,6 +681,24 @@ The native completed-answer cache cannot be shared between clients. Legacy
 portable stores remain compatibility/test surfaces but are not trusted as
 authorization-answer providers.
 
+Cache granularity is deliberately split:
+
+- completed-answer entries are keyed by the complete semantic operation and
+  query, including the principal; they do not reuse graph results across
+  different principals or different permission questions;
+- page-navigation and recursive-continuation state is likewise scoped to one
+  authenticated query and snapshot proof;
+- schema-derived permission paths, dependency closures, recursive routing,
+  and immutable recursive traversal plans are shared by every query in the
+  same client/schema generation.
+
+The last layer gives recursive queries a safe compilation network effect: once
+one principal queries `server/view`, another principal querying `server/view`
+reuses its compiled worklist rules and indexes. It does **not** reuse either
+principal's grants, visited graph, or final answer. EACL v8 does not implement
+SpiceDB-style cached authorization subproblems; backend indexes still serve
+every graph edge needed by a cache miss.
+
 Reach for `no-cache` when the same permission check is essentially never asked
 twice — a batch job sweeping distinct resources, say — or when direct
 evaluation is cheaper than authenticated completed-answer validation. Repeated

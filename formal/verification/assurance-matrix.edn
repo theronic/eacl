@@ -5,9 +5,11 @@
  [{:operation :can?
    :entry-points ['eacl.core/can?]
    :theorems [:authorization-membership-iff
-              :limit-fails-closed]
+              :limit-fails-closed
+              :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
            "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/SchemaPlanCost.dfy"
            "formal/dafny/Semantics.dfy"]
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :direct-scan-equivalence]
@@ -20,11 +22,13 @@
               :reverse-projection-exact
               :unique-deterministic-sequence
               :page-walk-complete
-              :limit-fails-closed]
+              :limit-fails-closed
+              :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
            "formal/dafny/OrderedMerge.dfy"
            "formal/dafny/Pagination.dfy"
-           "formal/dafny/RecursiveEngine.dfy"]
+           "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/SchemaPlanCost.dfy"]
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :ordered-complete-scans
                          :permission-node-completeness]
@@ -34,9 +38,11 @@
    :entry-points ['eacl.core/count-resources
                   'eacl.core/count-subjects]
    :theorems [:count-equals-lookup-cardinality :bounded-count-law
-              :limit-fails-closed]
+              :limit-fails-closed
+              :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
-           "formal/dafny/RecursiveEngine.dfy"]
+           "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/SchemaPlanCost.dfy"]
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :ordered-complete-scans]
    :runtime-targets [:clj-java :cljs-javascript]

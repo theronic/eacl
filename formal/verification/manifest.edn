@@ -55,6 +55,11 @@
    :verified-obligations 3
    :source "formal/dafny/CursorCost.dfy"
    :claim :conditional-operation-count-bound}
+  :recursive-plan-cost-model
+  {:status :passed
+   :verified-obligations 5
+   :source "formal/dafny/SchemaPlanCost.dfy"
+   :claim :conditional-operation-count-bound}
   :cache-decision-kernel
   {:status :passed
    :verified-obligations 17
