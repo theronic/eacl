@@ -40,8 +40,9 @@
   {:input {:current-proof "new" :cursor-proof "old"
            :exact {:graph 7 :source "source" :proof "old"}}
    :expected :exact}
-  {:input {:current-proof "new" :cursor-proof "old" :mode :at-least}
-   :expected :conflict}
+  {:input {:current-proof "new" :cursor-proof "old"
+           :mode :recover-current}
+   :expected :rebase-current}
   {:input {:current-proof "p" :cursor-proof "p" :expired? true}
    :expected :expired}
   {:input {:current-proof "new" :cursor-proof "old"

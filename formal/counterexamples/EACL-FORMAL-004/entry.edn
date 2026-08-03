@@ -3,15 +3,15 @@
  :discovered-by :manual-review
  :seed-or-trace "proof-mode-none/add-between-pages"
  :minimized-fixture "fixture.edn"
- :impact :mixed-snapshot
+ :impact :unproved-cross-graph-resume
  :affected-versions ["current worktree at discovery"]
  :affected-backends [:shared :datomic :datascript :datahike]
  :root-cause
- "Cursor proof identity hashed nil schema/relation proofs when :proof-mode :none was selected. Cursor equivalence compared that constant digest while omitting graph head and exact locator, so page 2 could apply an old frontier to a changed current graph."
+ "Cursor proof identity hashed nil schema/relation proofs when :proof-mode :none was selected. Cursor equivalence compared that constant digest and silently lifted graph-specific resume state without an explicit current-recovery or exact-snapshot decision."
  :fix
- "Shared relay proof identity now distinguishes complete deterministic proofs from exact-snapshot-only identities. Missing proofs and nondeterministic adapters commit to snapshot id and graph head, preventing proofless lift; complete equal proofs remain liftable."
+ "Every cursor is authenticated to the complete semantic query. Non-exact continuation re-evaluates on one selected current graph, without treating proof equivalence as authorization; explicit at-exact-snapshot continuation alone selects retained history."
  :closing-evidence
- ["eacl.datomic.cache-review-regressions-test/proofless-cursor-uses-exact-snapshot-test"
-  "eacl.relay-test/cursor-proof-identity-test (CLJ and CLJS)"
-  "formal/dafny/TemporalSafety.dfy proof-availability lemmas"
-  "formal/tla/EaclTemporal.tla SingleGraphCursorWalk invariant"]}
+ ["eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test"
+  "eacl.relay-test/non-exact-continuation-recovers-on-current-graph-test (CLJ and CLJS)"
+  "formal/dafny/TemporalSafety.dfy recovery-mode lemmas"
+  "formal/tla/EaclTemporal.tla CursorCurrentSafe invariant"]}

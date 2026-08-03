@@ -16,7 +16,7 @@ Its 25 transitions cover:
 - authenticated cache lookup, tampering, provider failure, future and sibling
   entries, storage, invalidation generations, and telemetry compare-and-set;
 - cursor authentication, operation/non-page-query/result scope, positional
-  direction changes, expiry, proof-equivalent reuse, exact-snapshot fallback,
+  direction changes, expiry, current-graph recovery, exact-snapshot selection,
   divergence, and conflict;
 - recursive continuation and page publication, retry, eviction, lookup, and
   deterministic replay.
@@ -25,8 +25,9 @@ The model checks these safety properties:
 
 1. cache reuse is exact-snapshot or forward-only from a causal ancestor with
    matching authenticated source, query, scope, and proof;
-2. cursors either continue on the selected graph under a complete matching
-   proof, continue on their retained exact graph, or fail closed;
+2. authenticated query-scoped cursors either continue or recover on the
+   selected graph in non-exact mode, continue on their retained graph in exact
+   mode, or fail closed;
 3. a page walk never combines results from different computation graphs;
 4. cache and continuation publication or eviction races do not change the
    authorization decision.
@@ -50,7 +51,9 @@ trace length. Therefore `bin/formal apalache-invariant` separately checks:
 `formal/dafny/TemporalSafety.dfy` additionally expresses cache, cursor,
 continuation, and telemetry states as typed predicates and proves each
 transition constructor preserves the corresponding safety predicate without a
-finite trace bound.
+finite trace bound. Its cursor machine distinguishes authenticated current
+recovery from retained exact continuation and proves both select only the
+request-scoped graph allowed by their mode.
 
 ## Reproduction
 

@@ -115,7 +115,7 @@
       (is (= [(first documents)] (:data previous-page)))
       (is (true? (:cached? previous-page)))
       (is (true? (:cached? previous-hit))))
-    (testing "historical fallback never consults the current-answer cache"
+    (testing "current recovery becomes cacheable after re-evaluation"
       (eacl/delete-relationship! authorization (second relationships))
       (let [before (datahike/cache-stats authorization)
             historical-1
@@ -123,13 +123,13 @@
             historical-2
             (eacl/lookup-resources authorization page-2-query)
             after (datahike/cache-stats authorization)]
-        (is (= [(second documents)] (:data historical-1)))
+        (is (= [(last documents)] (:data historical-1)))
         (is (= (:data historical-1) (:data historical-2)))
+        (is (= :rebased
+               (get-in historical-1 [:page-info :cursor-recovery])))
         (is (false? (:cached? historical-1)))
-        (is (false? (:cached? historical-2)))
-        (is (= (+ 2 (:bypasses before)) (:bypasses after)))
-        (is (= (:exact-hits before) (:exact-hits after)))
-        (is (= (:managed-hits before) (:managed-hits after)))))))
+        (is (true? (:cached? historical-2)))
+        (is (= (:bypasses before) (:bypasses after)))))))
 
 (deftest per-request-cache-bypass-covers-public-read-shapes-test
   (let [conn (datahike/create-conn)
@@ -467,7 +467,7 @@
           (d/release conn)
           (d/delete-database config))))))
 
-(deftest relationship-cursor-proof-equivalence-and-exact-fallback-test
+(deftest relationship-cursor-current-recovery-test
   (let [conn (datahike/create-conn)
         authorization (client conn)
         _ (eacl/write-schema! authorization schema)
@@ -489,7 +489,7 @@
         (datahike/token->cursor cursor (:opts authorization))]
     (try
       (d/transact conn [{:eacl/id "unrelated-cursor-churn"}])
-      (testing "an unrelated write still pins continuation to the original commit"
+      (testing "an unrelated write rebases continuation to the current commit"
         (let [page-2
               (eacl/read-relationships
                authorization
@@ -499,8 +499,10 @@
                (get-in page-2 [:page-info :end-cursor])
                (:opts authorization))]
           (is (= [(second relationships)] (:data page-2)))
-          (is (= (get-in cursor-data [:graph-head :exact-locator])
-                 (get-in rebased [:graph-head :exact-locator])))))
+          (is (= :rebased
+                 (get-in page-2 [:page-info :cursor-recovery])))
+          (is (not= (get-in cursor-data [:graph-head :exact-locator])
+                    (get-in rebased [:graph-head :exact-locator])))))
       (let [fresh-page-1
             (eacl/read-relationships authorization query)
             fresh-cursor
@@ -510,14 +512,16 @@
              (eacl/delete-relationship!
               authorization
               (second relationships)))]
-        (testing "a relationship change uses the retained original commit"
-          (is (= [(second relationships)]
-                 (:data
-                  (eacl/read-relationships
-                   authorization
-                   (assoc query :after fresh-cursor))))))
-        (testing "a newer at-least floor forbids exact fallback"
-          (is (= :eacl.consistency/cursor-consistency-conflict
+        (testing "a relationship change resumes on the current commit"
+          (let [page
+                (eacl/read-relationships
+                 authorization
+                 (assoc query :after fresh-cursor))]
+            (is (= [(last relationships)] (:data page)))
+            (is (= :rebased
+                   (get-in page [:page-info :cursor-recovery])))))
+        (testing "a changed consistency contract is a different query scope"
+          (is (= :eacl.pagination/invalid-cursor
                  (:type
                   (error-data
                    #(eacl/read-relationships

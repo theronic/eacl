@@ -12,7 +12,7 @@
     :EACL-FORMAL-003
     eacl.datomic.cache-test/authenticated-store-preserves-logical-kind-test
     :EACL-FORMAL-004
-    eacl.datomic.cache-review-regressions-test/proofless-cursor-uses-exact-snapshot-test
+    eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test
     :EACL-FORMAL-005
     eacl.secure-format-test/portable-cursor-expiry-boundary-test
     :EACL-FORMAL-006

@@ -52,7 +52,7 @@
 
 ;; --- Follow-up review -------------------------------------------------------
 
-(deftest proofless-cursor-uses-exact-snapshot-test
+(deftest proofless-cursor-recovers-on-current-snapshot-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client
           (core/make-client
@@ -79,17 +79,17 @@
         (eacl/create-relationship!
          client
          (->Relationship alice :owner (account "a2")))
-        (is (= ["a3"]
-               (mapv
-                :id
-                (:data
-                 (eacl/lookup-resources
-                  client
-                  (assoc query
-                         :after
-                         (get-in page-1
-                                 [:page-info :end-cursor]))))))
-            "without complete proofs, page 2 must use page 1's exact graph")))))
+        (let [page-2
+              (eacl/lookup-resources
+               client
+               (assoc query
+                      :after
+                      (get-in page-1
+                              [:page-info :end-cursor])))]
+          (is (= ["a2"] (mapv :id (:data page-2))))
+          (is (= :rebased
+                 (get-in page-2
+                         [:page-info :cursor-recovery]))))))))
 
 (deftest explicit-cache-true-does-not-fragment-answer-keys-test
   ;; :cache? selects how to obtain an answer, not which answer was requested.
@@ -336,8 +336,8 @@
 ;; --- M4 ---------------------------------------------------------------------
 
 (deftest current-cursor-pages-use-the-current-answer-cache-test
-  ;; Cursor validation selects either an equivalent current snapshot or a
-  ;; reconstructed historical snapshot. Only the former may publish.
+  ;; Non-exact cursor validation recovers on the current snapshot and may
+  ;; publish only after re-evaluation there.
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           context {:store store}
@@ -382,19 +382,22 @@
        (->Relationship (spice-object :user "alice")
                        :owner
                        (spice-object :account "acct3")))
-      (let [before-historical (core/cache-stats acl)
-            historical-1 (eacl/lookup-resources acl page-2-query)
-            historical-2 (eacl/lookup-resources acl page-2-query)
-            after-historical (core/cache-stats acl)]
-        (is (= ["acct3" "acct4" "acct5"]
-               (mapv :id (:data historical-1))))
-        (is (= (:data historical-1) (:data historical-2)))
-        (is (false? (:cached? historical-1)))
-        (is (false? (:cached? historical-2)))
-        (is (= (+ 2 (:bypasses before-historical))
-               (:bypasses after-historical)))
-        (is (= (:exact-hits before-historical)
-               (:exact-hits after-historical)))))))
+      (let [before-recovery (core/cache-stats acl)
+            recovered-1 (eacl/lookup-resources acl page-2-query)
+            recovered-2 (eacl/lookup-resources acl page-2-query)
+            after-recovery (core/cache-stats acl)]
+        (is (= ["acct4" "acct5" "acct6"]
+               (mapv :id (:data recovered-1))))
+        (is (= (:data recovered-1) (:data recovered-2)))
+        (is (= :rebased
+               (get-in recovered-1
+                       [:page-info :cursor-recovery])))
+        (is (false? (:cached? recovered-1)))
+        (is (true? (:cached? recovered-2)))
+        (is (= (:bypasses before-recovery)
+               (:bypasses after-recovery)))
+        (is (= (inc (:exact-hits before-recovery))
+               (:exact-hits after-recovery)))))))
 
 ;; --- L2 ---------------------------------------------------------------------
 

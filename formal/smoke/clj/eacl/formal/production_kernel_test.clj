@@ -142,7 +142,7 @@
              :bound? false
              :realized-count 21}
             #(throw (ex-info "legacy must not run" {}))))))
-  (testing "cursor proof mismatch is fail-closed"
+  (testing "exact cursor proof mismatch is fail-closed"
     (is (= :snapshot-unavailable
            (verified/decide
             selection
@@ -154,7 +154,23 @@
              :cursor-source "source"
              :current-proof "new"
              :cursor-proof "old"
-             :mode :minimize-latency
+             :mode :exact-snapshot
+             :cursor-graph 0
+             :exact nil}
+            #(throw (ex-info "legacy must not run" {}))))))
+  (testing "recoverable cursor proof mismatch rebases to current"
+    (is (= :rebase-current
+           (verified/decide
+            selection
+            :cursor-continuation
+            {:authenticated? true
+             :scope-matches? true
+             :expired? false
+             :source "source"
+             :cursor-source "source"
+             :current-proof "new"
+             :cursor-proof "old"
+             :mode :recover-current
              :cursor-graph 0
              :exact nil}
             #(throw (ex-info "legacy must not run" {}))))))

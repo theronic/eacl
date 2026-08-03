@@ -58,6 +58,7 @@ VARIABLES
   \* @type: Int;
   cursorProof,
   \* @type: Bool;
+  \* TRUE means non-exact continuation may recover on the selected head.
   cursorLiftable,
   \* @type: Int;
   cursorQuery,
@@ -133,9 +134,7 @@ CursorCurrentSafe ==
   outcome # CursorCurrent \/
     /\ cursorPresent
     /\ cursorQuery = selectedQuery
-    /\ (cursorGraph = head \/
-        /\ cursorLiftable
-        /\ cursorProof = proof[head])
+    /\ (cursorGraph = head \/ cursorLiftable)
     /\ chosenGraph = head
 
 CursorExactSafe ==
@@ -329,9 +328,7 @@ CursorResume ==
           /\ cursorQuery = query
         currentEligible ==
           /\ scopeMatches
-          /\ (cursorGraph = head \/
-              /\ cursorLiftable
-              /\ cursorProof = proof[head])
+          /\ (cursorGraph = head \/ cursorLiftable)
         exactEligible ==
           /\ scopeMatches
           /\ ~currentEligible

@@ -59,10 +59,16 @@
    :median -3440
    :maximum 4648
    :interpretation :gc-noise-not-a-portable-guarantee}
-  :cursor-token-utf8-bytes
+ :cursor-token-utf8-bytes
   {:recursive-250-results-page-25 1814
    :multipath-500-results-page-50 1966
-   :regression-max 8192}}
+   :regression-max 8192}
+  :cursor-codec-work
+  {:payload-canonical-passes-per-encode 1
+   :payload-canonical-passes-per-decode 1
+   :authentication-passes-per-encode 1
+   :authentication-passes-per-decode 1
+   :framing-growth :linear}}
 
  :shadow-rollout
  {:unexplained-differences-max 0

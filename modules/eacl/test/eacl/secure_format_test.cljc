@@ -1,6 +1,7 @@
 (ns eacl.secure-format-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
+            [clojure.string :as str]
             [eacl.causal-token :as token]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]))
@@ -13,10 +14,7 @@
              :current current-key}})
 
 (def portable-cursor-vector
-  "eacl_c3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqZFhKemIzSWdlenByYVc1a0lEcHlaV3hoZEdsdmJuTm9hWEJ6TENBNmIyWm1jMlYwSURJc0lEcHpZMjl3WlNCYk9uSmxZV1FnZXpwemRXSnFaV04wTDJsa0lDSjFNU0o5WFN3Z09uWWdPWDBzSURwbGVIQnBjbVZ6TFdGMElERXdOU3dnT21semMzVmxaQzFoZENBeE1EQXNJRHAyWlhKemFXOXVJRE45IiwgOnRhZyAiMnRLbjR3YmIzT3Rnc3MySkpFWFo1WUg2U05SVEh6d3ZJOGpnNmE4aWNDWSIsIDp2IDF9")
-
-(def legacy-jvm-cursor-vector
-  "eacl_c3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqZFhKemIzSWdlenByYVc1a0lEcHlaV3hoZEdsdmJuTm9hWEJ6TENBNmIyWm1jMlYwSURJc0lEcHpZMjl3WlNCYk9uSmxZV1FnSXpwemRXSnFaV04wZXpwcFpDQWlkVEVpZlYwc0lEcDJJRGw5TENBNlpYaHdhWEpsY3kxaGRDQXhNRFVzSURwcGMzTjFaV1F0WVhRZ01UQXdMQ0E2ZG1WeWMybHZiaUF6ZlEiLCA6dGFnICJtRlhBR2lBLXQ5VEZtc0dTaFNsUlJsODg0YzJyYnIybmdQQVRPbTNfekZzIiwgOnYgMX0")
+  "eacl_c4_OmN1cnJlbnQ.ezpjdXJzb3IgezpraW5kIDpyZWxhdGlvbnNoaXBzLCA6b2Zmc2V0IDIsIDpzY29wZSBbOnJlYWQgezpzdWJqZWN0L2lkICJ1MSJ9XSwgOnYgOX0sIDpleHBpcmVzLWF0IDEwNSwgOmlzc3VlZC1hdCAxMDAsIDp2ZXJzaW9uIDR9.977hLzhIglQl_tClD4faSO8IvVpkEFUatzI9hAFDHfY")
 
 (def portable-cache-vector
   "eacl_ce3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqYjIxd2RYUmxaQzFoZENCN09tZHlZWEJvSURkOUxDQTZaR1Z3Wlc1a1pXNWplUzF6WTI5d1pTQjdPbkpsYkdGMGFXOXVjeUJiTVRGZExDQTZjMk5vWlcxaElGdGJPbVJ2WTNWdFpXNTBJRHAyYVdWM1hWMTlMQ0E2YTJWNUlIczZjMlZ0WVc1MGFXTXRhMlY1SUZzNlkyRnVQeUFpZFRFaVhYMHNJRHByYVc1a0lEcGliMjlzWldGdUxDQTZjRzl5ZEdGaWJHVXRkbVZ5YzJsdmJpQXhMQ0E2Y0hKdmIyWWdlenB5Wld4aGRHbHZibk1nZXpFeElDSnlNU0o5TENBNmMyTm9aVzFoSUNKek1TSjlMQ0E2ZG1Gc2FXUmhkR1ZrTFdGMElIczZaM0poY0dnZ04zMHNJRHAyWVd4MVpTQjBjblZsTENBNmRtVnljMmx2YmlBemZRIiwgOnRhZyAiNEk0ZmxKQUZGcjZVczFGQnZiVl9uWDZ6ekczaDVEWlM1d3ExVjBQRUxPWSIsIDp2IDF9")
@@ -46,7 +44,17 @@
     (str prefix
          (secure/b64url-encode
           (secure/utf8-bytes
-           (secure/encode-canonical envelope'))))))
+          (secure/encode-canonical envelope'))))))
+
+(defn- tamper-compact-authenticator
+  [token]
+  (let [[kid payload tag]
+        (str/split
+         (subs token (count cursor/cursor-prefix))
+         #"\."
+         -1)]
+    (str cursor/cursor-prefix
+         kid "." payload "." (tamper tag))))
 
 (deftest canonical-portable-format-test
   (is (= (secure/encode-canonical {:b #{3 2 1} :a [1 true nil]})
@@ -306,7 +314,7 @@
            (:reason
             (error-data
              #(cursor/token->cursor
-               (tamper-authenticator cursor/cursor-prefix encoded)
+               (tamper-compact-authenticator encoded)
                options)))))))
 
 (deftest private-cursor-codec-cache-test
@@ -314,35 +322,64 @@
                :scope [:lookup {:subject/id "user-1"}]
                :edge {:kind :lookup-eid :result-eid "document-1"}}
         codec-cache (cursor/codec-cache {:max-entries 2})
-        cached-options (assoc options :cursor-codec-cache codec-cache)
-        original-encode secure/encode-authenticated
-        encode-calls (atom 0)
+        cached-options
+        (assoc options
+               :cursor-codec-cache codec-cache
+               :completed-cache-request? false)
+        encode-work (atom {})
         encoded
-        (with-redefs [secure/encode-authenticated
-                      (fn [options payload]
-                        (swap! encode-calls inc)
-                        (original-encode options payload))]
+        (binding [cursor/*codec-work* encode-work]
           (let [first-token
                 (cursor/cursor->token value cached-options)
                 repeated-token
                 (cursor/cursor->token value cached-options)]
             (is (= first-token repeated-token))
-            (is (= 1 @encode-calls)
-                "a client-owned non-expiring cursor is authenticated once")
+            (is (= 1 (:encode-calls @encode-work))
+                "EACL memoizes its own cursor independently of answer caching")
             first-token))]
     (testing "a token minted by this cache skips repeated authenticated decode"
-      (with-redefs [secure/decode-authenticated
-                    (fn [_options _token]
-                      (throw (ex-info "unexpected decode" {})))]
+      (let [decode-work (atom {})]
+        (binding [cursor/*codec-work* decode-work]
         (is (= value
-               (cursor/token->cursor encoded cached-options)))))
+                 (cursor/token->cursor encoded cached-options)))
+          (is (empty? @decode-work)))))
     (testing "an unknown token still passes through authenticated decoding"
       (is (= :authentication-failed
              (:reason
               (error-data
                #(cursor/token->cursor
-                 (tamper-authenticator cursor/cursor-prefix encoded)
+                 (tamper-compact-authenticator encoded)
                  cached-options))))))))
+
+(deftest compact-cursor-operation-count-and-growth-test
+  (let [small
+        {:v 10
+         :scope "scope"
+         :edge {:kind :lookup-eid
+                :path-frontiers {[:a] "1"}}}
+        large
+        (assoc-in
+         small
+         [:edge :path-frontiers]
+         (into {}
+               (map (fn [n] [[(keyword (str "path-" n))] (str n)]))
+               (range 512)))
+        encode-work (atom {})
+        token
+        (binding [cursor/*codec-work* encode-work]
+          (cursor/cursor->token large options))
+        decode-work (atom {})]
+    (is (= large
+           (binding [cursor/*codec-work* decode-work]
+             (cursor/token->cursor token options))))
+    (doseq [work [@encode-work @decode-work]]
+      (is (= 1 (:payload-canonical-passes work)))
+      (is (= 1 (:authentication-passes work))))
+    (is (= 3 (:base64-encode-passes @encode-work)))
+    (is (= 3 (:base64-decode-passes @decode-work)))
+    (is (< (count token)
+           (+ 128 (* 2 (:payload-input-bytes @encode-work))))
+        "compact framing grows linearly and leaves no nested envelope pass")))
 
 (deftest portable-cursor-expiry-boundary-test
   (let [value {:v 8 :edge {:kind :lookup-eid} :position [1 "a"]}
@@ -403,11 +440,6 @@
            (cursor/token->cursor
             portable-cursor-vector
             vector-options)))
-    (is (= cursor-payload
-           (cursor/token->cursor
-            legacy-jvm-cursor-vector
-            vector-options))
-        "tokens emitted by the former JVM renderer remain readable")
     (is (= portable-cache-vector
            (secure/encode-authenticated
             cache-options

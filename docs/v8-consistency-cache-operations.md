@@ -170,25 +170,31 @@ of authorization.
 ## Cursors
 
 Cursors are authenticated and scoped to backend/source, operation, query,
-ordering, engine version, graph anchor, and an exact snapshot locator.
+engine version, graph anchor, and an exact snapshot locator. The normalized
+query scope includes the principal, permission, filters, resource type, and
+consistency contract. Relay direction and page size are resume controls, not
+authorization scope.
 
-A cursor walk is exact-snapshot pinned:
+A cursor walk follows its requested consistency contract:
 
 1. decode and authenticate the cursor before it influences traversal;
 2. continue on the identical current snapshot when still selected;
-3. otherwise reconstruct the cursor's original exact snapshot;
-4. bypass the completed-answer cache for that exact/historical work;
-5. return a typed snapshot-expired or consistency-conflict error when the
-   original snapshot is unavailable or violates an `at-least` floor.
+3. for a non-exact mode, re-evaluate the resume hint on the selected current
+   snapshot and annotate the page as `:rebased`;
+4. restart graph-specific recursive state and annotate the page as
+   `:restarted`;
+5. only for `at-exact-snapshot`, reconstruct the requested exact snapshot or
+   return the typed retention error.
 
 EACL does not recalculate whole-graph or whole-result content proofs on every
-page and does not rebase a cursor onto a newer merely proof-equivalent graph.
-That removes both a mixed-snapshot loophole and the dominant proof cost
-observed in the earlier v8 candidate.
+page. Recovery never treats proof equivalence as authorization: it runs the
+query again on one immutable selected graph. This removes both the
+snapshot-retention availability failure for ordinary reads and the dominant
+proof cost observed in the earlier v8 candidate.
 
 Recursive continuation state is an optional performance optimization.
-Continuation-store eviction causes deterministic replay against the same exact
-snapshot; it cannot change the answer.
+Continuation-store eviction replays on an explicit exact snapshot or restarts
+on the selected current graph, according to the request consistency mode.
 
 ## Operational invariants
 

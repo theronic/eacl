@@ -1,9 +1,10 @@
 # EACL 8.0.0 candidate release notes
 
 EACL v8 replaces the proof-per-hit cache candidate with a client-private
-current-generation cache, pins cursors to exact snapshots, and makes the
-current DB visible to the local backend the default consistency contract.
-These are deliberate pre-release breaking changes.
+current-generation cache, adds recoverable query-scoped cursors, and makes the
+current DB visible to the local backend the default consistency contract. Exact
+snapshot pinning remains available through `at-exact-snapshot`. These are
+deliberate pre-release breaking changes.
 
 V8 also adds the database-visible v3 mutation journal and authenticated causal
 tokens/cursors, and moves the DataScript/Datahike ports to the v8 Relay
@@ -180,23 +181,25 @@ continuation state is isolated in a separate bounded private store.
 
 ## Cursor redesign
 
-Cursor envelopes are now v10. Cursors authenticate the backend/source,
-operation, normalized non-page query, result kind,
-semantic/configuration identity, graph anchor, and exact snapshot locator.
-Their boundary position is direction-neutral, so the same authenticated edge
-can serve as an exclusive `after` or `before` bound.
+Portable cursor payloads are v10 inside the compact `eacl_c4_` authenticated
+frame. Cursors bind the backend/source, operation, complete semantic query
+(including principal and consistency), result kind, semantic/configuration
+identity, graph anchor, and exact snapshot locator. Relay window size and
+direction remain caller-controlled so the same boundary supports forward and
+backward navigation.
 
 - Continuation on the same current immutable snapshot is direct.
-- If current has advanced, EACL reconstructs the cursor's original exact
-  snapshot.
-- Historical/exact continuation bypasses the completed-answer cache.
-- A missing original snapshot returns a typed snapshot-expired failure.
-- A requested at-least floor newer than the cursor snapshot returns a typed
-  consistency conflict.
-- Recursive continuation-store eviction causes deterministic replay against
-  the same exact snapshot.
-- Relationship cursors bind the exact selected snapshot rather than hashing
-  the complete item sequence.
+- For non-exact modes, a changed graph is re-evaluated against the selected
+  current snapshot and reports `:cursor-recovery :rebased`.
+- Graph-specific recursive state restarts from the current first page and
+  reports `:cursor-recovery :restarted`.
+- `at-exact-snapshot` retains exact continuation and returns a typed
+  snapshot-expired failure if that explicit snapshot is unavailable.
+- Relationship cursors bind their selected graph anchor rather than hashing
+  the complete item sequence; non-exact continuation may rebase the
+  authenticated physical edge against a newer selected graph.
+- Portable cursors use HMAC authenticity, not encryption. Datomic retains its
+  compact AES-GCM codec for cursor-content confidentiality.
 - DataScript and Datahike relationship pages now seek from an authenticated
   physical tuple-index edge and resolve only the selected page's public IDs.
   They read at most `page-size + 1` matching internal rows instead of
@@ -209,9 +212,10 @@ snapshot. A complete valid walk has no item movement, omission, or duplication.
 Relationship pages use each backend's tuple-index order; that order is an
 internal pagination contract, not a presentation-order API.
 
-The previous candidate recalculated complete dependency/content proofs and
-could rebase a cursor to a newer proof-equivalent graph. That design was both
-more expensive and harder to reason about. v8 removes it.
+Recovery has ordinary weak-pagination behavior under concurrent mutation:
+duplicates or omissions across page boundaries are possible, but every
+returned page is freshly authorized on one selected graph. Exact walks require
+the explicit exact-snapshot consistency mode.
 
 All old cursor/cache/token candidate envelopes are intentionally incompatible
 with the final v8 formats.
@@ -227,9 +231,11 @@ with the final v8 formats.
 - **DataScript exact-snapshot ABA.** Numeric `max-tx` is not a unique database
   identity across `reset-conn!`. Exact snapshot/cursor identity now uses a
   bounded registry of opaque immutable-DB handles.
-- **Mixed-snapshot cursor complexity.** Proof-equivalent cursor rebasing made
-  a page walk depend on validation against multiple snapshots. Cursors are now
-  exact-snapshot pinned.
+- **Mixed-snapshot cursor complexity.** Proof-equivalent lifting made a page
+  depend on validation across two graphs and converted retention eviction into
+  an availability failure. Non-exact continuation now discards graph-specific
+  state and re-evaluates on one selected current graph; only explicit
+  `at-exact-snapshot` walks remain graph-pinned.
 - **Late publication after expiry.** In-flight work could conceptually publish
   after a cache reset if publication resolved “current cache” twice. The new
   resolver captures the lifecycle/generation; old publication is unreachable.

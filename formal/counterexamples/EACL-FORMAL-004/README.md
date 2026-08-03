@@ -1,14 +1,15 @@
 # EACL-FORMAL-004 — proofless cursor mixes graph snapshots
 
-With `:proof-mode :none`, both schema and relationship proofs are `nil`.
+With `:proof-mode :none`, both schema and relationship proofs were `nil`.
 `dependency-context` hashed those values and the cursor equivalence check
-treated every later snapshot as proof-equivalent. The graph head was carried
-for fallback but not compared during the fast path.
+treated every later snapshot as proof-equivalent. The old model silently
+treated that equivalence as permission to lift graph-specific resume state.
 
 In the minimized trace, page 1 returned `a1`, an `a2` relationship was added,
-and page 2 returned the newly authorized `a2` using page 1’s old frontier.
-The correct exact-snapshot continuation is `a3` (or a typed retention/conflict
-error when exact continuation is unavailable).
+and page 2 returned the newly authorized `a2`. That result is valid for weak,
+non-exact pagination only when EACL deliberately re-evaluates the scoped query
+on the selected current graph and reports `:cursor-recovery :rebased`.
+An explicit `at-exact-snapshot` request instead continues on retained history.
 
 Reproduce through nREPL:
 
@@ -16,9 +17,9 @@ Reproduce through nREPL:
 (do
   (require 'eacl.datomic.cache-review-regressions-test :reload)
   (clojure.test/test-var
-   #'eacl.datomic.cache-review-regressions-test/proofless-cursor-uses-exact-snapshot-test))
+   #'eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test))
 ```
 
-Fixed in the shared CLJC relay: missing proofs and nondeterministic adapters
-now produce an exact-snapshot identity that commits to snapshot id and graph
-head. Only complete deterministic proof identities can lift to a newer graph.
+Fixed in the shared CLJC relay and Datomic runtime: cursor authentication binds
+the complete semantic query, non-exact continuation re-evaluates on one
+selected current graph, and only explicit exact mode selects retained history.

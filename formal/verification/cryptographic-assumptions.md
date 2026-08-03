@@ -20,8 +20,11 @@ does not authenticate.
 - `eacl.secure-format/decode-authenticated` validates envelope fields, selects
   the named key, recomputes the domain-separated tag, compares it before
   decoding the payload, and rejects unknown payload fields.
-- Cursor, cache-entry, and causal-token namespaces supply distinct domains and
-  prefixes.
+- `eacl.cursor` applies the same derived HMAC boundary to its compact
+  `kid.payload.tag` frame, verifies the tag before parsing the payload, and
+  supplies cursor-specific bounds, domain, and prefix.
+- Cache-entry and causal-token namespaces use the generic authenticated
+  envelope with distinct domains and prefixes.
 
 **Evidence.**
 
@@ -29,8 +32,8 @@ does not authenticate.
   domain confusion, key substitution, payload-field confusion, and tampering.
 - `authenticated-portable-cursor-test` and cache corruption tests cover
   authenticator failure at public boundaries.
-- `authenticated-cross-runtime-vectors-test` replays literal cursor and cache
-  envelopes in CLJ and CLJS.
+- `authenticated-cross-runtime-vectors-test` replays literal compact cursor
+  frames and cache envelopes in CLJ and CLJS.
 
 **Residual trust.** HMAC-SHA-256, platform byte conversion, key secrecy, and
 forgery resistance remain trusted.

@@ -106,7 +106,7 @@
             (is (true? (eacl/can? acl viewer :admin account)))
             (is (= 2 @path-calcs))))))))
 
-(deftest page-token-replays-with-its-historical-schema-generation-test
+(deftest page-token-recovers-on-the-current-schema-generation-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a-1"} {:eacl/id "a-2"}])
@@ -126,13 +126,12 @@
           cursor (get-in page1 [:page-info :end-cursor])]
       (is (some? cursor))
       (eacl/write-schema! acl schema-viewer-only)
-      (is (= ["a-2"]
-             (mapv :id
-                   (:data
-                    (eacl/lookup-resources
-                     acl
-                     (assoc query :after cursor)))))
-          "cursor replay evaluates permission definitions from its basis")
+      (let [recovered
+            (eacl/lookup-resources acl (assoc query :after cursor))]
+        (is (empty? (:data recovered))
+            "ordinary continuation re-evaluates permission definitions on the current schema")
+        (is (= :rebased
+               (get-in recovered [:page-info :cursor-recovery]))))
       (is (empty? (:data (eacl/lookup-resources acl query)))
           "a new enumeration uses the new schema generation"))))
 

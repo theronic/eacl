@@ -5,6 +5,7 @@
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
+            [eacl.spicedb.consistency :as public-consistency]
             [eacl.verified-kernel :as verified]))
 
 (def empty-page
@@ -58,16 +59,31 @@
 (def ^:private relay-page-keys
   #{:first :last :after :before :consistency})
 
+(def ^:private cursor-transport-keys
+  "Relay window controls do not define the authorized result set. They remain
+  caller-controlled so one boundary cursor can support forward and backward
+  navigation. Consistency, principal, permission, filters, and resource type
+  remain part of the authenticated semantic scope."
+  #{:first :last :after :before :cache?})
+
+(defn- normalized-cursor-query
+  [query]
+  (-> (apply dissoc query cursor-transport-keys)
+      (assoc :consistency
+             (public-consistency/descriptor (:consistency query)))))
+
 (defn- cursor-scope
   [operation query]
   (let [plain-object
         (fn [object]
           (when object
             (select-keys object [:type :id :relation])))]
-    [operation
-     (cond-> (apply dissoc query relay-page-keys)
-       (:subject query) (update :subject plain-object)
-       (:resource query) (update :resource plain-object))]))
+    (secure/canonical-digest
+     "eacl/cursor/query-scope/v5"
+     [operation
+      (cond-> (normalized-cursor-query query)
+        (:subject query) (update :subject plain-object)
+        (:resource query) (update :resource plain-object))])))
 
 (defn- page-generation
   [adapter]
@@ -287,12 +303,12 @@
     edge))
 
 (defn- encode-page-edge
-  [adapter opts operation query context edge]
+  [adapter opts scope context edge]
   (when edge
     (cursor/cursor->token
      (merge
       {:v 10
-       :scope (cursor-scope operation query)
+       :scope scope
        :edge (transform-edge-ids
               #(backend/invoke adapter :internal-id->object %)
               edge)}
@@ -377,7 +393,9 @@
   (cond
     (identity-mismatch current envelope) :scope-mismatch
     (same-continuation-proof? current envelope) :current
-    (= :at-least-as-fresh (:cursor-consistency-mode opts)) :conflict
+    (not= :at-exact-snapshot
+          (:cursor-consistency-mode opts))
+    :rebase-current
     (nil? exact) :snapshot-unavailable
     (or (identity-mismatch exact envelope)
         (not (same-continuation-proof? exact envelope))
@@ -399,10 +417,10 @@
           current-proof (continuation-proof current)
           cursor-proof (continuation-proof envelope)
           mode
-          (if (= :at-least-as-fresh
+          (if (= :at-exact-snapshot
                  (:cursor-consistency-mode opts))
-            :at-least-as-fresh
-            :minimize-latency)
+            :exact-snapshot
+            :recover-current)
           exact-decision
           (when exact
             {:graph
@@ -440,6 +458,7 @@
   [adapter current envelope decision]
   (case decision
     :current adapter
+    :rebase-current adapter
     :exact adapter
 
     :scope-mismatch
@@ -497,11 +516,13 @@
 (defn- select-envelope-adapter
   [adapter opts envelope]
   (if-not envelope
-    adapter
+    {:adapter adapter
+     :recovery nil}
     (let [current (current-context adapter opts)
           initial
           (continuation-decision opts current envelope nil)]
-      (if (= :snapshot-unavailable initial)
+      (case initial
+        :snapshot-unavailable
         (let [exact
               (backend/invoke
                adapter
@@ -527,23 +548,55 @@
                  opts current envelope exact-context)]
             (apply-continuation-decision!
              exact exact-context envelope decision)
-            exact))
+            {:adapter exact
+             :recovery nil}))
+
+        :rebase-current
         (do
           (apply-continuation-decision!
            adapter current envelope initial)
-          adapter)))))
+          {:adapter adapter
+           :recovery :rebased})
+
+        (do
+          (apply-continuation-decision!
+           adapter current envelope initial)
+          {:adapter adapter
+           :recovery nil})))))
 
 (defn select-continuation-adapter
-  "Uses an equal current proof, otherwise reconstructs the authenticated
-  original graph when no newer at-least floor forbids fallback."
+  "Uses an equal current proof, recovers non-exact reads on current, and
+  reconstructs history only for explicit exact-snapshot requests."
   [adapter opts operation query]
   (let [token (or (:after query) (:before query))
         envelope (decode-envelope opts operation query token)]
-    (select-envelope-adapter adapter opts envelope)))
+    (:adapter (select-envelope-adapter adapter opts envelope))))
+
+(defn- internalize-rebased-edge
+  [adapter edge]
+  (if (= :recursive-traversal (:kind edge))
+    {:edge nil
+     :recovery :restarted}
+    (let [missing? (atom false)
+          transformed
+          (transform-edge-ids
+           (fn [object-id]
+             (let [internal-id
+                   (backend/invoke
+                    adapter :object-id->internal object-id)]
+               (when (nil? internal-id)
+                 (reset! missing? true))
+               internal-id))
+           edge)]
+      (if @missing?
+        {:edge nil
+         :recovery :restarted}
+        {:edge transformed
+         :recovery :rebased}))))
 
 (defn prepare-page-query
-  "Authenticates each supplied page token once, selects its immutable snapshot,
-  and converts the cursor edge into that snapshot's internal identity space."
+  "Authenticates each page token once, selects the consistency-mode snapshot,
+  and converts or safely restarts its resume edge in that identity space."
   [adapter opts operation query]
   (let [envelopes
         (->> [:after :before]
@@ -555,27 +608,44 @@
                     opts operation query (get query field))])))
              vec)
         primary-envelope (some second envelopes)
-        page-adapter
+        selection
         (select-envelope-adapter adapter opts primary-envelope)
-        internal-query
+        page-adapter (:adapter selection)
+        selected-recovery (:recovery selection)
+        prepared
         (reduce
-         (fn [current-query [field envelope]]
+         (fn [{:keys [query recovery]} [field envelope]]
            (if-not envelope
-             (assoc current-query field nil)
+             {:query (assoc query field nil)
+              :recovery recovery}
              (do
                (when-not (identical? envelope primary-envelope)
                  (validate-context! page-adapter opts envelope))
-               (assoc
-                current-query
-                field
-                (transform-edge-ids
-                 #(backend/invoke
-                   page-adapter :object-id->internal %)
-                 (:edge envelope))))))
-         query
+               (let [{internal-edge :edge
+                      edge-recovery :recovery}
+                     (if selected-recovery
+                       (internalize-rebased-edge
+                        page-adapter (:edge envelope))
+                       {:edge
+                        (transform-edge-ids
+                         #(backend/invoke
+                           page-adapter :object-id->internal %)
+                         (:edge envelope))
+                        :recovery recovery})]
+                 {:query
+                  (if internal-edge
+                    (assoc query field internal-edge)
+                    (dissoc query field))
+                  :recovery
+                  (if (= :restarted edge-recovery)
+                    :restarted
+                    (or recovery edge-recovery))}))))
+         {:query query
+          :recovery selected-recovery}
          envelopes)]
     {:adapter page-adapter
-     :query internal-query}))
+     :query (:query prepared)
+     :recovery (:recovery prepared)}))
 
 (defn- decode-page-edge
   [adapter opts operation query token]
@@ -598,15 +668,20 @@
 (defn- externalize-page-cursors
   [adapter opts operation query page]
   (let [context (delay (dependency-context adapter nil))
+        scope (cursor-scope operation query)
         encode-edge
         (fn [edge]
           (encode-page-edge
-           adapter opts operation query
+           adapter opts scope
            (when edge @context)
            edge))]
-    (-> page
-        (update-in [:page-info :start-cursor] encode-edge)
-        (update-in [:page-info :end-cursor] encode-edge))))
+    (cond-> (-> page
+                (update-in [:page-info :start-cursor] encode-edge)
+                (update-in [:page-info :end-cursor] encode-edge))
+      (:cursor-recovery opts)
+      (assoc-in
+       [:page-info :cursor-recovery]
+       (:cursor-recovery opts)))))
 
 (defn externalize-page
   [adapter opts operation query page]

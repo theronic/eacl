@@ -133,6 +133,7 @@
         (assoc
          (cursor-options
           page-adapter opts selection resource-type permission)
+         :cursor-recovery (:recovery prepared)
          :completed-cache?
          (and
           (:completed-cache-request? opts)
@@ -148,7 +149,8 @@
     {:adapter page-adapter
      :db (:db (backend/state page-adapter))
      :opts page-opts
-     :query (:query prepared)}))
+     :query (:query prepared)
+     :recovery (:recovery prepared)}))
 
 (defn- datom-transaction
   [db entity attribute]

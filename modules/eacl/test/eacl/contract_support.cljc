@@ -515,21 +515,15 @@
         (let [stale-cursor
               (get-in (last pages) [:page-info :end-cursor])
               stale-result
-              (try
-                (eacl/lookup-resources
-                 client
-                 (assoc query :after stale-cursor))
-                (catch #?(:clj Exception :cljs :default) error
-                  error))]
-          (if #?(:clj (instance? Exception stale-result)
-                 :cljs (instance? js/Error stale-result))
-            (is (contains?
-                 #{:eacl.pagination/stale-cursor
-                   :eacl.consistency/snapshot-expired}
-                 (let [data (ex-data stale-result)]
-                   (or (:eacl/error data) (:type data)))))
-            (is (= [] (:data stale-result))
-                "historical backends must resume the pre-mutation snapshot")))
+              (eacl/lookup-resources
+               client
+               (assoc query :after stale-cursor))]
+          (is (= :restarted
+                 (get-in stale-result
+                         [:page-info :cursor-recovery])))
+          (is (= [(folder 0) (folder 1)]
+                 (:data stale-result))
+              "graph-specific recursive state restarts safely on current"))
 
         (let [after-write (eacl/lookup-resources client all-query)]
           (is (false? (:cached? after-write)))

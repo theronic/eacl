@@ -359,8 +359,8 @@ module PageWindow {
   }
 
   datatype ConsistencyMode =
-    | MinimizeLatency
-    | AtLeastAsFresh
+    | RecoverCurrent
+    | ExactSnapshotMode
 
   datatype ExactSelection =
     | ExactUnavailable
@@ -380,11 +380,13 @@ module PageWindow {
 
   datatype ContinuationDecision =
     | UseCurrent
+    | RebaseCurrent
     | UseExact(graph: TemporalSafety.Graph)
     | Reject(reason: ContinuationRejectReason)
 
   datatype RelationshipPageOutcome<T> =
     | ReturnedCurrentPage(page: Page<T>)
+    | ReturnedRecoveredPage(page: Page<T>)
     | ReturnedExactPage(
         graph: TemporalSafety.Graph,
         page: Page<T>
@@ -413,8 +415,8 @@ module PageWindow {
         Reject(CursorExpired)
       else if currentProof == cursorProof then
         UseCurrent
-      else if mode.AtLeastAsFresh? then
-        Reject(CursorConflict)
+      else if mode.RecoverCurrent? then
+        RebaseCurrent
       else
         match exact
         case ExactUnavailable =>
@@ -490,7 +492,7 @@ module PageWindow {
               !expired &&
               sourceIdentity == cursorSourceIdentity &&
               currentProof != cursorProof &&
-              mode.MinimizeLatency? &&
+              mode.ExactSnapshotMode? &&
               exact.ExactSnapshot? &&
               exact.graph == cursorGraph &&
               exact.sourceIdentity == cursorSourceIdentity &&
@@ -498,7 +500,7 @@ module PageWindow {
   {
   }
 
-  lemma AtLeastConflictNeverFallsBack(
+  lemma RecoverCurrentNeverRequiresRetainedHistory(
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection,
     currentProof: string,
@@ -513,10 +515,41 @@ module PageWindow {
               "source",
               currentProof,
               cursorProof,
-              AtLeastAsFresh,
+              RecoverCurrent,
               cursorGraph,
               exact
-            ) == Reject(CursorConflict)
+            ) == RebaseCurrent
+  {
+  }
+
+  lemma RebasedContinuationRequiresAuthenticatedSameScope(
+    authenticated: bool,
+    scopeMatches: bool,
+    expired: bool,
+    sourceIdentity: string,
+    cursorSourceIdentity: string,
+    currentProof: string,
+    cursorProof: string,
+    cursorGraph: TemporalSafety.Graph,
+    exact: ExactSelection
+  )
+    ensures DecideContinuation(
+              authenticated,
+              scopeMatches,
+              expired,
+              sourceIdentity,
+              cursorSourceIdentity,
+              currentProof,
+              cursorProof,
+              RecoverCurrent,
+              cursorGraph,
+              exact
+            ).RebaseCurrent? ==>
+              authenticated &&
+              scopeMatches &&
+              !expired &&
+              sourceIdentity == cursorSourceIdentity &&
+              currentProof != cursorProof
   {
   }
 
@@ -602,7 +635,7 @@ module PageWindow {
               !expired &&
               sourceIdentity == cursorSourceIdentity &&
               currentProof != cursorProof &&
-              mode.MinimizeLatency? &&
+              mode.ExactSnapshotMode? &&
               exact.ExactSnapshot? &&
               exact.graph == cursorGraph &&
               exact.sourceIdentity == cursorSourceIdentity &&
@@ -611,6 +644,22 @@ module PageWindow {
               outcome.page ==
               PageFromNormalized(
                 exactValues,
+                NormalizePageRequest(
+                  raw,
+                  defaultSize,
+                  maximumSize
+                )
+              )
+    ensures outcome.ReturnedRecoveredPage? ==>
+              authenticated &&
+              scopeMatches &&
+              !expired &&
+              sourceIdentity == cursorSourceIdentity &&
+              currentProof != cursorProof &&
+              mode.RecoverCurrent? &&
+              outcome.page ==
+              PageFromNormalized(
+                currentValues,
                 NormalizePageRequest(
                   raw,
                   defaultSize,
@@ -656,6 +705,27 @@ module PageWindow {
         exact
       );
       return ReturnedCurrentPage(page);
+    }
+
+    if decision.RebaseCurrent? {
+      normalized, page := PaginateRelationshipItems(
+        currentValues,
+        raw,
+        defaultSize,
+        maximumSize
+      );
+      RebasedContinuationRequiresAuthenticatedSameScope(
+        authenticated,
+        scopeMatches,
+        expired,
+        sourceIdentity,
+        cursorSourceIdentity,
+        currentProof,
+        cursorProof,
+        cursorGraph,
+        exact
+      );
+      return ReturnedRecoveredPage(page);
     }
 
     normalized, page := PaginateRelationshipItems(
