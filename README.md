@@ -699,6 +699,14 @@ principal's grants, visited graph, or final answer. EACL v8 does not implement
 SpiceDB-style cached authorization subproblems; backend indexes still serve
 every graph edge needed by a cache miss.
 
+Recursive Relay pages also size backend scan batches to the requested window:
+16 datoms for pages up to 32 results, 32 for pages up to 256, and 64 beyond
+that. Small UI pages therefore avoid most of the former 64-datom over-read,
+while large pages and counts retain larger batches to amortize index seeks.
+`:fetched-stream-datoms` and `:stream-fills` in the optional recursive
+traversal stats expose the actual batch work for deterministic regression
+tests; `:advanced-stream-datoms` remains the number consumed by the engine.
+
 Reach for `no-cache` when the same permission check is essentially never asked
 twice — a batch job sweeping distinct resources, say — or when direct
 evaluation is cheaper than authenticated completed-answer validation. Repeated

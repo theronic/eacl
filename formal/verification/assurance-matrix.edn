@@ -23,6 +23,7 @@
               :unique-deterministic-sequence
               :page-walk-complete
               :limit-fails-closed
+              :bounded-page-stream-prefetch
               :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
            "formal/dafny/OrderedMerge.dfy"

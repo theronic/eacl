@@ -63,7 +63,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
 | `CacheKernel.dfy` | dependency closure, cache validation, telemetry CAS laws |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
-| `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root and schema generation |
+| `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
 

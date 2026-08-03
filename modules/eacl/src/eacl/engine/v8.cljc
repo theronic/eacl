@@ -908,6 +908,11 @@
   (when *recursive-traversal-stats*
     (swap! *recursive-traversal-stats* update k (fnil inc 0))))
 
+(defn- add-stat!
+  [k n]
+  (when *recursive-traversal-stats*
+    (swap! *recursive-traversal-stats* update k (fnil + 0) n)))
+
 (defn- increment-counter
   [state counter-key limit-key]
   (let [n (inc (get-in state [:counters counter-key] 0))
@@ -1352,7 +1357,20 @@
         (catch #?(:clj Exception :cljs :default) _
           false)))))
 
-(def ^:private stream-chunk-size 64)
+(def ^:dynamic ^:private *stream-chunk-size*
+  "Backend scan batch size selected by the enclosing recursive page.
+
+  Small Relay windows use smaller batches to avoid realizing graph edges the
+  caller did not ask for. Count operations and large pages keep the larger
+  batch so index-seek overhead remains amortized."
+  64)
+
+(defn- page-stream-chunk-size
+  [page-size]
+  (cond
+    (<= page-size 32) 16
+    (<= page-size 256) 32
+    :else 64))
 
 (defn- subject-resource-scan
   [subject-type subject-eid relation-eid resource-type]
@@ -1401,11 +1419,13 @@
 
 (defn- fill-stream
   [db {:keys [scan] :as work}]
-  (let [realized (vec (take (inc stream-chunk-size)
+  (let [realized (vec (take (inc *stream-chunk-size*)
                             (scan-eids db scan)))
-        more? (> (count realized) stream-chunk-size)
+        _ (inc-stat! :stream-fills)
+        _ (add-stat! :fetched-stream-datoms (count realized))
+        more? (> (count realized) *stream-chunk-size*)
         eids (if more?
-               (subvec realized 0 stream-chunk-size)
+               (subvec realized 0 *stream-chunk-size*)
                realized)]
     (assoc work
            :eids eids
@@ -1687,59 +1707,60 @@
                  continuation-cache :forward :resource bound size))]
     (or
      cached-page
-     (let [continuation (when (and bound (= :asc direction))
-                          (note-continuation-miss!
-                           bound
-                           (cached-continuation continuation-cache
-                                                bound :forward :resource)))
-           state (or (:state continuation)
-                     (when subject-eid
-                       (initial-forward-state
-                        db subject-type subject-eid root-node)))
-           replay-bound (when-not continuation bound)]
-       (if-not state
-         (page-response {:items []
-                         :has-next? false
-                         :has-previous? (boolean bound)})
-         (case direction
-           :asc
-           (let [{:keys [items complete? page-end-state]}
-                 (collect-forward-after
-                  db root-node result-type state replay-bound size)
-                 page-items (vec (take size items))
-                 has-sentinel? (> (count items) size)
-                 has-next? (and has-sentinel? (not complete?))
-                 page (page-response {:items page-items
-                                      :has-next? has-next?
-                                      :has-previous? (boolean bound)})
-                 continuation-stored?
-                 (when has-next?
-                   (store-continuation!
-                    continuation-cache
-                    (some-> page-items last :cursor)
-                    :forward :resource page-end-state))
-                 page-stored?
-                 (store-recursive-page!
-                  continuation-cache :forward :resource :asc bound size page)]
-             ;; Keep the input continuation until both retry data and the next
-             ;; frontier are safely published. A cache failure must not consume
-             ;; an otherwise usable cursor.
-             (when (and continuation
-                        page-stored?
-                        (or (not has-next?) continuation-stored?))
-               (evict-continuation! continuation-cache bound))
-             page)
+     (binding [*stream-chunk-size* (page-stream-chunk-size size)]
+       (let [continuation (when (and bound (= :asc direction))
+                            (note-continuation-miss!
+                             bound
+                             (cached-continuation continuation-cache
+                                                  bound :forward :resource)))
+             state (or (:state continuation)
+                       (when subject-eid
+                         (initial-forward-state
+                          db subject-type subject-eid root-node)))
+             replay-bound (when-not continuation bound)]
+         (if-not state
+           (page-response {:items []
+                           :has-next? false
+                           :has-previous? (boolean bound)})
+           (case direction
+             :asc
+             (let [{:keys [items complete? page-end-state]}
+                   (collect-forward-after
+                    db root-node result-type state replay-bound size)
+                   page-items (vec (take size items))
+                   has-sentinel? (> (count items) size)
+                   has-next? (and has-sentinel? (not complete?))
+                   page (page-response {:items page-items
+                                        :has-next? has-next?
+                                        :has-previous? (boolean bound)})
+                   continuation-stored?
+                   (when has-next?
+                     (store-continuation!
+                      continuation-cache
+                      (some-> page-items last :cursor)
+                      :forward :resource page-end-state))
+                   page-stored?
+                   (store-recursive-page!
+                    continuation-cache :forward :resource :asc bound size page)]
+               ;; Keep the input continuation until both retry data and the next
+               ;; frontier are safely published. A cache failure must not consume
+               ;; an otherwise usable cursor.
+               (when (and continuation
+                          page-stored?
+                          (or (not has-next?) continuation-stored?))
+                 (evict-continuation! continuation-cache bound))
+               page)
 
-           :desc
-           (let [{:keys [items has-sentinel?]}
-                 (collect-forward-before
-                  db root-node result-type state bound size)
-                 page (page-response {:items items
-                                      :has-next? true
-                                      :has-previous? has-sentinel?})]
-             (store-recursive-page!
-              continuation-cache :forward :resource :desc bound size page)
-             page)))))))
+             :desc
+             (let [{:keys [items has-sentinel?]}
+                   (collect-forward-before
+                    db root-node result-type state bound size)
+                   page (page-response {:items items
+                                        :has-next? true
+                                        :has-previous? has-sentinel?})]
+               (store-recursive-page!
+                continuation-cache :forward :resource :desc bound size page)
+               page))))))))
 
 (defn- reverse-consumer-key
   [node resource-eid]
@@ -2044,57 +2065,58 @@
                  continuation-cache :reverse :subject bound size))]
     (or
      cached-page
-     (let [continuation (when (and bound (= :asc direction))
-                          (note-continuation-miss!
-                           bound
-                           (cached-continuation continuation-cache
-                                                bound :reverse :subject)))
-           state (or (:state continuation)
-                     (when resource-eid
-                       (initial-reverse-state
-                        db subject-type root-node resource-eid)))
-           replay-bound (when-not continuation bound)]
-       (if-not state
-         (page-response {:items []
-                         :has-next? false
-                         :has-previous? (boolean bound)})
-         (case direction
-           :asc
-           (let [{:keys [items complete? page-end-state]}
-                 (collect-reverse-after db root-node resource-eid
-                                        subject-type state replay-bound size)
-                 page-items (vec (take size items))
-                 has-sentinel? (> (count items) size)
-                 has-next? (and has-sentinel? (not complete?))
-                 page (page-response {:items page-items
-                                      :has-next? has-next?
-                                      :has-previous? (boolean bound)})
-                 continuation-stored?
-                 (when has-next?
-                   (store-continuation!
-                    continuation-cache
-                    (some-> page-items last :cursor)
-                    :reverse :subject page-end-state))
-                 page-stored?
-                 (store-recursive-page!
-                  continuation-cache :reverse :subject :asc bound size page)]
-             (when (and continuation
-                        page-stored?
-                        (or (not has-next?) continuation-stored?))
-               (evict-continuation! continuation-cache bound))
-             page)
+     (binding [*stream-chunk-size* (page-stream-chunk-size size)]
+       (let [continuation (when (and bound (= :asc direction))
+                            (note-continuation-miss!
+                             bound
+                             (cached-continuation continuation-cache
+                                                  bound :reverse :subject)))
+             state (or (:state continuation)
+                       (when resource-eid
+                         (initial-reverse-state
+                          db subject-type root-node resource-eid)))
+             replay-bound (when-not continuation bound)]
+         (if-not state
+           (page-response {:items []
+                           :has-next? false
+                           :has-previous? (boolean bound)})
+           (case direction
+             :asc
+             (let [{:keys [items complete? page-end-state]}
+                   (collect-reverse-after db root-node resource-eid
+                                          subject-type state replay-bound size)
+                   page-items (vec (take size items))
+                   has-sentinel? (> (count items) size)
+                   has-next? (and has-sentinel? (not complete?))
+                   page (page-response {:items page-items
+                                        :has-next? has-next?
+                                        :has-previous? (boolean bound)})
+                   continuation-stored?
+                   (when has-next?
+                     (store-continuation!
+                      continuation-cache
+                      (some-> page-items last :cursor)
+                      :reverse :subject page-end-state))
+                   page-stored?
+                   (store-recursive-page!
+                    continuation-cache :reverse :subject :asc bound size page)]
+               (when (and continuation
+                          page-stored?
+                          (or (not has-next?) continuation-stored?))
+                 (evict-continuation! continuation-cache bound))
+               page)
 
-           :desc
-           (let [{:keys [items has-sentinel?]}
-                 (collect-reverse-before db root-node
-                                         resource-eid subject-type
-                                         state bound size)
-                 page (page-response {:items items
-                                      :has-next? true
-                                      :has-previous? has-sentinel?})]
-             (store-recursive-page!
-              continuation-cache :reverse :subject :desc bound size page)
-             page)))))))
+             :desc
+             (let [{:keys [items has-sentinel?]}
+                   (collect-reverse-before db root-node
+                                           resource-eid subject-type
+                                           state bound size)
+                   page (page-response {:items items
+                                        :has-next? true
+                                        :has-previous? has-sentinel?})]
+               (store-recursive-page!
+                continuation-cache :reverse :subject :desc bound size page)
+               page))))))))
 
 (declare traverse-permission-path lookup-subject-eids* can*)
 

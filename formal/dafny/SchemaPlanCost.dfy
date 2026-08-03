@@ -85,4 +85,42 @@ module SchemaPlanCost {
     ensures CompileWork(cache, selectedGeneration, root) == 1
   {
   }
+
+  // This mirrors the page-window-sensitive backend scan batching in the
+  // production recursive engine. It is a deterministic operation-count
+  // boundary, not a claim about backend or wall-clock latency.
+  function PageStreamChunkSize(pageSize: nat): nat
+    requires 0 < pageSize
+  {
+    if pageSize <= 32 then
+      16
+    else if pageSize <= 256 then
+      32
+    else
+      64
+  }
+
+  lemma PageStreamChunkIsBounded(pageSize: nat)
+    requires 0 < pageSize
+    ensures 16 <= PageStreamChunkSize(pageSize) <= 64
+  {
+  }
+
+  lemma SmallPageAvoidsTheLargeBatch(pageSize: nat)
+    requires 0 < pageSize <= 32
+    ensures PageStreamChunkSize(pageSize) == 16
+  {
+  }
+
+  lemma MediumPageUsesTheMiddleBatch(pageSize: nat)
+    requires 32 < pageSize <= 256
+    ensures PageStreamChunkSize(pageSize) == 32
+  {
+  }
+
+  lemma LargePageKeepsScanAmortization(pageSize: nat)
+    requires 256 < pageSize
+    ensures PageStreamChunkSize(pageSize) == 64
+  {
+  }
 }

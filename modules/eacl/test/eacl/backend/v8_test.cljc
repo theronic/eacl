@@ -335,3 +335,88 @@
                             adapter (query 1003))))))
         (is (= 2 (:compiled-recursive-plans @stats))
             "schema-cache eviction forces plan recompilation")))))
+
+(deftest recursive-page-stream-batches-track-the-requested-window-test
+  (let [permission-defs
+        [{:permission-id 1
+          :resource-type :node
+          :permission-name :read
+          :source-relation-name :self
+          :target-type :relation
+          :target-name :reader}
+         {:permission-id 2
+          :resource-type :node
+          :permission-name :read
+          :source-relation-name :self
+          :target-type :permission
+          :target-name :read}]
+        operations
+        (merge
+         (operation-map)
+         {:snapshot-id (fn [] {:database-id :test :basis-t 1})
+          :source-scope (fn [] {:source-id :test :branch nil})
+          :schema-proof (fn
+                          ([] :schema-proof)
+                          ([_] :schema-proof))
+          :object-id->internal identity
+          :internal-id->object identity
+          :permission-defs
+          (fn [resource-type permission-name]
+            (if (= [:node :read]
+                   [resource-type permission-name])
+              permission-defs
+              []))
+          :relation-defs
+          (fn [resource-type relation-name]
+            (if (= [:node :reader]
+                   [resource-type relation-name])
+              [{:relation-id 3
+                :resource-type :node
+                :relation-name :reader
+                :subject-type :user}]
+              []))
+          :subject->resources
+          (fn [_subject-type _subject-id _relation-id _resource-type
+               {:keys [bound-eid]}]
+            (range (inc (or bound-eid 0)) 2001))
+          :all-permission-nodes
+          (fn [] #{[:node :read]})})
+        adapter
+        (backend/make-adapter
+         {:id :test
+          :capabilities
+          {:consistency #{:fully-consistent}
+           :snapshots #{:current}
+           :cursor #{:forward :reverse}
+           :transactions #{}
+           :cache-proofs #{:schema :relations :snapshot-bound}
+           :runtime #{#?(:clj :clj :cljs :cljs)}}
+          :operations operations})
+        schema-cache (engine/make-schema-cache adapter :schema-proof)
+        query
+        (fn [page-size]
+          {:subject {:type :user :id 1001}
+           :permission :read
+           :resource/type :node
+           :first page-size})
+        run-page
+        (fn [page-size]
+          (let [stats (atom {})
+                page
+                (binding [engine/*schema-cache* schema-cache
+                          engine/*recursive-traversal-stats* stats]
+                  (engine/lookup-resources
+                   adapter (query page-size)))]
+            {:page page
+             :stats @stats}))]
+    (doseq [[page-size expected-fills expected-fetched]
+            [[20 2 34]
+             [100 4 132]
+             [300 5 325]]]
+      (testing (str "page size " page-size)
+        (let [{:keys [page stats]} (run-page page-size)]
+          (is (= page-size (count (:data page))))
+          (is (= expected-fills (:stream-fills stats)))
+          (is (= expected-fetched (:fetched-stream-datoms stats))))))
+    (is (= 1 (count @(:recursive-plans schema-cache)))
+        "batch tuning never changes the schema-derived traversal plan")))
