@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.core :as eacl]
+            [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.schema :as schema]
@@ -340,3 +341,20 @@
         (is (= 20 (:first (first @internal-queries))))
         (is (not (contains? (first @internal-queries) :limit))
             "the public wrapper must not drain an unbounded legacy page")))))
+
+(deftest relationship-continuation-authenticates-cursor-once-test
+  (let [{:keys [conn client]} (seed-bulk-read-db 100)
+        first-page (eacl/read-relationships client
+                                            {:subject/type :user
+                                             :first 20})
+        token (get-in first-page [:page-info :end-cursor])
+        continuation-client (datascript/make-client conn {})
+        work (atom {})]
+    (binding [cursor/*codec-work* work]
+      (let [page (eacl/read-relationships continuation-client
+                                          {:subject/type :user
+                                           :first 20
+                                           :after token})]
+        (is (= 20 (count (:data page))))
+        (is (= 1 (:decode-calls @work))
+            "snapshot selection and relationship keyset internalization must share one authenticated decode")))))
