@@ -184,11 +184,46 @@
         schema-proof (backend/invoke before-adapter :schema-proof)
         before-proof
         (backend/invoke before-adapter :relation-proof [relation-id])
-        user-eid (ddb/entid (d/db conn) [:eacl/id "user"])]
+        user-eid (ddb/entid (d/db conn) [:eacl/id "user"])
+        document-eid
+        (ddb/entid (d/db conn) [:eacl/id "document"])]
     (is (= #{:content-digest} (set (keys schema-proof))))
     (is (= 43 (count (:content-digest schema-proof))))
     (is (= #{:content-digest} (set (keys before-proof))))
     (is (= 43 (count (:content-digest before-proof))))
+    (let [reverse
+          (first
+           (ddb/eavt-datoms
+            (d/db conn)
+            document-eid
+            :eacl.v7.relationship/resource-type+relation+subject-type+subject))]
+      (d/transact
+       conn
+       [[:db/retract
+         document-eid
+         :eacl.v7.relationship/resource-type+relation+subject-type+subject
+         (vec (:v reverse))]])
+      (let [half-proof
+            (backend/invoke
+             (datahike-backend/snapshot-adapter
+              (d/db conn) (:opts authorization))
+             :relation-proof
+             [relation-id])]
+        (is (not= before-proof half-proof)
+            "a missing physical half invalidates a content-proof cache hit"))
+      (eacl/write-relationship!
+       authorization
+       {:operation :touch
+        :subject user
+        :relation :reader
+        :resource document})
+      (is (= before-proof
+             (backend/invoke
+              (datahike-backend/snapshot-adapter
+               (d/db conn) (:opts authorization))
+              :relation-proof
+              [relation-id]))
+          "repairing the pair restores the same content proof"))
     (d/transact conn [[:db/retract user-eid :eacl/id "user"]
                       [:db/add user-eid :eacl/id "renamed-user"]])
     (let [after-adapter

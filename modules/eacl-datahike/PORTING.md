@@ -1,8 +1,10 @@
 # The Datahike backend
 
-A port of `modules/eacl-datascript`. DataScript was the right template rather
-than Datomic, because DataScript and Datahike diverge from Datomic in the *same*
-place — see "Tuple seek bounds" below.
+The first Datahike port was derived from `modules/eacl-datascript`. The v8
+relationship layer now deliberately follows `modules/eacl-datomic`: Datahike
+supports heterogeneous tuples, so it does not need DataScript's relationship
+entity plus derived composite indexes. DataScript keeps that backend-specific
+layout until it gains heterogeneous tuples.
 
 Status: `eacl.datahike.contract-test` runs the shared v8 public API,
 recursive, cache, and independent-oracle contracts **twice**, once per
@@ -14,20 +16,49 @@ asynchronous and the backend SPI is synchronous.
 
 ## Layout
 
-Five namespaces. `eacl.datahike.db` holds the
-adapter primitives — `entid`, attribute representation, and the three index
-accessors — so that everything above it reads like the DataScript source and
-every datahike divergence lives in one file:
+Six namespaces. `eacl.datahike.db` holds entity-id, attribute-representation,
+and index-access primitives so Datahike API spelling and temporal-seek behavior
+stay below the EACL relationship model:
 
 | | |
 |---|---|
-| `db.clj` | adapter primitives (no eacl concepts) |
+| `db.clj` | adapter primitives (no EACL concepts) |
 | `schema.clj` | attribute declarations, `create-conn`, `write-schema!` |
-| `impl.clj` | the legacy SPI compatibility implementation and relationship scans |
+| `impl.clj` | Datomic-layout relationship transactions, scans, and cleanup |
+| `integrity.clj` | explicit offline dangling-half diagnostics |
 | `backend.clj` | the validated v8 snapshot adapter and cache proofs |
 | `core.clj` | `IAuthorization`, v8 Relay/cache integration, and `make-client` |
 
-## What differs from the DataScript source
+## Physical relationship layout
+
+One relationship is exactly two heterogeneous tuple datoms, identical to the
+Datomic Pro adapter:
+
+```clojure
+[subject-eid forward-attr
+ [subject-type relation-eid resource-type resource-eid]]
+
+[resource-eid reverse-attr
+ [resource-type relation-eid subject-type subject-eid]]
+```
+
+Authorization traversal reads the endpoint-local EAVT segment. Global
+relationship listing and relation-in-use checks read AVET tuple ranges. Writes
+add or retract both halves in one Datahike transaction. `:touch` treats a
+half-pair as absent and reasserts both datoms; `:delete` retracts both
+unconditionally.
+
+The layout costs two relationship datoms rather than a relationship entity,
+five component datoms, and five derived tuple datoms. It also has Datomic's
+integrity tradeoff: `:db/retractEntity` does not follow refs inside tuple
+values. Consumers must call EACL relationship deletion first. The explicit
+`eacl.datahike.integrity` report detects surviving peer halves offline.
+
+The old Datahike entity/composite layout existed only on the unreleased v8
+branch. Databases created from that branch must be recreated; the adapter does
+not dual-read or migrate the obsolete physical model.
+
+## What differs from DataScript
 
 | | DataScript | Datahike |
 |---|---|---|
@@ -52,26 +83,26 @@ numeric ref under `:attribute-refs? true` (Datomic's representation). This is a
 creation-time, one-way choice per database. Both modes are supported and both
 are tested; three consequences are load-bearing.
 
-1. A composite tuple attribute under `:attribute-refs?` needs datahike
-   **>= 0.8.1759** (replikativ/datahike#921). Before that fix the tuples were
-   silently never derived and never validated. The adapter's ordered
-   relationship access depends on those tuples, so every permission check
-   denied.
+1. A composite tuple attribute under `:attribute-refs?` needs Datahike
+   **>= 0.8.1759** (replikativ/datahike#921). EACL still uses derived composite
+   tuples for relation and permission definitions. Relationship tuples are
+   explicit heterogeneous values and are not derived.
 
 2. `index-range`'s `:attrid` is the one accessor that does **not** accept the
    attribute keyword in both modes: under `:attribute-refs?` it demands the
    numeric ref and raises. `db/avet-range` resolves it via `db/attr-repr`.
    (`datoms` and `seek-datoms` take the keyword in either mode.)
 
-3. Anything comparing a datom's `:a` against a set of keywords matches nothing
-   under `:attribute-refs?`. In this module that is `core/schema-transaction?`,
-   the tx listener that evicts cached permission paths. Left unresolved it
-   fails **OPEN** — `can?` keeps answering from pre-change permission paths and
-   grants what the schema has just revoked. `db/attr-ident` resolves it.
+3. Anything comparing a datom's `:a` directly against a keyword matches
+   nothing under `:attribute-refs?`. The adapter avoids raw comparisons and
+   resolves the attribute representation where Datahike's `index-range`
+   requires it.
 
-MEASURED, both modes: `(:attribute-refs? (:config db))` is the reliable flag.
+MEASURED, both modes: `(:attribute-refs? (dbi/-config db))` is the reliable
+flag. Concrete DB records also expose `:config` directly; temporal/filter
+wrappers do not, and instead delegate `IDB/-config` to their origin database.
 
-## Tuple seek bounds — the one non-obvious ordering fact
+## Composite schema-tuple seek bounds
 
 MEASURED on datahike 0.8.1759, in BOTH modes:
 
@@ -81,28 +112,34 @@ seek [:room :owner nil]    → [:room :owner :party]  ; correct
 seek [:room :owner :party] → [:room :owner :party]  ; correct
 ```
 
-A PARTIAL tuple is not a valid seek bound — identical to DataScript, whose
-adapter comments "DataScript sorts vectors by LENGTH FIRST". Datomic is the
-outlier, and `modules/eacl-datomic` relies on Datomic's behaviour.
+A partial composite tuple is therefore not a reliable seek bound. Datahike
+0.8.1759 does carry an `AsOfDB` wrapper's temporal context into
+`seek-datoms`, but its full-tuple temporal seek can position after a
+historically visible tuple that was retracted later. This was reproduced with
+an exact `(entity, attribute)` `datoms` read returning the old relationship
+while the equivalent lower-bound seek started in a later index segment.
 
-So `db/seek-tuple-prefix` pads to full tuple arity with `nil` (`nil` sorts
-lowest) and then takes the matching prefix. Padding is both correct AND
-O(log n) — do not replace it with a scan of the whole attribute segment.
+Concrete and retained-commit DB values consequently use padded prefix seeks.
+Temporal/filter wrappers use exact attribute- or endpoint-bounded `datoms`
+followed by prefix filtering. Those wrapper reads remain bounded by schema size
+for definitions and by one endpoint for relationships. Attribute guards on the
+seek path resolve the configured representation through Datahike's database
+protocol, which also works when attributes are numeric refs.
 
-`seek-datoms` also runs off the end of the attribute into the next one, so the
-`take-while` guards on `:a` as well as on the value.
+The hot relationship paths use explicit heterogeneous values through
+endpoint-local EAVT seeks or full-length AVET range bounds. Every prefix seek
+checks the appropriate entity/attribute index boundary because Datahike seeks
+continue into the next segment when no value matches the requested prefix.
 
 ## A coverage trap worth knowing about
 
 The shared contract goes through `make-client`, whose v8 adapter serves
-relation definitions from a prebuilt schema catalog — a full index scan. So
-**the contract suite does not exercise every legacy tuple seek**. The seek is
-also reached by the bare-db v7 compatibility path and by the
-relation-retraction guard, which is why `backend-test` tests it directly.
+relation definitions from a prebuilt schema catalog. So **the contract suite
+does not exercise every schema tuple-prefix path**. The bare-db compatibility
+path does, and `backend-test` covers it directly.
 
-Both mechanisms above were verified non-vacuously by breaking them:
-removing the padding fails 12 assertions in both modes; comparing `:a` raw
-fails exactly 1, only under `:attribute-refs?`.
+The schema-prefix and relationship-storage regressions run in both attribute
+representations so a keyword-only implementation cannot pass silently.
 
 ## Adapter surfaces
 
@@ -117,7 +154,8 @@ this module.
 The public v8 client uses `eacl.datahike.backend/snapshot-adapter`. Its
 validated operation map adds snapshot identity, object ID conversion,
 permission-node discovery, cursor frontier identity, and scoped schema/relation
-proofs. Capabilities explicitly limit Datahike to current
-`:fully-consistent` snapshots and synchronous CLJ cursors. Authorization graph
-compilation, SCC/fixed-point traversal, Relay behavior, and cache validation
-stay in `modules/eacl`.
+proofs. Direct-writer stores support authoritative current selection; retained
+commit graphs or temporal history support exact reconstruction; managed stores
+support causal at-least selection. Authorization graph compilation,
+SCC/fixed-point traversal, Relay behavior, and cache validation stay in
+`modules/eacl`.

@@ -153,26 +153,33 @@
 
 (defn- content-relation-proof
   [db relation-ids external-id]
-  (let [wanted (set relation-ids)]
+  (let [wanted (set relation-ids)
+        forward
+        (when (seq wanted)
+          (for [{subject :e value :v}
+                (ddb/avet-datoms
+                 db schema/forward-relationship-attr)
+                :let [[subject-type relation-id
+                       resource-type resource] value]
+                :when (contains? wanted relation-id)]
+            [:forward relation-id
+             subject-type subject (external-id db subject)
+             resource-type resource (external-id db resource)]))
+        reverse
+        (when (seq wanted)
+          (for [{resource :e value :v}
+                (ddb/avet-datoms
+                 db schema/reverse-relationship-attr)
+                :let [[resource-type relation-id
+                       subject-type subject] value]
+                :when (contains? wanted relation-id)]
+            [:reverse relation-id
+             subject-type subject (external-id db subject)
+             resource-type resource (external-id db resource)]))]
     {:content-digest
      (secure/canonical-records-digest
       "eacl/datahike/relationship-content-proof/v3"
-      (->> (d/q '[:find ?relation ?subject-type ?subject
-                  ?resource-type ?resource
-                  :where
-                  [?relationship :eacl.relationship/relation ?relation]
-                  [?relationship :eacl.relationship/subject-type ?subject-type]
-                  [?relationship :eacl.relationship/subject ?subject]
-                  [?relationship :eacl.relationship/resource-type ?resource-type]
-                  [?relationship :eacl.relationship/resource ?resource]]
-                db)
-           (filter #(contains? wanted (nth % 0)))
-           sort
-           (map (fn [[relation subject-type subject
-                      resource-type resource]]
-                  [:relationship relation
-                   subject-type subject (external-id db subject)
-                   resource-type resource (external-id db resource)]))))}))
+      (sort (concat forward reverse)))}))
 
 (defn- mutation-schema-proof
   [db]
@@ -342,11 +349,9 @@
 
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]
-         (boolean
-          (ddb/entid
-           db
-           [schema/relationship-full-key-attr
-            [subject-type subject-id relation-id resource-type resource-id]])))
+         (impl/direct-match?
+          db subject-type subject-id relation-id
+          resource-type resource-id))
 
        :all-permission-nodes
        (fn []

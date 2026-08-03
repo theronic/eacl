@@ -5,7 +5,8 @@
 
    This namespace is JVM-only, as is the rest of the module: datahike's
    ClojureScript API is asynchronous, and the backend SPI is synchronous."
-  (:require [datahike.api :as d]))
+  (:require [datahike.api :as d]
+            [datahike.db.interface :as dbi]))
 
 (defn entid
   "`entid` as DataScript and Datomic define it: a number passes through
@@ -25,20 +26,14 @@
                           {:type :eacl/invalid-entity-id
                            :value eid-or-ref}))))
 
-(defn attr-ident
-  "A datom's `:a` as an ident. Datahike reports `:a` as the attribute keyword by
-   default and as a numeric ref under `:attribute-refs? true` (Datomic's
-   representation), so code that compares `:a` against a keyword set matches
-   nothing in the second mode without this."
-  [db a]
-  (if (number? a) (:db/ident (d/entity db a)) a))
-
 (defn attribute-refs?
   "Whether this db represents attributes as numeric refs (Datomic's
    representation) rather than as keywords. A creation-time choice, so it is
-   constant for the life of the database."
+   constant for the life of the database. Use Datahike's database protocol
+   rather than record-field lookup so temporal wrappers delegate to their
+   origin database."
   [db]
-  (boolean (:attribute-refs? (:config db))))
+  (boolean (:attribute-refs? (dbi/-config db))))
 
 (defn attr-repr
   "`attr` in the representation this db uses for it: the keyword itself, or its
@@ -49,31 +44,103 @@
     (entid db attr)
     attr))
 
+(defn- direct-db?
+  "Whether `db` is a concrete Datahike DB rather than a temporal/filter wrapper.
+   Concrete and retained-commit DB records carry their config as a field.
+   Wrappers delegate `IDB/-config` but deliberately do not expose that field."
+  [db]
+  (some? (:config db)))
+
 (defn seek-tuple-prefix
   "Datoms of composite-tuple attribute `attr` (of `arity` components) whose
    value begins with `prefix`.
 
-   Restrict the scan to the exact AVET attribute first, then filter its tuple
-   values. Datahike 0.8.1759's `AsOfDB` delegates `seek-datoms` without applying
-   the temporal wrapper's seek context: a padded composite lower bound can skip
-   the wanted historical tuple and start in the following attribute. Exact
-   `datoms` does apply that context. Relation-definition cardinality is bounded
-   by the authorization schema, so this preserves correctness on temporal
-   snapshots without widening the scan to the database."
+   Datahike orders vectors by length before contents, so pad the seek key to the
+   tuple's full arity. The attribute guard is load-bearing: `seek-datoms`
+   continues into the next attribute when the requested prefix has no match.
+
+   Datahike carries an `AsOfDB` temporal context into `seek-datoms`, but
+   0.8.1759 can position a full-tuple temporal seek after a historically visible
+   tuple that was retracted later. Wrapper values therefore use exact AVET
+   datoms plus a schema-bounded prefix filter."
   [db attr arity prefix]
   (let [prefix (vec prefix)
         n      (count prefix)]
-    (->> (d/datoms db {:index :avet :components [attr]})
-         (filter (fn [{:keys [v]}]
-                   (and (vector? v)
-                        (= arity (count v))
-                        (<= n arity)
-                        (= prefix (subvec v 0 n))))))))
+    (if (> n arity)
+      []
+      (let [matches-prefix?
+            (fn [{:keys [v]}]
+              (and (vector? v)
+                   (= arity (count v))
+                   (= prefix (subvec v 0 n))))]
+        (if (direct-db? db)
+          (let [padded (into prefix (repeat (- arity n) nil))
+                a-repr (attr-repr db attr)]
+            (->> (d/seek-datoms
+                  db
+                  {:index :avet
+                   :components [attr padded]})
+                 (take-while
+                  (fn [{:keys [a] :as datom}]
+                    (and (= a-repr a)
+                         (matches-prefix? datom))))))
+          (filter matches-prefix?
+                  (d/datoms db {:index :avet
+                                :components [attr]})))))))
 
 (defn avet-datoms
   "Datoms of `attr`, optionally restricted to an exact value."
   ([db attr] (d/datoms db {:index :avet :components [attr]}))
   ([db attr v] (d/datoms db {:index :avet :components [attr v]})))
+
+(defn eavt-datoms
+  "Datoms on `entity` for `attr`, optionally restricted to an exact value.
+   Datahike resolves the attribute keyword in both attribute representations."
+  ([db entity attr]
+   (d/datoms db {:index :eavt :components [entity attr]}))
+  ([db entity attr v]
+   (d/datoms db {:index :eavt :components [entity attr v]})))
+
+(defn eavt-tuple-prefix
+  "Datoms on `entity` whose `arity`-tuple value starts with `prefix`.
+
+   A full-length lower bound positions the scan at the requested tuple segment.
+   The entity and attribute guards prevent a missing prefix from running into a
+   different relationship attribute on the same endpoint. Current and
+   retained-commit values use that seek. Temporal/filter wrappers use exact EAVT
+   datoms plus an endpoint-local prefix filter because Datahike 0.8.1759 can
+   skip a historically visible tuple after a later retraction."
+  ([db entity attr arity prefix]
+   (eavt-tuple-prefix db entity attr arity prefix nil))
+  ([db entity attr arity prefix lower-tail]
+   (let [prefix (vec prefix)
+         prefix-size (count prefix)
+         missing (- arity prefix-size)]
+     (if (neg? missing)
+       []
+       (let [lower-bound
+             (if (and (some? lower-tail) (pos? missing))
+               (into prefix
+                     (cons lower-tail (repeat (dec missing) nil)))
+               (into prefix (repeat missing nil)))
+             matches-prefix?
+             (fn [{:keys [v]}]
+               (and (vector? v)
+                    (= arity (count v))
+                    (= prefix (subvec v 0 prefix-size))))]
+         (if (direct-db? db)
+           (let [a-repr (attr-repr db attr)]
+             (->> (d/seek-datoms
+                   db
+                   {:index :eavt
+                    :components [entity attr lower-bound]})
+                  (take-while
+                   (fn [{:keys [e a] :as datom}]
+                     (and (= entity e)
+                          (= a-repr a)
+                          (matches-prefix? datom))))))
+           (filter matches-prefix?
+                   (eavt-datoms db entity attr))))))))
 
 (defn avet-range
   "Datoms of `attr` whose value falls in [`start`, `end`]. Datahike's

@@ -3,9 +3,11 @@
 The major version increments because v8.0 adds the database-visible v3 mutation
 journal and authenticated causal tokens/cache entries/cursors, and moves the
 DataScript/Datahike ports to the v8 Relay list/count contract. The relationship
-storage model is unchanged (`:eacl/storage-version` stays at 7). Client
-construction performs an idempotent additive migration that creates the graph
-family/head, schema mutation identity, and identities for existing relations.
+storage version stays at 7: Datomic keeps its v7 layout, Datahike now uses that
+same two-tuple physical layout, and DataScript keeps its backend-specific
+entity/composite representation. Client construction performs an idempotent
+additive migration that creates the graph family/head, schema mutation
+identity, and identities for existing relations.
 
 ## Modular artifacts
 
@@ -16,7 +18,9 @@ EACL v8.0 is a workspace with independently consumable modules:
 - `modules/eacl-datomic` contains the complete v8 Datomic implementation.
 - `modules/eacl-datascript` contains the CLJ/CLJS DataScript adapter.
 - `modules/eacl-datahike` contains the CLJ Datahike adapter and supports both
-  keyword and numeric attribute-reference representations.
+  keyword and numeric attribute-reference representations. Its relationship
+  storage now matches Datomic's two cardinality-many heterogeneous endpoint
+  tuples; DataScript retains its entity/composite-index storage adapter.
 
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
@@ -139,8 +143,8 @@ number equality.
   writers must either use the v3 mutation builder or keep
   `:coherence-authority :unknown`.
 - Consumers should call `delete-relationships!` before retracting an entity.
-  `eacl.datomic.integrity/dangling-relationship-report` detects reverse ghost tuples left by an
-  incorrect deletion sequence.
+  The Datomic and Datahike integrity reports detect ghost tuple halves left by
+  an incorrect deletion sequence.
 - Relationship update operations are validated before endpoint resolution. `delete-object!`
   reports actual committed relationship-datom retractions across all batches.
 
