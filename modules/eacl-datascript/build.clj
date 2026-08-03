@@ -1,7 +1,11 @@
 (ns build
-  (:require [clojure.tools.build.api :as b]))
+  (:require [clojure.java.io :as io]
+            [clojure.tools.build.api :as b]))
 
-(def module-dir "modules/eacl-datascript")
+(def module-dir
+  (if (.exists (io/file "modules/eacl-datascript/src"))
+    "modules/eacl-datascript"
+    "."))
 (def lib 'cloudafrica/eacl-datascript)
 (def version "8.0.0-SNAPSHOT")
 (def class-dir (str module-dir "/target/classes"))

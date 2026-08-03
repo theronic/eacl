@@ -2,11 +2,13 @@
   "Reifies eacl.core/IAuthorization for Datomic-backed EACL in eacl.datomic.impl."
   (:require [com.rpl.specter :as S]
             [datomic.api :as d]
+            [eacl.backend.v8 :as backend]
             [eacl.core :as eacl :refer [IAuthorization
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate
                                         map->Relationship]]
+            [eacl.datomic.backend :as datomic-backend]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.codec :as codec]
             [eacl.datomic.consistency :as revision]
@@ -372,8 +374,10 @@
 
 (defn- consistency-request
   [opts value]
-  (let [{:keys [token] :as descriptor}
+  (let [{:keys [mode token] :as descriptor}
         (consistency/descriptor value)]
+    (backend/require-supported!
+     :datomic (:backend-capabilities opts) :consistency mode)
     (if token
       (assoc descriptor
              :requested-t
@@ -900,7 +904,8 @@
       :else
       (let [cache-prefix (result-cache-prefix
                           opts op query-identity
-                          (:schema-version consistency-context))
+                          (or (:cache-schema-proof consistency-context)
+                              (:schema-version consistency-context)))
             exact-key (when (and exact? cache-epoch)
                         (exact-result-cache-key cache-prefix cache-epoch))
             tag-hit (fn [answer]
@@ -1250,6 +1255,19 @@
   (boolean (or (:cache-remember-answers? opts)
                (:lookup-cache-store opts))))
 
+(defn- permission-cache-dependencies
+  [opts db resource-type permission]
+  (when (needs-relationship-dependencies? opts)
+    (let [relation-ids
+          (impl.indexed/permission-relationship-eids
+           db resource-type permission)]
+      {:relationship-dependencies relation-ids
+       :schema-dependencies
+       {:permission-nodes
+        (impl.indexed/permission-schema-nodes
+         db resource-type permission)
+        :relation-ids relation-ids}})))
+
 (defn- request-cache-opts
   "Validates and applies a per-request `:cache?` override to the client's opts.
 
@@ -1310,6 +1328,7 @@
     (if historical-t
       (let [db (historical-db conn opts historical-t operation)
             schema-cache (impl.indexed/make-schema-cache db)
+            snapshot-adapter ((:backend-adapter-fn opts) db)
             prepared
             (binding [impl.indexed/*schema-cache* schema-cache]
               (prepare db))]
@@ -1326,7 +1345,13 @@
                :cache-scope (:cache-scope decoded)
                :cursor-scope (:cache-scope decoded)
                :schema-cache schema-cache
-               :schema-version (some-> schema-cache :schema-version str)))
+               :schema-version
+               (backend/invoke snapshot-adapter :schema-proof)
+               :cache-schema-proof
+               (backend/invoke
+                snapshot-adapter
+                :schema-proof
+                (:schema-dependencies prepared))))
       (let [minimum-t (when (= :at-least-as-fresh mode)
                         requested-t)
             _ (await-revision-db conn opts minimum-t)
@@ -1338,15 +1363,19 @@
             ;; value is the proof and there is nothing to synchronise.
             db (d/db conn)
             observed-t (d/basis-t db)
-            {:keys [relationship-dependencies] :as prepared} (prepare db)
+            snapshot-adapter ((:backend-adapter-fn opts) db)
+            {:keys [relationship-dependencies schema-dependencies]
+             :as prepared}
+            (prepare db)
             ;; The max relation stamp over exactly what this answer depends on,
             ;; read from the same db value. An unrelated application write
             ;; leaves it alone, and so does churn on an EACL relation this
             ;; answer does not read. Any write that CAN affect the answer moves
             ;; it, whichever process or connection made it, because the stamp is
             ;; transacted with the relationship datoms.
-            cache-epoch (watermark/safe-epoch-for
-                         (:cache-epoch-state opts) db
+            cache-epoch (backend/invoke
+                         snapshot-adapter
+                         :relation-proof
                          relationship-dependencies)]
         (revision/observe! (:revision-checkpoints opts) observed-t)
         (assoc prepared
@@ -1361,7 +1390,10 @@
                :cache-scope (if cache-epoch
                               [:relations cache-epoch]
                               [:basis observed-t])
-               :schema-version (client-schema-version opts))))))
+               :schema-version (client-schema-version opts)
+               :cache-schema-proof
+               (backend/invoke
+                snapshot-adapter :schema-proof schema-dependencies))))))
 
 (defn basis-instant
   "Wall-clock time of a Datomic basis `t`, for interpreting the `:cache-basis`
@@ -1481,13 +1513,12 @@
                 subject-eid (object->entid db subject)
                 resource-type (:type resource)
                 resource-eid (object->entid db resource)]
-            {:db db
-             :internal-subject (spice-object subject-type subject-eid)
-             :internal-resource (spice-object resource-type resource-eid)
-             :relationship-dependencies
-             (when (needs-relationship-dependencies? opts)
-               (impl.indexed/permission-relationship-eids
-                db resource-type permission))}))
+            (merge
+             {:db db
+              :internal-subject (spice-object subject-type subject-eid)
+              :internal-resource (spice-object resource-type resource-eid)}
+             (permission-cache-dependencies
+              opts db resource-type permission))))
         {:keys [db internal-subject internal-resource]
          :as result-context}
         (capture-result-context
@@ -1523,15 +1554,15 @@
         (fn [db]
           (let [internal-subject (spice-object->internal db subject)
                 query' (assoc query :subject internal-subject)]
-            {:db db
-             :internal-subject internal-subject
-             :query' query'
-             :query-shape query-shape
-             :internal-query (internal-page-query query' page-req decoded)
-             :relationship-dependencies
-             (when (needs-relationship-dependencies? opts)
-               (impl.indexed/permission-relationship-eids
-                db (:resource/type query') (:permission query')))}))
+            (merge
+             {:db db
+              :internal-subject internal-subject
+              :query' query'
+              :query-shape query-shape
+              :internal-query
+              (internal-page-query query' page-req decoded)}
+             (permission-cache-dependencies
+              opts db (:resource/type query') (:permission query')))))
         captured
         (capture-result-context
          conn opts (:consistency query) prepare
@@ -1607,13 +1638,12 @@
                 query' (-> query
                            (assoc :subject subject-ent)
                            (dissoc :consistency :cache?))]
-            {:db db
-             :subject-ent subject-ent
-             :query' query'
-             :relationship-dependencies
-             (when (needs-relationship-dependencies? opts)
-               (impl.indexed/permission-relationship-eids
-                db (:resource/type query') (:permission query')))}))
+            (merge
+             {:db db
+              :subject-ent subject-ent
+              :query' query'}
+             (permission-cache-dependencies
+              opts db (:resource/type query') (:permission query')))))
         {:keys [db subject-ent query']
          :as result-context}
         (capture-result-context
@@ -1645,15 +1675,15 @@
           (let [internal-resource
                 (spice-object->internal db (:resource query))
                 query' (assoc query :resource internal-resource)]
-            {:db db
-             :internal-resource internal-resource
-             :query' query'
-             :query-shape query-shape
-             :internal-query (internal-page-query query' page-req decoded)
-             :relationship-dependencies
-             (when (needs-relationship-dependencies? opts)
-               (impl.indexed/permission-relationship-eids
-                db (:type internal-resource) (:permission query')))}))
+            (merge
+             {:db db
+              :internal-resource internal-resource
+              :query' query'
+              :query-shape query-shape
+              :internal-query
+              (internal-page-query query' page-req decoded)}
+             (permission-cache-dependencies
+              opts db (:type internal-resource) (:permission query')))))
         captured
         (capture-result-context
          conn opts (:consistency query) prepare
@@ -1718,13 +1748,12 @@
                 query' (-> query
                            (assoc :resource resource-ent)
                            (dissoc :consistency :cache?))]
-            {:db db
-             :resource-ent resource-ent
-             :query' query'
-             :relationship-dependencies
-             (when (needs-relationship-dependencies? opts)
-               (impl.indexed/permission-relationship-eids
-                db (:type resource-ent) (:permission query')))}))
+            (merge
+             {:db db
+              :resource-ent resource-ent
+              :query' query'}
+             (permission-cache-dependencies
+              opts db (:type resource-ent) (:permission query')))))
         {:keys [db resource-ent query']
          :as result-context}
         (capture-result-context
@@ -2258,6 +2287,13 @@
         opts               {:object-id->ident object-id->ident
                             :schema-state schema-state
                             :database-id (:database-id @schema-state)
+                            :backend-capabilities datomic-backend/capabilities
+                            :backend-adapter-fn
+                            (fn [db]
+                              (datomic-backend/snapshot-adapter
+                               db
+                               {:entid->object-id entid->object-id
+                                :cache-epoch-state cache-epoch-state}))
                             :lookup-cache-store (:store cache-config)
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
                             :cache-namespace (:namespace cache-config)

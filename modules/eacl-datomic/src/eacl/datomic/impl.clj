@@ -3,8 +3,10 @@
   (:require
    [datomic.api :as d]
    [eacl.core :as eacl :refer [spice-object]]
+   [eacl.datomic.backend :as backend]
    [eacl.datomic.impl.base :as base]
-   [eacl.datomic.impl.indexed :as impl.indexed]))
+   [eacl.datomic.impl.indexed :as impl.indexed]
+   [eacl.engine.v8 :as engine]))
 
 (def Relation base/Relation)
 (def Permission base/Permission)
@@ -15,33 +17,58 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
+(defmacro ^:private with-shared-engine
+  [& body]
+  `(binding [engine/*schema-cache* impl.indexed/*schema-cache*
+             engine/*recursive-traversal-limits*
+             impl.indexed/*recursive-traversal-limits*
+             engine/*recursive-traversal-stats*
+             impl.indexed/*recursive-traversal-stats*
+             engine/*count-stats* impl.indexed/*count-stats*]
+     ~@body))
+
 (defn can?
   ([db subject permission resource]
-   (impl.indexed/can? db subject permission resource))
-  ;; The map arity used to forward to a 2-arity impl.indexed/can? that does not
-  ;; exist, so every call threw ArityException.
+   (with-shared-engine
+     (engine/can?
+      (backend/snapshot-adapter db)
+      subject permission resource)))
   ([db {:keys [subject permission resource]}]
-   (impl.indexed/can? db subject permission resource)))
+   (can? db subject permission resource)))
 
 (defn lookup-subjects
   ([db query]
-   (impl.indexed/lookup-subjects db query))
+   (lookup-subjects db query nil))
   ([db query lookup-opts]
-   (impl.indexed/lookup-subjects db query lookup-opts)))
+   (with-shared-engine
+     (engine/lookup-subjects
+      (backend/snapshot-adapter db)
+      query
+      lookup-opts))))
 
 (defn lookup-resources
   ([db query]
-   (impl.indexed/lookup-resources db query))
+   (lookup-resources db query nil))
   ([db query lookup-opts]
-   (impl.indexed/lookup-resources db query lookup-opts)))
+   (with-shared-engine
+     (engine/lookup-resources
+      (backend/snapshot-adapter db)
+      query
+      lookup-opts))))
 
 (defn count-resources
   [db query]
-  (impl.indexed/count-resources db query))
+  (with-shared-engine
+    (engine/count-resources
+     (backend/snapshot-adapter db)
+     query)))
 
 (defn count-subjects
   [db query]
-  (impl.indexed/count-subjects db query))
+  (with-shared-engine
+    (engine/count-subjects
+     (backend/snapshot-adapter db)
+     query)))
 
 (def ^:private forward-relationship-attr
   :eacl.v7.relationship/subject-type+relation+resource-type+resource)

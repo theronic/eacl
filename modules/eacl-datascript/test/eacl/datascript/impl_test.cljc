@@ -270,11 +270,13 @@
 
 (deftest read-relationships-default-limit-test
   (let [{:keys [client]} (seed-bulk-read-db 1005)
-        {page-1 :data cursor :cursor}
+        {page-1 :data page-info :page-info}
         (eacl/read-relationships client {:subject/type :user})
+        cursor (:end-cursor page-info)
         {page-2 :data}
         (eacl/read-relationships client {:subject/type :user
-                                         :cursor       cursor})]
+                                         :first        1000
+                                         :after        cursor})]
     (is (= 1000 (count page-1)))
     (is (= 5 (count page-2)))
     (is (string? cursor))

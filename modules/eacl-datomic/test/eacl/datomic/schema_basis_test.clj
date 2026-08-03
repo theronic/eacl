@@ -13,7 +13,8 @@
             [eacl.datomic.impl :as impl :refer [Permission Relation Relationship]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.integrity :as integrity]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]))
 
 (def ^:private schema-v1
   "definition user {}
@@ -49,13 +50,14 @@
     (let [version-reads (atom 0)
           path-calcs   (atom 0)
           version-fn   idx/schema-version
-          calc-fn      idx/calc-permission-paths]
+          calc-fn      engine/calc-permission-paths]
       (with-redefs [idx/schema-version (fn [db]
                                         (swap! version-reads inc)
                                         (version-fn db))
-                    idx/calc-permission-paths (fn [& args]
-                                                (swap! path-calcs inc)
-                                                (apply calc-fn args))]
+                    engine/calc-permission-paths
+                    (fn [& args]
+                      (swap! path-calcs inc)
+                      (apply calc-fn args))]
         (let [acl (core/make-client conn {})
               u   (spice-object :user "u")
               a   (spice-object :account "a")]
@@ -83,8 +85,8 @@
           viewer    (spice-object :user "viewer")
           account   (spice-object :account "a")
           path-calcs (atom 0)
-          calc-fn   idx/calc-permission-paths]
-      (with-redefs [idx/calc-permission-paths
+          calc-fn   engine/calc-permission-paths]
+      (with-redefs [engine/calc-permission-paths
                     (fn [& args]
                       (swap! path-calcs inc)
                       (apply calc-fn args))]

@@ -8,7 +8,8 @@
                                                   with-mem-conns]]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]))
 
 (def ^:private direct-schema
   "definition user {}
@@ -383,7 +384,7 @@
                  :resource/type :folder
                  :first 10}
           classifications (atom 0)
-          classify idx/traversal-permission?]
+          classify engine/traversal-permission?]
       (eacl/write-schema! client recursive-schema)
       @(d/transact conn [{:eacl/id "alice"}
                          {:eacl/id "root"}
@@ -392,10 +393,10 @@
        client
        [(->Relationship alice :reader root)
         (->Relationship root :parent child)])
-      (with-redefs [idx/traversal-permission?
-                    (fn [db resource-type permission]
+      (with-redefs [engine/traversal-permission?
+                    (fn [snapshot resource-type permission]
                       (swap! classifications inc)
-                      (classify db resource-type permission))]
+                      (classify snapshot resource-type permission))]
         (is (= #{"root" "child"}
                (set (map :id
                          (:data
