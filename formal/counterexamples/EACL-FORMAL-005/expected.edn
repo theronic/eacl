@@ -1,0 +1,5 @@
+{:decode-at-expires-at
+ {:typed-error :eacl.pagination/expired-cursor
+  :reason :expired}
+ :invariant
+ "expires-at is the first invalid second on every cursor runtime and backend."}

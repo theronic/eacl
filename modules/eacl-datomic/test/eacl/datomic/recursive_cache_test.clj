@@ -128,17 +128,17 @@
         (is (= (:data hit-page2) (:data retry-page2))
             "a cursor retry returns its immutable cached page")
         (is (= (:data page1) (:data previous-page)))
-        (is (nil? (:continuation-hits @hit-stats))
-            "v3 does not read the unauthenticated continuation side cache")
+        (is (= 1 (:continuation-hits @hit-stats))
+            "the originating client resumes its private proof-bound continuation")
         (is (nil? (:continuation-hits @miss-stats)))
         (is (= 1 (:continuation-misses @alternate-stats)))
-        (is (nil? (:recursive-page-hits @retry-stats))
-            "a retry deterministically replays its authenticated cursor")
-        (is (nil? (:recursive-page-hits @previous-stats))
-            "back navigation does not trust a side-cache page")
-        (is (= (:derived-grants @hit-stats)
-               (:derived-grants @miss-stats))
-            "both cache configurations replay the same proven prefix")))))
+        (is (= 1 (:recursive-page-hits @retry-stats))
+            "a retry reuses only the originating client's proof-bound page")
+        (is (= 1 (:recursive-page-hits @previous-stats))
+            "back navigation may reuse the same private proof-bound page")
+        (is (<= (:derived-grants @hit-stats)
+                (:derived-grants @miss-stats))
+            "private continuation reuse does no more traversal than replay")))))
 
 (deftest reverse-recursive-pagination-resumes-test
   (with-mem-conn [conn schema/v7-schema]
@@ -159,7 +159,7 @@
         (is (empty? (set/intersection
                      (set (map :id (:data page1)))
                      (set (map :id (:data page2))))))
-        (is (nil? (:continuation-hits @stats)))
+        (is (= 1 (:continuation-hits @stats)))
         (let [all-subjects (collect-reverse client query)]
           (is (= 130 (count all-subjects)))
           (is (= 130 (count (set (map :id all-subjects))))
@@ -210,7 +210,10 @@
 
 (deftest recursive-cursor-survives-unrelated-datomic-transactions-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "recursive-unrelated"})
+    (let [client (core/make-client
+                  conn
+                  {:page-token-key "recursive-unrelated"
+                   :coherence-authority :managed})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -225,15 +228,15 @@
                       (eacl/lookup-resources client (assoc query :after cursor)))]
           (is (= (mapv account-id (range 5 10))
                  (mapv :id (:data page2))))
-          (is (nil? (:continuation-hits @stats))
-              "unrelated basis churn still avoids unauthenticated continuation state")
+          (is (= 1 (:continuation-hits @stats))
+              "proof-equivalent basis churn can resume private continuation state")
           (let [restart-stats (atom {})
                 restarted-page1
                 (binding [idx/*recursive-traversal-stats* restart-stats]
                   (eacl/lookup-resources client query))]
             (is (= (:data page1) (:data restarted-page1)))
-            (is (nil? (:recursive-page-hits @restart-stats))
-                "a completed authenticated answer, not a side-cache page, is reusable")
+            (is (true? (:cached? restarted-page1))
+                "the completed page is lifted by unchanged relation stamps")
             (is (zero? (get @restart-stats :derived-grants 0)))))))))
 
 (deftest recursive-pages-are-isolated-by-cache-namespace-test
@@ -276,8 +279,8 @@
               (binding [idx/*recursive-traversal-stats* second-b-stats]
                 (eacl/lookup-resources client-b query))]
           (is (= (:data page-b) (:data page-b-again)))
-          (is (nil? (:recursive-page-hits @second-b-stats))
-              "tenant B also replays without a recursive page side cache"))))))
+          (is (= 1 (:recursive-page-hits @second-b-stats))
+              "tenant B reuses only its own client-private page"))))))
 
 (deftest reverse-continuation-side-state-is-not-retained-test
   (with-mem-conn [conn schema/v7-schema]
@@ -450,6 +453,6 @@
             replayed (collect-forward disabled-client query)]
         (is (= (:data replayed) (:data cached)))
         (is (= 80 (count (:data cached))))
-        (is (= (:derived-grants cached)
-               (:derived-grants replayed))
-            "authenticated replay performs the same traversal work")))))
+        (is (<= (:derived-grants cached)
+                (:derived-grants replayed))
+            "private continuation reuse does no more work than safe replay")))))

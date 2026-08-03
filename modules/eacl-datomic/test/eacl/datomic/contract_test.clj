@@ -30,6 +30,7 @@
           (datomic/make-client
            conn
            {:page-token-key "datomic-recursive-contract-test"
+            :coherence-authority :managed
             :cache {:remember-answers true}})]
       (eacl/write-schema! client contract/recursive-schema)
       @(d/transact conn

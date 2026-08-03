@@ -1,0 +1,6 @@
+{:duplicate-map {:eacl/error :eacl.format/invalid
+                 :reason :malformed}
+ :unknown-tag {:eacl/error :eacl.format/invalid
+               :reason :malformed}
+ :invariant
+ "CLJ and CLJS reject every value outside the bounded canonical wire language with the same typed EACL malformed-format error."}

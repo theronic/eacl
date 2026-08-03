@@ -12,7 +12,9 @@
   (:import [java.util UUID]))
 
 (def capabilities
-  {:consistency #{:fully-consistent
+  {:consistency #{:local-snapshot
+                  :fully-consistent
+                  :synchronized-head
                   :minimize-latency
                   :at-least-as-fresh
                   :at-exact-snapshot}
@@ -92,25 +94,6 @@
    (:eacl.permission/source-relation-name permission)
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
-
-(defn- apply-scan-window
-  [ids {:keys [direction bound-eid inclusive-bound?]}]
-  (let [direction (or direction :asc)
-        ordered (sort ids)
-        within-bound?
-        (case direction
-          :asc (if bound-eid
-                 (if inclusive-bound?
-                   #(<= bound-eid %)
-                   #(< bound-eid %))
-                 (constantly true))
-          :desc (if bound-eid
-                  (if inclusive-bound?
-                    #(>= bound-eid %)
-                    #(> bound-eid %))
-                  (constantly true)))]
-    (cond->> (filter within-bound? ordered)
-      (= :desc direction) reverse)))
 
 (defn- schema-proof-records
   [db {:keys [permission-nodes relation-ids] :as scope}]
@@ -206,13 +189,14 @@
               coherence-authority proof-mode]
        :or {proof-mode :content}
        :as opts}]
-  (let [source-scope
+  (let [graph-state (journal/graph-state db)
+        source-scope
         (or (:source-scope opts)
             (let [{:keys [backend id]} (get-in db [:config :store])]
               {:source-id
                {:store-backend backend
                 :store-id (str id)
-                :family-id (:family-id (journal/graph-state db))}
+                :family-id (:family-id graph-state)}
                :branch (get-in db [:config :branch])}))
         opts' (assoc opts :source-scope source-scope)]
     (backend/make-adapter
@@ -229,7 +213,7 @@
 
         (or (nil? conn)
             (not (direct-writer? db)))
-        (update :consistency disj :fully-consistent)
+        (update :consistency disj :fully-consistent :synchronized-head)
 
         (or (nil? conn)
             (not (exact-reconstruction? db)))
@@ -252,7 +236,7 @@
 
        :graph-head
        (fn []
-         {:graph-anchor (:head-id (journal/graph-state db))
+         {:graph-anchor (:head-id graph-state)
           :order-hint (:max-tx db)
           :exact-locator (commit-locator db)})
 
@@ -338,17 +322,13 @@
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
-         (apply-scan-window
-          (impl/subject->resources
-           db subject-type subject-id relation-id resource-type nil)
-          options))
+         (impl/subject->resources
+          db subject-type subject-id relation-id resource-type options))
 
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type options]
-         (apply-scan-window
-          (impl/resource->subjects
-           db resource-type resource-id relation-id subject-type nil)
-          options))
+         (impl/resource->subjects
+          db resource-type resource-id relation-id subject-type options))
 
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]

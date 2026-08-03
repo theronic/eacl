@@ -1,0 +1,9 @@
+{:page-1 ["a1"]
+ :page-2 ["a3"]
+ :allowed-alternative
+ {:typed-error
+  #{:eacl.consistency/snapshot-expired
+    :eacl.consistency/cursor-conflict}}
+ :forbidden ["a2"]
+ :invariant
+ "A cursor walk uses one graph. Without a complete proof, continuation must be exact-snapshot only."}

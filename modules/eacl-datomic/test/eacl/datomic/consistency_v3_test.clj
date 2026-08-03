@@ -42,7 +42,7 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
-(deftest authoritative-and-targeted-sync-arities-test
+(deftest local-authoritative-and-targeted-sync-arities-test
   (with-mem-conn [conn schema/v7-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
@@ -60,7 +60,21 @@
                        (swap! calls conj [:at-least basis])
                        (original-sync connection basis)))]
         (is (true? (eacl/can? authorization user :view document)))
-        (is (= [:authoritative] @calls))
+        (is (empty? @calls)
+            "the default local snapshot must not synchronize")
+        (is (true?
+             (eacl/can?
+              authorization user :view document
+              consistency/fully-consistent)))
+        (is (= [:authoritative] @calls)
+            "the compatibility spelling remains an explicit barrier")
+        (reset! calls [])
+        (is (true?
+             (eacl/can?
+              authorization user :view document
+              consistency/synchronized-head)))
+        (is (= [:authoritative] @calls)
+            "the precisely named head barrier uses zero-argument sync")
         (reset! calls [])
         (is (true?
              (eacl/can?
@@ -191,23 +205,17 @@
         conn
         [{:db/id (d/tempid :db.part/user)
           :db/doc "unrelated cursor churn"}])
-      (testing "an equal complete proof continues on current without as-of"
-        (with-redefs [d/as-of
-                      (fn [& _]
-                        (throw
-                         (ex-info
-                          "proof-equivalent continuation must not use history"
-                          {})))]
-          (let [page-2
-                (eacl/lookup-resources
-                 authorization
-                 (assoc query :after cursor))
-                rebased
-                (datomic/token->page-bound
-                 (:opts authorization)
-                 (get-in page-2 [:page-info :end-cursor]))]
-            (is (= ["doc-b"] (mapv :id (:data page-2))))
-            (is (< cursor-basis (:basis-t rebased))))))
+      (testing "an unrelated write still pins continuation to the original basis"
+        (let [page-2
+              (eacl/lookup-resources
+               authorization
+               (assoc query :after cursor))
+              continued
+              (datomic/token->page-bound
+               (:opts authorization)
+               (get-in page-2 [:page-info :end-cursor]))]
+          (is (= ["doc-b"] (mapv :id (:data page-2))))
+          (is (= cursor-basis (:basis-t continued)))))
       (let [fresh-page-1
             (eacl/lookup-resources authorization query)
             fresh-cursor
@@ -218,7 +226,7 @@
               authorization
               (eacl/->Relationship
                user :reader (second documents))))]
-        (testing "a changed proof continues only on the original exact graph"
+        (testing "a relationship change continues on the original exact graph"
           (is (= ["doc-b"]
                  (mapv
                   :id

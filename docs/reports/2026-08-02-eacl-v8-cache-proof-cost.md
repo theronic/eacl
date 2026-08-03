@@ -2,6 +2,15 @@
 
 Date: 2026-08-02
 
+> **Superseded implementation:** the proof-per-hit v3 candidate measured below
+> is not the final v8 cache. EACL now uses a private current-generation cache:
+> exact hits validate immutable snapshot identity only, managed cross-
+> transaction hits use current relation transaction stamps, and disabled or
+> per-request-bypassed caching branches directly to evaluation before semantic
+> cache-key, dependency-stamp, provider, canonicalization, or envelope work.
+> See
+> [the current-snapshot design](2026-08-02-eacl-v8-single-db-current-cache-design.md).
+
 ## Scope
 
 This review compares the cache immediately before the v3 freshness redesign
@@ -181,3 +190,26 @@ per root. The measured steady lookup is constant at this resolution.
    Further optimization should profile token and cache-envelope encode/decode
    separately; weakening proof or authentication semantics is not an acceptable
    benchmark optimization.
+
+## Final v8 replacement measurements
+
+After replacing the candidate, the final Datomic heavy-suite rerun measured a
+cache-disabled/warm permission check at 31.38 µs and an exact-current completed
+hit at 9.25 µs. The exact hit's native cache resolution accounted for about
+1.57 µs; selected-snapshot capture accounted for about 5.45 µs. The former
+1.5–1.8 ms proof/envelope floor is absent.
+
+Separate repeated-check probes measured:
+
+| Backend | Current-generation hit | Cache disabled |
+| --- | ---: | ---: |
+| Datomic | 8.67 µs | 33.54 µs |
+| Datahike | 12.19 µs | 17.65 µs |
+| DataScript | 7.20 µs | 26.81 µs |
+
+The measurements vary with JIT and fixture state; the structural regression is
+stronger than the timing. Tests replace `eacl.cache/resolve-current!` with a
+throwing function and prove that globally disabled Datomic evaluation and
+per-request bypasses on Datomic, Datahike, DataScript CLJ, and DataScript CLJS
+still return correct results. Disabled operation does not merely miss inside
+the cache strategy—it never enters native cache resolution.

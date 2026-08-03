@@ -1,0 +1,48 @@
+{:schema-version 1
+ :required-score 1.0
+ :mutants
+ [{:id :wrong-arrow-direction
+   :mechanism :swap-arrow-resource-and-subject
+   :killed-by
+   {:proof :compiled-path-denotation
+    :test :wrong-arrow-direction-control}}
+  {:id :premature-cycle-cut
+   :mechanism :treat-recursive-node-visit-as-complete
+   :killed-by
+   {:proof :recursive-worklist-completeness
+    :test :premature-cycle-cut-control}}
+  {:id :missing-de-duplication
+   :mechanism :emit-every-semantic-path
+   :killed-by
+   {:proof :unique-deterministic-sequence
+    :test :missing-de-duplication-control}}
+  {:id :wrong-frontier
+   :mechanism :resume-from-inclusive-after-bound
+   :killed-by
+   {:proof :exclusive-inclusive-frontier-laws
+    :test :wrong-frontier-control}}
+  {:id :incomplete-dependency
+   :mechanism :omit-reachable-relation-from-proof-scope
+   :killed-by
+   {:proof :calculated-scope-semantically-complete
+    :test :incomplete-dependency-control}}
+  {:id :numeric-ancestry
+   :mechanism :treat-lower-order-sibling-as-ancestor
+   :killed-by
+   {:model :forward-only-proof-lifting
+    :test :numeric-ancestry-control}}
+  {:id :cursor-scope
+   :mechanism :ignore-operation-and-query-scope
+   :killed-by
+   {:proof :cursor-scope-before-influence
+    :test :cursor-scope-control}}
+  {:id :cache-fail-open
+   :mechanism :return-candidate-on-provider-failure
+   :killed-by
+   {:proof :provider-failure-fails-closed
+    :test :cache-fail-open-control}}
+  {:id :continuation-race
+   :mechanism :return-concurrently-replaced-unvalidated-entry
+   :killed-by
+   {:proof :telemetry-cas-does-not-change-value
+    :test :continuation-race-control}}]}

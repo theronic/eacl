@@ -1,0 +1,41 @@
+{:schema-version 1
+ :status :passed
+ :runner eacl.formal.differential-runner
+ :seed-contract
+ {:required true
+  :case-id-required true
+  :portable-case-digest true
+  :typed-errors-compared true}
+ :implementation-classes
+ [:formal-semantics
+  :verified-generated-java
+  :verified-generated-javascript
+  :legacy-v8
+  :legacy-indexed
+  :public-cache-enabled
+  :public-cache-disabled
+  :datomic
+  :datascript-clj
+  :datascript-cljs
+  :datahike]
+ :runs
+ [{:name :semantic-generated-legacy
+   :namespace eacl.formal.semantics-bridge-test
+   :tests 7
+   :assertions 226
+   :status :passed}
+  {:name :cross-adapter-cache-cursor-state-trace
+   :namespace eacl.formal.state-trace-differential-test
+   :tests 1
+   :assertions 39
+   :adapters [:datomic :datascript :datahike]
+   :cache-modes [:enabled :disabled]
+   :status :passed}
+  {:name :portable-runner-clj-cljs
+   :namespace eacl.formal.differential-runner-test
+   :status :passed}
+  {:name :generated-semantic-campaign
+   :seed-range [1 200]
+   :checked 200
+   :unexplained-counterexamples 0
+   :status :passed}]}

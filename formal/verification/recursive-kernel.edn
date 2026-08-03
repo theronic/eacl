@@ -1,0 +1,63 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :passed
+ :scope :recursive-kernel
+ :proof
+ {:source "formal/dafny/RecursiveEngine.dfy"
+  :verified-obligations 46
+  :claims
+  [:least-dependency-closure
+   :reachable-recursive-scc-detection
+   :recursive-rule-compilation-denotation
+   :finite-forward-worklist-termination
+   :forward-soundness-and-completeness
+   :finite-reverse-goal-worklist-termination
+   :reverse-soundness-and-completeness
+   :typed-reverse-projection-soundness-and-completeness
+   :result-de-duplication
+   :recursive-can-membership
+   :recursive-bounded-forward-count
+   :recursive-bounded-typed-reverse-count
+   :derived-grant-limit-fails-closed
+   :advanced-datom-limit-fails-closed
+   :queued-work-limit-fails-closed
+   :strict-traversal-ordinals
+   :retained-replay-suffix-equivalence]}
+ :generated-targets
+ {:java
+  {:status :passed
+   :tests 8
+   :assertions 257
+   :failures 0
+   :errors 0}
+  :javascript
+  {:status :passed
+   :tests 3
+   :assertions 18
+   :failures 0
+   :errors 0}}
+ :differential
+ {:implementations
+  [:independent-least-fixed-point-oracle
+   :generated-java
+   :eacl-engine-v8-datascript]
+  :fixtures
+  [:recursive-chain
+   :cyclic
+   :diamond
+   :deep
+   :wide
+   :duplicate-path
+   :empty-seed
+   :limit-exceeded]
+  :status :passed
+  :retained-mismatches 0}
+ :performance-observation
+ {:status :not-cutover-ready
+  :reason :generated-kernel-recomputes-the-finite-closure-per-operation
+  :representative-jvm-formal-suite-seconds 15.45}
+ :limitations
+ [:generated-kernel-is-not-yet-production-authoritative
+  :full-pagination-and-cursor-obligations-remain
+  :cross-adapter-recursive-differential-campaign-remains
+  :performance-cutover-gate-remains]}

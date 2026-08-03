@@ -5,9 +5,16 @@
             [eacl.cache-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
+            [eacl.engine.relationships-test]
             [eacl.mutation-test]
             [eacl.relationships.endpoint-pair-test]
+            [eacl.relay-test]
             [eacl.secure-format-test]
+            [eacl.verified-kernel-test]
+            [eacl.formal.cache-strategy-adversarial-test]
+            [eacl.formal.differential-runner-test]
+            [eacl.formal.generators-test]
+            [eacl.datascript.adapter-certification-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
             [eacl.datascript.mutation-test]
@@ -29,9 +36,16 @@
                'eacl.cache-test
                'eacl.causal-model-test
                'eacl.consistency-test
+               'eacl.engine.relationships-test
                'eacl.mutation-test
                'eacl.relationships.endpoint-pair-test
+               'eacl.relay-test
                'eacl.secure-format-test
+               'eacl.verified-kernel-test
+               'eacl.formal.cache-strategy-adversarial-test
+               'eacl.formal.differential-runner-test
+               'eacl.formal.generators-test
+               'eacl.datascript.adapter-certification-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
                'eacl.datascript.mutation-test

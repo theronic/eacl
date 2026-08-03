@@ -111,9 +111,7 @@
      conn
      (cond-> (-> config
                  (dissoc :cache-fn)
-                 (assoc :entity->object-id (fn [ent] (:eacl/id ent))
-                        :object-id->ident (fn [obj-id] [:eacl/id obj-id])
-                        ;; Fixed key so token cost does not vary between runs.
+                 (assoc ;; Fixed key so token cost does not vary between runs.
                         :page-token-key "version-comparison"
                         ;; A 3,000-page walk outlives the 5-minute default, and
                         ;; an expiring cursor mid-walk would measure the error

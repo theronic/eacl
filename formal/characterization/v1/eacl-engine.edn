@@ -1,0 +1,186 @@
+{:fixture-format :eacl/characterization
+ :fixture-version 1
+ :semantics-version 1
+ :oracle-seed 820084
+
+ :authorization-scenarios
+ [{:id :direct-relation
+   :objects [{:type :user :id "u1"}
+             {:type :document :id "d1"}]
+   :relationships [{:subject {:type :user :id "u1"}
+                    :relation :viewer
+                    :resource {:type :document :id "d1"}}]
+   :rules {[:document :view] [:relation :viewer]}
+   :expected-grants
+   #{[{:type :user :id "u1"}
+      :view
+      {:type :document :id "d1"}]}}
+
+  {:id :permission-alias
+   :objects [{:type :user :id "u1"}
+             {:type :document :id "d1"}]
+   :relationships [{:subject {:type :user :id "u1"}
+                    :relation :reader
+                    :resource {:type :document :id "d1"}}]
+   :rules {[:document :read] [:relation :reader]
+           [:document :view] [:permission :read]}
+   :expected-grants
+   #{[{:type :user :id "u1"}
+      :read
+      {:type :document :id "d1"}]
+     [{:type :user :id "u1"}
+      :view
+      {:type :document :id "d1"}]}}
+
+  {:id :arrow-to-relation
+   :objects [{:type :user :id "u1"}
+             {:type :account :id "a1"}
+             {:type :server :id "s1"}]
+   :relationships [{:subject {:type :user :id "u1"}
+                    :relation :owner
+                    :resource {:type :account :id "a1"}}
+                   {:subject {:type :account :id "a1"}
+                    :relation :account
+                    :resource {:type :server :id "s1"}}]
+   :rules {[:server :view]
+           [:arrow :account [:relation :owner]]}
+   :expected-grants
+   #{[{:type :user :id "u1"}
+      :view
+      {:type :server :id "s1"}]}}
+
+  {:id :arrow-to-permission
+   :objects [{:type :user :id "u1"}
+             {:type :account :id "a1"}
+             {:type :server :id "s1"}]
+   :relationships [{:subject {:type :user :id "u1"}
+                    :relation :viewer
+                    :resource {:type :account :id "a1"}}
+                   {:subject {:type :account :id "a1"}
+                    :relation :account
+                    :resource {:type :server :id "s1"}}]
+   :rules {[:account :view] [:relation :viewer]
+           [:server :view]
+           [:arrow :account [:permission :view]]}
+   :expected-grants
+   #{[{:type :user :id "u1"}
+      :view
+      {:type :account :id "a1"}]
+     [{:type :user :id "u1"}
+      :view
+      {:type :server :id "s1"}]}}
+
+  {:id :multi-path-deduplication
+   :objects [{:type :user :id "u1"}
+             {:type :document :id "d1"}]
+   :relationships [{:subject {:type :user :id "u1"}
+                    :relation :viewer
+                    :resource {:type :document :id "d1"}}
+                   {:subject {:type :user :id "u1"}
+                    :relation :editor
+                    :resource {:type :document :id "d1"}}]
+   :rules {[:document :edit] [:relation :editor]
+           [:document :view]
+           [:union
+            [:relation :viewer]
+            [:permission :edit]
+            [:relation :editor]]}
+   :expected-grants
+   #{[{:type :user :id "u1"}
+      :edit
+      {:type :document :id "d1"}]
+     [{:type :user :id "u1"}
+      :view
+      {:type :document :id "d1"}]}}
+
+  {:id :recursive-scc
+   :objects [{:type :user :id "u1"}
+             {:type :folder :id "f0"}
+             {:type :folder :id "f1"}
+             {:type :folder :id "f2"}]
+   :relationships [{:subject {:type :user :id "u1"}
+                    :relation :reader
+                    :resource {:type :folder :id "f0"}}
+                   {:subject {:type :folder :id "f0"}
+                    :relation :parent
+                    :resource {:type :folder :id "f1"}}
+                   {:subject {:type :folder :id "f1"}
+                    :relation :parent
+                    :resource {:type :folder :id "f2"}}
+                   {:subject {:type :folder :id "f2"}
+                    :relation :parent
+                    :resource {:type :folder :id "f0"}}]
+   :rules {[:folder :read]
+           [:union
+            [:relation :reader]
+            [:arrow :parent [:permission :read]]]}
+   :expected-grants
+   #{[{:type :user :id "u1"}
+      :read
+      {:type :folder :id "f0"}]
+     [{:type :user :id "u1"}
+      :read
+      {:type :folder :id "f1"}]
+     [{:type :user :id "u1"}
+      :read
+      {:type :folder :id "f2"}]}
+   :expected-resource-lookup
+   [{:type :folder :id "f0"}
+    {:type :folder :id "f1"}
+    {:type :folder :id "f2"}]
+   :expected-resource-count 3}
+
+  {:id :seedless-recursive-scc
+   :objects [{:type :user :id "u1"}
+             {:type :folder :id "f0"}
+             {:type :folder :id "f1"}]
+   :relationships [{:subject {:type :folder :id "f0"}
+                    :relation :parent
+                    :resource {:type :folder :id "f1"}}
+                   {:subject {:type :folder :id "f1"}
+                    :relation :parent
+                    :resource {:type :folder :id "f0"}}]
+   :rules {[:folder :read]
+           [:arrow :parent [:permission :read]]}
+   :expected-grants #{}}
+  ]
+
+ :public-operation-scenarios
+ [{:id :lookup-and-count
+   :expected {:forward-page-ids ["folder-0" "folder-1"]
+              :reverse-subject-ids ["user-1"]
+              :resource-count 4
+              :subject-count 1}
+   :covered-by
+   [eacl.datomic.v8-characterization-test/extraction-preserves-public-v8-behavior-test
+    eacl.contract-support/assert-v8-seeded-contracts!
+    eacl.contract-support/assert-v8-recursive-contracts!]}
+
+  {:id :cursor-continuation
+   :expected {:forward-page-ids [["folder-0" "folder-1"]
+                                 ["folder-2" "folder-3"]]
+              :backward-page-ids ["folder-0" "folder-1"]
+              :malformed-error :eacl.pagination/invalid-cursor
+              :scope-error :eacl.pagination/invalid-cursor
+              :expiry-boundary :exclusive}
+   :covered-by
+   [eacl.datomic.v8-characterization-test/extraction-preserves-public-v8-behavior-test
+    eacl.secure-format-test/portable-cursor-expiry-boundary-test]}
+
+  {:id :authenticated-cache
+   :expected {:first-read-cached? false
+              :second-read-cached? true
+              :uncached-read-cached? false
+              :provider-failure :recompute
+              :proof-mismatch :recompute}
+   :covered-by
+   [eacl.datomic.v8-characterization-test/extraction-preserves-public-v8-behavior-test
+    eacl.datomic.cache-test/provider-and-observability-failures-are-contained-test]}
+
+  {:id :typed-errors
+   :expected {:unsupported-filter :eacl.pagination/unsupported-filter
+              :invalid-cursor :eacl.pagination/invalid-cursor
+              :expired-cursor :eacl.pagination/expired-cursor}
+   :covered-by
+   [eacl.datomic.v8-characterization-test/extraction-preserves-public-v8-behavior-test
+    eacl.secure-format-test/portable-cursor-expiry-boundary-test]}]}

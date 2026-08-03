@@ -248,6 +248,8 @@
 (deftest capability-matrix-and-legacy-restriction-test
   (doseq [[mode descriptor]
           [[:fully-consistent public-consistency/fully-consistent]
+           [:synchronized-head public-consistency/synchronized-head]
+           [:local-snapshot public-consistency/local-snapshot]
            [:minimize-latency public-consistency/minimize-latency]
            [:at-least-as-fresh
             (public-consistency/at-least-as-fresh
@@ -273,6 +275,8 @@
         (let [other-descriptor
               (case other-mode
                 :fully-consistent public-consistency/fully-consistent
+                :synchronized-head public-consistency/synchronized-head
+                :local-snapshot public-consistency/local-snapshot
                 :minimize-latency public-consistency/minimize-latency
                 :at-least-as-fresh
                 (public-consistency/at-least-as-fresh

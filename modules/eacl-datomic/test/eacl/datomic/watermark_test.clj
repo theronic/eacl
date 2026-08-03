@@ -52,6 +52,7 @@
 
 (defn- exact-client [conn]
   (core/make-client conn {:cache {:remember-answers true}
+                          :coherence-authority :managed
                           :page-token-key "watermark-test"}))
 
 (defn- seed! [conn acl]
@@ -429,6 +430,7 @@
                                schema/v7-schema)]
     (is (nil? (d/entid (d/db conn) :eacl/relation-version)))
     (let [acl (core/make-client conn {:cache {:remember-answers true}
+                                      :coherence-authority :managed
                                       :page-token-key "watermark-test"})]
       (seed! conn acl)
       (is (some? (d/entid (d/db conn) :eacl/relation-version))

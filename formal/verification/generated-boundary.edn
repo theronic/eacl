@@ -1,0 +1,65 @@
+{:schema-version 1
+ :status :materialized-reference-and-partial-production-routing-passed
+ :portable-boundary eacl.verified-kernel
+ :modes
+ [:legacy-authoritative :verified-shadow :verified-authoritative]
+ :generated-providers
+ {:clj-java eacl.formal.production-kernel/GeneratedJavaKernel
+  :cljs-javascript
+  eacl.formal.production-kernel/GeneratedJavaScriptKernel}
+ :strict-input-coverage
+ [:unknown-tags
+  :unknown-fields
+  :duplicate-map-fields
+  :invalid-object-identities
+  :bounded-identity-strings
+  :unsafe-integer-ranges
+  :oversized-values
+  :invalid-generated-result-variants]
+ :production-routed-decisions
+ [:relationship-page
+  :relationship-keyset-page
+  :lookup-cursor-continuation
+  :relationship-cursor-continuation
+  :cache-validation]
+ :materialized-reference-decisions
+ [:can?
+  :lookup-resources
+  :lookup-subjects
+  :count-resources
+  :count-subjects]
+ :evidence
+ {:generated-java-wire
+  {:namespace eacl.formal.wire-format-bridge-test
+   :tests 1 :assertions 7 :status :passed}
+  :generated-javascript-wire
+  {:namespace eacl.formal.js-round-trip-test
+   :suite-tests 12 :suite-assertions 610 :status :passed}
+  :portable-clj-cljs-boundary
+  {:namespace eacl.verified-kernel-test
+   :clj {:tests 5 :assertions 28}
+   :cljs :passed-in-full-suite}
+  :production-routing
+  {:clj-java {:tests 4 :assertions 19}
+   :cljs-javascript {:tests 4 :assertions 19}}
+  :materialized-reference
+  {:clj-java
+   {:namespace eacl.formal.production-kernel-test
+    :tests 4 :assertions 19 :status :passed}
+   :cljs-javascript
+   {:namespace eacl.formal.production-kernel-test
+    :suite-tests 12 :suite-assertions 610 :status :passed}}
+  :public-state-trace
+  {:namespace eacl.formal.state-trace-differential-test
+   :backends [:datomic :datahike :datascript]
+   :cache-modes [:enabled :disabled]
+   :operations
+   [:can?
+    :lookup-resources
+    :lookup-subjects
+    :count-resources
+    :count-subjects]
+   :tests 1 :assertions 99 :status :passed}}
+ :remaining
+ [:indexed-adapter-callback-routing
+  :complete-public-traversal-authority]}

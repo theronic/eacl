@@ -1,0 +1,143 @@
+{:schema-version 1
+ :assurance-status :not-verified
+ :reason :proof-obligations-incomplete
+ :toolchain-lock "formal/toolchain.lock.json"
+ :cryptographic-assumption-map
+ "formal/verification/cryptographic-assumptions.md"
+ :semantics-version 1
+ :source-digests {}
+ :generated-artifact-digests {}
+ :theorems
+ {:semantic-foundation
+  {:status :passed
+   :verified-obligations 21
+   :source "formal/dafny/Semantics.dfy"}
+  :cache-cursor-foundation
+  {:status :passed
+   :verified-obligations 24
+   :source "formal/dafny/TemporalSafety.dfy"}
+  :strict-wire-format
+  {:status :passed
+   :verified-obligations 10
+   :source "formal/dafny/WireFormat.dfy"}
+  :abstract-snapshot-oracle
+  {:status :passed
+   :verified-obligations 16
+   :source "formal/dafny/SnapshotOracle.dfy"
+   :claim :conditional-interface-contract}
+  :direct-and-acyclic-engine
+  {:status :passed
+   :verified-obligations 30
+   :source "formal/dafny/AcyclicEngine.dfy"
+   :report "formal/verification/acyclic-kernel.edn"}
+  :ordered-merge
+  {:status :passed
+   :verified-obligations 22
+   :source "formal/dafny/OrderedMerge.dfy"}
+  :frontier-foundation
+  {:status :passed
+   :verified-obligations 16
+   :source "formal/dafny/Pagination.dfy"
+   :claim :frontier-laws-only}
+  :recursive-engine
+  {:status :passed
+   :verified-obligations 46
+   :source "formal/dafny/RecursiveEngine.dfy"
+   :report "formal/verification/recursive-kernel.edn"}
+  :pagination-and-cursor-kernel
+  {:status :passed
+   :verified-obligations 26
+   :source "formal/dafny/PageWindow.dfy"
+   :report "formal/verification/pagination-kernel.edn"
+   :integration-status :production-routing-passed}
+  :cache-decision-kernel
+  {:status :passed
+   :verified-obligations 17
+   :source "formal/dafny/CacheKernel.dfy"
+   :report "formal/verification/cache-kernel.edn"
+   :integration-status :production-routing-passed}
+  :current-generation-cache
+  {:status :passed
+   :verified-obligations 24
+   :source "formal/dafny/CurrentCache.dfy"
+   :report "formal/verification/cache-kernel.edn"
+   :integration-status :all-three-backends-regression-passed
+   :claim :conditional-current-cache-refinement}
+  :complete-public-engine
+  {:status :incomplete}}
+ :adapter-certification
+ {:report "formal/verification/adapter-certification.edn"
+  :datomic :certification-suite-passed
+  :datascript :certification-suite-passed
+  :datahike :certification-suite-passed}
+ :runtime-targets
+ {:clj-java
+  {:boundary-smoke :passed
+   :semantic-fixtures :passed
+   :cross-runtime-vectors :passed}
+  :cljs-javascript
+  {:node-smoke :passed
+   :browser-esbuild-smoke :passed
+   :cross-runtime-vectors :passed}}
+ :cross-runtime-parity
+ {:status :passed
+  :report "formal/verification/cross-runtime-parity.edn"}
+ :unified-differential-runner
+ {:status :passed
+  :report "formal/verification/differential-runner.edn"
+  :seeded-campaigns true
+  :typed-errors-compared true}
+ :counterexample-corpus-revision
+ {:latest :EACL-FORMAL-008
+  :fixed [:EACL-FORMAL-001
+          :EACL-FORMAL-002
+          :EACL-FORMAL-003
+          :EACL-FORMAL-004
+          :EACL-FORMAL-005
+          :EACL-FORMAL-006
+          :EACL-FORMAL-007
+          :EACL-FORMAL-008]}
+ :counterexample-replay
+ {:status :passed
+  :report "formal/verification/counterexample-replay.edn"
+  :entries 8}
+ :residual-assumptions
+ [:verification-toolchain
+  :generated-code-compilers
+  :clj-cljs-runtimes
+  :ffi-boundaries
+  :adapter-contract
+  :cryptography
+  :canonicalization
+  :hash-collision-resistance
+  :entropy-and-key-management
+  :configured-limits]
+ :performance-gates
+ {:status :current-cache-passed
+  :managed-legacy-heavy-suite :passed
+  :current-generation-heavy-suite :passed
+  :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
+  :blocking-finding nil}
+ :mutation-control
+ {:status :passed
+  :report "formal/verification/mutation-control.edn"
+  :score 1.0
+  :killed 9
+  :registered 9}
+ :generated-semantic-campaign
+ {:status :passed
+  :report "formal/verification/campaign-run-2026-08-02.edn"
+  :seeds 200
+  :unexplained-counterexamples 0}
+ :generated-boundary
+ {:status :materialized-reference-and-partial-production-routing-passed
+  :report "formal/verification/generated-boundary.edn"
+  :complete-public-routing false}
+ :release-gate
+ {:verified-status-allowed? false
+  :decision :refused
+  :unmet-required-obligations
+  [:complete-public-engine
+   :shadow-rollout-gates
+   :performance-cutover
+   :independent-security-formal-review]}}

@@ -1,0 +1,146 @@
+{:schema-version 1
+ :baseline-date "2026-08-02"
+ :host {:os :macos
+        :arch :arm64
+        :jdk "24.0.1"
+        :clojure "1.11.4"
+        :node "22.23.1"}
+
+ :formal-pipeline
+ {:baseline-wall-seconds 36.31
+  :pull-request-max-seconds 90
+  :scheduled-max-seconds 180
+  :timeout-is-failure true}
+
+ :generated-artifacts
+ {:java-source {:baseline-bytes 439019
+                :foundation-max-bytes 1048576}
+  :java-classes-with-runtime {:baseline-bytes 493986
+                              :foundation-max-bytes 1048576}
+  :javascript-with-runtime {:baseline-bytes 107520
+                            :foundation-max-bytes 262144}
+  :browser-iife {:baseline-bytes 165055
+                 :foundation-max-bytes 393216}
+  :cutover-rule
+  {:status :requires-full-kernel-rebaseline
+   :maximum-growth-over-reviewed-full-kernel 1.25}}
+
+ :legacy-runtime
+ {:multipath-page
+  {:items 50
+   :first-page-baseline-ms 1.43
+   :first-page-max-ms 75
+   :max-page-median-baseline-ms 1.98
+   :max-page-median-max-ms 50
+   :minimum-threshold-throughput-pages-per-second 20}
+  :permission-check
+  {:warm-baseline-microseconds 268
+   :warm-max-microseconds 1000
+   :minimum-warm-operations-per-second 1000
+   :cold-baseline-microseconds 268
+   :cold-max-microseconds 1500
+   :completed-cache-baseline-microseconds 1616
+   :completed-cache-max-microseconds 3000}
+  :recursive-continuation
+  {:fixture-results 4000
+   :page-size 25
+   :maximum-work-per-result 2
+   :minimum-replay-to-continuation-work-ratio 50
+   :minimum-replay-to-continuation-time-ratio 10}
+  :content-proof
+  {:baseline-ms-per-page 670
+   :status :diagnostic-not-cutover-target}}
+
+ :memory-and-token
+ {:maximum-retained-page-eids 16384
+  :default-continuation-store-max-weight-bytes 16777216
+  :recursive-4000-result-gc-stabilized-delta-bytes
+  {:minimum -3760
+   :median -3440
+   :maximum 4648
+   :interpretation :gc-noise-not-a-portable-guarantee}
+  :cursor-token-utf8-bytes
+  {:recursive-250-results-page-25 1814
+   :multipath-500-results-page-50 1966
+   :regression-max 8192}}
+
+ :shadow-rollout
+ {:unexplained-differences-max 0
+  :false-grants-max 0
+  :stages
+  [{:name :ci
+    :sample-rate 1.0
+    :minimum-compared-operations 10000}
+   {:name :canary
+    :sample-rate 0.01
+    :minimum-compared-operations 100000}
+   {:name :ramp
+    :sample-rate 0.10
+    :minimum-compared-operations 1000000}
+   {:name :pre-authority
+    :sample-rate 1.0
+    :minimum-compared-operations 1000000}]
+  :maximum-p95-legacy-latency-overhead-ratio 0.10
+  :maximum-p95-verified-to-legacy-latency-ratio 2.0
+  :maximum-verified-to-legacy-retained-heap-ratio 1.5}
+
+ :final-heavy-run
+ {:date "2026-08-02"
+  :command
+  "clj-nrepl-eval -p <fresh-dev-test-port> --timeout 1200000 \"(do (require 'eacl.bench.pagination-test :reload) (clojure.test/run-tests 'eacl.bench.pagination-test))\""
+  :result {:tests 9
+           :assertions 3403
+           :failures 0
+           :errors 0}
+  :status :current-generation-cache-passed
+  :multipath-page
+  {:first-page-median-ms 1.60
+   :first-page-p95-ms 8.27
+   :forward-early-ms-per-page 1.03
+   :forward-late-ms-per-page 0.94
+   :reverse-early-ms-per-page 1.56
+   :reverse-late-ms-per-page 1.53
+   :max-page-median-ms 2.00
+   :thresholds-met true}
+  :permission-check
+  {:heavy-run
+   {:warm-median-microseconds 31.79
+    :completed-cache-hit-median-microseconds 8.50
+    :cache-hit-to-warm-ratio 0.267
+    :absolute-threshold-met true}
+   :isolated-repeat
+   {:datomic-cache-disabled-microseconds 33.54
+    :datomic-completed-hit-microseconds 8.67
+    :datascript-cache-disabled-microseconds 26.805
+    :datascript-completed-hit-microseconds 7.196
+    :datahike-cache-disabled-microseconds 17.647
+    :datahike-completed-hit-microseconds 12.191}
+   :blocking-finding nil}
+  :cache-proof-churn
+  {:unit :microseconds-per-read
+   :unrelated
+   {:managed-current 32.646
+    :legacy-content-proof 132.8545
+    :global-invalidation 29.521
+    :no-cache 20.8955}
+   :relevant
+   {:managed-current 60.9795
+    :legacy-content-proof 135.646
+    :global-invalidation 64.333
+    :no-cache 30.333}}
+  :completed-hit-cost-breakdown-nanoseconds-per-operation
+  {:db 80.578
+   :entid 960.196
+   :capture-basic-context 5318.525
+   :current-cache 1513.644
+   :cached-basic-authorization 2175.579}
+  :recursive-4000
+  {:continuation-ms 68.728
+   :replay-ms 1698.015
+   :time-ratio 24.706
+   :work-ratio 77.461
+   :thresholds-met true}
+  :cutover-decision
+  {:current-cache-blocked false
+   :verified-authority-decision :not-evaluated-by-this-cache-gate
+   :reason :proof-per-hit-path-removed}}}

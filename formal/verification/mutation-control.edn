@@ -1,0 +1,9 @@
+{:schema-version 1
+ :registry "formal/mutations/registry.edn"
+ :mutants 9
+ :killed 9
+ :survived 0
+ :score 1.0
+ :status :passed
+ :command
+ "EACL_NREPL_PORT=<dev-port> bin/formal mutation-control"}

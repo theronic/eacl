@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.backend.v8 :as backend]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.core :as datahike]
@@ -46,6 +47,81 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)]
+    (seed! conn authorization)
+    (eacl/create-relationship! authorization relationship)
+    (is (true? (eacl/can? authorization user :view document)))
+    (is (true? (eacl/can? authorization user :view document)))
+    (let [before (datahike/cache-stats authorization)]
+      (is (pos? (:exact-hits before)))
+      (datahike/expire-cache! authorization)
+      (is (true? (eacl/can? authorization user :view document)))
+      (let [after (datahike/cache-stats authorization)]
+        (is (= (inc (:expirations before)) (:expirations after)))
+        (is (= (inc (:misses before)) (:misses after)))
+        (is (= (:exact-hits before) (:exact-hits after)))))))
+
+(deftest per-request-cache-bypass-covers-public-read-shapes-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        _ (seed! conn authorization)
+        _ (eacl/create-relationship! authorization relationship)
+        before (datahike/cache-stats authorization)
+        resources {:subject user
+                   :permission :view
+                   :resource/type :document
+                   :first 10
+                   :cache? false}
+        subjects {:resource document
+                  :permission :view
+                  :subject/type :user
+                  :first 10
+                  :cache? false}
+        resource-count (dissoc resources :first)
+        subject-count (dissoc subjects :first)]
+    (with-redefs [cache/resolve-current!
+                  (fn [& _]
+                    (throw
+                     (ex-info "cache resolution must be unreachable" {})))]
+      (dotimes [_ 2]
+        (is (true?
+             (eacl/can? authorization
+                        {:subject user
+                         :permission :view
+                         :resource document
+                         :cache? false})))
+        (is (false? (:cached?
+                     (eacl/lookup-resources authorization resources))))
+        (is (false? (:cached?
+                     (eacl/lookup-subjects authorization subjects))))
+        (is (false? (:cached?
+                     (eacl/count-resources authorization resource-count))))
+        (is (false? (:cached?
+                     (eacl/count-subjects authorization subject-count))))))
+    (is (= 1
+           (count
+            (:data
+             (eacl/read-relationships
+              authorization
+              {:resource/type :document
+               :first 10
+               :cache? false})))))
+    (is (= :eacl/invalid-request
+           (:type
+            (error-data
+             #(eacl/can? authorization
+                         {:subject user
+                          :permission :view
+                          :resource document
+                          :cache? :invalid})))))
+    (let [after (datahike/cache-stats authorization)]
+      (is (= (+ 10 (:bypasses before)) (:bypasses after)))
+      (doseq [metric [:exact-hits :managed-hits :misses :puts]]
+        (is (= (metric before) (metric after))
+            (str metric " must not change during request bypass"))))))
+
 (deftest branch-refresh-exact-and-force-rewind-test
   (let [conn (datahike/create-conn)
         authorization (client conn)
@@ -60,10 +136,21 @@
           (consistency/at-least-as-fresh token))))
     (eacl/delete-relationship! authorization relationship)
     (testing "retained commit reconstruction recovers the exact graph"
-      (is (true?
-           (eacl/can?
-            authorization user :view document
-            (consistency/at-exact-snapshot token)))))
+      (let [before (datahike/cache-stats authorization)]
+        (is (true?
+             (eacl/can?
+              authorization user :view document
+              (consistency/at-exact-snapshot token))))
+        (is (true?
+             (eacl/can?
+              authorization user :view document
+              (consistency/at-exact-snapshot token))))
+        (let [after (datahike/cache-stats authorization)]
+          (is (= (+ 2 (:bypasses before))
+                 (:bypasses after)))
+          (is (= (:exact-hits before)
+                 (:exact-hits after))
+              "exact requests never consult the completed-answer cache"))))
     (testing "force-moving the branch to a predecessor cannot pass by max-tx"
       (d/force-branch!
        pre-write
@@ -118,6 +205,26 @@
     (is (not
          (backend/supports?
           adapter :consistency :at-exact-snapshot)))))
+
+(deftest low-level-db-entry-point-bypasses-completed-cache-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        _ (seed! conn authorization)
+        _ (eacl/create-relationship! authorization relationship)
+        before (datahike/cache-stats authorization)]
+    (is (true?
+         (datahike/datahike-can?
+          (d/db conn) (:opts authorization)
+          user :view document consistency/fully-consistent)))
+    (is (true?
+         (datahike/datahike-can?
+          (d/db conn) (:opts authorization)
+          user :view document consistency/fully-consistent)))
+    (let [after (datahike/cache-stats authorization)]
+      (is (= (+ 2 (:bypasses before))
+             (:bypasses after)))
+      (is (= (:exact-hits before)
+             (:exact-hits after))))))
 
 (deftest reader-branch-and-merge-metadata-test
   (let [writer-conn (datahike/create-conn)
@@ -314,7 +421,7 @@
         (datahike/token->cursor cursor (:opts authorization))]
     (try
       (d/transact conn [{:eacl/id "unrelated-cursor-churn"}])
-      (testing "an equal complete result proof rebases to the current commit"
+      (testing "an unrelated write still pins continuation to the original commit"
         (let [page-2
               (eacl/read-relationships
                authorization
@@ -324,8 +431,8 @@
                (get-in page-2 [:page-info :end-cursor])
                (:opts authorization))]
           (is (= [(second relationships)] (:data page-2)))
-          (is (< (get-in cursor-data [:graph-head :order-hint])
-                 (get-in rebased [:graph-head :order-hint])))))
+          (is (= (get-in cursor-data [:graph-head :exact-locator])
+                 (get-in rebased [:graph-head :exact-locator])))))
       (let [fresh-page-1
             (eacl/read-relationships authorization query)
             fresh-cursor
@@ -335,7 +442,7 @@
              (eacl/delete-relationship!
               authorization
               (second relationships)))]
-        (testing "a changed proof falls back to the retained original commit"
+        (testing "a relationship change uses the retained original commit"
           (is (= [(second relationships)]
                  (:data
                   (eacl/read-relationships

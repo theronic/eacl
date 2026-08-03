@@ -1,0 +1,7 @@
+{:cache-entry :irrelevant
+ :adapter {:schema-proof :throws
+           :relation-proof :not-called}
+ :compute {:returns false
+           :calls 0}
+ :observed {:exception "schema proof unavailable"
+            :typed-error nil}}

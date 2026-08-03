@@ -242,14 +242,14 @@
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
         @(d/transact conn [{:eacl/id "unrelated"}])
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
-        (is (= 1 @calls)
-            "a complete content schema proof safely caches an unstamped schema")
+        (is (= 2 @calls)
+            "unknown writers reuse only the identical current snapshot")
 
         (eacl/write-schema! acl schema-v1)
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
         (is (= ["a"] (mapv :id (:data (eacl/lookup-resources acl query)))))
-        (is (= 1 @calls)
-            "a semantically equal stamped schema preserves the proof")))))
+        (is (= 3 @calls)
+            "the schema write installs a new exact generation; its repeat hits")))))
 
 (deftest out-of-band-schema-write-is-observed-by-existing-client-test
   (with-mem-conn [conn schema/v7-schema]

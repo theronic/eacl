@@ -1,0 +1,25 @@
+{:schema-version 1
+ :vectors "formal/cross-runtime/vectors.edn"
+ :status :passed
+ :surfaces
+ [:portable-schema-and-graph
+  :direct-can
+  :forward-lookup
+  :reverse-lookup
+  :page-windows
+  :cursor-decisions
+  :cache-decisions
+  :typed-wire-results]
+ :clj-java {:tests 1 :assertions 22}
+ :production-routing
+ {:clj-java
+  {:namespace eacl.formal.production-kernel-test
+   :tests 3 :assertions 13}
+  :cljs-javascript
+  {:namespace eacl.formal.production-kernel-test
+   :tests 3 :assertions 13}}
+ :cljs-javascript {:suite-tests 10 :suite-assertions 597}
+ :authenticated-format
+ {:clj-assertions 42
+  :cljs-full-suite-tests 59
+  :cljs-full-suite-assertions 594}}

@@ -1,0 +1,6 @@
+{:result {:value false
+          :cached? false}
+ :compute-calls 1
+ :telemetry {:provider-failure 1}
+ :invariant
+ "A cache store or dependency-proof provider failure is a miss and cannot suppress independent authorization recomputation."}

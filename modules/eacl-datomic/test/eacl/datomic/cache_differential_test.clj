@@ -319,13 +319,10 @@
            (acyclic-mutations 6)
            20260732 40))))))
 
-(deftest acyclic-pages-replay-without-unauthenticated-stream-heads-test
-  ;; v7 used a process-local side cache of per-intermediate stream heads. Those
-  ;; values were not covered by the v3 causal/proof envelope, so v8 deliberately
-  ;; refuses to read them. A cursor page instead replays deterministically from
-  ;; the authenticated cursor against the proof-equivalent selected snapshot.
-  ;; The optimization can return only after its state is authenticated by the
-  ;; same contract as completed answers.
+(deftest acyclic-pages-use-private-proof-keyed-stream-heads-test
+  ;; Opaque stream heads are retained only in the bounded client-private store.
+  ;; Its key commits to the same proof identity authenticated into the cursor;
+  ;; caller-supplied providers can neither inject nor share these values.
   (with-mem-conn [conn schema/v7-schema]
     (let [boot (client conn {:cache cache/no-cache})
           _ (seed-acyclic! conn boot 12)
@@ -340,8 +337,8 @@
               _ (is (get-in page-1 [:page-info :has-next-page?]))
               cursor (get-in page-1 [:page-info :end-cursor])
               page-2 (eacl/lookup-resources acl (assoc query :first 3 :after cursor))]
-          (is (zero? (:lookup-head-hits @stats 0))
-              "page two did not trust the unauthenticated v7 heads side cache")
+          (is (= 1 (:lookup-head-hits @stats 0))
+              "page two resumes the client-private proof-keyed stream heads")
           (is (= (mapv :id (:data (eacl/lookup-resources
                                    oracle (assoc query :first 3 :after cursor))))
                  (mapv :id (:data page-2)))

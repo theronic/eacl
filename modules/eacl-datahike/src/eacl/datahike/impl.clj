@@ -71,28 +71,72 @@
         (ddb/avet-datoms db schema/relation-key-attr)))
 
 (defn- relationship-datoms-on-entity
-  [db entity attr prefix lower-id]
-  (ddb/eavt-tuple-prefix db entity attr 4 prefix lower-id))
+  ([db entity attr prefix cursor-id]
+   (relationship-datoms-on-entity
+    db entity attr prefix cursor-id :asc))
+  ([db entity attr prefix cursor-id direction]
+   (ddb/eavt-tuple-prefix
+    db entity attr 4 prefix cursor-id direction)))
 
 (defn subject->resources
-  [db subject-type subject-id relation-id resource-type cursor-resource-id]
-  (->> (relationship-datoms-on-entity
-        db subject-id schema/forward-relationship-attr
-        [subject-type relation-id resource-type]
-        cursor-resource-id)
-       (map (comp #(nth % 3) :v))
-       (drop-while #(and cursor-resource-id
-                         (<= % cursor-resource-id)))))
+  [db subject-type subject-id relation-id resource-type cursor-or-options]
+  (let [{:keys [direction bound-eid inclusive-bound?]}
+        (if (map? cursor-or-options)
+          (merge {:direction :asc} cursor-or-options)
+          {:direction :asc
+           :bound-eid cursor-or-options
+           :inclusive-bound? false})
+        within-bound?
+        (case direction
+          :asc
+          (if bound-eid
+            (if inclusive-bound?
+              #(<= bound-eid %)
+              #(< bound-eid %))
+            (constantly true))
+
+          :desc
+          (if bound-eid
+            (if inclusive-bound?
+              #(>= bound-eid %)
+              #(> bound-eid %))
+            (constantly true)))]
+    (->> (relationship-datoms-on-entity
+          db subject-id schema/forward-relationship-attr
+          [subject-type relation-id resource-type]
+          bound-eid direction)
+         (map (comp #(nth % 3) :v))
+         (filter within-bound?))))
 
 (defn resource->subjects
-  [db resource-type resource-id relation-id subject-type cursor-subject-id]
-  (->> (relationship-datoms-on-entity
-        db resource-id schema/reverse-relationship-attr
-        [resource-type relation-id subject-type]
-        cursor-subject-id)
-       (map (comp #(nth % 3) :v))
-       (drop-while #(and cursor-subject-id
-                         (<= % cursor-subject-id)))))
+  [db resource-type resource-id relation-id subject-type cursor-or-options]
+  (let [{:keys [direction bound-eid inclusive-bound?]}
+        (if (map? cursor-or-options)
+          (merge {:direction :asc} cursor-or-options)
+          {:direction :asc
+           :bound-eid cursor-or-options
+           :inclusive-bound? false})
+        within-bound?
+        (case direction
+          :asc
+          (if bound-eid
+            (if inclusive-bound?
+              #(<= bound-eid %)
+              #(< bound-eid %))
+            (constantly true))
+
+          :desc
+          (if bound-eid
+            (if inclusive-bound?
+              #(>= bound-eid %)
+              #(> bound-eid %))
+            (constantly true)))]
+    (->> (relationship-datoms-on-entity
+          db resource-id schema/reverse-relationship-attr
+          [resource-type relation-id subject-type]
+          bound-eid direction)
+         (map (comp #(nth % 3) :v))
+         (filter within-bound?))))
 
 (defn build-schema-catalog
   [db]
@@ -288,7 +332,9 @@
       (retract-relationship-txes resolved))))
 
 (defn read-relationships
-  [db filters]
+  ([db filters]
+   (read-relationships db filters nil))
+  ([db filters engine-selection]
   (let [subject-id'  (when (contains? filters :subject/id)
                        (internal-id db (:subject/id filters)))
         resource-id' (when (contains? filters :resource/id)
@@ -308,10 +354,22 @@
                   (spice-object (:subject-type spec) subject-id)
                   (:relation-name spec)
                   (spice-object (:resource-type spec) resource-id))})
-              (drop-until-after-cursor [spec cursor rows]
-                (drop-while #(not (relationship-engine/after-cursor? (:scan-kind spec) cursor %))
-                            rows))
-              (exact-match-row [spec cursor]
+              (normalized-cursor [cursor]
+                (when cursor
+                  {:subject-id (or (:subject-id cursor)
+                                   (:subject cursor))
+                   :resource-id (or (:resource-id cursor)
+                                    (:resource cursor))}))
+              (drop-until-beyond-cursor [spec cursor direction rows]
+                (drop-while
+                 #(not
+                   (relationship-engine/beyond-cursor?
+                    (:scan-kind spec)
+                    direction
+                    (normalized-cursor cursor)
+                    %))
+                 rows))
+              (exact-match-row [spec cursor direction]
                 (let [row (when (and (:subject-id spec) (:resource-id spec))
                             (when (direct-match?
                                    db
@@ -322,11 +380,12 @@
                                    (:resource-id spec))
                               (relationship-row spec (:subject-id spec) (:resource-id spec))))]
                   (if row
-                    (drop-until-after-cursor spec cursor [row])
+                    (drop-until-beyond-cursor
+                     spec cursor direction [row])
                     [])))
-              (scan-forward-anchored [spec cursor]
+              (scan-forward-anchored [spec cursor direction]
                 (if (:resource-id spec)
-                  (exact-match-row spec cursor)
+                  (exact-match-row spec cursor direction)
                   (->> (relationship-datoms-on-entity
                         db
                         (:subject-id spec)
@@ -334,14 +393,17 @@
                         [(:subject-type spec)
                          (:relation-id spec)
                          (:resource-type spec)]
-                        (:resource cursor))
+                        (or (:resource-id cursor)
+                            (:resource cursor))
+                        direction)
                        (map (fn [{:keys [v]}]
                               (relationship-row
                                spec (:subject-id spec) (nth v 3))))
-                       (drop-until-after-cursor spec cursor))))
-              (scan-reverse-anchored [spec cursor]
+                       (drop-until-beyond-cursor
+                        spec cursor direction))))
+              (scan-reverse-anchored [spec cursor direction]
                 (if (:subject-id spec)
-                  (exact-match-row spec cursor)
+                  (exact-match-row spec cursor direction)
                   (->> (relationship-datoms-on-entity
                         db
                         (:resource-id spec)
@@ -349,49 +411,69 @@
                         [(:resource-type spec)
                          (:relation-id spec)
                          (:subject-type spec)]
-                        (:subject cursor))
+                        (or (:subject-id cursor)
+                            (:subject cursor))
+                        direction)
                        (map (fn [{:keys [v]}]
                               (relationship-row
                                spec (nth v 3) (:resource-id spec))))
-                       (drop-until-after-cursor spec cursor))))
-              (scan-forward-partial [spec cursor]
-                (->> (ddb/avet-range db
-                                     schema/forward-relationship-attr
-                                     [(:subject-type spec)
-                                      (:relation-id spec)
-                                      (:resource-type spec)
-                                      (or (:resource cursor) 0)]
-                                     [(:subject-type spec)
-                                      (:relation-id spec)
-                                      (:resource-type spec)
-                                      max-entid])
+                       (drop-until-beyond-cursor
+                        spec cursor direction))))
+              (scan-forward-partial [spec cursor direction]
+                (->> (ddb/avet-tuple-prefix
+                      db
+                      schema/forward-relationship-attr
+                      4
+                      [(:subject-type spec)
+                       (:relation-id spec)
+                       (:resource-type spec)]
+                      (or (:resource-id cursor)
+                          (:resource cursor))
+                      direction)
                      (map (fn [{:keys [e v]}]
                             (relationship-row spec e (nth v 3))))
-                     (drop-until-after-cursor spec cursor)))
-              (scan-reverse-partial [spec cursor]
-                (->> (ddb/avet-range db
-                                     schema/reverse-relationship-attr
-                                     [(:resource-type spec)
-                                      (:relation-id spec)
-                                      (:subject-type spec)
-                                      (or (:subject cursor) 0)]
-                                     [(:resource-type spec)
-                                      (:relation-id spec)
-                                      (:subject-type spec)
-                                      max-entid])
+                     (drop-until-beyond-cursor
+                      spec cursor direction)))
+              (scan-reverse-partial [spec cursor direction]
+                (->> (ddb/avet-tuple-prefix
+                      db
+                      schema/reverse-relationship-attr
+                      4
+                      [(:resource-type spec)
+                       (:relation-id spec)
+                       (:subject-type spec)]
+                      (or (:subject-id cursor)
+                          (:subject cursor))
+                      direction)
                      (map (fn [{:keys [e v]}]
                             (relationship-row spec (nth v 3) e)))
-                     (drop-until-after-cursor spec cursor)))
-              (scan-spec [spec cursor]
+                     (drop-until-beyond-cursor
+                      spec cursor direction)))
+              (scan-spec
+                ([spec cursor]
+                 (scan-spec spec cursor :asc))
+                ([spec cursor direction]
                 (case (:scan-kind spec)
-                  :forward-anchored (scan-forward-anchored spec cursor)
-                  :reverse-anchored (scan-reverse-anchored spec cursor)
-                  :forward-partial (scan-forward-partial spec cursor)
-                  (scan-reverse-partial spec cursor)))]
-        (relationship-engine/execute-plan
-         (relationship-engine/plan-scans (all-relation-defs db) filters')
-         filters'
-         scan-spec)))))
+                  :forward-anchored
+                  (scan-forward-anchored spec cursor direction)
+
+                  :reverse-anchored
+                  (scan-reverse-anchored spec cursor direction)
+
+                  :forward-partial
+                  (scan-forward-partial spec cursor direction)
+
+                  (scan-reverse-partial
+                   spec cursor direction))))]
+        (let [scan-specs
+              (relationship-engine/plan-scans
+               (all-relation-defs db) filters')]
+          (if-not (or (contains? filters' :limit)
+                      (contains? filters' :cursor))
+            (relationship-engine/execute-page
+             scan-specs filters' engine-selection scan-spec)
+            (relationship-engine/execute-plan
+             scan-specs filters' scan-spec))))))))
 
 ;; A relationship is split across its endpoints. A bare retractEntity removes
 ;; only the half stored on that entity because Datahike does not follow refs

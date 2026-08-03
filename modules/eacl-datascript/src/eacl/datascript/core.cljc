@@ -9,8 +9,7 @@
             [eacl.core :as eacl :refer [IAuthorization
                                         spice-object
                                         ->Relationship
-                                        ->RelationshipUpdate
-                                        map->Relationship]]
+                                        ->RelationshipUpdate]]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.mutation :as journal]
@@ -19,8 +18,8 @@
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
-            [eacl.relationships.relay :as relationship-relay]
             [eacl.secure-format :as secure]
+            [eacl.verified-kernel :as verified]
             [eacl.spicedb.consistency :as consistency]))
 
 (def cursor->token cursor/cursor->token)
@@ -82,35 +81,35 @@
         (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
 
-(defn object->spice
-  [db {:keys [entid->object-id]} object]
-  (update object :id #(entid->object-id db %)))
-
-(defn relationship->spice
-  [db opts {:keys [subject relation resource]}]
-  (map->Relationship
-   {:subject (object->spice db opts subject)
-    :relation relation
-    :resource (object->spice db opts resource)}))
-
 (defn- snapshot-adapter
   [db opts]
   (datascript-backend/snapshot-adapter db opts))
 
 (defn- selected-context
   [db opts consistency-value]
-  (let [selection
-        (consistency-v3/select
-         (snapshot-adapter db opts)
-         consistency-value
-         {:format-options (:format-options opts)
-          :coherence-authority (:coherence-authority opts)
-          :issue-token? true
-          :timeout-ms (:consistency-sync-timeout-ms opts)})
+  (let [descriptor (consistency/descriptor consistency-value)
+        source-adapter (snapshot-adapter db opts)
+        selection
+        (if (#{:local-snapshot :minimize-latency} (:mode descriptor))
+          {:adapter source-adapter
+           :descriptor descriptor
+           :request-token nil
+           :response-token nil}
+          (consistency-v3/select
+           source-adapter
+           consistency-value
+           {:format-options (:format-options opts)
+            :coherence-authority (:coherence-authority opts)
+            :issue-token? false
+            :timeout-ms (:consistency-sync-timeout-ms opts)}))
         adapter (:adapter selection)]
     {:adapter adapter
      :db (:db (backend/state adapter))
-     :selection selection}))
+     :selection selection
+     :completed-cache?
+     (and (:completed-cache-request? opts)
+          (not= :at-exact-snapshot
+                (get-in selection [:descriptor :mode])))}))
 
 (defn- permission-dependencies
   [adapter resource-type permission]
@@ -125,70 +124,123 @@
       :relation-ids relation-ids}}))
 
 (defn- cursor-options
-  [adapter opts selection resource-type permission]
-  (binding [engine/*schema-cache*
-            (engine/schema-cache-for!
-             (:derived-schema-caches opts)
-             adapter)]
-    (assoc opts
-           :cursor-dependencies
-           (permission-dependencies
-            adapter resource-type permission)
-           :cursor-consistency-mode
-           (get-in selection [:descriptor :mode])
-           :timeout-ms (:consistency-sync-timeout-ms opts))))
+  [_adapter opts selection _resource-type _permission]
+  (assoc opts
+         :cursor-consistency-mode
+         (get-in selection [:descriptor :mode])
+         :timeout-ms (:consistency-sync-timeout-ms opts)))
 
 (defn- page-context
   [adapter opts selection operation query resource-type permission]
   (let [current-opts
         (cursor-options
          adapter opts selection resource-type permission)
-        page-adapter
-        (relay/select-continuation-adapter
+        continuation
+        (relay/select-continuation-context
          adapter current-opts operation query)
+        page-adapter (:adapter continuation)
         page-opts
-        (cursor-options
-         page-adapter opts selection resource-type permission)]
+        (assoc
+         (cursor-options
+          page-adapter opts selection resource-type permission)
+         :decoded-page-bound (:decoded-page-bound continuation)
+         :completed-cache?
+         (and
+          (:completed-cache-request? opts)
+          (nil? (or (:after query) (:before query)))
+          (not= :at-exact-snapshot
+                (get-in selection [:descriptor :mode]))
+          (identical?
+           (:db (backend/state adapter))
+           (:db (backend/state page-adapter)))))]
     {:adapter page-adapter
      :db (:db (backend/state page-adapter))
      :opts page-opts}))
 
-(defn- pagination-snapshot-context
-  [adapter]
-  {:source-scope
-   {:backend (backend/backend-id adapter)
-    :scope (backend/invoke adapter :source-scope)}
-   :graph-head (backend/invoke adapter :graph-head)
-   :adapter-fingerprint (backend/fingerprint adapter)
-   :identity-contract (backend/identity-contract adapter)})
+(defn- datom-transaction
+  [db entity attribute]
+  (some-> (first (ds/datoms db :eavt entity attribute))
+          :tx))
+
+(defn- managed-cache-descriptor
+  [db relation-ids]
+  (let [relation-ids (vec (distinct relation-ids))]
+    (when (seq relation-ids)
+      (let [schema-eid
+            (ds/entid db [:eacl/id mutation/schema-entity-id])
+            schema-stamp
+            (when schema-eid
+              (datom-transaction
+               db schema-eid mutation/schema-mutation-id-attr))
+            relation-stamps
+            (keep
+             (fn [relation-id]
+               (when-let [tx
+                          (datom-transaction
+                           db relation-id
+                           mutation/relation-mutation-id-attr)]
+                 [relation-id tx]))
+             relation-ids)]
+        (when (and (integer? schema-stamp)
+                   (= (count relation-ids)
+                      (count relation-stamps))
+                   (every? (comp integer? second)
+                           relation-stamps))
+          {:schema-stamp schema-stamp
+           :dependency-stamp
+           (reduce max (map second relation-stamps))})))))
 
 (defn- cached-engine-result
   [adapter opts operation query resource-type permission
    valid-value? compute]
-  (binding [engine/*schema-cache*
-            (engine/schema-cache-for!
-             (:derived-schema-caches opts)
-             adapter)
-            engine/*recursive-traversal-limits*
-            (:recursive-traversal-limits opts)]
-    (let [{:keys [schema-scope relation-ids]}
-          (permission-dependencies adapter resource-type permission)]
-      (cache/resolve!
-       adapter
-       (:cache-store opts)
-       {:operation operation
-        :query query
-        :engine-version engine/engine-version
-        :adapter-fingerprint (:adapter-fingerprint opts)
-        :proof-mode (:proof-mode opts)
-        :recursive-traversal-limits
-        (:recursive-traversal-limits opts)}
-       operation
-       schema-scope
-       relation-ids
-       valid-value?
-       compute
-       (:format-options opts)))))
+  (let [schema-cache
+        (delay
+          (engine/schema-cache-for!
+           (:derived-schema-caches opts)
+           adapter))
+        evaluate
+        #(binding [engine/*schema-cache* @schema-cache
+                   engine/*recursive-traversal-limits*
+                   (:recursive-traversal-limits opts)]
+           (compute))
+        cacheable?
+        (and (:current-cache-store opts)
+             (:completed-cache? opts))]
+    (if-not cacheable?
+      (do
+        (cache/record-current-bypass!
+         (:current-cache-store opts))
+        {:value (evaluate)
+         :cached? false
+         :cache-tier nil
+         :cache-basis nil})
+      (let [dependencies
+            (delay
+              (binding [engine/*schema-cache* @schema-cache]
+                (permission-dependencies
+                 adapter resource-type permission)))
+            db (:db (backend/state adapter))
+            semantic-key
+            {:operation operation
+             :query query
+             :engine-version engine/engine-version
+             :adapter-fingerprint (:adapter-fingerprint opts)
+             :recursive-traversal-limits
+             (:recursive-traversal-limits opts)}]
+        (cache/resolve-current!
+         (:current-cache-store opts)
+         {:snapshot db
+          :snapshot-order (:max-tx db)
+          :same-snapshot? identical?
+          :cache-basis (backend/invoke adapter :snapshot-id)
+          :managed-key-fn
+          (when (:managed-cache-enabled? opts)
+            #(managed-cache-descriptor
+              db (:relation-ids @dependencies)))}
+         semantic-key
+         operation
+         valid-value?
+         evaluate)))))
 
 (defn- with-cache-info
   [value {:keys [cached? cache-basis]}]
@@ -199,66 +251,40 @@
 (defn datascript-read-relationships
   [db
    {:as opts
-   :keys [object-id->entid
-           internal-cursor->spice
-           spice-cursor->internal]}
+   :keys [object-id->entid]}
    filters]
-  (let [{selected-db :db adapter :adapter selection :selection}
+  (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency filters))
+        {adapter :adapter page-db :db cursor-opts :opts}
+        (page-context
+         source-adapter opts selection :read-relationships filters nil nil)
         base-filters (apply dissoc filters
                             [:first :last :after :before :consistency])
         _ (relationship-filters/validate! base-filters)
-        items-for-adapter
-        (fn [page-adapter]
-          (let [page-db (:db (backend/state page-adapter))
-                subject-id (:subject/id base-filters)
-                resource-id (:resource/id base-filters)
-                subject-eid (when subject-id
-                              (object-id->entid page-db subject-id))
-                resource-eid (when resource-id
-                               (object-id->entid page-db resource-id))]
-            (if (or (and subject-id (nil? subject-eid))
-                    (and resource-id (nil? resource-eid)))
-              []
-              (let [filters'
-                    (cond-> base-filters
-                      subject-id (assoc :subject/id subject-eid)
-                      resource-id (assoc :resource/id resource-eid))
-                    internal-relationships
-                    (loop [cursor nil
-                           result []]
-                      (let [page
-                            (impl/read-relationships
-                             page-db
-                             (cond-> (assoc filters' :limit 10000)
-                               cursor (assoc :cursor cursor)))
-                            result' (into result (:data page))
-                            next-cursor (:cursor page)]
-                        (if (and next-cursor
-                                 (not= cursor next-cursor)
-                                 (seq (:data page)))
-                          (recur next-cursor result')
-                          result')))]
-                (->> internal-relationships
-                     (map #(relationship->spice page-db opts %))
-                     (sort-by
-                      (fn [{:keys [subject relation resource]}]
-                        [(:type subject) (:id subject)
-                         relation
-                         (:type resource) (:id resource)]))
-                     vec)))))
-        cursor-opts
-        (assoc opts
-               :cursor-consistency-mode
-               (get-in selection [:descriptor :mode])
-               :relationship-adapter adapter
-               :relationship-items-for-adapter items-for-adapter)]
-    (relationship-relay/paginate
-     cursor-opts
-     :read-relationships
-     filters
-     (pagination-snapshot-context adapter)
-     (items-for-adapter adapter))))
+        subject-id (:subject/id base-filters)
+        resource-id (:resource/id base-filters)
+        subject-eid (when subject-id
+                      (object-id->entid page-db subject-id))
+        resource-eid (when resource-id
+                       (object-id->entid page-db resource-id))
+        internal-query
+        (-> filters
+            (dissoc :consistency)
+            (#(relay/internalize-page-query
+               adapter cursor-opts :read-relationships %))
+            (cond->
+              subject-id (assoc :subject/id subject-eid)
+              resource-id (assoc :resource/id resource-eid)))]
+    (if (or (and subject-id (nil? subject-eid))
+            (and resource-id (nil? resource-eid)))
+      relay/empty-page
+      (relay/externalize-relationship-page
+       adapter
+       cursor-opts
+       :read-relationships
+       filters
+       (impl/read-relationships
+        page-db internal-query (:engine-selection cursor-opts))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -381,8 +407,10 @@
 (defn datascript-can?
   [db {:keys [spice-object->internal] :as opts}
    subject permission resource consistency]
-  (let [{selected-db :db adapter :adapter}
+  (let [{selected-db :db adapter :adapter
+         completed-cache? :completed-cache?}
         (selected-context db opts consistency)
+        opts (assoc opts :completed-cache? completed-cache?)
         internal-subject (spice-object->internal selected-db subject)
         internal-resource (spice-object->internal selected-db resource)]
     (if-not (and (:id internal-subject) (:id internal-resource))
@@ -445,8 +473,10 @@
            spice-cursor->internal
            internal-cursor->spice]}
    {:as query :keys [subject]}]
-  (let [{selected-db :db adapter :adapter selection :selection}
+  (let [{selected-db :db adapter :adapter selection :selection
+         completed-cache? :completed-cache?}
         (selected-context db opts (:consistency query))
+        opts (assoc opts :completed-cache? completed-cache?)
         internal-subject (spice-object->internal selected-db subject)]
     (if-not (:id internal-subject)
       (assoc
@@ -518,8 +548,10 @@
            spice-cursor->internal
            internal-cursor->spice]}
    query]
-  (let [{selected-db :db adapter :adapter}
+  (let [{selected-db :db adapter :adapter
+         completed-cache? :completed-cache?}
         (selected-context db opts (:consistency query))
+        opts (assoc opts :completed-cache? completed-cache?)
         internal-resource
         (spice-object->internal selected-db (:resource query))]
     (if-not (:id internal-resource)
@@ -542,15 +574,29 @@
              #(engine/count-subjects adapter internal-query))]
         (with-cache-info (:value answer) answer)))))
 
+(defn- request-cache-enabled?
+  [cache-option]
+  (when-not (or (nil? cache-option) (boolean? cache-option))
+    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
+                    {:type :eacl/invalid-request
+                     :key :cache?
+                     :value cache-option})))
+  (not (false? cache-option)))
+
 (defrecord DataScriptAuthorization [conn opts]
   IAuthorization
   (can? [_ subject permission resource]
-    (datascript-can? (ds/db conn) opts subject permission resource consistency/fully-consistent))
+    (datascript-can? (ds/db conn) (assoc opts :completed-cache-request? true)
+                     subject permission resource consistency/local-snapshot))
   (can? [_ subject permission resource consistency]
-    (datascript-can? (ds/db conn) opts subject permission resource consistency))
-  (can? [_ {:keys [subject permission resource consistency]}]
-    (datascript-can? (ds/db conn) opts subject permission resource
-                     (or consistency consistency/fully-consistent)))
+    (datascript-can? (ds/db conn) (assoc opts :completed-cache-request? true)
+                     subject permission resource consistency))
+  (can? [_ {:keys [subject permission resource consistency] cache? :cache?}]
+    (datascript-can? (ds/db conn)
+                     (assoc opts :completed-cache-request?
+                            (request-cache-enabled? cache?))
+                     subject permission resource
+                     (or consistency consistency/local-snapshot)))
 
   (read-schema [_]
     (schema/read-schema (ds/db conn)))
@@ -561,11 +607,15 @@
            (select-keys opts
                         [:token-ttl-seconds
                          :retention-grace-seconds]))]
+      (when-let [store (:current-cache-store opts)]
+        (cache/expire-current! store))
       (merge result
              (write-response (:eacl.mutation/db-after result) opts))))
 
   (read-relationships [_ filters]
-    (datascript-read-relationships (ds/db conn) opts filters))
+    (request-cache-enabled? (:cache? filters))
+    (datascript-read-relationships (ds/db conn) opts
+                                   (dissoc filters :cache?)))
   (write-relationships! [_ updates]
     (datascript-write-relationships! conn opts updates))
   (write-relationship! [_ operation subject relation resource]
@@ -602,18 +652,54 @@
                                                             (->Relationship subject relation resource))]))
 
   (lookup-resources [_ query]
-    (datascript-lookup-resources (ds/db conn) opts query))
+    (datascript-lookup-resources
+     (ds/db conn)
+     (assoc opts :completed-cache-request?
+            (request-cache-enabled? (:cache? query)))
+     (dissoc query :cache?)))
   (count-resources [_ query]
-    (datascript-count-resources (ds/db conn) opts query))
+    (datascript-count-resources
+     (ds/db conn)
+     (assoc opts :completed-cache-request?
+            (request-cache-enabled? (:cache? query)))
+     (dissoc query :cache?)))
   (lookup-subjects [_ query]
-    (datascript-lookup-subjects (ds/db conn) opts query))
+    (datascript-lookup-subjects
+     (ds/db conn)
+     (assoc opts :completed-cache-request?
+            (request-cache-enabled? (:cache? query)))
+     (dissoc query :cache?)))
   (count-subjects [_ query]
-    (datascript-count-subjects (ds/db conn) opts query))
+    (datascript-count-subjects
+     (ds/db conn)
+     (assoc opts :completed-cache-request?
+            (request-cache-enabled? (:cache? query)))
+     (dissoc query :cache?)))
 
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
                     {:type :eacl/not-implemented
                      :method (quote expand-permission-tree)}))))
+
+(defn expire-cache!
+  "Expires every completed answer owned by one DataScript EACL client."
+  [client]
+  (when-not (instance? DataScriptAuthorization client)
+    (throw (ex-info "expire-cache! requires a DataScript EACL client."
+                    {:type :eacl/invalid-client})))
+  (when-let [store (get-in client [:opts :current-cache-store])]
+    (cache/expire-current! store))
+  nil)
+
+(defn cache-stats
+  "Returns private completed-cache counters for one DataScript EACL client."
+  [client]
+  (when-not (instance? DataScriptAuthorization client)
+    (throw (ex-info "cache-stats requires a DataScript EACL client."
+                    {:type :eacl/invalid-client})))
+  (if-let [store (get-in client [:opts :current-cache-store])]
+    (cache/current-cache-stats store)
+    {:disabled? true}))
 
 (def ^:private known-client-opt-keys
   #{:entid->object-id
@@ -634,7 +720,8 @@
     :adapter-fingerprint
     :adapter-deterministic?
     :consistency-sync-timeout-ms
-    :exact-snapshot-registry-size})
+    :exact-snapshot-registry-size
+    :engine-selection})
 
 (defn make-client
   "Builds an IAuthorization client over a DataScript conn.
@@ -644,6 +731,10 @@
   - :entid->object-id  (fn [db eid] external-id) - canonical.
   - :entity->object-id (fn [entity] external-id) - deprecated alias; do not combine.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
+  - :cache - omitted creates a bounded client-private current-generation
+    cache; eacl.cache/no-cache disables it; {:max-entries n} bounds it.
+    :coherence-authority :managed enables relation-stamp reuse across
+    unrelated forward transactions. Unknown authority remains exact-current.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn
@@ -666,7 +757,8 @@
            adapter-fingerprint
            adapter-deterministic?
            consistency-sync-timeout-ms
-           exact-snapshot-registry-size]
+           exact-snapshot-registry-size
+           engine-selection]
     :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -801,6 +893,8 @@
                           :object-id->entid object-id->entid
                           :cursor-ttl-seconds cursor-ttl-seconds
                           :format-options format-options
+                          :engine-selection
+                          (verified/normalize-selection engine-selection)
                           :coherence-authority coherence-authority
                           :proof-mode proof-mode
                           :consistency-sync-timeout-ms
@@ -820,6 +914,13 @@
                           (if cache-eligible?
                             (eacl.cache/cache-store cache)
                             eacl.cache/no-cache)
+                          :current-cache-store
+                          (when cache-eligible?
+                            (eacl.cache/current-cache-for-option cache))
+                          :managed-cache-enabled?
+                          (and cache-eligible?
+                               (not custom-codec?)
+                               (= :managed coherence-authority))
                           :recursive-traversal-limits
                           (engine/normalize-recursive-traversal-limits
                            recursive-traversal-limits)

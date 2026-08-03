@@ -1,6 +1,9 @@
-(ns eacl.engine.relationships)
+(ns eacl.engine.relationships
+  (:require [eacl.engine.v8 :as engine]
+            [eacl.verified-kernel :as verified]))
 
 (def default-limit 1000)
+(def maximum-limit 10000)
 
 (defn- sort-token
   [value]
@@ -67,6 +70,208 @@
             (and (= subject-id (:subject cursor))
                  (> resource-id (:resource cursor))))
         true)))
+
+(defn beyond-cursor?
+  "Whether `row` is strictly beyond `cursor` in the requested index direction."
+  [scan-kind direction cursor {:keys [subject-id resource-id]}]
+  (or
+   (nil? cursor)
+   (let [ordered-after?
+         (fn [a b]
+           (case direction
+             :asc (> a b)
+             :desc (< a b)))]
+     (case scan-kind
+       :forward-anchored
+       (ordered-after? resource-id (:resource-id cursor))
+
+       :reverse-anchored
+       (ordered-after? subject-id (:subject-id cursor))
+
+       :forward-partial
+       (or (ordered-after? resource-id (:resource-id cursor))
+           (and (= resource-id (:resource-id cursor))
+                (ordered-after? subject-id (:subject-id cursor))))
+
+       :reverse-partial
+       (or (ordered-after? subject-id (:subject-id cursor))
+           (and (= subject-id (:subject-id cursor))
+                (ordered-after? resource-id (:resource-id cursor))))
+
+       false))))
+
+(defn- relationship-edge
+  [{:keys [spec-idx subject-id resource-id]}]
+  {:kind :relationship-index
+   :v 1
+   :scan-index spec-idx
+   :subject-id subject-id
+   :resource-id resource-id})
+
+(defn- valid-edge?
+  [scan-specs edge]
+  (and (map? edge)
+       (= #{:kind :v :scan-index :subject-id :resource-id}
+          (set (keys edge)))
+       (= :relationship-index (:kind edge))
+       (= 1 (:v edge))
+       (nat-int? (:scan-index edge))
+       (< (:scan-index edge) (count scan-specs))
+       (nat-int? (:subject-id edge))
+       (nat-int? (:resource-id edge))))
+
+(defn- invalid-edge!
+  [edge]
+  (throw
+   (ex-info
+    "Relationship cursor contains an invalid index edge."
+    {:type :eacl.pagination/invalid-cursor
+     :eacl/error :eacl.pagination/invalid-cursor
+     :reason :invalid-relationship-edge
+     :edge-fields (when (map? edge) (vec (sort (keys edge))))})))
+
+(defn- pending-specs
+  [scan-specs direction start-index]
+  (case direction
+    :asc (drop start-index scan-specs)
+    :desc (reverse (take (inc start-index) scan-specs))))
+
+(defn- realize-page-rows
+  [scan-specs direction size edge scan-fn]
+  (let [start-index (if edge
+                      (:scan-index edge)
+                      (case direction
+                        :asc 0
+                        :desc (dec (count scan-specs))))
+        target (inc size)]
+    (loop [pending (if (seq scan-specs)
+                     (pending-specs scan-specs direction start-index)
+                     [])
+           rows []]
+      (if (or (empty? pending)
+              (= target (count rows)))
+        rows
+        (let [spec (first pending)
+              resume-edge (when (= (:idx spec) start-index) edge)
+              remaining (- target (count rows))
+              scanned (take remaining
+                            (scan-fn spec resume-edge direction))]
+          (recur (rest pending) (into rows scanned)))))))
+
+(defn- page-presence
+  [query field edge?]
+  (cond
+    (not (contains? query field)) :absent
+    (nil? (get query field)) :nil
+    edge? 0
+    :else (get query field)))
+
+(defn- raw-page-input
+  [query]
+  {:length 0
+   :request
+   {:first (page-presence query :first false)
+    :last (page-presence query :last false)
+    :after (page-presence query :after true)
+    :before (page-presence query :before true)
+    :has-legacy-limit? (contains? query :limit)
+    :has-legacy-cursor? (contains? query :cursor)}
+   :default-size default-limit
+   :maximum-size maximum-limit})
+
+(defn- legacy-normalization-decision
+  [query]
+  (let [{:keys [direction size]}
+        (engine/normalize-page-request query)]
+    {:status :valid
+     :direction direction
+     :size size
+     :start 0
+     :end 0
+     :has-next? false
+     :has-previous? false}))
+
+(defn- normalized-page
+  [engine-selection query]
+  (let [decision
+        (verified/decide
+         engine-selection
+         :relationship-page
+         (raw-page-input query)
+         #(legacy-normalization-decision query))]
+    (when (= :invalid (:status decision))
+      (throw
+       (ex-info
+        "Generated relationship pagination rejected the request."
+        {:type :eacl.pagination/invalid-cursor
+         :eacl/error :eacl.pagination/invalid-cursor
+         :reason (:reason decision)})))
+    decision))
+
+(defn- legacy-keyset-decision
+  [direction size bound? realized-count]
+  (let [take-count (min size realized-count)
+        any? (pos? take-count)
+        more? (> realized-count size)]
+    {:take-count take-count
+     :reverse? (= :desc direction)
+     :has-next?
+     (boolean
+      (and any?
+           (case direction
+             :asc more?
+             :desc bound?)))
+     :has-previous?
+     (boolean
+      (and any?
+           (case direction
+             :asc bound?
+             :desc more?)))}))
+
+(defn execute-page
+  "Executes one Relay page directly over ordered relationship indexes.
+
+  The authenticated cursor carries the last physical index edge, so continuation
+  seeks to that edge and reads at most `page-size + 1` matching rows. Public
+  object ids are resolved only for the selected page."
+  ([scan-specs query scan-fn]
+   (execute-page scan-specs query nil scan-fn))
+  ([scan-specs query engine-selection scan-fn]
+   (let [{:keys [direction size]} (normalized-page engine-selection query)
+         bound (case direction
+                 :asc (:after query)
+                 :desc (:before query))
+         _ (when (and bound (not (valid-edge? scan-specs bound)))
+             (invalid-edge! bound))
+         realized (realize-page-rows
+                   scan-specs direction size bound scan-fn)
+         page-decision
+         (verified/decide
+          engine-selection
+          :relationship-keyset-page
+          {:direction direction
+           :size size
+           :bound? (some? bound)
+           :realized-count (count realized)}
+          #(legacy-keyset-decision
+            direction size (some? bound) (count realized)))
+         selected-desc (take (:take-count page-decision) realized)
+         selected (vec
+                   (if (:reverse? page-decision)
+                     (reverse selected-desc)
+                     selected-desc))
+         any? (boolean (seq selected))]
+     {:data (mapv :relationship selected)
+      :page-info
+      {:start-cursor
+       (when any? (relationship-edge (first selected)))
+       :end-cursor
+       (when any? (relationship-edge (last selected)))
+       :has-next-page?
+       (boolean (and any? (:has-next? page-decision)))
+       :has-previous-page?
+       (boolean
+        (and any? (:has-previous? page-decision)))}})))
 
 (defn- build-cursor
   [cursor last-row]

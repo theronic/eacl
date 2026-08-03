@@ -1,6 +1,7 @@
 (ns eacl.datomic.consistency-cache-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.causal-token :as causal-token]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
@@ -63,6 +64,23 @@
     (catch clojure.lang.ExceptionInfo e
       (ex-data e))))
 
+(deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (cached-client conn)
+          _ (seed! conn client)
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct")]
+      (is (true? (eacl/can? client alice :admin account)))
+      (is (true? (eacl/can? client alice :admin account)))
+      (let [before (core/cache-stats client)]
+        (is (pos? (:exact-hits before)))
+        (core/expire-cache! client)
+        (is (true? (eacl/can? client alice :admin account)))
+        (let [after (core/cache-stats client)]
+          (is (= (inc (:expirations before)) (:expirations after)))
+          (is (= (inc (:misses before)) (:misses after)))
+          (is (= (:exact-hits before) (:exact-hits after))))))))
+
 (deftest can-results-obey-all-cache-consistency-modes-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
@@ -96,19 +114,21 @@
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 4 @calls)))
+            (is (= 3 @calls)
+                "the exact-current deletion result is reused"))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 4 @calls)))
+            (is (= 3 @calls)))
 
           (testing "and repeated exact selection remains snapshot-correct"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 5 @calls))))))))
+            (is (= 4 @calls)
+                "exact requests bypass completed-answer caching")))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -194,8 +214,8 @@
                       (consistency/at-exact-snapshot created-token))))
       (is (false? (eacl/can? client alice :admin account)))))
 
-  ;; The v3 default retains authenticated answers; correctness still does not
-  ;; depend on a hit because exact replay can reconstruct the selected value.
+  ;; Native current answers are client-private and admitted immediately.
+  ;; Exact replay remains cache-free.
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -205,9 +225,16 @@
           {created-token :zed/token} (seed! conn client)]
       (is (true? (eacl/can? client alice :admin account)))
       (is (pos?
-           (:entries
-            (cache/stats (get-in client [:opts :lookup-cache-store]))))
-          "the default fast path publishes an authenticated answer envelope")
+           (:exact-entries
+            (shared-cache/current-cache-stats
+             (get-in client [:opts :current-cache-store]))))
+          "the first current answer is retained in the private generation")
+      (is (true? (eacl/can? client alice :admin account)))
+      (is (pos?
+           (:exact-hits
+            (shared-cache/current-cache-stats
+             (get-in client [:opts :current-cache-store]))))
+          "the second sighting is an exact-current hit")
       (is (true?
            (eacl/can? client alice :admin account
                       (consistency/at-exact-snapshot created-token)))
@@ -681,7 +708,7 @@
             (is (= future-t
                    (:requested-order-hint (ex-data e))))))))))
 
-(deftest exact-provider-failure-falls-back-to-history-test
+(deftest exact-request-bypasses-completed-provider-test
   (with-mem-conn [conn schema/v7-schema]
     (let [delegate (cache/local-store)
           fail? (atom false)
@@ -717,4 +744,5 @@
       (is (true?
            (eacl/can? client alice :admin account
                       (consistency/at-exact-snapshot token))))
-      (is (pos? (:provider-errors (cache/stats delegate)))))))
+      (is (zero? (:provider-errors (cache/stats delegate)))
+          "exact selection does not consult the completed-answer provider"))))

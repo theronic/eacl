@@ -1,6 +1,7 @@
 (ns eacl.datomic.lookup-cache-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
@@ -61,7 +62,8 @@
 
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
                          :resource/type :account}
@@ -94,7 +96,8 @@
 
 (deftest relationship-write-invalidates-live-pages-but-no-op-does-not-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
@@ -143,7 +146,8 @@
   ;; stamp, so such a caller publishes the change without knowing the cache
   ;; exists, and no explicit eviction is needed.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
@@ -162,7 +166,8 @@
 
 (deftest live-page-dependencies-include-arrow-relations-and-target-permissions-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           alice (spice-object :user "alice")
           bob (spice-object :user "bob")
           account (spice-object :account "account")
@@ -209,7 +214,8 @@
 
 (deftest cached-pages-store-eids-and-reapply-current-id-coercion-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           original impl/lookup-resources
           calls (atom 0)]
       (seed-direct! conn client)
@@ -242,7 +248,8 @@
 
 (deftest recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
           relationship (->Relationship alice :owner account)
@@ -323,12 +330,13 @@
                (mapv :id (:data (eacl/lookup-resources client query)))))
         (is (= ["a-1"]
                (mapv :id (:data (eacl/lookup-resources client query)))))
-        (is (= 2 @calls)
-            "a structurally invalid value is never returned as a cache hit")))))
+        (is (= 1 @calls)
+            "an untrusted provider cannot influence the private answer cache")))))
 
 (deftest live-counts-share-dependency-aware-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
                          :resource/type :account}
@@ -375,7 +383,8 @@
 
 (deftest completed-recursive-page-hit-skips-engine-classification-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
           child (spice-object :folder "child")
@@ -450,9 +459,68 @@
         (is (nil? (:recursive-page-hits @stats))
             "no unauthenticated recursive page is reused across clients")))))
 
+(deftest recursive-cursors-resume-private-continuations-within-client-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client
+                  conn
+                  {:cache {:remember-answers false}
+                   :page-token-key "private-continuation"})
+          alice (spice-object :user "alice")
+          root (spice-object :folder "root")
+          child (spice-object :folder "child")
+          grandchild (spice-object :folder "grandchild")
+          query {:subject alice
+                 :permission :read
+                 :resource/type :folder
+                 :first 1}]
+      (eacl/write-schema! client recursive-schema)
+      @(d/transact conn [{:eacl/id "alice"}
+                         {:eacl/id "root"}
+                         {:eacl/id "child"}
+                         {:eacl/id "grandchild"}])
+      (eacl/create-relationships!
+       client
+       [(->Relationship alice :reader root)
+        (->Relationship root :parent child)
+        (->Relationship child :parent grandchild)])
+      (let [first-page (eacl/lookup-resources client query)
+            stats (atom {})
+            second-page
+            (binding [idx/*recursive-traversal-stats* stats]
+              (eacl/lookup-resources
+               client
+               (assoc query
+                      :after
+                      (get-in first-page [:page-info :end-cursor]))))]
+        (is (= ["root"] (mapv :id (:data first-page))))
+        (is (= ["child"] (mapv :id (:data second-page))))
+        (is (= 1 (:continuation-hits @stats)))
+        (is (nil? (:continuation-misses @stats))))
+      (testing "rejected private-cache admission deterministically replays"
+        (let [bounded-client
+              (core/make-client
+               conn
+               {:cache {:remember-answers false
+                        :max-weight 1024
+                        :max-entry-weight 512}
+                :page-token-key "rejected-private-continuation"})
+              first-page (eacl/lookup-resources bounded-client query)
+              stats (atom {})
+              second-page
+              (binding [idx/*recursive-traversal-stats* stats]
+                (eacl/lookup-resources
+                 bounded-client
+                 (assoc query
+                        :after
+                        (get-in first-page [:page-info :end-cursor]))))]
+          (is (= ["child"] (mapv :id (:data second-page))))
+          (is (nil? (:continuation-hits @stats)))
+          (is (= 1 (:continuation-misses @stats))))))))
+
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
+    (let [client (core/make-client conn {:coherence-authority :managed
+                                         :cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
@@ -568,6 +636,23 @@
           (is (= :eacl/invalid-config (:type (ex-data e)))))))))
 
 ;; --- per-request cache override ----------------------------------------------
+
+(deftest disabled-cache-skips-native-cache-strategy-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [enabled (core/make-client conn {:cache {:remember-answers true}})
+          _ (seed-direct! conn enabled)
+          disabled (core/make-client conn {:cache cache/no-cache})
+          demand {:subject (spice-object :user "alice")
+                  :permission :admin
+                  :resource (spice-object :account "a-1")}]
+      (with-redefs [shared-cache/resolve-current!
+                    (fn [& _]
+                      (throw
+                       (ex-info "cache resolution must be unreachable" {})))]
+        (is (true? (eacl/can? disabled demand))
+            "globally disabled clients evaluate directly")
+        (is (true? (eacl/can? enabled (assoc demand :cache? false)))
+            "per-request bypass evaluates directly")))))
 
 (deftest per-request-cache-flag-bypasses-the-cache-test
   (with-mem-conn [conn schema/v7-schema]

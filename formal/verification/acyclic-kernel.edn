@@ -1,0 +1,56 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :passed
+ :scope :direct-and-acyclic-kernel
+ :proofs
+ [{:source "formal/dafny/AcyclicEngine.dfy"
+   :verified-obligations 30
+   :claims
+   [:deterministic-path-identity
+    :reachable-dependency-closure
+    :reachable-compilation-denotation
+    :direct-can-sound-and-complete
+    :forward-projection-exact
+    :reverse-projection-exact
+    :bounded-count-law]}
+  {:source "formal/dafny/OrderedMerge.dfy"
+   :verified-obligations 22
+   :claims
+   [:ascending-merge-set-preservation
+    :descending-merge-set-preservation
+    :ascending-output-unique
+    :descending-output-unique]}
+  {:source "formal/dafny/Pagination.dfy"
+   :verified-obligations 16
+   :claims
+   [:exclusive-frontier
+    :inclusive-boundary-conversion
+    :exhaustion
+    :direction-reversal]}]
+ :generated-targets
+ {:java
+  {:status :passed
+   :tests 6
+   :assertions 232
+   :failures 0
+   :errors 0}
+  :javascript
+  {:status :passed
+   :tests 2
+   :assertions 12
+   :failures 0
+   :errors 0}}
+ :differential
+ {:fixtures 2
+  :seed-base 820084
+  :implementations
+  [:formal-semantics
+   :generated-java
+   :eacl-engine-v8
+   :eacl-engine-indexed]
+  :status :passed
+  :retained-mismatches 0}
+ :limitations
+ [:generated-kernel-is-not-yet-production-authoritative
+  :recursive-engine-obligations-remain
+  :full-pagination-and-cursor-obligations-remain]}
