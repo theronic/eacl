@@ -106,6 +106,7 @@
             :payload-canonical-passes-per-decode 1
             :authentication-passes-per-encode 1
             :authentication-passes-per-decode 1
+            :public-relationship-continuation-decodes-per-request 1
             :framing-growth :linear}
            (:cursor-codec-work memory-and-token)))
     (is (zero? (:unexplained-differences-max shadow-rollout)))
