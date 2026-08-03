@@ -6,7 +6,7 @@
   Relay pagination, deletion, consistency selection, and exact cache proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 1)
+(def adapter-version 3)
 
 (def legacy-spi-operations
   #{:cache-stamp
@@ -18,6 +18,15 @@
 
 (def required-snapshot-operations
   #{:snapshot-id
+    :source-scope
+    :graph-head
+    :contains-anchor?
+    :order-hint
+    :select-current
+    :select-authoritative
+    :select-at-least
+    :exact-locator
+    :select-exact
     :object-id->internal
     :internal-id->object
     :relation-defs
@@ -39,6 +48,7 @@
 (def empty-capabilities
   {:consistency #{}
    :snapshots #{}
+   :source #{}
    :cursor #{}
    :transactions #{}
    :cache-proofs #{}
@@ -116,8 +126,29 @@
                               operation))}))
   candidate)
 
+(defn require-legacy-evaluation!
+  "Allows the six-function SPI only for an explicitly supplied immutable
+  snapshot with caching and every v3 consistency guarantee disabled."
+  [candidate {:keys [explicit-snapshot? cache? consistency-mode]}]
+  (validate-legacy-adapter! candidate)
+  (when-not (and explicit-snapshot?
+                 (not cache?)
+                 (or (nil? consistency-mode)
+                     (= :snapshot-only consistency-mode)))
+    (unsupported!
+     :legacy
+     :v3-guarantee
+     {:explicit-snapshot? (boolean explicit-snapshot?)
+      :cache? (boolean cache?)
+      :consistency-mode consistency-mode}
+     #{:uncached-explicit-snapshot}))
+  candidate)
+
 (defn make-adapter
-  [{:keys [id capabilities operations state]}]
+  [{:keys [id capabilities operations state fingerprint deterministic?
+           identity-contract]
+    :or {deterministic? true
+         identity-contract :selected-internal/current-external-v1}}]
   (when-not (keyword? id)
     (invalid-adapter! "Backend :id must be a keyword."
                       {:backend id}))
@@ -137,6 +168,11 @@
    ::id id
    ::capabilities (normalize-capabilities id capabilities)
    ::operations operations
+   ::fingerprint
+   (or fingerprint
+       {:backend id :adapter-version adapter-version})
+   ::deterministic? (boolean deterministic?)
+   ::identity-contract identity-contract
    ::state state})
 
 (defn adapter?
@@ -159,6 +195,39 @@
   [adapter]
   (if (adapter? adapter)
     (::capabilities adapter)
+    (invalid-adapter! "Value is not a v8 backend adapter."
+                      {:value adapter})))
+
+(defn state
+  "Returns the immutable backend state captured by this adapter.
+
+  Selection orchestration uses this only to hand the selected native snapshot
+  to backend-specific ID/cursor codecs; authorization reads remain behind the
+  validated operation boundary."
+  [adapter]
+  (if (adapter? adapter)
+    (::state adapter)
+    (invalid-adapter! "Value is not a v8 backend adapter."
+                      {:value adapter})))
+
+(defn fingerprint
+  [adapter]
+  (if (adapter? adapter)
+    (::fingerprint adapter)
+    (invalid-adapter! "Value is not a v8 backend adapter."
+                      {:value adapter})))
+
+(defn deterministic?
+  [adapter]
+  (if (adapter? adapter)
+    (::deterministic? adapter)
+    (invalid-adapter! "Value is not a v8 backend adapter."
+                      {:value adapter})))
+
+(defn identity-contract
+  [adapter]
+  (if (adapter? adapter)
+    (::identity-contract adapter)
     (invalid-adapter! "Value is not a v8 backend adapter."
                       {:value adapter})))
 

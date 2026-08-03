@@ -22,14 +22,27 @@
                   [operation (fn [& _] nil)]))
            backend/required-snapshot-operations)
      {:snapshot-id #(select-keys @proofs [:basis])
+      :source-scope
+      (fn [] {:source-id (:source @proofs) :branch nil})
+      :graph-head
+      (fn [] {:graph-anchor (:head @proofs)
+              :order-hint (:basis @proofs)
+              :exact-locator (:basis @proofs)})
+      :contains-anchor?
+      (fn [anchor] (contains? (:anchors @proofs) anchor))
+      :order-hint (fn [] (:basis @proofs))
+      :exact-locator (fn [] (:basis @proofs))
       :schema-proof
       (fn
-        ([] (:schema @proofs))
+        ([] (when-not (:proof-unavailable? @proofs)
+              (:schema @proofs)))
         ([{:keys [permission-nodes]}]
-         (select-keys (:schema @proofs) permission-nodes)))
+         (when-not (:proof-unavailable? @proofs)
+           (select-keys (:schema @proofs) permission-nodes))))
       :relation-proof
       (fn [relation-ids]
-        (select-keys (:relations @proofs) relation-ids))})}))
+        (when-not (:proof-unavailable? @proofs)
+          (select-keys (:relations @proofs) relation-ids)))})}))
 
 (defrecord ThrowingStore []
   cache/CacheStore
@@ -39,8 +52,19 @@
   (clear! [_] (throw (ex-info "unavailable" {})))
   (stats [_] (throw (ex-info "unavailable" {}))))
 
+(defrecord ForgingStore [value]
+  cache/CacheStore
+  (lookup [_ _] value)
+  (store! [_ _ _] true)
+  (evict! [_ _] false)
+  (clear! [_] nil)
+  (stats [_] {}))
+
 (deftest exact-proof-validation-test
   (let [proofs (atom {:basis 1
+                      :source "source"
+                      :head "head-1"
+                      :anchors #{"head-1"}
                       :schema {:document :schema-1
                                :unrelated :schema-a}
                       :relations {10 :relation-1
@@ -62,6 +86,10 @@
 
     (testing "unrelated relation changes retain the entry"
       (swap! proofs assoc-in [:relations 20] :unrelated-2)
+      (swap! proofs assoc
+             :basis 2
+             :head "head-2"
+             :anchors #{"head-1" "head-2"})
       (is (true? (:cached? (resolve))))
       (is (= 1 @calls)))
 
@@ -77,8 +105,44 @@
       (is (false? (:cached? (resolve))))
       (is (= 3 @calls)))))
 
+(deftest forward-only-proof-lifting-test
+  (let [proofs
+        (atom {:basis 1
+               :source "source"
+               :head "computed"
+               :anchors #{"computed"}
+               :schema {:document :schema}
+               :relations {10 :relation}})
+        snapshot (adapter proofs)
+        store (cache/local-store)
+        calls (atom 0)
+        resolve
+        #(cache/resolve!
+          snapshot store :key :can?
+          {:permission-nodes #{:document}}
+          [10] boolean?
+          (fn [] (swap! calls inc) true))]
+    (is (false? (:cached? (resolve))))
+    (swap! proofs assoc
+           :basis 2
+           :head "descendant"
+           :anchors #{"computed" "descendant"})
+    (is (true? (:cached? (resolve))))
+    (swap! proofs assoc
+           :basis 2
+           :head "sibling"
+           :anchors #{"sibling"})
+    (is (false? (:cached? (resolve))))
+    (is (= 2 @calls))
+    (is (= 1 (:causal-proof-lift (cache/stats store))))
+    (is (= 1 (:future-history-rejection
+              (cache/stats store))))))
+
 (deftest corrupt-and-unavailable-store-fail-closed-test
   (let [proofs (atom {:basis 1
+                      :source "source"
+                      :head "head"
+                      :anchors #{"head"}
                       :schema {:document :schema}
                       :relations {10 :relation}})
         snapshot (adapter proofs)
@@ -89,7 +153,8 @@
     (testing "a malformed value is a miss"
       (let [answer
             (cache/resolve!
-             snapshot corrupt-store :key :can?
+             snapshot (->ForgingStore "eacl_ce3_forged")
+             :key :can?
              {:permission-nodes #{:document}}
              [10] boolean? compute)]
         (is (false? (:value answer)))
@@ -106,3 +171,35 @@
         (is (false? (:cached? answer)))))
 
     (is (= 2 @computed))))
+
+(deftest cache-scope-and-proof-availability-test
+  (let [store (cache/local-store)
+        first-proof
+        (atom {:basis 1
+               :source "first"
+               :head "first-head"
+               :anchors #{"first-head"}
+               :schema {:document :schema}
+               :relations {10 :relation}})
+        second-proof
+        (atom {:basis 1
+               :source "second"
+               :head "second-head"
+               :anchors #{"second-head"}
+               :schema {:document :schema}
+               :relations {10 :relation}})
+        calls (atom 0)
+        compute #(do (swap! calls inc) true)
+        resolve
+        (fn [snapshot]
+          (cache/resolve!
+           snapshot store :same-query :can?
+           {:permission-nodes #{:document}}
+           [10] boolean? compute))]
+    (is (false? (:cached? (resolve (adapter first-proof)))))
+    (is (false? (:cached? (resolve (adapter second-proof)))))
+    (is (= 2 @calls)
+        "equal content in another source cannot reuse the entry")
+    (swap! first-proof assoc :proof-unavailable? true)
+    (is (false? (:cached? (resolve (adapter first-proof)))))
+    (is (= 1 (:no-proof-bypass (cache/stats store))))))

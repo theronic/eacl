@@ -1,0 +1,322 @@
+(ns eacl.datahike.consistency-v3-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [datahike.api :as d]
+            [eacl.backend.v8 :as backend]
+            [eacl.core :as eacl]
+            [eacl.datahike.backend :as datahike-backend]
+            [eacl.datahike.core :as datahike]
+            [eacl.datahike.db :as ddb]
+            [eacl.spicedb.consistency :as consistency])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
+           [java.util Date]))
+
+(def schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission view = reader
+   }")
+
+(def security-key "01234567890123456789012345678901")
+(def user (eacl/spice-object :user "user"))
+(def document (eacl/spice-object :document "document"))
+(def relationship
+  (eacl/->Relationship user :reader document))
+
+(defn- client
+  [conn]
+  (datahike/make-client
+   conn
+   {:coherence-authority :managed
+    :security-key security-key
+    :consistency-sync-timeout-ms 5}))
+
+(defn- seed!
+  [conn authorization]
+  (eacl/write-schema! authorization schema)
+  (d/transact conn [{:eacl/id "user"}
+                    {:eacl/id "document"}]))
+
+(defn- error-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(deftest branch-refresh-exact-and-force-rewind-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        _ (seed! conn authorization)
+        pre-write (d/db conn)
+        token
+        (:zed/token
+         (eacl/create-relationship! authorization relationship))]
+    (is (true?
+         (eacl/can?
+          authorization user :view document
+          (consistency/at-least-as-fresh token))))
+    (eacl/delete-relationship! authorization relationship)
+    (testing "retained commit reconstruction recovers the exact graph"
+      (is (true?
+           (eacl/can?
+            authorization user :view document
+            (consistency/at-exact-snapshot token)))))
+    (testing "force-moving the branch to a predecessor cannot pass by max-tx"
+      (d/force-branch!
+       pre-write
+       :db
+       #{(get-in pre-write [:meta :datahike/commit-id])})
+      ;; force-branch! deliberately makes existing writer connections stale.
+      ;; Reconnect before advancing the replacement history.
+      (d/release conn)
+      (let [rewound-conn (d/connect (:config pre-write))
+            rewound-authorization (client rewound-conn)]
+        (d/transact rewound-conn [{:eacl/id "unrelated"}])
+        (is (= :eacl.consistency/freshness-unavailable
+               (:type
+                (error-data
+                 #(eacl/can?
+                   rewound-authorization
+                   user
+                   :view
+                   document
+                   (consistency/at-least-as-fresh token))))))))))
+
+(deftest configuration-specific-head-and-history-capabilities-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        adapter
+        (datahike-backend/snapshot-adapter
+         (d/db conn)
+         (:opts authorization))]
+    (is (backend/supports?
+         adapter :consistency :fully-consistent))
+    (is (backend/supports?
+         adapter :consistency :at-exact-snapshot))
+    (let [streaming-db
+          (assoc-in (d/db conn)
+                    [:config :writer]
+                    {:backend :stream})]
+      (is (not
+           (backend/supports?
+            (datahike-backend/snapshot-adapter
+             streaming-db (:opts authorization))
+            :consistency :fully-consistent)))))
+  (let [conn
+        (datahike/create-conn
+         nil
+         {:commit-graph? false
+          :keep-history? false})
+        authorization (client conn)
+        adapter
+        (datahike-backend/snapshot-adapter
+         (d/db conn)
+         (:opts authorization))]
+    (is (not
+         (backend/supports?
+          adapter :consistency :at-exact-snapshot)))))
+
+(deftest reader-branch-and-merge-metadata-test
+  (let [writer-conn (datahike/create-conn)
+        config (:config (d/db writer-conn))
+        reader-conn (d/connect config)
+        writer (client writer-conn)
+        reader (client reader-conn)
+        _ (seed! writer-conn writer)
+        token
+        (:zed/token
+         (eacl/create-relationship! writer relationship))]
+    (testing "another direct-store connection refreshes to the token anchor"
+      (is (true?
+           (eacl/can?
+            reader user :view document
+            (consistency/at-least-as-fresh token)))))
+    (d/branch! writer-conn :db :feature)
+    (let [feature-conn
+          (d/connect (assoc config :branch :feature))
+          feature (client feature-conn)
+          feature-commit
+          (str
+           (get-in (d/db feature-conn)
+                   [:meta :datahike/commit-id]))]
+      (testing "branch scope is authenticated even when the initial commit is shared"
+        (is (= :eacl.consistency/incomparable-scope
+               (:type
+                (error-data
+                 #(eacl/can?
+                   feature user :view document
+                   (consistency/at-least-as-fresh token)))))))
+      (d/merge-db
+       writer-conn
+       #{:feature}
+       [{:db/id -1 :db/doc "unrelated merge metadata"}])
+      (let [adapter
+            (datahike-backend/snapshot-adapter
+             (d/db writer-conn)
+             (:opts writer))]
+        (is (= [feature-commit]
+               (:parent-commit-ids (backend/state adapter)))))
+      (d/release feature-conn))
+    (d/release reader-conn)
+    (d/release writer-conn)))
+
+(deftest content-proofs-are-bounded-and-cover-public-identity-test
+  (let [conn (datahike/create-conn)
+        authorization
+        (datahike/make-client
+         conn
+         {:coherence-authority :managed
+          :proof-mode :content
+          :security-key security-key})
+        _ (seed! conn authorization)
+        _ (eacl/create-relationship! authorization relationship)
+        before-adapter
+        (datahike-backend/snapshot-adapter
+         (d/db conn) (:opts authorization))
+        relation-id
+        (:relation-id
+         (first
+          (backend/invoke
+           before-adapter :relation-defs :document :reader)))
+        schema-proof (backend/invoke before-adapter :schema-proof)
+        before-proof
+        (backend/invoke before-adapter :relation-proof [relation-id])
+        user-eid (ddb/entid (d/db conn) [:eacl/id "user"])]
+    (is (= #{:content-digest} (set (keys schema-proof))))
+    (is (= 43 (count (:content-digest schema-proof))))
+    (is (= #{:content-digest} (set (keys before-proof))))
+    (is (= 43 (count (:content-digest before-proof))))
+    (d/transact conn [[:db/retract user-eid :eacl/id "user"]
+                      [:db/add user-eid :eacl/id "renamed-user"]])
+    (let [after-adapter
+          (datahike-backend/snapshot-adapter
+           (d/db conn) (:opts authorization))
+          after-proof
+          (backend/invoke after-adapter :relation-proof [relation-id])]
+      (is (not= before-proof after-proof)))
+    (d/release conn)))
+
+(deftest temporal-fallback-and-commit-garbage-collection-test
+  (testing "history can reconstruct exact state when the commit graph is off"
+    (let [conn
+          (datahike/create-conn
+           nil
+           {:commit-graph? false
+            :keep-history? true})
+          authorization (client conn)
+          _ (seed! conn authorization)
+          token
+          (:zed/token
+           (eacl/create-relationship! authorization relationship))]
+      (eacl/delete-relationship! authorization relationship)
+      (is (true?
+           (eacl/can?
+            authorization user :view document
+            (consistency/at-exact-snapshot token))))
+      (d/release conn)))
+  (testing "collected commit history expires exact, not causal anchor membership"
+    ;; Datahike 0.8.1759's in-memory konserve backend cannot mark its
+    ;; persistent-set roots (`:flush-before-marking`). Exercise the public GC
+    ;; contract on the file backend, where the persisted roots are flushable.
+    (let [temp-dir
+          (Files/createTempDirectory
+           "eacl-datahike-gc-"
+           (make-array FileAttribute 0))
+          conn
+          (datahike/create-conn
+           nil
+           {:store {:backend :file
+                    :path (str temp-dir "/db")}})
+          config (:config (d/db conn))
+          authorization (client conn)
+          _ (seed! conn authorization)
+          token
+          (:zed/token
+           (eacl/create-relationship! authorization relationship))]
+      (try
+        (eacl/delete-relationship! authorization relationship)
+        (is (true?
+             (eacl/can?
+              authorization user :view document
+              (consistency/at-exact-snapshot token))))
+        @(d/gc-storage conn (Date. (+ 1000 (System/currentTimeMillis))))
+        (is (= :eacl.consistency/exact-snapshot-unavailable
+               (:type
+                (error-data
+                 #(eacl/can?
+                   authorization user :view document
+                   (consistency/at-exact-snapshot token))))))
+        (is (false?
+             (eacl/can?
+              authorization user :view document
+              (consistency/at-least-as-fresh token))))
+        (finally
+          (d/release conn)
+          (d/delete-database config))))))
+
+(deftest relationship-cursor-proof-equivalence-and-exact-fallback-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        _ (eacl/write-schema! authorization schema)
+        _ (d/transact conn [{:eacl/id "user"}
+                            {:eacl/id "doc-a"}
+                            {:eacl/id "doc-b"}
+                            {:eacl/id "doc-c"}])
+        documents
+        (mapv #(eacl/spice-object :document %)
+              ["doc-a" "doc-b" "doc-c"])
+        relationships
+        (mapv #(eacl/->Relationship user :reader %) documents)
+        _ (doseq [value relationships]
+            (eacl/create-relationship! authorization value))
+        query {:subject/id "user" :first 1}
+        page-1 (eacl/read-relationships authorization query)
+        cursor (get-in page-1 [:page-info :end-cursor])
+        cursor-data
+        (datahike/token->cursor cursor (:opts authorization))]
+    (try
+      (d/transact conn [{:eacl/id "unrelated-cursor-churn"}])
+      (testing "an equal complete result proof rebases to the current commit"
+        (let [page-2
+              (eacl/read-relationships
+               authorization
+               (assoc query :after cursor))
+              rebased
+              (datahike/token->cursor
+               (get-in page-2 [:page-info :end-cursor])
+               (:opts authorization))]
+          (is (= [(second relationships)] (:data page-2)))
+          (is (< (get-in cursor-data [:graph-head :order-hint])
+                 (get-in rebased [:graph-head :order-hint])))))
+      (let [fresh-page-1
+            (eacl/read-relationships authorization query)
+            fresh-cursor
+            (get-in fresh-page-1 [:page-info :end-cursor])
+            delete-token
+            (:zed/token
+             (eacl/delete-relationship!
+              authorization
+              (second relationships)))]
+        (testing "a changed proof falls back to the retained original commit"
+          (is (= [(second relationships)]
+                 (:data
+                  (eacl/read-relationships
+                   authorization
+                   (assoc query :after fresh-cursor))))))
+        (testing "a newer at-least floor forbids exact fallback"
+          (is (= :eacl.consistency/cursor-consistency-conflict
+                 (:type
+                  (error-data
+                   #(eacl/read-relationships
+                     authorization
+                     (assoc
+                      query
+                      :after fresh-cursor
+                      :consistency
+                      (consistency/at-least-as-fresh
+                       delete-token)))))))))
+      (finally
+        (d/release conn)))))

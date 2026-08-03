@@ -237,8 +237,8 @@
                        {:subject (spice-object :user "renamed-alice")
                         :permission :admin
                         :resource/type :account})))))
-        (is (= 1 @calls)
-            "the internal-EID page remains valid while ID coercion observes the current db")))))
+        (is (= 2 @calls)
+            "a changed public identity binding cannot reuse the old query key")))))
 
 (deftest recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
   (with-mem-conn [conn schema/v7-schema]
@@ -430,9 +430,9 @@
        first-client
        [(->Relationship alice :reader root)
         (->Relationship root :parent child)])
-      ;; :remember-answers false so this observes the recursive PAGE cache;
-      ;; otherwise the answer cache serves the repeat and the engine, whose
-      ;; stats this asserts on, is never entered.
+      ;; :remember-answers false forces deterministic replay. The old recursive
+      ;; page side cache was process-local and unauthenticated; v3 refuses to
+      ;; read it until continuation state uses the proof envelope contract.
       (let [second-client (core/make-client conn {:cache {:store store
                                                           :remember-answers false}
                                                   :page-token-key token-key})
@@ -447,8 +447,8 @@
                   (eacl/lookup-resources second-client
                                          (assoc query :after cursor)))))
             "another client replays the cursor against its authenticated snapshot")
-        (is (= 1 (:recursive-page-hits @stats))
-            "the shared immutable page is reusable across client instances")))))
+        (is (nil? (:recursive-page-hits @stats))
+            "no unauthenticated recursive page is reused across clients")))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]

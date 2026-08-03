@@ -3,6 +3,8 @@
             [eacl.core :refer [spice-object]]
             [eacl.lazy-merge-sort :as lazy-sort]))
 
+(def engine-version 8)
+
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
 (def ^:private count-page-size 16384)
@@ -253,26 +255,21 @@
                :relation-name target-relation-name})
         []))))
 
-;; --- Client-lifecycle permission-path cache (issue #74) ----------------------
+;; --- Selected-snapshot permission-path cache (issue #74) ---------------------
 ;;
-;; EACL has one supported schema mutation boundary: eacl/write-schema!. A
-;; connection-backed client reads :eacl/schema-version ONCE when it is created
-;; and owns one generation of resolved permission paths for its lifetime.
-;; Ordinary Datomic transactions may produce a new db value for every request;
-;; they do not cause a version read, definition scan, cache-key change or db
-;; value retention.
+;; A client owns derived-schema generations keyed by backend, source scope, and
+;; the schema proof visible in the selected immutable snapshot. Managed writer
+;; authority makes that proof one atomically published mutation identity.
+;; Unknown writer authority deliberately uses a complete content proof instead:
+;; detecting arbitrary out-of-band schema writes without trusting a listener or
+;; writer-maintained stamp requires reading the database-visible definitions.
 ;;
-;; write-schema! through that client replaces the entire generation under the
-;; client's schema write lock. Other clients/processes must be recreated after
-;; an out-of-band schema write. Low-level functions in this namespace are
-;; intentionally uncached unless a client binds *schema-cache*: arbitrary
-;; d/with/filter/as-of values therefore cannot publish paths into a live
-;; connection-backed client's cache.
-;;
-;; An unstamped snapshot (normally a fresh v7 database before its first schema
-;; write) is never latched: paths are resolved from the supplied db value on
-;; every call until write-schema! establishes a version. This is not a v6
-;; compatibility path.
+;; Permission paths, dependency closures, and recursive-routing decisions are
+;; memoized inside one proof generation. Their cold compilation cost is paid
+;; once per queried permission root and schema proof, then reused. Low-level
+;; functions remain uncached unless a client binds *schema-cache*, so arbitrary
+;; d/with/filter/as-of values cannot publish derived state into another
+;; snapshot's generation.
 
 (def ^:dynamic *schema-cache*
   "The client-owned schema cache bound by eacl.datomic.core.
@@ -287,16 +284,14 @@
   (backend/invoke snapshot :schema-proof))
 
 (defn schema-version-stamp
-  "String form of the version visible in a snapshot. This is an explicit diagnostic;
-  connection-backed authorization calls do not invoke it."
+  "String form of the schema proof visible in a snapshot."
   [snapshot]
   (some-> (schema-version snapshot) str))
 
 (defn make-schema-cache
-  "Creates the one schema generation owned by an EACL client.
+  "Creates a derived-schema generation for one selected schema proof.
 
-  This is the only automatic :eacl/schema-version read. A nil version marks a
-  fresh/unstamped database and deliberately disables latching/caching."
+  A nil proof deliberately disables derived-state latching."
   ([snapshot]
    (make-schema-cache snapshot (schema-version snapshot)))
   ([snapshot known-schema-version]
@@ -304,8 +299,41 @@
     :schema-version known-schema-version
     :permission-paths (atom {})
     :traversal-permissions (atom {})
+    :traversal-analysis (atom nil)
     :relationship-dependencies (atom {})
     :direct-grant-relations (atom {})}))
+
+(defn schema-cache-key
+  "Identity of schema-derived state for one selected immutable snapshot.
+
+  The key deliberately contains no listener/client counter. A missed callback
+  cannot make a cache entry cross a source or schema proof boundary."
+  ([snapshot]
+   (schema-cache-key
+    snapshot
+    (backend/invoke snapshot :schema-proof)))
+  ([snapshot schema-proof]
+   [(backend/backend-id snapshot)
+    (backend/invoke snapshot :source-scope)
+    schema-proof]))
+
+(defn schema-cache-for!
+  "Returns a derived-schema generation keyed by selected source and proof."
+  [registry snapshot]
+  (let [schema-proof (backend/invoke snapshot :schema-proof)
+        key (schema-cache-key snapshot schema-proof)
+        existing (get @registry key)]
+    (if existing
+      existing
+      (let [created
+            (make-schema-cache
+             snapshot
+             schema-proof)]
+        (get (swap! registry
+                    #(if (contains? % key)
+                       %
+                       (assoc % key created)))
+             key)))))
 
 (defn- permission-paths-cache-key
   [resource-type permission-name]
@@ -320,6 +348,7 @@
   ([schema-cache]
    (reset! (:permission-paths schema-cache) {})
    (reset! (:traversal-permissions schema-cache) {})
+   (some-> (:traversal-analysis schema-cache) (reset! nil))
    (reset! (:relationship-dependencies schema-cache) {})
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
@@ -548,9 +577,93 @@
     db
     (permission-query-node resource-type permission-name))))
 
-(defn- reachable-from
-  [graph root]
+(defn- permission-graph
+  [db nodes]
+  (let [node-set (set nodes)]
+    (into {}
+          (map (fn [node]
+                 [node
+                  (vec
+                   (filter node-set
+                           (permission-query-dependencies db node)))])
+               nodes))))
+
+(defn- transpose-graph
+  [nodes graph]
+  (reduce-kv
+   (fn [result node dependencies]
+     (reduce (fn [result dependency]
+               (update result dependency conj node))
+             result
+             dependencies))
+   (zipmap nodes (repeat []))
+   graph))
+
+(defn- postorder-from
+  [graph root initial-seen initial-order]
+  (loop [stack [[root false]]
+         seen initial-seen
+         order initial-order]
+    (if-let [[node expanded?] (peek stack)]
+      (cond
+        expanded?
+        (recur (pop stack) seen (conj order node))
+
+        (contains? seen node)
+        (recur (pop stack) seen order)
+
+        :else
+        (let [dependencies (get graph node)]
+          (recur (into (conj (pop stack) [node true])
+                       (map #(vector % false)
+                            (reverse dependencies)))
+                 (conj seen node)
+                 order)))
+      [seen order])))
+
+(defn- graph-postorder
+  [nodes graph]
+  (second
+   (reduce (fn [[seen order] node]
+             (if (contains? seen node)
+               [seen order]
+               (postorder-from graph node seen order)))
+           [#{} []]
+           nodes)))
+
+(defn- collect-component
+  [graph root initial-seen]
   (loop [stack [root]
+         seen initial-seen
+         component []]
+    (if-let [node (peek stack)]
+      (if (contains? seen node)
+        (recur (pop stack) seen component)
+        (recur (into (pop stack)
+                     (reverse (get graph node)))
+               (conj seen node)
+               (conj component node)))
+      [seen component])))
+
+(defn- graph-components
+  "Returns deterministic strongly connected components in O(V+E) time and
+  memory using iterative Kosaraju passes."
+  [nodes graph]
+  (let [transposed (transpose-graph nodes graph)
+        roots (reverse (graph-postorder nodes graph))]
+    (second
+     (reduce (fn [[seen components] root]
+               (if (contains? seen root)
+                 [seen components]
+                 (let [[seen component]
+                       (collect-component transposed root seen)]
+                   [seen (conj components component)])))
+             [#{} []]
+             roots))))
+
+(defn- reachable-from-many
+  [graph roots]
+  (loop [stack (vec roots)
          seen #{}]
     (if-let [node (peek stack)]
       (if (contains? seen node)
@@ -566,29 +679,9 @@
   [db resource-type permission-name]
   (let [root (permission-query-node resource-type permission-name)
         nodes (sort (reachable-permission-query-nodes db root))
-        graph (into {}
-                    (map (fn [node]
-                           [node
-                            (vec
-                             (filter (set nodes)
-                                     (permission-query-dependencies db node)))])
-                         nodes))
-        closures (into {}
-                       (map (fn [node]
-                              [node (reachable-from graph node)])
-                            nodes))]
-    (loop [remaining (set nodes)
-           components []]
-      (if-let [node (first (sort remaining))]
-        (let [component
-              (->> remaining
-                   (filter #(and (contains? (get closures node) %)
-                                 (contains? (get closures %) node)))
-                   sort
-                   vec)]
-          (recur (apply disj remaining component)
-                 (conj components component)))
-        components))))
+        graph (permission-graph db nodes)]
+    (mapv (comp vec sort)
+          (graph-components nodes graph))))
 
 (defn- recursive-permission-query?
   [db resource-type permission-name]
@@ -601,6 +694,32 @@
                    (some #{node}
                          (permission-query-dependencies db node)))))
            components))))
+
+(defn- calc-traversal-analysis
+  "Classifies every permission node into one shared schema-generation result.
+
+  Once permission paths are materialized, one iterative SCC pass plus reverse
+  reachability is O(V+E) in the permission graph. Sharing the resulting map
+  prevents a large schema from recompiling recursive routing independently for
+  every first-read root."
+  [db]
+  (let [nodes (vec (set (backend/invoke db :all-permission-nodes)))
+        graph (permission-graph db nodes)
+        transposed (transpose-graph nodes graph)
+        recursive-nodes
+        (->> (graph-components nodes graph)
+             (filter (fn [component]
+                       (or (> (count component) 1)
+                           (let [node (first component)]
+                             (some #{node} (get graph node))))))
+             (mapcat identity)
+             set)
+        traversal-nodes
+        (reachable-from-many transposed recursive-nodes)]
+    (into {}
+          (map (fn [node]
+                 [node (contains? traversal-nodes node)])
+               nodes))))
 
 (defn- resume-scan-opts
   "Scan options that resume an intermediate's result stream strictly after
@@ -690,22 +809,38 @@
   These roots cannot be proven page-bounded in eid order without materialized
   grants, so list APIs evaluate them in deterministic traversal order.
 
-  A stamped connection-backed client memoises this once in its single schema
-  generation. Raw db evaluation and unstamped clients recompute it."
+  A stamped connection-backed client shares one classification for every
+  permission node in a schema generation. Raw db evaluation and unstamped
+  clients recompute the requested root."
   [db resource-type permission-name]
   (if-not (some? (:schema-version *schema-cache*))
     (recursive-permission-query? db resource-type permission-name)
-    (let [cache-key (permission-paths-cache-key resource-type permission-name)
-          cache-atom (:traversal-permissions *schema-cache*)
-          snapshot @cache-atom]
-      (if (contains? snapshot cache-key)
-        (get snapshot cache-key)
-        (let [recursive? (recursive-permission-query? db resource-type permission-name)]
-          (get (swap! cache-atom
-                      #(if (contains? % cache-key)
-                         %
-                         (assoc % cache-key recursive?)))
-               cache-key))))))
+    (if-let [analysis-atom (:traversal-analysis *schema-cache*)]
+      (let [analysis-delay
+            (or @analysis-atom
+                (let [candidate
+                      (delay (calc-traversal-analysis db))]
+                  (swap! analysis-atom #(or % candidate))))
+            analysis @analysis-delay]
+        (boolean
+         (get analysis
+              (permission-paths-cache-key
+               resource-type permission-name))))
+      ;; Compatibility for externally constructed schema-cache maps.
+      (let [cache-key
+            (permission-paths-cache-key resource-type permission-name)
+            cache-atom (:traversal-permissions *schema-cache*)
+            snapshot @cache-atom]
+        (if (contains? snapshot cache-key)
+          (get snapshot cache-key)
+          (let [recursive?
+                (recursive-permission-query?
+                 db resource-type permission-name)]
+            (get (swap! cache-atom
+                        #(if (contains? % cache-key)
+                           %
+                           (assoc % cache-key recursive?)))
+                 cache-key)))))))
 
 (defn traversal-nodes
   [db]

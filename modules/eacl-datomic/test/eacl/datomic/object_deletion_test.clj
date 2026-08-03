@@ -86,7 +86,9 @@
 (deftest delete-object-through-the-client-test
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [u a]} (seed! conn)
-          acl (core/make-client conn {})]
+          acl (core/make-client
+               conn
+               {:coherence-authority :managed})]
       (is (true? (eacl/can? acl (spice-object :user "u") :admin (spice-object :account "a"))))
 
       (let [result (eacl/delete-object! acl (spice-object :account "a"))]

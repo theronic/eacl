@@ -1030,3 +1030,107 @@
                       targets)]
             (println "can? completed-cache breakdown:" breakdown)
             (is (every? (comp pos? :calls val) breakdown))))))))
+
+(def ^:private cache-proof-benchmark-schema
+  "definition user {}
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }")
+
+(deftest ^:benchmark cache-proof-strategy-churn-benchmark
+  (testing "mutation/content proofs, global invalidation, and no-cache"
+    (with-mem-conn [conn schema/v7-schema]
+      (let [mutation-store (cache/local-store)
+            content-store (cache/local-store)
+            global-store (cache/local-store)
+            common {:page-token-key "cache-proof-benchmark"
+                    :zed-token-key "cache-proof-benchmark-zed"}
+            managed
+            (fn [store]
+              (spiceomic/make-client
+               conn
+               (assoc common
+                      :coherence-authority :managed
+                      :proof-mode :mutation
+                      :cache (if store
+                               {:store store :remember-answers true}
+                               cache/no-cache))))
+            mutation-client (managed mutation-store)
+            writer mutation-client
+            content-client
+            (spiceomic/make-client
+             conn
+             (assoc common
+                    :coherence-authority :unknown
+                    :proof-mode :content
+                    :cache {:store content-store
+                            :remember-answers true}))
+            global-client (managed global-store)
+            no-cache-client (managed nil)
+            user (->user "benchmark-user")
+            account (->account "benchmark-account")
+            relationship (Relationship user :owner account)
+            _ (eacl/write-schema! writer cache-proof-benchmark-schema)
+            _ @(d/transact conn [{:eacl/id "benchmark-user"}
+                                 {:eacl/id "benchmark-account"}])
+            _ (eacl/create-relationship! writer relationship)
+            strategies
+            [[:mutation-proof mutation-client nil]
+             [:content-proof content-client nil]
+             [:global-invalidation global-client global-store]
+             [:no-cache no-cache-client nil]]
+            iterations 12
+            measure
+            (fn [client store expected]
+              (when store
+                (cache/clear! store))
+              (let [start (System/nanoTime)
+                    value (eacl/can? client user :admin account)
+                    elapsed (/ (double (- (System/nanoTime) start)) 1000.0)]
+                (is (= expected value))
+                elapsed))
+            unrelated
+            (into
+             {}
+             (for [[label client clear-store] strategies]
+               (do
+                 (eacl/can? client user :admin account)
+                 [label
+                  (median
+                   (for [i (range iterations)]
+                     (do
+                       @(d/transact
+                         conn
+                         [{:eacl/id
+                           (str "benchmark-unrelated-"
+                                (name label)
+                                "-"
+                                i)}])
+                       (measure client clear-store true))))])))
+            relevant
+            (into
+             {}
+             (for [[label client clear-store] strategies]
+               (do
+                 (eacl/can? client user :admin account)
+                 [label
+                  (median
+                   (for [i (range iterations)]
+                     (let [grant? (odd? i)]
+                       (if grant?
+                         (eacl/create-relationship! writer relationship)
+                         (eacl/delete-relationship! writer relationship))
+                       (measure client clear-store grant?))))])))]
+        (prn {:benchmark :cache-proof-strategy-churn
+              :unit :microseconds-per-read
+              :iterations iterations
+              :unrelated-churn unrelated
+              :relevant-churn relevant})
+        (is (= (set (keys unrelated))
+               #{:mutation-proof
+                 :content-proof
+                 :global-invalidation
+                 :no-cache}))
+        (is (= (set (keys relevant))
+               (set (keys unrelated))))))))
