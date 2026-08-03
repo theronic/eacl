@@ -2,9 +2,11 @@
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
             [eacl.authorization-oracle :as oracle]
-            [eacl.formal.generators :as generators]))
+            [eacl.formal.generators :as generators]
+            [eacl.test-support.repo :as repo]))
 
-(def registry-path "formal/mutations/registry.edn")
+(def registry-path
+  (repo/file "formal" "mutations" "registry.edn"))
 
 (defn- registry
   []

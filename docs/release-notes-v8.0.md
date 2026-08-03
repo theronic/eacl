@@ -196,10 +196,21 @@ backward navigation.
 - `at-exact-snapshot` retains exact continuation and returns a typed
   snapshot-expired failure if that explicit snapshot is unavailable.
 - Relationship cursors bind their selected graph anchor rather than hashing
-  the complete item sequence; non-exact continuation may re-evaluate the
-  offset against a newer selected graph.
+  the complete item sequence; non-exact continuation may rebase the
+  authenticated physical edge against a newer selected graph.
 - Portable cursors use HMAC authenticity, not encryption. Datomic retains its
   compact AES-GCM codec for cursor-content confidentiality.
+- DataScript and Datahike relationship pages now seek from an authenticated
+  physical tuple-index edge and resolve only the selected page's public IDs.
+  They read at most `page-size + 1` matching internal rows instead of
+  materializing and sorting every match before every page.
+
+EACL does not promise a global, lexical, domain, or cross-backend order now that
+recursive schema has multiple valid traversal orders. It promises one
+deterministic sequence for a fixed query on the cursor-pinned immutable
+snapshot. A complete valid walk has no item movement, omission, or duplication.
+Relationship pages use each backend's tuple-index order; that order is an
+internal pagination contract, not a presentation-order API.
 
 Recovery has ordinary weak-pagination behavior under concurrent mutation:
 duplicates or omissions across page boundaries are possible, but every

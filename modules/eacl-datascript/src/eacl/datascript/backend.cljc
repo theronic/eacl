@@ -224,7 +224,9 @@
               coherence-authority proof-mode exact-registry]
        :or {proof-mode :content}
        :as opts}]
-  (let [exact-handle
+  (let [graph-state
+        (delay (journal/graph-state db))
+        exact-handle
         (when exact-registry
           (remember-snapshot!
            exact-registry
@@ -253,12 +255,12 @@
 
        :source-scope
        (fn []
-         {:source-id (:family-id (journal/graph-state db))
+         {:source-id (:family-id @graph-state)
           :branch nil})
 
        :graph-head
        (fn []
-         {:graph-anchor (:head-id (journal/graph-state db))
+         {:graph-anchor (:head-id @graph-state)
           :order-hint (:max-tx db)
           :exact-locator exact-handle})
 

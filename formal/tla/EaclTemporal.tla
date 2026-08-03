@@ -134,7 +134,6 @@ CursorCurrentSafe ==
   outcome # CursorCurrent \/
     /\ cursorPresent
     /\ cursorQuery = selectedQuery
-    /\ cursorDirection = selectedDirection
     /\ (cursorGraph = head \/ cursorLiftable)
     /\ chosenGraph = head
 
@@ -142,7 +141,6 @@ CursorExactSafe ==
   outcome # CursorExact \/
     /\ cursorPresent
     /\ cursorQuery = selectedQuery
-    /\ cursorDirection = selectedDirection
     /\ cursorGraph \in retained
     /\ chosenGraph = cursorGraph
 
@@ -328,7 +326,6 @@ CursorResume ==
     LET scopeMatches ==
           /\ cursorPresent
           /\ cursorQuery = query
-          /\ cursorDirection = direction
         currentEligible ==
           /\ scopeMatches
           /\ (cursorGraph = head \/ cursorLiftable)

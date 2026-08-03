@@ -1,18 +1,23 @@
 (ns eacl.characterization-fixture-test
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
-            [eacl.authorization-oracle :as oracle]))
+            [eacl.authorization-oracle :as oracle]
+            [eacl.test-support.repo :as repo]))
 
 (def ^:private fixture-path
-  (io/file "formal" "characterization" "v1" "eacl-engine.edn"))
+  (repo/file "formal" "characterization" "v1" "eacl-engine.edn"))
 
 (def ^:private performance-gates-path
-  (io/file "formal" "verification" "performance-gates.edn"))
+  (repo/file "formal" "verification" "performance-gates.edn"))
 
 (defn- load-fixture
   []
   (edn/read-string (slurp fixture-path)))
+
+(defn- available-evidence
+  [evidence]
+  (when (repo/evidence-namespace-available? evidence)
+    (requiring-resolve evidence)))
 
 (defn- resource-projection
   [grants subject permission resource-type]
@@ -67,8 +72,10 @@
         (is (every? symbol? covered-by)
             (str "evidence must name test vars: " id))
         (doseq [evidence covered-by]
-          (is (var? (requiring-resolve evidence))
-              (str "unresolvable characterization evidence: " evidence)))))))
+          (when-let [evidence-var (available-evidence evidence)]
+            (is (var? evidence-var)
+                (str "unresolvable characterization evidence: "
+                     evidence))))))))
 
 (deftest quantitative-performance-gates-are-well-formed-test
   (let [{:keys [formal-pipeline

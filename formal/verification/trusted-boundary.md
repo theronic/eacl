@@ -21,7 +21,9 @@ Reproducibility reduces supply-chain drift; it does not prove these tools.
 Handwritten CLJ/CLJS conversion code must:
 
 - reject unknown variants, fields, and result tags;
-- preserve exact object/type/relation identities and deterministic order;
+- preserve exact object/type/relation identities and the adapter's
+  fixed-snapshot cursor-relative sequence positions, without presenting that
+  internal sequence as a global, lexical, domain, or cross-adapter order;
 - reject integers outside the target's exact representable range;
 - bound collection size, nesting, and encoded input size;
 - turn every malformed adapter callback or generated result into a typed,
@@ -37,8 +39,10 @@ For an operation to inherit a kernel theorem, its adapter must establish:
 2. external/internal object conversion is injective and round-trips for every
    visible object;
 3. relation and permission definitions are complete for the requested schema;
-4. forward and reverse scans are finite, strictly ordered, duplicate-free,
-   complete, directionally equivalent, and honor inclusive/exclusive bounds;
+4. forward and reverse scans are finite, duplicate-free, complete,
+   directionally equivalent, strictly ordered within the adapter's internal
+   fixed-snapshot index sequence, and honor inclusive/exclusive bounds; this is
+   a pagination obligation, not a public global-order guarantee;
 5. direct match agrees exactly with membership in the corresponding scan;
 6. `all-permission-nodes` is complete;
 7. schema and relationship proofs cover the declared dependency scope;

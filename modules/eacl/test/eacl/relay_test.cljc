@@ -2,10 +2,9 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.core :as eacl]
             [eacl.cursor :as cursor]
-            [eacl.relay :as relay]
-            [eacl.relationships.relay :as relationships-relay]
-            [eacl.secure-format :as secure]))
+            [eacl.relay :as relay]))
 
 (defn- operation-map
   [snapshot-id proof]
@@ -85,22 +84,6 @@
            dependencies)]
       (is (not= (:proof-digest first-context)
                 (:proof-digest later-context))))))
-
-(deftest relationship-pagination-rejects-nil-cursors-test
-  (doseq [query [{:first 1 :after nil}
-                 {:last 1 :before nil}]]
-    (is (= :eacl.pagination/invalid-cursor
-           (try
-             (relationships-relay/paginate
-              {}
-              :read-relationships
-              query
-              {}
-              [])
-             nil
-             (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
-               (:eacl/error (ex-data error)))))
-        (pr-str query))))
 
 (def lookup-query
   {:subject {:type :user :id "user-1"}
@@ -254,3 +237,52 @@
                 (get-in page [:page-info :end-cursor])))]
     (is (identical? exact (:adapter prepared)))
     (is (nil? (:recovery prepared)))))
+
+(deftest one-page-builds-one-snapshot-context-test
+  (let [graph-head-calls (atom 0)
+        snapshot-id-calls (atom 0)
+        test-adapter
+        (backend/make-adapter
+         {:id :relay-test
+          :capabilities {}
+          :fingerprint {:adapter :relay-test}
+          :deterministic? true
+          :operations
+          (merge
+           (operation-map 1 nil)
+           {:graph-head
+            (fn []
+              (swap! graph-head-calls inc)
+              {:graph-anchor 1
+               :order-hint 1
+               :exact-locator 1})
+            :snapshot-id
+            (fn []
+              (swap! snapshot-id-calls inc)
+              1)
+            :internal-id->object str})})
+        edge {:kind :relationship-index
+              :v 1
+              :scan-index 0
+              :subject-id 10
+              :resource-id 20}
+        page
+        {:data
+         [(eacl/->Relationship
+           (eacl/spice-object :user 10)
+           :reader
+           (eacl/spice-object :document 20))]
+         :page-info
+         {:start-cursor edge
+          :end-cursor edge
+          :has-next-page? false
+          :has-previous-page? false}}
+        external
+        (relay/externalize-relationship-page
+         test-adapter {} :read-relationships
+         {:subject/type :user :first 1}
+         page)]
+    (is (= 1 @graph-head-calls))
+    (is (= 1 @snapshot-id-calls))
+    (is (string? (get-in external [:page-info :start-cursor])))
+    (is (string? (get-in external [:page-info :end-cursor])))))

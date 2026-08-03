@@ -1,12 +1,12 @@
 (ns eacl.formal.production-kernel-test
   (:require
-   [cljs.test :refer-macros [deftest is testing]]
+   [cljs.test :refer-macros [deftest is]]
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
    [eacl.core :refer [spice-object]]
+   [eacl.engine.relationships :as relationship-engine]
    [eacl.formal.production-kernel :as production]
    [eacl.relay :as relay]
-   [eacl.relationships.relay :as relationship-relay]
    [eacl.verified-kernel :as verified]))
 
 (def selection
@@ -128,6 +128,18 @@
            :default-size 1000
            :maximum-size 10000}
           #(throw (ex-info "legacy must not run" {})))))
+  (is (= {:take-count 20
+          :reverse? false
+          :has-next? true
+          :has-previous? false}
+         (verified/decide
+          selection
+          :relationship-keyset-page
+          {:direction :asc
+           :size 20
+           :bound? false
+           :realized-count 21}
+          #(throw (ex-info "legacy must not run" {})))))
   (is (= :rebase-current
          (verified/decide
           selection
@@ -212,28 +224,36 @@
             [:count :truncated?])))))
 
 (deftest production-relationship-pages-use-generated-javascript-decisions
-  (let [snapshot-context
-        {:source-scope {:backend :test :scope "source"}
-         :graph-head {:graph-anchor "graph-1"
-                      :order-hint 1
-                      :exact-locator "graph-1"}
-         :adapter-fingerprint {:adapter :test}
-         :identity-contract :test/v1}
-        opts {:engine-selection selection}
-        items [{:id 0} {:id 1} {:id 2} {:id 3}]
+  (let [scan-specs [{:idx 0 :scan-kind :forward-anchored}]
+        rows (mapv (fn [id]
+                     {:spec-idx 0
+                      :subject-id 1
+                      :resource-id id
+                      :relationship {:id id}})
+                   (range 1 5))
+        scan
+        (fn [spec edge direction]
+          (let [ordered (if (= :desc direction)
+                          (reverse rows)
+                          rows)]
+            (drop-while
+             #(not
+               (relationship-engine/beyond-cursor?
+                (:scan-kind spec) direction edge %))
+             ordered)))
         first-page
-        (relationship-relay/paginate
-         opts :read-relationships {:first 2}
-         snapshot-context items)
+        (relationship-engine/execute-page
+         scan-specs {:first 2} selection scan)
         second-page
-        (relationship-relay/paginate
-         opts :read-relationships
+        (relationship-engine/execute-page
+         scan-specs
          {:first 2
           :after (get-in first-page [:page-info :end-cursor])}
-         snapshot-context items)]
-    (is (= [{:id 0} {:id 1}] (:data first-page)))
+         selection
+         scan)]
+    (is (= [{:id 1} {:id 2}] (:data first-page)))
     (is (true? (get-in first-page [:page-info :has-next-page?])))
-    (is (= [{:id 2} {:id 3}] (:data second-page)))
+    (is (= [{:id 3} {:id 4}] (:data second-page)))
     (is (false? (get-in second-page [:page-info :has-next-page?])))
     (is (true? (get-in second-page
                        [:page-info :has-previous-page?])))))

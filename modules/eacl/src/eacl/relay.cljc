@@ -2,7 +2,7 @@
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.v8 :as backend]
             [eacl.consistency :as consistency]
-            [eacl.core :refer [spice-object]]
+            [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
@@ -294,6 +294,11 @@
     :recursive-traversal
     (cond-> edge
       (get-in edge [:result :eid]) (update-in [:result :eid] f))
+
+    :relationship-index
+    (-> edge
+        (update :subject-id f)
+        (update :resource-id f))
 
     edge))
 
@@ -660,7 +665,7 @@
     (contains? query :before)
     (update :before #(decode-page-edge adapter opts operation query %))))
 
-(defn externalize-page
+(defn- externalize-page-cursors
   [adapter opts operation query page]
   (let [context (delay (dependency-context adapter nil))
         scope (cursor-scope operation query)
@@ -670,19 +675,46 @@
            adapter opts scope
            (when edge @context)
            edge))]
-    (cond->
-     (-> page
-         (update :data
-                 (fn [objects]
-                   (mapv
-                    (fn [{:keys [type id]}]
-                      (spice-object
-                       type
-                       (backend/invoke adapter :internal-id->object id)))
-                    objects)))
-         (update-in [:page-info :start-cursor] encode-edge)
-         (update-in [:page-info :end-cursor] encode-edge))
+    (cond-> (-> page
+                (update-in [:page-info :start-cursor] encode-edge)
+                (update-in [:page-info :end-cursor] encode-edge))
       (:cursor-recovery opts)
       (assoc-in
        [:page-info :cursor-recovery]
        (:cursor-recovery opts)))))
+
+(defn externalize-page
+  [adapter opts operation query page]
+  (externalize-page-cursors
+   adapter opts operation query
+   (update
+    page :data
+    (fn [objects]
+      (mapv
+       (fn [{:keys [type id]}]
+         (spice-object
+          type
+          (backend/invoke adapter :internal-id->object id)))
+       objects)))))
+
+(defn externalize-relationship-page
+  [adapter opts operation query page]
+  (externalize-page-cursors
+   adapter opts operation query
+   (update
+    page
+    :data
+    (fn [relationships]
+      (mapv
+       (fn [{:keys [subject relation resource]}]
+         (eacl/map->Relationship
+          {:subject
+           (update
+            subject :id
+            #(backend/invoke adapter :internal-id->object %))
+           :relation relation
+           :resource
+           (update
+            resource :id
+            #(backend/invoke adapter :internal-id->object %))}))
+       relationships)))))

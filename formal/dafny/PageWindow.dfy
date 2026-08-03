@@ -175,6 +175,50 @@ module PageWindow {
     hasPrevious: bool
   )
 
+  datatype KeysetPageDecision = KeysetPageDecision(
+    takeCount: nat,
+    reverseItems: bool,
+    hasNext: bool,
+    hasPrevious: bool
+  )
+
+  method DecideKeysetPage(
+    direction: Pagination.Direction,
+    size: nat,
+    boundPresent: bool,
+    realizedCount: nat
+  ) returns (decision: KeysetPageDecision)
+    requires 0 < size
+    requires realizedCount <= size + 1
+    ensures decision.takeCount == Minimum(size, realizedCount)
+    ensures decision.takeCount <= size
+    ensures decision.reverseItems <==> direction.Descending?
+    ensures decision.hasNext <==>
+            0 < decision.takeCount &&
+            (if direction.Ascending?
+             then realizedCount > size
+             else boundPresent)
+    ensures decision.hasPrevious <==>
+            0 < decision.takeCount &&
+            (if direction.Ascending?
+             then boundPresent
+             else realizedCount > size)
+  {
+    var takeCount := Minimum(size, realizedCount);
+    decision := KeysetPageDecision(
+      takeCount,
+      direction.Descending?,
+      0 < takeCount &&
+      (if direction.Ascending?
+       then realizedCount > size
+       else boundPresent),
+      0 < takeCount &&
+      (if direction.Ascending?
+       then boundPresent
+       else realizedCount > size)
+    );
+  }
+
   function PageValues<T>(
     values: seq<T>,
     direction: Pagination.Direction,

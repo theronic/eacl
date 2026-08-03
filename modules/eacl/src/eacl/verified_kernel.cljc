@@ -15,6 +15,7 @@
 
 (def operations
   #{:relationship-page
+    :relationship-keyset-page
     :cursor-continuation
     :cache-validation
     :authorization-evaluation})
@@ -118,6 +119,36 @@
        (get request field)))
     (doseq [field [:has-legacy-limit? :has-legacy-cursor?]]
       (require-value! operation field boolean? (get request field)))
+    input))
+
+(defn- validate-keyset-page-input!
+  [input]
+  (let [operation :relationship-keyset-page]
+    (exact-keys!
+     operation
+     :input
+     input
+     #{:direction :size :bound? :realized-count})
+    (require-value!
+     operation :direction #{:asc :desc} (:direction input))
+    (require-value! operation :size safe-natural? (:size input))
+    (when (zero? (:size input))
+      (boundary-error!
+       "Generated keyset page size must be positive."
+       {:operation operation :field :size}))
+    (require-value!
+     operation :bound? boolean? (:bound? input))
+    (require-value!
+     operation
+     :realized-count
+     safe-natural?
+     (:realized-count input))
+    (when (> (:realized-count input) (inc (:size input)))
+      (boundary-error!
+       "Generated keyset page input exceeds its one-row lookahead bound."
+       {:operation operation
+        :size (:size input)
+        :realized-count (:realized-count input)}))
     input))
 
 (defn- validate-exact-input!
@@ -421,6 +452,7 @@
   [operation input]
   (case operation
     :relationship-page (validate-page-input! input)
+    :relationship-keyset-page (validate-keyset-page-input! input)
     :cursor-continuation (validate-continuation-input! input)
     :cache-validation (validate-cache-input! input)
     :authorization-evaluation (validate-authorization-input! input)
@@ -466,6 +498,20 @@
       (boundary-error!
        "Generated page result has an unknown variant."
        {:operation operation :result result}))))
+
+(defn- validate-keyset-page-result!
+  [result]
+  (let [operation :relationship-keyset-page]
+    (exact-keys!
+     operation
+     :result
+     result
+     #{:take-count :reverse? :has-next? :has-previous?})
+    (require-value!
+     operation :take-count safe-natural? (:take-count result))
+    (doseq [field [:reverse? :has-next? :has-previous?]]
+      (require-value! operation field boolean? (get result field)))
+    result))
 
 (def continuation-decisions
   #{:current
@@ -620,6 +666,7 @@
   [operation result]
   (case operation
     :relationship-page (validate-page-result! result)
+    :relationship-keyset-page (validate-keyset-page-result! result)
     :cursor-continuation (validate-continuation-result! result)
     :cache-validation (validate-cache-result! result)
     :authorization-evaluation (validate-authorization-result! result)
@@ -681,6 +728,13 @@
           :length (:length input)
           :maximum-size (:maximum-size input)
           :result result}))
+      (when (and (= :relationship-keyset-page operation)
+                 (> (:take-count result) (:size input)))
+        (boundary-error!
+         "Generated keyset page exceeds its requested size."
+         {:operation operation
+          :size (:size input)
+          :take-count (:take-count result)}))
       result)
     (catch #?(:clj Exception :cljs :default) error
       (if (= :eacl.verification/invalid-boundary

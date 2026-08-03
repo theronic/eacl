@@ -54,8 +54,11 @@
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
   {:operation :relationship-pagination
-   :entry-points ['eacl.relationships.relay]
-   :theorems [:relationship-window-exact :single-permitted-graph]
+   :entry-points ['eacl.engine.relationships/execute-page
+                  'eacl.relay/externalize-relationship-page]
+   :theorems [:relationship-keyset-page-decision-exact
+              :page-walk-complete
+              :single-permitted-graph]
    :dafny ["formal/dafny/PageWindow.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :ordered-complete-scans

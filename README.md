@@ -73,6 +73,13 @@ cursor's exact snapshot. If current has advanced, EACL reconstructs the
 authenticated original exact value; a missing value or incompatible freshness
 floor returns a typed failure.
 
+Relationship pages seek directly through the backend's immutable tuple indexes
+with an authenticated physical keyset edge and read at most the requested page
+plus one lookahead row. EACL does not promise one global, lexical, or
+cross-backend result order. It promises that a fixed query and cursor-pinned
+snapshot have one deterministic backend sequence: following its cursors does
+not move items between pages and emits no item twice.
+
 The authenticated database identity is checked before EACL selects a cursor basis or resolves
 query inputs. Sharing a stable page-token key across backend instances does not make a cursor
 portable to another logical Datomic database, even when a cloned database has matching schema,
@@ -293,7 +300,14 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
    :before        (get-in page2 [:page-info :start-cursor])})
 ```
 
-Forward and backward pages return results in the same order for the query. Acyclic lookup uses Datomic eid order; recursive lookup uses deterministic traversal order. Backward pagination returns the previous window; it does not reverse the result order. Bare `:last` without `:before` is not supported for recursive lookup because it requires traversing the full closure.
+Forward and backward pages return results in the same order for one fixed query
+and cursor-pinned snapshot. Acyclic lookup uses backend internal-ID order,
+recursive lookup uses deterministic traversal order, and relationship reads use
+backend tuple-index order. These are pagination orders, not a global,
+cross-backend, or domain sort order. Backward pagination returns the previous
+window; it does not reverse the result order. Bare `:last` without `:before` is
+not supported for recursive lookup because it requires traversing the full
+closure.
 
 ## Datomic Quickstart
 
@@ -1029,7 +1043,13 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   Recursive work retains hard heap-protection ceilings, and counts use one traversal. Use
   `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load
   tests.
-- *Return order:* Acyclic EACL lookups enumerate in Datomic eid order and relationship reads enumerate in tuple-index order. Recursive lookups enumerate in deterministic traversal order. SpiceDB returns results in discovery or schema order. You should not rely on either system's order as a domain sort order.
+- *Return order:* EACL makes no global, lexical, or cross-backend ordering
+  promise. For a fixed query and cursor-pinned snapshot, acyclic lookups use
+  backend internal-ID order, relationship reads use backend tuple-index order,
+  and recursive lookups use deterministic traversal order. This stability is
+  sufficient for a cursor walk with no movement or duplicates; sort by a
+  domain key after reading if presentation order matters. SpiceDB likewise
+  returns results in discovery or schema order.
 
 ## How to Run All Tests
 

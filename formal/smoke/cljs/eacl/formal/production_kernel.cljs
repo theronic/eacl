@@ -328,6 +328,29 @@
        :has-next? (.-dtor_hasNext page)
        :has-previous? (.-dtor_hasPrevious page)})))
 
+(defn- keyset-page-decision
+  [{:keys [direction size bound? realized-count]}]
+  (let [page-window (.-PageWindow generated)
+        pagination (.-Pagination generated)
+        direction-value
+        (if (= :asc direction)
+          (js-invoke
+           (.-Direction pagination) "create_Ascending")
+          (js-invoke
+           (.-Direction pagination) "create_Descending"))
+        decision
+        (js-invoke
+         (.-__default page-window)
+         "DecideKeysetPage"
+         direction-value
+         (big-number size)
+         bound?
+         (big-number realized-count))]
+    {:take-count (.toNumber (.-dtor_takeCount decision))
+     :reverse? (.-dtor_reverseItems decision)
+     :has-next? (.-dtor_hasNext decision)
+     :has-previous? (.-dtor_hasPrevious decision)}))
+
 (defn- exact-selection
   [exact]
   (let [page-window (.-PageWindow generated)]
@@ -476,6 +499,7 @@
   (-decide [_ operation input]
     (case operation
       :relationship-page (page-decision input)
+      :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
       :cache-validation (cache-decision input)
       :authorization-evaluation (authorization-decision input))))
