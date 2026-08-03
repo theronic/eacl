@@ -1,7 +1,8 @@
 (ns eacl.formal.counterexample-replay-test
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.test :as test :refer [deftest is testing]]))
+            [clojure.test :as test :refer [deftest is testing]]
+            [eacl.test-support.repo :as repo]))
 
 (def regression-vars
   '{:EACL-FORMAL-001
@@ -27,13 +28,20 @@
 
 (defn- entry-files
   []
-  (->> (file-seq (io/file "formal/counterexamples"))
+  (->> (file-seq (repo/file "formal" "counterexamples"))
        (filter #(.isFile %))
        (filter #(= "entry.edn" (.getName %)))
        (sort-by #(.getPath %))))
 
+(defn- available-regression
+  [test-symbol]
+  (when (repo/evidence-namespace-available? test-symbol)
+    (requiring-resolve test-symbol)))
+
 (deftest counterexample-corpus-is-complete-and-closed-test
-  (let [schema (read-edn "formal/counterexamples/ledger-schema.edn")
+  (let [schema (read-edn
+                (repo/file
+                 "formal" "counterexamples" "ledger-schema.edn"))
         required (set (keys (:required schema)))
         entries
         (mapv
@@ -52,7 +60,8 @@
                    (str directory "/" artifact)))
              entry))
          (entry-files))
-        manifest (read-edn "formal/verification/manifest.edn")
+        manifest (read-edn
+                  (repo/file "formal" "verification" "manifest.edn"))
         revision (:counterexample-corpus-revision manifest)]
     (is (= (set (keys regression-vars))
            (set (map :id entries))
@@ -61,8 +70,15 @@
     (is (= 8 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
-  (doseq [[bug-id test-symbol] regression-vars]
-    (testing (name bug-id)
-      (let [test-var (requiring-resolve test-symbol)]
+  (let [available
+        (keep
+         (fn [[bug-id test-symbol]]
+           (when-let [test-var (available-regression test-symbol)]
+             [bug-id test-symbol test-var]))
+         regression-vars)]
+    (is (seq available)
+        "each isolated classpath must expose some closing regressions")
+    (doseq [[bug-id test-symbol test-var] available]
+      (testing (name bug-id)
         (is (var? test-var) (str "missing replay " test-symbol))
         (test/test-var test-var)))))

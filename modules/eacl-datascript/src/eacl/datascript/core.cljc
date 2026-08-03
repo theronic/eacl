@@ -9,8 +9,7 @@
             [eacl.core :as eacl :refer [IAuthorization
                                         spice-object
                                         ->Relationship
-                                        ->RelationshipUpdate
-                                        map->Relationship]]
+                                        ->RelationshipUpdate]]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.mutation :as journal]
@@ -19,7 +18,6 @@
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
-            [eacl.relationships.relay :as relationship-relay]
             [eacl.secure-format :as secure]
             [eacl.verified-kernel :as verified]
             [eacl.spicedb.consistency :as consistency]))
@@ -83,17 +81,6 @@
         (:resource cursor) (S/transform [:resource :id] #(object-id->entid db %) cursor)
         (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
 
-(defn object->spice
-  [db {:keys [entid->object-id]} object]
-  (update object :id #(entid->object-id db %)))
-
-(defn relationship->spice
-  [db opts {:keys [subject relation resource]}]
-  (map->Relationship
-   {:subject (object->spice db opts subject)
-    :relation relation
-    :resource (object->spice db opts resource)}))
-
 (defn- snapshot-adapter
   [db opts]
   (datascript-backend/snapshot-adapter db opts))
@@ -148,13 +135,15 @@
   (let [current-opts
         (cursor-options
          adapter opts selection resource-type permission)
-        page-adapter
-        (relay/select-continuation-adapter
+        continuation
+        (relay/select-continuation-context
          adapter current-opts operation query)
+        page-adapter (:adapter continuation)
         page-opts
         (assoc
          (cursor-options
           page-adapter opts selection resource-type permission)
+         :decoded-page-bound (:decoded-page-bound continuation)
          :completed-cache?
          (and
           (:completed-cache-request? opts)
@@ -167,15 +156,6 @@
     {:adapter page-adapter
      :db (:db (backend/state page-adapter))
      :opts page-opts}))
-
-(defn- pagination-snapshot-context
-  [adapter]
-  {:source-scope
-   {:backend (backend/backend-id adapter)
-    :scope (backend/invoke adapter :source-scope)}
-   :graph-head (backend/invoke adapter :graph-head)
-   :adapter-fingerprint (backend/fingerprint adapter)
-   :identity-contract (backend/identity-contract adapter)})
 
 (defn- datom-transaction
   [db entity attribute]
@@ -271,66 +251,40 @@
 (defn datascript-read-relationships
   [db
    {:as opts
-   :keys [object-id->entid
-           internal-cursor->spice
-           spice-cursor->internal]}
+   :keys [object-id->entid]}
    filters]
-  (let [{selected-db :db adapter :adapter selection :selection}
+  (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency filters))
+        {adapter :adapter page-db :db cursor-opts :opts}
+        (page-context
+         source-adapter opts selection :read-relationships filters nil nil)
         base-filters (apply dissoc filters
                             [:first :last :after :before :consistency])
         _ (relationship-filters/validate! base-filters)
-        items-for-adapter
-        (fn [page-adapter]
-          (let [page-db (:db (backend/state page-adapter))
-                subject-id (:subject/id base-filters)
-                resource-id (:resource/id base-filters)
-                subject-eid (when subject-id
-                              (object-id->entid page-db subject-id))
-                resource-eid (when resource-id
-                               (object-id->entid page-db resource-id))]
-            (if (or (and subject-id (nil? subject-eid))
-                    (and resource-id (nil? resource-eid)))
-              []
-              (let [filters'
-                    (cond-> base-filters
-                      subject-id (assoc :subject/id subject-eid)
-                      resource-id (assoc :resource/id resource-eid))
-                    internal-relationships
-                    (loop [cursor nil
-                           result []]
-                      (let [page
-                            (impl/read-relationships
-                             page-db
-                             (cond-> (assoc filters' :limit 10000)
-                               cursor (assoc :cursor cursor)))
-                            result' (into result (:data page))
-                            next-cursor (:cursor page)]
-                        (if (and next-cursor
-                                 (not= cursor next-cursor)
-                                 (seq (:data page)))
-                          (recur next-cursor result')
-                          result')))]
-                (->> internal-relationships
-                     (map #(relationship->spice page-db opts %))
-                     (sort-by
-                      (fn [{:keys [subject relation resource]}]
-                        [(:type subject) (:id subject)
-                         relation
-                         (:type resource) (:id resource)]))
-                     vec)))))
-        cursor-opts
-        (assoc opts
-               :cursor-consistency-mode
-               (get-in selection [:descriptor :mode])
-               :relationship-adapter adapter
-               :relationship-items-for-adapter items-for-adapter)]
-    (relationship-relay/paginate
-     cursor-opts
-     :read-relationships
-     filters
-     (pagination-snapshot-context adapter)
-     (items-for-adapter adapter))))
+        subject-id (:subject/id base-filters)
+        resource-id (:resource/id base-filters)
+        subject-eid (when subject-id
+                      (object-id->entid page-db subject-id))
+        resource-eid (when resource-id
+                       (object-id->entid page-db resource-id))
+        internal-query
+        (-> filters
+            (dissoc :consistency)
+            (#(relay/internalize-page-query
+               adapter cursor-opts :read-relationships %))
+            (cond->
+              subject-id (assoc :subject/id subject-eid)
+              resource-id (assoc :resource/id resource-eid)))]
+    (if (or (and subject-id (nil? subject-eid))
+            (and resource-id (nil? resource-eid)))
+      relay/empty-page
+      (relay/externalize-relationship-page
+       adapter
+       cursor-opts
+       :read-relationships
+       filters
+       (impl/read-relationships
+        page-db internal-query (:engine-selection cursor-opts))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]

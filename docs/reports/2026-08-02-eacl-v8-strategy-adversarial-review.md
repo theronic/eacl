@@ -472,11 +472,15 @@ Never silently fall forward.
 
 ### L31 — cursor scope can omit ordering or rendering semantics
 
-A cursor reused with another direction, query, engine ABI, adapter ordering,
-identity generation, page mode, or tenant can omit/duplicate values.
+A cursor reused with another query, engine ABI, adapter ordering, identity
+generation, incompatible page mode, or tenant can omit/duplicate values. Relay
+edge positions themselves must remain direction-neutral: a start cursor can be
+used as a `before` bound and an end cursor as an `after` bound.
 
-**Fix:** Authenticate complete normalized query scope, direction, ordering ABI,
-source incarnation, exact view, result kind, and boundary/frontier.
+**Fix:** Authenticate the complete normalized non-page query scope, ordering
+ABI, source incarnation, exact view, result kind, and boundary/frontier. Keep
+direction-specific traversal frontier data inside the authenticated edge where
+needed, but do not bind the physical position to the request direction.
 
 ### L32 — continuation state can be swapped
 

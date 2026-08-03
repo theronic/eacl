@@ -172,13 +172,11 @@ module TemporalSafety {
     );
   }
 
-  datatype Direction = Ascending | Descending
   datatype ResultKind = ResourceResult | SubjectResult | RelationshipResult
 
   datatype CursorScope = CursorScope(
     operation: string,
     normalizedQuery: string,
-    direction: Direction,
     resultKind: ResultKind,
     engineVersion: nat,
     semanticsVersion: nat,

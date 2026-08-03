@@ -57,7 +57,17 @@ The verified kernel SHALL mechanically prove termination for every finite valid 
 - **THEN** the operation returns the typed recursive-traversal limit error and returns no partial authorization decision as final
 
 ### Requirement: Proven cursor safety and page completeness
-The verified kernel SHALL mechanically prove that every accepted lookup or relationship cursor is bound to its operation, normalized query, direction, result kind, execution identity, dependency scope, and permitted graph. Within one permitted graph, each page SHALL be the specified window of one deterministic complete result sequence, and concatenating a valid complete page walk SHALL reproduce that sequence without omissions or duplicates.
+The verified kernel SHALL mechanically prove that every accepted lookup or
+relationship cursor is bound to its operation, normalized non-page query,
+result kind, execution identity, dependency scope, and permitted graph. A
+relationship cursor represents an authenticated physical position rather than
+one traversal direction, so the same position MAY be used as an `after` or
+`before` bound for the same operation and normalized non-page query. For
+one fixed adapter, query, and permitted immutable graph, each page SHALL be the
+specified window of one deterministic complete result sequence, and
+concatenating a valid complete page walk SHALL reproduce that sequence without
+omissions or duplicates. EACL SHALL NOT promise that this internal pagination
+sequence is a global, lexical, domain, or cross-adapter order.
 
 #### Scenario: Complete forward walk
 - **WHEN** a caller follows successive `:first` and `:after` cursors to exhaustion without changing the permitted graph
@@ -68,8 +78,12 @@ The verified kernel SHALL mechanically prove that every accepted lookup or relat
 - **THEN** each response is the mathematically correct preceding window with accurate page flags
 
 #### Scenario: Cross-query cursor reuse
-- **WHEN** a cursor is presented to another operation, query scope, direction, or result kind
+- **WHEN** a cursor is presented to another operation, normalized non-page query scope, or result kind
 - **THEN** EACL rejects it with a typed invalid-cursor error before traversal
+
+#### Scenario: Reverse from an authenticated position
+- **WHEN** a relationship cursor from the same operation, normalized non-page query, execution identity, and permitted graph is used in the opposite page direction
+- **THEN** EACL treats it as the exclusive physical bound for that direction without moving or duplicating results
 
 #### Scenario: Changed authorization dependencies
 - **WHEN** current has advanced and the cursor's authenticated exact graph cannot be selected

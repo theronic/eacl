@@ -26,7 +26,9 @@ None.
 
 ## Impact
 
-- Affected shared code: `modules/eacl/src/eacl/engine/v8.cljc`, `cache.cljc`, `relay.cljc`, `relationships/relay.cljc`, `backend/v8.cljc`, and their public-client orchestration.
+- Affected shared code: `modules/eacl/src/eacl/engine/v8.cljc`,
+  `engine/relationships.cljc`, `cache.cljc`, `relay.cljc`,
+  `backend/v8.cljc`, and their public-client orchestration.
 - Affected adapter verification: Datomic, DataScript, and Datahike contract suites; backend implementations remain outside the formal proof and are checked against explicit assumptions.
 - New repository artifacts: formal semantics and proofs, temporal models, generated JVM integration code, differential generators, minimized counterexamples, toolchain locks, and CI jobs.
 - New development tooling: a pinned verification-aware JVM-targeting toolchain and a pinned TLA+ model checker; no new production service or database dependency.

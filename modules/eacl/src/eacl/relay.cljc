@@ -2,7 +2,7 @@
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.v8 :as backend]
             [eacl.consistency :as consistency]
-            [eacl.core :refer [spice-object]]
+            [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
             [eacl.verified-kernel :as verified]))
@@ -80,20 +80,29 @@
     (cond-> edge
       (get-in edge [:result :eid]) (update-in [:result :eid] f))
 
+    :relationship-index
+    (-> edge
+        (update :subject-id f)
+        (update :resource-id f))
+
     edge))
 
 (defn- encode-page-edge
-  [adapter opts operation query edge]
-  (when edge
-    (cursor/cursor->token
-     (merge
-      {:v 10
-       :scope (cursor-scope operation query)
-       :edge (transform-edge-ids
-              #(backend/invoke adapter :internal-id->object %)
-              edge)}
-      (dependency-context adapter nil))
-     opts)))
+  ([adapter opts operation query edge]
+   (encode-page-edge
+    adapter opts operation query edge
+    (when edge (dependency-context adapter nil))))
+  ([adapter opts operation query edge context]
+   (when edge
+     (cursor/cursor->token
+      (merge
+       {:v 10
+        :scope (cursor-scope operation query)
+        :edge (transform-edge-ids
+               #(backend/invoke adapter :internal-id->object %)
+               edge)}
+       context)
+      opts))))
 
 (defn- invalid-cursor!
   [message data cause]
@@ -276,48 +285,72 @@
      (continuation-decision opts current envelope nil))
     true))
 
+(defn- select-adapter-for-envelope
+  [adapter opts envelope]
+  (let [current (current-context adapter opts)
+        initial
+        (continuation-decision opts current envelope nil)]
+    (if (= :snapshot-unavailable initial)
+      (let [exact
+            (backend/invoke
+             adapter
+             :select-exact
+             {:graph-anchor
+              (get-in envelope [:graph-head :graph-anchor])
+              :order-hint
+              (get-in envelope [:graph-head :order-hint])
+              :exact-locator
+              (get-in envelope [:graph-head :exact-locator])}
+             (:timeout-ms opts))]
+        (when-not exact
+          (throw
+           (ex-info
+            "The cursor's exact snapshot is no longer retained."
+            {:type :eacl.consistency/snapshot-expired
+             :eacl/error
+             :eacl.consistency/snapshot-expired})))
+        (let [exact-context
+              (dependency-context exact nil)
+              decision
+              (continuation-decision
+               opts current envelope exact-context)]
+          (apply-continuation-decision!
+           exact exact-context envelope decision)
+          exact))
+      (do
+        (apply-continuation-decision!
+         adapter current envelope initial)
+        adapter))))
+
+(defn select-continuation-context
+  "Selects the cursor-pinned adapter and decodes its physical edge once."
+  [adapter opts operation query]
+  (let [field (cond
+                (contains? query :after) :after
+                (contains? query :before) :before)
+        token (get query field)
+        envelope (decode-envelope opts operation query token)]
+    (if-not envelope
+      {:adapter adapter}
+      (let [selected
+            (select-adapter-for-envelope adapter opts envelope)]
+        {:adapter selected
+         :decoded-page-bound
+         {:field field
+          :token token
+          :operation operation
+          :scope (cursor-scope operation query)
+          :edge
+          (transform-edge-ids
+           #(backend/invoke selected :object-id->internal %)
+           (:edge envelope))}}))))
+
 (defn select-continuation-adapter
   "Uses an equal current proof, otherwise reconstructs the authenticated
   original graph when no newer at-least floor forbids fallback."
   [adapter opts operation query]
-  (let [token (or (:after query) (:before query))
-        envelope (decode-envelope opts operation query token)]
-    (if-not envelope
-      adapter
-      (let [current (current-context adapter opts)]
-        (let [initial
-              (continuation-decision opts current envelope nil)]
-          (if (= :snapshot-unavailable initial)
-            (let [exact
-                  (backend/invoke
-                   adapter
-                   :select-exact
-                   {:graph-anchor
-                    (get-in envelope [:graph-head :graph-anchor])
-                    :order-hint
-                    (get-in envelope [:graph-head :order-hint])
-                    :exact-locator
-                    (get-in envelope [:graph-head :exact-locator])}
-                   (:timeout-ms opts))]
-              (when-not exact
-                (throw
-                 (ex-info
-                  "The cursor's exact snapshot is no longer retained."
-                  {:type :eacl.consistency/snapshot-expired
-                   :eacl/error
-                   :eacl.consistency/snapshot-expired})))
-              (let [exact-context
-                    (dependency-context exact nil)
-                    decision
-                    (continuation-decision
-                     opts current envelope exact-context)]
-                (apply-continuation-decision!
-                 exact exact-context envelope decision)
-                exact))
-            (do
-              (apply-continuation-decision!
-               adapter current envelope initial)
-              adapter)))))))
+  (:adapter
+   (select-continuation-context adapter opts operation query)))
 
 (defn- decode-page-edge
   [adapter opts operation query token]
@@ -330,25 +363,74 @@
 
 (defn internalize-page-query
   [adapter opts operation query]
-  (cond-> query
-    (contains? query :after)
-    (update :after #(decode-page-edge adapter opts operation query %))
+  (let [predecoded (:decoded-page-bound opts)
+        internalize
+        (fn [field token]
+          (if (= {:field field
+                  :token token
+                  :operation operation
+                  :scope (cursor-scope operation query)}
+                 (select-keys
+                  predecoded
+                  [:field :token :operation :scope]))
+            (:edge predecoded)
+            (decode-page-edge
+             adapter opts operation query token)))]
+    (cond-> query
+      (contains? query :after)
+      (update :after #(internalize :after %))
 
-    (contains? query :before)
-    (update :before #(decode-page-edge adapter opts operation query %))))
+      (contains? query :before)
+      (update :before #(internalize :before %)))))
+
+(defn- externalize-page-cursors
+  [adapter opts operation query page]
+  (let [start (get-in page [:page-info :start-cursor])
+        end (get-in page [:page-info :end-cursor])
+        context (when (or start end)
+                  (dependency-context adapter nil))]
+    (-> page
+        (assoc-in
+         [:page-info :start-cursor]
+         (encode-page-edge
+          adapter opts operation query start context))
+        (assoc-in
+         [:page-info :end-cursor]
+         (encode-page-edge
+          adapter opts operation query end context)))))
 
 (defn externalize-page
   [adapter opts operation query page]
-  (-> page
-      (update :data
-              (fn [objects]
-                (mapv
-                 (fn [{:keys [type id]}]
-                   (spice-object
-                    type
-                    (backend/invoke adapter :internal-id->object id)))
-                 objects)))
-      (update-in [:page-info :start-cursor]
-                 #(encode-page-edge adapter opts operation query %))
-      (update-in [:page-info :end-cursor]
-                 #(encode-page-edge adapter opts operation query %))))
+  (externalize-page-cursors
+   adapter opts operation query
+   (update
+    page :data
+    (fn [objects]
+      (mapv
+       (fn [{:keys [type id]}]
+         (spice-object
+          type
+          (backend/invoke adapter :internal-id->object id)))
+       objects)))))
+
+(defn externalize-relationship-page
+  [adapter opts operation query page]
+  (externalize-page-cursors
+   adapter opts operation query
+   (update
+    page
+    :data
+    (fn [relationships]
+      (mapv
+       (fn [{:keys [subject relation resource]}]
+         (eacl/map->Relationship
+          {:subject
+           (update
+            subject :id
+            #(backend/invoke adapter :internal-id->object %))
+           :relation relation
+           :resource
+           (update
+            resource :id
+            #(backend/invoke adapter :internal-id->object %))}))
+       relationships)))))

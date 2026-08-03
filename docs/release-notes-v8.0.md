@@ -181,8 +181,10 @@ continuation state is isolated in a separate bounded private store.
 ## Cursor redesign
 
 Cursor envelopes are now v10. Cursors authenticate the backend/source,
-operation, query, direction, result kind, semantic/configuration identity,
-graph anchor, and exact snapshot locator.
+operation, normalized non-page query, result kind,
+semantic/configuration identity, graph anchor, and exact snapshot locator.
+Their boundary position is direction-neutral, so the same authenticated edge
+can serve as an exclusive `after` or `before` bound.
 
 - Continuation on the same current immutable snapshot is direct.
 - If current has advanced, EACL reconstructs the cursor's original exact
@@ -195,6 +197,17 @@ graph anchor, and exact snapshot locator.
   the same exact snapshot.
 - Relationship cursors bind the exact selected snapshot rather than hashing
   the complete item sequence.
+- DataScript and Datahike relationship pages now seek from an authenticated
+  physical tuple-index edge and resolve only the selected page's public IDs.
+  They read at most `page-size + 1` matching internal rows instead of
+  materializing and sorting every match before every page.
+
+EACL does not promise a global, lexical, domain, or cross-backend order now that
+recursive schema has multiple valid traversal orders. It promises one
+deterministic sequence for a fixed query on the cursor-pinned immutable
+snapshot. A complete valid walk has no item movement, omission, or duplication.
+Relationship pages use each backend's tuple-index order; that order is an
+internal pagination contract, not a presentation-order API.
 
 The previous candidate recalculated complete dependency/content proofs and
 could rebase a cursor to a newer proof-equivalent graph. That design was both

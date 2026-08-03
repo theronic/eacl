@@ -15,8 +15,9 @@ Its 25 transitions cover:
 - complete dependency scopes, structural proofs, and proof lifting;
 - authenticated cache lookup, tampering, provider failure, future and sibling
   entries, storage, invalidation generations, and telemetry compare-and-set;
-- cursor authentication, operation/query/direction/result scope, expiry,
-  proof-equivalent reuse, exact-snapshot fallback, divergence, and conflict;
+- cursor authentication, operation/non-page-query/result scope, positional
+  direction changes, expiry, proof-equivalent reuse, exact-snapshot fallback,
+  divergence, and conflict;
 - recursive continuation and page publication, retry, eviction, lookup, and
   deterministic replay.
 

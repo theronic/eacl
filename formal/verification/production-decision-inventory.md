@@ -15,8 +15,8 @@ reused.
 | Recursive continuation and page reuse | `cached-continuation`, `store-continuation!`, `cached-recursive-request-page`, `cached-recursive-previous-page`, `store-recursive-page!` | recursive lookup/count pagination |
 | Page-bound validation and window assembly | cursor-bound validators and page constructors in `eacl.engine.v8` | lookup/count page data, order, flags, start/end cursors |
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
-| Relationship pagination | `eacl.relationships.relay` query scope, offsets, current/exact graph selection | relationship list APIs |
-| Authenticated token scope and continuation decision | cursor decode/validate and graph/proof selection in `eacl.relay` and `eacl.relationships.relay` | lookup/count/relationship continuation |
+| Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
+| Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
 | Semantic cache key and entry eligibility | `eacl.cache` request keys, execution/source identity, exact/causal/proof validation | `can?`, lookup, count cache-enabled responses |
 | Cache provider failure/tamper handling | `eacl.cache` read, authentication, proof-provider, and validation paths | whether a cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
@@ -33,5 +33,6 @@ The decisions above flow into these externally observable families:
 - cache-enabled variants of checks, lookup, and count.
 
 No production decision may be omitted from the assurance matrix when it can
-alter allow/deny, membership, ordering, page flags, typed errors, selected
-snapshot, or cache provenance.
+alter allow/deny, membership, the stable per-query pagination sequence, page
+flags, typed errors, selected snapshot, or cache provenance. “Ordering” here
+does not imply a global, lexical, domain, or cross-backend order.
