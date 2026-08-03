@@ -309,6 +309,41 @@
                (tamper-authenticator cursor/cursor-prefix encoded)
                options)))))))
 
+(deftest private-cursor-codec-cache-test
+  (let [value {:v 10
+               :scope [:lookup {:subject/id "user-1"}]
+               :edge {:kind :lookup-eid :result-eid "document-1"}}
+        codec-cache (cursor/codec-cache {:max-entries 2})
+        cached-options (assoc options :cursor-codec-cache codec-cache)
+        original-encode secure/encode-authenticated
+        encode-calls (atom 0)
+        encoded
+        (with-redefs [secure/encode-authenticated
+                      (fn [options payload]
+                        (swap! encode-calls inc)
+                        (original-encode options payload))]
+          (let [first-token
+                (cursor/cursor->token value cached-options)
+                repeated-token
+                (cursor/cursor->token value cached-options)]
+            (is (= first-token repeated-token))
+            (is (= 1 @encode-calls)
+                "a client-owned non-expiring cursor is authenticated once")
+            first-token))]
+    (testing "a token minted by this cache skips repeated authenticated decode"
+      (with-redefs [secure/decode-authenticated
+                    (fn [_options _token]
+                      (throw (ex-info "unexpected decode" {})))]
+        (is (= value
+               (cursor/token->cursor encoded cached-options)))))
+    (testing "an unknown token still passes through authenticated decoding"
+      (is (= :authentication-failed
+             (:reason
+              (error-data
+               #(cursor/token->cursor
+                 (tamper-authenticator cursor/cursor-prefix encoded)
+                 cached-options))))))))
+
 (deftest portable-cursor-expiry-boundary-test
   (let [value {:v 8 :edge {:kind :lookup-eid} :position [1 "a"]}
         issued-at 100

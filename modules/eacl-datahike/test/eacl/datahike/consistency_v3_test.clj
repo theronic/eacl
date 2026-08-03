@@ -78,6 +78,59 @@
         (is (= (:misses before) (:misses after)))
         (is (= (inc (:exact-hits before)) (:exact-hits after)))))))
 
+(deftest current-cursor-pages-use-completed-cache-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        document-ids ["doc-a" "doc-b" "doc-c"]
+        documents (mapv #(eacl/spice-object :document %) document-ids)
+        relationships
+        (mapv #(eacl/->Relationship user :reader %) documents)
+        _ (eacl/write-schema! authorization schema)
+        _ (d/transact conn
+                      (mapv (fn [id] {:eacl/id id})
+                            (into ["user"] document-ids)))
+        _ (eacl/create-relationships! authorization relationships)
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 1}
+        page-1 (eacl/lookup-resources authorization query)
+        page-2-query
+        (assoc query :after (get-in page-1 [:page-info :end-cursor]))
+        page-2 (eacl/lookup-resources authorization page-2-query)
+        page-2-hit (eacl/lookup-resources authorization page-2-query)
+        previous-query
+        (-> query
+            (dissoc :first)
+            (assoc :last 1
+                   :before (get-in page-2 [:page-info :start-cursor])))
+        previous-page
+        (eacl/lookup-resources authorization previous-query)
+        previous-hit
+        (eacl/lookup-resources authorization previous-query)]
+    (testing "adjacent reverse navigation reuses the visited current page"
+      (is (= [(second documents)] (:data page-2)))
+      (is (false? (:cached? page-2)))
+      (is (true? (:cached? page-2-hit)))
+      (is (= [(first documents)] (:data previous-page)))
+      (is (true? (:cached? previous-page)))
+      (is (true? (:cached? previous-hit))))
+    (testing "historical fallback never consults the current-answer cache"
+      (eacl/delete-relationship! authorization (second relationships))
+      (let [before (datahike/cache-stats authorization)
+            historical-1
+            (eacl/lookup-resources authorization page-2-query)
+            historical-2
+            (eacl/lookup-resources authorization page-2-query)
+            after (datahike/cache-stats authorization)]
+        (is (= [(second documents)] (:data historical-1)))
+        (is (= (:data historical-1) (:data historical-2)))
+        (is (false? (:cached? historical-1)))
+        (is (false? (:cached? historical-2)))
+        (is (= (+ 2 (:bypasses before)) (:bypasses after)))
+        (is (= (:exact-hits before) (:exact-hits after)))
+        (is (= (:managed-hits before) (:managed-hits after)))))))
+
 (deftest per-request-cache-bypass-covers-public-read-shapes-test
   (let [conn (datahike/create-conn)
         authorization (client conn)

@@ -335,9 +335,9 @@
 
 ;; --- M4 ---------------------------------------------------------------------
 
-(deftest cursor-pages-bypass-the-current-answer-cache-test
-  ;; A cursor is exact-snapshot work. Page one may publish to the current
-  ;; generation, but continuation never writes a historical entry into it.
+(deftest current-cursor-pages-use-the-current-answer-cache-test
+  ;; Cursor validation selects either an equivalent current snapshot or a
+  ;; reconstructed historical snapshot. Only the former may publish.
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           context {:store store}
@@ -349,17 +349,52 @@
                  :first 3}
           page-1 (eacl/lookup-resources acl query)
           stats-after-page-1 (core/cache-stats acl)
-          page-2 (eacl/lookup-resources
-                  acl (assoc query :after (get-in page-1 [:page-info :end-cursor])))
-          stats (core/cache-stats acl)]
+          page-2-query
+          (assoc query :after (get-in page-1 [:page-info :end-cursor]))
+          page-2 (eacl/lookup-resources acl page-2-query)
+          stats-after-page-2 (core/cache-stats acl)
+          page-2-hit (eacl/lookup-resources acl page-2-query)
+          stats-after-hit (core/cache-stats acl)
+          previous-query
+          (-> query
+              (dissoc :first)
+              (assoc :last 3
+                     :before (get-in page-2 [:page-info :start-cursor])))
+          previous-page (eacl/lookup-resources acl previous-query)
+          previous-hit (eacl/lookup-resources acl previous-query)]
       (is (= ["acct0" "acct1" "acct2"] (mapv :id (:data page-1))))
       (is (= ["acct3" "acct4" "acct5"] (mapv :id (:data page-2))))
       (is (= 1 (:puts stats-after-page-1))
           "page one publishes one private exact-current answer")
-      (is (= (:puts stats-after-page-1) (:puts stats))
-          "the exact continuation cannot publish into the current generation")
-      (is (= (inc (:bypasses stats-after-page-1))
-             (:bypasses stats))))))
+      (is (= (inc (:puts stats-after-page-1))
+             (:puts stats-after-page-2))
+          "a current cursor page publishes once")
+      (is (false? (:cached? page-2)))
+      (is (true? (:cached? page-2-hit)))
+      (is (= (inc (:exact-hits stats-after-page-2))
+             (:exact-hits stats-after-hit)))
+      (is (= ["acct0" "acct1" "acct2"]
+             (mapv :id (:data previous-page))))
+      (is (false? (:cached? previous-page)))
+      (is (true? (:cached? previous-hit)))
+      (eacl/delete-relationship!
+       acl
+       (->Relationship (spice-object :user "alice")
+                       :owner
+                       (spice-object :account "acct3")))
+      (let [before-historical (core/cache-stats acl)
+            historical-1 (eacl/lookup-resources acl page-2-query)
+            historical-2 (eacl/lookup-resources acl page-2-query)
+            after-historical (core/cache-stats acl)]
+        (is (= ["acct3" "acct4" "acct5"]
+               (mapv :id (:data historical-1))))
+        (is (= (:data historical-1) (:data historical-2)))
+        (is (false? (:cached? historical-1)))
+        (is (false? (:cached? historical-2)))
+        (is (= (+ 2 (:bypasses before-historical))
+               (:bypasses after-historical)))
+        (is (= (:exact-hits before-historical)
+               (:exact-hits after-historical)))))))
 
 ;; --- L2 ---------------------------------------------------------------------
 

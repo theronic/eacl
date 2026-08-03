@@ -14,6 +14,47 @@
                :has-next-page? false
                :has-previous-page? false}})
 
+(defrecord PageNavigationCache [state max-entries])
+
+(defn page-navigation-cache
+  "Creates a bounded, client-private cache of visited Relay page requests.
+
+  The cache stores public pages only for the immutable snapshot against which
+  they were produced. It also learns the opposite-direction request for an
+  adjacent page, allowing a first Back/Forward traversal to reuse EACL's
+  already-computed answer."
+  ([]
+   (page-navigation-cache {}))
+  ([{:keys [max-entries]
+     :or {max-entries 2048}}]
+   (when-not (and (integer? max-entries) (pos? max-entries))
+     (throw
+      (ex-info
+       "Relay page-navigation cache :max-entries must be positive."
+       {:type :eacl/invalid-config
+        :max-entries max-entries})))
+   (->PageNavigationCache
+    (atom {:order []
+           :entries {}
+           :by-start {}
+           :by-end {}})
+    max-entries)))
+
+(defn clear-page-navigation-cache!
+  [cache]
+  (when cache
+    (when-not (instance? PageNavigationCache cache)
+      (throw
+       (ex-info
+        "Expected an EACL Relay page-navigation cache."
+        {:type :eacl/invalid-config})))
+    (reset! (:state cache)
+            {:order []
+             :entries {}
+             :by-start {}
+             :by-end {}}))
+  nil)
+
 (def ^:private relay-page-keys
   #{:first :last :after :before :consistency})
 
@@ -27,6 +68,164 @@
      (cond-> (apply dissoc query relay-page-keys)
        (:subject query) (update :subject plain-object)
        (:resource query) (update :resource plain-object))]))
+
+(defn- page-generation
+  [adapter]
+  {:backend (backend/backend-id adapter)
+   :source-scope (backend/invoke adapter :source-scope)
+   :graph-head (backend/invoke adapter :graph-head)
+   :adapter-fingerprint (backend/fingerprint adapter)
+   :identity-contract (backend/identity-contract adapter)})
+
+(defn- page-request-key
+  [generation operation query]
+  [generation operation (dissoc query :consistency)])
+
+(defn- page-boundary-key
+  [generation operation query token]
+  [generation (cursor-scope operation query) token])
+
+(defn- remove-index-value
+  [index request-key]
+  (into {}
+        (remove (fn [[_ indexed-key]]
+                  (= request-key indexed-key)))
+        index))
+
+(defn- evict-page-request
+  [state request-key]
+  (-> state
+      (update :entries dissoc request-key)
+      (update :by-start remove-index-value request-key)
+      (update :by-end remove-index-value request-key)))
+
+(defn- put-page-request
+  [state request-key page max-entries]
+  (let [order
+        (conj
+         (into [] (remove #(= request-key %)) (:order state))
+         request-key)
+        state
+        (assoc state
+               :order order
+               :entries (assoc (:entries state) request-key page))
+        overflow (- (count order) max-entries)]
+    (if-not (pos? overflow)
+      state
+      (let [victims (take overflow order)]
+        (reduce evict-page-request
+                (assoc state :order (vec (drop overflow order)))
+                victims)))))
+
+(defn- page-cache-enabled?
+  [cache opts]
+  (and cache
+       (:completed-cache? opts)
+       (nil? (:cursor-ttl-seconds opts))))
+
+(defn lookup-visited-page
+  "Returns a page already visited under this exact immutable snapshot.
+
+  Cursor selection/authentication must happen before this function. A hit
+  therefore reuses computation, not consistency or trust decisions."
+  [adapter opts operation query]
+  (let [cache (:page-navigation-cache opts)]
+    (when (page-cache-enabled? cache opts)
+      (when-not (instance? PageNavigationCache cache)
+        (throw
+         (ex-info
+          "Expected an EACL Relay page-navigation cache."
+          {:type :eacl/invalid-config})))
+      (some->
+       (get-in
+        @(:state cache)
+        [:entries
+         (page-request-key
+          (page-generation adapter)
+          operation
+          query)])
+       (assoc :cached? true)))))
+
+(defn remember-visited-page!
+  "Stores one current page and learns any adjacent opposite-direction alias."
+  [adapter opts operation query page]
+  (let [cache (:page-navigation-cache opts)]
+    (when (page-cache-enabled? cache opts)
+      (when-not (instance? PageNavigationCache cache)
+        (throw
+         (ex-info
+          "Expected an EACL Relay page-navigation cache."
+          {:type :eacl/invalid-config})))
+      (let [generation (page-generation adapter)
+            request-key
+            (page-request-key generation operation query)
+            scope-key
+            #(page-boundary-key
+              generation operation query %)
+            start-token
+            (get-in page [:page-info :start-cursor])
+            end-token
+            (get-in page [:page-info :end-cursor])
+            after-token (:after query)
+            before-token (:before query)
+            base-query
+            (apply dissoc query relay-page-keys)]
+        (swap!
+         (:state cache)
+         (fn [state]
+           (let [previous-key
+                 (when after-token
+                   (get-in state [:by-end (scope-key after-token)]))
+                 previous-page
+                 (when previous-key
+                   (get-in state [:entries previous-key]))
+                 next-key
+                 (when before-token
+                   (get-in state [:by-start (scope-key before-token)]))
+                 next-page
+                 (when next-key
+                   (get-in state [:entries next-key]))
+                 state
+                 (put-page-request
+                  state request-key page (:max-entries cache))
+                 state
+                 (cond-> state
+                   start-token
+                   (assoc-in [:by-start (scope-key start-token)]
+                             request-key)
+                   end-token
+                   (assoc-in [:by-end (scope-key end-token)]
+                             request-key))
+                 state
+                 (if (and previous-page
+                          start-token
+                          (integer? (:first query)))
+                   (put-page-request
+                    state
+                    (page-request-key
+                     generation
+                     operation
+                     (assoc base-query
+                            :last (:first query)
+                            :before start-token))
+                    previous-page
+                    (:max-entries cache))
+                   state)]
+             (if (and next-page
+                      end-token
+                      (integer? (:last query)))
+               (put-page-request
+                state
+                (page-request-key
+                 generation
+                 operation
+                 (assoc base-query
+                        :first (:last query)
+                        :after end-token))
+                next-page
+                (:max-entries cache))
+               state)))))))
+  page)
 
 (def ^:private exact-snapshot-scope-digest
   (secure/canonical-digest
@@ -88,21 +287,17 @@
     edge))
 
 (defn- encode-page-edge
-  ([adapter opts operation query edge]
-   (encode-page-edge
-    adapter opts operation query edge
-    (when edge (dependency-context adapter nil))))
-  ([adapter opts operation query edge context]
-   (when edge
-     (cursor/cursor->token
-      (merge
-       {:v 10
-        :scope (cursor-scope operation query)
-        :edge (transform-edge-ids
-               #(backend/invoke adapter :internal-id->object %)
-               edge)}
-       context)
-      opts))))
+  [adapter opts operation query context edge]
+  (when edge
+    (cursor/cursor->token
+     (merge
+      {:v 10
+       :scope (cursor-scope operation query)
+       :edge (transform-edge-ids
+              #(backend/invoke adapter :internal-id->object %)
+              edge)}
+      context)
+     opts)))
 
 (defn- invalid-cursor!
   [message data cause]
@@ -169,20 +364,23 @@
    [(:dependency-scope-digest context)
     (:proof-digest context)]))
 
+(defn- same-continuation-proof?
+  [left right]
+  (and
+   (= (:dependency-scope-digest left)
+      (:dependency-scope-digest right))
+   (= (:proof-digest left)
+      (:proof-digest right))))
+
 (defn- legacy-continuation-decision
   [opts current envelope exact]
   (cond
     (identity-mismatch current envelope) :scope-mismatch
-    (= (continuation-proof current)
-       (continuation-proof envelope))
-    :current
+    (same-continuation-proof? current envelope) :current
     (= :at-least-as-fresh (:cursor-consistency-mode opts)) :conflict
     (nil? exact) :snapshot-unavailable
     (or (identity-mismatch exact envelope)
-        (not= (:dependency-scope-digest exact)
-              (:dependency-scope-digest envelope))
-        (not= (continuation-proof exact)
-              (continuation-proof envelope))
+        (not (same-continuation-proof? exact envelope))
         (not= 0
               (graph-code
                (get-in envelope [:graph-head :graph-anchor])
@@ -192,31 +390,42 @@
 
 (defn- continuation-decision
   [opts current envelope exact]
-  (verified/decide
-   (:engine-selection opts)
-   :cursor-continuation
-   {:authenticated? true
-    :scope-matches? true
-    :expired? false
-    :source (execution-identity current)
-    :cursor-source (execution-identity envelope)
-    :current-proof (continuation-proof current)
-    :cursor-proof (continuation-proof envelope)
-    :mode
-    (if (= :at-least-as-fresh
-           (:cursor-consistency-mode opts))
-      :at-least-as-fresh
-      :minimize-latency)
-    :cursor-graph 0
-    :exact
-    (when exact
-      {:graph
-       (graph-code (get-in envelope
-                           [:graph-head :graph-anchor])
-       (get-in exact [:graph-head :graph-anchor]))
-       :source (execution-identity exact)
-       :proof (continuation-proof exact)})}
-   #(legacy-continuation-decision opts current envelope exact)))
+  (if (= :legacy-authoritative
+         (or (get-in opts [:engine-selection :mode])
+             :legacy-authoritative))
+    (legacy-continuation-decision opts current envelope exact)
+    (let [source (execution-identity current)
+          cursor-source (execution-identity envelope)
+          current-proof (continuation-proof current)
+          cursor-proof (continuation-proof envelope)
+          mode
+          (if (= :at-least-as-fresh
+                 (:cursor-consistency-mode opts))
+            :at-least-as-fresh
+            :minimize-latency)
+          exact-decision
+          (when exact
+            {:graph
+             (graph-code
+              (get-in envelope [:graph-head :graph-anchor])
+              (get-in exact [:graph-head :graph-anchor]))
+             :source (execution-identity exact)
+             :proof (continuation-proof exact)})]
+      (verified/decide
+       (:engine-selection opts)
+       :cursor-continuation
+       {:authenticated? true
+        :scope-matches? true
+        :expired? false
+        :source source
+        :cursor-source cursor-source
+        :current-proof current-proof
+        :cursor-proof cursor-proof
+        :mode mode
+        :cursor-graph 0
+        :exact exact-decision}
+       #(legacy-continuation-decision
+         opts current envelope exact)))))
 
 (defn- stale-context!
   [message reason]
@@ -285,72 +494,88 @@
      (continuation-decision opts current envelope nil))
     true))
 
-(defn- select-adapter-for-envelope
+(defn- select-envelope-adapter
   [adapter opts envelope]
-  (let [current (current-context adapter opts)
-        initial
-        (continuation-decision opts current envelope nil)]
-    (if (= :snapshot-unavailable initial)
-      (let [exact
-            (backend/invoke
-             adapter
-             :select-exact
-             {:graph-anchor
-              (get-in envelope [:graph-head :graph-anchor])
-              :order-hint
-              (get-in envelope [:graph-head :order-hint])
-              :exact-locator
-              (get-in envelope [:graph-head :exact-locator])}
-             (:timeout-ms opts))]
-        (when-not exact
-          (throw
-           (ex-info
-            "The cursor's exact snapshot is no longer retained."
-            {:type :eacl.consistency/snapshot-expired
-             :eacl/error
-             :eacl.consistency/snapshot-expired})))
-        (let [exact-context
-              (dependency-context exact nil)
-              decision
-              (continuation-decision
-               opts current envelope exact-context)]
+  (if-not envelope
+    adapter
+    (let [current (current-context adapter opts)
+          initial
+          (continuation-decision opts current envelope nil)]
+      (if (= :snapshot-unavailable initial)
+        (let [exact
+              (backend/invoke
+               adapter
+               :select-exact
+               {:graph-anchor
+                (get-in envelope [:graph-head :graph-anchor])
+                :order-hint
+                (get-in envelope [:graph-head :order-hint])
+                :exact-locator
+                (get-in envelope [:graph-head :exact-locator])}
+               (:timeout-ms opts))]
+          (when-not exact
+            (throw
+             (ex-info
+              "The cursor's exact snapshot is no longer retained."
+              {:type :eacl.consistency/snapshot-expired
+               :eacl/error
+               :eacl.consistency/snapshot-expired})))
+          (let [exact-context
+                (dependency-context exact nil)
+                decision
+                (continuation-decision
+                 opts current envelope exact-context)]
+            (apply-continuation-decision!
+             exact exact-context envelope decision)
+            exact))
+        (do
           (apply-continuation-decision!
-           exact exact-context envelope decision)
-          exact))
-      (do
-        (apply-continuation-decision!
-         adapter current envelope initial)
-        adapter))))
-
-(defn select-continuation-context
-  "Selects the cursor-pinned adapter and decodes its physical edge once."
-  [adapter opts operation query]
-  (let [field (cond
-                (contains? query :after) :after
-                (contains? query :before) :before)
-        token (get query field)
-        envelope (decode-envelope opts operation query token)]
-    (if-not envelope
-      {:adapter adapter}
-      (let [selected
-            (select-adapter-for-envelope adapter opts envelope)]
-        {:adapter selected
-         :decoded-page-bound
-         {:field field
-          :token token
-          :operation operation
-          :scope (cursor-scope operation query)
-          :edge
-          (transform-edge-ids
-           #(backend/invoke selected :object-id->internal %)
-           (:edge envelope))}}))))
+           adapter current envelope initial)
+          adapter)))))
 
 (defn select-continuation-adapter
   "Uses an equal current proof, otherwise reconstructs the authenticated
   original graph when no newer at-least floor forbids fallback."
   [adapter opts operation query]
-  (:adapter
-   (select-continuation-context adapter opts operation query)))
+  (let [token (or (:after query) (:before query))
+        envelope (decode-envelope opts operation query token)]
+    (select-envelope-adapter adapter opts envelope)))
+
+(defn prepare-page-query
+  "Authenticates each supplied page token once, selects its immutable snapshot,
+  and converts the cursor edge into that snapshot's internal identity space."
+  [adapter opts operation query]
+  (let [envelopes
+        (->> [:after :before]
+             (keep
+              (fn [field]
+                (when (contains? query field)
+                  [field
+                   (decode-envelope
+                    opts operation query (get query field))])))
+             vec)
+        primary-envelope (some second envelopes)
+        page-adapter
+        (select-envelope-adapter adapter opts primary-envelope)
+        internal-query
+        (reduce
+         (fn [current-query [field envelope]]
+           (if-not envelope
+             (assoc current-query field nil)
+             (do
+               (when-not (identical? envelope primary-envelope)
+                 (validate-context! page-adapter opts envelope))
+               (assoc
+                current-query
+                field
+                (transform-edge-ids
+                 #(backend/invoke
+                   page-adapter :object-id->internal %)
+                 (:edge envelope))))))
+         query
+         envelopes)]
+    {:adapter page-adapter
+     :query internal-query}))
 
 (defn- decode-page-edge
   [adapter opts operation query token]
@@ -363,41 +588,25 @@
 
 (defn internalize-page-query
   [adapter opts operation query]
-  (let [predecoded (:decoded-page-bound opts)
-        internalize
-        (fn [field token]
-          (if (= {:field field
-                  :token token
-                  :operation operation
-                  :scope (cursor-scope operation query)}
-                 (select-keys
-                  predecoded
-                  [:field :token :operation :scope]))
-            (:edge predecoded)
-            (decode-page-edge
-             adapter opts operation query token)))]
-    (cond-> query
-      (contains? query :after)
-      (update :after #(internalize :after %))
+  (cond-> query
+    (contains? query :after)
+    (update :after #(decode-page-edge adapter opts operation query %))
 
-      (contains? query :before)
-      (update :before #(internalize :before %)))))
+    (contains? query :before)
+    (update :before #(decode-page-edge adapter opts operation query %))))
 
 (defn- externalize-page-cursors
   [adapter opts operation query page]
-  (let [start (get-in page [:page-info :start-cursor])
-        end (get-in page [:page-info :end-cursor])
-        context (when (or start end)
-                  (dependency-context adapter nil))]
+  (let [context (delay (dependency-context adapter nil))
+        encode-edge
+        (fn [edge]
+          (encode-page-edge
+           adapter opts operation query
+           (when edge @context)
+           edge))]
     (-> page
-        (assoc-in
-         [:page-info :start-cursor]
-         (encode-page-edge
-          adapter opts operation query start context))
-        (assoc-in
-         [:page-info :end-cursor]
-         (encode-page-edge
-          adapter opts operation query end context)))))
+        (update-in [:page-info :start-cursor] encode-edge)
+        (update-in [:page-info :end-cursor] encode-edge))))
 
 (defn externalize-page
   [adapter opts operation query page]

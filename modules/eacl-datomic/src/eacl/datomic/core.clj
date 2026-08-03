@@ -816,12 +816,12 @@
 (defn- cached-authorization-result
   [opts consistency-context op query-identity kind valid-result? _weight-fn compute]
   (let [{:keys [adapter db relationship-dependencies
-                permission-dependencies basis-t mode]}
+                permission-dependencies basis-t completed-cache?]}
         consistency-context
         cacheable?
         (and (:current-cache-store opts)
              (:cache-remember-answers? opts)
-             (not= :at-exact-snapshot mode))]
+             completed-cache?)]
     (if-not cacheable?
       (do
         (shared-cache/record-current-bypass!
@@ -1440,6 +1440,7 @@
         selected-adapter (:adapter selection)
         selected-context
         (snapshot-result-context opts selected-adapter prepare)
+        selected-current-basis (:basis-t selected-context)
         {:keys [mode]} (:descriptor selection)
         request-token (:request-token selection)
         requested-t (:order-hint request-token)
@@ -1517,6 +1518,13 @@
      {:mode (if decoded
               :at-exact-snapshot
               (or (:mode selected-context) mode))
+      ;; A cursor is authenticated before snapshot selection. It is cacheable
+      ;; only when that selection retained the request's current immutable
+      ;; basis. Historical reconstruction necessarily changes the basis and
+      ;; must never publish into or read from the current completed cache.
+      :completed-cache?
+      (and (not= :at-exact-snapshot mode)
+           (= selected-current-basis (:basis-t selected-context)))
       :requested-t requested-t
       :selection selection
       :response-token nil})))
