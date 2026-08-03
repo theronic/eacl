@@ -73,6 +73,15 @@
    :report "formal/verification/cache-kernel.edn"
    :integration-status :all-three-backends-regression-passed
    :claim :conditional-current-cache-refinement}
+  :subproblem-cache
+  {:status :passed
+   :verified-obligations 33
+   :source "formal/dafny/SubproblemCache.dfy"
+   :report "formal/verification/subproblem-cache.edn"
+   :integration-status
+   :atomic-managed-datascript-and-all-backend-contracts-passed
+   :claim
+   :conditional-exact-and-managed-atomic-projection-refinement}
   :complete-public-engine
   {:status :incomplete}}
  :adapter-certification
@@ -123,10 +132,13 @@
   :entropy-and-key-management
   :configured-limits]
  :performance-gates
- {:status :current-cache-passed
-  :managed-legacy-heavy-suite :passed
-  :current-generation-heavy-suite :passed
-  :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
+ {:status :layered-managed-atomic-projection-cache-passed
+   :managed-legacy-heavy-suite :passed
+   :current-generation-heavy-suite :passed
+   :shared-subgraph-zero-final-hit :passed
+   :completed-answer-hot-nonregression :passed
+   :cache-disabled-nonregression :passed
+   :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
   :blocking-finding nil}
  :mutation-control
  {:status :passed
@@ -148,6 +160,8 @@
   :decision :refused
   :unmet-required-obligations
   [:complete-public-engine
+   :managed-derived-subproblem-proof
+   :generated-subproblem-production-routing
    :shadow-rollout-gates
    :performance-cutover
    :independent-security-formal-review]}}

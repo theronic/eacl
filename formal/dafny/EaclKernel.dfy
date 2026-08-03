@@ -6,6 +6,7 @@ include "OrderedMerge.dfy"
 include "PageWindow.dfy"
 include "Pagination.dfy"
 include "RecursiveEngine.dfy"
+include "SubproblemCache.dfy"
 include "TemporalSafety.dfy"
 include "WireFormat.dfy"
 

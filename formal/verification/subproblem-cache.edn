@@ -1,0 +1,126 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :conditional-foundation-passed
+ :proof
+ {:source "formal/dafny/SubproblemCache.dfy"
+  :verified-obligations 33
+  :claims
+  [:projection-key-field-separation
+   :managed-source-schema-relation-proof-key-separation
+   :same-transaction-different-mutation-value-proof-separation
+   :unchanged-managed-relation-stamp-preserves-projection
+   :changed-managed-relation-slice-requires-changed-stamp
+   :bounded-exact-projection-slice
+   :adjacent-projection-concatenation
+   :incomplete-exact-candidate-rejection
+   :different-generation-rejection
+   :exact-hit-refinement-under-candidate-contract
+   :complete-exact-hit-skips-value-dependent-callbacks
+   :candidate-callback-cost-is-constant
+   :atomic-managed-proof-read-cost-is-graph-size-independent
+   :acyclic-subproblem-call-stack-independence
+   :expired-lifecycle-publication-rejection
+   :partial-invalid-and-oversized-publication-rejection
+   :admitted-weight-bound
+   :inflight-admission-bound-preservation
+   :full-inflight-store-distinct-admission-rejection
+   :partial-recursive-publication-rejection
+   :completed-worklist-least-fixed-point-publication]}
+ :temporal-models
+ [{:source "formal/tla/EaclSubproblemCache.tla"
+   :configuration "formal/tla/EaclSubproblemCache.cfg"
+   :bounded-length 8
+   :status :passed
+   :invariants
+   [:continuous-reserved-weight-bound
+    :complete-current-hit-only
+    :single-flight-join-current-computing-only
+    :partial-state-never-hits
+    :one-inflight-state-per-key
+    :global-inflight-bound
+    :late-orphan-publication-unreachable-from-active-generation]}
+  {:source "formal/tla/EaclManagedProjectionCache.tla"
+   :configuration "formal/tla/EaclManagedProjectionCache.cfg"
+   :bounded-length 8
+   :status :passed
+   :invariants
+   [:managed-hit-requires-current-source-schema-and-relation-proof
+    :managed-single-flight-join-requires-current-proof
+    :managed-global-inflight-bound]
+   :histories
+   [:unrelated-generation-advance
+    :relation-mutation
+    :schema-mutation
+    :source-switch
+    :late-publication
+    :failure]}]
+ :production
+ {:sources
+  ["modules/eacl/src/eacl/subproblem_cache.cljc"
+   "modules/eacl/src/eacl/cache.cljc"
+   "modules/eacl/src/eacl/engine/v8.cljc"]
+  :exact-generation-only false
+  :managed-forward-revision-subproblems :atomic-relation-projections
+  :managed-forward-revision-derived-denotations false
+  :partial-recursive-publication false
+  :cache-disabled-bypass true}
+ :differential-tests
+ {:projection-generated-seeds 40
+  :projection-assertions 2560
+  :recursive-public-operations
+  [:can? :lookup-resources :lookup-subjects
+   :count-resources :count-subjects :cursor-forward :cursor-backward]
+  :backends-smoke-passed [:datomic :datahike :datascript]
+  :latest-validation
+  {:date "2026-08-03"
+   :core-clj {:tests 109 :assertions 4060}
+   :datascript-clj {:tests 39 :assertions 297}
+   :datascript-cljs {:tests 123 :assertions 4084}
+   :datahike-clj {:tests 29 :assertions 368}
+   :datomic-clj {:tests 245 :assertions 11370}
+   :generated-java-bridge {:tests 18 :assertions 7143}
+   :generated-javascript-bridge {:tests 12 :assertions 610}
+   :heavy-pagination {:tests 9 :assertions 3403}
+   :failures 0
+   :errors 0}}
+ :performance
+ {:fixture
+  {:depth 48
+   :distinct-top-level-queries 80
+   :unrelated-write-between-warmup-and-measurement true
+   :completed-answer-hits 0
+   :baseline-backend-operations 3920}
+  :repeated-runs 5
+  :backend-operation-reduction-ratio 1.0
+  :p50-improvement-range [0.4399612747075434 0.5018338461538462]
+  :latest-run
+  {:date "2026-08-03"
+   :completed-answer-only-p50-ms 0.239875
+   :layered-subproblem-p50-ms 0.129792
+   :p50-latency-ratio 0.5410818134445023
+   :p50-improvement-ratio 0.45891818655549765
+   :completed-answer-only-backend-operations 3920
+   :layered-subproblem-backend-operations 0
+   :completed-answer-hits 0
+   :managed-projection-hits 49
+   :new-generation-proof-reads 49}
+  :hit-cardinality-scaling
+  {:small-entries 64
+   :large-entries 4096
+   :entry-count-ratio 64
+   :p50-latency-ratio 1.074889746035696}
+  :cached-recursive-page-scaling
+  {:small-closure-items 64
+   :large-closure-items 131072
+   :closure-size-ratio 2048
+   :page-size 20
+   :p50-latency-ratio 1.008695652173913}
+  :hot-hit-regression-ratio 1.0
+  :cache-disabled-regression-ratio 1.0035726495726496}
+ :claim-boundary
+ {:complete-public-engine false
+  :localized-managed-proof :atomic-relation-projections-only
+  :managed-derived-denotation-proof false
+  :generated-production-decision-kernel false
+  :independent-review false
+  :release-verification-claim :withheld}}

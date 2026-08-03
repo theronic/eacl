@@ -75,18 +75,27 @@
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
   {:operation :cache-reuse
-   :entry-points ['eacl.cache]
+   :entry-points ['eacl.cache
+                  'eacl.subproblem-cache]
    :theorems [:exact-current-same-snapshot
-              :managed-least-fixed-point-frame
+              :managed-atomic-relation-projection-frame
+              :managed-source-schema-relation-proof-key-separation
+              :changed-relation-slice-requires-changed-stamp
               :forward-scalar-stamp-invalidation
               :late-publication-unreachable
-              :exact-and-arbitrary-db-bypass]
+              :exact-and-arbitrary-db-bypass
+              :projection-chunk-concatenation
+              :acyclic-subproblem-call-stack-independence
+              :partial-recursive-publication-rejection
+              :subproblem-weight-bound
+              :subproblem-global-inflight-bound]
    :dafny ["formal/dafny/CacheKernel.dfy"
            "formal/dafny/CurrentCache.dfy"
+           "formal/dafny/SubproblemCache.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot
                          :complete-compiled-dependencies
-                         :forward-stamped-writer-contract
+                         :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering
                          :source-fingerprint]
    :runtime-targets [:clj-java :cljs-javascript]

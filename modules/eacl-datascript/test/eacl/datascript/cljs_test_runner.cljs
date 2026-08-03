@@ -10,6 +10,7 @@
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.secure-format-test]
+            [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
             [eacl.formal.cache-strategy-adversarial-test]
             [eacl.formal.differential-runner-test]
@@ -41,6 +42,7 @@
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.secure-format-test
+               'eacl.subproblem-cache-test
                'eacl.verified-kernel-test
                'eacl.formal.cache-strategy-adversarial-test
                'eacl.formal.differential-runner-test

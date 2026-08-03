@@ -4,7 +4,8 @@
             [eacl.backend.spi :as legacy]
             [eacl.backend.v8 :as backend]
             [eacl.engine.v8 :as engine]
-            [eacl.spicedb.consistency :as consistency]))
+            [eacl.spicedb.consistency :as consistency]
+            [eacl.subproblem-cache :as subproblem]))
 
 (defn- operation-map []
   (into {}
@@ -329,6 +330,20 @@
         (is (= 1 (:compiled-recursive-plans @stats))
             "different principals share one immutable recursive plan")
         (is (= 1 (count @(:recursive-plans schema-cache))))
+        (let [{:keys [root-component-id components]}
+              (engine/recursive-component-plan
+               adapter :node :cycle-view)
+              [cycle-component view-component] components]
+          (is (= [0 1] (mapv :order components)))
+          (is (true? (:recursive? cycle-component)))
+          (is (= [[:node :cycle-a] [:node :cycle-b]]
+                 (:nodes cycle-component)))
+          (is (false? (:recursive? view-component)))
+          (is (= [[:node :cycle-view]]
+                 (:nodes view-component)))
+          (is (= [(:id cycle-component)]
+                 (:dependencies view-component)))
+          (is (= (:id view-component) root-component-id)))
         (engine/evict-permission-paths-cache! schema-cache)
         (binding [engine/*recursive-traversal-stats* stats]
           (is (= [] (:data (engine/lookup-resources
@@ -420,3 +435,225 @@
           (is (= expected-fetched (:fetched-stream-datoms stats))))))
     (is (= 1 (count @(:recursive-plans schema-cache)))
         "batch tuning never changes the schema-derived traversal plan")))
+
+(defn- bounded-values
+  [values {:keys [direction bound-eid inclusive-bound?]}]
+  (let [ordered (case direction
+                  :asc values
+                  :desc (reverse values))
+        within?
+        (case direction
+          :asc (if inclusive-bound? >= >)
+          :desc (if inclusive-bound? <= <))]
+    (if bound-eid
+      (filter #(within? % bound-eid) ordered)
+      ordered)))
+
+(defn- projection-test-adapter
+  []
+  (backend/make-adapter
+   {:id :projection-test
+    :capabilities
+    {:consistency #{:fully-consistent}
+     :snapshots #{:current}
+     :cursor #{:forward :reverse}
+     :transactions #{}
+     :cache-proofs #{:schema :relations :snapshot-bound}
+     :runtime #{#?(:clj :clj :cljs :cljs)}}
+    :operations
+    (merge
+     (operation-map)
+     {:subject->resources
+      (fn [_subject-type _subject-eid _relation-eid _resource-type opts]
+        (bounded-values (range 1 101) opts))
+      :resource->subjects
+      (fn [_resource-type _resource-eid _relation-eid _subject-type opts]
+        (bounded-values (range 201 301) opts))
+      :direct-match?
+      (fn [_subject-type _subject-eid _relation-eid _resource-type resource-eid]
+        (even? resource-eid))})}))
+
+(deftest exact-projection-prefix-cache-test
+  (let [adapter (projection-test-adapter)
+        store (subproblem/store)
+        work (atom {})]
+    (binding [subproblem/*store* store
+              engine/*backend-work-stats* work]
+      (testing "a small ascending request realizes one bounded prefix"
+        (is (= (vec (range 1 21))
+               (vec
+                (take 20
+                      (engine/subject->resources
+                       adapter :user 1 10 :document nil)))))
+        (is (= 1 (:subject->resources-scans @work)))
+        (is (= 32 (:fetched-projection-values
+                   (subproblem/stats store)))))
+      (testing "a distinct consumer reuses the prefix without a backend call"
+        (is (= (vec (range 1 21))
+               (vec
+                (take 20
+                      (engine/subject->resources
+                       adapter :user 1 10 :document nil)))))
+        (is (= 1 (:subject->resources-scans @work)))
+        (is (= 1 (:projection-hits (subproblem/stats store))))
+        (is (= 1 (:avoided-backend-operations
+                  (subproblem/stats store)))))
+      (testing "consuming beyond the retained prefix resumes exclusively"
+        (is (= (vec (range 1 41))
+               (vec
+                (take 40
+                      (engine/subject->resources
+                       adapter :user 1 10 :document nil)))))
+        (is (= 2 (:subject->resources-scans @work)))
+        (testing "the lazily demanded successor chunk is retained too"
+          (is (= (vec (range 1 41))
+                 (vec
+                  (take 40
+                        (engine/subject->resources
+                         adapter :user 1 10 :document nil)))))
+          (is (= 2 (:subject->resources-scans @work)))))
+      (testing "inclusive and exclusive bounds are distinct semantic keys"
+        (is (= [40 41 42]
+               (vec
+                (take 3
+                      (engine/subject->resources
+                       adapter :user 1 10 :document
+                       {:direction :asc
+                        :bound-eid 40
+                        :inclusive-bound? true})))))
+        (is (= [41 42 43]
+               (vec
+                (take 3
+                      (engine/subject->resources
+                       adapter :user 1 10 :document
+                       {:direction :asc
+                        :bound-eid 40
+                        :inclusive-bound? false}))))))
+      (testing "descending reverse projections preserve strict order"
+        (is (= [300 299 298 297 296]
+               (vec
+                (take 5
+                      (engine/resource->subjects
+                       adapter :document 500 10 :user
+                       {:direction :desc}))))))
+      (testing "terminal and empty chunks are reusable"
+        (is (= [100]
+               (vec
+                (engine/subject->resources
+                 adapter :user 1 10 :document
+                 {:direction :asc
+                  :bound-eid 99}))))
+        (let [before (:subject->resources-scans @work)]
+          (is (= [100]
+                 (vec
+                  (engine/subject->resources
+                   adapter :user 1 10 :document
+                   {:direction :asc
+                    :bound-eid 99}))))
+          (is (= before (:subject->resources-scans @work))))
+        (is (= []
+               (vec
+                (engine/subject->resources
+                 adapter :user 1 10 :document
+                 {:direction :asc
+                  :bound-eid 100}))))
+        (let [before (:subject->resources-scans @work)]
+          (is (= []
+                 (vec
+                  (engine/subject->resources
+                   adapter :user 1 10 :document
+                   {:direction :asc
+                    :bound-eid 100}))))
+          (is (= before (:subject->resources-scans @work)))))
+      (testing "direct positive and negative probes are shared"
+        (is (= [true]
+               (engine/direct-match-datoms-in-relationship-index
+                adapter :user 1 10 :document 2)))
+        (is (= []
+               (engine/direct-match-datoms-in-relationship-index
+                adapter :user 1 10 :document 3)))
+        (let [before (:direct-match-probes @work)]
+          (is (= [true]
+                 (engine/direct-match-datoms-in-relationship-index
+                  adapter :user 1 10 :document 2)))
+          (is (= []
+                 (engine/direct-match-datoms-in-relationship-index
+                  adapter :user 1 10 :document 3)))
+          (is (= before (:direct-match-probes @work))))))))
+
+(deftest projection-cache-free-path-has-no-cache-effects-test
+  (let [adapter (projection-test-adapter)
+        work (atom {})]
+    (binding [subproblem/*store* nil
+              engine/*backend-work-stats* work]
+      (dotimes [_ 2]
+        (is (= (vec (range 1 6))
+               (vec
+                (take 5
+                      (engine/subject->resources
+                       adapter :user 1 10 :document nil))))))
+      (is (= 2 (:subject->resources-scans @work))))))
+
+(deftest generated-certified-projection-traces-match-cache-free-results-test
+  (doseq [seed (range 1 41)]
+    (let [values
+          (->> (range (+ 5 (mod (* seed 17) 90)))
+               (map #(+ 1 (* seed 1000) (* % (+ 1 (mod seed 7)))))
+               vec)
+          calls (atom {:forward 0 :reverse 0})
+          adapter
+          (backend/make-adapter
+           {:id :generated-projection
+            :capabilities
+            {:consistency #{:fully-consistent}
+             :snapshots #{:current}
+             :cursor #{:forward :reverse}
+             :transactions #{}
+             :cache-proofs #{:schema :relations :snapshot-bound}
+             :runtime #{#?(:clj :clj :cljs :cljs)}}
+            :runtime-guards? true
+            :operations
+            (merge
+             (operation-map)
+             {:subject->resources
+              (fn [& args]
+                (swap! calls update :forward inc)
+                (bounded-values values (last args)))
+              :resource->subjects
+              (fn [& args]
+                (swap! calls update :reverse inc)
+                (bounded-values values (last args)))})})
+          store (subproblem/store)
+          bounds [nil
+                  (first values)
+                  (nth values (quot (count values) 2))
+                  (peek values)]]
+      (binding [subproblem/*store* store]
+        (doseq [direction [:asc :desc]
+                inclusive? [false true]
+                bound bounds
+                :let [opts {:direction direction
+                            :bound-eid bound
+                            :inclusive-bound? inclusive?}
+                      expected (vec (bounded-values values opts))]]
+          (testing (str "seed=" seed " opts=" opts)
+            (let [forward
+                  (vec
+                   (engine/subject->resources
+                    adapter :user seed 10 :document opts))
+                  reverse
+                  (vec
+                   (engine/resource->subjects
+                    adapter :document seed 10 :user opts))
+                  before @calls]
+              (is (= expected forward reverse))
+              (is (= forward
+                     (vec
+                      (engine/subject->resources
+                       adapter :user seed 10 :document opts))))
+              (is (= reverse
+                     (vec
+                      (engine/resource->subjects
+                       adapter :document seed 10 :user opts))))
+              (is (= before @calls)
+                  "the fully demanded generated trace is retained"))))))))

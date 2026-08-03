@@ -232,7 +232,12 @@
         (reset! calc-calls 0)
         (eacl/write-schema! client permission-schema-v2)
         (is (false? (eacl/can? client subject :view resource)))
-        (is (= 1 @calc-calls))))))
+        ;; The schema-generation recursive-routing analysis intentionally
+        ;; compiles every permission root once. v2 contains :view and :admin;
+        ;; the subsequent :view evaluation reuses the compiled path.
+        (is (= 2 @calc-calls))
+        (eacl/can? client subject :view resource)
+        (is (= 2 @calc-calls))))))
 
 (deftest permission-path-cache-is-connection-local-test
   (let [{client-1 :client} (seed-permission-db)

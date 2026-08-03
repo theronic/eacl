@@ -19,6 +19,7 @@
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.secure-format :as secure]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]
             [eacl.spicedb.consistency :as consistency]))
 
@@ -163,10 +164,10 @@
      :query (:query prepared)
      :recovery (:recovery prepared)}))
 
-(defn- datom-transaction
+(defn- datom-proof
   [db entity attribute]
-  (some-> (first (ds/datoms db :eavt entity attribute))
-          :tx))
+  (when-let [datom (first (ds/datoms db :eavt entity attribute))]
+    [(:tx datom) (:v datom)]))
 
 (defn- managed-cache-descriptor
   [db relation-ids]
@@ -176,25 +177,28 @@
             (ds/entid db [:eacl/id mutation/schema-entity-id])
             schema-stamp
             (when schema-eid
-              (datom-transaction
+              (datom-proof
                db schema-eid mutation/schema-mutation-id-attr))
             relation-stamps
             (keep
              (fn [relation-id]
                (when-let [tx
-                          (datom-transaction
+                          (datom-proof
                            db relation-id
                            mutation/relation-mutation-id-attr)]
                  [relation-id tx]))
              relation-ids)]
-        (when (and (integer? schema-stamp)
+        (when (and (subproblem/proof-stamp? schema-stamp)
                    (= (count relation-ids)
                       (count relation-stamps))
-                   (every? (comp integer? second)
+                   (every? (comp subproblem/proof-stamp? second)
                            relation-stamps))
           {:schema-stamp schema-stamp
            :dependency-stamp
-           (reduce max (map second relation-stamps))})))))
+           (mapv
+            (fn [[relation-id [tx mutation-id]]]
+              [relation-id tx mutation-id])
+            (sort-by first relation-stamps))})))))
 
 (defn- cached-engine-result
   [adapter opts operation query resource-type permission
@@ -239,10 +243,18 @@
           :snapshot-order (:max-tx db)
           :same-snapshot? identical?
           :cache-basis (backend/invoke adapter :snapshot-id)
+          :managed-descriptor-key-fn
+          (when (:managed-cache-enabled? opts)
+            #(vec (sort (distinct (:relation-ids @dependencies)))))
           :managed-key-fn
           (when (:managed-cache-enabled? opts)
             #(managed-cache-descriptor
-              db (:relation-ids @dependencies)))}
+              db (:relation-ids @dependencies)))
+          :managed-subproblem-key-fn
+          (when (:managed-cache-enabled? opts)
+            #(managed-cache-descriptor db [%]))
+          :managed-subproblem-scope
+          (backend/invoke adapter :source-scope)}
          semantic-key
          operation
          valid-value?
@@ -470,9 +482,11 @@
               #(engine/lookup-resources adapter internal-query))
              page
              (with-cache-info
-               (relay/externalize-page
-                adapter cursor-opts :lookup-resources query
-                (:value answer))
+               (binding [subproblem/*store*
+                         (:subproblem-store answer)]
+                 (relay/externalize-page
+                  adapter cursor-opts :lookup-resources query
+                  (:value answer)))
                answer)]
          (relay/remember-visited-page!
           adapter cursor-opts :lookup-resources query page))))))
@@ -551,9 +565,11 @@
               #(engine/lookup-subjects adapter internal-query))
              page
              (with-cache-info
-               (relay/externalize-page
-                adapter cursor-opts :lookup-subjects query
-                (:value answer))
+               (binding [subproblem/*store*
+                         (:subproblem-store answer)]
+                 (relay/externalize-page
+                  adapter cursor-opts :lookup-subjects query
+                  (:value answer)))
                answer)]
          (relay/remember-visited-page!
           adapter cursor-opts :lookup-subjects query page))))))

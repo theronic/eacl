@@ -5,6 +5,7 @@
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
+            [eacl.engine.v8 :as engine]
             [eacl.secure-format :as secure]))
 
 (defn- seed-objects!
@@ -48,6 +49,171 @@
         conn
         {:cache cache/no-cache
          :recursive-traversal-limits {limit-key 1}})))))
+
+(deftest completed-recursive-denotation-is-reused-by-point-check-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:coherence-authority :managed})
+        subject (contract/->user "recursive-user")
+        last-folder
+        (eacl/spice-object
+         :folder
+         (str "folder-" (dec contract/recursive-connected-folder-count)))]
+    (eacl/write-schema! client contract/recursive-schema)
+    (ds/transact!
+     conn
+     (map-indexed
+      (fn [index {:keys [id]}]
+        {:db/id (- (inc index))
+         :eacl/id id})
+      contract/recursive-objects))
+    (eacl/create-relationships! client contract/recursive-relationships)
+    (is (= contract/recursive-connected-folder-count
+           (:count
+            (eacl/count-resources
+             client
+             {:subject subject
+              :permission :read
+              :resource/type :folder}))))
+    (is (= 1
+           (:count
+            (eacl/count-subjects
+             client
+             {:resource last-folder
+              :permission :read
+              :subject/type :user}))))
+    (let [before (datascript/cache-stats client)
+          page-work (atom {})
+          page
+          (binding [engine/*backend-work-stats* page-work]
+            (eacl/lookup-resources
+             client
+             {:subject subject
+              :permission :read
+              :resource/type :folder
+              :first 3}))
+          page-2
+          (eacl/lookup-resources
+           client
+           {:subject subject
+            :permission :read
+            :resource/type :folder
+            :first 3
+            :after (get-in page [:page-info :end-cursor])})
+          previous
+          (eacl/lookup-resources
+           client
+           {:subject subject
+            :permission :read
+            :resource/type :folder
+            :last 3
+            :before (get-in page-2 [:page-info :start-cursor])})
+          reverse-work (atom {})
+          reverse-page
+          (binding [engine/*backend-work-stats* reverse-work]
+            (eacl/lookup-subjects
+             client
+             {:resource last-folder
+              :permission :read
+              :subject/type :user
+              :first 10}))
+          work (atom {})
+          allowed?
+          (binding [engine/*backend-work-stats* work]
+            (eacl/can? client subject :read last-folder))
+          after (datascript/cache-stats client)]
+      (is (= ["folder-0" "folder-1" "folder-2"]
+             (mapv :id (:data page))))
+      (is (= ["folder-3" "folder-4" "folder-5"]
+             (mapv :id (:data page-2))))
+      (is (= (:data page) (:data previous)))
+      (is (empty? @page-work)
+          "the completed fixed point renders a distinct page without scans")
+      (is (= [subject] (:data reverse-page)))
+      (is (empty? @reverse-work)
+          "the reverse fixed point also renders without scans")
+      (is (true? allowed?))
+      (is (empty? @work)
+          "a completed fixed point answers the distinct point query")
+      (is (< (get-in before
+                     [:subproblems :recursive-component-hits])
+             (get-in after
+                     [:subproblems :recursive-component-hits]))))))
+
+(deftest managed-projection-portions-survive-unrelated-forward-writes-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:coherence-authority :managed})
+        user (eacl/spice-object :user "shared-user")
+        other-user (eacl/spice-object :user "other-user")
+        group (eacl/spice-object :group "shared-group")
+        server-1 (eacl/spice-object :server "server-1")
+        server-2 (eacl/spice-object :server "server-2")
+        document-1 (eacl/spice-object :document "document-1")
+        document-2 (eacl/spice-object :document "document-2")]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition group {
+        relation member: user
+        permission access = member
+      }
+      definition server {
+        relation team: group
+        permission read_a = team->access
+        permission read_b = team->access
+        permission read_c = team->access
+      }
+      definition document {
+        relation owner: user
+        permission read = owner
+      }")
+    (ds/transact!
+     conn
+     (map-indexed
+      (fn [index object]
+        {:db/id (- (inc index))
+         :eacl/id (:id object)})
+      [user other-user group server-1 server-2 document-1 document-2]))
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship user :member group)
+      (eacl/->Relationship group :team server-1)
+      (eacl/->Relationship other-user :owner document-1)])
+
+    (is (true? (eacl/can? client user :read_a server-1)))
+    (let [before (datascript/cache-stats client)]
+      ;; This advances the exact graph generation without touching either
+      ;; relation used by the server permission.
+      (eacl/create-relationships!
+       client
+       [(eacl/->Relationship other-user :owner document-2)])
+      (let [work (atom {})
+            allowed?
+            (binding [engine/*backend-work-stats* work]
+              (eacl/can? client user :read_b server-1))
+            after (datascript/cache-stats client)]
+        (is (true? allowed?))
+        (is (pos?
+             (- (get-in after
+                        [:subproblems :managed-projection-hits])
+                (get-in before
+                        [:subproblems :managed-projection-hits])))
+            "a distinct top-level query reuses relation-stamped portions")
+        (is (< (get @work :executed-backend-operations 0) 2)
+            "shared portions avoid the two direct relationship probes")))
+
+    ;; A write to the depended-on relation must select a different managed key,
+    ;; not reuse the previous negative projection.
+    (is (false? (eacl/can? client user :read_c server-2)))
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship group :team server-2)])
+    (is (true? (eacl/can? client user :read_c server-2)))))
 
 (deftest datascript-delete-object-contract-test
   (let [conn   (datascript/create-conn)

@@ -667,7 +667,11 @@ Capacity can be tuned, though most consumers do not need to:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:max-entries 4096}}))
+   {:cache {:max-entries 4096
+            :subproblem-cache
+            {:projection-max-weight (* 8 1024 1024)
+             :denotation-max-weight (* 8 1024 1024)
+             :max-inflight 256}}}))
 ```
 
 The exact tier accepts a hit only for the same immutable selected DB
@@ -686,18 +690,29 @@ Cache granularity is deliberately split:
 - completed-answer entries are keyed by the complete semantic operation and
   query, including the principal; they do not reuse graph results across
   different principals or different permission questions;
+- bounded relationship projection chunks and direct probes omit the principal
+  and top-level permission from their keys, so queries that converge on the
+  same relation/index portion reuse it;
+- under managed writer authority, unchanged relation stamps permit those
+  atomic projections to survive unrelated forward graph revisions;
+- completed acyclic and recursive denotations are reusable across compatible
+  operations on the identical immutable snapshot, but derived denotations are
+  not yet lifted across revisions;
 - page-navigation and recursive-continuation state is likewise scoped to one
   authenticated query and snapshot proof;
 - schema-derived permission paths, dependency closures, recursive routing,
   and immutable recursive traversal plans are shared by every query in the
   same client/schema generation.
 
-The last layer gives recursive queries a safe compilation network effect: once
-one principal queries `server/view`, another principal querying `server/view`
-reuses its compiled worklist rules and indexes. It does **not** reuse either
-principal's grants, visited graph, or final answer. EACL v8 does not implement
-SpiceDB-style cached authorization subproblems; backend indexes still serve
-every graph edge needed by a cache miss.
+These layers provide two network effects: schema/plan compilation is shared
+through the schema generation, and relationship projections are shared where
+otherwise different authorization queries traverse the same graph portion.
+Recursive visited-set fragments and partial worklists remain uncacheable;
+only completed least-fixed-point denotations may be published.
+
+The complete architecture, bounds, metrics, benchmark method, and exact formal
+claim boundary are documented in the
+[v8 layered subproblem cache guide](docs/v8-subproblem-cache.md).
 
 Recursive Relay pages also size backend scan batches to the requested window:
 16 datoms for pages up to 32 results, 32 for pages up to 256, and 64 beyond

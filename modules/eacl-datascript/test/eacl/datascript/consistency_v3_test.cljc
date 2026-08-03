@@ -8,6 +8,7 @@
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as datascript-schema]
+            [eacl.engine.v8 :as engine]
             [eacl.spicedb.consistency :as consistency]))
 
 (def schema
@@ -191,6 +192,70 @@
       (doseq [metric [:exact-hits :managed-hits :misses :puts]]
         (is (= (metric before) (metric after))
             (str metric " must not change during request bypass"))))))
+
+(deftest distinct-permissions-share-exact-relationship-projections-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})
+        shared-schema
+        "definition user {}
+         definition team {
+           relation member: user
+           permission access = member
+         }
+         definition server {
+           relation team: team
+           permission view = team->access
+           permission edit = team->access
+         }"
+        team (eacl/spice-object :team "shared-team")
+        servers
+        (mapv #(eacl/spice-object :server (str "shared-server-" %))
+              (range 40))
+        relationships
+        (into [(eacl/->Relationship user :member team)]
+              (map #(eacl/->Relationship team :team %) servers))
+        query
+        (fn [permission]
+          {:subject user
+           :permission permission
+           :resource/type :server
+           :first 20})
+        work (atom {})]
+    (eacl/write-schema! client shared-schema)
+    (ds/transact!
+     conn
+     (mapv (fn [object]
+             {:eacl/id (:id object)})
+           (into [user team] servers)))
+    (eacl/create-relationships! client relationships)
+    (binding [engine/*backend-work-stats* work]
+      (let [view-page (eacl/lookup-resources client (query :view))
+            after-view (datascript/cache-stats client)
+            edit-page (eacl/lookup-resources client (query :edit))
+            after-edit (datascript/cache-stats client)]
+        (is (= (:data view-page) (:data edit-page)))
+        (is (false? (:cached? view-page)))
+        (is (false? (:cached? edit-page)))
+        (is (= (:exact-hits after-view) (:exact-hits after-edit))
+            "different top-level permission keys cannot hit completed answers")
+        (is (> (get-in after-edit [:subproblems :projection-hits])
+               (get-in after-view [:subproblems :projection-hits])))
+        (is (> (get-in after-edit
+                       [:subproblems :avoided-backend-operations])
+               (get-in after-view
+                       [:subproblems :avoided-backend-operations])))
+        (is (pos? (:executed-backend-operations @work))))
+      (testing "acyclic point decisions reuse a shared target permission"
+        (let [server (first servers)
+              _ (is (true? (eacl/can? client user :view server)))
+              after-view (datascript/cache-stats client)
+              _ (is (true? (eacl/can? client user :edit server)))
+              after-edit (datascript/cache-stats client)]
+          (is (= (:exact-hits after-view) (:exact-hits after-edit)))
+          (is (> (get-in after-edit
+                         [:subproblems :acyclic-denotation-hits])
+                 (get-in after-view
+                         [:subproblems :acyclic-denotation-hits]))))))))
 
 (deftest causal-anchor-survives-restart-and-detects-reset-test
   (let [conn (datascript/create-conn)

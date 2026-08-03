@@ -6,6 +6,7 @@
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def empty-page
@@ -683,6 +684,30 @@
        [:page-info :cursor-recovery]
        (:cursor-recovery opts)))))
 
+(def ^:private identity-key-version 1)
+
+(defn- cached-internal-id->object
+  [adapter internal-id]
+  (let [resolved
+        (subproblem/resolve-bound!
+         :projection
+         [identity-key-version
+          :internal-id->object
+          (backend/backend-id adapter)
+          (backend/identity-contract adapter)
+          internal-id]
+         {:valid? some?
+          :weight-fn
+          (fn [value]
+            (+ 96
+               (if (string? value)
+                 (* 2 (count value))
+                 160)))}
+         #(backend/invoke adapter :internal-id->object internal-id))]
+    (when (:cached? resolved)
+      (subproblem/record-avoided-backend-operation!))
+    (:value resolved)))
+
 (defn externalize-page
   [adapter opts operation query page]
   (externalize-page-cursors
@@ -694,7 +719,7 @@
        (fn [{:keys [type id]}]
          (spice-object
           type
-          (backend/invoke adapter :internal-id->object id)))
+          (cached-internal-id->object adapter id)))
        objects)))))
 
 (defn externalize-relationship-page
@@ -711,10 +736,10 @@
           {:subject
            (update
             subject :id
-            #(backend/invoke adapter :internal-id->object %))
+            #(cached-internal-id->object adapter %))
            :relation relation
            :resource
            (update
             resource :id
-            #(backend/invoke adapter :internal-id->object %))}))
+            #(cached-internal-id->object adapter %))}))
        relationships)))))

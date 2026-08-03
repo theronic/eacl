@@ -11,7 +11,8 @@ the generated release manifest.
 - `dafny/` contains the executable mathematical semantics, verified kernels,
   and proof lemmas.
 - `tla/` contains bounded temporal models used to discover hostile cache,
-  cursor, snapshot, and continuation histories.
+  cursor, snapshot, continuation, subproblem-publication, relation-proof, and
+  source-switch histories.
 - `counterexamples/` retains minimized witnesses and their bug ledger.
 - `verification/` records the decision inventory, trusted boundary, assurance
   matrix, tool-selection research, baselines, and release-manifest inputs.

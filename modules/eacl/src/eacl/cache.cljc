@@ -3,6 +3,7 @@
   authenticated-entry validation."
   (:require [eacl.backend.v8 :as backend]
             [eacl.secure-format :as secure]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def cache-entry-version 3)
@@ -57,11 +58,12 @@
   [store]
   (instance? NoCache store))
 
-(defrecord ExactGeneration [snapshot order entries])
-(defrecord ManagedGeneration [schema-stamp installed-order entries])
+(defrecord ExactGeneration [snapshot order entries subproblems])
+(defrecord ManagedGeneration
+  [schema-stamp installed-order entries subproblems])
 (defrecord CacheLifecycle [exact managed])
 (defrecord CurrentGenerationCache [lifecycle metrics max-entries admissions
-                                   admit-on-repeat?])
+                                   admit-on-repeat? subproblem-options])
 
 (defn- new-lifecycle
   []
@@ -75,9 +77,10 @@
   contract. Neither tier is a portable provider or a historical cache."
   ([]
    (current-cache {}))
-  ([{:keys [max-entries admit-on-repeat?]
+  ([{:keys [max-entries admit-on-repeat? subproblem-cache]
      :or {max-entries 1024
-          admit-on-repeat? false}}]
+          admit-on-repeat? false
+          subproblem-cache {}}}]
    (when-not (and (integer? max-entries) (pos? max-entries))
      (throw (ex-info "Current cache :max-entries must be positive."
                      {:type :eacl/invalid-config
@@ -86,6 +89,16 @@
      (throw (ex-info "Current cache :admit-on-repeat? must be boolean."
                      {:type :eacl/invalid-config
                       :admit-on-repeat? admit-on-repeat?})))
+   (when-not (map? subproblem-cache)
+     (throw (ex-info "Current cache :subproblem-cache must be a map."
+                     {:type :eacl/invalid-config
+                      :subproblem-cache subproblem-cache})))
+   (when-not (boolean? (get subproblem-cache :enabled? true))
+     (throw (ex-info "Current cache subproblem :enabled? must be boolean."
+                     {:type :eacl/invalid-config
+                      :subproblem-cache subproblem-cache})))
+   ;; Validate budgets before a request attempts to install a generation.
+   (subproblem/store (dissoc subproblem-cache :enabled?))
    (->CurrentGenerationCache
     (atom (new-lifecycle))
     (atom {:exact-hits 0
@@ -97,7 +110,8 @@
            :expirations 0})
     max-entries
     (atom {})
-    admit-on-repeat?)))
+    admit-on-repeat?
+    subproblem-cache)))
 
 (defn current-cache?
   [value]
@@ -121,7 +135,9 @@
        :reason :client-private-cache-reuse}))
     (and (map? value)
          (not (satisfies? CacheStore value)))
-    (current-cache (select-keys value [:max-entries]))
+    (current-cache
+     (select-keys value
+                  [:max-entries :admit-on-repeat? :subproblem-cache]))
     :else
     (current-cache)))
 
@@ -140,7 +156,16 @@
            :managed-entries
            (if managed (count @(:entries managed)) 0)
            :admission-entries
-           (count @(:admissions store)))))
+           (count @(:admissions store))
+           :subproblems
+           (if (and exact (:subproblems exact))
+             (subproblem/stats (:subproblems exact))
+             (subproblem/stats
+              (subproblem/store
+               (dissoc (:subproblem-options store) :enabled?))))
+           :managed-subproblems
+           (when (and managed (:subproblems managed))
+             (subproblem/stats (:subproblems managed))))))
 
 (defn record-current-bypass!
   "Records that a configured native cache was deliberately skipped without
@@ -216,7 +241,7 @@
         nil))))
 
 (defn- install-exact-generation!
-  [exact snapshot order same-snapshot?]
+  [exact snapshot order same-snapshot? subproblem-options]
   (loop []
     (let [current @exact]
       (cond
@@ -227,7 +252,11 @@
         (or (nil? current)
             (< (:order current) order))
         (let [created
-              (->ExactGeneration snapshot order (atom {}))]
+              (->ExactGeneration
+               snapshot order (atom {})
+               (when (get subproblem-options :enabled? true)
+                 (subproblem/store
+                  (dissoc subproblem-options :enabled?))))]
           (if (compare-and-set! exact current created)
             {:generation created :active? true}
             (recur)))
@@ -238,7 +267,7 @@
         {:generation nil :active? false}))))
 
 (defn- install-managed-generation!
-  [managed schema-stamp order]
+  [managed schema-stamp order subproblem-options]
   (loop []
     (let [current @managed]
       (cond
@@ -248,7 +277,13 @@
         (or (nil? current)
             (< (:installed-order current) order))
         (let [created
-              (->ManagedGeneration schema-stamp order (atom {}))]
+              (->ManagedGeneration
+               schema-stamp
+               order
+               (atom {})
+               (when (get subproblem-options :enabled? true)
+                 (subproblem/store
+                  (dissoc subproblem-options :enabled?))))]
           (if (compare-and-set! managed current created)
             created
             (recur)))
@@ -257,17 +292,31 @@
         :else
         nil))))
 
+(defn- valid-managed-descriptor?
+  [descriptor]
+  (let [{:keys [schema-stamp dependency-stamp]} descriptor]
+    (and (map? descriptor)
+         (subproblem/proof-stamp? schema-stamp)
+         (subproblem/proof-stamp? dependency-stamp))))
+
 (defn- managed-descriptor
-  [store managed-key-fn]
+  [store subproblem-store descriptor-key-fn managed-key-fn]
   (when managed-key-fn
     (try
-      (let [{:keys [schema-stamp dependency-stamp] :as descriptor}
-            (managed-key-fn)]
-        (when (and (map? descriptor)
-                   (integer? schema-stamp)
-                   (not (neg? schema-stamp))
-                   (integer? dependency-stamp)
-                   (not (neg? dependency-stamp)))
+      (let [descriptor-key
+            (when descriptor-key-fn (descriptor-key-fn))
+            descriptor
+            (if (and subproblem-store descriptor-key)
+              (:value
+               (subproblem/resolve!
+                subproblem-store
+                :denotation
+                [:managed-descriptor 1 descriptor-key]
+                {:valid? valid-managed-descriptor?
+                 :weight-fn (constantly 160)}
+                managed-key-fn))
+              (managed-key-fn))]
+        (when (valid-managed-descriptor? descriptor)
           descriptor))
       (catch #?(:clj Exception :cljs :default) _
         (swap! (:metrics store) update :stamp-failures inc)
@@ -286,7 +335,8 @@
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
-           managed-key-fn]
+           managed-descriptor-key-fn managed-key-fn
+           managed-subproblem-key-fn managed-subproblem-scope]
     :or {same-snapshot? =
          cacheable? true}}
    semantic-key kind valid-value? compute]
@@ -298,7 +348,11 @@
     (do
       (when (current-cache? store)
         (swap! (:metrics store) update :bypasses inc))
-      {:value (compute)
+      {:value (binding [subproblem/*store* nil
+                        subproblem/*managed-store* nil
+                        subproblem/*managed-key-fn* nil
+                        subproblem/*managed-scope* nil]
+                (compute))
        :cached? false
        :cache-tier nil
        :cache-basis nil})
@@ -317,12 +371,17 @@
             {:keys [generation active?]}
             (install-exact-generation!
              (:exact lifecycle)
-             snapshot snapshot-order same-snapshot?)
+             snapshot snapshot-order same-snapshot?
+             (:subproblem-options store))
             entry-key [semantic-key kind]]
         (if-not active?
           (do
             (swap! (:metrics store) update :bypasses inc)
-            {:value (compute)
+            {:value (binding [subproblem/*store* nil
+                              subproblem/*managed-store* nil
+                              subproblem/*managed-key-fn* nil
+                              subproblem/*managed-scope* nil]
+                      (compute))
              :cached? false
              :cache-tier nil
              :cache-basis nil})
@@ -334,14 +393,18 @@
               {:value (:value entry)
                :cached? true
                :cache-tier :exact-current
-               :cache-basis (:cache-basis entry)})
+               :cache-basis (:cache-basis entry)
+               :subproblem-store (:subproblems generation)})
             (let [{:keys [schema-stamp dependency-stamp]}
-                  (managed-descriptor store managed-key-fn)
+                  (managed-descriptor
+                   store (:subproblems generation)
+                   managed-descriptor-key-fn managed-key-fn)
                   managed-generation
                   (when (some? schema-stamp)
                     (install-managed-generation!
                      (:managed lifecycle)
-                     schema-stamp snapshot-order))
+                     schema-stamp snapshot-order
+                     (:subproblem-options store)))
                   managed-entry-key
                   (when managed-generation
                     [semantic-key kind dependency-stamp])
@@ -359,8 +422,18 @@
                   {:value (:value managed-entry)
                    :cached? true
                    :cache-tier :managed-current
-                   :cache-basis (:cache-basis managed-entry)})
-                (let [value (compute)
+                   :cache-basis (:cache-basis managed-entry)
+                   :subproblem-store (:subproblems generation)})
+                (let [value
+                      (binding [subproblem/*store*
+                                (:subproblems generation)
+                                subproblem/*managed-store*
+                                (:subproblems managed-generation)
+                                subproblem/*managed-key-fn*
+                                managed-subproblem-key-fn
+                                subproblem/*managed-scope*
+                                managed-subproblem-scope]
+                        (compute))
                       entry {:value value
                              :cache-basis cache-basis}
                       admit? (admit-entry? store entry-key)]
@@ -377,7 +450,8 @@
                   {:value value
                    :cached? false
                    :cache-tier nil
-                   :cache-basis cache-basis})))))))))
+                   :cache-basis cache-basis
+                   :subproblem-store (:subproblems generation)})))))))))
 
 (defrecord LocalStore [entries metrics max-entries]
   CacheStore

@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (defn- adapter
@@ -115,7 +116,7 @@
              nil
              (catch #?(:clj clojure.lang.ExceptionInfo
                        :cljs cljs.core.ExceptionInfo)
-                 error
+                    error
                (:reason (ex-data error))))))
     (is (not (identical? (cache/current-cache-for-option nil)
                          (cache/current-cache-for-option nil)))
@@ -152,11 +153,19 @@
     (testing "the exact hot path does not read dependency stamps"
       (is (= {:value true :cached? false :cache-tier nil}
              (select-keys
-              (resolve (context snapshot-1 1 10 20))
+              (resolve
+               (context
+                snapshot-1 1
+                [10 "schema-a"]
+                [[1 20 "relation-a"]]))
               [:value :cached? :cache-tier])))
       (is (= {:value true :cached? true :cache-tier :exact-current}
              (select-keys
-              (resolve (context snapshot-1 1 10 20))
+              (resolve
+               (context
+                snapshot-1 1
+                [10 "schema-a"]
+                [[1 20 "relation-a"]]))
               [:value :cached? :cache-tier])))
       (is (= 1 @computations))
       (is (= 1 @stamp-reads)))
@@ -164,23 +173,39 @@
     (testing "an unrelated transaction lifts through the managed tier"
       (is (= {:value true :cached? true :cache-tier :managed-current}
              (select-keys
-              (resolve (context snapshot-2 2 10 20))
+              (resolve
+               (context
+                snapshot-2 2
+                [10 "schema-a"]
+                [[1 20 "relation-a"]]))
               [:value :cached? :cache-tier])))
       (is (= 1 @computations))
       (is (= 2 @stamp-reads))
       (is (= :exact-current
              (:cache-tier
-              (resolve (context snapshot-2 2 10 20)))))
+              (resolve
+               (context
+                snapshot-2 2
+                [10 "schema-a"]
+                [[1 20 "relation-a"]])))))
       (is (= 2 @stamp-reads)
           "promotion makes the next hit independent of stamp extraction"))
 
-    (testing "relevant relation and schema changes miss"
+    (testing "same-tx relation and schema mutation identities cannot collide"
       (reset! answer false)
       (is (false? (:cached?
-                   (resolve (context snapshot-3 3 10 21)))))
+                   (resolve
+                    (context
+                     snapshot-3 3
+                     [10 "schema-a"]
+                     [[1 20 "relation-b"]])))))
       (reset! answer true)
       (is (false? (:cached?
-                   (resolve (context snapshot-4 4 11 21)))))
+                   (resolve
+                    (context
+                     snapshot-4 4
+                     [10 "schema-b"]
+                     [[1 20 "relation-b"]])))))
       (is (= 3 @computations)))
 
     (testing "explicit bypass neither reads nor publishes"
@@ -252,6 +277,180 @@
     (cache/expire-current! store)
     (is (false? (:cached? (resolve))))
     (is (= 2 @calls))))
+
+(deftest exact-generation-subproblem-lifecycle-test
+  (let [store (cache/current-cache)
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
+        projection-calls (atom 0)
+        resolve
+        (fn [top-level-key]
+          (cache/resolve-current!
+           store context top-level-key :decision integer?
+           (fn []
+             (:value
+              (subproblem/resolve-bound!
+               :projection :shared-projection {}
+               (fn []
+                 (swap! projection-calls inc)
+                 42))))))]
+    (testing "distinct completed-answer keys share one exact projection"
+      (is (= 42 (:value (resolve :top-level-a))))
+      (is (= 42 (:value (resolve :top-level-b))))
+      (is (= 1 @projection-calls))
+      (is (zero? (:exact-hits (cache/current-cache-stats store)))
+          "different top-level keys must not be counted as final-answer hits")
+      (is (= 1 (get-in (cache/current-cache-stats store)
+                       [:subproblems :projection-hits]))))
+    (testing "expiry replaces the complete subproblem generation"
+      (cache/expire-current! store)
+      (is (= 42 (:value (resolve :top-level-c))))
+      (is (= 2 @projection-calls))
+      (is (zero? (get-in (cache/current-cache-stats store)
+                         [:subproblems :projection-hits]))))))
+
+#?(:clj
+   (deftest delayed-subproblem-publication-cannot-resurrect-expired-generation-test
+     (let [store (cache/current-cache)
+           snapshot-1 (snapshot-object)
+           snapshot-2 (snapshot-object)
+           context
+           (fn [snapshot order]
+             {:snapshot snapshot
+              :snapshot-order order
+              :same-snapshot? identical?
+              :cache-basis order})
+           started (promise)
+           release (promise)
+           old
+           (future
+             (cache/resolve-current!
+              store (context snapshot-1 1) :old :decision integer?
+              (fn []
+                (:value
+                 (subproblem/resolve-bound!
+                  :projection :shared {}
+                  (fn []
+                    (deliver started true)
+                    @release
+                    41))))))
+           _ @started]
+       (cache/expire-current! store)
+       (is (= 42
+              (:value
+               (cache/resolve-current!
+                store (context snapshot-2 2) :new-a :decision integer?
+                (fn []
+                  (:value
+                   (subproblem/resolve-bound!
+                    :projection :shared {}
+                    (constantly 42))))))))
+       (deliver release true)
+       (is (= 41 (:value @old))
+           "the already selected request may finish on its old snapshot")
+       (is (= 42
+              (:value
+               (cache/resolve-current!
+                store (context snapshot-2 2) :new-b :decision integer?
+                (fn []
+                  (:value
+                   (subproblem/resolve-bound!
+                    :projection :shared {}
+                    (constantly 99)))))))
+           "late work remains reachable only from the expired lifecycle")
+       (is (= 1 (get-in (cache/current-cache-stats store)
+                        [:subproblems :projection-hits]))))))
+
+(deftest cache-disabled-request-bypasses-subproblem-store-test
+  (let [store (cache/current-cache)
+        snapshot (snapshot-object)
+        cached-context {:snapshot snapshot
+                        :snapshot-order 1
+                        :same-snapshot? identical?
+                        :cache-basis 1}
+        projection-calls (atom 0)
+        projection
+        #(subproblem/resolve-bound!
+          :projection :projection {}
+          (fn []
+            (swap! projection-calls inc)
+            7))
+        top-level
+        (fn [key context]
+          (cache/resolve-current!
+           store context key :decision integer?
+           #(-> (projection) :value)))]
+    (is (= 7 (:value (top-level :cached cached-context))))
+    (let [before (:subproblems (cache/current-cache-stats store))]
+      (is (= 7 (:value
+                (top-level :disabled
+                           (assoc cached-context :cacheable? false)))))
+      (is (= 2 @projection-calls))
+      (is (= before
+             (:subproblems (cache/current-cache-stats store)))))))
+
+(deftest completed-answer-only-cache-option-test
+  (let [store
+        (cache/current-cache
+         {:subproblem-cache {:enabled? false}})
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
+        calls (atom 0)
+        resolve
+        (fn [key]
+          (cache/resolve-current!
+           store context key :decision integer?
+           (fn []
+             (:value
+              (subproblem/resolve-bound!
+               :projection :shared {}
+               (fn []
+                 (swap! calls inc)
+                 9))))))]
+    (is (= 9 (:value (resolve :a))))
+    (is (= 9 (:value (resolve :b))))
+    (is (= 2 @calls))
+    (is (zero? (get-in (cache/current-cache-stats store)
+                       [:subproblems :projection-hits])))))
+
+(deftest managed-descriptor-is-compiled-once-per-exact-generation-test
+  (let [store (cache/current-cache)
+        snapshot-1 (snapshot-object)
+        snapshot-2 (snapshot-object)
+        descriptor-reads (atom 0)
+        context
+        (fn [snapshot order descriptor-key]
+          {:snapshot snapshot
+           :snapshot-order order
+           :same-snapshot? identical?
+           :cache-basis order
+           :managed-descriptor-key-fn (constantly descriptor-key)
+           :managed-key-fn
+           (fn []
+             (swap! descriptor-reads inc)
+             {:schema-stamp 10
+              :dependency-stamp 20})})
+        resolve
+        (fn [semantic-key current-context]
+          (cache/resolve-current!
+           store current-context semantic-key :decision integer?
+           (constantly 7)))]
+    (resolve :query-a (context snapshot-1 1 [1 2 3]))
+    (resolve :query-b (context snapshot-1 1 [1 2 3]))
+    (is (= 1 @descriptor-reads)
+        "distinct final-answer keys share proof compilation on one snapshot")
+    (resolve :query-c (context snapshot-1 1 [1 2 4]))
+    (is (= 2 @descriptor-reads)
+        "a different dependency set has a different descriptor key")
+    (resolve :query-d (context snapshot-2 2 [1 2 3]))
+    (is (= 3 @descriptor-reads)
+        "a new immutable snapshot owns a new proof-compilation store")))
 
 (deftest current-generation-two-hit-admission-test
   (let [store (cache/current-cache {:admit-on-repeat? true})

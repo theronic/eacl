@@ -51,6 +51,44 @@
   {:baseline-ms-per-page 670
    :status :diagnostic-not-cutover-target}}
 
+ :layered-subproblem-cache
+ {:fixture
+  {:backend :datascript
+   :managed-coherence true
+   :permission-depth 48
+   :distinct-queries 80
+   :completed-answer-hits 0
+   :unrelated-write-between-warmup-and-measurement true}
+  :required
+  {:maximum-backend-work-ratio 0.50
+   :maximum-p50-latency-ratio 0.75
+   :maximum-new-generation-proof-reads 50
+   :maximum-hot-hit-regression-ratio 1.05
+   :maximum-cache-disabled-regression-ratio 1.05}
+  :observed
+  {:repeated-runs 5
+   :baseline-backend-operations 3920
+   :layered-backend-operations 0
+   :p50-latency-ratio-range [0.4981661538461538 0.5600387252924566]
+   :managed-projection-hits 49
+   :new-generation-proof-reads 49
+   :hit-cardinality
+   {:small-entries 64
+    :large-entries 4096
+    :entry-count-ratio 64
+    :p50-latency-ratio 1.074889746035696}
+   :cached-recursive-page
+   {:small-closure-items 64
+    :large-closure-items 131072
+    :closure-size-ratio 2048
+    :page-size 20
+    :p50-latency-ratio 1.008695652173913}
+   :hot-hit-regression-ratio 1.0
+   :cache-disabled-regression-ratio 1.0035726495726496}
+  :raw-sample-source
+  "modules/eacl-datascript/test/eacl/bench/subproblem_cache_test.clj"
+  :status :passed}
+
  :memory-and-token
  {:maximum-retained-page-eids 16384
   :default-continuation-store-max-weight-bytes 16777216
@@ -101,19 +139,19 @@
            :errors 0}
   :status :current-generation-cache-passed
   :multipath-page
-  {:first-page-median-ms 1.60
-   :first-page-p95-ms 8.27
-   :forward-early-ms-per-page 1.03
-   :forward-late-ms-per-page 0.94
-   :reverse-early-ms-per-page 1.56
-   :reverse-late-ms-per-page 1.53
-   :max-page-median-ms 2.00
+  {:first-page-median-ms 1.57
+   :first-page-p95-ms 2.46
+   :forward-early-ms-per-page 1.18
+   :forward-late-ms-per-page 1.05
+   :reverse-early-ms-per-page 1.60
+   :reverse-late-ms-per-page 1.55
+   :max-page-median-ms 2.28
    :thresholds-met true}
   :permission-check
   {:heavy-run
-   {:warm-median-microseconds 31.79
-    :completed-cache-hit-median-microseconds 8.50
-    :cache-hit-to-warm-ratio 0.267
+   {:warm-median-microseconds 33.50
+    :completed-cache-hit-median-microseconds 11.71
+    :cache-hit-to-warm-ratio 0.3496
     :absolute-threshold-met true}
    :isolated-repeat
    {:datomic-cache-disabled-microseconds 33.54
@@ -126,25 +164,25 @@
   :cache-proof-churn
   {:unit :microseconds-per-read
    :unrelated
-   {:managed-current 32.646
-    :legacy-content-proof 132.8545
-    :global-invalidation 29.521
-    :no-cache 20.8955}
+   {:managed-current 35.2295
+    :legacy-content-proof 131.8125
+    :global-invalidation 33.6455
+    :no-cache 22.854}
    :relevant
-   {:managed-current 60.9795
-    :legacy-content-proof 135.646
-    :global-invalidation 64.333
-    :no-cache 30.333}}
+   {:managed-current 120.208
+    :legacy-content-proof 186.0415
+    :global-invalidation 112.708
+    :no-cache 42.8335}}
   :completed-hit-cost-breakdown-nanoseconds-per-operation
-  {:db 80.578
-   :entid 960.196
-   :capture-basic-context 5318.525
-   :current-cache 1513.644
-   :cached-basic-authorization 2175.579}
+  {:db 85.2364
+   :entid 1034.9762
+   :capture-basic-context 5454.8998
+   :current-cache 854.2744
+   :cached-basic-authorization 3286.8094}
   :recursive-4000
-  {:continuation-ms 68.728
-   :replay-ms 1698.015
-   :time-ratio 24.706
+  {:continuation-ms 94.427542
+   :replay-ms 1761.414834
+   :time-ratio 18.653613095213256
    :work-ratio 77.461
    :thresholds-met true}
   :cutover-decision

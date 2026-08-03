@@ -24,6 +24,7 @@
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.secure-format :as secure]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]
             [eacl.spicedb.consistency :as consistency])
   (:import [java.io ByteArrayInputStream ByteArrayOutputStream DataInputStream
@@ -784,10 +785,10 @@
 
     result))
 
-(defn- datom-transaction
+(defn- datom-proof
   [db entity attribute]
-  (some-> (first (d/datoms db :eavt entity attribute))
-          :tx))
+  (when-let [datom (first (d/datoms db :eavt entity attribute))]
+    [(:tx datom) (:v datom)]))
 
 (defn- managed-cache-descriptor
   [db relation-ids]
@@ -797,32 +798,35 @@
             (d/entid db [:eacl/id mutation/schema-entity-id])
             schema-stamp
             (when schema-eid
-              (datom-transaction
+              (datom-proof
                db schema-eid mutation/schema-mutation-id-attr))
             relation-stamps
             (keep
              (fn [relation-id]
                (when-let [tx
                           (or
-                           (datom-transaction
+                           (datom-proof
                             db relation-id
                             :eacl/relation-version)
                            ;; A newly declared relation has no relationship
                            ;; write yet. Its schema transaction still provides
                            ;; the initial monotone stamp.
-                           (datom-transaction
+                           (datom-proof
                             db relation-id
                             mutation/relation-mutation-id-attr))]
                  [relation-id tx]))
              relation-ids)]
-        (when (and (integer? schema-stamp)
+        (when (and (subproblem/proof-stamp? schema-stamp)
                    (= (count relation-ids)
                       (count relation-stamps))
-                   (every? (comp integer? second)
+                   (every? (comp subproblem/proof-stamp? second)
                            relation-stamps))
           {:schema-stamp schema-stamp
            :dependency-stamp
-           (reduce max (map second relation-stamps))})))))
+           (mapv
+            (fn [[relation-id [tx mutation-id]]]
+              [relation-id tx mutation-id])
+            (sort-by first relation-stamps))})))))
 
 (defn- cached-authorization-result
   [opts consistency-context op query-identity kind valid-result? _weight-fn compute]
@@ -854,10 +858,18 @@
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
+              :managed-descriptor-key-fn
+              (when (:managed-cache-enabled? opts)
+                #(vec (sort (distinct (relation-ids)))))
               :managed-key-fn
               (when (:managed-cache-enabled? opts)
                 #(managed-cache-descriptor
-                  db (relation-ids)))}
+                  db (relation-ids)))
+              :managed-subproblem-key-fn
+              (when (:managed-cache-enabled? opts)
+                #(managed-cache-descriptor db [%]))
+              :managed-subproblem-scope
+              (backend/invoke adapter :source-scope)}
              {:operation op
               :query query-identity
               :engine-version engine/engine-version
@@ -1602,10 +1614,21 @@
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
+              :managed-descriptor-key-fn
+              (when (:managed-cache-enabled? opts)
+                #(vec
+                  (sort
+                   (distinct
+                    (:relationship-dependencies @dependencies)))))
               :managed-key-fn
               (when (:managed-cache-enabled? opts)
                 #(managed-cache-descriptor
-                  db (:relationship-dependencies @dependencies)))}
+                  db (:relationship-dependencies @dependencies)))
+              :managed-subproblem-key-fn
+              (when (:managed-cache-enabled? opts)
+                #(managed-cache-descriptor db [%]))
+              :managed-subproblem-scope
+              (backend/invoke adapter :source-scope)}
              {:operation op
               :query query-identity
               :engine-version engine/engine-version

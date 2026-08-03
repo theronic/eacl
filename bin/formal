@@ -225,7 +225,9 @@ case "$command" in
     mkdir -p "$output_root/apalache/typecheck"
     for model in \
       "$repo_root/formal/tla/EaclTemporal.tla" \
-      "$repo_root/formal/tla/EaclTemporalDetailed.tla"
+      "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
+      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
+      "$repo_root/formal/tla/EaclManagedProjectionCache.tla"
     do
       java -cp "$tla_jar" tla2sany.SANY "$model"
       "$apalache" \
@@ -247,6 +249,16 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.cfg" \
       6
+    apalache_check \
+      "subproblem-bounded" \
+      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
+      "$repo_root/formal/tla/EaclSubproblemCache.cfg" \
+      8
+    apalache_check \
+      "managed-projection-bounded" \
+      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
+      "$repo_root/formal/tla/EaclManagedProjectionCache.cfg" \
+      8
     ;;
   apalache-scheduled)
     need_tools
@@ -268,6 +280,14 @@ case "$command" in
       "detailed" \
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.cfg"
+    apalache_induction \
+      "subproblem" \
+      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
+      "$repo_root/formal/tla/EaclSubproblemCache.cfg"
+    apalache_induction \
+      "managed-projection" \
+      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
+      "$repo_root/formal/tla/EaclManagedProjectionCache.cfg"
     ;;
   all)
     "$repo_root/bin/formal" format
