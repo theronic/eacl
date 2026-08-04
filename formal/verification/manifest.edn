@@ -27,7 +27,7 @@
    :claim :conditional-interface-contract}
   :direct-and-acyclic-engine
   {:status :passed
-   :verified-obligations 67
+   :verified-obligations 78
    :source "formal/dafny/AcyclicEngine.dfy"
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
@@ -245,8 +245,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 85
-  :registered 85}
+  :killed 90
+  :registered 90}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"

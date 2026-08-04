@@ -1011,6 +1011,30 @@
      :direct-intersection-phases (.toNumber (aget result 1))
      :full-candidate-checks (.toNumber (aget result 2))}))
 
+(defn acyclic-path-fold
+  "Executes the generated source-shaped outer acyclic path fold. This is
+  formal test support, not a public EACL API."
+  [{:keys [visited? kinds direct-subject-type-matches path-results]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        result
+        (js-invoke
+         (.-__default acyclic)
+         "AcyclicPathFoldWithTrace"
+         visited?
+         (dafny-sequence (map big-number kinds))
+         (dafny-sequence direct-subject-type-matches)
+         (dafny-sequence path-results))]
+    {:allowed? (aget result 0)
+     :path-checks (.toNumber (aget result 1))
+     :direct-probe-checks (.toNumber (aget result 2))
+     :self-permission-checks (.toNumber (aget result 3))
+     :arrow-checks (.toNumber (aget result 4))
+     :callback-trace
+     (mapv
+      (fn [event]
+        (mapv #(.toNumber %) event))
+      (aget result 5))}))
+
 (defn- raw-relation-definition
   [acyclic
    {:keys [resource-type relation-name subject-type relation-eid]}]

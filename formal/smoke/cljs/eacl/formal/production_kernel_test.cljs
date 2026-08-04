@@ -302,6 +302,132 @@
     (boolean (some (set direct-matches) intermediates))
     :exhaustive? exhaustive?}))
 
+(def acyclic-path-observations
+  [{:kind 0 :direct-subject-type-matches? false :path-result true}
+   {:kind 0 :direct-subject-type-matches? true :path-result false}
+   {:kind 0 :direct-subject-type-matches? true :path-result true}
+   {:kind 1 :direct-subject-type-matches? false :path-result false}
+   {:kind 1 :direct-subject-type-matches? false :path-result true}
+   {:kind 2 :direct-subject-type-matches? false :path-result false}
+   {:kind 2 :direct-subject-type-matches? false :path-result true}])
+
+(defn- observation-sequences
+  [length]
+  (if (zero? length)
+    [[]]
+    (for [head acyclic-path-observations
+          tail (observation-sequences (dec length))]
+      (into [head] tail))))
+
+(defn- observed-path-seq
+  [indexed-paths path-checks]
+  (lazy-seq
+   (when-let [[[index path] & more] (seq indexed-paths)]
+     (swap! path-checks inc)
+     (cons path (observed-path-seq more path-checks)))))
+
+(defn- source-acyclic-path-fold
+  [{:keys [visited? observations]}]
+  (let [path-checks (atom 0)
+        direct-probe-checks (atom 0)
+        self-permission-checks (atom 0)
+        arrow-checks (atom 0)
+        callback-trace (atom [])
+        paths
+        (mapv
+         (fn [index
+              {:keys [kind direct-subject-type-matches?]}]
+           (case kind
+             0 {:type :relation
+                :subject-type
+                (if direct-subject-type-matches? :user :service)
+                :relation-eid (inc index)}
+             1 {:type :self-permission
+                :target-permission (keyword (str "self-" index))}
+             2 {:type :arrow
+                :target-type :group
+                :via-relation-eid (inc index)
+                :target-permission (keyword (str "arrow-" index))}))
+         (range)
+         observations)
+        results
+        (into
+         {}
+         (map-indexed
+          (fn [index {:keys [kind path-result]}]
+            [[kind index] path-result]))
+         observations)
+        target-index
+        (into
+         {}
+         (keep-indexed
+          (fn [index {:keys [kind]}]
+            (when (pos? kind)
+              [(keyword
+                (str (if (= 1 kind) "self-" "arrow-") index))
+               [kind index]])))
+         observations)
+        state [:user 9 :view :document 10]]
+    (with-redefs [engine/get-permission-paths
+                  (fn [& _]
+                    (observed-path-seq
+                     (map-indexed vector paths)
+                     path-checks))
+                  engine/direct-match-datoms-in-relationship-index
+                  (fn [_ _ _ relation-eid _ _]
+                    (let [index (dec relation-eid)
+                          event [0 index]]
+                      (swap! direct-probe-checks inc)
+                      (swap! callback-trace conj event)
+                      (if (get results event) [true] [])))
+                  engine/resource->subjects
+                  (fn [_ _ _ via-relation-eid _ _]
+                    [(+ 1000 via-relation-eid)])
+                  engine/can*
+                  (fn [_ _ _ target-permission _ _ _]
+                    (let [[kind index :as event]
+                          (get target-index target-permission)]
+                      (swap!
+                       (if (= 1 kind)
+                         self-permission-checks
+                         arrow-checks)
+                       inc)
+                      (swap! callback-trace conj event)
+                      (get results [kind index])))]
+      (let [allowed?
+            (engine/can-uncached*
+             nil :user 9 :view :document 10
+             (if visited? #{state} #{}))]
+        {:allowed? allowed?
+         :path-checks @path-checks
+         :direct-probe-checks @direct-probe-checks
+         :self-permission-checks @self-permission-checks
+         :arrow-checks @arrow-checks
+         :callback-trace @callback-trace}))))
+
+(defn- generated-acyclic-path-fold
+  [{:keys [visited? observations]}]
+  (production/acyclic-path-fold
+   {:visited? visited?
+    :kinds (mapv :kind observations)
+    :direct-subject-type-matches
+    (mapv :direct-subject-type-matches? observations)
+    :path-results (mapv :path-result observations)}))
+
+(defn- acyclic-path-fold-fixtures
+  []
+  (let [ordinary
+        (map
+         (fn [observations]
+           {:visited? false :observations (vec observations)})
+         (mapcat observation-sequences (range 4)))
+        visited
+        (map
+         (fn [observations]
+           {:visited? true :observations (vec observations)})
+         (take 7 (observation-sequences 3)))]
+    (into (vec ordinary) visited)))
+
 (def path-materialization-relations
   [{:resource-type "document"
     :relation-name "reader"
@@ -1832,6 +1958,18 @@
           (pr-str {:label label
                    :source source
                    :generated generated})))))
+
+(deftest generated-javascript-acyclic-path-fold-refines-source-control
+  (let [fixtures (acyclic-path-fold-fixtures)]
+    (is (= 407 (count fixtures)))
+    (doseq [[index fixture] (map-indexed vector fixtures)]
+      (let [source (source-acyclic-path-fold fixture)
+            generated (generated-acyclic-path-fold fixture)]
+        (is (= source generated)
+            (pr-str {:fixture index
+                     :input fixture
+                     :source source
+                     :generated generated}))))))
 
 (deftest generated-javascript-permission-path-materialization-refines-source
   (let [fixtures (path-materialization-fixtures)]

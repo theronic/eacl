@@ -208,6 +208,16 @@ with actual Datomic, Datahike, and DataScript definition IDs. That is finite
 executable refinement evidence; host-language semantics and arbitrary storage
 engine states remain trusted.
 
+The outer acyclic union fold is source-shaped as well. Dafny proves the
+recursion guard performs zero path/callback work, direct paths with a
+nonmatching declared subject type do not invoke the backend probe, evaluation
+stops at the first effective positive, and path/callback checks are linear in
+the materialized path count. Generated Java and JavaScript match the actual
+CLJ/CLJS value, realized-path count, per-kind callback counts, and ordered
+`[path-kind, path-index]` trace on 407 fixtures each. Complete callback argument
+vectors and the meaning of nested callback results remain separate refinement
+obligations.
+
 Recursive engine selection has a narrower generated oracle. Production first
 materializes complete permission dependencies as
 `[resource-type permission] -> [resource-type permission]` edges, then uses

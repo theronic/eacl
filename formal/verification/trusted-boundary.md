@@ -143,6 +143,11 @@ CLJ/CLJS on 99 fixtures each; adapter certification v2 composes that source
 calculation with actual Datomic, Datahike, and DataScript relation IDs. The
 remaining trust is in the CLJ/CLJS language correspondence, adapter behavior
 outside certified fixtures, and the truth of nested non-direct callbacks.
+The enclosing acyclic union fold has an additional exact source-control model:
+407 fixtures per runtime compare authorization, realized path count, per-kind
+callback counts, and ordered callback kind/path index. Complete host callback
+arguments and the nested results themselves remain trusted inputs to that
+model.
 
 ## Cryptographic and canonicalization axioms
 

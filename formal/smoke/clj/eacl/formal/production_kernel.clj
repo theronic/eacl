@@ -9,7 +9,7 @@
     SnapshotConsistencyMode
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
-   (dafny DafnySequence DafnySet Tuple2 Tuple3 Tuple5 TypeDescriptor)
+   (dafny DafnySequence DafnySet Tuple2 Tuple3 Tuple5 Tuple6 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
@@ -941,6 +941,26 @@
     {:allowed? (.dtor__0 result)
      :direct-intersection-phases (dafny-long (.dtor__1 result))
      :full-candidate-checks (dafny-long (.dtor__2 result))}))
+
+(defn acyclic-path-fold
+  "Executes the generated source-shaped outer acyclic path fold. This is
+  formal test support, not a public EACL API."
+  [{:keys [visited? kinds direct-subject-type-matches path-results]}]
+  (let [^Tuple6 result
+        (AcyclicEngine.__default/AcyclicPathFoldWithTrace
+         visited?
+         (dafny-sequence kinds)
+         (typed-sequence
+          TypeDescriptor/BOOLEAN
+          direct-subject-type-matches)
+         (typed-sequence TypeDescriptor/BOOLEAN path-results))]
+    {:allowed? (.dtor__0 result)
+     :path-checks (dafny-long (.dtor__1 result))
+     :direct-probe-checks (dafny-long (.dtor__2 result))
+     :self-permission-checks (dafny-long (.dtor__3 result))
+     :arrow-checks (dafny-long (.dtor__4 result))
+     :callback-trace
+     (dafny-sequences->vectors (.dtor__5 result))}))
 
 (defn- raw-relation-definition
   [{:keys [resource-type relation-name subject-type relation-eid]}]

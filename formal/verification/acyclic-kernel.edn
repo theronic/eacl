@@ -4,7 +4,7 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 67
+   :verified-obligations 78
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
@@ -15,6 +15,11 @@
     :direct-grant-relation-eids-filter-subject-type
     :direct-grant-positive-implies-complete-path-positive
     :exhaustive-direct-grant-result-equals-complete-path-result
+    :visited-acyclic-state-performs-zero-path-and-callback-checks
+    :acyclic-path-fold-short-circuits-at-first-effective-positive
+    :mismatched-direct-path-does-not-invoke-the-direct-probe
+    :acyclic-callback-trace-preserves-path-kind-and-index
+    :acyclic-path-and-callback-checks-are-linear-in-materialized-path-count
     :forward-projection-exact
     :reverse-projection-exact
     :bounded-count-law
@@ -60,14 +65,14 @@
  :generated-targets
  {:java
   {:status :passed
-   :tests 34
-   :assertions 9985
+   :tests 35
+   :assertions 10393
    :failures 0
    :errors 0}
   :javascript
   {:status :passed
-   :tests 54
-   :assertions 10537
+   :tests 55
+   :assertions 10945
    :failures 0
    :errors 0}}
  :differential
@@ -190,6 +195,31 @@
    :direct-summary-ignores-nonrelation-path]
   :formal-source-refinement
   :source-shaped-materialization-and-direct-facts-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
+ :acyclic-outer-path-fold-source-specialization
+ {:hot-path :can-uncached-recursion-guard-and-cheapest-first-path-fold
+  :generated-source-fixtures
+  {:java 407
+   :javascript 407}
+  :path-kinds [:relation :self-permission :arrow]
+  :exact-trace
+  [:authorization-result
+   :realized-path-count
+   :direct-probe-count
+   :self-permission-callback-count
+   :arrow-evaluation-count
+   :ordered-callback-kind-and-path-index]
+  :formal-resource-bounds
+  {:path-checks "<= |paths|"
+   :each-callback-kind "<= path-checks"
+   :visited-state-path-and-callback-checks 0}
+  :mutations
+  [:acyclic-visited-state-evaluates-path
+   :acyclic-mismatched-direct-invokes-probe
+   :acyclic-path-fold-does-not-short-circuit
+   :acyclic-self-permission-routed-as-direct
+   :acyclic-arrow-callback-skipped]
+  :formal-source-refinement
+  :source-shaped-outer-fold-and-callback-kind-trace-proved-callback-arguments-and-semantics-language-correspondence-and-independent-review-remain-trusted}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
   :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement

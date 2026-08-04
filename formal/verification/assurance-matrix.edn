@@ -26,6 +26,9 @@
               :permission-path-materialization-refines-raw-typed-definitions
               :direct-grant-positive-is-sound
               :direct-grant-exhaustive-is-complete
+              :acyclic-recursion-guard-performs-zero-path-work
+              :acyclic-outer-path-fold-short-circuits-in-source-order
+              :acyclic-outer-path-and-callback-counts-are-linear
               :acyclic-arrow-source-control-refines-full-far-side-evaluation
               :acyclic-arrow-full-candidate-checks-are-linear
               :limit-fails-closed
@@ -41,7 +44,7 @@
    :production-authoritative
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
-   [:acyclic-direct-alias-and-arrow-callback-source-refinement
+   [:acyclic-direct-alias-and-arrow-callback-arguments-and-semantic-refinement
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]

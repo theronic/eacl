@@ -268,6 +268,70 @@
     :path-callback-evaluation-and-outer-union-fold-remain-outside-this-materialization-model
     :no-formal-bound-on-backend-schema-read-allocation-retained-heap-or-wall-time
     :independent-source-refinement-review-not-recorded]}
+  {:id :acyclic-outer-path-fold
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbol eacl.engine.v8/can-uncached*
+    :scope
+    :recursion-guard-cheapest-first-union-short-circuit-and-callback-kind-routing
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.EffectiveAcyclicPathResult
+     AcyclicEngine.AnyEffectiveAcyclicPathResult
+     AcyclicEngine.FirstEffectiveAcyclicPathChecks
+     AcyclicEngine.AcyclicCallbackTrace
+     AcyclicEngine.CallbackKindCount]
+    :lemmas
+    [AcyclicEngine.FirstEffectiveAcyclicPathChecksProperties
+     AcyclicEngine.AcyclicCallbackTraceProperties
+     AcyclicEngine.CallbackKindCountBound]
+    :methods [AcyclicEngine.AcyclicPathFoldWithTrace]}
+   :abstract-domain
+   {:path-kinds
+    {0 :direct-relation
+     1 :self-permission
+     2 :arrow}
+    :direct-result
+    :declared-subject-type-matches-and-direct-probe-is-positive
+    :self-and-arrow-result :nested-path-evaluation-result
+    :trace-event [:path-kind :materialized-path-index]}
+   :evidence
+   {:java-source-control-fixtures 407
+    :javascript-source-control-fixtures 407
+    :ordinary-sequences
+    {:path-observations 7
+     :lengths [0 1 2 3]
+     :fixtures 400}
+    :visited-state-fixtures 7
+    :exact
+    [:authorization-result
+     :realized-path-count
+     :direct-probe-count
+     :self-permission-callback-count
+     :arrow-evaluation-count
+     :ordered-callback-kind-and-path-index]
+    :mutations
+    [:acyclic-visited-state-evaluates-path
+     :acyclic-mismatched-direct-invokes-probe
+     :acyclic-path-fold-does-not-short-circuit
+     :acyclic-self-permission-routed-as-direct
+     :acyclic-arrow-callback-skipped]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :formal-resource-bounds
+   {:path-checks "<= |materialized paths|"
+    :each-callback-kind "<= path checks"
+    :visited-state-path-and-callback-checks 0}
+   :limitations
+   [:callback-trace-proves-kind-and-path-index-not-the-complete-host-argument-vector
+    :nested-self-permission-and-arrow-results-remain-semantic-inputs-to-this-pure-fold
+    :direct-backend-probe-correctness-remains-an-adapter-and-runtime-obligation
+    :clojure-lazy-sequence-and-callback-language-semantics-remain-a-digest-locked-trusted-refinement
+    :no-formal-bound-on-backend-work-allocation-retained-heap-or-wall-time
+    :independent-source-refinement-review-not-recorded]}
   {:id :recursive-scc-routing
    :production
    {:source "modules/eacl/src/eacl/engine/v8.cljc"

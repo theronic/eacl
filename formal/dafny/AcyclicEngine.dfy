@@ -1210,6 +1210,264 @@ module AcyclicEngine {
       FirstTrueCandidateChecks(fullCandidateMatches);
   }
 
+  function EffectiveAcyclicPathResult(
+    kind: nat,
+    directSubjectTypeMatches: bool,
+    pathResult: bool
+  ): bool
+    requires kind < 3
+  {
+    if kind == 0
+    then directSubjectTypeMatches && pathResult
+    else pathResult
+  }
+
+  function AnyEffectiveAcyclicPathResult(
+    kinds: seq<nat>,
+    directSubjectTypeMatches: seq<bool>,
+    pathResults: seq<bool>
+  ): bool
+    requires |kinds| == |directSubjectTypeMatches| == |pathResults|
+    requires forall i | 0 <= i < |kinds| :: kinds[i] < 3
+    decreases |kinds|
+  {
+    |kinds| != 0 &&
+    (EffectiveAcyclicPathResult(
+       kinds[0],
+       directSubjectTypeMatches[0],
+       pathResults[0]
+     ) ||
+     AnyEffectiveAcyclicPathResult(
+       kinds[1..],
+       directSubjectTypeMatches[1..],
+       pathResults[1..]
+     ))
+  }
+
+  function FirstEffectiveAcyclicPathChecks(
+    kinds: seq<nat>,
+    directSubjectTypeMatches: seq<bool>,
+    pathResults: seq<bool>
+  ): nat
+    requires |kinds| == |directSubjectTypeMatches| == |pathResults|
+    requires forall i | 0 <= i < |kinds| :: kinds[i] < 3
+    decreases |kinds|
+  {
+    if |kinds| == 0 then
+      0
+    else if EffectiveAcyclicPathResult(
+              kinds[0],
+              directSubjectTypeMatches[0],
+              pathResults[0]
+            ) then
+      1
+    else
+      1 +
+      FirstEffectiveAcyclicPathChecks(
+        kinds[1..],
+        directSubjectTypeMatches[1..],
+        pathResults[1..]
+      )
+  }
+
+  function AcyclicCallbackTrace(
+    kinds: seq<nat>,
+    directSubjectTypeMatches: seq<bool>,
+    checks: nat,
+    offset: nat
+  ): seq<seq<nat>>
+    requires |kinds| == |directSubjectTypeMatches|
+    requires forall i | 0 <= i < |kinds| :: kinds[i] < 3
+    decreases checks
+  {
+    if checks == 0 || |kinds| == 0 then
+      []
+    else
+      (if kinds[0] == 0 && !directSubjectTypeMatches[0]
+       then []
+       else [[kinds[0], offset]]) +
+      AcyclicCallbackTrace(
+        kinds[1..],
+        directSubjectTypeMatches[1..],
+        checks - 1,
+        offset + 1
+      )
+  }
+
+  function CallbackKindCount(
+    trace: seq<seq<nat>>,
+    kind: nat
+  ): nat
+    decreases |trace|
+  {
+    if |trace| == 0 then
+      0
+    else (if |trace[0]| != 0 && trace[0][0] == kind then 1 else 0) +
+         CallbackKindCount(trace[1..], kind)
+  }
+
+  lemma FirstEffectiveAcyclicPathChecksProperties(
+    kinds: seq<nat>,
+    directSubjectTypeMatches: seq<bool>,
+    pathResults: seq<bool>
+  )
+    requires |kinds| == |directSubjectTypeMatches| == |pathResults|
+    requires forall i | 0 <= i < |kinds| :: kinds[i] < 3
+    ensures FirstEffectiveAcyclicPathChecks(
+              kinds,
+              directSubjectTypeMatches,
+              pathResults
+            ) <= |kinds|
+    decreases |kinds|
+  {
+    if |kinds| != 0 &&
+       !EffectiveAcyclicPathResult(
+         kinds[0],
+         directSubjectTypeMatches[0],
+         pathResults[0]
+       ) {
+      FirstEffectiveAcyclicPathChecksProperties(
+        kinds[1..],
+        directSubjectTypeMatches[1..],
+        pathResults[1..]
+      );
+    }
+  }
+
+  lemma AcyclicCallbackTraceProperties(
+    kinds: seq<nat>,
+    directSubjectTypeMatches: seq<bool>,
+    checks: nat,
+    offset: nat
+  )
+    requires |kinds| == |directSubjectTypeMatches|
+    requires checks <= |kinds|
+    requires forall i | 0 <= i < |kinds| :: kinds[i] < 3
+    ensures |AcyclicCallbackTrace(
+              kinds,
+              directSubjectTypeMatches,
+              checks,
+              offset
+            )| <= checks
+    ensures forall event <-
+                     AcyclicCallbackTrace(
+                       kinds,
+                       directSubjectTypeMatches,
+                       checks,
+                       offset
+                     ) :: |event| == 2
+    decreases checks
+  {
+    if checks != 0 {
+      AcyclicCallbackTraceProperties(
+        kinds[1..],
+        directSubjectTypeMatches[1..],
+        checks - 1,
+        offset + 1
+      );
+    }
+  }
+
+  lemma CallbackKindCountBound(
+    trace: seq<seq<nat>>,
+    kind: nat
+  )
+    ensures CallbackKindCount(trace, kind) <= |trace|
+    decreases |trace|
+  {
+    if |trace| != 0 {
+      CallbackKindCountBound(trace[1..], kind);
+    }
+  }
+
+  method AcyclicPathFoldWithTrace(
+    visited: bool,
+    kinds: seq<nat>,
+    directSubjectTypeMatches: seq<bool>,
+    pathResults: seq<bool>
+  ) returns (
+      allowed: bool,
+      pathChecks: nat,
+      directProbeChecks: nat,
+      selfPermissionChecks: nat,
+      arrowChecks: nat,
+      callbackTrace: seq<seq<nat>>
+    )
+    requires |kinds| == |directSubjectTypeMatches| == |pathResults|
+    requires forall i | 0 <= i < |kinds| :: kinds[i] < 3
+    ensures allowed ==
+            (!visited &&
+             AnyEffectiveAcyclicPathResult(
+               kinds,
+               directSubjectTypeMatches,
+               pathResults
+             ))
+    ensures pathChecks ==
+            (if visited
+             then 0
+             else FirstEffectiveAcyclicPathChecks(
+                 kinds,
+                 directSubjectTypeMatches,
+                 pathResults
+               ))
+    ensures callbackTrace ==
+            AcyclicCallbackTrace(
+              kinds,
+              directSubjectTypeMatches,
+              pathChecks,
+              0
+            )
+    ensures directProbeChecks == CallbackKindCount(callbackTrace, 0)
+    ensures selfPermissionChecks == CallbackKindCount(callbackTrace, 1)
+    ensures arrowChecks == CallbackKindCount(callbackTrace, 2)
+    ensures pathChecks <= |kinds|
+    ensures directProbeChecks <= pathChecks
+    ensures selfPermissionChecks <= pathChecks
+    ensures arrowChecks <= pathChecks
+  {
+    FirstEffectiveAcyclicPathChecksProperties(
+      kinds,
+      directSubjectTypeMatches,
+      pathResults
+    );
+    if visited {
+      allowed := false;
+      pathChecks := 0;
+    } else {
+      allowed :=
+        AnyEffectiveAcyclicPathResult(
+          kinds,
+          directSubjectTypeMatches,
+          pathResults
+        );
+      pathChecks :=
+        FirstEffectiveAcyclicPathChecks(
+          kinds,
+          directSubjectTypeMatches,
+          pathResults
+        );
+    }
+    callbackTrace :=
+      AcyclicCallbackTrace(
+        kinds,
+        directSubjectTypeMatches,
+        pathChecks,
+        0
+      );
+    AcyclicCallbackTraceProperties(
+      kinds,
+      directSubjectTypeMatches,
+      pathChecks,
+      0
+    );
+    directProbeChecks := CallbackKindCount(callbackTrace, 0);
+    selfPermissionChecks := CallbackKindCount(callbackTrace, 1);
+    arrowChecks := CallbackKindCount(callbackTrace, 2);
+    CallbackKindCountBound(callbackTrace, 0);
+    CallbackKindCountBound(callbackTrace, 1);
+    CallbackKindCountBound(callbackTrace, 2);
+  }
+
   function ForwardProjection(
     objects: seq<Semantics.ObjectRef>,
     grants: set<Semantics.Grant>,

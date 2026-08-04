@@ -191,6 +191,37 @@
    :killed-by
    {:proof :direct-grant-exhaustive-iff-every-materialized-path-is-a-relation
     :test :permission-path-materialization-refines-source}}
+  {:id :acyclic-visited-state-evaluates-path
+   :mechanism :evaluate-a-permission-path-after-the-recursion-guard-matches
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :visited-acyclic-state-performs-zero-path-and-callback-checks
+    :test :acyclic-path-fold-refines-source-control}}
+  {:id :acyclic-mismatched-direct-invokes-probe
+   :mechanism
+   :invoke-the-direct-backend-probe-when-the-declared-subject-type-does-not-match
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :mismatched-direct-path-has-no-callback-event
+    :test :acyclic-path-fold-refines-source-control}}
+  {:id :acyclic-path-fold-does-not-short-circuit
+   :mechanism :evaluate-later-permission-paths-after-the-first-positive
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :path-checks-stop-at-the-first-effective-positive
+    :test :acyclic-path-fold-refines-source-control}}
+  {:id :acyclic-self-permission-routed-as-direct
+   :mechanism :route-a-self-permission-path-through-the-direct-probe-callback
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :callback-trace-preserves-materialized-path-kind
+    :test :acyclic-path-fold-refines-source-control}}
+  {:id :acyclic-arrow-callback-skipped
+   :mechanism :return-an-arrow-result-without-evaluating-the-arrow-path
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :callback-trace-records-every-evaluated-arrow-path
+    :test :acyclic-path-fold-refines-source-control}}
   {:id :adapter-negative-eid-admitted
    :mechanism :treat-any-signed-exact-integer-as-a-formal-engine-eid
    :control {:kind :clojure}

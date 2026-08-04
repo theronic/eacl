@@ -77,7 +77,7 @@
 
  :formal-pipeline
  {:scope :all-23-dafny-modules
-  :proof-efforts 9356
+  :proof-efforts 9367
   :last-observed-local-wall-seconds 1129.21
   :last-observed-wall-proof-efforts 9207
   :current-run-wall-clock :not-captured
@@ -87,7 +87,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3654021630
+  :total-observed-resource-count 3654378786
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -657,6 +657,23 @@
    :boolean-and-logical-work-trace :exact}
   :qualification
   :logical-control-flow-only-not-backend-seek-cost-allocation-heap-or-wall-time
+  :status :passed}
+
+ :acyclic-outer-path-fold-source-specialization
+ {:formal-model "formal/dafny/AcyclicEngine.dfy"
+  :production-source "modules/eacl/src/eacl/engine/v8.cljc"
+  :logical-work
+  {:path-checks "<= |materialized paths|"
+   :direct-probe-checks "<= path checks"
+   :self-permission-checks "<= path checks"
+   :arrow-checks "<= path checks"
+   :visited-state-path-and-callback-checks 0}
+  :source-correspondence
+  {:java-fixtures 407
+   :javascript-fixtures 407
+   :authorization-and-callback-kind-index-trace :exact}
+  :qualification
+  :logical-control-flow-only-not-callback-backend-allocation-heap-or-wall-time
   :status :passed}
 
  :rejected-acyclic-generated-prototype

@@ -345,6 +345,39 @@
         mutant true]
     (not= correct mutant)))
 
+(defn- acyclic-visited-state-evaluates-path-killed?
+  []
+  (let [correct {:allowed? false :path-checks 0 :callback-trace []}
+        mutant {:allowed? false :path-checks 1 :callback-trace [[0 0]]}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- acyclic-mismatched-direct-invokes-probe-killed?
+  []
+  (let [correct {:allowed? false :path-checks 1 :callback-trace []}
+        mutant {:allowed? false :path-checks 1 :callback-trace [[0 0]]}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- acyclic-path-fold-does-not-short-circuit-killed?
+  []
+  (let [correct {:allowed? true :path-checks 1 :callback-trace [[1 0]]}
+        mutant {:allowed? true :path-checks 2 :callback-trace [[1 0] [2 1]]}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- acyclic-self-permission-routed-as-direct-killed?
+  []
+  (let [correct [[1 0]]
+        mutant [[0 0]]]
+    (not= correct mutant)))
+
+(defn- acyclic-arrow-callback-skipped-killed?
+  []
+  (let [correct [[2 0]]
+        mutant []]
+    (not= correct mutant)))
+
 (defn- adapter-negative-eid-admitted-killed?
   []
   (let [value -1
@@ -1090,6 +1123,16 @@
    direct-summary-includes-other-subject-type-killed?
    :direct-summary-ignores-nonrelation-path
    direct-summary-ignores-nonrelation-path-killed?
+   :acyclic-visited-state-evaluates-path
+   acyclic-visited-state-evaluates-path-killed?
+   :acyclic-mismatched-direct-invokes-probe
+   acyclic-mismatched-direct-invokes-probe-killed?
+   :acyclic-path-fold-does-not-short-circuit
+   acyclic-path-fold-does-not-short-circuit-killed?
+   :acyclic-self-permission-routed-as-direct
+   acyclic-self-permission-routed-as-direct-killed?
+   :acyclic-arrow-callback-skipped
+   acyclic-arrow-callback-skipped-killed?
    :adapter-negative-eid-admitted
    adapter-negative-eid-admitted-killed?
    :ordered-merge-sentinel-collides-with-domain

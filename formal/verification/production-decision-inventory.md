@@ -107,6 +107,14 @@ IDs on Datomic, Datahike, and DataScript. Clojure language semantics and
 arbitrary backend implementation correctness remain explicit trusted
 obligations.
 
+The enclosing `some` fold in `can-uncached*` is also modeled rather than
+collapsed into an unordered Boolean union. The recursion guard, materialized
+path realization order, direct subject-type gate, first-positive
+short-circuit, and direct/self/arrow callback-kind trace are exact. Generated
+Java and JavaScript compare 407 source executions per runtime. This closes the
+outer control and linear logical-work boundary, but not complete callback
+argument vectors or the semantic correctness of nested callback results.
+
 ## Public operation coverage
 
 The decisions above flow into these externally observable families:
