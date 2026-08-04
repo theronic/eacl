@@ -976,6 +976,58 @@
       :eacl/error :eacl/internal-schema-error}
      data))))
 
+(defn- indexed-routing-path-descriptor
+  "Translates one materialized permission path into the portable routing
+  descriptor checked by Dafny. `node-count` is an invalid-index sentinel:
+  an incomplete backend node catalogue therefore fails closed at the
+  generated boundary instead of silently deleting a dependency."
+  [node-index node-count head path]
+  (let [head-index (get node-index head node-count)]
+    (case (:type path)
+      :relation
+      {:kind :relation
+       :head head-index}
+
+      :self-permission
+      {:kind :self-permission
+       :head head-index
+       :target
+       (get
+        node-index
+        (permission-query-node
+         (first head)
+         (:target-permission path))
+        node-count)}
+
+      :arrow
+      (if-let [target-permission (:target-permission path)]
+        {:kind :arrow-permission
+         :head head-index
+         :target
+         (get
+          node-index
+          (permission-query-node
+           (:target-type path)
+           target-permission)
+          node-count)}
+        {:kind :arrow-relation
+         :head head-index}))))
+
+(defn- routing-path-dependency-edge
+  [{:keys [kind head target]}]
+  (case kind
+    :self-permission
+    {:head head :target target}
+
+    :arrow-permission
+    {:head head :target target}
+
+    :relation
+    nil
+
+    :arrow-relation
+    nil))
+
 (defn- component-parent-tree
   "Builds one linear-size reachability witness tree inside an SCC.
 
@@ -1044,7 +1096,36 @@
           pr-str
           (set (backend/invoke db :all-permission-nodes))))
         node-index (zipmap nodes (range))
-        graph (permission-graph db nodes)
+        node-count (count nodes)
+        path-descriptors
+        (vec
+         (mapcat
+          (fn [head]
+            (map
+             #(indexed-routing-path-descriptor
+               node-index
+               node-count
+               head
+               %)
+             (get-permission-paths db (first head) (second head))))
+          nodes))
+        indexed-edges
+        (into []
+              (keep routing-path-dependency-edge)
+              path-descriptors)
+        valid-indexed-edges
+        (into []
+              (keep-indexed
+               (fn [index {:keys [head target] :as edge}]
+                 (when (and (< head node-count) (< target node-count))
+                   [index edge])))
+              indexed-edges)
+        graph
+        (reduce
+         (fn [result [_ {:keys [head target]}]]
+           (update result (nth nodes head) conj (nth nodes target)))
+         (zipmap nodes (repeat []))
+         valid-indexed-edges)
         transposed (transpose-graph nodes graph)
         components (mapv vec (graph-components nodes graph))
         component-root
@@ -1084,22 +1165,12 @@
                (fn [node]
                  [node (contains? traversal-nodes node)])
                nodes))
-        indexed-edges
-        (vec
-         (mapcat
-          (fn [head]
-            (map
-             (fn [target]
-               {:head (get node-index head)
-                :target (get node-index target)})
-             (get graph head [])))
-          nodes))
         edge-index
         (into {}
-              (map-indexed
-               (fn [index {:keys [head target]}]
+              (map
+               (fn [[index {:keys [head target]}]]
                  [[(nth nodes head) (nth nodes target)] index])
-               indexed-edges))
+               valid-indexed-edges))
         trees
         (reduce
          (fn [result component]
@@ -1138,7 +1209,7 @@
                 index))
              result))
          {}
-         (map-indexed vector indexed-edges))
+         valid-indexed-edges)
         traversal-witnesses
         (reduce
          (fn [result [index {:keys [head target]}]]
@@ -1153,7 +1224,7 @@
                (assoc result head-root index)
                result)))
          {}
-         (map-indexed vector indexed-edges))
+         valid-indexed-edges)
         certificate
         {:component-root
          (mapv #(get node-index (get component-root %)) nodes)
@@ -1182,7 +1253,8 @@
     {:nodes nodes
      :analysis analysis
      :certificate-input
-     {:node-count (count nodes)
+     {:node-count node-count
+      :path-descriptors path-descriptors
       :edges indexed-edges
       :certificate certificate}}))
 
@@ -1216,8 +1288,10 @@
 
   Once permission paths are materialized, deterministic node indexing costs
   O(V log V) `pr-str` comparisons; the iterative graph analysis and certificate
-  construction are O(V+E). The generated checker performs exactly 2V+E logical
-  checks. Sharing the result prevents a large schema from recompiling or
+  construction are O(V+P+E). The generated checker performs exactly P+2V+E
+  certified loop iterations, including exact validation of path-to-edge
+  derivation. Each iteration performs constant-time generated operations.
+  Sharing the result prevents a large schema from recompiling or
   recertifying recursive routing independently for every first-read root."
   [db]
   (let [{:keys [nodes analysis certificate-input]}
@@ -1228,6 +1302,7 @@
             {:status :accepted
              :traversal
              (mapv #(get analysis %) nodes)
+             :path-checks (count (:path-descriptors certificate-input))
              :node-checks (* 2 (count nodes))
              :edge-checks (count (:edges certificate-input))}
             decision
@@ -1240,6 +1315,7 @@
           (routing-certificate-error!
            "Generated verification rejected recursive SCC routing."
            {:reason (:reason decision)
+            :path-checks (:path-checks decision)
             :node-checks (:node-checks decision)
             :edge-checks (:edge-checks decision)}))
         (zipmap nodes (:traversal decision))))))

@@ -343,6 +343,24 @@
    :killed-by
    {:proof :accepted-checker-counters-are-exactly-two-v-and-e
     :test :routing-certificate-result-is-bound-to-its-input}}
+  {:id :routing-permission-path-omits-dependency-edge
+   :mechanism :translate-a-self-or-arrow-permission-path-as-non-dependent
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :accepted-routing-edges-equal-derived-permission-path-edges
+    :test :generated-runtime-rejects-mutated-routing-path-derivation}}
+  {:id :routing-relation-path-invents-dependency-edge
+   :mechanism :translate-a-direct-or-arrow-relation-path-as-a-permission-edge
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :relation-paths-emit-no-routing-dependency
+    :test :generated-runtime-accepts-nondependency-paths-without-extra-edges}}
+  {:id :routing-path-edge-order-unbound
+   :mechanism :accept-a-permutation-of-derived-routing-edges
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :accepted-routing-edges-equal-derived-path-edges-in-order
+    :test :generated-runtime-rejects-mutated-routing-path-derivation}}
   {:id :consistency-plan-drops-managed-authority
    :mechanism :perform-causal-selection-without-complete-writer-authority
    :control {:kind :clojure}

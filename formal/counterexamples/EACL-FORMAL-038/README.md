@@ -7,10 +7,11 @@ an accepted traversal vector shorter than `node-count`, or counters that did
 not describe its alleged execution, and still cross the Clojure boundary.
 
 The boundary now requires every accepted vector to contain exactly
-`node-count` Booleans, exactly `2 * node-count` node checks, and exactly
-`count(edges)` edge checks. Rejected decisions may stop early but cannot report
-more than those maxima. These are boundary postconditions derived from the
-Dafny checker contract, not a second authorization algorithm.
+`node-count` Booleans, exactly `count(path-descriptors)` path checks, exactly
+`2 * node-count` node checks, and exactly `count(edges)` edge checks. Rejected
+decisions may stop early but cannot report more than those maxima. These are
+boundary postconditions derived from the Dafny checker contract, not a second
+authorization algorithm.
 
 The regression runs identically in CLJ and CLJS. Two registered mutants cover
 the omitted vector-length and counter relations.

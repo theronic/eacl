@@ -46,6 +46,9 @@
 
 (def valid-routing-certificate-input
   {:node-count 2
+   :path-descriptors
+   [{:kind :self-permission :head 0 :target 1}
+    {:kind :arrow-permission :head 1 :target 1}]
    :edges [{:head 0 :target 1}
            {:head 1 :target 1}]
    :certificate
@@ -103,6 +106,7 @@
   (let [accepted
         {:status :accepted
          :traversal [true true]
+         :path-checks 2
          :node-checks 4
          :edge-checks 2}
         decide
@@ -114,16 +118,32 @@
            valid-routing-certificate-input
            #(throw (ex-info "legacy must not run" {}))))]
     (is (= accepted (decide accepted)))
+    (is
+     (thrown?
+      #?(:clj clojure.lang.ExceptionInfo
+         :cljs cljs.core.ExceptionInfo)
+      (verified/decide
+       {:mode :verified-authoritative
+        :kernel (->FunctionKernel (fn [_ _] accepted))}
+       :recursive-routing-certificate
+       (assoc-in
+        valid-routing-certificate-input
+        [:path-descriptors 0]
+        {:kind :relation :head 0 :target 1})
+       #(throw (ex-info "legacy must not run" {})))))
     (doseq [result
             [(assoc accepted :traversal [true])
+             (assoc accepted :path-checks 1)
              (assoc accepted :node-checks 3)
              (assoc accepted :edge-checks 1)
              {:status :rejected
               :reason :invalid-component-witness
+              :path-checks 2
               :node-checks 5
               :edge-checks 2}
              {:status :rejected
               :reason :invalid-dependency-edge
+              :path-checks 2
               :node-checks 2
               :edge-checks 3}]]
       (is (thrown?

@@ -30,14 +30,19 @@
    :retained-replay-suffix-equivalence]}
  :routing-certificate-proof
  {:source "formal/dafny/RoutingCertificate.dfy"
-  :verified-obligations 42
+  :verified-obligations 46
   :claims
-  [:accepted-component-forest-proves-mutual-reachability
+  [:accepted-path-descriptors-derive-exact-ordered-edge-vector
+   :relation-paths-emit-no-dependency-edge
+   :permission-paths-emit-exactly-one-directed-dependency-edge
+   :invalid-path-node-indices-fail-closed
+   :accepted-component-forest-proves-mutual-reachability
    :component-ranks-prove-distinct-components-are-not-mutually-reachable
    :multi-member-or-self-loop-recursion-witness-is-exact
    :traversal-witness-chain-is-sound
    :reverse-edge-propagation-is-complete
    :accepted-traversal-vector-is-exact
+   :accepted-checker-path-checks-equal-path-count
    :accepted-checker-node-checks-equal-two-times-node-count
    :accepted-checker-edge-checks-equal-edge-count]}
  :resource-interpretation
@@ -50,16 +55,16 @@
  :generated-targets
   {:java
   {:status :passed
-   :tests 30
-   :assertions 1576
+   :tests 31
+   :assertions 1585
    :failures 0
    :errors 0
    :qualification :suite-spans-all-generated-java-production-kernel-operations}
   :javascript
   {:status :passed
    :suite :generated-kernel-cljs-smoke
-   :tests 50
-   :assertions 2176
+   :tests 51
+   :assertions 2187
    :failures 0
    :errors 0
    :qualification :suite-spans-generated-javascript-and-portable-boundary-operations}}
@@ -87,7 +92,9 @@
    :routing-deep-ancestor-chain
    :routing-same-permission-name-distinct-resource-types
    :all-512-labeled-directed-graphs-on-three-typed-nodes
+   :all-four-production-materialized-routing-path-kinds
    :mutated-routing-certificates
+   :mutated-routing-path-derivations
    :4096-node-production-certificate-chain]
   :status :passed
   :retained-mismatches 0}
@@ -97,7 +104,7 @@
   :formal-oracle
   :typed-permission-dependency-edge-least-closure
   :generated-authority
-  :accepted-proof-carrying-routing-certificate
+  :accepted-proof-carrying-path-derivation-and-routing-certificate
   :complete-node-identity [:resource-type :permission]
   :counterexample :EACL-FORMAL-030
   :source-specialization-report
@@ -114,24 +121,27 @@
   :host-per-root-fallback-no-persistent-cross-snapshot-derived-state
   :resource-refinement
   {:generated-checker
-   {:node-checks "2V"
+   {:path-checks "P"
+    :node-checks "2V"
     :edge-checks "E"
-    :logical-checks "2V+E"}
+    :logical-checks "P+2V+E"}
    :production-construction
-   "O(V log V + E) after permission paths are materialized"
+   "O(V log V + P + E) after permission paths are materialized"
    :allocation-retained-heap-latency :not-formally-proved}}
  :performance-observation
  {:status :schema-generation-cutover-ready
   :scale-fixture
   {:nodes 4096
+   :paths 4096
    :edges 4096
+   :path-checks 4096
    :node-checks 8192
    :edge-checks 4096
    :certificate-runs-per-generation 1}
   :qualification
   :logical-work-is-proved-but-jvm-and-javascript-runtime-peaks-remain-measured-platform-properties}
  :limitations
- [:backend-permission-path-to-indexed-edge-extraction-remains-a-source-refinement-obligation
+ [:backend-permission-path-materialization-and-host-map-to-indexed-descriptor-translation-remain-source-refinement-obligations
   :proofless-raw-snapshots-do-not-call-the-generated-certificate
   :older-name-only-path-dependency-is-conservative-cache-scope-not-exact-routing
   :typed-routing-oracle-and-certificate-do-not-model-host-allocation-or-retained-heap

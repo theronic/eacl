@@ -427,17 +427,48 @@
 (defn- validate-routing-certificate-input!
   [input]
   (let [operation :recursive-routing-certificate
-        {:keys [node-count edges certificate]}
+        {:keys [node-count path-descriptors edges certificate]}
         (exact-keys!
          operation
          :input
          input
-         #{:node-count :edges :certificate})]
+         #{:node-count :path-descriptors :edges :certificate})]
     (require-value! operation :node-count safe-natural? node-count)
     (when (> node-count maximum-boundary-items)
       (boundary-error!
        "Generated routing certificate exceeds the boundary node limit."
        {:operation operation :node-count node-count}))
+    (doseq [[index path]
+            (map-indexed
+             vector
+             (bounded-vector!
+              operation
+              :path-descriptors
+              path-descriptors))]
+      (let [field [:path-descriptors index]
+            kind (:kind path)
+            expected-keys
+            (case kind
+              (:relation :arrow-relation)
+              #{:kind :head}
+
+              (:self-permission :arrow-permission)
+              #{:kind :head :target}
+
+              nil)]
+        (when-not expected-keys
+          (boundary-error!
+           "Generated routing path has an unknown kind."
+           {:operation operation
+            :field field
+            :kind kind}))
+        (exact-keys! operation field path expected-keys)
+        (doseq [key (disj expected-keys :kind)]
+          (require-value!
+           operation
+           [field key]
+           safe-natural?
+           (get path key)))))
     (doseq [[index edge]
             (map-indexed
              vector
@@ -1886,7 +1917,9 @@
   #{:shape-mismatch
     :invalid-component
     :invalid-dependency-edge
-    :invalid-component-witness})
+    :invalid-component-witness
+    :invalid-routing-path
+    :routing-path-edge-mismatch})
 
 (defn- validate-routing-certificate-result!
   [result]
@@ -1902,7 +1935,7 @@
          operation
          :result
          result
-         #{:status :traversal :node-checks :edge-checks})
+         #{:status :traversal :path-checks :node-checks :edge-checks})
         (doseq [[index value]
                 (map-indexed
                  vector
@@ -1922,7 +1955,7 @@
          operation
          :result
          result
-         #{:status :reason :node-checks :edge-checks})
+         #{:status :reason :path-checks :node-checks :edge-checks})
         (require-value!
          operation
          :reason
@@ -1932,7 +1965,7 @@
       (boundary-error!
        "Generated routing-certificate result has an unknown variant."
        {:operation operation :result result}))
-    (doseq [field [:node-checks :edge-checks]]
+    (doseq [field [:path-checks :node-checks :edge-checks]]
       (require-value!
        operation
        field
@@ -2184,9 +2217,11 @@
           :result result}))
       (when (= :recursive-routing-certificate operation)
         (let [node-count (:node-count input)
+              path-count (count (:path-descriptors input))
               edge-count (count (:edges input))
               accepted? (= :accepted (:status result))]
-          (when (or (> (:node-checks result) (* 2 node-count))
+          (when (or (> (:path-checks result) path-count)
+                    (> (:node-checks result) (* 2 node-count))
                     (> (:edge-checks result) edge-count)
                     (and
                      accepted?
@@ -2194,17 +2229,21 @@
                                (count (:traversal result)))
                          (not= (* 2 node-count)
                                (:node-checks result))
+                         (not= path-count
+                               (:path-checks result))
                          (not= edge-count
                                (:edge-checks result)))))
             (boundary-error!
              "Generated routing certificate result contradicts its validated input."
              {:operation operation
               :node-count node-count
+              :path-count path-count
               :edge-count edge-count
               :result-status (:status result)
               :result-traversal-count
               (when accepted?
                 (count (:traversal result)))
+              :result-path-checks (:path-checks result)
               :result-node-checks (:node-checks result)
               :result-edge-checks (:edge-checks result)}))))
       (when (= :ordered-merge-chunk operation)

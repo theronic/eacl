@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated-verification-incomplete
   :source-files 51
   :public-roots 60
-  :reachable-definitions 1328
+  :reachable-definitions 1330
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -172,7 +172,8 @@
     :accepted-certificate-component-partition-is-exact
     :accepted-certificate-recursion-witness-is-exact
     :accepted-certificate-traversal-vector-is-sound-and-complete
-    :accepted-certificate-checker-performs-exactly-two-node-passes-and-one-edge-pass]
+    :accepted-path-descriptors-derive-the-exact-indexed-edge-vector
+    :accepted-certificate-checker-performs-exactly-one-path-pass-two-node-passes-and-one-edge-pass]
    :dafny
    ["formal/dafny/RecursiveEngine.dfy"
     "formal/dafny/RoutingCertificate.dfy"]
@@ -184,12 +185,12 @@
    :production-authoritative
    :generated-accepted-certificate-result-for-stamped-schema-generations
    :resource-claim
-   {:generated-checker :exact-2v-plus-e-logical-checks
+   {:generated-checker :exact-p-plus-2v-plus-e-logical-checks
     :host-construction
-    :o-v-log-v-plus-e-after-materialized-permission-paths
+    :o-v-log-v-plus-p-plus-e-after-materialized-permission-paths
     :runtime-peaks :measured-not-proved}
    :remaining
-   [:backend-permission-path-to-indexed-edge-source-refinement
+   [:backend-permission-path-materialization-and-map-to-descriptor-source-refinement
     :proofless-and-raw-snapshot-generated-authority
     :independent-host-source-refinement-review
     :allocation-retained-heap-and-latency-platform-contracts]

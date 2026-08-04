@@ -76,6 +76,36 @@
    (big-number head)
    (big-number target)))
 
+(defn- indexed-routing-path
+  [{:keys [kind head target]}]
+  (let [routing-path (.-IndexedRoutingPath (.-RoutingCertificate generated))]
+    (case kind
+      :relation
+      (js-invoke
+       routing-path
+       "create_IndexedDirectRelation"
+       (big-number head))
+
+      :self-permission
+      (js-invoke
+       routing-path
+       "create_IndexedSelfPermission"
+       (big-number head)
+       (big-number target))
+
+      :arrow-relation
+      (js-invoke
+       routing-path
+       "create_IndexedArrowRelation"
+       (big-number head))
+
+      :arrow-permission
+      (js-invoke
+       routing-path
+       "create_IndexedArrowPermission"
+       (big-number head)
+       (big-number target)))))
+
 (defn- routing-proof
   [{:keys [component-root
            forward-parent-edge
@@ -107,23 +137,32 @@
     (.-is_ShapeMismatch error) :shape-mismatch
     (.-is_InvalidComponent error) :invalid-component
     (.-is_InvalidDependencyEdge error) :invalid-dependency-edge
-    :else :invalid-component-witness))
+    (.-is_InvalidComponentWitness error) :invalid-component-witness
+    (.-is_InvalidRoutingPath error) :invalid-routing-path
+    (.-is_RoutingPathEdgeMismatch error) :routing-path-edge-mismatch
+    :else
+    (throw
+     (ex-info
+      "Unknown generated routing certificate error."
+      {:error error}))))
 
 (defn- routing-certificate-decision
-  [{:keys [node-count edges certificate]}]
+  [{:keys [node-count path-descriptors edges certificate]}]
   (let [routing (.-RoutingCertificate generated)
         decision
         (js-invoke
          (.-__default routing)
-         "CheckRoutingCertificate"
+         "CheckRoutingCertificateFromPaths"
          (big-number node-count)
+         (dafny-sequence (map indexed-routing-path path-descriptors))
          (dafny-sequence (map indexed-routing-edge edges))
          (routing-proof certificate))
         counters (.-dtor_counters decision)
         work
-        {:node-checks (.toNumber (.-dtor_nodeChecks counters))
+        {:path-checks (.toNumber (.-dtor_pathChecks counters))
+         :node-checks (.toNumber (.-dtor_nodeChecks counters))
          :edge-checks (.toNumber (.-dtor_edgeChecks counters))}]
-    (if (.-is_RoutingCertificateAccepted decision)
+    (if (.-is_RoutingDerivationAccepted decision)
       (merge
        {:status :accepted
         :traversal (mapv boolean (.-dtor_traversal decision))}

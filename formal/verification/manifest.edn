@@ -50,14 +50,14 @@
    :routing-resource-refinement :not-claimed}
   :recursive-routing-certificate
   {:status :passed
-   :verified-obligations 42
+   :verified-obligations 46
    :source "formal/dafny/RoutingCertificate.dfy"
    :integration-status
    :generated-authority-for-stamped-schema-generations-on-all-three-backends
    :claim
-   :conditional-exact-classification-and-exact-2v-plus-e-logical-checker-work
+   :conditional-exact-path-derivation-classification-and-exact-p-plus-2v-plus-e-logical-checker-work
    :remaining
-   [:backend-materialized-permission-path-to-indexed-edge-source-refinement
+   [:backend-materialized-permission-path-and-map-to-descriptor-source-refinement
     :proofless-raw-snapshot-generated-authority
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
@@ -155,7 +155,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-038
+ {:latest :EACL-FORMAL-039
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -193,11 +193,12 @@
           :EACL-FORMAL-035
           :EACL-FORMAL-036
           :EACL-FORMAL-037
-          :EACL-FORMAL-038]}
+          :EACL-FORMAL-038
+          :EACL-FORMAL-039]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 38}
+  :entries 39}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

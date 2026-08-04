@@ -80,7 +80,9 @@
     :EACL-FORMAL-037
     eacl.datomic.impl.indexed-test/schema-cache-carries-shared-engine-analysis-test
     :EACL-FORMAL-038
-    eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input})
+    eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
+    :EACL-FORMAL-039
+    eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation})
 
 (defn- read-edn
   [path]
@@ -159,8 +161,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-038 (:latest revision)))
-    (is (= 38 (count entries)))))
+    (is (= :EACL-FORMAL-039 (:latest revision)))
+    (is (= 39 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

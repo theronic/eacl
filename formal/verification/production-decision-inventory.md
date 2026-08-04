@@ -30,8 +30,12 @@ Generated Java and JavaScript agree with production's shared iterative
 Kosaraju/reverse-reachability analysis on seven adversarial shapes and all 512
 labeled directed graphs over three typed nodes. EACL-FORMAL-030 records why
 the older permission-name-only arrow abstraction cannot support this exact
-claim. The host-source refinement and production O(V+E) resource proof remain
-open and are not implied by the differential campaign.
+claim. The proof-carrying production boundary also verifies exact ordered
+materialized-path-descriptor to dependency-edge derivation before accepting an
+SCC certificate, with exact `P+2V+E` accepted certified loop iterations. Adapter path
+materialization, host map-to-descriptor translation, and runtime resource peaks
+remain open source/platform refinements and are not implied by the
+differential campaign.
 
 Consistency selection now has a separate generated decision boundary.
 `ConsistencyDecision.dfy` distinguishes capability failure, missing managed
@@ -71,7 +75,7 @@ does not imply a global, lexical, domain, or cross-backend order.
 51 shared and backend EACL source files. It currently closes the
 cross-namespace call graph from 60 engine, relationship-pagination, relay,
 cursor, cache, subproblem-cache, consistency, causal-token, and named
-Datomic/Datahike/DataScript roots over 1,328 definitions. Unattributed
+Datomic/Datahike/DataScript roots over 1,330 definitions. Unattributed
 clj-kondo usages inside exact `defrecord` spans are assigned to their
 containing protocol implementation, so those public client methods are
 included. CI checks the exact

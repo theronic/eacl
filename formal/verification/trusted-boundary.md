@@ -58,18 +58,24 @@ verify DataScript, Datomic, Datahike, their storage engines, or host databases.
 
 `RoutingCertificate.dfy` proves that an accepted certificate classifies every
 indexed permission node exactly according to reachability of a recursive
-strongly connected component. It also proves that the generated checker makes
-exactly two node passes and one edge pass on acceptance. In
+strongly connected component. It first proves that the indexed edge sequence
+is exactly derived from every supplied materialized-path descriptor: relation
+paths emit no edge and permission paths emit one directed edge. The generated
+checker makes exactly one path pass, two node passes, and one edge pass on
+acceptance. In
 verified-authoritative mode, stamped schema generations consume only that
 generated traversal vector; the host classification is not the returned
 authority.
 
-The theorem is conditional on the indexed edge list. Clojure still obtains
-materialized permission paths from the selected adapter, maps self-permission
-and arrow-permission paths to fully typed dependency nodes, and assigns stable
-indices. Exhaustive typed-graph differentials, certificate mutations, backend
-certification, and forced-authority suites test this extraction, but do not
-prove it as a Clojure fact. Proofless/raw snapshots deliberately retain the
+The theorem is conditional on the path descriptors. Clojure still obtains
+materialized permission paths from the selected adapter, maps their portable
+fields to typed descriptors, and assigns stable indices. The generated
+boundary, rather than Clojure, decides which descriptors emit dependency
+edges; production constructs its graph and certificate from that same edge
+vector. Exhaustive typed-graph differentials, path-derivation and certificate
+mutations, backend certification, and forced-authority suites test the earlier
+adapter/map-to-descriptor extraction, but do not prove Clojure bytecode or
+backend truthfulness. Proofless/raw snapshots deliberately retain the
 uncached host per-root classifier rather than paying schema-wide certification
 on every query or publishing derived state across snapshot boundaries.
 

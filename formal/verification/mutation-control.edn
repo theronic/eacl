@@ -1,15 +1,15 @@
 {:schema-version 2
  :registry "formal/mutations/registry.edn"
- :mutants 70
- :killed 70
+ :mutants 73
+ :killed 73
  :survived 0
  :score 1.0
  :status :passed
  :controls
  {:clojure
-  {:mutants 62
+  {:mutants 65
    :tests 1
-   :assertions 178
+   :assertions 184
    :command "EACL_NREPL_PORT=<dev-port> bin/formal mutation-control"}
   :apalache
   {:mutants 8

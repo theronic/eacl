@@ -4,6 +4,58 @@ module RoutingCertificate {
     target: nat
   )
 
+  datatype IndexedRoutingPath =
+    | IndexedDirectRelation(head: nat)
+    | IndexedSelfPermission(head: nat, target: nat)
+    | IndexedArrowRelation(head: nat)
+    | IndexedArrowPermission(head: nat, target: nat)
+
+  ghost function DerivedRoutingEdges(
+    paths: seq<IndexedRoutingPath>
+  ): seq<IndexedDependencyEdge>
+    decreases |paths|
+  {
+    if |paths| == 0 then
+      []
+    else
+      match paths[0]
+      case IndexedDirectRelation(_) =>
+        DerivedRoutingEdges(paths[1..])
+      case IndexedSelfPermission(head, target) =>
+        [IndexedDependencyEdge(head, target)] +
+        DerivedRoutingEdges(paths[1..])
+      case IndexedArrowRelation(_) =>
+        DerivedRoutingEdges(paths[1..])
+      case IndexedArrowPermission(head, target) =>
+        [IndexedDependencyEdge(head, target)] +
+        DerivedRoutingEdges(paths[1..])
+  }
+
+  predicate ValidIndexedRoutingPath(
+    nodeCount: nat,
+    path: IndexedRoutingPath
+  )
+  {
+    match path
+    case IndexedDirectRelation(head) =>
+      head < nodeCount
+    case IndexedSelfPermission(head, target) =>
+      head < nodeCount && target < nodeCount
+    case IndexedArrowRelation(head) =>
+      head < nodeCount
+    case IndexedArrowPermission(head, target) =>
+      head < nodeCount && target < nodeCount
+  }
+
+  predicate ValidIndexedRoutingPaths(
+    nodeCount: nat,
+    paths: seq<IndexedRoutingPath>
+  )
+  {
+    forall pathIndex: int | 0 <= pathIndex < |paths| ::
+      ValidIndexedRoutingPath(nodeCount, paths[pathIndex])
+  }
+
   datatype RoutingProof = RoutingProof(
     componentRoot: seq<nat>,
     forwardParentEdge: seq<int>,
@@ -1056,6 +1108,8 @@ module RoutingCertificate {
     | InvalidComponent
     | InvalidDependencyEdge
     | InvalidComponentWitness
+    | InvalidRoutingPath
+    | RoutingPathEdgeMismatch
 
   datatype RoutingCertificateCounters = RoutingCertificateCounters(
     nodeChecks: nat,
@@ -1089,6 +1143,8 @@ module RoutingCertificate {
               decision.counters.nodeChecks == 2 * nodeCount
     ensures decision.RoutingCertificateAccepted? ==>
               decision.counters.edgeChecks == |edges|
+    ensures decision.counters.nodeChecks <= 2 * nodeCount
+    ensures decision.counters.edgeChecks <= |edges|
     ensures decision.RoutingCertificateAccepted? ==>
               forall node: nat | node < nodeCount ::
                 decision.traversal[node] <==>
@@ -1361,6 +1417,156 @@ module RoutingCertificate {
     return RoutingCertificateAccepted(
         certificate.traversal,
         RoutingCertificateCounters(nodeChecks, edgeChecks)
+      );
+  }
+
+  datatype RoutingDerivationCounters = RoutingDerivationCounters(
+    pathChecks: nat,
+    nodeChecks: nat,
+    edgeChecks: nat
+  )
+
+  datatype RoutingDerivationDecision =
+    | RoutingDerivationAccepted(
+        traversal: seq<bool>,
+        counters: RoutingDerivationCounters
+      )
+    | RoutingDerivationRejected(
+        error: RoutingCertificateError,
+        counters: RoutingDerivationCounters
+      )
+
+  method CheckRoutingCertificateFromPaths(
+    nodeCount: nat,
+    paths: seq<IndexedRoutingPath>,
+    edges: seq<IndexedDependencyEdge>,
+    certificate: RoutingProof
+  ) returns (decision: RoutingDerivationDecision)
+    ensures decision.RoutingDerivationAccepted? <==>
+            ValidIndexedRoutingPaths(nodeCount, paths) &&
+            edges == DerivedRoutingEdges(paths) &&
+            ValidRoutingCertificate(
+              nodeCount,
+              edges,
+              certificate
+            )
+    ensures decision.RoutingDerivationAccepted? ==>
+              decision.traversal == certificate.traversal
+    ensures decision.RoutingDerivationAccepted? ==>
+              decision.counters.pathChecks == |paths|
+    ensures decision.RoutingDerivationAccepted? ==>
+              decision.counters.nodeChecks == 2 * nodeCount
+    ensures decision.RoutingDerivationAccepted? ==>
+              decision.counters.edgeChecks == |edges|
+    ensures decision.counters.pathChecks <= |paths|
+    ensures decision.counters.nodeChecks <= 2 * nodeCount
+    ensures decision.counters.edgeChecks <= |edges|
+    ensures decision.RoutingDerivationAccepted? ==>
+              forall node: nat | node < nodeCount ::
+                decision.traversal[node] <==>
+                IndexedDependsOnRecursiveComponent(
+                  nodeCount,
+                  DerivedRoutingEdges(paths),
+                  node
+                )
+  {
+    var pathChecks: nat := 0;
+    var pathIndex: nat := 0;
+    var derivedEdgeIndex: nat := 0;
+    while pathIndex < |paths|
+      invariant pathIndex <= |paths|
+      invariant pathChecks == pathIndex
+      invariant derivedEdgeIndex <= |edges|
+      invariant edges[..derivedEdgeIndex] +
+                DerivedRoutingEdges(paths[pathIndex..]) ==
+                DerivedRoutingEdges(paths)
+      invariant forall prior: nat | prior < pathIndex ::
+                  ValidIndexedRoutingPath(nodeCount, paths[prior])
+      decreases |paths| - pathIndex
+    {
+      pathChecks := pathChecks + 1;
+      var path := paths[pathIndex];
+      match path {
+        case IndexedDirectRelation(head) =>
+          if head >= nodeCount {
+            return RoutingDerivationRejected(
+                InvalidRoutingPath,
+                RoutingDerivationCounters(pathChecks, 0, 0)
+              );
+          }
+        case IndexedSelfPermission(head, target) =>
+          if head >= nodeCount || target >= nodeCount {
+            return RoutingDerivationRejected(
+                InvalidRoutingPath,
+                RoutingDerivationCounters(pathChecks, 0, 0)
+              );
+          }
+          if derivedEdgeIndex >= |edges| ||
+             edges[derivedEdgeIndex] !=
+             IndexedDependencyEdge(head, target) {
+            return RoutingDerivationRejected(
+                RoutingPathEdgeMismatch,
+                RoutingDerivationCounters(pathChecks, 0, 0)
+              );
+          }
+          derivedEdgeIndex := derivedEdgeIndex + 1;
+        case IndexedArrowRelation(head) =>
+          if head >= nodeCount {
+            return RoutingDerivationRejected(
+                InvalidRoutingPath,
+                RoutingDerivationCounters(pathChecks, 0, 0)
+              );
+          }
+        case IndexedArrowPermission(head, target) =>
+          if head >= nodeCount || target >= nodeCount {
+            return RoutingDerivationRejected(
+                InvalidRoutingPath,
+                RoutingDerivationCounters(pathChecks, 0, 0)
+              );
+          }
+          if derivedEdgeIndex >= |edges| ||
+             edges[derivedEdgeIndex] !=
+             IndexedDependencyEdge(head, target) {
+            return RoutingDerivationRejected(
+                RoutingPathEdgeMismatch,
+                RoutingDerivationCounters(pathChecks, 0, 0)
+              );
+          }
+          derivedEdgeIndex := derivedEdgeIndex + 1;
+      }
+      pathIndex := pathIndex + 1;
+    }
+    if derivedEdgeIndex != |edges| {
+      return RoutingDerivationRejected(
+          RoutingPathEdgeMismatch,
+          RoutingDerivationCounters(pathChecks, 0, 0)
+        );
+    }
+    assert edges == DerivedRoutingEdges(paths);
+    assert ValidIndexedRoutingPaths(nodeCount, paths);
+
+    var checked := CheckRoutingCertificate(
+      nodeCount,
+      edges,
+      certificate
+    );
+    if checked.RoutingCertificateAccepted? {
+      return RoutingDerivationAccepted(
+          checked.traversal,
+          RoutingDerivationCounters(
+            pathChecks,
+            checked.counters.nodeChecks,
+            checked.counters.edgeChecks
+          )
+        );
+    }
+    return RoutingDerivationRejected(
+        checked.error,
+        RoutingDerivationCounters(
+          pathChecks,
+          checked.counters.nodeChecks,
+          checked.counters.edgeChecks
+        )
       );
   }
 }

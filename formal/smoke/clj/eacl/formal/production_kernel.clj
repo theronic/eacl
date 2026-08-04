@@ -57,8 +57,9 @@
     WorkCounters)
    (RoutingCertificate
     IndexedDependencyEdge
-    RoutingCertificateCounters
-    RoutingCertificateDecision
+    IndexedRoutingPath
+    RoutingDerivationCounters
+    RoutingDerivationDecision
     RoutingCertificateError
     RoutingProof)
    (SubproblemCache CandidateState)
@@ -139,6 +140,27 @@
    (dafny-nat head)
    (dafny-nat target)))
 
+(defn- indexed-routing-path
+  [{:keys [kind head target]}]
+  (case kind
+    :relation
+    (IndexedRoutingPath/create_IndexedDirectRelation
+     (dafny-nat head))
+
+    :self-permission
+    (IndexedRoutingPath/create_IndexedSelfPermission
+     (dafny-nat head)
+     (dafny-nat target))
+
+    :arrow-relation
+    (IndexedRoutingPath/create_IndexedArrowRelation
+     (dafny-nat head))
+
+    :arrow-permission
+    (IndexedRoutingPath/create_IndexedArrowPermission
+     (dafny-nat head)
+     (dafny-nat target))))
+
 (defn- routing-proof
   [{:keys [component-root
            forward-parent-edge
@@ -168,23 +190,34 @@
     (.is_ShapeMismatch error) :shape-mismatch
     (.is_InvalidComponent error) :invalid-component
     (.is_InvalidDependencyEdge error) :invalid-dependency-edge
-    :else :invalid-component-witness))
+    (.is_InvalidComponentWitness error) :invalid-component-witness
+    (.is_InvalidRoutingPath error) :invalid-routing-path
+    (.is_RoutingPathEdgeMismatch error) :routing-path-edge-mismatch
+    :else
+    (throw
+     (ex-info
+      "Unknown generated routing certificate error."
+      {:error error}))))
 
 (defn- routing-certificate-decision
-  [{:keys [node-count edges certificate]}]
-  (let [^RoutingCertificateDecision decision
-        (RoutingCertificate.__default/CheckRoutingCertificate
+  [{:keys [node-count path-descriptors edges certificate]}]
+  (let [^RoutingDerivationDecision decision
+        (RoutingCertificate.__default/CheckRoutingCertificateFromPaths
          (dafny-nat node-count)
+         (typed-sequence
+          (IndexedRoutingPath/_typeDescriptor)
+          (mapv indexed-routing-path path-descriptors))
          (typed-sequence
           (IndexedDependencyEdge/_typeDescriptor)
           (mapv indexed-routing-edge edges))
          (routing-proof certificate))
-        ^RoutingCertificateCounters counters
+        ^RoutingDerivationCounters counters
         (.dtor_counters decision)
         work
-        {:node-checks (dafny-long (.dtor_nodeChecks counters))
+        {:path-checks (dafny-long (.dtor_pathChecks counters))
+         :node-checks (dafny-long (.dtor_nodeChecks counters))
          :edge-checks (dafny-long (.dtor_edgeChecks counters))}]
-    (if (.is_RoutingCertificateAccepted decision)
+    (if (.is_RoutingDerivationAccepted decision)
       (merge
        {:status :accepted
         :traversal (mapv boolean (.dtor_traversal decision))}

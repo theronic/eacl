@@ -194,10 +194,15 @@
      :routing-certificate-omits-multi-member-witness
      :routing-certificate-hides-recursive-traversal
      :routing-certificate-result-length-unbound
-     :routing-certificate-result-counters-unbound]
+     :routing-certificate-result-counters-unbound
+     :routing-permission-path-omits-dependency-edge
+     :routing-relation-path-invents-dependency-edge
+     :routing-path-edge-order-unbound]
     :scale-fixture
     {:nodes 4096
+     :paths 4096
      :edges 4096
+     :generated-path-checks 4096
      :generated-node-checks 8192
      :generated-edge-checks 4096
      :certificate-runs-per-stamped-schema-generation 1
@@ -210,16 +215,17 @@
      "formal/dafny/RoutingCertificate.dfy"]}
    :resource-claim
    {:production
-    "O(V log V + E) comparison/logical work after permission paths are materialized: deterministic indexing is O(V log V), graph and certificate construction are O(V+E)"
+    "O(V log V + P + E) comparison/logical work after permission paths are materialized: deterministic indexing is O(V log V), path derivation plus graph and certificate construction are O(V+P+E)"
     :generated-certificate-checker
-    {:node-checks "2V"
+    {:path-checks "P"
+     :node-checks "2V"
      :edge-checks "E"
-     :logical-checks "2V+E"
+     :logical-checks "P+2V+E"
      :allocation-heap-latency :runtime-measurements-not-formal-theorems}
     :lore-qualification
     :historical-techniques-only-no-analyser-result-or-release-gate}
    :limitations
-   [:accepted-certificate-is-exact-for-the-indexed-edge-list-but-does-not-prove-backend-to-edge-extraction
+   [:accepted-certificate-proves-exact-descriptor-to-edge-derivation-but-not-backend-path-materialization-or-host-map-to-descriptor-translation
     :proofless-raw-snapshots-use-the-temporal-safe-host-per-root-fallback
     :externally-constructed-legacy-schema-cache-maps-use-the-host-per-root-fallback
     :path-materialization-cost-is-outside-this-specialization

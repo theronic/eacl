@@ -375,6 +375,9 @@
 
 (def routing-certificate-input
   {:node-count 2
+   :path-descriptors
+   [{:kind :self-permission :head 0 :target 1}
+    {:kind :arrow-permission :head 1 :target 1}]
    :edges [{:head 0 :target 1}
            {:head 1 :target 1}]
    :certificate
@@ -391,6 +394,9 @@
 
 (def scc-routing-certificate-input
   {:node-count 2
+   :path-descriptors
+   [{:kind :self-permission :head 0 :target 1}
+    {:kind :arrow-permission :head 1 :target 0}]
    :edges [{:head 0 :target 1}
            {:head 1 :target 0}]
    :certificate
@@ -416,6 +422,13 @@
           (range last-node))
          {:head last-node :target last-node})]
     {:node-count node-count
+     :path-descriptors
+     (mapv
+      (fn [{:keys [head target]}]
+        {:kind :self-permission
+         :head head
+         :target target})
+      edges)
      :edges edges
      :certificate
      {:component-root (vec (range node-count))
@@ -434,6 +447,7 @@
 (deftest generated-javascript-checks-linear-routing-certificates
   (is (= {:status :accepted
           :traversal [true true]
+          :path-checks 2
           :node-checks 4
           :edge-checks 2}
          (verified/decide
@@ -450,6 +464,49 @@
             routing-certificate-input
             [:certificate :traversal]
             [false true])
+           (constantly nil)))))
+  (is (= :routing-path-edge-mismatch
+         (:reason
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           (assoc-in
+            routing-certificate-input
+            [:path-descriptors 0]
+            {:kind :relation :head 0})
+           (constantly nil)))))
+  (is (= :invalid-routing-path
+         (:reason
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           (assoc-in
+            routing-certificate-input
+            [:path-descriptors 0 :target]
+            2)
+           (constantly nil)))))
+  (is (= :accepted
+         (:status
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           (assoc
+            routing-certificate-input
+            :path-descriptors
+            [{:kind :relation :head 0}
+             {:kind :arrow-relation :head 1}
+             {:kind :self-permission :head 0 :target 1}
+             {:kind :arrow-permission :head 1 :target 1}])
+           (constantly nil)))))
+  (is (= :routing-path-edge-mismatch
+         (:reason
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           (update
+            routing-certificate-input
+            :path-descriptors
+            #(vec (reverse %)))
            (constantly nil)))))
   (is (= :invalid-component-witness
          (:reason
@@ -511,6 +568,7 @@
          (chain-routing-certificate-input node-count)
          (constantly nil))]
     (is (= :accepted (:status decision)))
+    (is (= node-count (:path-checks decision)))
     (is (= (* 2 node-count) (:node-checks decision)))
     (is (= node-count (:edge-checks decision)))
     (is (= node-count (count (:traversal decision))))
@@ -546,6 +604,83 @@
     (is (= 1 @calls))
     (is (= node-count (count certified)))
     (is (every? true? (vals certified)))))
+
+(deftest generated-javascript-certifies-production-path-to-edge-derivation
+  (let [document-view [:document :view]
+        document-edit [:document :edit]
+        team-view [:team :view]
+        nodes [document-view document-edit team-view]
+        ordered-nodes (vec (sort-by pr-str nodes))
+        node-index (zipmap ordered-nodes (range))
+        captured (atom nil)
+        capturing-kernel
+        (reify
+          verified/DecisionKernel
+          (-decide [_ operation input]
+            (when (= :recursive-routing-certificate operation)
+              (reset! captured input))
+            (verified/-decide
+             production/generated-javascript-kernel
+             operation
+             input)))
+        materialized-paths
+        [{:type :relation}
+         {:type :self-permission
+          :target-permission :edit}
+         {:type :arrow
+          :target-type :team
+          :target-relation :member}
+         {:type :arrow
+          :target-type :team
+          :target-permission :view}]]
+    (with-redefs [engine/get-permission-paths
+                  (fn [_ resource-type permission]
+                    (if (= [resource-type permission] document-view)
+                      materialized-paths
+                      []))]
+      (is
+       (every?
+        false?
+        (vals
+         (source-traversal-analysis
+          nodes
+          []
+          {:mode :verified-authoritative
+           :kernel capturing-kernel})))))
+    (let [head (get node-index document-view)
+          document-target (get node-index document-edit)
+          team-target (get node-index team-view)]
+      (is
+       (=
+        [{:kind :relation :head head}
+         {:kind :self-permission
+          :head head
+          :target document-target}
+         {:kind :arrow-relation :head head}
+         {:kind :arrow-permission
+          :head head
+          :target team-target}]
+        (:path-descriptors @captured)))
+      (is
+       (=
+        [{:head head :target document-target}
+         {:head head :target team-target}]
+        (:edges @captured))))
+    (with-redefs [engine/get-permission-paths
+                  (fn [_ resource-type permission]
+                    (if (= [resource-type permission] document-view)
+                      materialized-paths
+                      []))]
+      (let [failure
+            (try
+              (source-traversal-analysis
+               [document-view]
+               []
+               selection)
+              nil
+              (catch cljs.core.ExceptionInfo error
+                (ex-data error)))]
+        (is (= :invalid-routing-path (:reason failure)))))))
 
 (deftest generated-javascript-classifies-production-recursive-routing
   (let [a [:alpha :read]

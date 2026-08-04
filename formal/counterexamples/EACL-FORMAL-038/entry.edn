@@ -11,7 +11,7 @@
  :root-cause
  "The strict result validator checked routing-certificate map variants and scalar representations independently, but omitted relational postconditions tying traversal length and logical counters to node-count and edge count from the validated input."
  :fix
- "Require accepted traversal length equal to node-count, accepted node and edge counters equal to 2V and E, and every rejected counter to remain within those input-derived maxima."
+ "Require accepted traversal length equal to node-count, accepted path, node, and edge counters equal to P, 2V, and E, and every rejected counter to remain within those input-derived maxima."
  :closing-evidence
  ["eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input"
   "formal mutation :routing-certificate-result-length-unbound"

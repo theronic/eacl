@@ -191,16 +191,19 @@ generated-code compiler out of the trusted computing base.
   directed graphs over three typed nodes. A subsequent proof-carrying
   `RoutingCertificate` checker now verifies the host partition, mutual
   reachability forests, component ranks, recursion witnesses, and traversal
-  propagation before accepting the traversal vector. The generated vector is
-  authoritative for stamped schema generations on Datomic, Datahike, and
-  DataScript. The remaining source-refinement gap is earlier: the checker is
-  exact for the indexed edge list, while adapter materialization and Clojure
-  path-to-edge extraction are still trusted and differentially tested.
+  propagation before accepting the traversal vector. It also stream-checks
+  that all materialized path descriptors derive exactly the supplied ordered
+  dependency-edge vector: relation paths emit none and permission paths emit
+  one directed edge. The generated vector is authoritative for stamped schema
+  generations on Datomic, Datahike, and DataScript. The remaining
+  source-refinement gap is earlier: adapter path materialization and Clojure
+  map-to-descriptor translation are still trusted and differentially tested.
 - Lore prompted the resource-accounting question for that routing result, but
   its historical analyser is outdated and untrusted. EACL does not run it as
   an oracle or release gate. Production deterministic indexing is
-  `O(V log V)` comparison work, followed by `O(V+E)` graph/certificate work.
-  The generated certificate checker proves exactly `2V+E` logical checks on
+  `O(V log V)` comparison work, followed by `O(V+P+E)`
+  path/graph/certificate work. The generated certificate checker proves
+  exactly `P+2V+E` certified loop iterations on
   acceptance. Those statements still do not bound string-comparison cost,
   allocation, retained heap, CPU, wall time, or backend work. JVM/Node
   measurements gate those dimensions separately; no Lore result or Dafny
@@ -274,8 +277,16 @@ generated-code compiler out of the trusted computing base.
 - EACL-FORMAL-038 found that strict routing-result validation checked map
   shape and scalar representations but did not relate the accepted vector or
   work counters to the request. The CLJ/CLJS boundary now requires accepted
-  traversal length `V`, node checks `2V`, and edge checks `E`; rejected
-  counters may stop early but cannot exceed those request-derived maxima.
+  traversal length `V`, path checks `P`, node checks `2V`, and edge checks
+  `E`; rejected counters may stop early but cannot exceed those
+  request-derived maxima.
+- EACL-FORMAL-039 found that the first routing certificate trusted an indexed
+  edge vector independently supplied by Clojure. A path-translation bug could
+  therefore prove the wrong graph perfectly. The generated boundary now
+  consumes every materialized path descriptor and accepts only the exact
+  ordered edge derivation before checking the SCC certificate. Production
+  constructs its graph from that same edge vector; three new mutants cover
+  omitted permission edges, invented relation edges, and edge permutations.
 - Snapshot-consistency planning and post-selection validation now route
   through `ConsistencyDecision.dfy` in verified modes. Its 24 plan states and
   48 well-formed validation states are exhausted in generated Java and
@@ -370,7 +381,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,295 proof efforts across 23
+- Clean checksum-locked Dafny cache: 9,299 proof efforts across 23
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -383,21 +394,21 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 38 minimized entries replayed by 40 tests and 2,060
+- Counterexample corpus: 39 minimized entries replayed by 41 tests and 2,102
   assertions, zero failures/errors.
-- Mutation controls: 62 Clojure detectors and 8 Apalache counterexample
-  controls; all 70 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 489 tests, 18,716 assertions,
+- Mutation controls: 65 Clojure detectors and 8 Apalache counterexample
+  controls; all 73 registered mutants killed.
+- Forced-authority non-benchmark CLJ suite: 492 tests, 18,851 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 16 tests, 4,047 assertions, zero
   failures/errors.
-- Ordinary and forced-authority DataScript CLJS suites: 151 tests, 4,491
+- Ordinary and forced-authority DataScript CLJS suites: 152 tests, 4,499
   assertions each, zero failures/errors.
-- Generated Java production-kernel namespace: 30 tests, 1,576 assertions,
+- Generated Java production-kernel namespace: 31 tests, 1,585 assertions,
   zero failures/errors.
-- Generated JavaScript smoke suite: 50 tests, 2,176 assertions, zero
+- Generated JavaScript smoke suite: 51 tests, 2,187 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,328 unique
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,330 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent
@@ -474,7 +485,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 23-module
-  replay passed 9,295 proof efforts and consumed 3,650,819,377 deterministic
+  replay passed 9,299 proof efforts and consumed 3,651,718,990 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

@@ -1,7 +1,7 @@
 (ns eacl.formal.routing-certificate-benchmark
   "Host-specific regression gate for the generated SCC-routing boundary.
 
-  Dafny proves the accepted checker's exact 2V+E logical work. This runner
+  Dafny proves the accepted checker's exact P+2V+E logical work. This runner
   measures different dimensions: caller-thread allocation and elapsed time on
   a warmed HotSpot JVM. Input construction is deliberately outside the
   measured interval. The result makes no retained-heap, CPU, or worst-case
@@ -46,6 +46,13 @@
           (range last-node))
          {:head last-node :target last-node})]
     {:node-count node-count
+     :path-descriptors
+     (mapv
+      (fn [{:keys [head target]}]
+        {:kind :self-permission
+         :head head
+         :target target})
+      edges)
      :edges edges
      :certificate
      {:component-root (vec (range node-count))
@@ -83,6 +90,7 @@
         allocated-after (allocated-bytes)]
     {:node-count node-count
      :status (:status decision)
+     :path-checks (:path-checks decision)
      :node-checks (:node-checks decision)
      :edge-checks (:edge-checks decision)
      :elapsed-ns elapsed
@@ -109,12 +117,14 @@
           (when allocation-supported?
             (median allocation))]
       {:node-count node-count
+       :path-count node-count
        :edge-count node-count
        :samples samples
        :logical-counters-exact?
        (every?
         (fn [sample]
           (and (= :accepted (:status sample))
+               (= node-count (:path-checks sample))
                (= (* 2 node-count) (:node-checks sample))
                (= node-count (:edge-checks sample))))
         observations)
@@ -202,7 +212,7 @@
        :maximum-normalized-latency-ratio
        maximum-normalized-latency-ratio}
       :qualification
-      {:logical-work :dafny-proved-exact-2v-plus-e
+      {:logical-work :dafny-proved-exact-p-plus-2v-plus-e
        :allocation :hotspot-caller-thread-measurement
        :latency :host-specific-regression-measurement
        :retained-live-heap :not-established

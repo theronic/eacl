@@ -77,9 +77,9 @@
 
  :formal-pipeline
  {:scope :all-23-dafny-modules
-  :proof-efforts 9295
+  :proof-efforts 9299
   :last-observed-local-wall-seconds 1129.21
-  :last-observed-wall-proof-efforts 9295
+  :last-observed-wall-proof-efforts 9299
   :current-run-wall-clock :not-captured
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -87,7 +87,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3650819377
+  :total-observed-resource-count 3651718990
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -109,13 +109,14 @@
   "formal/smoke/clj/eacl/formal/routing_certificate_benchmark.clj"
   :formal-model "formal/dafny/RoutingCertificate.dfy"
   :formal-logical-work
-  {:accepted-node-checks "2V"
+  {:accepted-path-checks "P"
+   :accepted-node-checks "2V"
    :accepted-edge-checks "E"
-   :accepted-total-checks "2V+E"
+   :accepted-total-checks "P+2V+E"
    :assurance :dafny-theorem}
   :production-construction
   {:deterministic-indexing "O(V log V) pr-str comparisons"
-   :graph-and-certificate "O(V+E) logical collection work"
+   :graph-and-certificate "O(V+P+E) logical collection work"
    :certificate-frequency :once-per-stamped-schema-generation
    :qualification
    :host-collection-string-and-backend-path-materialization-costs-remain-trusted}
@@ -134,25 +135,28 @@
    :samples-per-size 7
    :sizes
    [{:nodes 1024
+     :paths 1024
      :edges 1024
-     :p50-elapsed-ns 5669291
-     :p50-ns-per-node 5536.4169921875
-     :p50-allocated-bytes 4351520
-     :p50-allocated-bytes-per-node 4249.53125}
+     :p50-elapsed-ns 2975625
+     :p50-ns-per-node 2905.8837890625
+     :p50-allocated-bytes 6219696
+     :p50-allocated-bytes-per-node 6073.921875}
     {:nodes 4096
+     :paths 4096
      :edges 4096
-     :p50-elapsed-ns 8952042
-     :p50-ns-per-node 2185.55712890625
-     :p50-allocated-bytes 17503232
-     :p50-allocated-bytes-per-node 4273.25}
+     :p50-elapsed-ns 16255042
+     :p50-ns-per-node 3968.51611328125
+     :p50-allocated-bytes 24988464
+     :p50-allocated-bytes-per-node 6100.69921875}
     {:nodes 16384
+     :paths 16384
      :edges 16384
-     :p50-elapsed-ns 22498042
-     :p50-ns-per-node 1373.1715087890625
-     :p50-allocated-bytes 70102688
-     :p50-allocated-bytes-per-node 4278.728515625}]
-   :normalized-allocation-ratio 1.0068707026510277
-   :normalized-latency-ratio 4.031846682480191
+     :p50-elapsed-ns 26576375
+     :p50-ns-per-node 1622.0932006835938
+     :p50-allocated-bytes 100055456
+     :p50-allocated-bytes-per-node 6106.900390625}]
+   :normalized-allocation-ratio 1.0054295258160528
+   :normalized-latency-ratio 2.4465401319781197
    :logical-status :passed
    :allocation-status :passed
    :latency-status :passed}

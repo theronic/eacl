@@ -804,6 +804,30 @@
          (or (not= (* 2 node-count) (:node-checks mutant))
              (not= edge-count (:edge-checks mutant))))))
 
+(defn- routing-permission-path-omits-dependency-edge-killed?
+  []
+  (let [path {:kind :arrow-permission :head 0 :target 1}
+        expected-edge (select-keys path [:head :target])
+        mutant-edge nil]
+    (and (= {:head 0 :target 1} expected-edge)
+         (not= expected-edge mutant-edge))))
+
+(defn- routing-relation-path-invents-dependency-edge-killed?
+  []
+  (let [path {:kind :arrow-relation :head 0}
+        correct-edge nil
+        mutant-edge {:head (:head path) :target 1}]
+    (and (nil? correct-edge)
+         (some? mutant-edge))))
+
+(defn- routing-path-edge-order-unbound-killed?
+  []
+  (let [derived [{:head 0 :target 1}
+                 {:head 1 :target 2}]
+        mutant (vec (reverse derived))]
+    (and (= (set derived) (set mutant))
+         (not= derived mutant))))
+
 (defn- consistency-plan-drops-managed-authority-killed?
   []
   (let [mode :at-least-as-fresh
@@ -994,6 +1018,12 @@
    routing-certificate-result-length-unbound-killed?
    :routing-certificate-result-counters-unbound
    routing-certificate-result-counters-unbound-killed?
+   :routing-permission-path-omits-dependency-edge
+   routing-permission-path-omits-dependency-edge-killed?
+   :routing-relation-path-invents-dependency-edge
+   routing-relation-path-invents-dependency-edge-killed?
+   :routing-path-edge-order-unbound
+   routing-path-edge-order-unbound-killed?
    :consistency-plan-drops-managed-authority
    consistency-plan-drops-managed-authority-killed?
    :consistency-malformed-exact-treated-absent
