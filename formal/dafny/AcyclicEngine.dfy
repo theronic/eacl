@@ -1308,6 +1308,58 @@ module AcyclicEngine {
       else AdvanceReseekCalls(values[1..], target, probes + 1)
   }
 
+  function AdvanceReseekTrace(
+    side: nat,
+    values: seq<nat>,
+    target: nat,
+    probes: nat
+  ): seq<seq<nat>>
+    requires side < 2
+    requires probes <= LinearProbeLimit
+    decreases |values|
+  {
+    if |values| == 0 || target <= values[0]
+    then []
+    else if probes == LinearProbeLimit
+      then [[side, target]]
+      else AdvanceReseekTrace(
+          side,
+          values[1..],
+          target,
+          probes + 1
+        )
+  }
+
+  lemma AdvanceReseekTraceProperties(
+    side: nat,
+    values: seq<nat>,
+    target: nat,
+    probes: nat
+  )
+    requires side < 2
+    requires probes <= LinearProbeLimit
+    ensures |AdvanceReseekTrace(side, values, target, probes)| ==
+            AdvanceReseekCalls(values, target, probes)
+    ensures forall event
+              | event in
+                  AdvanceReseekTrace(side, values, target, probes) ::
+              |event| == 2 &&
+              event[0] == side &&
+              event[1] == target
+    decreases |values|
+  {
+    if |values| != 0 &&
+       values[0] < target &&
+       probes < LinearProbeLimit {
+      AdvanceReseekTraceProperties(
+        side,
+        values[1..],
+        target,
+        probes + 1
+      );
+    }
+  }
+
   lemma AdvanceSortedEidsProperties(
     values: seq<nat>,
     target: nat,
@@ -1351,7 +1403,8 @@ module AcyclicEngine {
       intersects: bool,
       iterations: nat,
       reseekCalls: nat,
-      examinedHeads: nat
+      examinedHeads: nat,
+      reseekTrace: seq<seq<nat>>
     )
     requires StrictAscendingEids(left)
     requires StrictAscendingEids(right)
@@ -1360,32 +1413,40 @@ module AcyclicEngine {
     ensures iterations <= |left| + |right|
     ensures iterations == 0 <==> |left| == 0 || |right| == 0
     ensures reseekCalls <= iterations
+    ensures |reseekTrace| == reseekCalls
+    ensures forall event | event in reseekTrace ::
+              |event| == 2 && event[0] < 2
     ensures examinedHeads <=
             (LinearProbeLimit + 1) * iterations
     decreases |left| + |right|
   {
     if |left| == 0 || |right| == 0 {
-      return false, 0, 0, 0;
+      return false, 0, 0, 0, [];
     }
 
     if left[0] == right[0] {
       assert left[0] in left;
       assert right[0] in right;
       assert exists value :: value in left && value in right;
-      return true, 1, 0, 0;
+      return true, 1, 0, 0, [];
     }
 
     if left[0] < right[0] {
       var next := AdvanceSortedEids(left, right[0], 0);
       AdvanceSortedEidsProperties(left, right[0], 0);
+      var currentReseekTrace :=
+        AdvanceReseekTrace(0, left, right[0], 0);
+      AdvanceReseekTraceProperties(0, left, right[0], 0);
       assert |next| < |left|;
       var remainingIterations: nat;
       var remainingReseekCalls: nat;
       var remainingExaminedHeads: nat;
+      var remainingReseekTrace: seq<seq<nat>>;
       intersects,
       remainingIterations,
       remainingReseekCalls,
-      remainingExaminedHeads :=
+      remainingExaminedHeads,
+      remainingReseekTrace :=
         LeapfrogSortedEidsIntersectWithWork(next, right);
       iterations := 1 + remainingIterations;
       reseekCalls :=
@@ -1394,8 +1455,10 @@ module AcyclicEngine {
       examinedHeads :=
         AdvanceExaminedHeads(left, right[0], 0) +
         remainingExaminedHeads;
+      reseekTrace := currentReseekTrace + remainingReseekTrace;
       assert iterations <= |left| + |right|;
       assert reseekCalls <= iterations;
+      assert |reseekTrace| == reseekCalls;
       assert examinedHeads <=
              (LinearProbeLimit + 1) * iterations;
       return;
@@ -1403,14 +1466,19 @@ module AcyclicEngine {
 
     var next := AdvanceSortedEids(right, left[0], 0);
     AdvanceSortedEidsProperties(right, left[0], 0);
+    var currentReseekTrace :=
+      AdvanceReseekTrace(1, right, left[0], 0);
+    AdvanceReseekTraceProperties(1, right, left[0], 0);
     assert |next| < |right|;
     var remainingIterations: nat;
     var remainingReseekCalls: nat;
     var remainingExaminedHeads: nat;
+    var remainingReseekTrace: seq<seq<nat>>;
     intersects,
     remainingIterations,
     remainingReseekCalls,
-    remainingExaminedHeads :=
+    remainingExaminedHeads,
+    remainingReseekTrace :=
       LeapfrogSortedEidsIntersectWithWork(left, next);
     iterations := 1 + remainingIterations;
     reseekCalls :=
@@ -1419,8 +1487,10 @@ module AcyclicEngine {
     examinedHeads :=
       AdvanceExaminedHeads(right, left[0], 0) +
       remainingExaminedHeads;
+    reseekTrace := currentReseekTrace + remainingReseekTrace;
     assert iterations <= |left| + |right|;
     assert reseekCalls <= iterations;
+    assert |reseekTrace| == reseekCalls;
     assert examinedHeads <=
            (LinearProbeLimit + 1) * iterations;
   }
@@ -1437,7 +1507,12 @@ module AcyclicEngine {
     var iterations: nat;
     var reseekCalls: nat;
     var examinedHeads: nat;
-    intersects, iterations, reseekCalls, examinedHeads :=
+    var reseekTrace: seq<seq<nat>>;
+    intersects,
+    iterations,
+    reseekCalls,
+    examinedHeads,
+    reseekTrace :=
       LeapfrogSortedEidsIntersectWithWork(left, right);
   }
 }

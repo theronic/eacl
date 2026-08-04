@@ -38,8 +38,8 @@
    :jvm-live-heap-bytes :not-established
    :worst-case-elapsed-nanoseconds :not-established
    :whole-engine-resource-safety :not-established}
-  :current-revision-reanalysis
-  {:scope :production-and-formal-source-before-evidence-only-report-update
+  :historical-revision-reanalysis
+  {:scope :immutable-historical-production-and-formal-source-snapshot
    :status :completed
    :lore-revision
    "dabb5634b0d44e196e2b6ec63003917b3d445bec"
@@ -71,13 +71,13 @@
     :reason
     :the-pinned-old-refutation-witness-does-not-match-the-new-revision}
    :production-source-resource-refinement :unmatched
-   :evidence-update-qualification
-   :subsequent-commit-changes-reports-only-not-analyzed-production-or-formal-source}
+   :current-tree-qualification
+   :current-production-and-formal-source-are-not-analyzed-by-lore}
   :status :diagnostic-only-no-release-gate-depends-on-analyzer}
 
  :formal-pipeline
  {:scope :all-23-dafny-modules
-  :proof-efforts 9333
+  :proof-efforts 9337
   :last-observed-local-wall-seconds 1129.21
   :last-observed-wall-proof-efforts 9207
   :current-run-wall-clock :not-captured
@@ -87,7 +87,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3653248656
+  :total-observed-resource-count 3653389167
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name

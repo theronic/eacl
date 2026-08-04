@@ -9,7 +9,7 @@
     SnapshotConsistencyMode
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
-   (dafny DafnySequence DafnySet Tuple2 Tuple4 TypeDescriptor)
+   (dafny DafnySequence DafnySet Tuple2 Tuple5 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
@@ -98,6 +98,13 @@
   (DafnySequence/fromList
    (DafnySequence/_typeDescriptor TypeDescriptor/BIG_INTEGER)
    (mapv dafny-sequence streams)))
+
+(defn- dafny-sequences->vectors
+  [^DafnySequence streams]
+  (mapv
+   (fn [^DafnySequence values]
+     (mapv dafny-long values))
+   streams))
 
 (defn- typed-sequence
   [descriptor values]
@@ -906,14 +913,16 @@
   "Executes the generated bounded leapfrog oracle for source-specialization
   tests. This is test-support code, not part of EACL's production kernel SPI."
   [{:keys [left right]}]
-  (let [^Tuple4 result
+  (let [^Tuple5 result
         (AcyclicEngine.__default/LeapfrogSortedEidsIntersectWithWork
          (dafny-sequence left)
          (dafny-sequence right))]
     {:intersects? (.dtor__0 result)
      :iterations (dafny-long (.dtor__1 result))
      :reseek-calls (dafny-long (.dtor__2 result))
-     :examined-heads (dafny-long (.dtor__3 result))}))
+     :examined-heads (dafny-long (.dtor__3 result))
+     :reseek-trace
+     (dafny-sequences->vectors (.dtor__4 result))}))
 
 (defn- optional-eid
   [value]

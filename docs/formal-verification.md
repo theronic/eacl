@@ -202,9 +202,10 @@ EACL-FORMAL-030 retains the same-permission-name counterexample.
 That semantic comparison is not a resource refinement. Production's stated
 O(V+E) routing cost begins after permission paths are materialized, while the
 generated oracle uses repeated finite closure scans. Lore commit
-`dabb5634b0d44e196e2b6ec63003917b3d445bec` informs the structural-risk
-inventory, but unsupported host operators and missing platform cost contracts
-mean it proves no production time, allocation, heap, or backend-work bound.
+`dabb5634b0d44e196e2b6ec63003917b3d445bec` historically prompted part of the
+structural-risk inventory, but its outdated analyser is untrusted and the
+immutable result does not cover current source. It proves no production time,
+allocation, heap, or backend-work bound.
 
 This is still not a full-engine cutover. Materializing an entire database is
 not an acceptable hot-path implementation for large EACL graphs. Public

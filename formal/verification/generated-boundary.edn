@@ -202,7 +202,8 @@
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
     :tests 32
-    :assertions 9877}
+    :assertions 9877
+    :leapfrog-reseek-side-and-target-trace :exact}
  :cljs-javascript
    {:namespace-tests 30
     :suite-tests 52
@@ -226,6 +227,7 @@
     :namespace-tests 30
     :suite-tests 52
     :suite-assertions 10429
+    :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace
@@ -271,5 +273,5 @@
  :remaining
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
-  :acyclic-optimized-leapfrog-source-refinement
+  :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
   :independent-review]}

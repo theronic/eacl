@@ -232,17 +232,18 @@
 
 (defn- source-leapfrog-intersection
   [left right]
-  (let [reseeks (atom 0)
+  (let [reseek-trace (atom [])
         exact-reseek
-        (fn [values]
+        (fn [side values]
           (fn [target]
-            (swap! reseeks inc)
+            (swap! reseek-trace conj [side target])
             (drop-while #(< (long %) (long target)) values)))]
     {:intersects?
      (#'engine/sorted-eids-intersect?
-      left (exact-reseek left)
-      right (exact-reseek right))
-     :reseeks @reseeks}))
+      left (exact-reseek 0 left)
+      right (exact-reseek 1 right))
+     :reseek-trace @reseek-trace
+     :reseeks (count @reseek-trace)}))
 
 (defn- generated-leapfrog-intersection
   [left right]
@@ -1462,6 +1463,10 @@
                     (= expected (:intersects? generated))
                     (= (:reseeks source)
                        (:reseek-calls generated))
+                    (= (:reseek-trace source)
+                       (:reseek-trace generated))
+                    (= (:reseek-calls generated)
+                       (count (:reseek-trace generated)))
                     (<= (:iterations generated)
                         (+ (count left) (count right)))
                     (<= (:reseek-calls generated)

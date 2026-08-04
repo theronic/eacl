@@ -988,7 +988,12 @@
     {:intersects? (aget result 0)
      :iterations (.toNumber (aget result 1))
      :reseek-calls (.toNumber (aget result 2))
-     :examined-heads (.toNumber (aget result 3))}))
+     :examined-heads (.toNumber (aget result 3))
+     :reseek-trace
+     (mapv
+      (fn [event]
+        (mapv #(.toNumber %) event))
+      (aget result 4))}))
 
 (defn- optional-eid
   [indexed value]

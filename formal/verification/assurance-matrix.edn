@@ -37,7 +37,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-direct-and-arrow-source-refinement
-    :acyclic-optimized-leapfrog-source-refinement
+    :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
@@ -73,7 +73,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
-    :acyclic-optimized-leapfrog-source-refinement
+    :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
@@ -97,7 +97,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
-    :acyclic-optimized-leapfrog-source-refinement
+    :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
@@ -244,7 +244,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
-    :acyclic-optimized-leapfrog-source-refinement
+    :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
     :production-adapter-certification
     :independent-review]
    :ci [:generated-production-kernel

@@ -220,6 +220,30 @@
          (zero? mutant)
          (not= correct mutant))))
 
+(defn- leapfrog-reseek-wrong-target-killed?
+  []
+  (let [left (vec (range 40))
+        right [35]
+        correct-trace [[0 (first right)]]
+        mutant-trace [[0 (dec (first right))]]
+        correct-result (boolean (some (set left) right))
+        mutant-result correct-result]
+    (and (true? correct-result)
+         (true? mutant-result)
+         (not= correct-trace mutant-trace))))
+
+(defn- leapfrog-reseek-wrong-side-killed?
+  []
+  (let [left (vec (range 40))
+        right [35]
+        correct-trace [[0 (first right)]]
+        mutant-trace [[1 (first right)]]
+        correct-result (boolean (some (set left) right))
+        mutant-result correct-result]
+    (and (true? correct-result)
+         (true? mutant-result)
+         (not= correct-trace mutant-trace))))
+
 (defn- adapter-negative-eid-admitted-killed?
   []
   (let [value -1
@@ -636,7 +660,7 @@
          "^Direction"
          "^ConsistencyError error"
          "^MergeChunk chunk"
-         "^Tuple4 result"
+         "^Tuple5 result"
          "^ScanError error"
          "^PlanCertificationError error"
          "^IndexedLimitKind kind"
@@ -940,6 +964,10 @@
    leapfrog-reseek-target-excluded-killed?
    :leapfrog-probe-limit-off-by-one
    leapfrog-probe-limit-off-by-one-killed?
+   :leapfrog-reseek-wrong-target
+   leapfrog-reseek-wrong-target-killed?
+   :leapfrog-reseek-wrong-side
+   leapfrog-reseek-wrong-side-killed?
    :adapter-negative-eid-admitted
    adapter-negative-eid-admitted-killed?
    :ordered-merge-sentinel-collides-with-domain

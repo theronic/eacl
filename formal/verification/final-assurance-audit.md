@@ -74,14 +74,17 @@ generated-code compiler out of the trusted computing base.
   least-fixed-point managed frame, and selected-snapshot rendering are proved
   and integrated for all three adapters. This is a conditional cache
   refinement claim, not complete public-engine verification.
-- Lore's `A, B, A` analysis also exposed an implementation-level recursive
-  ownership mismatch: `resolve!` recorded
+- Lore's historical `A, B, A` report prompted an implementation-level
+  recursive ownership audit; Lore itself is not accepted as evidence. EACL's
+  own minimized regression, mutation control, and proof work independently
+  confirmed that `resolve!` recorded
   `(lifecycle, tier, semantic-key)` while `lookup!` checked only
   `(tier, semantic-key)`. A recursive lookup could therefore attempt to join
   its own in-flight computation. The production key shape is now identical on
   both paths, with CLJ/CLJS regression, Dafny lifecycle lemmas,
   counterexample replay, and mutation control.
-- The same audit found that recursive `resolve!` self-bypass invoked a callback
+- EACL's continued source audit found that recursive `resolve!` self-bypass
+  invoked a callback
   directly. A child `future` inherits the parent's resolving-key bindings but
   is a different execution context, so that callback escaped the coordinator's
   active count. Self-bypass now crosses the context-aware slot wrapper:
@@ -139,6 +142,15 @@ generated-code compiler out of the trusted computing base.
   empty streams. Clojure language/sequence semantics and independent review
   remain trusted; the report does not call executable correspondence a proof
   of Clojure itself.
+- EACL-FORMAL-041 found that the acyclic leapfrog specialization compared only
+  the Boolean answer and aggregate reseek count. A mutant could retain both
+  while seeking the wrong stream or requesting the wrong boundary, changing
+  backend work and potentially omitting candidates. Dafny now emits the exact
+  ordered `[stream-side, target]` trace and proves its length equals the reseek
+  count; generated Java and JavaScript compare that trace with callbacks from
+  the actual CLJ/CLJS source on all 4,100 fixtures per runtime. The
+  wrong-target and wrong-side mutants are killed. Clojure language semantics
+  and the backend inclusive-seek contract remain explicit trusted refinements.
 - EACL-FORMAL-021 found that Datomic's separate cache-compatibility normalizer
   rejected and failed to forward the shared `:subproblem-cache` configuration.
   DataScript and Datahike honored those projection, denotation, proof-atom,
@@ -377,9 +389,10 @@ generated-code compiler out of the trusted computing base.
   cardinalities, reseek calls by outer iterations, and probe-head examinations
   by seventeen times outer iterations. Generated Java and JavaScript agree
   with the actual private CLJ/CLJS function on 4,100 cases per runtime,
-  including exact reseek counts and a fixture that forces the 16-element
-  probe/reseek branch. Equal-head, exclusive-reseek, and probe-limit
-  off-by-one mutants are killed.
+  including exact reseek counts, exact ordered stream-side/target traces, and a
+  fixture that forces the 16-element probe/reseek branch. Equal-head,
+  exclusive-reseek, probe-limit off-by-one, wrong-target, and wrong-side
+  mutants are killed.
   These are dimensionally separate logical-control-flow bounds, not bounds on
   backend seek cost, lazy realization, allocation, heap, or latency.
   Correctness still assumes each adapter implements an inclusive
@@ -401,7 +414,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,333 proof efforts across 23
+- Clean checksum-locked Dafny cache: 9,337 proof efforts across 23
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -414,10 +427,10 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 40 minimized entries replayed by 42 tests and 10,332
+- Counterexample corpus: 41 minimized entries replayed by 43 tests and 10,373
   assertions, zero failures/errors.
-- Mutation controls: 65 Clojure detectors and 8 Apalache counterexample
-  controls; all 73 registered mutants killed.
+- Mutation controls: 67 Clojure detectors and 8 Apalache counterexample
+  controls; all 75 registered mutants killed.
 - Forced-authority non-benchmark CLJ suite: 492 tests, 18,851 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 16 tests, 4,047 assertions, zero
@@ -460,9 +473,9 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,952,511 Java
-  source bytes, 1,752,063 Java class bytes, 865,378
-  JavaScript-with-runtime bytes, and a 948,396-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 1,957,836 Java
+  source bytes, 1,753,016 Java class bytes, 867,263
+  JavaScript-with-runtime bytes, and a 950,342-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. Retained
   live heap remains `:not-established`, so the
@@ -480,9 +493,9 @@ that the complete v8.0 engine is formally verified.
   unique unsupported operators, and 331 per-function operator occurrences).
   The analyser rejected its pinned old production-refutation witness as
   revision-invalid instead of applying it to the changed implementation.
-  This evidence-only report update changes no analyzed production or formal
-  source. The analyser is not in the trusted computing base, has assurance
-  status `none`, and no release gate depends on it. The diagnostic proves no
+  The immutable result does not cover the current production or formal source.
+  The analyser is not in the trusted computing base, has assurance status
+  `none`, and no release gate depends on it. The diagnostic proves no
   production heap, elapsed-time, backend-operation, or whole-engine resource
   claim. EACL retains only the techniques of separating incompatible resource
   dimensions and constructing adversarial lifecycle schedules. Current
@@ -505,7 +518,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 23-module
-  replay passed 9,333 proof efforts and consumed 3,653,248,656 deterministic
+  replay passed 9,337 proof efforts and consumed 3,653,389,167 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

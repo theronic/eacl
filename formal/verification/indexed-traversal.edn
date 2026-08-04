@@ -153,7 +153,7 @@
   :wall-time :benchmark-only
   :verifier-cpu-time :separate-build-pipeline-measure
   :verifier-wall-time :separate-build-pipeline-measure}
- :external-falsification
+ :historical-resource-prompt
  {:project "theronic/lore"
   :revision "dabb5634b0d44e196e2b6ec63003917b3d445bec"
   :analyser-status :outdated-untrusted

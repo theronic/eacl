@@ -109,6 +109,20 @@
    :killed-by
    {:proof :advance-head-examinations-at-most-linear-probe-limit-plus-one
     :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
+  {:id :leapfrog-reseek-wrong-target
+   :mechanism
+   :reseek-the-correct-stream-at-a-nearby-but-incorrect-target
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :advance-reseek-trace-records-exact-side-and-target
+    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
+  {:id :leapfrog-reseek-wrong-side
+   :mechanism
+   :reseek-the-opposite-stream-at-the-correct-target
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :advance-reseek-trace-records-exact-side-and-target
+    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
   {:id :adapter-negative-eid-admitted
    :mechanism :treat-any-signed-exact-integer-as-a-formal-engine-eid
    :control {:kind :clojure}

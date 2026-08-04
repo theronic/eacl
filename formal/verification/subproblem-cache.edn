@@ -1,12 +1,22 @@
 {:schema-version 2
  :semantics-version 1
  :status :conditional-foundation-passed
- :external-falsification
+ :historical-prompt-and-independent-reproduction
  {:source "https://github.com/theronic/lore/commit/dabb5634b0d44e196e2b6ec63003917b3d445bec"
+  :analyser-status :outdated-untrusted
+  :lore-assurance :none
   :subject-pr 101
   :subject-revision "c5f8adb3b42d7e463a6449f78f9b9d34eb784423"
   :result :prior-production-resource-claim-refuted
+  :assurance-provenance :independent-eacl-model-test-and-mutation
   :witness :weighted-a-b-a-incomplete-eviction
+  :independent-evidence
+  {:jvm-regression
+   eacl.subproblem-cache-test/weighted-eviction-cannot-duplicate-a-running-key-test
+   :temporal-model "formal/tla/EaclTieredSubproblemCache.tla"
+   :mutant :incomplete-flight-eviction
+   :mutant-outcome :required-counterexample-produced
+   :proof "formal/dafny/SubproblemCache.dfy"}
   :corrective-action
   :flight-ownership-separated-from-evictable-admission-and-shared-execution-semaphore}
  :proof

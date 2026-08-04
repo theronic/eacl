@@ -92,9 +92,11 @@
      AcyclicEngine.DropEidsBefore
      AcyclicEngine.AdvanceSortedEids
      AcyclicEngine.AdvanceExaminedHeads
-     AcyclicEngine.AdvanceReseekCalls]
+     AcyclicEngine.AdvanceReseekCalls
+     AcyclicEngine.AdvanceReseekTrace]
     :lemmas
     [AcyclicEngine.DropEidsBeforeProperties
+     AcyclicEngine.AdvanceReseekTraceProperties
      AcyclicEngine.AdvanceSortedEidsProperties
      AcyclicEngine.LeapfrogSortedEidsIntersectWithWork
      AcyclicEngine.LeapfrogSortedEidsIntersect]}
@@ -115,7 +117,10 @@
     :mutations
     [:leapfrog-equal-head-skipped
      :leapfrog-reseek-target-excluded
-     :leapfrog-probe-limit-off-by-one]
+     :leapfrog-probe-limit-off-by-one
+     :leapfrog-reseek-wrong-target
+     :leapfrog-reseek-wrong-side]
+    :counterexample-regressions [:EACL-FORMAL-041]
     :source-digests-required
     ["modules/eacl/src/eacl/engine/v8.cljc"
      "formal/dafny/AcyclicEngine.dfy"]
@@ -123,11 +128,13 @@
     :dimensionally-separated-logical-control-flow
     :source-counter-agreement
     {:reseek-calls :exact-on-all-java-and-javascript-fixtures
+     :reseek-side-and-target-trace
+     :exact-on-all-java-and-javascript-fixtures
      :probe-head-examinations
      :formal-control-flow-measure-not-instrumented-in-production-source}}
    :limitations
-   [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
-    :inclusive-reseek-contract-remains-an-adapter-obligation
+   [:clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
+    :inclusive-reseek-contract-remains-an-adapter-obligation-with-every-materialized-fixture-bound-checked
     :formal-head-examinations-do-not-include-outer-loop-head-reads
     :backend-seek-complexity-and-allocation-remain-trusted
     :no-formal-bound-on-lazy-realization-allocation-heap-or-wall-time

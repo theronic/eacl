@@ -115,14 +115,21 @@ last-value state, exhausted-tail behavior, empty-stream filtering, and pairwise
 fold schedule and proves that control model equivalent to the canonical merge.
 Generated Java and JavaScript execute the model against the actual CLJ/CLJS
 source. `AcyclicEngine.dfy` similarly models the leapfrog probe/reseek control
-flow and its logical counters. The source digests and public call closure make
-any host-source edit invalidate the reviewed evidence.
+flow, its logical counters, and the exact ordered trace of reseek stream side
+and target. Generated Java and JavaScript compare that trace with callbacks
+from the actual CLJ/CLJS source. This rules out preserving only the aggregate
+reseek count while changing which stream is sought or the requested boundary.
+The source digests and public call closure make any host-source edit invalidate
+the reviewed evidence.
 
 This still trusts the documented correspondence between Clojure operations
 (`lazy-seq`, `seq`, `first`, `rest`, `next`, numeric comparison, and
 `drop-while`) and their Dafny sequence/integer model. No formal semantics or
 verified compiler for Clojure or ClojureScript is part of this repository.
 Inclusive backend reseek remains a separately certified adapter obligation.
+The adapter fixture certification exercises no bound and every materialized
+EID as a bound; it is finite executable evidence, not a proof of each storage
+engine's implementation.
 
 ## Cryptographic and canonicalization axioms
 

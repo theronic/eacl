@@ -222,7 +222,7 @@
   [operation scan expected]
   (let [expected (vec expected)
         bounds (if (seq expected)
-                 [nil (first expected) (last expected)]
+                 (into [nil] expected)
                  [nil])]
     (doseq [direction [:asc :desc]
             bound bounds

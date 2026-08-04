@@ -84,7 +84,9 @@
     :EACL-FORMAL-039
     eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation
     :EACL-FORMAL-040
-    eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model})
+    eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model
+    :EACL-FORMAL-041
+    eacl.formal.production-kernel-test/optimized-jvm-leapfrog-intersection-refines-bounded-proof})
 
 (defn- read-edn
   [path]
@@ -163,8 +165,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-040 (:latest revision)))
-    (is (= 40 (count entries)))))
+    (is (= :EACL-FORMAL-041 (:latest revision)))
+    (is (= 41 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

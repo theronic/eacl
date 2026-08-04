@@ -69,6 +69,17 @@ implementation. The final Clojure-language/sequence-semantics correspondence is
 digest-locked trusted refinement pending independent review, not a Dafny proof
 of the Clojure runtime.
 
+The acyclic arrow intersection fast path has the same source-specialization
+discipline. `AcyclicEngine.dfy` models the 16-element linear probe, inclusive
+reseek, and recursive stream selection used by
+`eacl.engine.v8/sorted-eids-intersect?`. It proves set-intersection semantics,
+linear outer-iteration and reseek-count bounds, and records the exact ordered
+reseek side/target trace. Generated Java and JavaScript compare the Boolean
+result, aggregate counters, and that trace against callbacks from the actual
+CLJ/CLJS source on 4,100 fixtures per runtime. This closes the narrower
+wrong-side/wrong-target loophole but does not prove Clojure language semantics,
+backend seek complexity, or the inclusive adapter contract.
+
 ## Public operation coverage
 
 The decisions above flow into these externally observable families:

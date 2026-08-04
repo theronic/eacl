@@ -4,7 +4,7 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 44
+   :verified-obligations 48
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
@@ -17,6 +17,8 @@
     :leapfrog-outer-iterations-at-most-input-cardinality-sum
     :leapfrog-reseek-calls-at-most-outer-iterations
     :leapfrog-probe-head-examinations-at-most-seventeen-times-outer-iterations
+    :leapfrog-reseek-trace-length-equals-reseek-count
+    :leapfrog-reseek-trace-records-exact-stream-side-and-target
     :inclusive-reseek-preserves-intersection-candidates]}
   {:source "formal/dafny/OrderedMerge.dfy"
    :verified-obligations 82
@@ -98,7 +100,10 @@
   :mutations
   [:leapfrog-equal-head-skipped
    :leapfrog-reseek-target-excluded
-   :leapfrog-probe-limit-off-by-one]
+   :leapfrog-probe-limit-off-by-one
+   :leapfrog-reseek-wrong-target
+   :leapfrog-reseek-wrong-side]
+  :counterexample :EACL-FORMAL-041
   :formal-resource-bounds
   {:outer-iterations "|left| + |right|"
    :reseek-calls "outer-iterations"
@@ -106,16 +111,20 @@
    :linear-probe-limit 16}
   :source-counter-agreement
   {:reseek-calls :exact-on-all-java-and-javascript-fixtures
+   :reseek-side-and-target-trace
+   :exact-on-all-java-and-javascript-fixtures
    :probe-head-examinations
    :formal-control-flow-measure-not-instrumented-in-production-source}
   :resource-qualification
   :logical-control-flow-only-not-backend-seek-cost-lazy-realization-allocation-heap-or-latency
-  :formal-source-refinement :pending-independent-review}
+  :formal-source-refinement
+  :exact-source-control-and-reseek-trace-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
   :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :ordered-merge-independent-source-refinement-review-is-not-recorded
-  :optimized-leapfrog-source-refinement-is-not-formally-discharged
+  :leapfrog-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :leapfrog-independent-source-refinement-review-is-not-recorded
   :inclusive-reseek-semantics-remain-an-adapter-obligation
   :recursive-engine-obligations-remain
   :full-pagination-and-cursor-obligations-remain]}
