@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-036
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "verified-authority-suite/all-backends/nonbenchmark/cache-cutover"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["PR 101 commit c149bc9"]
+ :affected-backends [:datomic :datascript :datahike]
+ :root-cause
+ "The generated-authoritative recursive branches returned correct public results but bypassed the production denotation, recursive-page, and process-private continuation caches. Generated page completion discarded the opaque Dafny frontier and compatibility traversal counters were not projected from generated dimensional counters. Point checks and counts therefore failed to publish or reuse complete fixed points, and Datomic cursor continuation replayed the traversal prefix."
+ :fix
+ "Dafny now verifies a page-continuation transition that authenticates the public ordinal/EID boundary and carries the already-consumed lookahead into a new render without copying or exposing the opaque frontier. The CLJ/CLJS kernel boundary validates typed continuation outcomes. Generated authority now participates in denotation/page caches, stores opaque client-private continuations with validated counter envelopes and O(1) logical-unit admission estimates, falls back to deterministic replay on any continuation miss, malformed or incompatible state, or rejection, and projects counter deltas into compatibility telemetry."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead"
+  "eacl.backend.v8-test/unusable-generated-continuation-is-a-recoverable-cache-miss-test"
+  "eacl.datascript.contract-test/completed-recursive-denotation-is-reused-by-point-check-test"
+  "eacl.datascript.contract-test/cold-recursive-point-check-publishes-complete-fixed-point-test"
+  "formal mutation :generated-authority-bypasses-cache-cutover"
+  "formal/smoke/clj/run-verified-authority nonbenchmark"]}

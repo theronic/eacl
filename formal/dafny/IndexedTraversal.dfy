@@ -350,6 +350,22 @@ module IndexedTraversal {
     | ReverseInitialized(state: ReverseState)
     | ReverseInitLimitExceeded(kind: IndexedLimitKind)
 
+  datatype PageContinuationError =
+    | InvalidContinuationSize
+    | ContinuationNotForwardPage
+    | ContinuationNotComplete
+    | ContinuationHasNoLookahead
+    | ContinuationHasPendingScan
+    | ContinuationBoundaryMismatch
+
+  datatype ForwardPageContinuation =
+    | ForwardPageContinued(state: ForwardState)
+    | ForwardPageContinuationRejected(error: PageContinuationError)
+
+  datatype ReversePageContinuation =
+    | ReversePageContinued(state: ReverseState)
+    | ReversePageContinuationRejected(error: PageContinuationError)
+
   predicate ValidRenderMode(mode: RenderMode) {
     match mode
     case RenderPage(size, after) =>
@@ -2359,6 +2375,224 @@ module IndexedTraversal {
     case RenderBoolean(_) => {
       return BooleanReady(|render.delivered| == 1);
     }
+  }
+
+  function ContinuedPageRender(
+    render: RenderState,
+    size: nat,
+    afterOrdinal: nat,
+    afterEid: int
+  ): RenderState
+    requires ValidRenderState(render)
+    requires render.mode.RenderPage?
+    requires render.complete
+    requires 0 < size
+    requires 0 < render.mode.size
+    requires |render.delivered| == render.mode.size + 1
+    requires 0 <= afterEid
+    requires
+      afterOrdinal ==
+      (if render.mode.after.AfterCursor?
+       then render.mode.after.ordinal + 1
+       else 0) +
+      render.mode.size - 1
+    requires render.delivered[render.mode.size - 1] == afterEid
+    ensures ValidRenderState(
+              ContinuedPageRender(
+                render,
+                size,
+                afterOrdinal,
+                afterEid
+              )
+            )
+    ensures
+      ContinuedPageRender(
+        render,
+        size,
+        afterOrdinal,
+        afterEid
+      ).ordinal == render.ordinal
+    ensures
+      ContinuedPageRender(
+        render,
+        size,
+        afterOrdinal,
+        afterEid
+      ).emitted == render.emitted
+    ensures
+      ContinuedPageRender(
+        render,
+        size,
+        afterOrdinal,
+        afterEid
+      ).delivered == [render.delivered[render.mode.size]]
+  {
+    RenderState(
+      RenderPage(size, AfterCursor(afterOrdinal, afterEid)),
+      render.ordinal,
+      render.emitted,
+      [render.delivered[render.mode.size]],
+      true,
+      false,
+      false
+    )
+  }
+
+  method ContinueForwardPage(
+    state: ForwardState,
+    size: nat,
+    afterOrdinal: nat,
+    afterEid: int
+  ) returns (outcome: ForwardPageContinuation)
+    requires ForwardStateInvariant(state)
+    ensures outcome.ForwardPageContinued? ==>
+              ForwardStateInvariant(outcome.state)
+    ensures outcome.ForwardPageContinued? ==>
+              ForwardSemanticFrame(state, outcome.state)
+    ensures outcome.ForwardPageContinued? ==>
+              outcome.state.queue == state.queue &&
+              outcome.state.seen == state.seen &&
+              outcome.state.emitted == state.emitted &&
+              outcome.state.counters == state.counters &&
+              outcome.state.render.ordinal == state.render.ordinal &&
+              outcome.state.render.emitted == state.render.emitted
+  {
+    if size == 0 {
+      return
+        ForwardPageContinuationRejected(InvalidContinuationSize);
+    }
+    if !state.render.mode.RenderPage? {
+      return
+        ForwardPageContinuationRejected(ContinuationNotForwardPage);
+    }
+    if !state.render.complete {
+      return
+        ForwardPageContinuationRejected(ContinuationNotComplete);
+    }
+    if |state.render.delivered| != state.render.mode.size + 1 {
+      return
+        ForwardPageContinuationRejected(ContinuationHasNoLookahead);
+    }
+    if !state.pending.NoForwardPending? {
+      return
+        ForwardPageContinuationRejected(ContinuationHasPendingScan);
+    }
+    var start :=
+      if state.render.mode.after.AfterCursor?
+      then state.render.mode.after.ordinal + 1
+      else 0;
+    if afterEid < 0 ||
+       afterOrdinal != start + state.render.mode.size - 1 ||
+       state.render.delivered[state.render.mode.size - 1] != afterEid
+    {
+      return
+        ForwardPageContinuationRejected(ContinuationBoundaryMismatch);
+    }
+    var render :=
+      ContinuedPageRender(
+        state.render,
+        size,
+        afterOrdinal,
+        afterEid
+      );
+    var continued :=
+      ForwardState(
+        state.queue,
+        state.consumers,
+        state.seen,
+        state.emitted,
+        render,
+        state.rootNode,
+        state.resultType,
+        state.chunkSize,
+        state.pending,
+        state.nextRequestId,
+        state.counters
+      );
+    assert ForwardStateInvariant(continued);
+    return ForwardPageContinued(continued);
+  }
+
+  method ContinueReversePage(
+    state: ReverseState,
+    size: nat,
+    afterOrdinal: nat,
+    afterEid: int
+  ) returns (outcome: ReversePageContinuation)
+    requires ReverseStateInvariant(state)
+    ensures outcome.ReversePageContinued? ==>
+              ReverseStateInvariant(outcome.state)
+    ensures outcome.ReversePageContinued? ==>
+              ReverseSemanticFrame(state, outcome.state)
+    ensures outcome.ReversePageContinued? ==>
+              outcome.state.queue == state.queue &&
+              outcome.state.seenGoals == state.seenGoals &&
+              outcome.state.seenGrants == state.seenGrants &&
+              outcome.state.emitted == state.emitted &&
+              outcome.state.counters == state.counters &&
+              outcome.state.render.ordinal == state.render.ordinal &&
+              outcome.state.render.emitted == state.render.emitted
+  {
+    if size == 0 {
+      return
+        ReversePageContinuationRejected(InvalidContinuationSize);
+    }
+    if !state.render.mode.RenderPage? {
+      return
+        ReversePageContinuationRejected(ContinuationNotForwardPage);
+    }
+    if !state.render.complete {
+      return
+        ReversePageContinuationRejected(ContinuationNotComplete);
+    }
+    if |state.render.delivered| != state.render.mode.size + 1 {
+      return
+        ReversePageContinuationRejected(ContinuationHasNoLookahead);
+    }
+    if !state.pending.NoReversePending? {
+      return
+        ReversePageContinuationRejected(ContinuationHasPendingScan);
+    }
+    var start :=
+      if state.render.mode.after.AfterCursor?
+      then state.render.mode.after.ordinal + 1
+      else 0;
+    if afterEid < 0 ||
+       afterOrdinal != start + state.render.mode.size - 1 ||
+       state.render.delivered[state.render.mode.size - 1] != afterEid
+    {
+      return
+        ReversePageContinuationRejected(ContinuationBoundaryMismatch);
+    }
+    var render :=
+      ContinuedPageRender(
+        state.render,
+        size,
+        afterOrdinal,
+        afterEid
+      );
+    var continued :=
+      ReverseState(
+        state.queue,
+        state.rulesByNode,
+        state.seenGoals,
+        state.seenGrants,
+        state.grantsByGoal,
+        state.consumers,
+        state.seenConsumers,
+        state.emitted,
+        render,
+        state.rootNode,
+        state.rootResourceEid,
+        state.resultType,
+        state.subjectType,
+        state.chunkSize,
+        state.pending,
+        state.nextRequestId,
+        state.counters
+      );
+    assert ReverseStateInvariant(continued);
+    return ReversePageContinued(continued);
   }
 
   predicate ForwardSemanticFrame(

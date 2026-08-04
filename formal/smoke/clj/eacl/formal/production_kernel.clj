@@ -15,6 +15,7 @@
    (IndexedTraversal
     CursorBound
     ForwardInit
+    ForwardPageContinuation
     ForwardResume
     ForwardState
     ForwardStep
@@ -22,12 +23,14 @@
     IndexedLimitKind
     IndexedRule
     OptionalEid
+    PageContinuationError
     Projection
     PublicRenderResult
     RenderMode
     RenderError
     ResourceCounters
     ReverseInit
+    ReversePageContinuation
     ReverseResume
     ReverseState
     ReverseStep
@@ -811,6 +814,16 @@
     (.is_OutOfOrder error) :out-of-order
     :else :bound-violation))
 
+(defn- indexed-page-continuation-reason
+  [^PageContinuationError error]
+  (cond
+    (.is_InvalidContinuationSize error) :invalid-size
+    (.is_ContinuationNotForwardPage error) :not-forward-page
+    (.is_ContinuationNotComplete error) :not-complete
+    (.is_ContinuationHasNoLookahead error) :no-lookahead
+    (.is_ContinuationHasPendingScan error) :pending-scan
+    :else :boundary-mismatch))
+
 (defn- indexed-scan-decision
   [{:keys [command response]}]
   (let [command'
@@ -1240,9 +1253,47 @@
          :reverse (.dtor_state ^ReverseResume outcome))
        :limit-kind
        (indexed-limit-kind
+       (case direction
+         :forward (.dtor_kind ^ForwardResume outcome)
+         :reverse (.dtor_kind ^ReverseResume outcome)))})))
+
+(defn- indexed-continue-page
+  [direction state {:keys [size bound]}]
+  (let [outcome
         (case direction
-          :forward (.dtor_kind ^ForwardResume outcome)
-          :reverse (.dtor_kind ^ReverseResume outcome)))})))
+          :forward
+          (IndexedTraversal.__default/ContinueForwardPage
+           ^ForwardState state
+           (dafny-nat size)
+           (dafny-nat (:ordinal bound))
+           (dafny-nat (:eid bound)))
+
+          :reverse
+          (IndexedTraversal.__default/ContinueReversePage
+           ^ReverseState state
+           (dafny-nat size)
+           (dafny-nat (:ordinal bound))
+           (dafny-nat (:eid bound))))]
+    (if (case direction
+          :forward
+          (.is_ForwardPageContinued ^ForwardPageContinuation outcome)
+          :reverse
+          (.is_ReversePageContinued ^ReversePageContinuation outcome))
+      {:status :continued
+       :state
+       (case direction
+         :forward
+         (.dtor_state ^ForwardPageContinuation outcome)
+         :reverse
+         (.dtor_state ^ReversePageContinuation outcome))}
+      {:status :rejected
+       :reason
+       (indexed-page-continuation-reason
+        (case direction
+          :forward
+          (.dtor_error ^ForwardPageContinuation outcome)
+          :reverse
+          (.dtor_error ^ReversePageContinuation outcome)))})))
 
 (defn- indexed-public-result
   [direction state]
@@ -1321,6 +1372,8 @@
     (indexed-drive direction state limits fuel))
   (-resume-indexed [_ direction state response limits]
     (indexed-resume direction state response limits))
+  (-continue-indexed-page [_ direction state input]
+    (indexed-continue-page direction state input))
   (-read-indexed-result [_ direction state]
     (indexed-public-result direction state)))
 

@@ -37,6 +37,7 @@
   :indexed-forward-seed-certification
   :indexed-plan-compilation
   :indexed-forward-and-reverse-state-transition
+  :indexed-forward-and-reverse-page-continuation
   :indexed-page-rendering
   :indexed-boolean-rendering
   :indexed-count-rendering]
@@ -129,16 +130,19 @@
             "formal/dafny/IndexedRendering.dfy"
             "formal/dafny/IndexedCertification.dfy"]
   :verified-obligations
-  {:transition-state-machine 636
+  {:transition-state-machine 641
    :semantic-soundness-refinement 1783
    :forward-least-fixed-point-completeness 1299
    :reverse-least-fixed-point-completeness 4975
    :traversal-order-rendering-and-ordered-nonimplication-witness 29
    :source-plan-and-seed-certification 48
-   :total 8770}
+   :total 8775}
   :generated-state-shape true
   :generated-forward-transitions true
   :generated-reverse-transitions true
+  :generated-forward-and-reverse-page-continuation true
+  :generated-continuation-authenticates-public-boundary true
+  :generated-continuation-retains-lookahead-without-replay true
   :generated-scan-response-validation true
   :generated-scan-request-scope-ownership true
   :production-scan-response-routing true
@@ -161,7 +165,7 @@
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 44 :suite-assertions 1627 :status :passed}
+   :suite-tests 46 :suite-assertions 1635 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 12 :assertions 141}
@@ -169,12 +173,12 @@
   :production-routing
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
-    :tests 25
-    :assertions 1033}
+    :tests 27
+    :assertions 1041}
  :cljs-javascript
-   {:namespace-tests 24
-    :suite-tests 44
-    :suite-assertions 1627
+   {:namespace-tests 26
+    :suite-tests 46
+    :suite-assertions 1635
     :datascript-public-recursive-cache-mode-differential true
     :datascript-complete-public-provenance-and-graph-shadow true
     :shared-scc-routing-differential true}}
@@ -185,15 +189,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 25
-    :namespace-assertions 1033
+    :namespace-tests 27
+    :namespace-assertions 1041
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
-   :cljs-javascript
+  :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 24
-    :suite-tests 44
-    :suite-assertions 1627
+    :namespace-tests 26
+    :suite-tests 46
+    :suite-assertions 1635
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace
@@ -240,5 +244,4 @@
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-source-refinement
   :acyclic-optimized-leapfrog-source-refinement
-  :cross-backend-generated-authority
   :independent-review]}

@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated-verification-incomplete
   :source-files 51
   :public-roots 60
-  :reachable-definitions 1288
+  :reachable-definitions 1319
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -37,7 +37,6 @@
    :remaining
    [:acyclic-direct-and-arrow-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
-    :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
         :recursive-contract
@@ -69,7 +68,6 @@
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
-    :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
         :recursive-contract
@@ -92,7 +90,6 @@
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
-    :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
         :recursive-contract
@@ -125,7 +122,6 @@
    :remaining
    [:backend-selection-source-refinement
     :authenticated-token-decoder-refinement
-    :cross-backend-authoritative-gates
     :independent-review]
    :ci
    [:generated-production-kernel
@@ -203,6 +199,9 @@
     :reverse-least-fixed-point-completeness
     :deterministic-render-prefix-independent-of-chunk-boundary
     :identical-complete-denotations-render-identically
+    :page-continuation-authenticates-ordinal-and-eid
+    :page-continuation-preserves-semantic-frontier
+    :page-continuation-carries-lookahead-without-prefix-replay
     :source-plan-certification-implies-exact-compiled-rules
     :seed-certification-implies-exact-forward-seed-bucket
     :instantaneous-queue-depth-bound
@@ -226,7 +225,6 @@
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
     :production-adapter-certification
-    :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
         :generated-indexed-scan-rejection

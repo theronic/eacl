@@ -45,6 +45,8 @@
     "Drives opaque generated state until scan, completion, rejection, or yield.")
   (-resume-indexed [kernel direction state response limits]
     "Resumes opaque generated state with one strict ordered scan response.")
+  (-continue-indexed-page [kernel direction state input]
+    "Continues a completed forward page from its authenticated public edge.")
   (-read-indexed-result [kernel direction state]
     "Reads the completed public render result and dimensional counters."))
 
@@ -735,6 +737,14 @@
 (def ^:private indexed-limit-kinds
   #{:derived-grants :advanced-datoms :queued-work})
 
+(def ^:private indexed-page-continuation-reasons
+  #{:invalid-size
+    :not-forward-page
+    :not-complete
+    :no-lookahead
+    :pending-scan
+    :boundary-mismatch})
+
 (def ^:private indexed-counter-keys
   #{:backend-commands
     :adapter-fetched-values
@@ -933,6 +943,22 @@
      :fetched-values safe-natural? (:fetched-values response))
     response))
 
+(defn- validate-indexed-page-continuation-input!
+  [input]
+  (let [operation :indexed-traversal-continue]
+    (exact-keys! operation :input input #{:size :bound})
+    (require-value!
+     operation :size
+     #(and (safe-natural? %) (pos? %))
+     (:size input))
+    (when-not (some? (:bound input))
+      (boundary-error!
+       "Generated indexed page continuation requires an exact cursor bound."
+       {:operation operation
+        :field :bound}))
+    (validate-indexed-bound! operation :bound (:bound input))
+    input))
+
 (defn- validate-indexed-state!
   [operation state]
   ;; State deliberately remains an opaque generated-runtime value between
@@ -1076,6 +1102,32 @@
 
       (boundary-error!
        "Generated indexed resume returned an unknown variant."
+       {:operation operation
+        :status (:status result)}))
+    result))
+
+(defn- validate-indexed-page-continuation-result!
+  [result]
+  (let [operation :indexed-traversal-continue]
+    (case (:status result)
+      :continued
+      (do
+        (exact-keys!
+         operation :result result #{:status :state})
+        (validate-indexed-state! operation (:state result)))
+
+      :rejected
+      (do
+        (exact-keys!
+         operation :result result #{:status :reason})
+        (require-value!
+         operation
+         :reason
+         indexed-page-continuation-reasons
+         (:reason result)))
+
+      (boundary-error!
+       "Generated indexed page continuation returned an unknown variant."
        {:operation operation
         :status (:status result)}))
     result))
@@ -2115,6 +2167,23 @@
        operation
        #(-resume-indexed kernel direction state response limits)
        validate-indexed-resume-result!))))
+
+(defn continue-indexed-page
+  "Continues a completed generated forward page without replaying its prefix.
+
+  The authenticated public boundary is checked against the completed render by
+  the generated kernel. Rejection is recoverable: callers may discard the
+  process-private state and deterministically replay from the pinned snapshot."
+  [selection direction state input]
+  (let [operation :indexed-traversal-continue]
+    (require-value! operation :direction indexed-directions direction)
+    (validate-indexed-state! operation state)
+    (validate-indexed-page-continuation-input! input)
+    (let [kernel (indexed-kernel selection operation)]
+      (invoke-indexed-kernel
+       operation
+       #(-continue-indexed-page kernel direction state input)
+       validate-indexed-page-continuation-result!))))
 
 (defn read-indexed-result
   "Reads one completed portable result without serializing opaque state."

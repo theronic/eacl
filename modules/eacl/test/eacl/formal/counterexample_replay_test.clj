@@ -74,7 +74,9 @@
     :EACL-FORMAL-034
     eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
     :EACL-FORMAL-035
-    eacl.characterization-fixture-test/generated-java-boundary-is-reflection-free-test})
+    eacl.characterization-fixture-test/generated-java-boundary-is-reflection-free-test
+    :EACL-FORMAL-036
+    eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead})
 
 (defn- read-edn
   [path]
@@ -153,8 +155,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-035 (:latest revision)))
-    (is (= 35 (count entries)))))
+    (is (= :EACL-FORMAL-036 (:latest revision)))
+    (is (= 36 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

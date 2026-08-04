@@ -71,7 +71,7 @@ does not imply a global, lexical, domain, or cross-backend order.
 51 shared and backend EACL source files. It currently closes the
 cross-namespace call graph from 60 engine, relationship-pagination, relay,
 cursor, cache, subproblem-cache, consistency, causal-token, and named
-Datomic/Datahike/DataScript roots over 1,305 definitions. Unattributed
+Datomic/Datahike/DataScript roots over 1,319 definitions. Unattributed
 clj-kondo usages inside exact `defrecord` spans are assigned to their
 containing protocol implementation, so those public client methods are
 included. CI checks the exact

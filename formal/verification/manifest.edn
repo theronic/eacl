@@ -98,7 +98,7 @@
    :conditional-exact-and-managed-atomic-projection-refinement}
   :indexed-recursive-public-engine
   {:status :passed
-   :verified-obligations 8770
+   :verified-obligations 8775
    :sources
    ["formal/dafny/IndexedTraversal.dfy"
     "formal/dafny/IndexedRefinement.dfy"
@@ -130,13 +130,20 @@
  :cross-runtime-parity
  {:status :passed
   :report "formal/verification/cross-runtime-parity.edn"}
+ :verified-authority-suites
+ {:status :passed
+  :report "formal/verification/verified-authority-suites.edn"
+  :clj-backends [:datomic :datahike :datascript]
+  :cljs-backends [:datascript]
+  :nonbenchmark :passed
+  :heavy :passed}
  :unified-differential-runner
  {:status :passed
   :report "formal/verification/differential-runner.edn"
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-035
+ {:latest :EACL-FORMAL-036
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -171,11 +178,12 @@
           :EACL-FORMAL-032
           :EACL-FORMAL-033
           :EACL-FORMAL-034
-          :EACL-FORMAL-035]}
+          :EACL-FORMAL-035
+          :EACL-FORMAL-036]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 35}
+  :entries 36}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -218,8 +226,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 63
-  :registered 63}
+  :killed 64
+  :registered 64}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -237,10 +245,6 @@
    :acyclic-optimized-ordered-merge-source-refinement
    :acyclic-optimized-leapfrog-source-refinement
    :recursive-scc-routing-source-refinement
-   :production-ordered-adapter-certification
-   :managed-derived-subproblem-proof
-   :generated-subproblem-production-routing
-   :shadow-rollout-gates
    :retained-live-heap-performance-gate
    :performance-cutover
    :independent-security-formal-review]}}

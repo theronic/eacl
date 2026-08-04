@@ -1458,6 +1458,173 @@
             [:status :items :start-ordinal
              :has-next? :has-previous?])))))
 
+(deftest generated-java-continues-pages-from-verified-lookahead
+  (let [compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules [indexed-direct-rule]
+          :seed-rules-by-subject-type
+          {"user" [indexed-direct-rule]}})
+        initialized
+        (verified/initialize-indexed
+         selection
+         :forward
+         {:compiled-plan compiled-plan
+          :request-scope 71
+          :subject-type "user"
+          :subject-eid 7
+          :root-node
+          {:resource-type "folder" :permission "read"}
+          :result-type "folder"
+          :render {:kind :page :size 1 :bound nil}
+          :chunk-size 2
+          :limits indexed-limits})
+        need-first-scan
+        (verified/drive-indexed
+         selection :forward (:state initialized) indexed-limits 100)
+        first-command (:command need-first-scan)
+        resumed
+        (verified/resume-indexed
+         selection :forward (:state need-first-scan)
+         {:request-scope (:request-scope first-command)
+          :request-id (:request-id first-command)
+          :values [10 20]
+          :terminal? false
+          :fetched-values 3}
+         indexed-limits)
+        first-complete
+        (verified/drive-indexed
+         selection :forward (:state resumed) indexed-limits 100)
+        first-result
+        (verified/read-indexed-result
+         selection :forward (:state first-complete))
+        rejected
+        (verified/continue-indexed-page
+         selection :forward (:state first-complete)
+         {:size 1 :bound {:ordinal 0 :eid 11}})
+        continued
+        (verified/continue-indexed-page
+         selection :forward (:state first-complete)
+         {:size 1 :bound {:ordinal 0 :eid 10}})
+        need-second-scan
+        (verified/drive-indexed
+         selection :forward (:state continued) indexed-limits 100)
+        second-command (:command need-second-scan)
+        second-resume
+        (verified/resume-indexed
+         selection :forward (:state need-second-scan)
+         {:request-scope (:request-scope second-command)
+          :request-id (:request-id second-command)
+          :values [30]
+          :terminal? true
+          :fetched-values 1}
+         indexed-limits)
+        second-complete
+        (verified/drive-indexed
+         selection :forward (:state second-resume) indexed-limits 100)
+        second-result
+        (verified/read-indexed-result
+         selection :forward (:state second-complete))]
+    (is (= {:status :page
+            :items [10]
+            :start-ordinal 0
+            :has-next? true
+            :has-previous? false}
+           (select-keys
+            first-result
+            [:status :items :start-ordinal
+             :has-next? :has-previous?])))
+    (is (= {:status :rejected :reason :boundary-mismatch}
+           rejected))
+    (is (= :continued (:status continued)))
+    (is (= 20
+           (get-in need-second-scan
+                   [:command :projection :bound-eid]))
+        "the continued state scans strictly after retained lookahead")
+    (is (= {:status :page
+            :items [20]
+            :start-ordinal 1
+            :has-next? true
+            :has-previous? true}
+           (select-keys
+            second-result
+            [:status :items :start-ordinal
+             :has-next? :has-previous?])))))
+
+(deftest generated-java-continues-reverse-pages-from-verified-lookahead
+  (let [compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules [indexed-direct-rule]
+          :seed-rules-by-subject-type
+          {"user" [indexed-direct-rule]}})
+        initialized
+        (verified/initialize-indexed
+         selection
+         :reverse
+         {:compiled-plan compiled-plan
+          :request-scope 72
+          :subject-type "user"
+          :root-node
+          {:resource-type "folder" :permission "read"}
+          :root-resource-eid 10
+          :result-type "user"
+          :render {:kind :page :size 1 :bound nil}
+          :chunk-size 2
+          :limits indexed-limits})
+        need-first-scan
+        (verified/drive-indexed
+         selection :reverse (:state initialized) indexed-limits 100)
+        first-command (:command need-first-scan)
+        resumed
+        (verified/resume-indexed
+         selection :reverse (:state need-first-scan)
+         {:request-scope (:request-scope first-command)
+          :request-id (:request-id first-command)
+          :values [7 8]
+          :terminal? false
+          :fetched-values 3}
+         indexed-limits)
+        first-complete
+        (verified/drive-indexed
+         selection :reverse (:state resumed) indexed-limits 100)
+        continued
+        (verified/continue-indexed-page
+         selection :reverse (:state first-complete)
+         {:size 1 :bound {:ordinal 0 :eid 7}})
+        need-second-scan
+        (verified/drive-indexed
+         selection :reverse (:state continued) indexed-limits 100)
+        second-command (:command need-second-scan)
+        second-resume
+        (verified/resume-indexed
+         selection :reverse (:state need-second-scan)
+         {:request-scope (:request-scope second-command)
+          :request-id (:request-id second-command)
+          :values [9]
+          :terminal? true
+          :fetched-values 1}
+         indexed-limits)
+        second-complete
+        (verified/drive-indexed
+         selection :reverse (:state second-resume) indexed-limits 100)
+        second-result
+        (verified/read-indexed-result
+         selection :reverse (:state second-complete))]
+    (is (= :continued (:status continued)))
+    (is (= 8
+           (get-in need-second-scan
+                   [:command :projection :bound-eid])))
+    (is (= {:status :page
+            :items [8]
+            :start-ordinal 1
+            :has-next? true
+            :has-previous? true}
+           (select-keys
+            second-result
+            [:status :items :start-ordinal
+             :has-next? :has-previous?])))))
+
 (deftest production-subproblem-store-uses-generated-java-decisions
   (let [store (subproblem/store {:projection-max-weight 1024
                                  :denotation-max-weight 1024

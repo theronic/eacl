@@ -65,9 +65,11 @@ generated-code compiler out of the trusted computing base.
   complete-public traces compare cache provenance and selected graph identity
   between legacy and generated authority on Datomic, Datahike, DataScript/JVM,
   and DataScript/JavaScript. Non-portable exception data is observable as
-  comparison-unavailable rather than passing. Required rollout volumes,
-  cross-backend generated-authority, source refinement, and release cutover
-  gates remain incomplete.
+  comparison-unavailable rather than passing. The complete non-benchmark and
+  heavy CLJ suites now pass under forced generated authority on Datomic,
+  Datahike, and DataScript, and the complete DataScript CLJS suite passes under
+  forced generated authority. Independent production rollout volumes, source
+  refinement, and release cutover gates remain incomplete.
 - The current-generation cache, exact/arbitrary-DB bypass, scalar stamp law,
   least-fixed-point managed frame, and selected-snapshot rendering are proved
   and integrated for all three adapters. This is a conditional cache
@@ -239,6 +241,22 @@ generated-code compiler out of the trusted computing base.
   requires zero reflection warnings across the complete generated-Java
   boundary. These are host measurements and source checks, not formal heap
   bounds.
+- EACL-FORMAL-036 found that generated authority returned correct recursive
+  answers while bypassing the production denotation, recursive-page, and
+  process-private continuation caches. It also discarded the opaque generated
+  frontier after every page and failed to project generated dimensional
+  counters into compatibility telemetry. The first forced-authority suite
+  produced 13 failures and 3 errors. Dafny now verifies forward and reverse
+  page-continuation transitions: the transition authenticates the public
+  ordinal and EID, preserves the semantic frontier and cumulative counters,
+  and carries the consumed lookahead into the next page without prefix replay.
+  The Clojure engine stores that state only in the client-private cache and
+  deterministically replays the authenticated prefix on any miss, eviction,
+  malformed value, or generated rejection. Cache-enabled point checks and
+  unbounded counts now publish or reuse complete generated fixed-point
+  denotations. The forced CLJ suites exercised 2,525 Datomic generated
+  continuations. Datahike and DataScript retain deterministic replay where no
+  process-private continuation store is available.
 - Snapshot-consistency planning and post-selection validation now route
   through `ConsistencyDecision.dfy` in verified modes. Its 24 plan states and
   48 well-formed validation states are exhausted in generated Java and
@@ -333,7 +351,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,248 proof efforts across 22
+- Clean checksum-locked Dafny cache: 9,253 proof efforts across 22
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -346,17 +364,22 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 35 minimized entries replayed by 37 tests and 1,903
+- Counterexample corpus: 36 minimized entries replayed by 38 tests and 1,947
   assertions, zero failures/errors.
-- Mutation controls: 55 Clojure detectors and 8 Apalache counterexample
-  controls; all 63 registered mutants killed.
-- Public non-benchmark CLJ suite: 485 tests, 18,601 assertions, zero
+- Mutation controls: 56 Clojure detectors and 8 Apalache counterexample
+  controls; all 64 registered mutants killed.
+- Fresh ordinary non-benchmark CLJ suite: 487 tests, 18,652 assertions, zero
   failures/errors.
-- DataScript CLJS suite: 141 tests, 4,434 assertions, zero failures/errors.
-- Generated Java suite: 43 tests, 8,228 assertions, zero failures/errors.
-- Generated JavaScript suite: 44 tests, 1,627 assertions, zero
+- Forced-authority non-benchmark CLJ suite: 487 tests, 18,652 assertions,
+  zero failures/errors across Datomic, Datahike, and DataScript.
+- Forced-authority heavy CLJ suite: 16 tests, 4,047 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,305 unique
+- Ordinary and forced-authority DataScript CLJS suites: 151 tests, 4,491
+  assertions each, zero failures/errors.
+- Generated Java suite: 46 tests, 8,239 assertions, zero failures/errors.
+- Generated JavaScript suite: 46 tests, 1,635 assertions, zero
+  failures/errors.
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,319 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent
@@ -388,16 +411,16 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,824,050 Java
-  source bytes, 1,663,914 Java class bytes, 801,034
-  JavaScript-with-runtime bytes, and an 882,317-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 1,849,044 Java
+  source bytes, 1,686,164 Java class bytes, 814,264
+  JavaScript-with-runtime bytes, and an 895,964-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. Retained
   live heap remains `:not-established`, so the
   evaluator and release manifest refuse performance cutover instead of
   substituting logical cache weight or the noise-dominated GC
   micro-measurement for a heap bound.
-- The outdated Lore revision
+- The outdated and untrusted Lore revision
   `dabb5634b0d44e196e2b6ec63003917b3d445bec`
   reanalyzed immutable EACL revision
   `401d15c3d058a00770856d25f5328289cbcd7971` (tree
@@ -409,10 +432,13 @@ that the complete v8.0 engine is formally verified.
   The analyser rejected its pinned old production-refutation witness as
   revision-invalid instead of applying it to the changed implementation.
   This evidence-only report update changes no analyzed production or formal
-  source. The analyser is not in the trusted computing base, no release gate
-  depends on it, and the diagnostic proves no production heap, elapsed-time,
-  backend-operation, or whole-engine resource claim. EACL retains only the
-  technique of separating incompatible resource dimensions.
+  source. The analyser is not in the trusted computing base, has assurance
+  status `none`, and no release gate depends on it. The diagnostic proves no
+  production heap, elapsed-time, backend-operation, or whole-engine resource
+  claim. EACL retains only the techniques of separating incompatible resource
+  dimensions and constructing adversarial lifecycle schedules. Current
+  semantic and logical-resource claims are reimplemented in Dafny; actual
+  allocation, retained heap, CPU, and latency remain host measurements.
 - The captured-current consistency boundary has a Dafny logical-work model
   matched by exact source-call instrumentation: one capability observation,
   one plan decision, and no authentication, backend selection, validation,
@@ -430,7 +456,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 22-module
-  replay passed 9,248 proof efforts and consumed 3,645,765,210 deterministic
+  replay passed 9,253 proof efforts and consumed 3,646,628,632 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

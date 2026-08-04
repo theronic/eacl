@@ -881,6 +881,16 @@
     (.-is_OutOfOrder error) :out-of-order
     :else :bound-violation))
 
+(defn- indexed-page-continuation-reason
+  [error]
+  (cond
+    (.-is_InvalidContinuationSize error) :invalid-size
+    (.-is_ContinuationNotForwardPage error) :not-forward-page
+    (.-is_ContinuationNotComplete error) :not-complete
+    (.-is_ContinuationHasNoLookahead error) :no-lookahead
+    (.-is_ContinuationHasPendingScan error) :pending-scan
+    :else :boundary-mismatch))
+
 (defn- indexed-scan-decision
   [{:keys [command response]}]
   (let [indexed (.-IndexedTraversal generated)
@@ -1322,6 +1332,29 @@
        :limit-kind
        (indexed-limit-kind (.-dtor_kind outcome))})))
 
+(defn- indexed-continue-page
+  [direction state {:keys [size bound]}]
+  (let [indexed (.-IndexedTraversal generated)
+        outcome
+        (js-invoke
+         (.-__default indexed)
+         (case direction
+           :forward "ContinueForwardPage"
+           :reverse "ContinueReversePage")
+         state
+         (big-number size)
+         (big-number (:ordinal bound))
+         (big-number (:eid bound)))]
+    (if (case direction
+          :forward (.-is_ForwardPageContinued outcome)
+          :reverse (.-is_ReversePageContinued outcome))
+      {:status :continued
+       :state (.-dtor_state outcome)}
+      {:status :rejected
+       :reason
+       (indexed-page-continuation-reason
+        (.-dtor_error outcome))})))
+
 (defn- indexed-public-result
   [direction state]
   (let [indexed (.-IndexedTraversal generated)
@@ -1399,6 +1432,8 @@
     (indexed-drive direction state limits fuel))
   (-resume-indexed [_ direction state response limits]
     (indexed-resume direction state response limits))
+  (-continue-indexed-page [_ direction state input]
+    (indexed-continue-page direction state input))
   (-read-indexed-result [_ direction state]
     (indexed-public-result direction state)))
 

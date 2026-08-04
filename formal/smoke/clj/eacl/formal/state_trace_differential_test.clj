@@ -129,6 +129,9 @@
   (-resume-indexed [_ direction state response limits]
     (swap! calls update :indexed-traversal-resume (fnil inc 0))
     (verified/-resume-indexed delegate direction state response limits))
+  (-continue-indexed-page [_ direction state input]
+    (swap! calls update :indexed-traversal-continue (fnil inc 0))
+    (verified/-continue-indexed-page delegate direction state input))
   (-read-indexed-result [_ direction state]
     (swap! calls update :indexed-traversal-read (fnil inc 0))
     (verified/-read-indexed-result delegate direction state)))

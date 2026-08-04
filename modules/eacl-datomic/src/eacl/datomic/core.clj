@@ -901,11 +901,11 @@
   "Client-private cache handles for recursive state, recursive pages, and
   acyclic frontier heads.
 
-  Opaque engine state contains process-local closures, so it must never be
-  accepted from a caller-supplied provider. The private store is created by
-  make-client and is not shared across clients. Its key commits to the exact
-  source, adapter, identity, schema, query, and snapshot context authenticated
-  by the cursor.
+  Opaque engine state may contain legacy process-local closures or generated
+  runtime objects, so it must never be accepted from a caller-supplied
+  provider or serialized. The private store is created by make-client and is
+  not shared across clients. Its key commits to the exact source, adapter,
+  identity, schema, query, and snapshot context authenticated by the cursor.
 
   A miss, eviction, rejected publication, or malformed value is only an
   optimization loss; the engine deterministically replays the authenticated

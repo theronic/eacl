@@ -30,6 +30,7 @@
    compile-indexed-plan
    indexed-init
    indexed-drive
+   indexed-continue-page
    indexed-resume]
   :cache-and-cursors
   [exact-selection

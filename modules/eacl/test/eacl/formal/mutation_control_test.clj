@@ -651,12 +651,32 @@
          "^ReverseStep outcome"
          "^ForwardResume outcome"
          "^ReverseResume outcome"
+         "^PageContinuationError error"
+         "^ForwardPageContinuation outcome"
+         "^ReversePageContinuation outcome"
          "^ForwardState state"
          "^ReverseState state"
          "^PublicRenderResult result"]]
     (every?
      #(not= -1 (.indexOf ^String source ^String %))
      required-static-targets)))
+
+(defn- generated-authority-bypasses-cache-cutover-killed?
+  []
+  (let [cache-enabled? true
+        complete-fixed-point? true
+        continuation-present? true
+        correct-point-path
+        (if cache-enabled? :resolve-denotation :generated-boolean)
+        mutant-point-path :generated-boolean
+        correct-next-page-work
+        (if continuation-present? :resume-frontier :replay-prefix)
+        mutant-next-page-work :replay-prefix]
+    (and complete-fixed-point?
+         (= :resolve-denotation correct-point-path)
+         (= :generated-boolean mutant-point-path)
+         (= :resume-frontier correct-next-page-work)
+         (= :replay-prefix mutant-next-page-work))))
 
 (defn- routing-node-identity-drops-resource-type-killed?
   []
@@ -895,6 +915,8 @@
    formal-cljs-smoke-terminates-agent-executors-killed?
    :generated-java-boundary-restores-reflection
    generated-java-boundary-restores-reflection-killed?
+   :generated-authority-bypasses-cache-cutover
+   generated-authority-bypasses-cache-cutover-killed?
    :routing-node-identity-drops-resource-type
    routing-node-identity-drops-resource-type-killed?
    :routing-only-recursive-component-members

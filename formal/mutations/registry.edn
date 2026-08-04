@@ -277,6 +277,12 @@
    :killed-by
    {:invariant :generated-java-boundary-has-no-reflective-invocation
     :test :generated-java-boundary-is-reflection-free-test}}
+  {:id :generated-authority-bypasses-cache-cutover
+   :mechanism :return-generated-recursive-results-without-denotation-page-or-frontier-cache-integration
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :verified-authority-preserves-production-cache-and-continuation-semantics
+    :test :verified-authority-full-suite-and-generated-page-continuation}}
   {:id :routing-node-identity-drops-resource-type
    :mechanism :resolve-arrow-permission-targets-by-permission-name-alone
    :control {:kind :clojure}

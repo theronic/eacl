@@ -1,0 +1,33 @@
+#!/bin/sh
+
+set -eu
+
+port=${EACL_NREPL_PORT:-}
+suite=${1:-nonbenchmark}
+
+[ -n "$port" ] || {
+  printf '%s\n' \
+    "EACL_NREPL_PORT must name an nREPL started with:" \
+    "  clojure -M:dev:formal-smoke:nrepl --port 0" >&2
+  exit 2
+}
+
+case "$suite" in
+  nonbenchmark)
+    entrypoint=run-nonbenchmark!
+    timeout=600000
+    ;;
+  heavy)
+    entrypoint=run-heavy!
+    timeout=1800000
+    ;;
+  *)
+    printf 'unknown verified-authority suite: %s\n' "$suite" >&2
+    exit 2
+    ;;
+esac
+
+clj-nrepl-eval -p "$port" --timeout "$timeout" \
+  "(do
+     (require 'eacl.formal.verified-authority-suite :reload)
+     (eacl.formal.verified-authority-suite/$entrypoint))"

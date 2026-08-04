@@ -1,0 +1,27 @@
+{:engine-mode :verified-authoritative
+ :operations
+ [{:operation :lookup-resources
+   :page-size 3
+   :follow-cursor? true
+   :expected-optimization :opaque-frontier-continuation}
+  {:operation :count-resources
+   :count-limit nil
+   :expected-publication :complete-forward-denotation}
+  {:operation :can?
+   :after-unrelated-write? true
+   :expected-optimization :managed-denotation-hit}
+  {:operation :count-subjects
+   :count-limit nil
+   :expected-publication :complete-reverse-denotation}]
+ :before
+ {:verified-authority-suite
+  {:tests 486
+   :assertions 18588
+   :failures 13
+   :errors 3}
+  :observed
+  [:zero-continuation-hits
+   :zero-recursive-page-hits
+   :zero-recursive-component-hits
+   :zero-managed-denotation-hits
+   :missing-derived-grants-telemetry]}}

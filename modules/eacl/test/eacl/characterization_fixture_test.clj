@@ -37,12 +37,16 @@
 
 (deftest formal-cljs-smoke-preserves-persistent-nrepl-executors-test
   (let [runner
-        (slurp (repo/file "formal" "smoke" "cljs" "run"))]
+        (slurp (repo/file "formal" "smoke" "cljs" "run"))
+        workflow
+        (slurp (repo/file ".github" "workflows" "formal.yml"))]
     (is (str/includes? runner "cljs.build.api"))
     (is (not (str/includes? runner "(cljs/-main")))
     (is (str/includes?
          runner
-         "@(future :eacl.formal/agent-executor-alive)"))))
+         "@(future :eacl.formal/agent-executor-alive)"))
+    (is (str/includes? workflow "cljs.build.api"))
+    (is (not (str/includes? workflow "(cljs/-main")))))
 
 (defn- source-definitions
   [path]

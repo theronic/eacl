@@ -160,7 +160,7 @@
 - [x] 12.5 Fix every demonstrated false grant, stale reuse, mixed-snapshot page, omission, duplicate, or fail-open path and attach its closing Dafny lemma/model invariant/test.
 - [x] 12.6 Run representative direct, acyclic, recursive, cursor, and cache load benchmarks in legacy and verified modes and meet the recorded cutover thresholds.
 - [ ] 12.7 Make verified-authoritative mode opt-in after all proof, adapter, cross-target, mutation, regression, and performance gates pass.
-- [ ] 12.8 Run the full non-benchmark and heavy suites through nREPL with verified authority on Datomic, DataScript CLJ/CLJS, and Datahike.
+- [x] 12.8 Run the full non-benchmark and heavy suites through nREPL with verified authority on Datomic, DataScript CLJ/CLJS, and Datahike.
 - [ ] 12.9 Make verified authority the default while retaining the legacy rollback path for the documented compatibility window.
 - [ ] 12.10 Remove the legacy decision path after the window closes, preserving characterization fixtures, counterexamples, and security fixes.
 
