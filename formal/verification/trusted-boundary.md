@@ -119,6 +119,11 @@ flow, its logical counters, and the exact ordered trace of reseek stream side
 and target. Generated Java and JavaScript compare that trace with callbacks
 from the actual CLJ/CLJS source. This rules out preserving only the aggregate
 reseek count while changing which stream is sought or the requested boundary.
+The same module models the empty/singleton/wide arrow selection in
+`can-uncached*`, including direct-intersection and full-candidate-check counts.
+Generated Java and JavaScript compare eight Boolean/work traces with actual
+CLJ/CLJS execution. The first comparison found and removed the empty-arrow
+wide-path work recorded as EACL-FORMAL-042.
 The source digests and public call closure make any host-source edit invalidate
 the reviewed evidence.
 
@@ -130,6 +135,10 @@ Inclusive backend reseek remains a separately certified adapter obligation.
 The adapter fixture certification exercises no bound and every materialized
 EID as a bound; it is finite executable evidence, not a proof of each storage
 engine's implementation.
+For arrow selection, the facts that direct matches are a subset of full
+far-side authorization and that `:exhaustive?` means equality remain schema,
+path-materialization, and callback obligations outside the pure control
+theorem.
 
 ## Cryptographic and canonicalization axioms
 

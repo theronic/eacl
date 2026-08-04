@@ -9,7 +9,7 @@
     SnapshotConsistencyMode
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
-   (dafny DafnySequence DafnySet Tuple2 Tuple5 TypeDescriptor)
+   (dafny DafnySequence DafnySet Tuple2 Tuple3 Tuple5 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
@@ -923,6 +923,19 @@
      :examined-heads (dafny-long (.dtor__3 result))
      :reseek-trace
      (dafny-sequences->vectors (.dtor__4 result))}))
+
+(defn acyclic-arrow-path-decision
+  "Executes the generated source-shaped acyclic arrow fast-path decision.
+  This is test-support code, not part of EACL's production kernel SPI."
+  [{:keys [full-candidate-matches direct-intersects? exhaustive?]}]
+  (let [^Tuple3 result
+        (AcyclicEngine.__default/AcyclicArrowPathDecisionWithWork
+         (typed-sequence TypeDescriptor/BOOLEAN full-candidate-matches)
+         direct-intersects?
+         exhaustive?)]
+    {:allowed? (.dtor__0 result)
+     :direct-intersection-phases (dafny-long (.dtor__1 result))
+     :full-candidate-checks (dafny-long (.dtor__2 result))}))
 
 (defn- optional-eid
   [value]

@@ -80,6 +80,20 @@ CLJ/CLJS source on 4,100 fixtures per runtime. This closes the narrower
 wrong-side/wrong-target loophole but does not prove Clojure language semantics,
 backend seek complexity, or the inclusive adapter contract.
 
+The next source-shaped boundary covers the high-level arrow decision inside
+`can-uncached*`. Dafny proves that direct-intersection positives are sound when
+they are a subset of complete far-side evaluation, exhaustive misses are
+complete when the sets are equal, and non-exhaustive misses fall back to full
+candidate evaluation. It also proves zero or one intermediate skips the direct
+intersection, wide arrows perform one such phase, and complete fallback checks
+at most the intermediate count. The first differential exposed
+EACL-FORMAL-042: production sent an empty arrow through wide-path setup.
+Production now returns false immediately, avoiding direct-grant calculation and
+subject-side scan setup. Generated Java and JavaScript compare eight exact
+source-control traces with the CLJ/CLJS function. Path materialization,
+recursive callback meaning, direct-subset/exhaustiveness facts, and Clojure
+language semantics remain separate obligations.
+
 ## Public operation coverage
 
 The decisions above flow into these externally observable families:

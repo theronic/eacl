@@ -250,6 +250,63 @@
   (production/acyclic-leapfrog-intersection
    {:left left :right right}))
 
+(defn- bounded-ascending-values
+  [values options]
+  (if-let [bound (:bound-eid options)]
+    (drop-while #(< (long %) (long bound)) values)
+    values))
+
+(defn- source-acyclic-arrow-path-decision
+  [{:keys [intermediates direct-matches full-matches exhaustive?]}]
+  (let [direct-intersection-phases (atom 0)
+        full-candidate-checks (atom 0)
+        substitutions
+        {'get-permission-paths
+         (fn [& _]
+           [{:type :arrow
+             :target-type :group
+             :via-relation-eid 11
+             :target-permission :member}])
+         'resource->subjects
+         (fn [& arguments]
+           (bounded-ascending-values intermediates (last arguments)))
+         'direct-grant-relations
+         (fn [& _]
+           (swap! direct-intersection-phases inc)
+           {:relation-eids [22]
+            :exhaustive? exhaustive?})
+         'subject->resources
+         (fn [& arguments]
+           (bounded-ascending-values direct-matches (last arguments)))
+         'can*
+         (fn [_ _ _ _ _ intermediate-eid _]
+           (swap! full-candidate-checks inc)
+           (contains? full-matches intermediate-eid))}
+        resolved
+        (into
+         {}
+         (map
+          (fn [[symbol replacement]]
+            [(ns-resolve 'eacl.engine.v8 symbol) replacement])
+          substitutions))
+        allowed?
+        (with-redefs-fn
+          resolved
+          #((ns-resolve 'eacl.engine.v8 'can-uncached*)
+            nil :user 9 :view :document 10 #{}))]
+    {:allowed? allowed?
+     :direct-intersection-phases @direct-intersection-phases
+     :full-candidate-checks @full-candidate-checks}))
+
+(defn- generated-acyclic-arrow-path-decision
+  [{:keys [intermediates direct-matches full-matches exhaustive?]}]
+  (production/acyclic-arrow-path-decision
+   {:full-candidate-matches
+    (mapv #(contains? full-matches %) intermediates)
+    :direct-intersects?
+    (boolean (some (set direct-matches) intermediates))
+    :exhaustive? exhaustive?}))
+
 (defn- routing-node
   [[resource-type permission]]
   {:resource-type (pr-str resource-type)
@@ -1484,6 +1541,88 @@
     (is (empty? mismatches) (pr-str (first mismatches)))
     (is (true? (:intersects? skewed-source)))
     (is (pos? (:reseeks skewed-source)))))
+
+(deftest generated-java-acyclic-arrow-path-refines-source-control
+  (doseq [{:keys [label expected] :as fixture}
+          [{:label :empty
+            :intermediates []
+            :direct-matches []
+            :full-matches #{}
+            :exhaustive? false
+            :expected
+            {:allowed? false
+             :direct-intersection-phases 0
+             :full-candidate-checks 0}}
+           {:label :singleton-hit
+            :intermediates [10]
+            :direct-matches []
+            :full-matches #{10}
+            :exhaustive? false
+            :expected
+            {:allowed? true
+             :direct-intersection-phases 0
+             :full-candidate-checks 1}}
+           {:label :singleton-miss
+            :intermediates [10]
+            :direct-matches []
+            :full-matches #{}
+            :exhaustive? true
+            :expected
+            {:allowed? false
+             :direct-intersection-phases 0
+             :full-candidate-checks 1}}
+           {:label :wide-direct-hit
+            :intermediates [10 20 30]
+            :direct-matches [30]
+            :full-matches #{30}
+            :exhaustive? false
+            :expected
+            {:allowed? true
+             :direct-intersection-phases 1
+             :full-candidate-checks 0}}
+           {:label :wide-exhaustive-hit
+            :intermediates [10 20 30]
+            :direct-matches [20]
+            :full-matches #{20}
+            :exhaustive? true
+            :expected
+            {:allowed? true
+             :direct-intersection-phases 1
+             :full-candidate-checks 0}}
+           {:label :wide-exhaustive-miss
+            :intermediates [10 20 30]
+            :direct-matches []
+            :full-matches #{}
+            :exhaustive? true
+            :expected
+            {:allowed? false
+             :direct-intersection-phases 1
+             :full-candidate-checks 0}}
+           {:label :wide-fallback-hit
+            :intermediates [10 20 30]
+            :direct-matches []
+            :full-matches #{20}
+            :exhaustive? false
+            :expected
+            {:allowed? true
+             :direct-intersection-phases 1
+             :full-candidate-checks 2}}
+           {:label :wide-fallback-miss
+            :intermediates [10 20 30]
+            :direct-matches []
+            :full-matches #{}
+            :exhaustive? false
+            :expected
+            {:allowed? false
+             :direct-intersection-phases 1
+             :full-candidate-checks 3}}]]
+    (let [input (dissoc fixture :label :expected)
+          source (source-acyclic-arrow-path-decision input)
+          generated (generated-acyclic-arrow-path-decision input)]
+      (is (= expected source generated)
+          (pr-str {:label label
+                   :source source
+                   :generated generated})))))
 
 (deftest generated-java-indexed-plan-certification-boundary
   (let [decide

@@ -140,6 +140,63 @@
     :no-formal-bound-on-lazy-realization-allocation-heap-or-wall-time
     :host-long-and-javascript-safe-integer-semantics-remain-trusted
     :independent-source-refinement-review-not-recorded]}
+  {:id :acyclic-arrow-path-control
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbol eacl.engine.v8/can-uncached*
+    :scope
+    :arrow-empty-singleton-direct-intersection-exhaustive-and-fallback-selection
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.AnyTrue
+     AcyclicEngine.FirstTrueCandidateChecks]
+    :lemmas
+    [AcyclicEngine.FirstTrueCandidateChecksProperties
+     AcyclicEngine.AcyclicArrowPathDecisionWithWork]}
+   :abstract-domain
+   {:intermediates :finite-ordered-resource-side-candidates
+    :full-candidate-matches
+    :exact-far-side-authorization-result-per-intermediate
+    :direct-intersection-contract
+    :positive-results-are-a-subset-of-full-candidate-matches
+    :exhaustive-contract
+    :direct-intersection-equals-full-candidate-evaluation
+    :formal-resource-bounds
+    {:zero-or-one-intermediate-direct-intersection-phases 0
+     :wide-intermediate-direct-intersection-phases 1
+     :full-candidate-checks "<= |intermediates|"}}
+   :evidence
+   {:java-source-control-fixtures 8
+    :javascript-source-control-fixtures 8
+    :covered-shapes
+    [:empty
+     :singleton-hit
+     :singleton-miss
+     :wide-direct-hit
+     :wide-exhaustive-hit
+     :wide-exhaustive-miss
+     :wide-fallback-hit
+     :wide-fallback-miss]
+    :mutations
+    [:arrow-empty-stream-enters-wide-path
+     :arrow-singleton-enters-wide-path
+     :arrow-direct-hit-runs-full-fallback
+     :arrow-exhaustive-miss-runs-full-fallback
+     :arrow-nonexhaustive-miss-skips-full-fallback]
+    :counterexample-regressions [:EACL-FORMAL-042]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :limitations
+   [:source-control-fixtures-exercise-arrow-permission-the-arrow-relation-variant-shares-the-selection-branch-and-is-covered-by-public-integration
+    :direct-match-subset-and-exhaustiveness-contracts-remain-production-schema-and-adapter-obligations
+    :full-candidate-match-booleans-remain-callback-semantic-obligations
+    :path-materialization-alias-recursion-and-outer-path-fold-are-outside-this-narrow-control-model
+    :clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
+    :no-formal-bound-on-backend-seek-cost-allocation-retained-heap-or-wall-time
+    :independent-source-refinement-review-not-recorded]}
   {:id :recursive-scc-routing
    :production
    {:source "modules/eacl/src/eacl/engine/v8.cljc"

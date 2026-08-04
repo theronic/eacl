@@ -55,16 +55,16 @@
  :generated-targets
   {:java
   {:status :passed
-   :tests 32
-   :assertions 9877
+   :tests 33
+   :assertions 9885
    :failures 0
    :errors 0
    :qualification :suite-spans-all-generated-java-production-kernel-operations}
   :javascript
   {:status :passed
    :suite :generated-kernel-cljs-smoke
-   :tests 52
-   :assertions 10429
+   :tests 53
+   :assertions 10437
    :failures 0
    :errors 0
    :qualification :suite-spans-generated-javascript-and-portable-boundary-operations}}

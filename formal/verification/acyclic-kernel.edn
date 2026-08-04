@@ -4,7 +4,7 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 48
+   :verified-obligations 52
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
@@ -19,7 +19,12 @@
     :leapfrog-probe-head-examinations-at-most-seventeen-times-outer-iterations
     :leapfrog-reseek-trace-length-equals-reseek-count
     :leapfrog-reseek-trace-records-exact-stream-side-and-target
-    :inclusive-reseek-preserves-intersection-candidates]}
+    :inclusive-reseek-preserves-intersection-candidates
+    :arrow-empty-and-singleton-skip-direct-intersection
+    :arrow-direct-positive-is-sound-under-subset-contract
+    :arrow-exhaustive-negative-is-complete-under-equality-contract
+    :arrow-fallback-refines-complete-far-side-evaluation
+    :arrow-full-candidate-checks-are-bounded-by-intermediate-count]}
   {:source "formal/dafny/OrderedMerge.dfy"
    :verified-obligations 82
    :claims
@@ -50,14 +55,14 @@
  :generated-targets
  {:java
   {:status :passed
-   :tests 32
-   :assertions 9877
+   :tests 33
+   :assertions 9885
    :failures 0
    :errors 0}
   :javascript
   {:status :passed
-   :tests 52
-   :assertions 10429
+   :tests 53
+   :assertions 10437
    :failures 0
    :errors 0}}
  :differential
@@ -119,12 +124,39 @@
   :logical-control-flow-only-not-backend-seek-cost-lazy-realization-allocation-heap-or-latency
   :formal-source-refinement
   :exact-source-control-and-reseek-trace-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
+ :arrow-path-source-specialization
+ {:hot-path :acyclic-can-arrow-empty-singleton-and-wide-selection
+  :generated-source-fixtures
+  {:java 8
+   :javascript 8}
+  :formal-contracts
+  {:direct-intersection-positive
+   :must-be-a-subset-of-complete-far-side-evaluation
+   :exhaustive-direct-intersection
+   :must-equal-complete-far-side-evaluation}
+  :formal-resource-bounds
+  {:zero-or-one-intermediate-direct-intersection-phases 0
+   :wide-intermediate-direct-intersection-phases 1
+   :full-candidate-checks "at most |intermediates|"}
+  :mutations
+  [:arrow-empty-stream-enters-wide-path
+   :arrow-singleton-enters-wide-path
+   :arrow-direct-hit-runs-full-fallback
+   :arrow-exhaustive-miss-runs-full-fallback
+   :arrow-nonexhaustive-miss-skips-full-fallback]
+  :counterexample :EACL-FORMAL-042
+  :formal-source-refinement
+  :source-shaped-control-and-logical-work-proved-callback-semantics-language-correspondence-and-independent-review-remain-trusted}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
   :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :ordered-merge-independent-source-refinement-review-is-not-recorded
   :leapfrog-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :leapfrog-independent-source-refinement-review-is-not-recorded
+  :arrow-direct-subset-and-exhaustiveness-are-production-schema-and-adapter-obligations
+  :arrow-full-candidate-booleans-remain-callback-semantic-obligations
+  :arrow-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :arrow-independent-source-refinement-review-is-not-recorded
   :inclusive-reseek-semantics-remain-an-adapter-obligation
   :recursive-engine-obligations-remain
   :full-pagination-and-cursor-obligations-remain]}

@@ -151,6 +151,17 @@ generated-code compiler out of the trusted computing base.
   the actual CLJ/CLJS source on all 4,100 fixtures per runtime. The
   wrong-target and wrong-side mutants are killed. Clojure language semantics
   and the backend inclusive-seek contract remain explicit trusted refinements.
+- EACL-FORMAL-042 was found by comparing the first source-shaped acyclic arrow
+  control model with actual CLJ/CLJS execution. Production's singleton
+  shortcut required a truthy intermediate stream, so an empty arrow entered
+  the wide branch, calculated direct-grant relations, and could open
+  subject-side scans before returning false. Production now returns false
+  immediately. Dafny proves that zero or one intermediate performs no
+  direct-intersection phase, full fallback checks at most the intermediate
+  count, and the optimized decision equals complete far-side evaluation under
+  explicit direct-subset and exhaustiveness contracts. Generated Java and
+  JavaScript agree with the source on eight Boolean/work traces; the
+  empty-enters-wide mutant is killed.
 - EACL-FORMAL-021 found that Datomic's separate cache-compatibility normalizer
   rejected and failed to forward the shared `:subproblem-cache` configuration.
   DataScript and Datahike honored those projection, denotation, proof-atom,
@@ -398,6 +409,14 @@ generated-code compiler out of the trusted computing base.
   Correctness still assumes each adapter implements an inclusive
   first-EID-at-or-after-target seek. Independent source refinement and adapter
   review remain open.
+- The acyclic arrow source specialization covers empty, singleton, wide direct
+  hit, exhaustive hit/miss, and non-exhaustive fallback hit/miss control. The
+  generated and source traces agree exactly on authorization,
+  direct-intersection phases, and full-candidate checks in Java and JavaScript.
+  This proves the source-shaped finite control model and its logical bounds,
+  not the truth of path materialization, nested permission callbacks,
+  direct-subset/exhaustiveness facts, Clojure semantics, or backend/runtime
+  costs.
 
 ## Public wording audit
 
@@ -414,7 +433,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,337 proof efforts across 23
+- Clean checksum-locked Dafny cache: 9,341 proof efforts across 23
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -427,19 +446,19 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 41 minimized entries replayed by 43 tests and 10,373
+- Counterexample corpus: 42 minimized entries replayed by 44 tests and 10,418
   assertions, zero failures/errors.
-- Mutation controls: 67 Clojure detectors and 8 Apalache counterexample
-  controls; all 75 registered mutants killed.
+- Mutation controls: 72 Clojure detectors and 8 Apalache counterexample
+  controls; all 80 registered mutants killed.
 - Forced-authority non-benchmark CLJ suite: 492 tests, 18,851 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 16 tests, 4,047 assertions, zero
   failures/errors.
 - Ordinary and forced-authority DataScript CLJS suites: 152 tests, 4,499
   assertions each, zero failures/errors.
-- Generated Java production-kernel namespace: 32 tests, 9,877 assertions,
+- Generated Java production-kernel namespace: 33 tests, 9,885 assertions,
   zero failures/errors.
-- Generated JavaScript smoke suite: 52 tests, 10,429 assertions, zero
+- Generated JavaScript smoke suite: 53 tests, 10,437 assertions, zero
   failures/errors.
 - Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,330 unique
   reachable definitions across 51 source files, with exact per-root internal
@@ -473,9 +492,9 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,957,836 Java
-  source bytes, 1,753,016 Java class bytes, 867,263
-  JavaScript-with-runtime bytes, and a 950,342-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 1,960,482 Java
+  source bytes, 1,754,036 Java class bytes, 869,294
+  JavaScript-with-runtime bytes, and a 952,425-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. Retained
   live heap remains `:not-established`, so the
@@ -518,7 +537,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 23-module
-  replay passed 9,337 proof efforts and consumed 3,653,389,167 deterministic
+  replay passed 9,341 proof efforts and consumed 3,653,448,018 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

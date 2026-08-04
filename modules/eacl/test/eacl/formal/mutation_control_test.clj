@@ -244,6 +244,71 @@
          (true? mutant-result)
          (not= correct-trace mutant-trace))))
 
+(defn- arrow-empty-stream-enters-wide-path-killed?
+  []
+  (let [correct
+        {:allowed? false
+         :direct-intersection-phases 0
+         :full-candidate-checks 0}
+        mutant
+        {:allowed? false
+         :direct-intersection-phases 1
+         :full-candidate-checks 0}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- arrow-singleton-enters-wide-path-killed?
+  []
+  (let [correct
+        {:allowed? true
+         :direct-intersection-phases 0
+         :full-candidate-checks 1}
+        mutant
+        {:allowed? true
+         :direct-intersection-phases 1
+         :full-candidate-checks 0}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- arrow-direct-hit-runs-full-fallback-killed?
+  []
+  (let [correct
+        {:allowed? true
+         :direct-intersection-phases 1
+         :full-candidate-checks 0}
+        mutant
+        {:allowed? true
+         :direct-intersection-phases 1
+         :full-candidate-checks 3}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- arrow-exhaustive-miss-runs-full-fallback-killed?
+  []
+  (let [correct
+        {:allowed? false
+         :direct-intersection-phases 1
+         :full-candidate-checks 0}
+        mutant
+        {:allowed? false
+         :direct-intersection-phases 1
+         :full-candidate-checks 3}]
+    (and (= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
+(defn- arrow-nonexhaustive-miss-skips-full-fallback-killed?
+  []
+  (let [correct
+        {:allowed? true
+         :direct-intersection-phases 1
+         :full-candidate-checks 2}
+        mutant
+        {:allowed? false
+         :direct-intersection-phases 1
+         :full-candidate-checks 0}]
+    (and (not= (:allowed? correct) (:allowed? mutant))
+         (not= correct mutant))))
+
 (defn- adapter-negative-eid-admitted-killed?
   []
   (let [value -1
@@ -660,6 +725,7 @@
          "^Direction"
          "^ConsistencyError error"
          "^MergeChunk chunk"
+         "^Tuple3 result"
          "^Tuple5 result"
          "^ScanError error"
          "^PlanCertificationError error"
@@ -968,6 +1034,16 @@
    leapfrog-reseek-wrong-target-killed?
    :leapfrog-reseek-wrong-side
    leapfrog-reseek-wrong-side-killed?
+   :arrow-empty-stream-enters-wide-path
+   arrow-empty-stream-enters-wide-path-killed?
+   :arrow-singleton-enters-wide-path
+   arrow-singleton-enters-wide-path-killed?
+   :arrow-direct-hit-runs-full-fallback
+   arrow-direct-hit-runs-full-fallback-killed?
+   :arrow-exhaustive-miss-runs-full-fallback
+   arrow-exhaustive-miss-runs-full-fallback-killed?
+   :arrow-nonexhaustive-miss-skips-full-fallback
+   arrow-nonexhaustive-miss-skips-full-fallback-killed?
    :adapter-negative-eid-admitted
    adapter-negative-eid-admitted-killed?
    :ordered-merge-sentinel-collides-with-domain

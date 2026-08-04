@@ -995,6 +995,22 @@
         (mapv #(.toNumber %) event))
       (aget result 4))}))
 
+(defn acyclic-arrow-path-decision
+  "Executes the generated source-shaped acyclic arrow fast-path decision.
+  This is test-support code, not part of EACL's production kernel SPI."
+  [{:keys [full-candidate-matches direct-intersects? exhaustive?]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        result
+        (js-invoke
+         (.-__default acyclic)
+         "AcyclicArrowPathDecisionWithWork"
+         (dafny-sequence full-candidate-matches)
+         direct-intersects?
+         exhaustive?)]
+    {:allowed? (aget result 0)
+     :direct-intersection-phases (.toNumber (aget result 1))
+     :full-candidate-checks (.toNumber (aget result 2))}))
+
 (defn- optional-eid
   [indexed value]
   (if (some? value)

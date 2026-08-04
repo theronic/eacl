@@ -188,6 +188,15 @@ shadowed against the generated indexed state machine. Cached and uncached
 public-client state traces cover Datomic, Datahike, and DataScript, including
 unrelated transactions and revocation.
 
+The acyclic `can?` hot path also has source-shaped submodels for ordered EID
+merge, leapfrog intersection, and arrow empty/singleton/wide selection. Dafny
+proves their Boolean/set behavior and named logical bounds; generated
+Java/JavaScript compare the exact source-control results and traces with
+CLJ/CLJS. EACL-FORMAL-042 records the resulting production fix: an empty arrow
+now returns false before direct-grant/intersection setup. These submodels do not
+prove path materialization, nested callback meaning, storage-engine seek cost,
+Clojure language semantics, allocation, retained heap, or wall time.
+
 Recursive engine selection has a narrower generated oracle. Production first
 materializes complete permission dependencies as
 `[resource-type permission] -> [resource-type permission]` edges, then uses

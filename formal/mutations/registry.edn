@@ -123,6 +123,41 @@
    :killed-by
    {:proof :advance-reseek-trace-records-exact-side-and-target
     :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
+  {:id :arrow-empty-stream-enters-wide-path
+   :mechanism
+   :run-direct-intersection-setup-when-the-resource-side-has-no-intermediates
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :zero-or-one-intermediate-skips-direct-intersection
+    :test :acyclic-arrow-path-refines-source-control}}
+  {:id :arrow-singleton-enters-wide-path
+   :mechanism
+   :run-direct-intersection-setup-for-a-single-resource-side-intermediate
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :zero-or-one-intermediate-skips-direct-intersection
+    :test :acyclic-arrow-path-refines-source-control}}
+  {:id :arrow-direct-hit-runs-full-fallback
+   :mechanism
+   :ignore-a-sound-positive-direct-intersection-and-probe-full-candidates
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :sound-direct-intersection-positive-is-authoritative
+    :test :acyclic-arrow-path-refines-source-control}}
+  {:id :arrow-exhaustive-miss-runs-full-fallback
+   :mechanism
+   :probe-full-candidates-after-an-exhaustive-direct-intersection-miss
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :exhaustive-direct-intersection-equals-full-evaluation
+    :test :acyclic-arrow-path-refines-source-control}}
+  {:id :arrow-nonexhaustive-miss-skips-full-fallback
+   :mechanism
+   :return-false-after-a-nonexhaustive-direct-intersection-miss
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :nonexhaustive-miss-refines-complete-far-side-evaluation
+    :test :acyclic-arrow-path-refines-source-control}}
   {:id :adapter-negative-eid-admitted
    :mechanism :treat-any-signed-exact-integer-as-a-formal-engine-eid
    :control {:kind :clojure}

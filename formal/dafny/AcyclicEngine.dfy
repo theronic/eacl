@@ -804,6 +804,84 @@ module AcyclicEngine {
     );
   }
 
+  function AnyTrue(values: seq<bool>): bool
+    decreases |values|
+  {
+    |values| != 0 && (values[0] || AnyTrue(values[1..]))
+  }
+
+  function FirstTrueCandidateChecks(values: seq<bool>): nat
+    decreases |values|
+  {
+    if |values| == 0
+    then 0
+    else if values[0]
+      then 1
+      else 1 + FirstTrueCandidateChecks(values[1..])
+  }
+
+  lemma FirstTrueCandidateChecksProperties(values: seq<bool>)
+    ensures FirstTrueCandidateChecks(values) <= |values|
+    ensures |values| == 0 ==>
+              FirstTrueCandidateChecks(values) == 0
+    ensures |values| != 0 ==>
+              FirstTrueCandidateChecks(values) != 0
+    decreases |values|
+  {
+    if |values| != 0 && !values[0] {
+      FirstTrueCandidateChecksProperties(values[1..]);
+    }
+  }
+
+  method AcyclicArrowPathDecisionWithWork(
+    fullCandidateMatches: seq<bool>,
+    directIntersects: bool,
+    exhaustive: bool
+  ) returns (
+      allowed: bool,
+      directIntersectionPhases: nat,
+      fullCandidateChecks: nat
+    )
+    requires directIntersects ==> AnyTrue(fullCandidateMatches)
+    requires exhaustive ==>
+               directIntersects == AnyTrue(fullCandidateMatches)
+    ensures allowed == AnyTrue(fullCandidateMatches)
+    ensures directIntersectionPhases ==
+            (if |fullCandidateMatches| <= 1 then 0 else 1)
+    ensures fullCandidateChecks ==
+            (if |fullCandidateMatches| <= 1 ||
+                (!directIntersects && !exhaustive)
+             then FirstTrueCandidateChecks(fullCandidateMatches)
+             else 0)
+    ensures fullCandidateChecks <= |fullCandidateMatches|
+  {
+    FirstTrueCandidateChecksProperties(fullCandidateMatches);
+    if |fullCandidateMatches| <= 1 {
+      allowed := AnyTrue(fullCandidateMatches);
+      directIntersectionPhases := 0;
+      fullCandidateChecks :=
+        FirstTrueCandidateChecks(fullCandidateMatches);
+      return;
+    }
+
+    directIntersectionPhases := 1;
+    if directIntersects {
+      allowed := true;
+      fullCandidateChecks := 0;
+      return;
+    }
+
+    if exhaustive {
+      allowed := false;
+      fullCandidateChecks := 0;
+      return;
+    }
+
+    allowed := AnyTrue(fullCandidateMatches);
+    fullCandidateChecks :=
+      FirstTrueCandidateChecks(fullCandidateMatches);
+  }
+
   function ForwardProjection(
     objects: seq<Semantics.ObjectRef>,
     grants: set<Semantics.Grant>,

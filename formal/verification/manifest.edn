@@ -27,7 +27,7 @@
    :claim :conditional-interface-contract}
   :direct-and-acyclic-engine
   {:status :passed
-   :verified-obligations 48
+   :verified-obligations 52
    :source "formal/dafny/AcyclicEngine.dfy"
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
@@ -155,7 +155,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-041
+ {:latest :EACL-FORMAL-042
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -196,11 +196,12 @@
           :EACL-FORMAL-038
           :EACL-FORMAL-039
           :EACL-FORMAL-040
-          :EACL-FORMAL-041]}
+          :EACL-FORMAL-041
+          :EACL-FORMAL-042]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 41}
+  :entries 42}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -243,8 +244,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 75
-  :registered 75}
+  :killed 80
+  :registered 80}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"

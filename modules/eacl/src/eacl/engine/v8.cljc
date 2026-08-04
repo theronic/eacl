@@ -4957,7 +4957,13 @@
                                       next-visited))
                               intermediates)))
                     intermediates (seq (resource-side nil))]
-                (if (and intermediates (nil? (next intermediates)))
+                (cond
+                  (nil? intermediates)
+                  ;; No resource-side candidate can satisfy the arrow. Avoid
+                  ;; far-side schema work and subject-side index scans.
+                  false
+
+                  (nil? (next intermediates))
                   ;; Exactly one intermediate — by far the most common arrow
                   ;; shape (`server->account->admin`). A single point probe
                   ;; beats opening a second index scan to intersect against.
@@ -4965,6 +4971,8 @@
                   ;; intersection below needs anyway, so the wide case pays
                   ;; nothing for this check.
                   (probe-each intermediates)
+
+                  :else
                   (let [;; Relations through which the subject can satisfy the
                         ;; far side of the arrow in one relationship.
                         {:keys [relation-eids exhaustive?]}

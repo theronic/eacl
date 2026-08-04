@@ -193,7 +193,7 @@
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 52 :suite-assertions 10429 :status :passed}
+   :suite-tests 53 :suite-assertions 10437 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 13 :assertions 149}
@@ -201,13 +201,15 @@
   :production-routing
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
-    :tests 32
-    :assertions 9877
-    :leapfrog-reseek-side-and-target-trace :exact}
+    :tests 33
+    :assertions 9885
+    :leapfrog-reseek-side-and-target-trace :exact
+    :acyclic-arrow-boolean-and-logical-work-trace :exact}
  :cljs-javascript
-   {:namespace-tests 30
-    :suite-tests 52
-    :suite-assertions 10429
+   {:namespace-tests 31
+    :suite-tests 53
+    :suite-assertions 10437
+    :acyclic-arrow-boolean-and-logical-work-trace :exact
     :datascript-public-recursive-cache-mode-differential true
     :datascript-complete-public-provenance-and-graph-shadow true
     :shared-scc-routing-differential true}}
@@ -218,15 +220,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 32
-    :namespace-assertions 9877
+    :namespace-tests 33
+    :namespace-assertions 9885
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 30
-    :suite-tests 52
-    :suite-assertions 10429
+    :namespace-tests 31
+    :suite-tests 53
+    :suite-assertions 10437
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
