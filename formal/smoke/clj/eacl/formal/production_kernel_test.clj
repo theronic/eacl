@@ -4,14 +4,37 @@
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
    [eacl.core :refer [spice-object]]
+   [eacl.engine.v8 :as engine]
    [eacl.engine.relationships :as relationship-engine]
    [eacl.formal.production-kernel :as production]
+   [eacl.lazy-merge-sort :as lazy-sort]
    [eacl.relay :as relay]
+   [eacl.subproblem-cache :as subproblem]
    [eacl.verified-kernel :as verified]))
 
 (def selection
   {:mode :verified-authoritative
    :kernel production/generated-java-kernel})
+
+(defn- generated-merge-two
+  [direction left right]
+  (loop [left (vec left)
+         right (vec right)
+         merged []]
+    (if (or (empty? left) (empty? right))
+      (into merged (if (empty? left) right left))
+      (let [{:keys [values left-consumed right-consumed]}
+            (verified/decide
+             selection
+             :ordered-merge-chunk
+             {:direction direction
+              :left left
+              :right right}
+             #(throw (ex-info "legacy must not run" {})))]
+        (recur
+         (subvec left left-consumed)
+         (subvec right right-consumed)
+         (into merged values))))))
 
 (def authorization-input
   {:objects [{:type "user" :id "u1"}
@@ -67,6 +90,56 @@
             :max-advanced-datoms 1000
             :max-queued-work 1000}})
 
+(def indexed-plan-input
+  (let [head {:resource-type "folder" :permission "read"}
+        direct
+        {:kind :relation
+         :head head
+         :relation-eid 1
+         :subject-type "user"}
+        recursive
+        {:kind :arrow-permission
+         :head head
+         :via-relation-eid 2
+         :intermediate-type "folder"
+         :target-node head}]
+    {:relations
+     [{:resource-type "folder"
+       :relation "reader"
+       :subject-type "user"}
+      {:resource-type "folder"
+       :relation "parent"
+       :subject-type "folder"}]
+     :permissions [head]
+     :definitions
+     [{:kind :direct-relation
+       :resource-type "folder"
+       :permission "read"
+       :relation "reader"
+       :subject-type "user"}
+      {:kind :arrow-permission
+       :resource-type "folder"
+       :permission "read"
+       :via-relation "parent"
+       :target-permission "read"}]
+     :relation-bindings
+     [{:eid 1
+       :relation
+       {:resource-type "folder"
+        :relation "reader"
+        :subject-type "user"}}
+      {:eid 2
+       :relation
+       {:resource-type "folder"
+        :relation "parent"
+        :subject-type "folder"}}]
+     :indexed-rules [direct recursive]}))
+
+(def indexed-seed-input
+  {:indexed-rules (:indexed-rules indexed-plan-input)
+   :seed-rules [(first (:indexed-rules indexed-plan-input))]
+   :subject-type "user"})
+
 (defn- test-adapter
   []
   (backend/make-adapter
@@ -106,6 +179,258 @@
       :relation-proof
       (fn [relation-ids]
         (zipmap relation-ids (repeat "relation-proof")))})}))
+
+(defn- recursive-plan-test-adapter
+  []
+  (let [relations
+        {[:folder :reader]
+         [{:relation-id 1
+           :resource-type :folder
+           :relation-name :reader
+           :subject-type :user}]
+         [:folder :parent]
+         [{:relation-id 2
+           :resource-type :folder
+           :relation-name :parent
+           :subject-type :folder}]
+         [:folder :team]
+         [{:relation-id 3
+           :resource-type :folder
+           :relation-name :team
+           :subject-type :team}]
+         [:team :member]
+         [{:relation-id 4
+           :resource-type :team
+           :relation-name :member
+           :subject-type :user}]}
+        permissions
+        [{:permission-id 11
+          :resource-type :folder
+          :permission-name :read
+          :source-relation-name :self
+          :target-type :relation
+          :target-name :reader}
+         {:permission-id 12
+          :resource-type :folder
+          :permission-name :read
+          :source-relation-name :self
+          :target-type :permission
+          :target-name :read}
+         {:permission-id 13
+          :resource-type :folder
+          :permission-name :read
+          :source-relation-name :parent
+          :target-type :permission
+          :target-name :read}
+         {:permission-id 14
+          :resource-type :folder
+          :permission-name :read
+          :source-relation-name :team
+          :target-type :relation
+          :target-name :member}]]
+    (backend/make-adapter
+     {:id :formal-recursive-plan-test
+      :capabilities
+      {:consistency #{:minimize-latency}
+       :snapshots #{:current}
+       :source #{:scoped}
+       :cursor #{:forward :backward}
+       :transactions #{}
+       :cache-proofs #{:schema :relations}
+       :runtime #{:clj}}
+      :operations
+      (merge
+       (into {}
+             (map
+              (fn [operation]
+                [operation (fn [& _] nil)]))
+             backend/required-snapshot-operations)
+       {:snapshot-id
+        (constantly {:database-id :formal :basis-t 1})
+        :source-scope
+        (constantly {:source-id :formal :branch nil})
+        :schema-proof
+        (fn
+          ([] :schema-proof)
+          ([_] :schema-proof))
+        :relation-defs
+        (fn [resource-type relation-name]
+          (get relations [resource-type relation-name] []))
+        :permission-defs
+        (fn [resource-type permission-name]
+          (if (= [:folder :read]
+                 [resource-type permission-name])
+            permissions
+            []))
+        :all-permission-nodes
+        (constantly #{[:folder :read]})})})))
+
+(defn- recursive-traversal-test-adapter
+  []
+  (let [base (recursive-plan-test-adapter)
+        forward
+        {[:user 1 1 :folder] [10]
+         [:folder 10 2 :folder] [20]
+         [:team 1 3 :folder] [30]
+         [:user 1 4 :team] [1]}
+        reverse
+        {[:folder 10 1 :user] [1]
+         [:folder 20 2 :folder] [10]
+         [:folder 30 3 :team] [1]
+         [:team 1 4 :user] [1]}
+        after-bound
+        (fn [values {:keys [bound-eid inclusive-bound?]}]
+          (if (some? bound-eid)
+            (drop-while
+             #(if inclusive-bound?
+                (< % bound-eid)
+                (<= % bound-eid))
+             values)
+            values))]
+    (assoc
+     base
+     ::backend/operations
+     (merge
+      (::backend/operations base)
+      {:object-id->internal identity
+       :internal-id->object identity
+       :subject->resources
+       (fn [subject-type subject-eid relation-eid resource-type opts]
+         (after-bound
+          (get
+           forward
+           [subject-type subject-eid relation-eid resource-type]
+           [])
+          opts))
+       :resource->subjects
+       (fn [resource-type resource-eid relation-eid subject-type opts]
+         (after-bound
+          (get
+           reverse
+           [resource-type resource-eid relation-eid subject-type]
+           [])
+          opts))}))))
+
+(deftest generated-java-certifies-production-recursive-plan
+  (let [adapter (recursive-plan-test-adapter)
+        schema-cache (engine/make-schema-cache adapter :schema-proof)
+        stats (atom {})]
+    (binding [engine/*schema-cache* schema-cache
+              engine/*recursive-traversal-stats* stats
+              subproblem/*engine-selection* selection]
+      (is (seq
+           (:components
+            (engine/recursive-component-plan
+             adapter :folder :read))))
+      (is (= 1 (:plan-certification-runs @stats)))
+      (is (= 4 (:plan-certification-rules @stats)))
+      (is (= 4 (:plan-certification-definitions @stats)))
+      (is (= 4 (:plan-certification-bindings @stats)))
+      (is (= 2 (:plan-certification-seed-buckets @stats)))
+      (is (= 3 (:plan-certification-kernel-calls @stats)))
+      (engine/recursive-component-plan adapter :folder :read)
+      (is (= 1 (:plan-certification-runs @stats))
+          "the certified plan is reused for the schema proof/root"))))
+
+(deftest generated-java-drives-production-recursive-pages
+  (let [adapter (recursive-traversal-test-adapter)
+        query
+        {:subject {:type :user :id 1}
+         :permission :read
+         :resource/type :folder
+         :first 2}
+        run-forward
+        (fn [engine-selection schema-cache query']
+          (binding [engine/*schema-cache* schema-cache
+                    subproblem/*engine-selection* engine-selection]
+            (engine/lookup-resources adapter query')))
+        legacy-cache
+        (engine/make-schema-cache adapter :schema-proof)
+        generated-cache
+        (engine/make-schema-cache adapter :schema-proof)
+        legacy-first
+        (run-forward
+         :legacy-authoritative legacy-cache query)
+        generated-first
+        (run-forward selection generated-cache query)
+        after (get-in generated-first [:page-info :end-cursor])
+        legacy-second
+        (run-forward
+         :legacy-authoritative
+         legacy-cache
+         (assoc query :after after))
+        generated-second
+        (run-forward
+         selection generated-cache (assoc query :after after))
+        reverse-query
+        {:resource {:type :folder :id 20}
+         :permission :read
+         :subject/type :user
+         :first 10}
+        run-reverse
+        (fn [engine-selection schema-cache]
+          (binding [engine/*schema-cache* schema-cache
+                    subproblem/*engine-selection* engine-selection]
+            (engine/lookup-subjects adapter reverse-query)))
+        legacy-reverse
+        (run-reverse
+         :legacy-authoritative
+         (engine/make-schema-cache adapter :schema-proof))
+        generated-reverse
+        (run-reverse
+         selection
+         (engine/make-schema-cache adapter :schema-proof))
+        run-operation
+        (fn [engine-selection operation]
+          (binding [engine/*schema-cache*
+                    (engine/make-schema-cache adapter :schema-proof)
+                    subproblem/*engine-selection* engine-selection]
+            (operation)))
+        can-operation
+        #(engine/can?
+          adapter
+          {:type :user :id 1}
+          :read
+          {:type :folder :id 20})
+        count-query
+        {:subject {:type :user :id 1}
+         :permission :read
+         :resource/type :folder}
+        limited-count-operation
+        #(engine/count-resources
+          adapter (assoc count-query :count-limit 2))
+        all-count-operation
+        #(engine/count-resources adapter count-query)
+        reverse-count-operation
+        #(engine/count-subjects
+          adapter
+          {:resource {:type :folder :id 20}
+           :permission :read
+           :subject/type :user})]
+    (is (= legacy-first generated-first))
+    (is (true? (get-in generated-first
+                       [:page-info :has-next-page?])))
+    (is (= legacy-second generated-second))
+    (is (= legacy-reverse generated-reverse))
+    (is (= [{:type :user :id 1}]
+           (mapv
+            #(select-keys % [:type :id])
+            (:data generated-reverse))))
+    (is (= (run-operation :legacy-authoritative can-operation)
+           (run-operation selection can-operation)
+           true))
+    (is (= (run-operation
+            :legacy-authoritative limited-count-operation)
+           (run-operation selection limited-count-operation)
+           {:count 2 :limit 2 :truncated? true}))
+    (is (= (run-operation
+            :legacy-authoritative all-count-operation)
+           (run-operation selection all-count-operation)
+           {:count 3 :limit -1}))
+    (is (= (run-operation
+            :legacy-authoritative reverse-count-operation)
+           (run-operation selection reverse-count-operation)
+           {:count 1 :limit -1}))))
 
 (deftest generated-java-production-decision-boundary
   (testing "page normalization and exact window"
@@ -193,6 +518,526 @@
                      :graph 2
                      :proof "proof"}}
             #(throw (ex-info "legacy must not run" {})))))))
+
+(deftest generated-java-subproblem-cache-decisions
+  (is (= :use-completed-value
+         (verified/decide
+          selection
+          :subproblem-cache-decision
+          {:decision :lookup
+           :recursive-self? false
+           :candidate :complete}
+          #(throw (ex-info "legacy must not run" {})))))
+  (is (= :compute-without-admission
+         (verified/decide
+          selection
+          :subproblem-cache-decision
+          {:decision :admission
+           :candidate-present? false
+           :represented-candidates 8
+           :maximum-candidates 8}
+          #(throw (ex-info "legacy must not run" {})))))
+  (is (= :drop-publication
+         (verified/decide
+          selection
+          :subproblem-cache-decision
+          {:decision :publication
+           :ticket-current? true
+           :complete? true
+           :valid? true
+           :weight 1025
+           :budget 1024}
+          #(throw (ex-info "legacy must not run" {}))))))
+
+(deftest generated-java-current-cache-decisions
+  (doseq [[input expected]
+          [[{:stage :eligibility :available? false}
+            :bypass-current-cache]
+           [{:stage :generation :available? true}
+            :probe-exact-entry]
+           [{:stage :exact-entry :available? false}
+            :probe-managed-entry]
+           [{:stage :managed-entry :available? true}
+            :use-managed-entry]]]
+    (is (= expected
+           (verified/decide
+            selection
+            :current-cache-decision
+            input
+            #(throw (ex-info "legacy must not run" {})))))))
+
+(deftest generated-java-ordered-merge-step-decisions
+  (doseq [[input expected]
+          [[{:direction :asc :left-head nil :right-head nil}
+            :left-exhausted]
+           [{:direction :asc :left-head 1 :right-head nil}
+            :right-exhausted]
+           [{:direction :asc :left-head 1 :right-head 2}
+            :take-left]
+           [{:direction :asc :left-head 2 :right-head 1}
+            :take-right]
+           [{:direction :asc :left-head 1 :right-head 1}
+            :take-both]
+           [{:direction :desc :left-head 2 :right-head 1}
+            :take-left]
+           [{:direction :desc :left-head 1 :right-head 2}
+            :take-right]]]
+    (is (= expected
+           (verified/decide
+            selection
+            :ordered-merge-step
+            input
+            #(throw (ex-info "legacy must not run" {}))))))
+  (is (= :eacl.verification/invalid-boundary
+         (try
+           (verified/decide
+            selection
+            :ordered-merge-step
+            {:direction :asc :left-head -1 :right-head 2}
+            #(throw (ex-info "legacy must not run" {})))
+           nil
+           (catch clojure.lang.ExceptionInfo error
+             (:type (ex-data error))))))
+  (is (= {:values [1 2 3 4 5]
+          :left-consumed 3
+          :right-consumed 2}
+         (verified/decide
+          selection
+          :ordered-merge-chunk
+          {:direction :asc
+           :left [1 3 5]
+           :right [2 4 6]}
+          #(throw (ex-info "legacy must not run" {})))))
+  (is (= {:values [6 5 4 3 2]
+          :left-consumed 3
+          :right-consumed 2}
+         (verified/decide
+          selection
+          :ordered-merge-chunk
+          {:direction :desc
+           :left [6 4 2]
+           :right [5 3 1]}
+          #(throw (ex-info "legacy must not run" {})))))
+  (is (= :eacl.verification/invalid-boundary
+         (try
+           (verified/decide
+            selection
+            :ordered-merge-chunk
+            {:direction :asc
+             :left [2 1]
+             :right [3 4]}
+            #(throw (ex-info "legacy must not run" {})))
+           nil
+           (catch clojure.lang.ExceptionInfo error
+             (:type (ex-data error)))))))
+
+(deftest optimized-jvm-ordered-merge-refines-generated-chunks
+  (doseq [seed (range 100)
+          direction [:asc :desc]]
+    (let [ascending-left
+          (vec (filter #(zero? (mod (+ % seed) 3)) (range 80)))
+          ascending-right
+          (vec (filter #(zero? (mod (+ % (* 2 seed)) 5)) (range 80)))
+          [left right]
+          (if (= :asc direction)
+            [ascending-left ascending-right]
+            [(vec (reverse ascending-left))
+             (vec (reverse ascending-right))])
+          actual
+          (vec
+           ((case direction
+              :asc lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+              :desc lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc)
+            identity
+            [left right]))]
+      (is (= (generated-merge-two direction left right)
+             actual)
+          (str "seed=" seed " direction=" direction))))
+  (doseq [seed (range 50)
+          direction [:asc :desc]]
+    (let [ascending-streams
+          (mapv
+           (fn [divisor]
+             (vec
+              (filter
+               #(zero? (mod (+ % seed) divisor))
+               (range 120))))
+           [2 3 5 7 11])
+          streams
+          (if (= :asc direction)
+            ascending-streams
+            (mapv #(vec (reverse %)) ascending-streams))
+          expected
+          (->> streams
+               (apply concat)
+               distinct
+               (sort (case direction :asc < :desc >))
+               vec)
+          actual
+          (vec
+           ((case direction
+              :asc lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+              :desc lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc)
+            identity
+            streams))]
+      (is (= expected actual)
+          (str "balanced seed=" seed " direction=" direction)))))
+
+(deftest generated-java-indexed-plan-certification-boundary
+  (let [decide
+        (fn [input]
+          (verified/decide
+           selection
+           :indexed-plan-certification
+           input
+           #(throw (ex-info "legacy must not run" {}))))
+        direct (first (:indexed-rules indexed-plan-input))]
+    (is (= {:status :certified}
+           (decide indexed-plan-input)))
+    (is (= {:status :rejected
+            :reason :compiled-rule-mismatch}
+           (decide
+            (update indexed-plan-input
+                    :indexed-rules
+                    pop))))
+    (is (= {:status :rejected
+            :reason :duplicate-indexed-rule}
+           (decide
+            (update indexed-plan-input
+                    :indexed-rules
+                    conj direct))))
+    (is (= :eacl.verification/invalid-boundary
+           (try
+             (decide (assoc indexed-plan-input :unknown true))
+             nil
+             (catch clojure.lang.ExceptionInfo error
+               (:type (ex-data error))))))))
+
+(deftest generated-java-indexed-seed-certification-boundary
+  (let [decide
+        (fn [input]
+          (verified/decide
+           selection
+           :indexed-seed-certification
+           input
+           #(throw (ex-info "legacy must not run" {}))))
+        direct (first (:indexed-rules indexed-seed-input))]
+    (is (= {:status :certified}
+           (decide indexed-seed-input)))
+    (is (= {:status :rejected
+            :reason :seed-bucket-mismatch}
+           (decide
+            (assoc indexed-seed-input :seed-rules []))))
+    (is (= {:status :rejected
+            :reason :duplicate-seed-rule}
+           (decide
+            (update indexed-seed-input
+                    :seed-rules
+                    conj direct))))))
+
+(deftest generated-java-indexed-scan-response-boundary
+  (let [base
+        {:command
+         {:request-scope 31
+          :request-id 7
+          :projection
+          {:kind :subject->resources
+           :subject-type "user"
+           :subject-eid 1
+           :relation-eid 2
+           :resource-type "document"
+           :bound-eid 10}
+         :chunk-size 3}
+         :response
+         {:request-scope 31
+          :request-id 7
+          :values [11 13 18]
+          :terminal? false
+          :fetched-values 4}}
+        decide
+        (fn [input]
+          (verified/decide
+           selection
+           :indexed-scan-response
+           input
+           #(throw (ex-info "legacy must not run" {}))))]
+    (is (= {:status :accepted
+            :values [11 13 18]
+            :terminal? false
+            :fetched-values 4}
+           (decide base)))
+    (doseq [[reason response]
+            [[:mismatched-request
+              {:request-scope 31
+               :request-id 8
+               :values [11 13 18]
+               :terminal? false
+               :fetched-values 4}]
+             [:mismatched-request-scope
+              {:request-scope 32
+               :request-id 7
+               :values [11 13 18]
+               :terminal? false
+               :fetched-values 4}]
+             [:oversized-chunk
+              {:request-scope 31
+               :request-id 7
+               :values [11 13 18 21]
+               :terminal? true
+               :fetched-values 4}]
+             [:non-progressing-response
+              {:request-scope 31
+               :request-id 7
+               :values []
+               :terminal? false
+               :fetched-values 1}]
+             [:invalid-eid
+              {:request-scope 31
+               :request-id 7
+               :values [-1]
+               :terminal? true
+               :fetched-values 1}]
+             [:out-of-order
+              {:request-scope 31
+               :request-id 7
+               :values [11 11]
+               :terminal? true
+               :fetched-values 2}]
+             [:bound-violation
+              {:request-scope 31
+               :request-id 7
+               :values [10]
+               :terminal? true
+               :fetched-values 1}]
+             [:invalid-fetched-count
+              {:request-scope 31
+               :request-id 7
+               :values [11 13 18]
+               :terminal? false
+               :fetched-values 3}]]]
+      (is (= {:status :rejected :reason reason}
+             (decide (assoc base :response response)))))))
+
+(deftest production-indexed-scan-gate-uses-generated-java
+  (let [validate!
+        (ns-resolve
+         'eacl.engine.v8
+         'validate-indexed-scan-response!)
+        input
+        {:command
+         {:request-scope 41
+          :request-id 3
+          :projection
+          {:kind :resource->subjects
+           :resource-type ":document"
+           :resource-eid 9
+           :relation-eid 4
+           :subject-type ":user"
+           :bound-eid nil}
+         :chunk-size 2}
+         :response
+         {:request-scope 41
+          :request-id 3
+          :values [2 5]
+          :terminal? true
+          :fetched-values 2}}]
+    (binding [subproblem/*engine-selection* selection]
+      (is (= {:status :accepted
+              :values [2 5]
+              :terminal? true
+              :fetched-values 2}
+             (validate! input)))
+      (is (= :out-of-order
+             (try
+               (validate!
+                (assoc-in input [:response :values] [5 2]))
+               nil
+               (catch clojure.lang.ExceptionInfo error
+                 (:reason (ex-data error)))))))))
+
+(deftest generated-traversal-request-scope-allocation-is-safe
+  (let [allocate!
+        (ns-resolve 'eacl.engine.v8 'next-generated-request-scope!)
+        successor
+        (ns-resolve 'eacl.engine.v8 'successor-generated-request-scope)
+        scopes (doall (pmap (fn [_] (allocate!)) (range 256)))]
+    (is (= 256 (count (distinct scopes))))
+    (is (every?
+         #(<= 0 % backend/maximum-exact-integer)
+         scopes))
+    (is (= backend/maximum-exact-integer
+           (successor (dec backend/maximum-exact-integer))))
+    (is (= :eacl/request-scope-exhausted
+           (try
+             (successor backend/maximum-exact-integer)
+             nil
+             (catch clojure.lang.ExceptionInfo error
+               (:type (ex-data error))))))))
+
+(def indexed-direct-rule
+  {:kind :relation
+   :head {:resource-type "folder" :permission "read"}
+   :relation-eid 1
+   :subject-type "user"})
+
+(def indexed-limits
+  {:max-derived-grants 100
+   :max-advanced-datoms 100
+   :max-queued-work 100})
+
+(deftest generated-java-owns-opaque-indexed-traversal-state
+  (let [compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules [indexed-direct-rule]
+          :seed-rules-by-subject-type
+          {"user" [indexed-direct-rule]}})
+        forward-init
+        (verified/initialize-indexed
+         selection
+         :forward
+         {:compiled-plan compiled-plan
+          :request-scope 51
+          :subject-type "user"
+          :subject-eid 7
+          :root-node
+          {:resource-type "folder" :permission "read"}
+          :result-type "folder"
+          :render {:kind :page :size 2 :bound nil}
+          :chunk-size 2
+          :limits indexed-limits})
+        forward-drive
+        (verified/drive-indexed
+         selection :forward (:state forward-init)
+         indexed-limits 100)
+        command (:command forward-drive)
+        malformed
+        (verified/resume-indexed
+         selection :forward (:state forward-drive)
+         {:request-scope (:request-scope command)
+          :request-id 0
+          :values [20 10]
+          :terminal? true
+          :fetched-values 2}
+         indexed-limits)
+        forward-resume
+        (verified/resume-indexed
+         selection :forward (:state forward-drive)
+         {:request-scope (:request-scope command)
+          :request-id 0
+          :values [10 20]
+          :terminal? true
+          :fetched-values 2}
+         indexed-limits)
+        forward-complete
+        (verified/drive-indexed
+         selection :forward (:state forward-resume)
+         indexed-limits 100)
+        forward-result
+        (verified/read-indexed-result
+         selection :forward (:state forward-complete))
+        reverse-init
+        (verified/initialize-indexed
+         selection
+         :reverse
+         {:compiled-plan compiled-plan
+          :request-scope 52
+          :subject-type "user"
+          :root-node
+          {:resource-type "folder" :permission "read"}
+          :root-resource-eid 10
+          :result-type "user"
+          :render {:kind :page :size 1 :bound nil}
+          :chunk-size 2
+          :limits indexed-limits})
+        reverse-drive
+        (verified/drive-indexed
+         selection :reverse (:state reverse-init)
+         indexed-limits 100)
+        reverse-command (:command reverse-drive)
+        reverse-resume
+        (verified/resume-indexed
+         selection :reverse (:state reverse-drive)
+         {:request-scope (:request-scope reverse-command)
+          :request-id 0
+          :values [7]
+          :terminal? true
+          :fetched-values 1}
+         indexed-limits)
+        reverse-complete
+        (verified/drive-indexed
+         selection :reverse (:state reverse-resume)
+         indexed-limits 100)
+        reverse-result
+        (verified/read-indexed-result
+         selection :reverse (:state reverse-complete))]
+    (is (= :initialized (:status forward-init)))
+    (is (= {:status :need-scan
+            :command
+            {:request-scope 51
+             :request-id 0
+             :projection
+             {:kind :subject->resources
+              :subject-type "user"
+              :subject-eid 7
+              :relation-eid 1
+              :resource-type "folder"
+              :bound-eid nil}
+             :chunk-size 2}}
+           (dissoc forward-drive :state)))
+    (is (= {:status :scan-rejected :reason :out-of-order}
+           malformed))
+    (is (= :complete (:status forward-complete)))
+    (is (= {:status :page
+            :items [10 20]
+            :start-ordinal 0
+            :has-next? false
+            :has-previous? false}
+           (select-keys
+            forward-result
+            [:status :items :start-ordinal
+             :has-next? :has-previous?])))
+    (is (= {:backend-commands 1
+            :adapter-fetched-values 2
+            :engine-consumed-values 2
+            :unique-grants 2
+            :emitted-results 2}
+           (select-keys
+            (:counters forward-result)
+            [:backend-commands :adapter-fetched-values
+             :engine-consumed-values :unique-grants
+             :emitted-results])))
+    (is (pos? (:retained-logical-units forward-result)))
+    (is (= :resource->subjects
+           (get-in reverse-drive [:command :projection :kind])))
+    (is (= {:status :page
+            :items [7]
+            :start-ordinal 0
+            :has-next? false
+            :has-previous? false}
+           (select-keys
+            reverse-result
+            [:status :items :start-ordinal
+             :has-next? :has-previous?])))))
+
+(deftest production-subproblem-store-uses-generated-java-decisions
+  (let [store (subproblem/store {:projection-max-weight 1024
+                                 :denotation-max-weight 1024
+                                 :max-inflight 1})
+        computes (atom 0)]
+    (binding [subproblem/*engine-selection* selection]
+      (is (= 7
+             (:value
+              (subproblem/resolve!
+               store :projection :key {}
+               #(do (swap! computes inc) 7)))))
+      (is (= 7
+             (:value
+              (subproblem/resolve!
+               store :projection :key {}
+               #(do (swap! computes inc) 8))))))
+    (is (= 1 @computes))
+    (is (= 1 (:hits (subproblem/stats store))))))
 
 (deftest generated-java-full-authorization-boundary
   (let [evaluate

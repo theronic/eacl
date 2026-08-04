@@ -344,6 +344,20 @@
       (throw (ex-info "Unexpected cache hit value." {:key key}))))
   nil)
 
+(defn- distinct-miss-batch
+  [store next-key repetitions]
+  (dotimes [_ repetitions]
+    (let [key (swap! next-key inc)
+          resolved
+          (subproblem/resolve!
+           store :projection key {} (constantly key))]
+      (when-not (= key (:value resolved))
+        (throw
+         (ex-info "Unexpected cache miss value."
+                  {:key key
+                   :resolved resolved})))))
+  nil)
+
 (deftest ^:benchmark hit-maintenance-does-not-regress-linearly-with-entry-count
   (testing "hit recency is O(1) state maintenance, not a full LRU-vector walk"
     (let [small-count 64
@@ -371,6 +385,55 @@
       ;; intentionally leaves room for persistent-map depth and runtime noise.
       (is (<= ratio 4.0)
           (str "cache-hit maintenance appears entry-count-linear: "
+               report)))))
+
+(deftest ^:benchmark miss-finalization-does-not-regress-linearly-with-entry-count
+  (testing "flight removal and publication do not scan represented entries"
+    (let [small-count 64
+          large-count 4096
+          batch-size 20
+          trial-count 60
+          small
+          (subproblem/store
+           {:projection-max-weight
+            (+ small-count (* batch-size trial-count) 1)})
+          large
+          (subproblem/store
+           {:projection-max-weight
+            (+ large-count (* batch-size trial-count) 1)})
+          _ (dotimes [key small-count]
+              (subproblem/resolve!
+               small :projection key {} (constantly key)))
+          _ (dotimes [key large-count]
+              (subproblem/resolve!
+               large :projection key {} (constantly key)))
+          small-next-key (atom small-count)
+          large-next-key (atom large-count)
+          batches
+          (paired-samples
+           #(distinct-miss-batch small small-next-key batch-size)
+           #(distinct-miss-batch large large-next-key batch-size)
+           trial-count
+           10)
+          small-p50 (percentile (:left batches) 0.50)
+          large-p50 (percentile (:right batches) 0.50)
+          ratio (/ large-p50 small-p50)
+          report
+          {:resource-dimension :actual-host-computation-lifecycle
+           :small-entries small-count
+           :large-entries large-count
+           :entries-ratio (/ large-count small-count)
+           :misses-per-batch batch-size
+           :small-batch-p50-ms small-p50
+           :large-batch-p50-ms large-p50
+           :latency-ratio ratio}]
+      (println "EACL subproblem miss-finalization benchmark"
+               (pr-str report))
+      ;; This covers the store-lock acquisition added to make flight removal
+      ;; share the lifecycle-selection linearization point. A 64x increase in
+      ;; represented entries must not induce an entry scan on the miss path.
+      (is (<= ratio 4.0)
+          (str "cache-miss finalization appears entry-count-linear: "
                report)))))
 
 (defn- render-recursive-page-batch

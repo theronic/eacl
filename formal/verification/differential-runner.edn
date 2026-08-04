@@ -23,13 +23,47 @@
    :namespace eacl.formal.semantics-bridge-test
    :tests 7
    :assertions 226
+   :recursive-shapes
+   [:cycle
+    :diamond
+    :mutual-permission-recursion
+    :multiple-seed
+    :negative-empty-seed
+    :deep-chain
+    :wide-fanout
+    :duplicate-path]
+   :limit-outcomes
+   [:derived-grants :advanced-datoms :queued-work]
    :status :passed}
   {:name :cross-adapter-cache-cursor-state-trace
    :namespace eacl.formal.state-trace-differential-test
-   :tests 1
-   :assertions 39
+   :tests 3
+   :assertions 137
    :adapters [:datomic :datascript :datahike]
    :cache-modes [:enabled :disabled]
+   :cursor-directions [:forward :backward]
+   :status :passed}
+  {:name :cljs-public-cache-generated-formal-differential
+   :namespace eacl.formal.production-kernel-test
+   :test
+   datascript-public-recursive-cache-modes-compare-generated-javascript
+   :runtime :cljs-node
+   :adapter :datascript
+   :implementation-classes
+   [:formal-semantics
+    :verified-generated-javascript
+    :public-cache-enabled
+    :public-cache-disabled]
+   :operations
+   [:can?
+    :lookup-resources
+    :lookup-subjects
+    :count-resources
+    :count-subjects
+    :cursor-continuation
+    :typed-limit]
+   :suite-tests 24
+   :suite-assertions 836
    :status :passed}
   {:name :portable-runner-clj-cljs
    :namespace eacl.formal.differential-runner-test

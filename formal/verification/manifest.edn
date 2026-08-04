@@ -32,8 +32,10 @@
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
   {:status :passed
-   :verified-obligations 22
-   :source "formal/dafny/OrderedMerge.dfy"}
+   :verified-obligations 48
+   :source "formal/dafny/OrderedMerge.dfy"
+   :source-specialization-report
+   "formal/verification/source-specializations.edn"}
   :frontier-foundation
   {:status :passed
    :verified-obligations 16
@@ -46,18 +48,18 @@
    :report "formal/verification/recursive-kernel.edn"}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 26
+   :verified-obligations 27
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
   :cursor-codec-cost-model
   {:status :passed
-   :verified-obligations 3
+   :verified-obligations 7
    :source "formal/dafny/CursorCost.dfy"
    :claim :conditional-operation-count-bound}
   :recursive-engine-cost-model
   {:status :passed
-   :verified-obligations 14
+   :verified-obligations 29
    :source "formal/dafny/SchemaPlanCost.dfy"
    :claim :conditional-operation-count-bound}
   :cache-decision-kernel
@@ -68,20 +70,36 @@
    :integration-status :production-routing-passed}
   :current-generation-cache
   {:status :passed
-   :verified-obligations 24
+   :verified-obligations 28
    :source "formal/dafny/CurrentCache.dfy"
    :report "formal/verification/cache-kernel.edn"
-   :integration-status :all-three-backends-regression-passed
+   :integration-status
+   :generated-selection-routed-and-all-three-backends-regression-passed
    :claim :conditional-current-cache-refinement}
   :subproblem-cache
   {:status :passed
-   :verified-obligations 33
+   :verified-obligations 99
    :source "formal/dafny/SubproblemCache.dfy"
    :report "formal/verification/subproblem-cache.edn"
    :integration-status
    :atomic-managed-datascript-and-all-backend-contracts-passed
    :claim
    :conditional-exact-and-managed-atomic-projection-refinement}
+  :indexed-recursive-public-engine
+  {:status :passed
+   :verified-obligations 8638
+   :sources
+   ["formal/dafny/IndexedTraversal.dfy"
+    "formal/dafny/IndexedRefinement.dfy"
+    "formal/dafny/IndexedForwardCompleteness.dfy"
+    "formal/dafny/IndexedReverseCompleteness.dfy"
+    "formal/dafny/IndexedRendering.dfy"
+    "formal/dafny/IndexedCertification.dfy"]
+   :report "formal/verification/indexed-traversal.edn"
+   :integration-status
+   :recursive-scc-dependent-roots-internal-authority-and-shadow-passed
+   :claim
+   :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :incomplete}}
  :adapter-certification
@@ -107,7 +125,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-008
+ {:latest :EACL-FORMAL-021
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -115,15 +133,29 @@
           :EACL-FORMAL-005
           :EACL-FORMAL-006
           :EACL-FORMAL-007
-          :EACL-FORMAL-008]}
+          :EACL-FORMAL-008
+          :EACL-FORMAL-009
+          :EACL-FORMAL-010
+          :EACL-FORMAL-011
+          :EACL-FORMAL-012
+          :EACL-FORMAL-013
+          :EACL-FORMAL-014
+          :EACL-FORMAL-015
+          :EACL-FORMAL-016
+          :EACL-FORMAL-017
+          :EACL-FORMAL-018
+          :EACL-FORMAL-019
+          :EACL-FORMAL-020
+          :EACL-FORMAL-021]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 8}
+  :entries 21}
  :residual-assumptions
  [:verification-toolchain
   :generated-code-compilers
   :clj-cljs-runtimes
+  :host-source-specializations
   :ffi-boundaries
   :adapter-contract
   :cryptography
@@ -132,27 +164,33 @@
   :entropy-and-key-management
   :configured-limits]
  :performance-gates
- {:status :layered-managed-atomic-projection-cache-passed
+ {:status :release-cutover-refused
+   :gate-enforcement :passed
+   :report "formal/verification/performance-gates.edn"
    :managed-legacy-heavy-suite :passed
    :current-generation-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed
    :completed-answer-hot-nonregression :passed
    :cache-disabled-nonregression :passed
+   :cross-backend-workload-baseline :passed
+   :retained-live-heap :not-established
    :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
-  :blocking-finding nil}
+   :blocking-findings
+   [:retained-live-heap-not-established
+    :acyclic-optimized-merge-source-refinement-and-review-pending]}
  :mutation-control
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 9
-  :registered 9}
+  :killed 37
+  :registered 37}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
   :seeds 200
   :unexplained-counterexamples 0}
  :generated-boundary
- {:status :materialized-reference-and-partial-production-routing-passed
+ {:status :recursive-indexed-and-materialized-reference-partial-routing-passed
   :report "formal/verification/generated-boundary.edn"
   :complete-public-routing false}
  :release-gate
@@ -160,8 +198,12 @@
   :decision :refused
   :unmet-required-obligations
   [:complete-public-engine
+   :acyclic-optimized-ordered-merge-source-refinement
+   :production-ordered-adapter-certification
+   :verified-shadow-complete-public-error-provenance-and-graph-comparison
    :managed-derived-subproblem-proof
    :generated-subproblem-production-routing
    :shadow-rollout-gates
+   :retained-live-heap-performance-gate
    :performance-cutover
    :independent-security-formal-review]}}

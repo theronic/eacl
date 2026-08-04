@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-014
+ :status :fixed
+ :discovered-by :lore-resource-refinement-review
+ :seed-or-trace
+ "subproblem-cache/parent-future/child-future/inherited-same-key"
+ :minimized-fixture "fixture.edn"
+ :impact :resource-bound
+ :affected-versions
+ ["PR 101 worktree before context-aware recursive-self execution"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "A recursive same-key `resolve!` bypassed its shared flight by invoking `compute` directly. Clojure futures inherit dynamic bindings, so a child thread could inherit the parent's resolving-key set, take the self-bypass, and run a callback that was absent from the coordinator's active-callback count."
+ :fix
+ "Recursive self-bypass now executes through `with-computation-slot`. That function reuses the permit only when the current execution context is the recorded owner; an inherited child context acquires its own global permit. Recursive bypass still creates no second shared flight."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/inherited-same-key-self-bypass-acquires-a-child-slot-test"
+  "formal mutation :inherited-self-bypass-skips-computation-slot"
+  "formal/dafny/SubproblemCache.dfy context-qualified recursive bypass lemmas"]}

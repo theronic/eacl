@@ -1,0 +1,6 @@
+{:value 42
+ :lookup-result nil
+ :self-bypasses 1
+ :lookup-misses 1
+ :invariant
+ "Every shared self-wait check uses the same lifecycle-qualified flight identity as flight ownership."}

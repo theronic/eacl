@@ -1,0 +1,24 @@
+{:tier :projection
+ :key :same
+ :initial-lifecycle :lifecycle-1
+ :interleaving
+ [{:thread :resolver
+   :action :capture-recursive-address
+   :address [:lifecycle-1 :projection :same]}
+  {:thread :clearer
+   :action :clear-and-advance-lifecycle
+   :lifecycle :lifecycle-2}
+  {:thread :resolver
+   :action :install-flight
+   :address [:lifecycle-2 :projection :same]}
+  {:thread :resolver
+   :action :resolve-same-key-recursively
+   :observed-recursive-address [:lifecycle-2 :projection :same]}]
+ :before-fix
+ {:bound-recursive-address [:lifecycle-1 :projection :same]
+  :owned-flight-address [:lifecycle-2 :projection :same]
+  :outcome :self-wait}
+ :after-fix
+ {:bound-recursive-address [:lifecycle-2 :projection :same]
+  :owned-flight-address [:lifecycle-2 :projection :same]
+  :outcome :recursive-bypass}}

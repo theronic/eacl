@@ -1,6 +1,6 @@
 {:schema-version 1
  :semantics-version 1
- :status :passed
+ :status :proof-oracle-passed-source-refinement-pending
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
@@ -14,12 +14,18 @@
     :reverse-projection-exact
     :bounded-count-law]}
   {:source "formal/dafny/OrderedMerge.dfy"
-   :verified-obligations 22
+   :verified-obligations 48
    :claims
    [:ascending-merge-set-preservation
     :descending-merge-set-preservation
     :ascending-output-unique
-    :descending-output-unique]}
+    :descending-output-unique
+    :ascending-step-refines-merge-definition
+    :descending-step-refines-merge-definition
+    :ascending-bounded-chunk-reconstructs-complete-merge
+    :descending-bounded-chunk-reconstructs-complete-merge
+    :balanced-ascending-fold-preserves-strict-order-and-complete-union
+    :balanced-descending-fold-preserves-strict-order-and-complete-union]}
   {:source "formal/dafny/Pagination.dfy"
    :verified-obligations 16
    :claims
@@ -50,7 +56,17 @@
    :eacl-engine-indexed]
   :status :passed
   :retained-mismatches 0}
+ :ordered-merge-source-specialization
+ {:hot-path :optimized-clj-cljs-lazy-merge
+  :generated-oracle
+  {:java {:fixtures 300 :status :passed}
+   :javascript {:fixtures 150 :status :passed}}
+  :mutation :ordered-merge-wrong-comparator
+  :performance-report
+  "formal/verification/performance-gates.edn"
+  :formal-source-refinement :pending-independent-review}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
+  :optimized-ordered-merge-source-refinement-is-not-formally-discharged
   :recursive-engine-obligations-remain
   :full-pagination-and-cursor-obligations-remain]}

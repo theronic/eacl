@@ -1,0 +1,30 @@
+{:first-command
+ {:request-scope 81
+  :request-id 0
+  :projection
+  {:kind :subject->resources
+   :subject-type "user"
+   :subject-eid 1
+   :relation-eid 2
+   :resource-type "document"
+   :bound-eid 10}
+  :chunk-size 3}
+ :second-command
+ {:request-scope 82
+  :request-id 0
+  :projection
+  {:kind :subject->resources
+   :subject-type "user"
+   :subject-eid 1
+   :relation-eid 2
+   :resource-type "document"
+   :bound-eid 10}
+  :chunk-size 3}
+ :misrouted-response
+ {:request-scope 82
+  :request-id 0
+  :values [11 13 18]
+  :terminal? false
+  :fetched-values 4}
+ :before-fix :accepted
+ :after-fix {:status :rejected :reason :mismatched-request-scope}}

@@ -21,6 +21,9 @@
    :theorems [:forward-projection-exact
               :reverse-projection-exact
               :unique-deterministic-sequence
+              :ordered-merge-step-refines-definition
+              :bounded-merge-chunk-reconstructs-complete-merge
+              :balanced-fold-merge-preserves-order-and-complete-union
               :page-walk-complete
               :limit-fails-closed
               :bounded-page-stream-prefetch
@@ -74,6 +77,54 @@
    :ci [:generated-production-kernel
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
+  {:operation :indexed-traversal-transition
+   :entry-points ['eacl.engine.v8/recursive-forward-page
+                  'eacl.engine.v8/recursive-reverse-page]
+   :theorems
+   [:malformed-indexed-scan-response-rejected
+    :lifecycle-local-request-identity
+    :pending-traversal-scope-and-local-request-identity
+    :data-valued-continuation-state
+    :fifo-forward-transition-invariant
+    :fifo-reverse-transition-invariant
+    :exact-object-and-relation-eid-catalogs
+    :exact-ordered-chunk-adapter-contract
+    :compiled-indexed-rule-soundness
+    :forward-transition-semantic-soundness
+    :reverse-transition-semantic-soundness
+    :forward-least-fixed-point-completeness
+    :reverse-least-fixed-point-completeness
+    :deterministic-render-prefix-independent-of-chunk-boundary
+    :identical-complete-denotations-render-identically
+    :source-plan-certification-implies-exact-compiled-rules
+    :seed-certification-implies-exact-forward-seed-bucket
+    :instantaneous-queue-depth-bound
+    :unique-grant-bound
+    :dimensionally-separated-resource-counters]
+   :dafny ["formal/dafny/IndexedTraversal.dfy"
+           "formal/dafny/IndexedRefinement.dfy"
+           "formal/dafny/IndexedForwardCompleteness.dfy"
+           "formal/dafny/IndexedReverseCompleteness.dfy"
+           "formal/dafny/IndexedRendering.dfy"
+           "formal/dafny/IndexedCertification.dfy"]
+   :adapter-obligations
+   [:immutable-snapshot
+    :ordered-complete-exclusive-chunks
+    :identity-round-trip
+    :compiled-plan-refinement]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :remaining
+   [:acyclic-optimized-ordered-merge-source-refinement
+    :production-adapter-certification
+    :verified-shadow-complete-public-error-provenance-and-graph-comparison
+    :cross-backend-authoritative-gates
+    :independent-review]
+   :ci [:generated-production-kernel
+        :generated-indexed-scan-rejection
+        :recursive-contract
+        :heavy-pagination]}
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]
@@ -88,7 +139,13 @@
               :acyclic-subproblem-call-stack-independence
               :partial-recursive-publication-rejection
               :subproblem-weight-bound
-              :subproblem-global-inflight-bound]
+              :subproblem-represented-candidate-bound
+              :subproblem-global-actual-callback-bound
+              :recursive-bypass-reuses-only-owner-context
+              :distinct-context-recursive-bypass-acquires-slot
+              :linearized-lifecycle-entry-and-flight-selection
+              :generated-lookup-action-precedes-flight-mutation
+              :registered-unrepresented-flight-is-computing]
    :dafny ["formal/dafny/CacheKernel.dfy"
            "formal/dafny/CurrentCache.dfy"
            "formal/dafny/SubproblemCache.dfy"
@@ -97,7 +154,8 @@
                          :complete-compiled-dependencies
                          :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering
-                         :source-fingerprint]
+                         :source-fingerprint
+                         :host-execution-context-accounting]
    :runtime-targets [:clj-java :cljs-javascript]
    :ci [:generated-production-kernel
         :authoritative-rejection-regression

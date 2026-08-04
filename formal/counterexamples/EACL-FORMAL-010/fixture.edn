@@ -1,0 +1,18 @@
+{:schema
+ "definition user {}
+  definition document {
+    relation owner: user
+    relation viewer: user
+    permission view = owner + viewer
+  }"
+ :relationships
+ {:owner ["document-01" "document-03" "document-05"]
+  :viewer ["document-02" "document-04" "document-06"]}
+ :query {:operation :lookup-resources
+         :permission :view
+         :first 6}
+ :legacy ["document-01" "document-02" "document-03"
+          "document-04" "document-05" "document-06"]
+ :generated-worklist-before-fix
+ ["document-02" "document-01" "document-04"
+  "document-03" "document-06" "document-05"]}

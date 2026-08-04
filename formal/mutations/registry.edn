@@ -1,48 +1,257 @@
-{:schema-version 1
+{:schema-version 2
  :required-score 1.0
  :mutants
  [{:id :wrong-arrow-direction
    :mechanism :swap-arrow-resource-and-subject
+   :control {:kind :clojure}
    :killed-by
    {:proof :compiled-path-denotation
     :test :wrong-arrow-direction-control}}
   {:id :premature-cycle-cut
    :mechanism :treat-recursive-node-visit-as-complete
+   :control {:kind :clojure}
    :killed-by
    {:proof :recursive-worklist-completeness
     :test :premature-cycle-cut-control}}
   {:id :missing-de-duplication
    :mechanism :emit-every-semantic-path
+   :control {:kind :clojure}
    :killed-by
    {:proof :unique-deterministic-sequence
     :test :missing-de-duplication-control}}
+  {:id :set-equality-as-sequence-equality
+   :mechanism :route-acyclic-union-through-worklist-discovery-order
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :set-equality-does-not-establish-ordered-page-refinement
+    :test :acyclic-interleaved-order-counterexample}}
   {:id :wrong-frontier
    :mechanism :resume-from-inclusive-after-bound
+   :control {:kind :clojure}
    :killed-by
    {:proof :exclusive-inclusive-frontier-laws
     :test :wrong-frontier-control}}
   {:id :incomplete-dependency
    :mechanism :omit-reachable-relation-from-proof-scope
+   :control {:kind :clojure}
    :killed-by
    {:proof :calculated-scope-semantically-complete
     :test :incomplete-dependency-control}}
   {:id :numeric-ancestry
    :mechanism :treat-lower-order-sibling-as-ancestor
+   :control {:kind :clojure}
    :killed-by
    {:model :forward-only-proof-lifting
     :test :numeric-ancestry-control}}
   {:id :cursor-scope
    :mechanism :ignore-operation-and-query-scope
+   :control {:kind :clojure}
    :killed-by
    {:proof :cursor-scope-before-influence
     :test :cursor-scope-control}}
   {:id :cache-fail-open
    :mechanism :return-candidate-on-provider-failure
+   :control {:kind :clojure}
    :killed-by
    {:proof :provider-failure-fails-closed
     :test :cache-fail-open-control}}
   {:id :continuation-race
    :mechanism :return-concurrently-replaced-unvalidated-entry
+   :control {:kind :clojure}
    :killed-by
    {:proof :telemetry-cas-does-not-change-value
-    :test :continuation-race-control}}]}
+    :test :continuation-race-control}}
+  {:id :immediate-reverse-consumer-registration
+   :mechanism :install-self-permission-consumer-without-queued-fifo-work
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :dimensionally-exact-reverse-transition-accounting
+    :test :recursive-shadow-resource-counter-control}}
+  {:id :current-cache-missing-entry-hit
+   :mechanism :select-exact-hit-when-the-validated-entry-is-missing
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :current-cache-hit-requires-available-entry
+    :test :current-cache-stage-boundary-control}}
+  {:id :mismatched-indexed-request-scope-response
+   :mechanism :accept-scan-response-with-matching-local-id-but-different-traversal-scope
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :indexed-response-requires-pending-traversal-scope
+    :test :generated-indexed-scan-response-boundary}}
+  {:id :lookup-self-scope-omits-lifecycle
+   :mechanism :check-recursive-lookup-ownership-with-tier-and-key-only
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :resolve-and-lookup-use-identical-lifecycle-qualified-key
+    :test :recursive-lookup-of-own-flight-is-a-miss}}
+  {:id :ordered-merge-wrong-comparator
+   :mechanism :take-the-larger-head-in-an-ascending-merge
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :ascending-merge-step-refines-definition
+    :test :optimized-host-ordered-merge-refines-generated-chunks}}
+  {:id :ordered-merge-sentinel-collides-with-domain
+   :mechanism :represent-no-previous-value-with-the-maximum-valid-eid
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :no-last-never-suppresses
+    :test :descending-merge-retains-maximum-eid}}
+  {:id :generic-ordered-merge-nil-sentinel-collides-with-domain
+   :mechanism :represent-no-previous-key-with-a-valid-nil-sort-key
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :no-last-never-suppresses
+    :test :generic-merge-retains-nil-key}}
+  {:id :inherited-self-bypass-skips-computation-slot
+   :mechanism :invoke-child-thread-recursive-compute-without-a-permit
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :only-the-current-execution-context-reuses-a-computation-permit
+    :test :inherited-same-key-self-bypass-acquires-a-child-slot}}
+  {:id :split-lifecycle-read-between-self-check-and-flight-selection
+   :mechanism :capture-recursive-address-before-clear-and-flight-address-after-clear
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :linearized-resolution-selection-uses-one-lifecycle
+    :test :lifecycle-selection-is-linearized-before-recursive-binding}}
+  {:id :lookup-decision-after-flight-installation
+   :mechanism :install-a-flight-before-honoring-the-authoritative-lookup-action
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :recursive-bypass-decision-suppresses-flight-installation
+    :test :authoritative-lookup-action-precedes-storage-mutation}}
+  {:id :unrepresented-flight-ignored-by-lookup
+   :mechanism :derive-missing-from-tier-entries-while-an-unadmitted-flight-is-registered
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :registered-unrepresented-flight-is-joined
+    :test :cache-unadmitted-fallbacks-still-share-one-flight}}
+  {:id :projection-key-omits-inclusive-bound
+   :mechanism :remove-inclusive-bound-from-the-projection-semantic-key
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :equal-projection-keys-separate-every-field
+    :test :generated-certified-projection-traces-match-cache-free-results}}
+  {:id :inclusive-bound-treated-exclusive
+   :mechanism :drop-the-boundary-value-from-an-inclusive-ordered-scan
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :ascending-exclusive-equals-inclusive-successor
+    :test :datascript-bounded-scan-parity}}
+  {:id :incomplete-managed-proof-atoms
+   :mechanism :accept-a-derived-proof-when-only-its-first-atom-matches
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :equal-bounded-proofs-establish-complete-dependency-frame
+    :test :bounded-derived-proof-reuses-complete-managed-denotation}}
+  {:id :stale-endpoint-stamp-accepted
+   :mechanism :ignore-the-relation-stamp-in-an-endpoint-local-managed-proof
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :changed-managed-relation-slice-requires-changed-stamp
+    :test :managed-projection-reuse-is-relation-stamp-scoped}}
+  {:id :over-budget-publication
+   :mechanism :retain-a-positive-completed-entry-with-weight-above-its-tier-budget
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :retained-publication-is-current-complete-valid-and-bounded
+    :test :admission-and-publication-keep-weight-continuously-bounded}}
+  {:id :exception-poisons-flight
+   :mechanism :retain-the-owning-flight-after-its-compute-callback-throws
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :failed-computations-remove-their-own-ticket
+    :test :failures-and-invalid-values-are-never-admitted}}
+  {:id :flight-removal-outside-selection-lock
+   :mechanism :remove-a-flight-while-lifecycle-stable-selection-holds-the-store-lock
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :flight-installation-selection-and-removal-share-one-linearization-lock
+    :test :flight-removal-serializes-with-lifecycle-selection}}
+  {:id :datomic-subproblem-config-dropped
+   :mechanism :construct-the-shared-current-cache-without-the-user-supplied-subproblem-limits
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :all-backends-forward-one-shared-subproblem-cache-configuration
+    :test :shared-subproblem-cache-config-is-forwarded-and-validated}}
+  {:id :partial-denotation-hit
+   :mechanism :allow-partial-denotation-as-cache-hit
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredPartialHit.cfg"
+    :length 4}
+   :killed-by
+   {:model :partial-recursive-denotation-never-hits
+    :test :apalache-counterexample}}
+  {:id :stale-generation-hit
+   :mechanism :ignore-selected-generation-on-cache-hit
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredStaleHit.cfg"
+    :length 5}
+   :killed-by
+   {:model :hit-is-complete-and-current
+    :test :apalache-counterexample}}
+  {:id :duplicate-flight-start
+   :mechanism :start-a-second-callback-for-one-flight-address
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredDuplicateStart.cfg"
+    :length 3}
+   :killed-by
+   {:model :exact-flight-address-has-at-most-one-callback
+    :test :apalache-counterexample}}
+  {:id :late-orphan-publication
+   :mechanism :publish-an-expired-lifecycle-callback
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredOrphanPublication.cfg"
+    :length 4}
+   :killed-by
+   {:model :late-completion-cannot-publish
+    :test :apalache-counterexample}}
+  {:id :coupled-tier-budgets
+   :mechanism :borrow-denotation-capacity-for-projection-admission
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredCoupledBudgets.cfg"
+    :length 2}
+   :killed-by
+   {:model :separate-tier-weight-bounds
+    :test :apalache-counterexample}}
+  {:id :incomplete-flight-eviction
+   :mechanism :evict-incomplete-candidate-and-drop-flight-owner
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredIncompleteEviction.cfg"
+    :length 3}
+   :killed-by
+   {:model :incomplete-candidates-keep-flight-ownership
+    :test :apalache-counterexample}}
+  {:id :obsolete-lifecycle-flight-join
+   :mechanism :join-same-tier-key-flight-from-an-expired-lifecycle
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclTieredSubproblemCache.tla"
+    :config "formal/tla/mutations/EaclTieredObsoleteFlightJoin.cfg"
+    :length 3}
+   :killed-by
+   {:model :single-flight-join-is-current-and-incomplete
+    :test :apalache-counterexample}}
+  {:id :managed-proof-bypass
+   :mechanism :reuse-managed-projection-with-mismatched-relation-proof
+   :control
+   {:kind :apalache
+    :model "formal/tla/EaclManagedProjectionCache.tla"
+    :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
+    :length 4}
+   :killed-by
+   {:model :managed-hit-requires-complete-proof-match
+    :test :apalache-counterexample}}]}

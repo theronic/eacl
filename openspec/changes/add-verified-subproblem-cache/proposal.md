@@ -19,9 +19,10 @@ semantics rather than merely tested beside them.
 - Reuse exact-snapshot subproblems without proof lifting and reuse current
   subproblems across forward revisions only when a complete localized
   dependency proof demonstrates that every relevant projection is unchanged.
-- Bound memory, entry cost, and concurrent duplicate work with weighted
-  eviction and single-flight publication while preserving the existing
-  cache-disabled evaluator as the reference semantics.
+- Bound retained admission weight and actual callback execution separately:
+  weighted eviction applies only to completed cache entries, while a
+  lifecycle-wide coordinator owns non-evictable flights and execution permits.
+  Preserve the existing cache-disabled evaluator as the reference semantics.
 - Add provenance and metrics that distinguish completed-answer hits,
   exact and managed subproblem hits, proof failures, evictions, and avoided
   backend reads.
@@ -34,6 +35,11 @@ semantics rather than merely tested beside them.
   completion, cache-key separation, dependency framing, lifecycle races,
   bounded resource accounting, and refinement from every public EACL operation
   through its CLJ and CLJS boundary.
+- Replay the concrete resource counterexample published by Lore at
+  `theronic/lore@dabb5634`, and keep represented cache candidates, registered
+  flights, waiting callers, active callbacks, and retained weight as distinct
+  measures. Do not infer JVM heap, CPU, backend-operation, or wall-time bounds
+  from an admission-weight theorem.
 - Keep the verification manifest withheld unless every public operation,
   generated boundary, adapter assumption, performance gate, and required
   independent review is satisfied. No partial proof may be described as

@@ -218,8 +218,37 @@
      {:operation :cursor-mint :arguments {:query query} :harness-only? true}
      {:operation :cursor-replay :arguments {:direction :asc}
       :harness-only? true}
+     {:operation :cursor-replay :arguments {:direction :desc}
+      :harness-only? true}
+     {:operation :exact-read
+      :arguments {:anchor :genesis}
+      :harness-only? true}
+     {:operation :history-read
+      :arguments {:anchor :genesis}
+      :harness-only? true}
      {:operation :exact-unavailable :arguments {} :harness-only? true}
+     {:operation :cache-disabled-read
+      :arguments {:query query :cache? false}
+      :harness-only? true}
+     {:operation :cache-expire :arguments {} :harness-only? true}
+     {:operation :traversal-limit
+      :arguments
+      {:max-derived-grants 1
+       :max-advanced-datoms 1
+       :max-queued-work 1}
+      :harness-only? true}
      {:operation :proof-provider-failure :arguments {} :harness-only? true}
+     {:operation :compute-failure :arguments {:stage :projection}
+      :harness-only? true}
+     {:operation :concurrent-identical-reads
+      :arguments {:query query :callers 4}
+      :harness-only? true}
+     {:operation :concurrent-read-write
+      :arguments
+      {:query query
+       :write :unrelated
+       :schedules [:read-first :write-first :overlap]}
+      :harness-only? true}
      {:operation :cache-tamper :arguments {:field :proof}
       :harness-only? true}
      {:operation :cursor-tamper :arguments {:field :scope}

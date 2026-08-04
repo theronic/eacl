@@ -20,7 +20,33 @@
     :EACL-FORMAL-007
     eacl.secure-format-test/canonical-portable-format-test
     :EACL-FORMAL-008
-    eacl.cache-test/proof-provider-failure-fails-closed-test})
+    eacl.cache-test/proof-provider-failure-fails-closed-test
+    :EACL-FORMAL-009
+    eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters
+    :EACL-FORMAL-010
+    eacl.formal.state-trace-differential-test/generated-mode-does-not-reorder-acyclic-multipath-pages
+    :EACL-FORMAL-011
+    eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results
+    :EACL-FORMAL-012
+    eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
+    :EACL-FORMAL-013
+    eacl.subproblem-cache-test/recursive-lookup-of-own-flight-is-a-miss-test
+    :EACL-FORMAL-014
+    eacl.subproblem-cache-test/inherited-same-key-self-bypass-acquires-a-child-slot-test
+    :EACL-FORMAL-015
+    eacl.subproblem-cache-test/lifecycle-selection-is-linearized-before-recursive-binding-test
+    :EACL-FORMAL-016
+    eacl.subproblem-cache-test/authoritative-lookup-action-precedes-storage-mutation-test
+    :EACL-FORMAL-017
+    eacl.subproblem-cache-test/cache-unadmitted-fallbacks-still-share-one-flight-test
+    :EACL-FORMAL-018
+    eacl.subproblem-cache-test/flight-removal-serializes-with-lifecycle-selection-test
+    :EACL-FORMAL-019
+    eacl.backend.v8-test/descending-merge-retains-maximum-eid-test
+    :EACL-FORMAL-020
+    eacl.backend.v8-test/generic-merge-retains-nil-key-test
+    :EACL-FORMAL-021
+    eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test})
 
 (defn- read-edn
   [path]
@@ -36,7 +62,14 @@
 (defn- available-regression
   [test-symbol]
   (when (repo/evidence-namespace-available? test-symbol)
-    (requiring-resolve test-symbol)))
+    ;; The corpus lives in the common test tree, while generated-boundary
+    ;; regressions are present only under the formal-smoke alias. A normal
+    ;; module test nREPL must skip those unavailable namespaces rather than
+    ;; failing merely because the repository file exists outside its classpath.
+    (try
+      (requiring-resolve test-symbol)
+      (catch java.io.FileNotFoundException _
+        nil))))
 
 (deftest counterexample-corpus-is-complete-and-closed-test
   (let [schema (read-edn
@@ -66,8 +99,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-008 (:latest revision)))
-    (is (= 8 (count entries)))))
+    (is (= :EACL-FORMAL-021 (:latest revision)))
+    (is (= 21 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

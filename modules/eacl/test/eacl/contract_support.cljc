@@ -579,13 +579,63 @@
 
 (defn assert-v8-cache-disabled!
   [client]
-  (let [query {:subject (->user "user-1")
-               :permission :view
-               :resource/type :server
-               :first 10}
-        first-result (eacl/lookup-resources client query)
-        repeated-result (eacl/lookup-resources client query)]
-    (testing "cache-disable mode never retains an authorization answer"
-      (is (false? (:cached? first-result)))
-      (is (false? (:cached? repeated-result)))
-      (is (= (:data first-result) (:data repeated-result))))))
+  (let [subject (->user "user-1")
+        resource (->server "server-1")
+        calls
+        [[:can?
+          #(eacl/can?
+            client
+            (assoc % :subject subject
+                   :permission :view
+                   :resource resource))]
+         [:lookup-resources
+          #(eacl/lookup-resources
+            client
+            (assoc % :subject subject
+                   :permission :view
+                   :resource/type :server
+                   :first 10))]
+         [:lookup-subjects
+          #(eacl/lookup-subjects
+            client
+            (assoc % :resource resource
+                   :permission :view
+                   :subject/type :user
+                   :first 10))]
+         [:count-resources
+          #(eacl/count-resources
+            client
+            (assoc % :subject subject
+                   :permission :view
+                   :resource/type :server))]
+         [:count-subjects
+          #(eacl/count-subjects
+            client
+            (assoc % :resource resource
+                   :permission :view
+                   :subject/type :user))]
+         [:read-relationships
+          #(eacl/read-relationships
+            client
+            (assoc % :resource/type :server))]]]
+    (testing "cache-disable mode covers every public read operation"
+      (doseq [[label call] calls]
+        (let [first-result (call {:cache? false})
+              repeated-result (call {:cache? false})
+              semantic-view
+              (fn [result]
+                (if (map? result)
+                  (select-keys result [:data :count :limit :truncated?])
+                  result))]
+          (is (= (semantic-view first-result)
+                 (semantic-view repeated-result))
+              (str label " remains deterministic with cache disabled"))
+          (when (and (map? first-result)
+                     (contains? first-result :cached?))
+            (is (false? (:cached? first-result))
+                (str label " reports a cache miss"))))))
+    (testing "every public read operation rejects a non-boolean cache flag"
+      (doseq [[label call] calls]
+        (is (= :eacl/invalid-request
+               (error-category #(call {:cache? :invalid})))
+            (str label " rejects a non-boolean :cache?"))))))

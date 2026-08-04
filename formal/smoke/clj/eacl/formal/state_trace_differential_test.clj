@@ -23,18 +23,35 @@
 
 (def authorization-schema
   "definition user {}
+   definition group {
+     relation member: user
+   }
    definition document {
      relation reader: user
-     permission view = reader
+     relation parent: document
+     relation group: group
+     permission base = reader
+     permission view = base + parent->view + group->member
    }")
 
 (def user (eacl/spice-object :user "user"))
 (def document-1 (eacl/spice-object :document "document-1"))
 (def document-2 (eacl/spice-object :document "document-2"))
+(def group (eacl/spice-object :group "group"))
 (def relationship-1
   (eacl/->Relationship user :reader document-1))
 (def relationship-2
   (eacl/->Relationship user :reader document-2))
+(def recursive-parent-relationship
+  (eacl/->Relationship document-1 :parent document-2))
+(def group-member-relationship
+  (eacl/->Relationship user :member group))
+(def document-group-relationship
+  (eacl/->Relationship group :group document-2))
+(def support-relationships
+  [recursive-parent-relationship
+   group-member-relationship
+   document-group-relationship])
 
 (def engine-selection
   {:mode :verified-authoritative
@@ -43,22 +60,82 @@
 (def formal-objects
   [{:type "user" :id "user"}
    {:type "document" :id "document-1"}
-   {:type "document" :id "document-2"}])
+   {:type "document" :id "document-2"}
+   {:type "group" :id "group"}])
 
 (def formal-schema
   {:relations
    [{:resource-type "document"
      :relation "reader"
+     :subject-type "user"}
+    {:resource-type "document"
+     :relation "parent"
+     :subject-type "document"}
+    {:resource-type "document"
+     :relation "group"
+     :subject-type "group"}
+    {:resource-type "group"
+     :relation "member"
      :subject-type "user"}]
    :permissions
    [{:resource-type "document"
+     :permission "base"}
+    {:resource-type "document"
      :permission "view"}]
    :definitions
    [{:kind :direct-relation
      :resource-type "document"
-     :permission "view"
+     :permission "base"
      :relation "reader"
+     :subject-type "user"}
+    {:kind :self-permission
+     :resource-type "document"
+     :permission "view"
+     :target-permission "base"}
+    {:kind :arrow-permission
+     :resource-type "document"
+     :permission "view"
+     :via-relation "parent"
+     :target-permission "view"}
+    {:kind :arrow-relation
+     :resource-type "document"
+     :permission "view"
+     :via-relation "group"
+     :target-relation "member"
      :subject-type "user"}]})
+
+(defrecord CountingGeneratedKernel [delegate calls]
+  verified/DecisionKernel
+  (-decide [_ operation input]
+    (swap! calls update operation (fnil inc 0))
+    (verified/-decide delegate operation input))
+
+  verified/IndexedTraversalKernel
+  (-compile-indexed-plan [_ input]
+    (swap! calls update :indexed-traversal-compile (fnil inc 0))
+    (verified/-compile-indexed-plan delegate input))
+  (-initialize-indexed [_ direction input]
+    (swap! calls update :indexed-traversal-initialize (fnil inc 0))
+    (verified/-initialize-indexed delegate direction input))
+  (-drive-indexed [_ direction state limits fuel]
+    (swap! calls update :indexed-traversal-drive (fnil inc 0))
+    (verified/-drive-indexed delegate direction state limits fuel))
+  (-resume-indexed [_ direction state response limits]
+    (swap! calls update :indexed-traversal-resume (fnil inc 0))
+    (verified/-resume-indexed delegate direction state response limits))
+  (-read-indexed-result [_ direction state]
+    (swap! calls update :indexed-traversal-read (fnil inc 0))
+    (verified/-read-indexed-result delegate direction state)))
+
+(defn- counting-engine-selection
+  [calls]
+  {:mode :verified-authoritative
+   :kernel
+   (->CountingGeneratedKernel production/generated-java-kernel calls)})
+
+(defn- call-count
+  [calls]
+  (reduce + 0 (vals @calls)))
 
 (def formal-limits
   {:max-derived-grants 1000
@@ -223,10 +300,12 @@
   (mapv :id (:data page)))
 
 (defn- assert-public-trace!
-  [label cached uncached unrelated-write!]
+  [label cached uncached unrelated-write! calls]
   (testing label
     (eacl/create-relationships!
-     cached [relationship-1 relationship-2])
+     cached
+     (into [relationship-1 relationship-2]
+           support-relationships))
     (let [all-query
           {:subject user
            :permission :view
@@ -235,7 +314,9 @@
           first-query
           (assoc all-query :first 1)
           first-cached (eacl/lookup-resources cached all-query)
+          calls-before-uncached (call-count calls)
           first-uncached (eacl/lookup-resources uncached all-query)
+          calls-after-uncached (call-count calls)
           exact-hit (eacl/lookup-resources cached all-query)
           page-1 (eacl/lookup-resources cached first-query)
           page-2
@@ -247,6 +328,9 @@
       (is (= ["document-1" "document-2"]
              (ids first-cached)
              (ids first-uncached)))
+      (is (< calls-before-uncached calls-after-uncached)
+          "an explicit cache bypass must still route recursive traversal
+           through generated authority")
       (is (= :passed
              (:status
               (differential/compare-values!
@@ -260,6 +344,9 @@
       (is (false? (:cached? first-cached)))
       (is (false? (:cached? first-uncached)))
       (is (true? (:cached? exact-hit)))
+      (is (pos?
+           (get @calls :current-cache-decision 0))
+          "cache eligibility and hit/miss selection cross generated authority")
       (is (= ["document-1" "document-2"]
              (into (ids page-1) (ids page-2))))
       (is (false? (get-in page-2
@@ -279,7 +366,11 @@
                    [:public-cache-disabled (ids fresh)]]}))))
         (is (true? (:cached? lifted))))
       (assert-public-authorization!
-       label cached uncached [relationship-1 relationship-2])
+       label
+       cached
+       uncached
+       (into [relationship-1 relationship-2]
+             support-relationships))
       (eacl/delete-relationship! cached relationship-1)
       (let [after-revocation
             (eacl/lookup-resources cached all-query)
@@ -304,13 +395,18 @@
              (eacl/can?
               cached user :view document-2))))
       (assert-public-authorization!
-       label cached uncached [relationship-2]))))
+       label
+       cached
+       uncached
+       (into [relationship-2]
+             support-relationships)))))
 
 (deftest generated-cache-and-cursor-state-traces-across-jvm-adapters
   (testing "DataScript"
     (let [conn (datascript/create-conn)
+          calls (atom {})
           common
-          {:engine-selection engine-selection
+          {:engine-selection (counting-engine-selection calls)
            :coherence-authority :managed
            :security-key
            "01234567890123456789012345678901"
@@ -324,17 +420,20 @@
        conn
        [{:eacl/id "user"}
         {:eacl/id "document-1"}
-        {:eacl/id "document-2"}])
+        {:eacl/id "document-2"}
+        {:eacl/id "group"}])
       (assert-public-trace!
        "DataScript generated authority"
        cached uncached
        #(ds/transact!
-         conn [{:db/doc "unrelated"}]))))
+         conn [{:db/doc "unrelated"}])
+       calls)))
 
   (testing "Datahike"
     (let [conn (datahike/create-conn)
+          calls (atom {})
           common
-          {:engine-selection engine-selection
+          {:engine-selection (counting-engine-selection calls)
            :coherence-authority :managed
            :security-key
            "01234567890123456789012345678901"}
@@ -347,17 +446,20 @@
        conn
        [{:eacl/id "user"}
         {:eacl/id "document-1"}
-        {:eacl/id "document-2"}])
+        {:eacl/id "document-2"}
+        {:eacl/id "group"}])
       (assert-public-trace!
        "Datahike generated authority"
        cached uncached
        #(dh/transact
-         conn [{:db/doc "unrelated"}]))))
+         conn [{:db/doc "unrelated"}])
+       calls)))
 
   (testing "Datomic"
     (with-mem-conn [conn datomic-schema/v7-schema]
-      (let [common
-            {:engine-selection engine-selection
+      (let [calls (atom {})
+            common
+            {:engine-selection (counting-engine-selection calls)
              :coherence-authority :managed
              :page-token-key
              "01234567890123456789012345678901"
@@ -380,7 +482,9 @@
            {:db/id (d/tempid :db.part/user)
             :eacl/id "document-1"}
            {:db/id (d/tempid :db.part/user)
-            :eacl/id "document-2"}])
+            :eacl/id "document-2"}
+           {:db/id (d/tempid :db.part/user)
+            :eacl/id "group"}])
         (assert-public-trace!
          "Datomic generated authority"
          cached uncached
@@ -388,4 +492,208 @@
            (d/transact
             conn
             [{:db/id (d/tempid :db.part/user)
-              :db/doc "unrelated"}])))))))
+              :db/doc "unrelated"}]))
+         calls)))))
+
+(deftest generated-mode-does-not-reorder-acyclic-multipath-pages
+  (let [conn (datascript/create-conn)
+        calls (atom {})
+        client
+        (datascript/make-client
+         conn
+         {:cache shared-cache/no-cache
+          :security-key
+          "01234567890123456789012345678901"
+          :engine-selection (counting-engine-selection calls)})
+        user (eacl/spice-object :user "ordered-user")
+        documents
+        (mapv
+         #(eacl/spice-object :document (format "document-%02d" %))
+         (range 1 41))
+        expected-ids (mapv :id documents)]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation owner: user
+        relation viewer: user
+        permission view = owner + viewer
+      }")
+    (ds/transact!
+     conn
+     (mapv
+      (fn [object] {:eacl/id (:id object)})
+      (into [user] documents)))
+    (eacl/create-relationships!
+     client
+     (mapv
+      (fn [index document]
+        (eacl/->Relationship
+         user
+         (if (odd? index) :owner :viewer)
+         document))
+      (range 1 41)
+      documents))
+    (let [query
+          {:subject user
+           :permission :view
+           :resource/type :document
+           :first 20}
+          first-page (eacl/lookup-resources client query)
+          second-page
+          (eacl/lookup-resources
+           client
+           (assoc query
+                  :after
+                  (get-in first-page [:page-info :end-cursor])))]
+      (is (= (subvec expected-ids 0 20)
+             (ids first-page)))
+      (is (= (subvec expected-ids 20 40)
+             (ids second-page)))
+      (is (= {:count 40 :limit -1
+              :cached? false :cache-basis nil}
+             (eacl/count-resources
+              client
+              (dissoc query :first))))
+      (is (true?
+           (eacl/can?
+            client user :view (peek documents))))
+      (is (zero?
+           (get @calls :indexed-traversal-compile 0))
+          "acyclic paths do not use the fixed-point discovery-order worklist"))))
+
+(defn- shadow-selection
+  [reports]
+  {:mode :verified-shadow
+   :kernel production/generated-java-kernel
+   :report-divergence #(swap! reports conj %)})
+
+(defn- assert-recursive-shadow!
+  [client limited-client reports]
+  (eacl/create-relationships!
+   client [relationship-1 relationship-2])
+  (let [query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 1}
+        page-1 (eacl/lookup-resources client query)
+        page-2
+        (eacl/lookup-resources
+         client
+         (assoc query
+                :after
+                (get-in page-1 [:page-info :end-cursor])))
+        reverse-page
+        (eacl/lookup-subjects
+         client
+         {:resource document-2
+          :permission :view
+          :subject/type :user
+          :first 1})
+        limit-error
+        (try
+          (eacl/count-resources
+           limited-client
+           (dissoc query :first))
+          nil
+          (catch Exception error
+            error))]
+    (is (= ["document-1"] (ids page-1)))
+    (is (= ["document-2"] (ids page-2)))
+    (is (= ["user"] (ids reverse-page)))
+    (is (= 2
+           (:count
+            (eacl/count-resources
+             client
+             (dissoc query :first)))))
+    (is (= 1
+           (:count
+            (eacl/count-subjects
+             client
+             {:resource document-2
+              :permission :view
+              :subject/type :user}))))
+    (is (true? (eacl/can? client user :view document-1)))
+    (is (= :eacl.recursive-traversal/limit-exceeded
+           (:eacl/error (ex-data limit-error))))
+    (is (= :derived-grants
+           (:limit-kind (ex-data limit-error))))
+    (is (empty? @reports)
+        (str "generated recursive shadow divergence: "
+             (pr-str @reports)))))
+
+(deftest recursive-shadow-compares-complete-public-results
+  (testing "DataScript"
+    (let [conn (datascript/create-conn)
+          reports (atom [])
+          common
+          {:cache shared-cache/no-cache
+           :security-key
+           "01234567890123456789012345678901"
+           :engine-selection (shadow-selection reports)}
+          client (datascript/make-client conn common)
+          limited-client
+          (datascript/make-client
+           conn
+           (assoc common
+                  :recursive-traversal-limits
+                  {:max-derived-grants 1}))]
+      (eacl/write-schema! client authorization-schema)
+      (ds/transact!
+       conn
+       [{:eacl/id "user"}
+        {:eacl/id "document-1"}
+        {:eacl/id "document-2"}])
+      (assert-recursive-shadow! client limited-client reports)))
+
+  (testing "Datahike"
+    (let [conn (datahike/create-conn)
+          reports (atom [])
+          common
+          {:cache shared-cache/no-cache
+           :security-key
+           "01234567890123456789012345678901"
+           :engine-selection (shadow-selection reports)}
+          client (datahike/make-client conn common)
+          limited-client
+          (datahike/make-client
+           conn
+           (assoc common
+                  :recursive-traversal-limits
+                  {:max-derived-grants 1}))]
+      (eacl/write-schema! client authorization-schema)
+      (dh/transact
+       conn
+       [{:eacl/id "user"}
+        {:eacl/id "document-1"}
+        {:eacl/id "document-2"}])
+      (assert-recursive-shadow! client limited-client reports)))
+
+  (testing "Datomic"
+    (with-mem-conn [conn datomic-schema/v7-schema]
+      (let [reports (atom [])
+            common
+            {:cache datomic-cache/no-cache
+             :page-token-key
+             "01234567890123456789012345678901"
+             :zed-token-key
+             "12345678901234567890123456789012"
+             :engine-selection (shadow-selection reports)}
+            client (datomic/make-client conn common)
+            limited-client
+            (datomic/make-client
+             conn
+             (assoc common
+                    :recursive-traversal-limits
+                    {:max-derived-grants 1}))]
+        (eacl/write-schema! client authorization-schema)
+        @(d/transact
+          conn
+          [{:db/id (d/tempid :db.part/user)
+            :eacl/id "user"}
+           {:db/id (d/tempid :db.part/user)
+            :eacl/id "document-1"}
+           {:db/id (d/tempid :db.part/user)
+            :eacl/id "document-2"}])
+        (assert-recursive-shadow! client limited-client reports)))))

@@ -364,6 +364,56 @@
        (is (= 1 (get-in (cache/current-cache-stats store)
                         [:subproblems :projection-hits]))))))
 
+#?(:clj
+   (deftest generation-expiry-does-not-reset-computation-capacity-test
+     (let [store
+           (cache/current-cache
+            {:subproblem-cache {:max-inflight 1}})
+           context
+           (fn [snapshot order]
+             {:snapshot snapshot
+              :snapshot-order order
+              :same-snapshot? identical?
+              :cache-basis order})
+           old-started (promise)
+           release-old (promise)
+           new-started (promise)
+           old-work
+           (future
+             (cache/resolve-current!
+              store (context (snapshot-object) 1) :old :decision keyword?
+              (fn []
+                (:value
+                 (subproblem/resolve-bound!
+                  :projection :old-projection {}
+                  (fn []
+                    (deliver old-started true)
+                    @release-old
+                    :old))))))
+           _ @old-started
+           _ (cache/expire-current! store)
+           new-work
+           (future
+             (cache/resolve-current!
+              store (context (snapshot-object) 2) :new :decision keyword?
+              (fn []
+                (:value
+                 (subproblem/resolve-bound!
+                  :projection :new-projection {}
+                  (fn []
+                    (deliver new-started true)
+                    :new))))))]
+       (Thread/sleep 20)
+       (is (not (realized? new-started)))
+       (is (= 1 (:active-subproblem-computations
+                 (cache/current-cache-stats store))))
+       (deliver release-old true)
+       (is (= :old (:value @old-work)))
+       @new-started
+       (is (= :new (:value @new-work)))
+       (is (= 0 (:active-subproblem-computations
+                 (cache/current-cache-stats store)))))))
+
 (deftest cache-disabled-request-bypasses-subproblem-store-test
   (let [store (cache/current-cache)
         snapshot (snapshot-object)

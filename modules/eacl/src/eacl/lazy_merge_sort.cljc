@@ -5,53 +5,47 @@
 
   Legacy helper names remain as wrappers for compatibility with older tests.")
 
-(def ^:private minimum-long
-  #?(:clj Long/MIN_VALUE
-     :cljs js/Number.MIN_SAFE_INTEGER))
-
-(def ^:private maximum-long
-  #?(:clj Long/MAX_VALUE
-     :cljs js/Number.MAX_SAFE_INTEGER))
-
 (defn- lazy-merge2-dedupe-longs
-  ([x y] (lazy-merge2-dedupe-longs minimum-long x y))
-  ([^long last-key x y]
+  ([x y] (lazy-merge2-dedupe-longs false 0 x y))
+  ([has-last? ^long last-key x y]
    (lazy-seq
     (let [sx (seq x)
           sy (seq y)]
       (cond
         (nil? sx)
         (when sy
-          (if (== last-key minimum-long)
-            sy
-            (drop-while #(== (long %) last-key) y)))
+          (if has-last?
+            (drop-while #(== (long %) last-key) y)
+            sy))
 
         (nil? sy)
-        (if (== last-key minimum-long)
-          sx
-          (drop-while #(== (long %) last-key) x))
+        (if has-last?
+          (drop-while #(== (long %) last-key) x)
+          sx)
 
         :else
         (let [xf (long (first sx))
               yf (long (first sy))]
           (cond
             (== xf yf)
-            (if (== xf last-key)
-              (lazy-merge2-dedupe-longs last-key (rest x) (rest y))
+            (if (and has-last? (== xf last-key))
+              (lazy-merge2-dedupe-longs true last-key (rest x) (rest y))
               (cons (first sx)
-                    (lazy-merge2-dedupe-longs xf (rest x) (rest y))))
+                    (lazy-merge2-dedupe-longs
+                     true xf (rest x) (rest y))))
 
             (< xf yf)
-            (if (== xf last-key)
-              (lazy-merge2-dedupe-longs last-key (rest x) y)
+            (if (and has-last? (== xf last-key))
+              (lazy-merge2-dedupe-longs true last-key (rest x) y)
               (cons (first sx)
-                    (lazy-merge2-dedupe-longs xf (rest x) y)))
+                    (lazy-merge2-dedupe-longs true xf (rest x) y)))
 
             :else
-            (if (== yf last-key)
-              (lazy-merge2-dedupe-longs last-key x (rest y))
+            (if (and has-last? (== yf last-key))
+              (lazy-merge2-dedupe-longs true last-key x (rest y))
               (cons (first sy)
-                    (lazy-merge2-dedupe-longs yf x (rest y)))))))))))
+                    (lazy-merge2-dedupe-longs
+                     true yf x (rest y)))))))))))
 
 (defn- fold2-merge-dedupe-longs
   [seqs]
@@ -68,44 +62,48 @@
              (partition-all 2 non-empty))))))
 
 (defn- lazy-merge2-dedupe-longs-desc
-  ([x y] (lazy-merge2-dedupe-longs-desc maximum-long x y))
-  ([^long last-key x y]
+  ([x y] (lazy-merge2-dedupe-longs-desc false 0 x y))
+  ([has-last? ^long last-key x y]
    (lazy-seq
     (let [sx (seq x)
           sy (seq y)]
       (cond
         (nil? sx)
         (when sy
-          (if (== last-key maximum-long)
-            sy
-            (drop-while #(== (long %) last-key) y)))
+          (if has-last?
+            (drop-while #(== (long %) last-key) y)
+            sy))
 
         (nil? sy)
-        (if (== last-key maximum-long)
-          sx
-          (drop-while #(== (long %) last-key) x))
+        (if has-last?
+          (drop-while #(== (long %) last-key) x)
+          sx)
 
         :else
         (let [xf (long (first sx))
               yf (long (first sy))]
           (cond
             (== xf yf)
-            (if (== xf last-key)
-              (lazy-merge2-dedupe-longs-desc last-key (rest x) (rest y))
+            (if (and has-last? (== xf last-key))
+              (lazy-merge2-dedupe-longs-desc
+               true last-key (rest x) (rest y))
               (cons (first sx)
-                    (lazy-merge2-dedupe-longs-desc xf (rest x) (rest y))))
+                    (lazy-merge2-dedupe-longs-desc
+                     true xf (rest x) (rest y))))
 
             (> xf yf)
-            (if (== xf last-key)
-              (lazy-merge2-dedupe-longs-desc last-key (rest x) y)
+            (if (and has-last? (== xf last-key))
+              (lazy-merge2-dedupe-longs-desc true last-key (rest x) y)
               (cons (first sx)
-                    (lazy-merge2-dedupe-longs-desc xf (rest x) y)))
+                    (lazy-merge2-dedupe-longs-desc
+                     true xf (rest x) y)))
 
             :else
-            (if (== yf last-key)
-              (lazy-merge2-dedupe-longs-desc last-key x (rest y))
+            (if (and has-last? (== yf last-key))
+              (lazy-merge2-dedupe-longs-desc true last-key x (rest y))
               (cons (first sy)
-                    (lazy-merge2-dedupe-longs-desc yf x (rest y)))))))))))
+                    (lazy-merge2-dedupe-longs-desc
+                     true yf x (rest y)))))))))))
 
 (defn- fold2-merge-dedupe-longs-desc
   [seqs]
@@ -123,22 +121,22 @@
 
 (defn- lazy-merge2-dedupe-by
   ([keyfn key-cmp x y]
-   (lazy-merge2-dedupe-by keyfn key-cmp nil x y))
-  ([keyfn key-cmp last-key x y]
+   (lazy-merge2-dedupe-by keyfn key-cmp false nil x y))
+  ([keyfn key-cmp has-last? last-key x y]
    (lazy-seq
     (let [sx (seq x)
           sy (seq y)]
       (cond
         (nil? sx)
         (when sy
-          (if (nil? last-key)
-            sy
-            (drop-while #(= (keyfn %) last-key) y)))
+          (if has-last?
+            (drop-while #(= (keyfn %) last-key) y)
+            sy))
 
         (nil? sy)
-        (if (nil? last-key)
-          sx
-          (drop-while #(= (keyfn %) last-key) x))
+        (if has-last?
+          (drop-while #(= (keyfn %) last-key) x)
+          sx)
 
         :else
         (let [xf (first sx)
@@ -147,22 +145,28 @@
               yk (keyfn yf)]
           (cond
             (= xk yk)
-            (if (= xk last-key)
-              (lazy-merge2-dedupe-by keyfn key-cmp last-key (rest x) (rest y))
+            (if (and has-last? (= xk last-key))
+              (lazy-merge2-dedupe-by
+               keyfn key-cmp true last-key (rest x) (rest y))
               (cons xf
-                    (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) (rest y))))
+                    (lazy-merge2-dedupe-by
+                     keyfn key-cmp true xk (rest x) (rest y))))
 
             (key-cmp xk yk)
-            (if (= xk last-key)
-              (lazy-merge2-dedupe-by keyfn key-cmp last-key (rest x) y)
+            (if (and has-last? (= xk last-key))
+              (lazy-merge2-dedupe-by
+               keyfn key-cmp true last-key (rest x) y)
               (cons xf
-                    (lazy-merge2-dedupe-by keyfn key-cmp xk (rest x) y)))
+                    (lazy-merge2-dedupe-by
+                     keyfn key-cmp true xk (rest x) y)))
 
             :else
-            (if (= yk last-key)
-              (lazy-merge2-dedupe-by keyfn key-cmp last-key x (rest y))
+            (if (and has-last? (= yk last-key))
+              (lazy-merge2-dedupe-by
+               keyfn key-cmp true last-key x (rest y))
               (cons yf
-                    (lazy-merge2-dedupe-by keyfn key-cmp yk x (rest y)))))))))))
+                    (lazy-merge2-dedupe-by
+                     keyfn key-cmp true yk x (rest y)))))))))))
 
 (defn- fold2-merge-dedupe-generic
   [keyfn seqs]

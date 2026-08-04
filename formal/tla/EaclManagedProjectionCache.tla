@@ -13,7 +13,9 @@ CONSTANTS
   \* @type: Set(Int);
   Keys,
   \* @type: Int;
-  InflightBound
+  InflightBound,
+  \* @type: Bool;
+  IgnoreRelationProof
 
 ASSUME
   /\ Generations # {}
@@ -149,12 +151,14 @@ JoinOrRead ==
     /\ outcome' =
       IF /\ entryState[key] = Complete
          /\ capturedSchemaStamp[key] = activeSchemaStamp
-         /\ capturedRelationStamp[key] = activeRelationStamp
+         /\ \/ IgnoreRelationProof
+            \/ capturedRelationStamp[key] = activeRelationStamp
          /\ capturedSource[key] = activeSource
       THEN CacheHit
       ELSE IF /\ entryState[key] = Computing
               /\ capturedSchemaStamp[key] = activeSchemaStamp
-              /\ capturedRelationStamp[key] = activeRelationStamp
+              /\ \/ IgnoreRelationProof
+                 \/ capturedRelationStamp[key] = activeRelationStamp
               /\ capturedSource[key] = activeSource
            THEN SingleFlightJoin
       ELSE CacheMiss

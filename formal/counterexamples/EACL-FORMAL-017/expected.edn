@@ -1,0 +1,5 @@
+{:generated-candidate :computing
+ :generated-action :join-computation
+ :compute-callbacks-for-key 1
+ :invariant
+ "The lifecycle-stable generated lookup state includes registered flights even when tier admission did not represent them."}

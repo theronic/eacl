@@ -46,6 +46,7 @@ usage() {
     "  apalache-check        run bounded temporal safety checks" \
     "  apalache-scheduled    run the larger scheduled temporal bound" \
     "  apalache-invariant    check inductive-invariant obligations" \
+    "  apalache-mutation-control require temporal cache mutants to fail" \
     "  all                   run all proof and build checks"
 }
 
@@ -108,6 +109,35 @@ apalache_induction() {
     --inv=Safety \
     --length=0 \
     "$model"
+}
+
+apalache_expect_counterexample() {
+  label=$1
+  model=$2
+  config=$3
+  length=$4
+  run_dir=$(mktemp -d "$output_root/apalache/$label.XXXXXX")
+  log_file="$run_dir/control.log"
+  if "$apalache" \
+    --out-dir="$output_root/apalache" \
+    --run-dir="$run_dir" \
+    check \
+    --config="$config" \
+    --inv=Safety \
+    --length="$length" \
+    "$model" >"$log_file" 2>&1
+  then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$status" -ne 12 ]; then
+    cat "$log_file" >&2
+    printf 'mutation control %s returned %s, expected counterexample exit 12\n' \
+      "$label" "$status" >&2
+    return 1
+  fi
+  printf 'killed temporal mutant: %s\n' "$label"
 }
 
 nrepl_eval() {
@@ -200,6 +230,8 @@ case "$command" in
          ;; Reload its Datomic implementation before constructing replay
          ;; fixtures, then reload every lazily resolved regression namespace.
          (require 'eacl.cache :reload)
+         (require 'eacl.subproblem-cache :reload)
+         (require 'eacl.lazy-merge-sort :reload)
          (require 'eacl.datomic.cache :reload)
          (doseq [test-ns
                  '[eacl.bench.pagination-test
@@ -227,6 +259,7 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporal.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
       "$repo_root/formal/tla/EaclSubproblemCache.tla" \
+      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla"
     do
       java -cp "$tla_jar" tla2sany.SANY "$model"
@@ -254,6 +287,11 @@ case "$command" in
       "$repo_root/formal/tla/EaclSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclSubproblemCache.cfg" \
       8
+    apalache_check \
+      "tiered-subproblem-bounded" \
+      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
+      "$repo_root/formal/tla/EaclTieredSubproblemCache.cfg" \
+      5
     apalache_check \
       "managed-projection-bounded" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
@@ -285,9 +323,44 @@ case "$command" in
       "$repo_root/formal/tla/EaclSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclSubproblemCache.cfg"
     apalache_induction \
+      "tiered-subproblem" \
+      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
+      "$repo_root/formal/tla/EaclTieredSubproblemCache.cfg"
+    apalache_induction \
       "managed-projection" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.cfg"
+    ;;
+  apalache-mutation-control)
+    need_tools
+    mkdir -p "$output_root/apalache"
+    controls_file=$(mktemp "$output_root/apalache/mutation-controls.XXXXXX")
+    bb -e '
+      (require (quote [clojure.edn :as edn])
+               (quote [clojure.string :as string]))
+      (let [registry
+            (edn/read-string
+             (slurp (first *command-line-args*)))]
+        (doseq [{:keys [id control]} (:mutants registry)
+                :when (= :apalache (:kind control))]
+          (println
+           (string/join
+            "\t"
+            [(name id)
+             (:model control)
+             (:config control)
+             (:length control)]))))' \
+      "$repo_root/formal/mutations/registry.edn" >"$controls_file"
+    tab=$(printf '\t')
+    while IFS="$tab" read -r mutant_id model_path config_path length
+    do
+      apalache_expect_counterexample \
+        "mutant-$mutant_id" \
+        "$repo_root/$model_path" \
+        "$repo_root/$config_path" \
+        "$length"
+    done <"$controls_file"
+    rm -f "$controls_file"
     ;;
   all)
     "$repo_root/bin/formal" format
@@ -299,6 +372,7 @@ case "$command" in
     "$repo_root/bin/formal" tla-typecheck
     "$repo_root/bin/formal" apalache-check
     "$repo_root/bin/formal" apalache-invariant
+    "$repo_root/bin/formal" apalache-mutation-control
     ;;
   *)
     usage >&2

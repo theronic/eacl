@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-021
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "datomic/make-client/cache/subproblem-cache-config-forwarding"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 worktree before Datomic subproblem-cache option forwarding"]
+ :affected-backends [:datomic]
+ :root-cause
+ "Datomic's cache normalizer omitted :subproblem-cache from its accepted nested options and constructed the shared current cache with only complete-answer entry settings. DataScript and Datahike forwarded the shared subproblem settings. Datomic therefore rejected an intended limit or disable request and always installed default projection, denotation, proof-atom, and callback bounds."
+ :fix
+ "The Datomic cache boundary now accepts one :subproblem-cache map, forwards it unchanged into eacl.cache/current-cache, documents the portable keys, and relies on the shared constructor to validate every bound before the client is returned."
+ :closing-evidence
+ ["eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test"
+  "formal mutation :datomic-subproblem-config-dropped"]}

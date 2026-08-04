@@ -37,8 +37,10 @@ comparison, cutover performance, and independent review remain incomplete.
 - Support recursive permissions by publishing only completed least-fixed-point
   SCC results.
 - Keep hit validation bounded and cheaper than recomputation.
-- Make memory, concurrent work, cache provenance, avoided backend work, and
-  proof costs observable and bounded.
+- Make retained admission weight, represented candidates, registered flights,
+  actual callback execution, cache provenance, avoided backend work, and proof
+  costs separately observable. Bound only the measures for which the
+  implementation has an enforceable contract.
 - Demonstrate a material latency and backend-read improvement over the current
   completed-answer cache on a workload whose top-level final-answer keys never
   hit.
@@ -125,8 +127,9 @@ Forward-revision reuse is a second tier for atomic projections:
   projection store; the resulting chunk is then installed in the exact store.
 - Changing relation B cannot evict relation A's projection chunks. Changing
   relation A selects a new managed key, so no old A chunk is eligible.
-- Derived denotations remain exact-generation-only until a bounded complete
-  union of their atomic relation proofs is implemented.
+- A derived denotation may cross forward revisions only when the complete
+  ordered union of its relation proof atoms fits the configured bound. Missing
+  or over-bound proof unions remain exact-generation-only.
 - Unknown writer authority, missing stamps, direct/raw snapshots, historical
   evaluation, and custom identity/context semantics without a frame theorem
   remain exact-only.
@@ -145,33 +148,86 @@ Alternatives rejected:
 - One global graph revision: correct but destroys shared-subgraph reuse after
   every write.
 
-### 4. Evaluate recursive components to a fixed point before publication
+### 4. Exhaust the anchored recursive worklist before publication
 
-The recursive plan already identifies permission SCCs. The cache-aware
-recursive evaluator will maintain request-local monotone sets until no rule can
-add a grant. Only then may it publish the component denotation and its bounded
+The recursive plan identifies permission SCCs and compiles every permission
+node reachable from the requested root. The production evaluator does not
+publish each SCC independently: it evaluates a request-local monotone worklist
+for one concrete root, direction, anchor, result type, and limit configuration.
+Only queue exhaustion may publish that anchored root denotation and its bounded
 proof. Consumers can stop early for pagination, but an early stop publishes no
-component result. Existing query-scoped continuations remain the mechanism for
+denotation. Existing query-scoped continuations remain the mechanism for
 resuming an incomplete page walk.
 
-A cached recursive component is a mathematical set/index, not traversal
-order. Page rendering applies the selected operation's deterministic order and
-limit after retrieving it.
+The cached value is the complete deterministic unique result sequence produced
+by that anchored traversal, not an unordered global grant closure. Forward and
+reverse denotations use distinct semantic keys. Re-rendering a compatible page
+or count slices the retained sequence; incompatible direction, anchor, result
+type, root, proof, or limit inputs cannot reuse it.
 
-### 5. Use weighted bounded storage and single-flight computation
+### 5. Separate weighted storage, flight ownership, and execution capacity
 
 Entry weight includes fixed overhead, key size, result count, proof atoms, and
 continuation metadata. The cache has separate budgets for projections,
 denotations, and completed answers so a large closure cannot evict every small
-hot projection. Eviction affects performance only.
+hot projection. Incomplete candidates are not eviction victims. Eviction
+affects performance only.
 
-Concurrent misses install one delayed/promise computation per exact semantic
-key. Waiters share the result. A separate configured global in-flight bound
-prevents a spread of distinct keys from accumulating unbounded candidate
-state; once full, new distinct work executes uncached while existing same-key
-callers may still join. Exceptions, cancellation, invalid values and partial
-computations are removed and independently recomputed; they are never
-published as answers.
+Lore's immutable analysis of PR #101 at
+`theronic/lore@dabb5634b0d44e196e2b6ec63003917b3d445bec` refuted the earlier
+claim that `:max-inflight` bounded actual work. The legal `A, B, A` schedule
+evicted an incomplete `A`, started `B`, then admitted a second `A`: only one
+candidate remained represented while three host callbacks were running. The
+old model proved a represented-cache-state bound, not a production execution
+bound.
+
+The corrected design has three separate mechanisms:
+
+- tier weight budgets bound represented cache weight;
+- a coordinator-wide registry owns exactly one flight for each
+  `(lifecycle, tier, semantic-key)`, independently of cache admission and
+  eviction; and
+- one fair JVM semaphore bounds actual top-level compute callbacks across
+  exact and managed stores and across generation replacement. Cache-admission
+  rejection does not bypass this semaphore.
+
+Same-key callers join the registered flight even when its value cannot be
+admitted to a tier. A saturated distinct flight waits for execution capacity;
+it does not run as an uncounted uncached fallback. Nested subproblems executing
+synchronously on the same host execution context reuse that context's permit
+to avoid recursive semaphore deadlock, but a child `future` is a different
+execution context and must acquire its own permit. Exceptions, cancellation,
+invalid values and partial computations remove their own flight/candidate and
+never publish an answer.
+
+Lifecycle capture, recursive-self detection, represented-entry lookup, and
+lifecycle-qualified flight lookup occur at one store-lock linearization point.
+The generated lookup action is dispatched from that complete stable state
+before the host installs any new flight. A registered flight is therefore
+`computing` even when tier admission did not represent it. Only generated
+`start-computation` may attempt installation; a defensive compare-and-set
+collision is converted by re-dispatching generated `join-computation`, not by
+silently substituting a host decision. The strict generated boundary rejects
+an action inconsistent with its validated lookup, admission, or publication
+input. Flight completion removes its lifecycle-qualified ticket under the
+same store lock, so registration, selection, lifecycle replacement, and
+ticket-qualified removal share one serial order. The lock is acquired once
+per completed miss, not on completed-answer hits or per traversed edge; the
+resource gate separately checks that finalization cost does not grow linearly
+with represented entry count.
+
+Lifecycle replacement clears represented entries but does not reset the
+coordinator or its semaphore. An old `(old-lifecycle, tier, key)` flight and a
+new `(new-lifecycle, tier, key)` flight may coexist; their combined executing
+callback count still respects the global bound, and only the new flight can
+publish into the new store lifecycle.
+
+The registry cardinality and the number of host callers waiting on flights or
+the semaphore are observable but are not claimed to be bounded independently
+of caller concurrency and distinct-key traffic. Admission weights are logical
+units, not JVM bytes. Consequently, this component establishes bounded
+retained weight and executing callbacks, not a whole-process heap, CPU-time,
+wall-time, or backend-operation theorem.
 
 CLJ and CLJS use the same state-transition functions. Host-specific waiting is
 kept outside the verified decision kernel.
@@ -210,8 +266,9 @@ predicate. Separate lemmas prove:
 - direct and acyclic memoization refinement;
 - recursive SCC fixed-point completion and partial-publication exclusion;
 - exact-generation and expiry race safety;
-- bounded proof validation, memory weight, and one computation per concurrent
-  key; and
+- bounded proof validation, represented admission weight, one computation per
+  lifecycle-qualified concurrent key, and global active callback execution;
+  and
 - composition from internal denotation through public rendering.
 
 The generated kernel decides admission, hit eligibility, proof composition and
@@ -246,6 +303,118 @@ The manifest may report end-to-end conditional verification only when:
 Until then, individual theorem families may be reported as passed, but
 `:complete-public-engine` and the release claim remain incomplete.
 
+### 9. Make indexed traversal a generated command/response state machine
+
+The existing generated authorization evaluator is a whole-graph reference
+oracle: it accepts complete object and relationship vectors, repeatedly
+computes global immediate consequences, and charges
+`|relationships| + |rules|` per saturation round. Production instead holds a
+FIFO queue of indexed stream/grant/goal work, asks the backend for bounded
+ordered chunks, de-duplicates grants incrementally, and may stop at a page or
+point-query boundary. The two implementations agree on small differential
+fixtures, but their state, order, failure boundaries, and resource counters do
+not refine one another. The materializing oracle therefore cannot be the
+authoritative production engine.
+
+The authoritative generated engine will instead be a coroutine:
+
+- a compiled schema plan contains only data-valued rules and continuation
+  descriptors—no host closures;
+- generated state owns the FIFO queue, scan continuations, seen grants/goals,
+  reverse consumer descriptors, emitted-result set, ordinal, page/count state,
+  and every authorization-affecting limit decision;
+- generated output is one of `NeedScan`, `Emit`, `Complete`, or
+  `LimitExceeded`;
+- the host adapter may only answer `NeedScan` with a bounded response from the
+  selected immutable snapshot, carrying a traversal-unique request scope and
+  traversal-local request ID, strictly ordered unique values, terminal flag,
+  and fetched-value count; and
+- generated resume logic validates the response before incorporating it. A
+  malformed or mismatched response fails closed.
+
+Generated code proves command-scope ownership by matching the response's
+traversal scope and local request ID to the pending command. The monotonic
+scope allocator is unique among live traversals and fails closed before
+safe-integer exhaustion. Keeping the complete projection in pending generated
+state makes the scalar response binding stronger than projection echoing:
+same-projection traversals cannot exchange responses, and no complete
+projection is allocated and converted on every scan response. The backend
+adapter remains trusted for actually executing that command against the
+selected immutable snapshot and for complete ordered index semantics. A
+snapshot token echoed by the same host could not prove that provenance. The
+host is not trusted for traversal, de-duplication, recursive closure,
+pagination, counts, cursors, or limits. Java and JavaScript adapters perform
+strict total conversion to and from the same generated datatypes.
+
+Resource accounting follows Lore's dimensional separation. The state machine
+records at least:
+
+- backend commands issued;
+- values fetched by the adapter, including lookahead;
+- values advanced/consumed by the engine;
+- work items enqueued cumulatively;
+- current and maximum queue depth;
+- unique grants derived;
+- results emitted; and
+- logical retained-state weight.
+
+Each limit is named for its own measure. A queue-depth theorem says nothing
+about cumulative work; a logical retained-weight theorem says nothing about
+JVM bytes; a backend-command theorem requires the adapter command/refinement
+edge. Wall time remains a benchmark gate, not a theorem.
+
+The referenced Lore revision was also run against an immutable synthetic Git
+snapshot of the current worktree. All 22 selected cache/traversal functions
+remained source-structural candidates because Lore's strict Core does not yet
+cover their concurrency, laziness, persistent collections, backend calls, or
+exception forms. Its old PR #101 refutation witness correctly failed revision
+validation instead of being reused for the changed source. Therefore Lore
+informs the dimensional model and rejects overclaiming here; it does not
+currently discharge production source-to-resource refinement, JVM heap, or
+worst-case elapsed-time obligations.
+
+The existing cache-free host evaluator remains the differential oracle during
+rollout. Generated authority is enabled only after all command/response
+transitions, public rendering, errors, counters, and cursor/page state agree
+across CLJ, CLJS, Datomic, Datahike, and DataScript, and after the generated
+path meets the performance thresholds.
+
+### 10. Treat generated collection code as an oracle unless it passes the hot-path gate
+
+Lore distinguishes logical work from actual callbacks, backend operations,
+heap and wall time. The same discipline applies to generated code: proving
+that a transition performs one logical merge step does not establish that its
+BigInteger conversion, immutable-sequence construction, FFI, validation or
+allocation cost is acceptable in a per-EID production loop.
+
+Two authoritative ordered-merge prototypes were therefore measured and
+rejected. A strict generated call per head preserved the abstract work count
+but made a fully consumed 20,000-value merge about four times slower. A
+bounded generated chunk reduced FFI calls but Dafny's generated immutable
+sequence construction still cost roughly twenty times the optimized host
+merge per item. Neither implementation belongs on the production data plane.
+
+The optimized CLJ/CLJS lazy merge remains the hot implementation with no
+engine-selection branch. The Dafny implementation now provides executable
+single-step and bounded-chunk oracles plus reconstruction lemmas. JVM and
+JavaScript campaigns compare the optimized source against that oracle over
+ascending, descending, empty, overlap and interleaving partitions, and a
+wrong-comparator mutant must be killed. This is useful refinement evidence,
+but it is not by itself a formal source-refinement proof: the assurance
+manifest must keep the acyclic source mapping incomplete until a
+source-digested specialization check and independent review exist.
+
+That complete-source review must include the private specialized helpers, not
+only their public wrappers. EACL-FORMAL-019 exposed why: the descending helper
+used the maximum integer as the sentinel for an absent previous value and
+therefore dropped a legitimate maximum EID. EACL-FORMAL-020 found the same
+state-shape defect in the generic helper, where `nil` was both the absence
+sentinel and a valid host sort key. Every runtime specialization now carries
+an explicit presence bit, and Dafny models the same absence/value separation
+with `OptionalLast`; maximum-EID and nil-key regressions run in CLJ and CLJS.
+The Dafny integer domain is an oracle for EID ordering and the optional-state
+shape, not a proof of every generic host comparator or value domain.
+
 ## Risks / Trade-offs
 
 - **Projection caching duplicates database page-cache data** → Admit only
@@ -257,15 +426,29 @@ Until then, individual theorem families may be reported as passed, but
   maximum entry weight, and no publication for partial/over-limit closures.
 - **Proof validation becomes O(N)** → Bound proof atoms; overflow entries are
   exact-only and never admitted to managed reuse.
-- **Single-flight deadlock or exception poisoning** → The computation never
-  waits on its own key, failures remove the candidate, and lifecycle
+- **Single-flight deadlock or exception poisoning** → The same execution
+  context reuses its permit, different contexts backpressure on a fair
+  semaphore, failures remove their own flight/candidate, and lifecycle
   replacement makes delayed publication unreachable.
+- **A cache-weight proof is mistaken for a heap theorem** → Report represented
+  admission weight, registered flights, waiting callers and executing
+  callbacks separately. Treat JVM object size, persistent-map overhead,
+  blocked-thread retention, GC, CPU and wall time as unproved until explicit
+  production refinement and runtime contracts exist.
 - **Benchmarks optimize one synthetic topology** → Include deep chains, wide
   fan-out, shared arrows, negative probes, recursive SCCs, churn and all three
   backends.
 - **Formal proof overstates implementation coverage** → Generated-boundary
   routing and manifest digests are mandatory; the claim remains withheld on
   any unmapped public decision.
+- **A materializing oracle is mistaken for an indexed refinement** → Record it
+  as reference-only. Make the generated command/response state machine own all
+  traversal state and validate every backend response before authoritative
+  use.
+- **Formal counters share names but not dimensions with production** → Define
+  backend commands, fetched values, consumed values, cumulative enqueues,
+  queue depth, derived grants, emitted results and retained logical weight as
+  separate fields with separate theorems and adapter obligations.
 
 ## Migration Plan
 

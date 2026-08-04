@@ -1,11 +1,25 @@
-{:schema-version 1
+{:schema-version 2
  :semantics-version 1
  :status :conditional-foundation-passed
+ :external-falsification
+ {:source "https://github.com/theronic/lore/commit/dabb5634b0d44e196e2b6ec63003917b3d445bec"
+  :subject-pr 101
+  :subject-revision "c5f8adb3b42d7e463a6449f78f9b9d34eb784423"
+  :result :prior-production-resource-claim-refuted
+  :witness :weighted-a-b-a-incomplete-eviction
+  :corrective-action
+  :flight-ownership-separated-from-evictable-admission-and-shared-execution-semaphore}
  :proof
  {:source "formal/dafny/SubproblemCache.dfy"
-  :verified-obligations 33
+  :verified-obligations 99
   :claims
   [:projection-key-field-separation
+   :lifecycle-qualified-recursive-self-detection
+   :different-lifecycle-self-wait-separation
+   :linearized-lifecycle-entry-and-flight-selection
+   :generated-lookup-action-precedes-flight-mutation
+   :registered-unrepresented-flight-is-computing
+   :missing-entry-and-flight-starts-computation
    :managed-source-schema-relation-proof-key-separation
    :same-transaction-different-mutation-value-proof-separation
    :unchanged-managed-relation-stamp-preserves-projection
@@ -22,8 +36,13 @@
    :expired-lifecycle-publication-rejection
    :partial-invalid-and-oversized-publication-rejection
    :admitted-weight-bound
-   :inflight-admission-bound-preservation
-   :full-inflight-store-distinct-admission-rejection
+   :represented-candidate-admission-bound-preservation
+   :full-represented-candidate-store-distinct-admission-rejection
+   :running-flight-not-eviction-eligible
+   :actual-callback-execution-bound
+   :recursive-bypass-reuses-only-the-owner-execution-context
+   :distinct-context-recursive-bypass-acquires-a-permit
+   :lifecycle-detachment-preserves-actual-callback-accounting
    :partial-recursive-publication-rejection
    :completed-worklist-least-fixed-point-publication]}
  :temporal-models
@@ -53,7 +72,29 @@
     :schema-mutation
     :source-switch
     :late-publication
-    :failure]}]
+    :failure]}
+  {:source "formal/tla/EaclTieredSubproblemCache.tla"
+   :configuration "formal/tla/EaclTieredSubproblemCache.cfg"
+   :bounded-length 5
+   :inductive-invariant :passed
+   :status :passed
+   :invariants
+   [:separate-tier-weight-bounds
+    :represented-candidates-current
+    :complete-current-hit-only
+    :partial-denotation-never-hits
+    :lifecycle-qualified-flight-ownership
+    :one-actual-callback-per-lifecycle-qualified-address
+    :global-actual-callback-execution-bound
+    :late-orphan-publication-rejected]
+   :mutation-controls
+   [:partial-denotation-hit
+    :stale-generation-hit
+    :duplicate-flight-start
+    :late-orphan-publication
+    :coupled-tier-budgets
+    :incomplete-flight-eviction
+    :obsolete-lifecycle-flight-join]}]
  :production
  {:sources
   ["modules/eacl/src/eacl/subproblem_cache.cljc"
@@ -63,7 +104,45 @@
   :managed-forward-revision-subproblems :atomic-relation-projections
   :managed-forward-revision-derived-denotations false
   :partial-recursive-publication false
-  :cache-disabled-bypass true}
+  :recursive-self-wait-identity :lifecycle-tier-semantic-key
+  :recursive-self-execution
+  :context-aware-slot-reuse-or-distinct-context-acquisition
+  :flight-removal-linearization :shared-store-lock
+  :cache-disabled-bypass true
+  :resource-measures
+  {:represented-tier-weight :bounded
+   :represented-candidates-per-store :bounded
+   :actual-top-level-callbacks-per-client :bounded
+   :registered-flights :observable-not-independently-bounded
+   :waiting-callers :external-caller-concurrency
+   :jvm-live-heap :not-established
+   :cpu-time :not-established
+   :wall-time :not-established
+   :general-backend-operations :not-established}}
+ :adversarial-boundaries
+ {:portable-test
+  eacl.subproblem-cache-test/managed-proof-adversarial-boundaries-test
+  :covered
+  [:unrelated-write
+   :missing-stamp-exact-only
+   :delete-recreate-mutation-identity
+   :same-endpoints-different-relation
+   :branch-scope
+   :restored-source-scope
+   :reset-lifecycle-expiry
+   :out-of-band-write-content-proof-change]
+  :trusted-assumption
+  :unstamped-raw-write-is-undetectable-by-mutation-proof
+  :backend-evidence
+  {:datomic
+   [eacl.datomic.lookup-cache-test/recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
+    eacl.datomic.object-deletion-test]
+   :datahike
+   [eacl.datahike.consistency-v3-test/content-proofs-are-bounded-and-cover-public-identity-test
+    eacl.datahike.consistency-v3-test/branch-refresh-exact-and-force-rewind-test]
+   :datascript
+   [eacl.datascript.consistency-v3-test/content-proofs-are-bounded-and-cover-public-identity-test
+    eacl.datascript.consistency-v3-test/causal-anchor-survives-restart-and-detects-reset-test]}}
  :differential-tests
  {:projection-generated-seeds 40
   :projection-assertions 2560
@@ -73,14 +152,16 @@
   :backends-smoke-passed [:datomic :datahike :datascript]
   :latest-validation
   {:date "2026-08-03"
-   :core-clj {:tests 109 :assertions 4060}
+   :public-clj {:namespaces 56 :tests 455 :assertions 16613}
+   :core-clj {:tests 110 :assertions 4065}
    :datascript-clj {:tests 39 :assertions 297}
-   :datascript-cljs {:tests 123 :assertions 4084}
+   :datascript-cljs {:tests 135 :assertions 4227}
    :datahike-clj {:tests 29 :assertions 368}
    :datomic-clj {:tests 245 :assertions 11370}
-   :generated-java-bridge {:tests 18 :assertions 7143}
-   :generated-javascript-bridge {:tests 12 :assertions 610}
+   :generated-java-bridge {:tests 33 :assertions 7551}
+   :generated-javascript-bridge {:tests 24 :assertions 836}
    :heavy-pagination {:tests 9 :assertions 3403}
+   :heavy-subproblem-cache {:tests 5 :assertions 12}
    :failures 0
    :errors 0}}
  :performance
@@ -95,10 +176,10 @@
   :p50-improvement-range [0.4399612747075434 0.5018338461538462]
   :latest-run
   {:date "2026-08-03"
-   :completed-answer-only-p50-ms 0.239875
-   :layered-subproblem-p50-ms 0.129792
-   :p50-latency-ratio 0.5410818134445023
-   :p50-improvement-ratio 0.45891818655549765
+   :completed-answer-only-p50-ms 0.282542
+   :layered-subproblem-p50-ms 0.179584
+   :p50-latency-ratio 0.6356010787776684
+   :p50-improvement-ratio 0.3643989212223316
    :completed-answer-only-backend-operations 3920
    :layered-subproblem-backend-operations 0
    :completed-answer-hits 0
@@ -108,19 +189,39 @@
   {:small-entries 64
    :large-entries 4096
    :entry-count-ratio 64
-   :p50-latency-ratio 1.074889746035696}
+   :p50-latency-ratio 1.0383030039439738}
+  :miss-finalization-scaling
+  {:resource-dimension :actual-host-computation-lifecycle
+   :small-entries 64
+   :large-entries 4096
+   :entry-count-ratio 64
+   :misses-per-batch 20
+   :p50-latency-ratio 1.001580436654774}
   :cached-recursive-page-scaling
   {:small-closure-items 64
    :large-closure-items 131072
    :closure-size-ratio 2048
    :page-size 20
-   :p50-latency-ratio 1.008695652173913}
-  :hot-hit-regression-ratio 1.0
-  :cache-disabled-regression-ratio 1.0035726495726496}
+   :p50-latency-ratio 1.015267175572519}
+  :hot-hit-regression-ratio 0.9986101694915255
+  :cache-disabled-regression-ratio 1.0007083705790085}
+ :managed-proof-resource-benchmark
+ {:report "formal/verification/managed-proof-cost.edn"
+  :status :passed
+  :backends [:datomic :datahike :datascript]
+  :unrelated-edge-count 1024
+  :maximum-observed-p50-ratio 1.0427758076012636
+  :committed-datom-events
+  {:datomic {:create 16 :delete 17}
+   :datahike {:create 13 :delete 13}
+   :datascript {:create 14 :delete 14}}
+  :suite {:tests 1 :assertions 13 :failures 0 :errors 0}}
  :claim-boundary
  {:complete-public-engine false
   :localized-managed-proof :atomic-relation-projections-only
   :managed-derived-denotation-proof false
   :generated-production-decision-kernel false
+  :production-source-refinement false
+  :whole-engine-resource-safety false
   :independent-review false
   :release-verification-claim :withheld}}

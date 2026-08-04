@@ -63,7 +63,8 @@
   [schema-stamp installed-order entries subproblems])
 (defrecord CacheLifecycle [exact managed])
 (defrecord CurrentGenerationCache [lifecycle metrics max-entries admissions
-                                   admit-on-repeat? subproblem-options])
+                                   admit-on-repeat? subproblem-options
+                                   subproblem-coordinator])
 
 (defn- new-lifecycle
   []
@@ -97,21 +98,28 @@
      (throw (ex-info "Current cache subproblem :enabled? must be boolean."
                      {:type :eacl/invalid-config
                       :subproblem-cache subproblem-cache})))
-   ;; Validate budgets before a request attempts to install a generation.
-   (subproblem/store (dissoc subproblem-cache :enabled?))
-   (->CurrentGenerationCache
-    (atom (new-lifecycle))
-    (atom {:exact-hits 0
-           :managed-hits 0
-           :misses 0
-           :bypasses 0
-           :stamp-failures 0
-           :puts 0
-           :expirations 0})
-    max-entries
-    (atom {})
-    admit-on-repeat?
-    subproblem-cache)))
+   ;; Validate budgets before a request attempts to install a generation, then
+   ;; keep the execution coordinator above exact/schema generation replacement.
+   ;; Old detached work and new-generation work therefore consume one client
+   ;; lifecycle-wide concurrency budget.
+   (let [validated
+         (subproblem/store (dissoc subproblem-cache :enabled?))
+         coordinator
+         (subproblem/computation-coordinator (:max-inflight validated))]
+     (->CurrentGenerationCache
+      (atom (new-lifecycle))
+      (atom {:exact-hits 0
+             :managed-hits 0
+             :misses 0
+             :bypasses 0
+             :stamp-failures 0
+             :puts 0
+             :expirations 0})
+      max-entries
+      (atom {})
+      admit-on-repeat?
+      subproblem-cache
+      coordinator))))
 
 (defn current-cache?
   [value]
@@ -155,6 +163,10 @@
            (if exact (count @(:entries exact)) 0)
            :managed-entries
            (if managed (count @(:entries managed)) 0)
+           :active-subproblem-computations
+           @(:active (:subproblem-coordinator store))
+           :max-subproblem-computations
+           (:maximum (:subproblem-coordinator store))
            :admission-entries
            (count @(:admissions store))
            :subproblems
@@ -241,7 +253,7 @@
         nil))))
 
 (defn- install-exact-generation!
-  [exact snapshot order same-snapshot? subproblem-options]
+  [exact snapshot order same-snapshot? subproblem-options coordinator]
   (loop []
     (let [current @exact]
       (cond
@@ -256,7 +268,8 @@
                snapshot order (atom {})
                (when (get subproblem-options :enabled? true)
                  (subproblem/store
-                  (dissoc subproblem-options :enabled?))))]
+                  (assoc (dissoc subproblem-options :enabled?)
+                         :computation-coordinator coordinator))))]
           (if (compare-and-set! exact current created)
             {:generation created :active? true}
             (recur)))
@@ -267,7 +280,7 @@
         {:generation nil :active? false}))))
 
 (defn- install-managed-generation!
-  [managed schema-stamp order subproblem-options]
+  [managed schema-stamp order subproblem-options coordinator]
   (loop []
     (let [current @managed]
       (cond
@@ -283,7 +296,8 @@
                (atom {})
                (when (get subproblem-options :enabled? true)
                  (subproblem/store
-                  (dissoc subproblem-options :enabled?))))]
+                  (assoc (dissoc subproblem-options :enabled?)
+                         :computation-coordinator coordinator))))]
           (if (compare-and-set! managed current created)
             created
             (recur)))
@@ -322,6 +336,37 @@
         (swap! (:metrics store) update :stamp-failures inc)
         nil))))
 
+(defn- current-cache-action
+  [engine-selection stage available?]
+  (let [legacy
+        #(case stage
+           (:eligibility :generation)
+           (if available?
+             :probe-exact-entry
+             :bypass-current-cache)
+
+           :exact-entry
+           (if available?
+             :use-exact-entry
+             :probe-managed-entry)
+
+           :managed-entry
+           (if available?
+             :use-managed-entry
+             :compute-current-value))]
+    ;; Preserve the default cache hot path. Verified modes cross the generated
+    ;; boundary at every authorization-affecting cache-selection stage.
+    (if (or (nil? engine-selection)
+            (= :legacy-authoritative engine-selection)
+            (and (map? engine-selection)
+                 (= :legacy-authoritative (:mode engine-selection))))
+      (legacy)
+      (verified/decide
+       engine-selection
+       :current-cache-decision
+       {:stage stage :available? available?}
+       legacy))))
+
 (defn resolve-current!
   "Resolves one completed semantic answer against a captured current snapshot.
 
@@ -336,22 +381,27 @@
   [store
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
            managed-descriptor-key-fn managed-key-fn
-           managed-subproblem-key-fn managed-subproblem-scope]
+           managed-subproblem-key-fn managed-subproblem-scope
+           engine-selection]
     :or {same-snapshot? =
          cacheable? true}}
    semantic-key kind valid-value? compute]
   (when-not (fn? compute)
     (throw (ex-info "Current cache computation must be a function."
                     {:type :eacl/invalid-config})))
-  (if (or (nil? store)
-          (not cacheable?))
+  (if (= :bypass-current-cache
+         (current-cache-action
+          engine-selection
+          :eligibility
+          (and (some? store) cacheable?)))
     (do
       (when (current-cache? store)
         (swap! (:metrics store) update :bypasses inc))
       {:value (binding [subproblem/*store* nil
                         subproblem/*managed-store* nil
                         subproblem/*managed-key-fn* nil
-                        subproblem/*managed-scope* nil]
+                        subproblem/*managed-scope* nil
+                        subproblem/*engine-selection* engine-selection]
                 (compute))
        :cached? false
        :cache-tier nil
@@ -372,22 +422,31 @@
             (install-exact-generation!
              (:exact lifecycle)
              snapshot snapshot-order same-snapshot?
-             (:subproblem-options store))
+             (:subproblem-options store)
+             (:subproblem-coordinator store))
             entry-key [semantic-key kind]]
-        (if-not active?
+        (if (= :bypass-current-cache
+               (current-cache-action
+                engine-selection :generation active?))
           (do
             (swap! (:metrics store) update :bypasses inc)
             {:value (binding [subproblem/*store* nil
                               subproblem/*managed-store* nil
                               subproblem/*managed-key-fn* nil
-                              subproblem/*managed-scope* nil]
+                              subproblem/*managed-scope* nil
+                              subproblem/*engine-selection*
+                              engine-selection]
                       (compute))
              :cached? false
              :cache-tier nil
              :cache-basis nil})
-          (if-let [entry
-                   (valid-current-entry
-                    (:entries generation) entry-key valid-value?)]
+          (let [entry
+                (valid-current-entry
+                 (:entries generation) entry-key valid-value?)
+                exact-action
+                (current-cache-action
+                 engine-selection :exact-entry (some? entry))]
+            (if (= :use-exact-entry exact-action)
             (do
               (swap! (:metrics store) update :exact-hits inc)
               {:value (:value entry)
@@ -404,7 +463,8 @@
                     (install-managed-generation!
                      (:managed lifecycle)
                      schema-stamp snapshot-order
-                     (:subproblem-options store)))
+                     (:subproblem-options store)
+                     (:subproblem-coordinator store)))
                   managed-entry-key
                   (when managed-generation
                     [semantic-key kind dependency-stamp])
@@ -413,8 +473,11 @@
                     (valid-current-entry
                      (:entries managed-generation)
                      managed-entry-key
-                     valid-value?))]
-              (if managed-entry
+                     valid-value?))
+                  managed-action
+                  (current-cache-action
+                   engine-selection :managed-entry (some? managed-entry))]
+              (if (= :use-managed-entry managed-action)
                 (do
                   (put-entry!
                    store (:entries generation) entry-key managed-entry)
@@ -432,7 +495,9 @@
                                 subproblem/*managed-key-fn*
                                 managed-subproblem-key-fn
                                 subproblem/*managed-scope*
-                                managed-subproblem-scope]
+                                managed-subproblem-scope
+                                subproblem/*engine-selection*
+                                engine-selection]
                         (compute))
                       entry {:value value
                              :cache-basis cache-basis}
@@ -451,7 +516,8 @@
                    :cached? false
                    :cache-tier nil
                    :cache-basis cache-basis
-                   :subproblem-store (:subproblems generation)})))))))))
+                   :subproblem-store
+                   (:subproblems generation)}))))))))))
 
 (defrecord LocalStore [entries metrics max-entries]
   CacheStore

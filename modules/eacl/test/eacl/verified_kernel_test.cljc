@@ -96,6 +96,109 @@
             (constantly
              {:status :hit :provenance :exact-hit}))))))
 
+(deftest current-cache-stage-boundary-is-strict
+  (let [input {:stage :exact-entry :available? true}
+        decide
+        (fn [kernel value]
+          (verified/decide
+           {:mode :verified-authoritative :kernel kernel}
+           :current-cache-decision
+           value
+           #(throw (ex-info "legacy must not run" {}))))]
+    (is (= :use-exact-entry
+           (decide
+            (->FunctionKernel
+             (fn [_ _] :use-exact-entry))
+            input)))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide
+          (->FunctionKernel
+           (fn [_ _] :use-exact-entry))
+          (assoc input :unknown true))))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide
+          (->FunctionKernel
+           (fn [_ _] :use-managed-entry))
+	          input)))))
+
+(deftest subproblem-cache-transition-boundary-is-strict
+  (let [input {:decision :lookup
+               :recursive-self? false
+               :candidate :missing}
+        decide
+        (fn [input result]
+          (verified/decide
+           {:mode :verified-authoritative
+            :kernel (->FunctionKernel (fn [_ _] result))}
+           :subproblem-cache-decision
+           input
+           #(throw (ex-info "legacy must not run" {}))))]
+    (is (= :start-computation
+           (decide input :start-computation)))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide input :bypass-recursive-self)))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide
+          {:decision :publication
+           :ticket-current? true
+           :complete? true
+           :valid? true
+           :weight 1
+           :budget 1}
+          :drop-publication)))))
+
+(deftest ordered-merge-chunk-boundary-is-strict
+  (let [input {:direction :asc
+               :left [1 3 5]
+               :right [2 4 6]}
+        result {:values [1 2 3 4 5]
+                :left-consumed 3
+                :right-consumed 2}
+        decide
+        (fn [input result]
+          (verified/decide
+           {:mode :verified-authoritative
+            :kernel (->FunctionKernel (fn [_ _] result))}
+           :ordered-merge-chunk
+           input
+           #(throw (ex-info "legacy must not run" {}))))]
+    (is (= result (decide input result)))
+    (doseq [invalid-input
+            [(assoc input :unknown true)
+             (assoc input :left [3 1])
+             (assoc input :right [2 2])
+             (assoc input :left [-1 3])]]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (decide invalid-input result))))
+    (doseq [invalid-result
+            [(assoc result :left-consumed 4)
+             (assoc result :right-consumed -1)
+             {:values [1]
+              :left-consumed 1
+              :right-consumed 0}
+             (assoc result :values [1 2 4 5])
+             (assoc result :unknown true)]]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (decide input invalid-result))))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide
+          {:direction :asc :left [] :right [2 4]}
+          {:values [2] :left-consumed 0 :right-consumed 1})))))
+
 (deftest keyset-page-boundary-enforces-one-row-lookahead
   (let [input {:direction :asc
                :size 20
@@ -225,3 +328,58 @@
               (constantly legacy))))
       (is (= :eacl.verification/shadow-kernel-failure
              (:type (first @diagnostics)))))))
+
+(deftest stateful-shadow-comparison-is-redacted-and-never-authoritative
+  (let [diagnostics (atom [])
+        kernel (->FunctionKernel (fn [_ _] nil))
+        legacy {:data [{:type :folder :id 41}]
+                :page-info {:has-next-page? false}}
+        selection
+        {:mode :verified-shadow
+         :kernel kernel
+         :report-divergence #(swap! diagnostics conj %)}]
+    (is (= legacy
+           (verified/compare-shadow!
+            selection
+            :indexed-forward-page
+            legacy
+            (constantly
+             {:data [{:type :folder :id 99}]
+              :page-info {:has-next-page? true}}))))
+    (is (= {:type :eacl.verification/shadow-divergence
+            :operation :indexed-forward-page
+            :changed-fields [:data :page-info]
+            :legacy-variant {}
+            :verified-variant {}}
+           (first @diagnostics)))
+    (is (nil? (:legacy (first @diagnostics))))
+    (is (nil? (:verified (first @diagnostics)))))
+  (testing "generated failure is fail-open and value-free"
+    (let [diagnostics (atom [])
+          legacy true
+          kernel (->FunctionKernel (fn [_ _] nil))]
+      (is (true?
+           (verified/compare-shadow!
+            {:mode :verified-shadow
+             :kernel kernel
+             :report-divergence #(swap! diagnostics conj %)}
+            :indexed-forward-boolean
+            legacy
+            #(throw
+              (ex-info
+               "sensitive authorization value"
+               {:type :generated-failure
+                :secret "must-not-escape"})))))
+      (is (= {:type :eacl.verification/shadow-kernel-failure
+              :operation :indexed-forward-boolean
+              :error-type :generated-failure}
+             (first @diagnostics)))))
+  (testing "non-shadow modes never pay for the duplicate traversal"
+    (let [called? (atom false)]
+      (is (= :legacy
+             (verified/compare-shadow!
+              :legacy-authoritative
+              :indexed-forward-page
+              :legacy
+              #(do (reset! called? true) :generated))))
+      (is (false? @called?)))))

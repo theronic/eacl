@@ -8,12 +8,12 @@ partially rendered pages, or traversal-order-dependent state as reusable
 subproblem answers.
 
 #### Scenario: Recursive traversal stops at a page boundary
-- **WHEN** a recursive page returns before its permission component reaches a least fixed point
-- **THEN** the engine may store query-scoped continuation state but does not publish a shared recursive-component answer
+- **WHEN** a recursive page returns before its anchored reachable worklist is exhausted
+- **THEN** the engine may store query-scoped continuation state but does not publish a shared recursive denotation
 
-#### Scenario: Recursive component completes
-- **WHEN** monotone evaluation reaches a fixed point for a concrete recursive component and anchor
-- **THEN** the complete component denotation may be admitted under its semantic key and proof
+#### Scenario: Anchored recursive denotation completes
+- **WHEN** monotone evaluation exhausts the reachable worklist for a concrete root, direction, anchor, result type, and limit configuration
+- **THEN** the complete deterministic denotation may be admitted under its semantic key and proof
 
 ### Requirement: Semantic keys separate every answer-affecting input
 Every subproblem key SHALL commit to the source, selected graph or validated
@@ -88,18 +88,30 @@ answers.
 - **THEN** the fixed-point evaluator includes the grant and no earlier cycle guard can suppress it
 
 #### Scenario: Cached recursive result is reused in reverse lookup
-- **WHEN** a completed component denotation is reused by a compatible reverse operation
+- **WHEN** a completed reverse anchored denotation is reused by a compatible reverse operation
 - **THEN** rendering preserves the reverse operation's declared ordering, de-duplication, limits, and cursor behavior
 
-### Requirement: Cache resources and concurrent work are bounded
+### Requirement: Retained weight and actual callback execution are bounded
 The client SHALL enforce separate weighted budgets for projection,
-authorization-denotation, continuation, and completed-answer entries. At most
-one computation for an exact semantic key SHALL be admitted concurrently;
-the number of admitted computations across distinct keys SHALL also respect a
-configured global bound. Work rejected by that bound SHALL execute without
-cache admission. Same-key callers MAY join an already-admitted computation;
-failed, cancelled, invalid, or partial computations MUST NOT poison later
-requests.
+authorization-denotation, continuation, and completed-answer entries.
+Incomplete candidates MUST NOT be evicted. Flight ownership MUST be separate
+from evictable cache entries and cache admission: at most one flight for a
+lifecycle-qualified exact semantic key may exist concurrently, including when
+the tier rejects admission.
+
+A coordinator shared across exact and managed stores and across generation
+replacement SHALL bound actual top-level compute callbacks. Saturated distinct
+work MUST wait or reject; it MUST NOT execute as an uncounted uncached
+fallback. A synchronous nested subproblem on the same host execution context
+MAY reuse that context's permit to avoid self-deadlock. Failed, cancelled,
+invalid, or partial computations MUST remove their own flight/candidate and
+MUST NOT poison later requests.
+
+Represented admission weight, represented candidates, registered flights,
+waiting callers, and executing callbacks SHALL be reported as distinct
+measures. Logical admission weight MUST NOT be described as JVM bytes or a
+whole-process heap, CPU-time, backend-operation, or wall-time bound without a
+separate checked production-refinement contract.
 
 #### Scenario: Entry exceeds its tier budget
 - **WHEN** a completed subproblem is larger than the configured maximum entry weight
@@ -109,9 +121,54 @@ requests.
 - **WHEN** multiple requests miss the same exact subproblem concurrently
 - **THEN** they observe one successfully computed immutable value or independently recompute after failure, and all returned values equal cache-free evaluation
 
-#### Scenario: Distinct in-flight work reaches the global bound
-- **WHEN** the configured number of distinct subproblem computations is already admitted
-- **THEN** a miss for another distinct key computes without cache admission while an identical-key caller may still join its admitted computation
+#### Scenario: Admission rejects an identical flight
+- **WHEN** a tier cannot represent a new candidate but an identical
+  lifecycle-qualified semantic-key computation is already registered
+- **THEN** the caller joins that flight instead of starting an unadmitted
+  duplicate
+
+#### Scenario: Generated lookup governs an unrepresented flight
+- **WHEN** a lifecycle-qualified flight is registered but admission did not
+  place its candidate in the tier entry map
+- **THEN** lifecycle capture, recursive-self detection, represented-entry
+  lookup, and registered-flight lookup occur at one linearization point
+- **AND** the generated lookup input reports `computing` and its
+  `join-computation` action is applied before any host storage mutation
+
+#### Scenario: Generated action contradicts validated state
+- **WHEN** the generated boundary returns a lookup, admission, or publication
+  action inconsistent with the complete validated transition input
+- **THEN** the boundary fails closed before the prohibited cache-state mutation
+
+#### Scenario: Flight completes while lifecycle selection is blocked
+- **WHEN** a computation finishes while another operation holds the
+  lifecycle-selection lock
+- **THEN** ticket-qualified flight removal waits for that lock and cannot
+  interleave outside the serial order used by selection and lifecycle
+  replacement
+- **AND** a 64-fold increase in represented entries does not make miss
+  finalization cost grow linearly
+
+#### Scenario: Actual callback execution reaches the global bound
+- **WHEN** the configured number of top-level compute callbacks is already
+  executing across any exact or managed store generation
+- **THEN** a miss for another distinct key waits or rejects without executing,
+  while an identical-key caller may still join its registered flight
+
+#### Scenario: A child execution context inherits recursive-self bindings
+- **WHEN** a child future or thread inherits a same-key resolving marker from
+  a parent callback but is not the execution context that owns the parent's
+  permit
+- **THEN** recursive self-bypass acquires its own coordinator permit before
+  invoking the child callback
+- **AND** only same-context synchronous recursion may reuse the parent's permit
+
+#### Scenario: Generation expires during a computation
+- **WHEN** an old-lifecycle callback is still executing and the same tier/key
+  is requested in a new lifecycle
+- **THEN** the two lifecycle-qualified flights may coexist, their combined
+  executing callback count remains bounded, and the old result cannot publish
+  into the new lifecycle
 
 ### Requirement: Cache bypass is a complete executable oracle
 For every public authorization operation, `:cache? false` SHALL bypass
@@ -150,13 +207,98 @@ percent.
 The repository SHALL prove subproblem-cache refinement, recursive fixed-point
 completion, key separation, projection concatenation, lifecycle safety,
 bounded proof cost, and resource bounds. Every authorization-affecting public
-CLJ and CLJS path SHALL route through generated decisions refining those
-semantics, with strict conversions and explicit adapter assumptions.
+CLJ and CLJS path SHALL either route through generated decisions refining
+those semantics or use a source-digested specialization whose complete
+abstract decision partition is proved equivalent to the generated semantics.
+Specializations require strict input contracts, cross-runtime differential
+replay against the executable generated oracle, mutation control, and an
+independent source-refinement review. Explicit adapter assumptions remain
+mandatory.
 
 #### Scenario: Public path lacks a generated refinement mapping
 - **WHEN** any public authorization operation can return a decision, page, count, cursor, cache result, or typed error through an unmapped implementation path
 - **THEN** `:complete-public-engine` remains incomplete and the release is not described as end-to-end formally verified
 
+#### Scenario: Generated hot path fails its resource gate
+- **WHEN** executing a generated collection primitive on every logical item materially regresses wall time, allocation, or throughput
+- **THEN** that runtime routing is rejected rather than weakening the gate
+- **AND** an optimized host specialization remains unverified until its complete abstract cases, source digest, differential oracle, mutation controls, and independent refinement review are recorded
+
+#### Scenario: Ordered-merge boundary value equals a runtime extremum
+- **WHEN** the first legitimate EID in an ascending or descending stream equals
+  a runtime boundary integer
+- **THEN** the specialization represents “no previous value” separately from
+  every EID and emits that boundary value exactly once
+- **AND** the mapped source surface includes the private pairwise and balanced
+  fold helpers actually selected by the public wrapper
+
+#### Scenario: Generic ordered-merge key equals the absence representation
+- **WHEN** a host key function legitimately returns `nil` for the first item
+- **THEN** the specialization distinguishes that key from “no previous key”
+  and emits the nil-keyed equivalence class exactly once
+- **AND** the assurance record states that the Dafny integer domain proves the
+  optional-state shape for EIDs rather than arbitrary host comparator
+  semantics
+
 #### Scenario: Complete conditional verification
 - **WHEN** all theorem, conversion, authoritative-routing, adapter-certification, temporal, mutation, differential, cross-runtime, performance, digest, and independent-review gates pass
 - **THEN** the manifest may report the public engine as conditionally formally verified while enumerating its compiler, runtime, database, cryptographic, and adapter assumptions
+
+### Requirement: Generated indexed traversal owns authorization state
+The authoritative generated engine SHALL execute as a command/response state
+machine over a compiled data-valued schema plan. It SHALL own traversal queues,
+scan continuations, de-duplication sets, recursive goals and consumers,
+emission order and ordinals, page/count state, limit decisions, and typed
+failures. Host code MUST NOT duplicate an authorization-affecting transition.
+
+The backend adapter MAY provide only bounded ordered scan responses from the
+selected immutable snapshot. Every response SHALL identify its
+traversal-unique request scope and traversal-local request ID, contain strictly
+ordered unique values after the pending command's requested exclusive bound,
+report terminal and fetched-value information, and satisfy the configured
+chunk limit. Generated resume logic MUST reject any response that violates
+this contract. The request-scope allocator MUST be unique among live
+traversals and fail closed before safe-integer exhaustion. Snapshot selection,
+immutability, and scan completeness remain explicit trusted adapter
+obligations because data echoed by that same adapter cannot prove which
+database it actually scanned.
+
+#### Scenario: Traversal needs another relationship chunk
+- **WHEN** generated state reaches an empty stream buffer whose projection is
+  not terminal
+- **THEN** it emits a `NeedScan` command and cannot derive or emit another
+  result from that stream until a matching valid response is resumed
+
+#### Scenario: Backend response belongs to another command
+- **WHEN** a scan response has a different traversal request scope or local request ID, or its values violate the pending projection's bound, direction variant, or chunk contract
+- **THEN** generated resume logic returns a typed adapter-contract failure and
+  publishes no authorization result
+
+#### Scenario: Materializing reference oracle agrees
+- **WHEN** the finite whole graph fits both strict reference and indexed
+  boundaries
+- **THEN** the generated indexed result agrees with the materializing
+  least-fixed-point oracle, while only dimensionally identical counters are
+  compared
+
+### Requirement: Engine resource measures are dimensionally separate
+The engine SHALL separately count backend commands, adapter-fetched values,
+engine-consumed values, cumulative enqueued work, current and maximum queue
+depth, unique derived grants, emitted results, and logical retained-state
+weight. Each configured bound and theorem SHALL name exactly one measure and
+unit.
+
+Logical weights or cardinalities MUST NOT be described as JVM bytes, live
+heap, CPU time, wall time, or general backend cost without an explicit checked
+refinement contract for that measure.
+
+#### Scenario: Queue depth remains small during a long traversal
+- **WHEN** a traversal repeatedly consumes and replaces one work item
+- **THEN** maximum queue depth may remain constant while cumulative enqueued
+  work increases, and neither counter is substituted for the other
+
+#### Scenario: Adapter performs lookahead
+- **WHEN** a backend fetches one sentinel value to determine whether a chunk is
+  terminal
+- **THEN** fetched values include the sentinel while consumed values include
+  only values actually advanced by the generated engine

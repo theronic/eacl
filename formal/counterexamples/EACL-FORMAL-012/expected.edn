@@ -1,0 +1,6 @@
+{:status :rejected
+ :reason :mismatched-request-scope
+ :invariant
+ "An indexed response is accepted only for the pending command whose traversal-unique request scope and local request ID it echoes."
+ :trusted-adapter-obligation
+ "The adapter executes the command synchronously against the selected immutable database value and returns a complete scan. A host-echoed snapshot token would not prove that provenance."}

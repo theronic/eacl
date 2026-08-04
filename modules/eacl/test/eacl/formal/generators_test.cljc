@@ -50,8 +50,26 @@
          [:read :cache-put :cache-read :unrelated-write
           :graph-write :schema-write :clone :reset :restore :branch
           :force-head :retention-expire :cursor-mint :cursor-replay
-          :exact-unavailable :proof-provider-failure
-          :cache-tamper :cursor-tamper]))))
+          :exact-read :history-read :exact-unavailable
+          :cache-disabled-read :cache-expire :traversal-limit
+          :proof-provider-failure :compute-failure
+          :concurrent-identical-reads :concurrent-read-write
+          :cache-tamper :cursor-tamper]))
+    (is (= #{:asc :desc}
+           (into
+            #{}
+            (keep
+             #(when (= :cursor-replay (:operation %))
+                (get-in % [:arguments :direction])))
+            trace)))
+    (is (= #{:read-first :write-first :overlap}
+           (set
+            (get-in
+             (first
+              (filter
+               #(= :concurrent-read-write (:operation %))
+               trace))
+             [:arguments :schedules]))))))
 
 (deftest coherence-preserving-shrinker-test
   (let [fixture (generators/coherent-schema 91)

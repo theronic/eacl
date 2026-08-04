@@ -1,0 +1,17 @@
+{:lifecycle :current
+ :tier :projection
+ :key :same
+ :schedule
+ [:start-flight
+  :selection-acquires-store-lock
+  :compute-callback-returns
+  :flight-finalizer-attempts-removal
+  :selection-observes-flight
+  :selection-releases-store-lock
+  :flight-finalizer-removes-flight]
+ :before-fix
+ {:flight-removal-lock :none
+  :removal-may-overlap-selection true}
+ :after-fix
+ {:flight-removal-lock :store
+  :removal-may-overlap-selection false}}

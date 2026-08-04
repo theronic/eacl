@@ -842,7 +842,10 @@
         (shared-cache/record-current-bypass!
          (:current-cache-store opts))
         (assoc consistency-context
-               :result (portable-result kind (compute))
+               :result
+               (binding [subproblem/*engine-selection*
+                         (:engine-selection opts)]
+                 (portable-result kind (compute)))
                :cached? false
                :cache-tier nil
                :cache-basis basis-t))
@@ -858,6 +861,7 @@
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
+              :engine-selection (:engine-selection opts)
               :managed-descriptor-key-fn
               (when (:managed-cache-enabled? opts)
                 #(vec (sort (distinct (relation-ids)))))
@@ -867,7 +871,12 @@
                   db (relation-ids)))
               :managed-subproblem-key-fn
               (when (:managed-cache-enabled? opts)
-                #(managed-cache-descriptor db [%]))
+                (fn [dependency]
+                  (managed-cache-descriptor
+                   db
+                   (if (vector? dependency)
+                     dependency
+                     [dependency]))))
               :managed-subproblem-scope
               (backend/invoke adapter :source-scope)}
              {:operation op
@@ -1587,7 +1596,9 @@
         schema-cache
         (delay (selected-schema-cache! opts adapter db))
         evaluate
-        #(binding [impl.indexed/*schema-cache* @schema-cache]
+        #(binding [impl.indexed/*schema-cache* @schema-cache
+                   subproblem/*engine-selection*
+                   (:engine-selection opts)]
            (portable-result kind (compute)))
         cacheable?
         (and (:current-cache-store opts)
@@ -1614,6 +1625,7 @@
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
+              :engine-selection (:engine-selection opts)
               :managed-descriptor-key-fn
               (when (:managed-cache-enabled? opts)
                 #(vec
@@ -1626,7 +1638,12 @@
                   db (:relationship-dependencies @dependencies)))
               :managed-subproblem-key-fn
               (when (:managed-cache-enabled? opts)
-                #(managed-cache-descriptor db [%]))
+                (fn [dependency]
+                  (managed-cache-descriptor
+                   db
+                   (if (vector? dependency)
+                     dependency
+                     [dependency]))))
               :managed-subproblem-scope
               (backend/invoke adapter :source-scope)}
              {:operation op
@@ -2229,7 +2246,8 @@
     :max-entries
     :kind-max-weight
     :two-hit-kinds
-    :admission-entries})
+    :admission-entries
+    :subproblem-cache})
 
 (defn- cache-adapter?
   "Whether `x` is a cache adapter rather than a config map.
@@ -2386,6 +2404,8 @@
        (or (:max-entries config) 1024)
        :native-admit-on-repeat?
        (= :on-repeat remember)
+       :native-subproblem-cache
+       (or (:subproblem-cache config) {})
        :remember-answers? (and remember-answers? (some? store))})))
 
 (defn make-client
@@ -2428,6 +2448,10 @@
       :max-weight, :max-entry-weight, :max-entries, :ttl-ms  capacity bounds
       :namespace         isolates entries between clients sharing an adapter
       :kind-max-weight, :two-hit-kinds, :admission-entries   per-kind tuning
+      :subproblem-cache   shared projection/denotation cache limits, including
+                          :enabled?, :projection-max-weight,
+                          :denotation-max-weight, :max-inflight, and
+                          :managed-proof-max-atoms
       :checkpoints       bounded revision checkpoints
       :remember-answers  false | true (default) | :on-repeat — whether a
                          finished answer is kept so an identical later check
@@ -2714,10 +2738,12 @@
                                    (:remember-answers? cache-config)
                                    adapter-deterministic?)
                               (shared-cache/current-cache
-                               {:max-entries
+                              {:max-entries
                                 (:native-max-entries cache-config)
                                 :admit-on-repeat?
-                                (:native-admit-on-repeat? cache-config)}))
+                                (:native-admit-on-repeat? cache-config)
+                                :subproblem-cache
+                                (:native-subproblem-cache cache-config)}))
                             :opaque-cache-token (Object.)
                             :cache-remember-answers? (:remember-answers? cache-config)
                             :managed-cache-enabled?

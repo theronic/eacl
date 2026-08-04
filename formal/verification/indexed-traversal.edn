@@ -1,0 +1,219 @@
+{:schema-version 1
+ :status :generated-recursive-authoritative-mode-routed-not-release-authoritative
+ :sources
+ ["formal/dafny/IndexedTraversal.dfy"
+  "formal/dafny/IndexedRefinement.dfy"
+  "formal/dafny/IndexedForwardCompleteness.dfy"
+  "formal/dafny/IndexedReverseCompleteness.dfy"
+  "formal/dafny/IndexedRendering.dfy"
+  "formal/dafny/IndexedCertification.dfy"]
+ :verified-obligations
+ {:indexed-transition-state-machine 504
+  :indexed-semantic-soundness-refinement 1783
+  :forward-least-fixed-point-completeness 1299
+  :reverse-least-fixed-point-completeness 4975
+  :traversal-order-rendering-and-ordered-nonimplication-witness 29
+  :source-plan-and-seed-certification 48
+  :total 8638}
+ :generated-targets [:java :javascript]
+ :production-authoritative false
+ :production-routing
+ {:scan-response-validation
+  {:status :verified-authoritative-mode-routed
+   :operation :indexed-scan-response
+   :rejects
+   [:invalid-command
+    :mismatched-request-scope
+    :mismatched-request
+    :oversized-chunk
+    :invalid-fetched-count
+    :non-progressing-response
+    :invalid-eid
+    :out-of-order
+    :bound-violation]}
+  :queue-and-grant-transitions
+  {:status :verified-authoritative-mode-routed
+   :permission-roots [:recursive-scc-dependent]
+   :state :opaque-generated-runtime-owned
+   :schema-indexes :compiled-once-per-schema-proof-and-root}
+  :rendering
+  {:status :verified-authoritative-mode-routed
+   :permission-roots [:recursive-scc-dependent]
+   :operations
+   [:can?
+    :lookup-resources
+    :lookup-subjects
+    :count-resources
+    :count-subjects]}
+  :source-plan-and-seed-certification
+  {:status :verified-modes-routed-at-schema-plan-compilation
+   :operations
+   [:indexed-plan-certification
+    :indexed-seed-certification]
+   :source
+   :raw-permission-and-relation-definitions-independent-of-path-compiler
+   :lifecycle :schema-proof-and-root-cached}}
+ :verified-transition-surface
+ [:data-valued-forward-continuations
+  :data-valued-reverse-continuations
+  :fifo-forward-work
+  :fifo-reverse-work
+  :reverse-consumer-registration
+  :pending-request-identity
+  :pending-traversal-scope-and-local-request-identity
+  :ordered-chunk-response-validation
+  :forward-scan-issue-and-resume
+  :reverse-scan-issue-and-resume
+  :forward-grant-deduplication
+  :reverse-goal-and-grant-deduplication
+  :forward-and-reverse-emission-ordinals
+  :forward-and-reverse-render-state
+  :forward-and-backward-pages
+  :bounded-and-unbounded-counts
+  :boolean-early-completion
+  :typed-traversal-limits
+  :forward-and-reverse-initialization
+  :fuel-bounded-forward-and-reverse-drivers]
+ :semantic-refinement
+ {:status :soundness-and-completeness-proved-under-explicit-assumptions
+  :assumptions
+  [:exact-object-eid-catalog
+   :exact-relation-eid-catalog
+   :exact-compiled-rule-expansion
+   :permission-closed-indexed-rules
+   :immutable-ordered-complete-projection-adapter]
+  :proved
+  [:direct-rule-soundness
+   :self-permission-soundness
+   :arrow-relation-soundness
+   :arrow-permission-soundness
+   :forward-initialization-soundness
+   :forward-step-soundness
+   :forward-exact-response-resume-soundness
+   :reverse-initialization-soundness
+   :reverse-goal-consumer-and-grant-soundness
+   :reverse-step-soundness
+   :reverse-exact-response-resume-soundness
+   :forward-operational-coverage
+   :reverse-bidirectional-join-coverage
+   :certified-forward-scan-resumption-coverage
+   :certified-reverse-scan-resumption-coverage
+   :forward-exhaustion-is-least-fixed-point-complete
+   :reverse-exhaustion-is-least-fixed-point-complete
+   :identical-complete-denotations-render-identically
+   :render-prefix-independent-of-adapter-chunk-boundary
+   :completed-render-read-determinism
+   :canonical-source-plan-compilation-refines-normalized-rules
+   :certified-compiled-rules-imply-exact-compiled-rules
+   :certified-seed-bucket-implies-exact-forward-seed-bucket
+   :compiled-forward-index-initialization-equals-uncompiled-spec
+   :compiled-reverse-index-initialization-equals-uncompiled-spec]
+  :not-yet-proved
+  [:production-backend-adapter-certification]}
+ :resource-measures
+ {:backend-commands :unbounded-trace-counter
+  :adapter-fetched-values :unbounded-trace-counter
+  :engine-consumed-values :unbounded-trace-counter
+  :cumulative-enqueues :unbounded-trace-counter
+  :current-queue-depth :configured-bound-proved
+  :maximum-queue-depth :configured-bound-proved
+  :unique-grants :configured-bound-proved
+  :emitted-results :bounded-by-unique-grants
+  :rule-applications :exact-logical-transition-counter
+  :consumer-grant-joins :exact-logical-transition-counter
+  :render-advances :exact-logical-transition-counter
+  :forward-retained-logical-units :structural-measure-not-heap-bytes
+  :reverse-retained-logical-units :structural-measure-not-heap-bytes
+  :source-plan-certification
+  :once-per-schema-proof-root-plan-and-cached
+  :seed-certification
+  :once-per-present-or-eligible-subject-type-per-compiled-plan
+  :certification-comparison-bound
+  :quadratic-when-subject-type-count-does-not-exceed-rule-count
+  :generated-rule-index-construction
+  :once-per-schema-proof-root-plan-not-per-query
+  :portable-state-conversion-per-transition
+  :zero-opaque-state-is-retained-by-generated-runtime
+  :jvm-or-javascript-heap :unknown
+  :cpu-time :benchmark-only
+  :wall-time :benchmark-only
+  :verifier-cpu-time :separate-build-pipeline-measure
+  :verifier-wall-time :separate-build-pipeline-measure}
+ :external-falsification
+ {:project "theronic/lore"
+  :revision "dabb5634b0d44e196e2b6ec63003917b3d445bec"
+  :lesson
+  :cache-weight-flight-ownership-actual-callbacks-waiters-and-host-resources-are-distinct}
+ :evidence
+ {:dafny
+  {:commands
+   ["dafny verify formal/dafny/IndexedTraversal.dfy --verification-time-limit:60"
+    "dafny verify formal/dafny/IndexedRefinement.dfy --verification-time-limit:60"
+    "dafny verify formal/dafny/IndexedForwardCompleteness.dfy --verification-time-limit:60"
+    "dafny verify formal/dafny/IndexedReverseCompleteness.dfy --verification-time-limit:60"
+    "dafny verify formal/dafny/IndexedRendering.dfy --verification-time-limit:60"
+    "dafny verify formal/dafny/IndexedCertification.dfy --verification-time-limit:60"]
+   :status :passed
+   :measurements
+   {:indexed-transition-state-machine
+    {:obligations 504}
+    :indexed-semantic-soundness-refinement
+    {:obligations 1783}
+    :forward-least-fixed-point-completeness
+    {:obligations 1299}
+    :reverse-least-fixed-point-completeness
+    {:obligations 4975}
+    :traversal-order-rendering-and-ordered-nonimplication-witness
+    {:obligations 29}
+    :source-plan-and-seed-certification
+    {:obligations 48}}
+   :aggregate
+   {:obligations 8638
+    :timing-recheck :pending}
+   :qualification
+   :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
+  :generated-java
+  {:namespace eacl.formal.production-kernel-test
+   :tests 17
+   :assertions 390
+   :qualification :namespace-includes-non-indexed-production-decisions
+   :status :passed}
+  :generated-javascript
+  {:runner "formal/smoke/cljs/run"
+   :suite-tests 24
+   :suite-assertions 836
+   :datascript-public-recursive-cache-mode-differential true
+   :status :passed}
+  :production-recursive-contract
+  {:namespaces
+   [eacl.backend.v8-test
+    eacl.datascript.contract-test]
+   :tests 23
+   :assertions 2812
+   :status :passed}
+  :public-state-trace
+  {:namespace eacl.formal.state-trace-differential-test
+   :backends [:datomic :datahike :datascript]
+   :indexed-rule-variants
+   [:relation :self-permission :arrow-relation :arrow-permission]
+   :cache-bypass-generated-routing true
+   :acyclic-ordering-counterexample-retained true
+   :recursive-shadow-result-comparison true
+   :dimensionally-matched-resource-counter-comparison true
+   :logical-retained-state-comparison true
+   :typed-limit-error-comparison true
+   :tests 3
+   :assertions 137
+   :status :passed}
+  :heavy-pagination
+  {:namespace eacl.bench.pagination-test
+   :tests 9
+   :assertions 3403
+   :status :passed}}
+ :remaining
+ [:production-ordered-adapter-certification
+  :acyclic-generated-ordered-merge-refinement
+  :verified-shadow-complete-public-error-provenance-and-graph-comparison
+  :verification-wall-time-budget
+  :cross-backend-authoritative-differential
+  :independent-review]}

@@ -19,9 +19,14 @@
    :compare-and-set-race-preserves-chosen-value]}
  :current-generation-proof
  {:source "formal/dafny/CurrentCache.dfy"
-  :verified-obligations 24
+  :verified-obligations 28
   :claims
-  [:exact-and-arbitrary-db-bypass
+  [:cache-eligibility-does-not-select-engine-authority
+   :generated-current-cache-stage-selection
+   :current-cache-hit-requires-available-entry
+   :current-cache-bypass-requires-ineligible-or-inactive-generation
+   :current-cache-computation-requires-managed-miss
+   :exact-and-arbitrary-db-bypass
    :exact-current-hit-is-same-selected-snapshot
    :late-publication-is-unreachable-after-lifecycle-expiry
    :forward-relevant-write-raises-scalar-dependency-stamp
@@ -60,7 +65,7 @@
   {:namespace eacl.cache-test
    :status :passed}
   :claim
-  :decoded-entry-cannot-be-returned-after-generated-rejection}
+  :cache-and-current-generation-selection-cannot-return-a-hit-after-generated-rejection}
  :formal-spec-findings
  [{:id :EACL-FORMAL-SPEC-001
    :classification :specification-bug
@@ -80,6 +85,6 @@
   :adapters [:datomic :datascript :datahike]
   :cache-modes [:enabled :disabled]
   :tests 1
-  :assertions 39
+  :assertions 105
   :status :passed}
  :remaining []}

@@ -2,6 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
             [eacl.authorization-oracle :as oracle]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.test-support.repo :as repo]))
 
 (def ^:private fixture-path
@@ -81,7 +82,13 @@
   (let [{:keys [formal-pipeline
                 generated-artifacts
                 legacy-runtime
+                generated-indexed-authority
+                ordered-merge-source-specialization
+                layered-subproblem-cache
+                cross-backend-managed-proof
                 memory-and-token
+                release-performance-evaluation
+                final-heavy-run
                 shadow-rollout]}
         (edn/read-string (slurp performance-gates-path))]
     (is (< (:baseline-wall-seconds formal-pipeline)
@@ -116,4 +123,127 @@
     (is (every? #(<= 0.0 (:sample-rate %) 1.0)
                 (:stages shadow-rollout)))
     (is (every? #(pos-int? (:minimum-compared-operations %))
-                (:stages shadow-rollout)))))
+                (:stages shadow-rollout)))
+
+    (testing "each Lore resource dimension is evaluated independently"
+      (let [dimensions (:dimensions release-performance-evaluation)
+            required (:required-dimensions release-performance-evaluation)
+            failed
+            (filterv
+             #(not= :passed (get-in dimensions [% :status]))
+             required)]
+        (is (= required (vec (distinct required))))
+        (is (= [:retained-live-heap] failed))
+        (is (true?
+             (get-in dimensions
+                     [:retained-live-heap :release-blocking])))
+        (is (false?
+             (:all-required-passed? release-performance-evaluation)))
+        (is (= :refused
+               (:release-cutover release-performance-evaluation)))))
+
+    (testing "configured logical weight is checked without calling it heap"
+      (let [store (subproblem/store)
+            expected
+            (:default-subproblem-cache memory-and-token)]
+        (is (= {:projection (:projection-max-weight expected)
+                :denotation (:denotation-max-weight expected)}
+               (:budgets store)))
+        (is (= (:max-inflight expected)
+               (:max-inflight store)))
+        (is (= (:managed-proof-max-atoms expected)
+               (:managed-proof-max-atoms store)))
+        (is (= :passed
+               (get-in release-performance-evaluation
+                       [:dimensions :entry-weight :status])))))
+
+    (testing "proof-operation thresholds are evaluated from like dimensions"
+      (let [maximum
+            (get-in cross-backend-managed-proof
+                    [:required :maximum-large-to-small-p50-ratio])]
+        (is (true?
+             (get-in cross-backend-managed-proof
+                     [:required :unchanged-target-proof])))
+        (doseq [[_ {:keys [p50-ratio]}]
+                (:observed cross-backend-managed-proof)]
+          (is (<= p50-ratio maximum)))
+        (is (= :passed
+               (get-in release-performance-evaluation
+                       [:dimensions :proof-operations :status])))))
+
+    (testing "throughput and latency gates use measured wall-time evidence"
+      (let [page-median
+            (get-in final-heavy-run
+                    [:multipath-page :max-page-median-ms])
+            pages-per-second (/ 1000.0 page-median)
+            minimum-throughput
+            (get-in legacy-runtime
+                    [:multipath-page
+                     :minimum-threshold-throughput-pages-per-second])]
+        (is (<= page-median
+                (get-in legacy-runtime
+                        [:multipath-page
+                         :max-page-median-max-ms])))
+        (is (>= pages-per-second minimum-throughput))
+        (is (true?
+             (get-in final-heavy-run
+                     [:recursive-4000 :thresholds-met])))
+        (is (= :passed
+               (get-in release-performance-evaluation
+                       [:dimensions :throughput :status])))))
+
+    (testing "shared-subgraph gates are recomputed rather than trusted"
+      (let [required (:required layered-subproblem-cache)
+            observed
+            (get-in layered-subproblem-cache
+                    [:observed :current-rerun])]
+        (is (<= (/ (:layered-backend-operations observed)
+                   (:baseline-backend-operations observed))
+                (:maximum-backend-work-ratio required)))
+        (is (<= (:p50-latency-ratio observed)
+                (:maximum-p50-latency-ratio required)))
+        (is (<= (:new-generation-proof-reads observed)
+                (:maximum-new-generation-proof-reads required)))
+        (is (<= (:hot-hit-regression-ratio observed)
+                (:maximum-hot-hit-regression-ratio required)))
+        (is (<= (:cache-disabled-regression-ratio observed)
+                (:maximum-cache-disabled-regression-ratio required)))))
+
+    (testing "verification-time and generated-byte gates fail closed"
+      (is (true? (:timeout-is-failure formal-pipeline)))
+      (is (<= (:baseline-wall-seconds formal-pipeline)
+              (:pull-request-max-seconds formal-pipeline)))
+      (doseq [[_ {:keys [baseline-bytes foundation-max-bytes]}]
+              (dissoc generated-artifacts :cutover-rule)]
+        (is (<= baseline-bytes foundation-max-bytes)))
+      (is (= :passed
+             (get-in release-performance-evaluation
+                     [:dimensions :verification-time :status])))
+      (is (= :passed
+             (get-in release-performance-evaluation
+                     [:dimensions :generated-artifact-size :status]))))
+
+    (testing "noise rules require independent trials and robust summaries"
+      (let [indexed
+            (get-in generated-indexed-authority
+                    [:traversal-scope-binding-recheck])
+            merge-gates
+            (map
+             ordered-merge-source-specialization
+             [:page-prefix-gate
+              :complete-consumption-gate])]
+        (is (= 5 (count (:trials indexed))))
+        (is (= :passed (get-in indexed [:summary :status])))
+        (doseq [gate merge-gates]
+          (is (= 5 (get-in gate [:fixture :independent-trials])))
+          (is (= :passed (:status gate)))
+          (is (<= (:median-p95-ratio gate)
+                  (get-in gate
+                          [:required
+                           :maximum-median-p95-ratio]))))
+        (is (= 5
+               (get-in layered-subproblem-cache
+                       [:observed :repeated-runs])))
+        (is (= :passed
+               (get-in release-performance-evaluation
+                       [:dimensions :benchmark-noise :status])))))))

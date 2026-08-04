@@ -11,6 +11,93 @@ module CurrentCache {
     | ExactSnapshot
     | ArbitraryDatabaseValue
 
+  datatype EngineAuthority =
+    | LegacyAuthority
+    | VerifiedShadow
+    | VerifiedAuthority
+
+  function EvaluationAuthority(
+    configured: EngineAuthority,
+    requestClass: RequestClass,
+    completedAnswerCacheEnabled: bool
+  ): EngineAuthority
+  {
+    configured
+  }
+
+  lemma CacheEligibilityDoesNotSelectEngineAuthority(
+    configured: EngineAuthority,
+    requestClass: RequestClass,
+    completedAnswerCacheEnabled: bool
+  )
+    ensures
+      EvaluationAuthority(
+        configured,
+        requestClass,
+        completedAnswerCacheEnabled
+      ) == configured
+  {
+  }
+
+  datatype CurrentCacheStage =
+    | EligibilityStage
+    | GenerationStage
+    | ExactEntryStage
+    | ManagedEntryStage
+
+  datatype CurrentCacheAction =
+    | BypassCurrentCache
+    | ProbeExactEntry
+    | UseExactEntry
+    | ProbeManagedEntry
+    | UseManagedEntry
+    | ComputeCurrentValue
+
+  function DecideCurrentCache(
+    stage: CurrentCacheStage,
+    available: bool
+  ): CurrentCacheAction {
+    match stage
+    case EligibilityStage =>
+      if available then ProbeExactEntry else BypassCurrentCache
+    case GenerationStage =>
+      if available then ProbeExactEntry else BypassCurrentCache
+    case ExactEntryStage =>
+      if available then UseExactEntry else ProbeManagedEntry
+    case ManagedEntryStage =>
+      if available then UseManagedEntry else ComputeCurrentValue
+  }
+
+  lemma CurrentCacheHitRequiresAvailableEntry(
+    stage: CurrentCacheStage,
+    available: bool
+  )
+    ensures DecideCurrentCache(stage, available).UseExactEntry? ==>
+              stage.ExactEntryStage? && available
+    ensures DecideCurrentCache(stage, available).UseManagedEntry? ==>
+              stage.ManagedEntryStage? && available
+  {
+  }
+
+  lemma CurrentCacheBypassRequiresIneligibleOrInactive(
+    stage: CurrentCacheStage,
+    available: bool
+  )
+    ensures DecideCurrentCache(stage, available).BypassCurrentCache? ==>
+              !available &&
+              (stage.EligibilityStage? || stage.GenerationStage?)
+  {
+  }
+
+  lemma CurrentCacheComputationRequiresManagedMiss(
+    stage: CurrentCacheStage,
+    available: bool
+  )
+    ensures DecideCurrentCache(stage, available).ComputeCurrentValue? ==>
+              stage.ManagedEntryStage? && !available
+  {
+  }
+
   datatype CurrentCacheDecision<T> =
     | CurrentMiss
     | ExactCurrentHit(value: T)

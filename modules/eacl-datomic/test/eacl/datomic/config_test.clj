@@ -61,3 +61,41 @@
                      (ex-data e)))]
         (is (= :eacl/invalid-config (:type data)) (pr-str value))
         (is (= :page-token-ttl-seconds (:key data)) (pr-str value))))))
+
+(deftest shared-subproblem-cache-config-is-forwarded-and-validated-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [subproblem-config
+          {:enabled? false
+           :projection-max-weight 17
+           :denotation-max-weight 19
+           :max-inflight 2
+           :managed-proof-max-atoms 3}
+          client
+          (eacl.datomic.core/make-client
+           conn
+           {:cache
+            {:remember-answers true
+             :subproblem-cache subproblem-config}})
+          current-store
+          (get-in client [:opts :current-cache-store])]
+      (is (= subproblem-config
+             (:subproblem-options current-store)))
+      (is (= 2
+             (get-in
+              (eacl.cache/current-cache-stats current-store)
+              [:max-subproblem-computations]))))
+    (doseq [subproblem-config
+            [{:enabled? :yes}
+             {:projection-max-weight 0}
+             {:denotation-max-weight 0}
+             {:max-inflight 0}
+             {:managed-proof-max-atoms 0}]]
+      (is (= :eacl/invalid-config
+             (try
+               (eacl.datomic.core/make-client
+                conn
+                {:cache {:subproblem-cache subproblem-config}})
+               nil
+               (catch clojure.lang.ExceptionInfo error
+                 (:type (ex-data error)))))
+          (pr-str subproblem-config)))))

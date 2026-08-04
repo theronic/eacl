@@ -1,0 +1,57 @@
+{:schema-version 1
+ :status :source-refinement-review-pending
+ :specializations
+ [{:id :ordered-eid-fold-merge
+   :production
+   {:source "modules/eacl/src/eacl/lazy_merge_sort.cljc"
+    :symbols
+    [eacl.lazy-merge-sort/lazy-merge2-dedupe-longs
+     eacl.lazy-merge-sort/fold2-merge-dedupe-longs
+     eacl.lazy-merge-sort/lazy-merge2-dedupe-longs-desc
+     eacl.lazy-merge-sort/fold2-merge-dedupe-longs-desc
+     eacl.lazy-merge-sort/lazy-merge2-dedupe-by
+     eacl.lazy-merge-sort/fold2-merge-dedupe-generic
+     eacl.lazy-merge-sort/lazy-fold2-merge-dedupe-sorted-by
+     eacl.lazy-merge-sort/lazy-fold2-merge-dedupe-sorted-by-desc]
+    :caller
+    eacl.engine.v8/merge-eid-seqs
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/OrderedMerge.dfy"
+    :definitions
+    [OrderedMerge.MergeAscending
+     OrderedMerge.MergeDescending
+     OrderedMerge.DecideMergeStepSpec
+     OrderedMerge.MergeAscendingChunkSpec
+     OrderedMerge.MergeDescendingChunkSpec]
+    :lemmas
+    [OrderedMerge.AscendingMergeStepRefinesDefinition
+     OrderedMerge.DescendingMergeStepRefinesDefinition
+     OrderedMerge.AscendingChunkReconstructsMerge
+     OrderedMerge.DescendingChunkReconstructsMerge
+     OrderedMerge.FoldBalancedAscending
+     OrderedMerge.FoldBalancedDescending]}
+   :abstract-domain
+   {:values :safe-natural-eids
+    :inputs :finite-strictly-ordered-streams
+    :directions [:asc :desc]
+    :head-partitions
+    [:left-empty :right-empty :left-less :equal :right-less]}
+   :evidence
+   {:java-generated-oracle-fixtures 300
+    :javascript-generated-oracle-fixtures 150
+    :mutation :ordered-merge-wrong-comparator
+    :counterexample-regressions
+    [:EACL-FORMAL-019 :EACL-FORMAL-020]
+    :uninitialized-last-value-representation :explicit-presence-bit
+    :performance-report
+    "formal/verification/performance-gates.edn"
+    :source-digests-required
+    ["modules/eacl/src/eacl/lazy_merge_sort.cljc"
+     "modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/OrderedMerge.dfy"]}
+   :limitations
+   [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
+    :dafny-integer-values-do-not-model-generic-host-key-domains
+    :host-integer-comparison-and-sequence-semantics-remain-trusted
+    :independent-source-refinement-review-not-recorded]}]}

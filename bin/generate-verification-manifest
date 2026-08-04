@@ -50,52 +50,51 @@
        (sort-by relative-path)))
 
 (def source-files
-  (concat
-   (files-under "formal/dafny" #(str/ends-with? (.getName %) ".dfy"))
-   (files-under "formal/tla"
-                #(or (str/ends-with? (.getName %) ".tla")
-                     (str/ends-with? (.getName %) ".cfg")))
-   (map repo-file
-        ["bin/formal"
-         "bin/generate-verification-manifest"
-         "bin/validate-verification-manifest"
-         "modules/eacl/src/eacl/backend/v8.cljc"
-         "modules/eacl/src/eacl/cache.cljc"
-         "modules/eacl/src/eacl/engine/relationships.cljc"
-         "modules/eacl/src/eacl/engine/v8.cljc"
-         "modules/eacl/src/eacl/relay.cljc"
-         "modules/eacl/src/eacl/secure_format.cljc"
-         "modules/eacl/src/eacl/verified_kernel.cljc"
-         "modules/eacl-datomic/src/eacl/datomic/backend.clj"
-         "modules/eacl-datomic/src/eacl/datomic/core.clj"
-         "modules/eacl-datascript/src/eacl/datascript/backend.cljc"
-         "modules/eacl-datascript/src/eacl/datascript/core.cljc"
-         "modules/eacl-datascript/src/eacl/datascript/db.cljc"
-         "modules/eacl-datascript/src/eacl/datascript/impl.cljc"
-         "modules/eacl-datahike/src/eacl/datahike/backend.clj"
-         "modules/eacl-datahike/src/eacl/datahike/core.clj"
-         "modules/eacl-datahike/src/eacl/datahike/db.clj"
-         "modules/eacl-datahike/src/eacl/datahike/impl.clj"
-         "formal/smoke/clj/eacl/formal/production_kernel.clj"
-         "formal/smoke/cljs/eacl/formal/production_kernel.cljs"
-         "formal/toolchain.lock.json"])))
+  (distinct
+   (concat
+    (files-under "formal/dafny" #(str/ends-with? (.getName %) ".dfy"))
+    (files-under "formal/tla"
+                 #(or (str/ends-with? (.getName %) ".tla")
+                      (str/ends-with? (.getName %) ".cfg")))
+    ;; Lore's external audit demonstrated why a hand-selected source list is
+    ;; not a production-refinement boundary: an omitted callback path can
+    ;; invalidate a resource claim while every named model still verifies.
+    ;; Hash every shipped implementation and regression source across all four
+    ;; modules so neither the claimed code nor its closing evidence can drift.
+    (files-under
+     "modules"
+     #(and (or (str/includes? (relative-path %) "/src/")
+               (str/includes? (relative-path %) "/test/"))
+           (or (str/ends-with? (.getName %) ".clj")
+               (str/ends-with? (.getName %) ".cljc")
+               (str/ends-with? (.getName %) ".cljs"))))
+    (files-under "formal/smoke/clj"
+                 #(str/ends-with? (.getName %) ".clj"))
+    (files-under "formal/smoke/cljs"
+                 #(str/ends-with? (.getName %) ".cljs"))
+    (map repo-file
+         ["bin/formal"
+          "bin/generate-verification-manifest"
+          "bin/validate-verification-manifest"
+          "formal/smoke/clj/eacl/formal/ordered_merge_benchmark.clj"
+          "formal/smoke/cljs/run"
+          "formal/smoke/java/run"
+          "formal/smoke/js/build_browser_bundle.mjs"
+          "formal/smoke/js/generated_loader.cjs"
+          "formal/smoke/js/package-lock.json"
+          "formal/smoke/js/package.json"
+          "formal/smoke/js/round_trip.mjs"
+          "formal/mutations/registry.edn"
+          "formal/toolchain.lock.json"]))))
 
 (def report-paths
-  ["formal/verification/acyclic-kernel.edn"
-   "formal/verification/adapter-certification.edn"
-   "formal/verification/cache-kernel.edn"
-   "formal/verification/campaign-run-2026-08-02.edn"
-   "formal/verification/counterexample-replay.edn"
-   "formal/verification/cross-runtime-parity.edn"
-   "formal/verification/differential-runner.edn"
-   "formal/verification/final-assurance-audit.md"
-   "formal/verification/generated-boundary.edn"
-   "formal/verification/mutation-control.edn"
-   "formal/verification/pagination-kernel.edn"
-   "formal/verification/performance-gates.edn"
-   "formal/verification/recursive-kernel.edn"
-   "docs/reports/2026-08-02-eacl-v8-keyset-relationship-pagination.md"
-   "docs/reports/2026-08-02-eacl-v8-single-db-current-cache-design.md"])
+  (concat
+   (->> (files-under
+         "formal/verification"
+         #(not= "manifest.edn" (.getName %)))
+        (map relative-path))
+   ["docs/reports/2026-08-02-eacl-v8-keyset-relationship-pagination.md"
+    "docs/reports/2026-08-02-eacl-v8-single-db-current-cache-design.md"]))
 
 (defn aggregate-digest
   [files]

@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 26
+  :verified-obligations 27
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected

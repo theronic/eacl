@@ -142,6 +142,47 @@
              (get-in after
                      [:subproblems :recursive-component-hits]))))))
 
+(deftest cold-recursive-point-check-publishes-complete-fixed-point-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:coherence-authority :managed})
+        subject (contract/->user "recursive-user")
+        folder
+        #(eacl/spice-object :folder (str "folder-" %))]
+    (eacl/write-schema! client contract/recursive-schema)
+    (ds/transact!
+     conn
+     (map-indexed
+      (fn [index {:keys [id]}]
+        {:db/id (- (inc index))
+         :eacl/id id})
+      contract/recursive-objects))
+    (eacl/create-relationships! client contract/recursive-relationships)
+    (is (true?
+         (eacl/can?
+          client subject :read
+          (folder (dec contract/recursive-connected-folder-count)))))
+    (eacl/create-relationship!
+     client
+     (contract/->user "denied-user")
+     :auditor
+     (folder 0))
+    (let [before (datascript/cache-stats client)
+          work (atom {})
+          allowed?
+          (binding [engine/*backend-work-stats* work]
+            (eacl/can? client subject :read (folder 1)))
+          after (datascript/cache-stats client)]
+      (is (true? allowed?))
+      (is (empty? @work)
+          "an unrelated revision reuses the proved complete fixed point")
+      (is (< (get-in before
+                     [:subproblems :managed-denotation-hits])
+             (get-in after
+                     [:subproblems :managed-denotation-hits]))))))
+
 (deftest managed-projection-portions-survive-unrelated-forward-writes-test
   (let [conn (datascript/create-conn)
         client

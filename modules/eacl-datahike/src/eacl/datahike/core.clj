@@ -199,7 +199,9 @@
         evaluate
         #(binding [engine/*schema-cache* @schema-cache
                    engine/*recursive-traversal-limits*
-                   (:recursive-traversal-limits opts)]
+                   (:recursive-traversal-limits opts)
+                   subproblem/*engine-selection*
+                   (:engine-selection opts)]
            (compute))
         cacheable?
         (and (:current-cache-store opts)
@@ -231,6 +233,7 @@
           :snapshot-order (:max-tx db)
           :same-snapshot? identical?
           :cache-basis (backend/invoke adapter :snapshot-id)
+          :engine-selection (:engine-selection opts)
           :managed-descriptor-key-fn
           (when (:managed-cache-enabled? opts)
             #(vec (sort (distinct (:relation-ids @dependencies)))))
@@ -240,7 +243,12 @@
               db (:relation-ids @dependencies)))
           :managed-subproblem-key-fn
           (when (:managed-cache-enabled? opts)
-            #(managed-cache-descriptor db [%]))
+            (fn [dependency]
+              (managed-cache-descriptor
+               db
+               (if (vector? dependency)
+                 dependency
+                 [dependency]))))
           :managed-subproblem-scope
           (backend/invoke adapter :source-scope)}
          semantic-key
@@ -482,7 +490,9 @@
              page
              (with-cache-info
                (binding [subproblem/*store*
-                         (:subproblem-store answer)]
+                         (:subproblem-store answer)
+                         subproblem/*engine-selection*
+                         (:engine-selection cursor-opts)]
                  (relay/externalize-page
                   adapter cursor-opts :lookup-resources query
                   (:value answer)))
@@ -565,7 +575,9 @@
              page
              (with-cache-info
                (binding [subproblem/*store*
-                         (:subproblem-store answer)]
+                         (:subproblem-store answer)
+                         subproblem/*engine-selection*
+                         (:engine-selection cursor-opts)]
                  (relay/externalize-page
                   adapter cursor-opts :lookup-subjects query
                   (:value answer)))
