@@ -5,9 +5,10 @@
   executable evidence for an adapter obligation, not a proof of the backend."
   (:require [clojure.set :as set]
             [eacl.backend.v8 :as backend]
-            [eacl.core :as eacl]))
+            [eacl.core :as eacl]
+            [eacl.engine.v8 :as engine]))
 
-(def certification-version "eacl.adapter-certification/v1")
+(def certification-version "eacl.adapter-certification/v2")
 
 (def certification-schema
   "definition user {}
@@ -311,6 +312,35 @@
      :permission-definitions (count actual-permissions)
      :permission-nodes (count nodes)}))
 
+(defn- certify-permission-paths!
+  [adapter relations]
+  (let [reader (get relations [:document :reader])
+        parent (get relations [:document :parent])
+        member (get relations [:group :member])
+        expected
+        [{:type :relation
+          :name :reader
+          :subject-type :user
+          :relation-eid (:relation-id reader)}
+         {:type :arrow
+          :via :parent
+          :target-type :group
+          :via-relation-eid (:relation-id parent)
+          :target-relation :member
+          :sub-paths
+          [{:type :relation
+            :name :member
+            :subject-type :user
+            :relation-eid (:relation-id member)}]}]
+        actual
+        (engine/calc-permission-paths adapter :document :view)]
+    (demand (= expected actual)
+            "Materialized permission paths did not exactly refine the seeded schema."
+            {:expected expected :actual actual})
+    {:permission :view
+     :paths (count actual)
+     :path-types (mapv :type actual)}))
+
 (defn- certify-scans!
   [adapter fixture relations internals]
   (doseq [relation (:relations fixture)]
@@ -526,9 +556,18 @@
           :schema-enumeration
           :all-permission-nodes
           :exact-schema-coverage
-          (fn []
+         (fn []
             (certify-definitions!
              adapter fixture
+             (or @relations
+                 (relation-catalog adapter fixture)))))
+         (check
+          :permission-path-materialization
+          :permission-defs
+          :exact-resolved-ranked-paths
+          (fn []
+            (certify-permission-paths!
+             adapter
              (or @relations
                  (relation-catalog adapter fixture)))))
          (check

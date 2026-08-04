@@ -309,6 +309,42 @@
     (and (not= (:allowed? correct) (:allowed? mutant))
          (not= correct mutant))))
 
+(defn- path-materialization-omits-expanded-relation-killed?
+  []
+  (let [correct [31 32]
+        mutant [31]]
+    (and (= 2 (count correct))
+         (not= correct mutant))))
+
+(defn- path-materialization-admits-missing-target-killed?
+  []
+  (let [correct []
+        mutant [{:type :arrow :target-relation :missing}]]
+    (and (empty? correct)
+         (not= correct mutant))))
+
+(defn- path-materialization-skips-cost-ranking-killed?
+  []
+  (let [correct
+        [:relation :self-permission :arrow-relation :arrow-permission]
+        mutant
+        [:arrow-permission :self-permission :relation :arrow-relation]]
+    (and (= (sort correct) (sort mutant))
+         (not= correct mutant))))
+
+(defn- direct-summary-includes-other-subject-type-killed?
+  []
+  (let [correct [11]
+        mutant [11 12]]
+    (and (= 1 (count correct))
+         (not= correct mutant))))
+
+(defn- direct-summary-ignores-nonrelation-path-killed?
+  []
+  (let [correct false
+        mutant true]
+    (not= correct mutant)))
+
 (defn- adapter-negative-eid-admitted-killed?
   []
   (let [value -1
@@ -1044,6 +1080,16 @@
    arrow-exhaustive-miss-runs-full-fallback-killed?
    :arrow-nonexhaustive-miss-skips-full-fallback
    arrow-nonexhaustive-miss-skips-full-fallback-killed?
+   :path-materialization-omits-expanded-relation
+   path-materialization-omits-expanded-relation-killed?
+   :path-materialization-admits-missing-target
+   path-materialization-admits-missing-target-killed?
+   :path-materialization-skips-cost-ranking
+   path-materialization-skips-cost-ranking-killed?
+   :direct-summary-includes-other-subject-type
+   direct-summary-includes-other-subject-type-killed?
+   :direct-summary-ignores-nonrelation-path
+   direct-summary-ignores-nonrelation-path-killed?
    :adapter-negative-eid-admitted
    adapter-negative-eid-admitted-killed?
    :ordered-merge-sentinel-collides-with-domain

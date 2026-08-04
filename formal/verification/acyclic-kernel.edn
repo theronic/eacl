@@ -4,12 +4,17 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 52
+   :verified-obligations 67
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
     :reachable-compilation-denotation
     :direct-can-sound-and-complete
+    :raw-typed-definition-materialization-is-source-shaped
+    :materialized-paths-are-partitioned-by-static-source-rank
+    :direct-grant-relation-eids-filter-subject-type
+    :direct-grant-positive-implies-complete-path-positive
+    :exhaustive-direct-grant-result-equals-complete-path-result
     :forward-projection-exact
     :reverse-projection-exact
     :bounded-count-law
@@ -55,14 +60,14 @@
  :generated-targets
  {:java
   {:status :passed
-   :tests 33
-   :assertions 9885
+   :tests 34
+   :assertions 9985
    :failures 0
    :errors 0}
   :javascript
   {:status :passed
-   :tests 53
-   :assertions 10437
+   :tests 54
+   :assertions 10537
    :failures 0
    :errors 0}}
  :differential
@@ -147,13 +152,52 @@
   :counterexample :EACL-FORMAL-042
   :formal-source-refinement
   :source-shaped-control-and-logical-work-proved-callback-semantics-language-correspondence-and-independent-review-remain-trusted}
+ :permission-path-materialization-source-specialization
+ {:hot-path
+  :raw-relation-and-permission-definitions-to-ranked-resolved-paths
+  :source "modules/eacl/src/eacl/engine/v8.cljc"
+  :generated-source-fixtures
+  {:java 99
+   :javascript 99}
+  :covered-paths
+  [:relation
+   :self-permission
+   :arrow-relation
+   :arrow-permission
+   :missing-source-relation
+   :missing-target-relation
+   :multiple-via-types
+   :multiple-target-subject-types
+   :static-cost-ranking]
+  :direct-grant-summary
+  {:relation-eids :exact-subject-type-filter
+   :exhaustive :iff-every-materialized-path-is-a-relation
+   :soundness
+   :direct-positive-implies-complete-path-positive
+   :completeness
+   :when-exhaustive-direct-result-equals-complete-path-result}
+  :adapter-composition
+  {:certification-version "eacl.adapter-certification/v2"
+   :datomic :passed
+   :datahike :passed
+   :datascript-clj :passed
+   :datascript-cljs :passed}
+  :mutations
+  [:path-materialization-omits-expanded-relation
+   :path-materialization-admits-missing-target
+   :path-materialization-skips-cost-ranking
+   :direct-summary-includes-other-subject-type
+   :direct-summary-ignores-nonrelation-path]
+  :formal-source-refinement
+  :source-shaped-materialization-and-direct-facts-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
   :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :ordered-merge-independent-source-refinement-review-is-not-recorded
   :leapfrog-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :leapfrog-independent-source-refinement-review-is-not-recorded
-  :arrow-direct-subset-and-exhaustiveness-are-production-schema-and-adapter-obligations
+  :permission-path-materialization-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :permission-path-materialization-independent-source-refinement-review-is-not-recorded
   :arrow-full-candidate-booleans-remain-callback-semantic-obligations
   :arrow-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :arrow-independent-source-refinement-review-is-not-recorded

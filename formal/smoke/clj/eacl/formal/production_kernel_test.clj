@@ -307,6 +307,168 @@
     (boolean (some (set direct-matches) intermediates))
     :exhaustive? exhaustive?}))
 
+(def path-materialization-relations
+  [{:resource-type "document"
+    :relation-name "reader"
+    :subject-type "user"
+    :relation-eid 11}
+   {:resource-type "document"
+    :relation-name "reader"
+    :subject-type "service"
+    :relation-eid 12}
+   {:resource-type "document"
+    :relation-name "parent"
+    :subject-type "group"
+    :relation-eid 21}
+   {:resource-type "document"
+    :relation-name "parent"
+    :subject-type "folder"
+    :relation-eid 22}
+   {:resource-type "group"
+    :relation-name "member"
+    :subject-type "user"
+    :relation-eid 31}
+   {:resource-type "group"
+    :relation-name "member"
+    :subject-type "service"
+    :relation-eid 32}
+   {:resource-type "folder"
+    :relation-name "member"
+    :subject-type "user"
+    :relation-eid 41}
+   {:resource-type "group"
+    :relation-name "admin"
+    :subject-type "user"
+    :relation-eid 33}
+   {:resource-type "folder"
+    :relation-name "admin"
+    :subject-type "service"
+    :relation-eid 42}])
+
+(def path-materialization-definitions
+  [{:resource-type "document"
+    :permission-name "view"
+    :source-is-self? false
+    :source-relation-name "parent"
+    :target-is-relation? false
+    :target-name "admin"}
+   {:resource-type "document"
+    :permission-name "view"
+    :source-is-self? true
+    :source-relation-name "self"
+    :target-is-relation? false
+    :target-name "read"}
+   {:resource-type "document"
+    :permission-name "view"
+    :source-is-self? true
+    :source-relation-name "self"
+    :target-is-relation? true
+    :target-name "reader"}
+   {:resource-type "document"
+    :permission-name "view"
+    :source-is-self? false
+    :source-relation-name "parent"
+    :target-is-relation? true
+    :target-name "member"}])
+
+(defn- keywordize-raw-definition
+  [{:keys [resource-type permission-name source-is-self?
+           source-relation-name target-is-relation? target-name]}]
+  {:eacl.permission/resource-type (keyword resource-type)
+   :eacl.permission/permission-name (keyword permission-name)
+   :eacl.permission/source-relation-name
+   (if source-is-self? :self (keyword source-relation-name))
+   :eacl.permission/target-type
+   (if target-is-relation? :relation :permission)
+   :eacl.permission/target-name (keyword target-name)})
+
+(defn- canonical-path
+  [path]
+  (cond-> (into
+           {}
+           (map
+            (fn [[key value]]
+              [key
+               (if (and (keyword? value) (not= :type key))
+                 (name value)
+                 value)]))
+           (dissoc path :sub-paths))
+    (:sub-paths path)
+    (assoc :sub-paths (mapv canonical-path (:sub-paths path)))))
+
+(defn- source-materialize-permission-paths
+  [{:keys [relations definitions subject-type]}]
+  (let [relation-datoms
+        (fn [_ resource-type relation-name]
+          (->> relations
+               (filter
+                #(and (= (keyword (:resource-type %)) resource-type)
+                      (= (keyword (:relation-name %)) relation-name)))
+               (mapv
+                (fn [{:keys [resource-type relation-name
+                             subject-type relation-eid]}]
+                  {:e relation-eid
+                   :v [(keyword resource-type)
+                       (keyword relation-name)
+                       (keyword subject-type)]}))))
+        permission-definitions
+        (mapv keywordize-raw-definition definitions)]
+    (with-redefs [engine/find-permission-defs
+                  (fn [& _] permission-definitions)
+                  engine/relation-datoms relation-datoms]
+      (let [paths
+            (engine/calc-permission-paths nil :document :view)
+            summary
+            ((ns-resolve 'eacl.engine.v8 'calc-direct-grant-relations)
+             nil :document :view (keyword subject-type))]
+        {:paths (mapv canonical-path paths)
+         :direct-relation-eids (vec (:relation-eids summary))
+         :exhaustive? (:exhaustive? summary)}))))
+
+(defn- path-materialization-fixtures
+  []
+  (let [definition-count (count path-materialization-definitions)
+        exhaustive
+        (for [mask (range (bit-shift-left 1 definition-count))
+              subject-type ["user" "service" "auditor"]
+              reverse-relations? [false true]]
+          {:relations
+           (cond-> path-materialization-relations
+             reverse-relations? reverse)
+           :definitions
+           (into
+            []
+            (keep-indexed
+             (fn [index definition]
+               (when (bit-test mask index)
+                 definition)))
+            path-materialization-definitions)
+           :subject-type subject-type})
+        missing
+        (for [definition
+              [{:resource-type "document"
+                :permission-name "view"
+                :source-is-self? true
+                :source-relation-name "self"
+                :target-is-relation? true
+                :target-name "missing"}
+               {:resource-type "document"
+                :permission-name "view"
+                :source-is-self? false
+                :source-relation-name "missing"
+                :target-is-relation? false
+                :target-name "read"}
+               {:resource-type "document"
+                :permission-name "view"
+                :source-is-self? false
+                :source-relation-name "parent"
+                :target-is-relation? true
+                :target-name "missing"}]]
+          {:relations path-materialization-relations
+           :definitions [definition]
+           :subject-type "user"})]
+    (into (vec exhaustive) missing)))
+
 (defn- routing-node
   [[resource-type permission]]
   {:resource-type (pr-str resource-type)
@@ -1623,6 +1785,17 @@
           (pr-str {:label label
                    :source source
                    :generated generated})))))
+
+(deftest generated-java-permission-path-materialization-refines-source
+  (let [fixtures (path-materialization-fixtures)]
+    (is (= 99 (count fixtures)))
+    (doseq [[index fixture] (map-indexed vector fixtures)]
+      (let [source (source-materialize-permission-paths fixture)
+            generated (production/materialize-permission-paths fixture)]
+        (is (= source generated)
+            (pr-str {:fixture index
+                     :source source
+                     :generated generated}))))))
 
 (deftest generated-java-indexed-plan-certification-boundary
   (let [decide

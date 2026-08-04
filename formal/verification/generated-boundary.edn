@@ -100,7 +100,7 @@
   :semantic-refinement-evidence :passed
   :formal-source-refinement :pending-independent-review
   :remaining-source-boundary
-  :backend-materialized-permission-paths-to-indexed-descriptors
+  :host-materialized-path-map-to-indexed-descriptor-translation-with-clojure-language-and-independent-review
   :runtime-resource-refinement
   :allocation-retained-heap-and-latency-not-formally-proved
   :scale-fixture
@@ -193,7 +193,7 @@
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 53 :suite-assertions 10437 :status :passed}
+   :suite-tests 54 :suite-assertions 10537 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 13 :assertions 149}
@@ -201,15 +201,17 @@
   :production-routing
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
-    :tests 33
-    :assertions 9885
+    :tests 34
+    :assertions 9985
     :leapfrog-reseek-side-and-target-trace :exact
-    :acyclic-arrow-boolean-and-logical-work-trace :exact}
- :cljs-javascript
-   {:namespace-tests 31
-    :suite-tests 53
-    :suite-assertions 10437
     :acyclic-arrow-boolean-and-logical-work-trace :exact
+    :permission-path-materialization-fixtures 99}
+ :cljs-javascript
+   {:namespace-tests 32
+    :suite-tests 54
+    :suite-assertions 10537
+    :acyclic-arrow-boolean-and-logical-work-trace :exact
+    :permission-path-materialization-fixtures 99
     :datascript-public-recursive-cache-mode-differential true
     :datascript-complete-public-provenance-and-graph-shadow true
     :shared-scc-routing-differential true}}
@@ -220,15 +222,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 33
-    :namespace-assertions 9885
+    :namespace-tests 34
+    :namespace-assertions 9985
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 31
-    :suite-tests 53
-    :suite-assertions 10437
+    :namespace-tests 32
+    :suite-tests 54
+    :suite-assertions 10537
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}

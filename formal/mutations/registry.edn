@@ -158,6 +158,39 @@
    :killed-by
    {:proof :nonexhaustive-miss-refines-complete-far-side-evaluation
     :test :acyclic-arrow-path-refines-source-control}}
+  {:id :path-materialization-omits-expanded-relation
+   :mechanism
+   :emit-only-one-path-when-a-relation-name-has-multiple-typed-definitions
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :raw-relation-expansion-preserves-every-matching-definition
+    :test :permission-path-materialization-refines-source}}
+  {:id :path-materialization-admits-missing-target
+   :mechanism
+   :emit-an-arrow-relation-with-no-target-relation-definition
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :arrow-relation-without-targets-materializes-no-path
+    :test :permission-path-materialization-refines-source}}
+  {:id :path-materialization-skips-cost-ranking
+   :mechanism :retain-backend-definition-order-instead-of-static-cost-order
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :materialized-paths-are-partitioned-by-source-rank
+    :test :permission-path-materialization-refines-source}}
+  {:id :direct-summary-includes-other-subject-type
+   :mechanism
+   :include-a-direct-relation-id-whose-declared-subject-type-does-not-match
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :direct-grant-relation-ids-filter-subject-type
+    :test :permission-path-materialization-refines-source}}
+  {:id :direct-summary-ignores-nonrelation-path
+   :mechanism :claim-exhaustiveness-when-a-nonrelation-path-exists
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :direct-grant-exhaustive-iff-every-materialized-path-is-a-relation
+    :test :permission-path-materialization-refines-source}}
   {:id :adapter-negative-eid-admitted
    :mechanism :treat-any-signed-exact-integer-as-a-formal-engine-eid
    :control {:kind :clojure}

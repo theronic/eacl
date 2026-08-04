@@ -1,5 +1,5 @@
 {:schema-version 1
- :certification-version "eacl.adapter-certification/v1"
+ :certification-version "eacl.adapter-certification/v2"
  :date "2026-08-02"
  :formal-contract "formal/dafny/SnapshotOracle.dfy"
  :runtime-contract "eacl.backend.v8/adapter-obligations"
@@ -20,6 +20,7 @@
   :identity-round-trip
   :nonnegative-internal-eids
   :schema-enumeration
+  :permission-path-materialization
   :forward-reverse-scans
   :direct-match-equivalence
   :immutable-snapshot]
@@ -112,6 +113,6 @@
  :claim
  {:status :adapter-certification-suite-passed
   :establishes
-  "Executable evidence for the named adapter obligations on the seeded and adversarial cases."
+  "Executable evidence for the named adapter obligations, including exact resolved/ranked permission paths, on the seeded and adversarial cases."
   :does-not-establish
   "A proof of Datomic, DataScript, Datahike, Clojure, ClojureScript, storage engines, or arbitrary backend states."}}

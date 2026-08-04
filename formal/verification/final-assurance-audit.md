@@ -234,9 +234,11 @@ generated-code compiler out of the trusted computing base.
   that all materialized path descriptors derive exactly the supplied ordered
   dependency-edge vector: relation paths emit none and permission paths emit
   one directed edge. The generated vector is authoritative for stamped schema
-  generations on Datomic, Datahike, and DataScript. The remaining
-  source-refinement gap is earlier: adapter path materialization and Clojure
-  map-to-descriptor translation are still trusted and differentially tested.
+  generations on Datomic, Datahike, and DataScript. Source-shaped
+  path-materialization plus adapter certification v2 now cover the preceding
+  raw-definition-to-path-map boundary. Clojure language semantics, arbitrary
+  adapter states, independent review, and the host path-map-to-descriptor
+  translation remain trusted.
 - Lore prompted the resource-accounting question for that routing result, but
   its historical analyser is outdated and untrusted. EACL does not run it as
   an oracle or release gate. Production deterministic indexing is
@@ -413,10 +415,22 @@ generated-code compiler out of the trusted computing base.
   hit, exhaustive hit/miss, and non-exhaustive fallback hit/miss control. The
   generated and source traces agree exactly on authorization,
   direct-intersection phases, and full-candidate checks in Java and JavaScript.
-  This proves the source-shaped finite control model and its logical bounds,
-  not the truth of path materialization, nested permission callbacks,
-  direct-subset/exhaustiveness facts, Clojure semantics, or backend/runtime
-  costs.
+  This proves the source-shaped finite control model and its logical bounds.
+  On its own it does not establish path materialization, nested permission
+  callbacks, direct-subset/exhaustiveness facts, Clojure semantics, or
+  backend/runtime costs; the next specialization discharges the
+  path-materialization and direct/exhaustive portions.
+- The path-materialization specialization removes the direct-subset and
+  exhaustiveness facts from the assumed arrow-control interface. Dafny models
+  raw typed relation/permission definitions, all four materialized path
+  variants, missing source/target definitions, static cost ranking, exact
+  subject-type filtering, and exhaustive iff every path is a relation. It
+  proves direct positives are sound and exhaustive direct evaluation is
+  complete. Generated Java and JavaScript match
+  `calc-permission-paths`/`calc-direct-grant-relations` on 99 CLJ/CLJS fixtures
+  each. Adapter certification v2 composes that calculation with actual Datomic,
+  Datahike, and DataScript relation IDs. Host-language semantics, arbitrary
+  backend states, nested callback truth, and independent review remain open.
 
 ## Public wording audit
 
@@ -433,7 +447,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,341 proof efforts across 23
+- Clean checksum-locked Dafny cache: 9,356 proof efforts across 23
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -448,17 +462,17 @@ that the complete v8.0 engine is formally verified.
   temporal mutants produced the required counterexample.
 - Counterexample corpus: 42 minimized entries replayed by 44 tests and 10,418
   assertions, zero failures/errors.
-- Mutation controls: 72 Clojure detectors and 8 Apalache counterexample
-  controls; all 80 registered mutants killed.
+- Mutation controls: 77 Clojure detectors and 8 Apalache counterexample
+  controls; all 85 registered mutants killed.
 - Forced-authority non-benchmark CLJ suite: 492 tests, 18,851 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 16 tests, 4,047 assertions, zero
   failures/errors.
 - Ordinary and forced-authority DataScript CLJS suites: 152 tests, 4,499
   assertions each, zero failures/errors.
-- Generated Java production-kernel namespace: 33 tests, 9,885 assertions,
+- Generated Java production-kernel namespace: 34 tests, 9,985 assertions,
   zero failures/errors.
-- Generated JavaScript smoke suite: 53 tests, 10,437 assertions, zero
+- Generated JavaScript smoke suite: 54 tests, 10,537 assertions, zero
   failures/errors.
 - Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,330 unique
   reachable definitions across 51 source files, with exact per-root internal
@@ -492,9 +506,9 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,960,482 Java
-  source bytes, 1,754,036 Java class bytes, 869,294
-  JavaScript-with-runtime bytes, and a 952,425-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 2,017,342 Java
+  source bytes, 1,789,556 Java class bytes, 890,491
+  JavaScript-with-runtime bytes, and a 974,545-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. Retained
   live heap remains `:not-established`, so the
@@ -537,7 +551,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 23-module
-  replay passed 9,341 proof efforts and consumed 3,653,448,018 deterministic
+  replay passed 9,356 proof efforts and consumed 3,654,021,630 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

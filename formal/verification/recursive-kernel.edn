@@ -55,16 +55,16 @@
  :generated-targets
   {:java
   {:status :passed
-   :tests 33
-   :assertions 9885
+   :tests 34
+   :assertions 9985
    :failures 0
    :errors 0
    :qualification :suite-spans-all-generated-java-production-kernel-operations}
   :javascript
   {:status :passed
    :suite :generated-kernel-cljs-smoke
-   :tests 53
-   :assertions 10437
+   :tests 54
+   :assertions 10537
    :failures 0
    :errors 0
    :qualification :suite-spans-generated-javascript-and-portable-boundary-operations}}
@@ -141,7 +141,8 @@
   :qualification
   :logical-work-is-proved-but-jvm-and-javascript-runtime-peaks-remain-measured-platform-properties}
  :limitations
- [:backend-permission-path-materialization-and-host-map-to-indexed-descriptor-translation-remain-source-refinement-obligations
+ [:permission-path-materialization-has-source-shaped-dafny-and-adapter-certification-v2-evidence-but-clojure-language-semantics-and-independent-review-remain-trusted
+  :host-map-to-indexed-descriptor-translation-remains-a-source-refinement-obligation
   :proofless-raw-snapshots-do-not-call-the-generated-certificate
   :older-name-only-path-dependency-is-conservative-cache-scope-not-exact-routing
   :typed-routing-oracle-and-certificate-do-not-model-host-allocation-or-retained-heap

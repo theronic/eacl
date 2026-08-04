@@ -63,6 +63,11 @@
     RoutingCertificateError
     RoutingProof)
    (SubproblemCache CandidateState)
+   (AcyclicEngine
+    MaterializedRelationPath
+    RawPermissionDefinition
+    RawRelationDefinition
+    SourceMaterializedPath)
    (Semantics
     ObjectRef
     PermissionNode
@@ -936,6 +941,82 @@
     {:allowed? (.dtor__0 result)
      :direct-intersection-phases (dafny-long (.dtor__1 result))
      :full-candidate-checks (dafny-long (.dtor__2 result))}))
+
+(defn- raw-relation-definition
+  [{:keys [resource-type relation-name subject-type relation-eid]}]
+  (RawRelationDefinition/create
+   (dafny-string resource-type)
+   (dafny-string relation-name)
+   (dafny-string subject-type)
+   (dafny-nat relation-eid)))
+
+(defn- raw-permission-definition
+  [{:keys [resource-type permission-name source-is-self?
+           source-relation-name target-is-relation? target-name]}]
+  (RawPermissionDefinition/create
+   (dafny-string resource-type)
+   (dafny-string permission-name)
+   source-is-self?
+   (dafny-string source-relation-name)
+   target-is-relation?
+   (dafny-string target-name)))
+
+(defn- materialized-relation-path->map
+  [^MaterializedRelationPath path]
+  {:type :relation
+   :name (dafny-unicode (.dtor_relationName path))
+   :subject-type (dafny-unicode (.dtor_subjectType path))
+   :relation-eid (dafny-long (.dtor_relationEid path))})
+
+(defn- source-materialized-path->map
+  [^SourceMaterializedPath path]
+  (cond
+    (.is_SourceRelationPath path)
+    {:type :relation
+     :name (dafny-unicode (.dtor_relationName path))
+     :subject-type (dafny-unicode (.dtor_subjectType path))
+     :relation-eid (dafny-long (.dtor_relationEid path))}
+
+    (.is_SourceSelfPermissionPath path)
+    {:type :self-permission
+     :target-permission (dafny-unicode (.dtor_targetPermission path))
+     :resource-type (dafny-unicode (.dtor_resourceType path))}
+
+    (.is_SourceArrowRelationPath path)
+    {:type :arrow
+     :via (dafny-unicode (.dtor_viaRelation path))
+     :target-type (dafny-unicode (.dtor_targetType path))
+     :via-relation-eid (dafny-long (.dtor_viaRelationEid path))
+     :target-relation (dafny-unicode (.dtor_targetRelation path))
+     :sub-paths
+     (mapv
+      materialized-relation-path->map
+      (.dtor_subPaths path))}
+
+    :else
+    {:type :arrow
+     :via (dafny-unicode (.dtor_viaRelation path))
+     :target-type (dafny-unicode (.dtor_targetType path))
+     :via-relation-eid (dafny-long (.dtor_viaRelationEid path))
+     :target-permission (dafny-unicode (.dtor_targetPermission path))}))
+
+(defn materialize-permission-paths
+  "Executes the generated source-shaped permission-path materializer and
+  direct-grant summary. This is formal test support, not a public EACL API."
+  [{:keys [relations definitions subject-type]}]
+  (let [^Tuple3 result
+        (AcyclicEngine.__default/MaterializePermissionPaths
+         (typed-sequence
+          (RawRelationDefinition/_typeDescriptor)
+          (mapv raw-relation-definition relations))
+         (typed-sequence
+          (RawPermissionDefinition/_typeDescriptor)
+          (mapv raw-permission-definition definitions))
+         (dafny-string subject-type))]
+    {:paths (mapv source-materialized-path->map (.dtor__0 result))
+     :direct-relation-eids
+     (mapv dafny-long (.dtor__1 result))
+     :exhaustive? (.dtor__2 result)}))
 
 (defn- optional-eid
   [value]

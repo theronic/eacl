@@ -23,6 +23,9 @@
  [{:operation :can?
    :entry-points ['eacl.core/can?]
    :theorems [:authorization-membership-iff
+              :permission-path-materialization-refines-raw-typed-definitions
+              :direct-grant-positive-is-sound
+              :direct-grant-exhaustive-is-complete
               :acyclic-arrow-source-control-refines-full-far-side-evaluation
               :acyclic-arrow-full-candidate-checks-are-linear
               :limit-fails-closed
@@ -38,7 +41,7 @@
    :production-authoritative
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
-   [:acyclic-path-materialization-direct-alias-and-arrow-callback-source-refinement
+   [:acyclic-direct-alias-and-arrow-callback-source-refinement
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]

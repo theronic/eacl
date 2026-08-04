@@ -197,6 +197,17 @@ now returns false before direct-grant/intersection setup. These submodels do not
 prove path materialization, nested callback meaning, storage-engine seek cost,
 Clojure language semantics, allocation, retained heap, or wall time.
 
+Permission-path materialization now has its own source-shaped boundary rather
+than being assumed by the arrow theorem. Dafny models expansion of typed
+relation definitions into direct, alias, arrow-relation, and arrow-permission
+paths, missing-definition behavior, static cost ranking, subject-type filtering
+for direct grants, and the exact meaning of `:exhaustive?`. Generated Java and
+JavaScript match `calc-permission-paths` and `calc-direct-grant-relations` on 99
+CLJ/CLJS fixtures each. Adapter certification v2 composes the same calculation
+with actual Datomic, Datahike, and DataScript definition IDs. That is finite
+executable refinement evidence; host-language semantics and arbitrary storage
+engine states remain trusted.
+
 Recursive engine selection has a narrower generated oracle. Production first
 materializes complete permission dependencies as
 `[resource-type permission] -> [resource-type permission]` edges, then uses

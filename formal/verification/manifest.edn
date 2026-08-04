@@ -27,7 +27,7 @@
    :claim :conditional-interface-contract}
   :direct-and-acyclic-engine
   {:status :passed
-   :verified-obligations 52
+   :verified-obligations 67
    :source "formal/dafny/AcyclicEngine.dfy"
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
@@ -57,7 +57,8 @@
    :claim
    :conditional-exact-path-derivation-classification-and-exact-p-plus-2v-plus-e-logical-checker-work
    :remaining
-   [:backend-materialized-permission-path-and-map-to-descriptor-source-refinement
+   [:permission-path-materialization-clojure-language-and-independent-review
+    :host-path-map-to-descriptor-source-refinement
     :proofless-raw-snapshot-generated-authority
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
@@ -244,8 +245,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 80
-  :registered 80}
+  :killed 85
+  :registered 85}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"

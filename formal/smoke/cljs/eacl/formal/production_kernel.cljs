@@ -1011,6 +1011,90 @@
      :direct-intersection-phases (.toNumber (aget result 1))
      :full-candidate-checks (.toNumber (aget result 2))}))
 
+(defn- raw-relation-definition
+  [acyclic
+   {:keys [resource-type relation-name subject-type relation-eid]}]
+  (js-invoke
+   (.-RawRelationDefinition acyclic)
+   "create_RawRelationDefinition"
+   (dafny-string resource-type)
+   (dafny-string relation-name)
+   (dafny-string subject-type)
+   (big-number relation-eid)))
+
+(defn- raw-permission-definition
+  [acyclic
+   {:keys [resource-type permission-name source-is-self?
+           source-relation-name target-is-relation? target-name]}]
+  (js-invoke
+   (.-RawPermissionDefinition acyclic)
+   "create_RawPermissionDefinition"
+   (dafny-string resource-type)
+   (dafny-string permission-name)
+   source-is-self?
+   (dafny-string source-relation-name)
+   target-is-relation?
+   (dafny-string target-name)))
+
+(defn- materialized-relation-path->map
+  [path]
+  {:type :relation
+   :name (.toVerbatimString (.-dtor_relationName path) false)
+   :subject-type (.toVerbatimString (.-dtor_subjectType path) false)
+   :relation-eid (.toNumber (.-dtor_relationEid path))})
+
+(defn- source-materialized-path->map
+  [path]
+  (cond
+    (.-is_SourceRelationPath path)
+    {:type :relation
+     :name (.toVerbatimString (.-dtor_relationName path) false)
+     :subject-type (.toVerbatimString (.-dtor_subjectType path) false)
+     :relation-eid (.toNumber (.-dtor_relationEid path))}
+
+    (.-is_SourceSelfPermissionPath path)
+    {:type :self-permission
+     :target-permission
+     (.toVerbatimString (.-dtor_targetPermission path) false)
+     :resource-type (.toVerbatimString (.-dtor_resourceType path) false)}
+
+    (.-is_SourceArrowRelationPath path)
+    {:type :arrow
+     :via (.toVerbatimString (.-dtor_viaRelation path) false)
+     :target-type (.toVerbatimString (.-dtor_targetType path) false)
+     :via-relation-eid (.toNumber (.-dtor_viaRelationEid path))
+     :target-relation
+     (.toVerbatimString (.-dtor_targetRelation path) false)
+     :sub-paths
+     (mapv materialized-relation-path->map (.-dtor_subPaths path))}
+
+    :else
+    {:type :arrow
+     :via (.toVerbatimString (.-dtor_viaRelation path) false)
+     :target-type (.toVerbatimString (.-dtor_targetType path) false)
+     :via-relation-eid (.toNumber (.-dtor_viaRelationEid path))
+     :target-permission
+     (.toVerbatimString (.-dtor_targetPermission path) false)}))
+
+(defn materialize-permission-paths
+  "Executes the generated source-shaped permission-path materializer and
+  direct-grant summary. This is formal test support, not a public EACL API."
+  [{:keys [relations definitions subject-type]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        result
+        (js-invoke
+         (.-__default acyclic)
+         "MaterializePermissionPaths"
+         (dafny-sequence
+          (map #(raw-relation-definition acyclic %) relations))
+         (dafny-sequence
+          (map #(raw-permission-definition acyclic %) definitions))
+         (dafny-string subject-type))]
+    {:paths (mapv source-materialized-path->map (aget result 0))
+     :direct-relation-eids
+     (mapv #(.toNumber %) (aget result 1))
+     :exhaustive? (aget result 2)}))
+
 (defn- optional-eid
   [indexed value]
   (if (some? value)

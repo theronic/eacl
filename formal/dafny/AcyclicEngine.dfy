@@ -3,6 +3,334 @@ include "Semantics.dfy"
 module AcyclicEngine {
   import Semantics
 
+  datatype RawRelationDefinition = RawRelationDefinition(
+    resourceType: string,
+    relationName: string,
+    subjectType: string,
+    relationEid: nat
+  )
+
+  datatype RawPermissionDefinition = RawPermissionDefinition(
+    resourceType: string,
+    permissionName: string,
+    sourceIsSelf: bool,
+    sourceRelationName: string,
+    targetIsRelation: bool,
+    targetName: string
+  )
+
+  datatype MaterializedRelationPath = MaterializedRelationPath(
+    relationName: string,
+    subjectType: string,
+    relationEid: nat
+  )
+
+  datatype SourceMaterializedPath =
+    | SourceRelationPath(
+        relationName: string,
+        subjectType: string,
+        relationEid: nat
+      )
+    | SourceSelfPermissionPath(
+        targetPermission: string,
+        resourceType: string
+      )
+    | SourceArrowRelationPath(
+        viaRelation: string,
+        targetType: string,
+        viaRelationEid: nat,
+        targetRelation: string,
+        subPaths: seq<MaterializedRelationPath>
+      )
+    | SourceArrowPermissionPath(
+        viaRelation: string,
+        targetType: string,
+        viaRelationEid: nat,
+        targetPermission: string
+      )
+
+  function MatchingRawRelations(
+    relations: seq<RawRelationDefinition>,
+    resourceType: string,
+    relationName: string
+  ): seq<RawRelationDefinition>
+    decreases |relations|
+  {
+    if |relations| == 0 then
+      []
+    else
+      (if relations[0].resourceType == resourceType &&
+          relations[0].relationName == relationName
+       then [relations[0]]
+       else []) +
+      MatchingRawRelations(
+        relations[1..],
+        resourceType,
+        relationName
+      )
+  }
+
+  function DirectPaths(
+    relations: seq<RawRelationDefinition>
+  ): seq<SourceMaterializedPath>
+    decreases |relations|
+  {
+    if |relations| == 0 then
+      []
+    else
+      [SourceRelationPath(
+         relations[0].relationName,
+         relations[0].subjectType,
+         relations[0].relationEid
+       )] +
+      DirectPaths(relations[1..])
+  }
+
+  function RelationSubPaths(
+    relations: seq<RawRelationDefinition>
+  ): seq<MaterializedRelationPath>
+    decreases |relations|
+  {
+    if |relations| == 0 then
+      []
+    else
+      [MaterializedRelationPath(
+         relations[0].relationName,
+         relations[0].subjectType,
+         relations[0].relationEid
+       )] +
+      RelationSubPaths(relations[1..])
+  }
+
+  function ExpandViaRelations(
+    vias: seq<RawRelationDefinition>,
+    relations: seq<RawRelationDefinition>,
+    definition: RawPermissionDefinition
+  ): seq<SourceMaterializedPath>
+    decreases |vias|
+  {
+    if |vias| == 0 then
+      []
+    else if definition.targetIsRelation then
+      var targets :=
+        MatchingRawRelations(
+          relations,
+          vias[0].subjectType,
+          definition.targetName
+        );
+      (if |targets| == 0
+       then []
+       else [SourceArrowRelationPath(
+               definition.sourceRelationName,
+               vias[0].subjectType,
+               vias[0].relationEid,
+               definition.targetName,
+               RelationSubPaths(targets)
+             )]) +
+      ExpandViaRelations(vias[1..], relations, definition)
+    else
+      [SourceArrowPermissionPath(
+         definition.sourceRelationName,
+         vias[0].subjectType,
+         vias[0].relationEid,
+         definition.targetName
+       )] +
+      ExpandViaRelations(vias[1..], relations, definition)
+  }
+
+  function MaterializeRawDefinition(
+    relations: seq<RawRelationDefinition>,
+    definition: RawPermissionDefinition
+  ): seq<SourceMaterializedPath>
+  {
+    if definition.sourceIsSelf then
+      if definition.targetIsRelation then
+        DirectPaths(
+          MatchingRawRelations(
+            relations,
+            definition.resourceType,
+            definition.targetName
+          )
+        )
+      else
+        [SourceSelfPermissionPath(
+           definition.targetName,
+           definition.resourceType
+         )]
+    else
+      ExpandViaRelations(
+        MatchingRawRelations(
+          relations,
+          definition.resourceType,
+          definition.sourceRelationName
+        ),
+        relations,
+        definition
+      )
+  }
+
+  function MaterializeRawDefinitions(
+    relations: seq<RawRelationDefinition>,
+    definitions: seq<RawPermissionDefinition>
+  ): seq<SourceMaterializedPath>
+    decreases |definitions|
+  {
+    if |definitions| == 0 then
+      []
+    else
+      MaterializeRawDefinition(relations, definitions[0]) +
+      MaterializeRawDefinitions(relations, definitions[1..])
+  }
+
+  function SourcePathRank(path: SourceMaterializedPath): nat
+  {
+    match path
+    case SourceRelationPath(_, _, _) => 0
+    case SourceSelfPermissionPath(_, _) => 1
+    case SourceArrowRelationPath(_, _, _, _, _) => 2
+    case SourceArrowPermissionPath(_, _, _, _) => 3
+  }
+
+  function PathsAtRank(
+    paths: seq<SourceMaterializedPath>,
+    rank: nat
+  ): seq<SourceMaterializedPath>
+    decreases |paths|
+  {
+    if |paths| == 0 then
+      []
+    else
+      (if SourcePathRank(paths[0]) == rank
+       then [paths[0]]
+       else []) +
+      PathsAtRank(paths[1..], rank)
+  }
+
+  function RankMaterializedPaths(
+    paths: seq<SourceMaterializedPath>
+  ): seq<SourceMaterializedPath>
+  {
+    PathsAtRank(paths, 0) +
+    PathsAtRank(paths, 1) +
+    PathsAtRank(paths, 2) +
+    PathsAtRank(paths, 3)
+  }
+
+  function DirectGrantRelationEids(
+    paths: seq<SourceMaterializedPath>,
+    subjectType: string
+  ): seq<nat>
+    decreases |paths|
+  {
+    if |paths| == 0 then
+      []
+    else
+      (match paths[0]
+       case SourceRelationPath(_, pathSubjectType, relationEid) =>
+         if pathSubjectType == subjectType then [relationEid] else []
+       case _ => []) +
+      DirectGrantRelationEids(paths[1..], subjectType)
+  }
+
+  predicate AllSourcePathsAreRelations(
+    paths: seq<SourceMaterializedPath>
+  )
+    decreases |paths|
+  {
+    |paths| == 0 ||
+    (paths[0].SourceRelationPath? &&
+     AllSourcePathsAreRelations(paths[1..]))
+  }
+
+  predicate RelationResultsRespectSubjectType(
+    paths: seq<SourceMaterializedPath>,
+    pathMatches: seq<bool>,
+    subjectType: string
+  )
+    requires |paths| == |pathMatches|
+    decreases |paths|
+  {
+    |paths| == 0 ||
+    ((match paths[0]
+      case SourceRelationPath(_, pathSubjectType, _) =>
+        pathSubjectType == subjectType || !pathMatches[0]
+      case _ => true) &&
+     RelationResultsRespectSubjectType(
+       paths[1..],
+       pathMatches[1..],
+       subjectType
+     ))
+  }
+
+  function DirectGrantAny(
+    paths: seq<SourceMaterializedPath>,
+    pathMatches: seq<bool>,
+    subjectType: string
+  ): bool
+    requires |paths| == |pathMatches|
+    decreases |paths|
+  {
+    |paths| != 0 &&
+    ((match paths[0]
+      case SourceRelationPath(_, pathSubjectType, _) =>
+        pathSubjectType == subjectType && pathMatches[0]
+      case _ => false) ||
+     DirectGrantAny(paths[1..], pathMatches[1..], subjectType))
+  }
+
+  lemma DirectGrantFactsAreSoundAndExhaustive(
+    paths: seq<SourceMaterializedPath>,
+    pathMatches: seq<bool>,
+    subjectType: string
+  )
+    requires |paths| == |pathMatches|
+    requires RelationResultsRespectSubjectType(
+               paths,
+               pathMatches,
+               subjectType
+             )
+    ensures DirectGrantAny(paths, pathMatches, subjectType) ==>
+              AnyTrue(pathMatches)
+    ensures AllSourcePathsAreRelations(paths) ==>
+              DirectGrantAny(paths, pathMatches, subjectType) ==
+              AnyTrue(pathMatches)
+    decreases |paths|
+  {
+    if |paths| != 0 {
+      DirectGrantFactsAreSoundAndExhaustive(
+        paths[1..],
+        pathMatches[1..],
+        subjectType
+      );
+    }
+  }
+
+  method MaterializePermissionPaths(
+    relations: seq<RawRelationDefinition>,
+    definitions: seq<RawPermissionDefinition>,
+    subjectType: string
+  ) returns (
+      paths: seq<SourceMaterializedPath>,
+      directRelationEids: seq<nat>,
+      exhaustive: bool
+    )
+    ensures paths ==
+            RankMaterializedPaths(
+              MaterializeRawDefinitions(relations, definitions)
+            )
+    ensures directRelationEids ==
+            DirectGrantRelationEids(paths, subjectType)
+    ensures exhaustive == AllSourcePathsAreRelations(paths)
+  {
+    paths :=
+      RankMaterializedPaths(
+        MaterializeRawDefinitions(relations, definitions)
+      );
+    directRelationEids :=
+      DirectGrantRelationEids(paths, subjectType);
+    exhaustive := AllSourcePathsAreRelations(paths);
+  }
+
   datatype CompiledPath =
     | RelationPath(
         head: Semantics.PermissionNode,

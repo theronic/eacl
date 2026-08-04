@@ -136,9 +136,13 @@ The adapter fixture certification exercises no bound and every materialized
 EID as a bound; it is finite executable evidence, not a proof of each storage
 engine's implementation.
 For arrow selection, the facts that direct matches are a subset of full
-far-side authorization and that `:exhaustive?` means equality remain schema,
-path-materialization, and callback obligations outside the pure control
-theorem.
+far-side authorization and that `:exhaustive?` means equality are now derived
+by the source-shaped materialization model from typed path results. Generated
+Java and JavaScript compare the exact ranked path maps and direct summary with
+CLJ/CLJS on 99 fixtures each; adapter certification v2 composes that source
+calculation with actual Datomic, Datahike, and DataScript relation IDs. The
+remaining trust is in the CLJ/CLJS language correspondence, adapter behavior
+outside certified fixtures, and the truth of nested non-direct callbacks.
 
 ## Cryptographic and canonicalization axioms
 

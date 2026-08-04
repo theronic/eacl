@@ -191,11 +191,82 @@
      "formal/dafny/AcyclicEngine.dfy"]}
    :limitations
    [:source-control-fixtures-exercise-arrow-permission-the-arrow-relation-variant-shares-the-selection-branch-and-is-covered-by-public-integration
-    :direct-match-subset-and-exhaustiveness-contracts-remain-production-schema-and-adapter-obligations
+    :direct-match-subset-and-exhaustiveness-contracts-compose-with-the-permission-path-materialization-specialization-subject-to-its-trusted-boundary
     :full-candidate-match-booleans-remain-callback-semantic-obligations
     :path-materialization-alias-recursion-and-outer-path-fold-are-outside-this-narrow-control-model
     :clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
     :no-formal-bound-on-backend-seek-cost-allocation-retained-heap-or-wall-time
+    :independent-source-refinement-review-not-recorded]}
+  {:id :permission-path-materialization
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbols
+    [eacl.engine.v8/calc-permission-paths
+     eacl.engine.v8/calc-direct-grant-relations]
+    :scope
+    :raw-definitions-to-resolved-ranked-path-maps-and-direct-grant-summary
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.MatchingRawRelations
+     AcyclicEngine.MaterializeRawDefinition
+     AcyclicEngine.MaterializeRawDefinitions
+     AcyclicEngine.RankMaterializedPaths
+     AcyclicEngine.DirectGrantRelationEids
+     AcyclicEngine.AllSourcePathsAreRelations
+     AcyclicEngine.DirectGrantAny]
+    :lemmas
+    [AcyclicEngine.DirectGrantFactsAreSoundAndExhaustive]
+    :methods [AcyclicEngine.MaterializePermissionPaths]}
+   :abstract-domain
+   {:relation-definition
+    [:resource-type :relation-name :subject-type :nonnegative-relation-eid]
+    :permission-definition
+    [:resource-type
+     :permission-name
+     :self-or-via-source
+     :relation-or-permission-target
+     :target-name]
+    :materialized-paths
+    [:relation :self-permission :arrow-relation :arrow-permission]
+    :rank-order
+    [:relation :self-permission :arrow-relation :arrow-permission]
+    :direct-summary
+    {:relation-eids :only-relation-paths-matching-subject-type
+     :exhaustive :iff-every-materialized-path-is-a-relation}}
+   :evidence
+   {:java-source-control-fixtures 99
+    :javascript-source-control-fixtures 99
+    :subset-campaigns
+    {:definition-kinds 4
+     :definition-subsets 16
+     :subject-types 3
+     :relation-orders 2}
+    :missing-definition-fixtures 3
+    :adapter-certification
+    {:version "eacl.adapter-certification/v2"
+     :datomic-clj :passed
+     :datahike-clj :passed
+     :datascript-clj :passed
+     :datascript-cljs :passed}
+    :mutations
+    [:path-materialization-omits-expanded-relation
+     :path-materialization-admits-missing-target
+     :path-materialization-skips-cost-ranking
+     :direct-summary-includes-other-subject-type
+     :direct-summary-ignores-nonrelation-path]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "modules/eacl/test/eacl/adapter_certification.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :limitations
+   [:adapter-composition-is-finite-executable-certification-not-a-proof-of-each-storage-engine
+    :backend-definition-order-is-compared-on-forward-and-reversed-fixtures-not-all-host-sequences
+    :clojure-and-clojurescript-sort-and-sequence-semantics-remain-a-digest-locked-trusted-language-refinement
+    :permission-definition-query-filtering-is-an-adapter-certification-obligation
+    :path-callback-evaluation-and-outer-union-fold-remain-outside-this-materialization-model
+    :no-formal-bound-on-backend-schema-read-allocation-retained-heap-or-wall-time
     :independent-source-refinement-review-not-recorded]}
   {:id :recursive-scc-routing
    :production

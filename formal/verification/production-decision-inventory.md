@@ -94,6 +94,19 @@ source-control traces with the CLJ/CLJS function. Path materialization,
 recursive callback meaning, direct-subset/exhaustiveness facts, and Clojure
 language semantics remain separate obligations.
 
+The raw-schema boundary feeding that decision is now modeled separately.
+`AcyclicEngine.dfy` expands raw typed relation and permission definitions into
+the four production path-map variants, drops missing source/target definitions,
+and applies the exact relation/alias/arrow-relation/arrow-permission cost
+partition. It derives direct relation EIDs only from relation paths matching the
+query subject type and proves that a direct positive is sound; if every path is
+a relation, the direct result is complete. Generated Java and JavaScript match
+the actual CLJ/CLJS materializer and direct summary on 99 fixtures each.
+Adapter certification v2 checks the composed path maps against real relation
+IDs on Datomic, Datahike, and DataScript. Clojure language semantics and
+arbitrary backend implementation correctness remain explicit trusted
+obligations.
+
 ## Public operation coverage
 
 The decisions above flow into these externally observable families:
