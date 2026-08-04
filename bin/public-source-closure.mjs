@@ -246,16 +246,13 @@ function buildReport() {
   const unionDefinitions = [...union]
     .sort()
     .map((id) => definitions.get(id));
-  const definitionIndex = new Map(
-    unionDefinitions.map((definition, index) => [definition.id, index]),
-  );
-  const indexedRootReports = Object.fromEntries(
+  const digestedRootReports = Object.fromEntries(
     Object.entries(rootReports).map(([root, rootReport]) => [
       root,
       {
         internalDefinitionCount: rootReport.internalDefinitionCount,
-        internalDefinitionIndices: rootReport.internalDefinitionIds.map((id) =>
-          definitionIndex.get(id),
+        internalDefinitionIdsSha256: sha256(
+          `${rootReport.internalDefinitionIds.join("\n")}\n`,
         ),
         externalCallCount: rootReport.externalCallCount,
         externalCalls: rootReport.externalCalls,
@@ -287,7 +284,38 @@ function buildReport() {
       roots,
       rootCount: roots.length,
       unionInternalDefinitionCount: union.size,
-      unionInternalDefinitions: unionDefinitions,
+      unionInternalDefinitionIdsSha256: sha256(
+        `${unionDefinitions.map((definition) => definition.id).join("\n")}\n`,
+      ),
+      unionDefinitionLocationsSha256: sha256(
+        `${unionDefinitions
+          .map(
+            (definition) =>
+              `${definition.id}\t${definition.sourcePath}\t${definition.row}\t${definition.endRow}\t${definition.definedBy}\t${definition.private}`,
+          )
+          .join("\n")}\n`,
+      ),
+      definitionsBySource: Object.fromEntries(
+        Object.entries(
+          Object.groupBy(
+            unionDefinitions,
+            (definition) => definition.sourcePath,
+          ),
+        )
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([path, sourceDefinitions]) => [
+            path,
+            {
+              count: sourceDefinitions.length,
+              idsSha256: sha256(
+                `${sourceDefinitions
+                  .map((definition) => definition.id)
+                  .sort()
+                  .join("\n")}\n`,
+              ),
+            },
+          ]),
+      ),
       exclusions: {
         adapterSemantics:
           "backend-dispatch.edn closes literal operation keys, but adapter operation semantics remain named trusted obligations rather than source-refined theorems",
@@ -300,7 +328,7 @@ function buildReport() {
         "unattributed usages inside exact clj-kondo defrecord source spans are assigned to the containing record root",
       inlineDefrecordCount: inlineDefinitionSpans.length,
     },
-    roots: indexedRootReports,
+    roots: digestedRootReports,
   };
 }
 
