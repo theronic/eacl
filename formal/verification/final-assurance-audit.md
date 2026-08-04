@@ -279,13 +279,20 @@ that the complete v8.0 engine is formally verified.
   evaluator and release manifest refuse performance cutover instead of
   substituting logical cache weight or the noise-dominated GC
   micro-measurement for a heap bound.
-- Lore revision `dabb5634` must be replayed against the immutable commit
-  containing this source tranche before its source-resource evidence is
-  finalized. The earlier `08ec9c7` analysis is explicitly superseded because
-  the production adapter and formal artifacts changed afterward; it is not
-  reused as a current witness. Regardless of replay outcome, Lore proves no
-  production heap, elapsed-time, backend-operation, or whole-engine resource
-  claim without checked source refinement and platform contracts.
+- Lore revision `dabb5634b0d44e196e2b6ec63003917b3d445bec`
+  reanalyzed immutable EACL revision
+  `b58338887bb7d3d2da2c5857f7878f595b60a5dc` (tree
+  `9a84c00b302e94b185849b153849e5187e860429`, snapshot SHA-256
+  `899d053faa98b32ee7bfbd2ed20ea5fa5fa5872060f6c34b293aa16a8f3e5138`).
+  It found all 22 named source targets, but zero fit Lore's strict Core; all
+  remain source-structural candidates (maximum nested traversal depth 3, 142
+  unique unsupported operators, and 331 per-function operator occurrences).
+  Lore rejected its pinned old production-refutation witness as
+  revision-invalid instead of applying it to the changed implementation.
+  This evidence-only report update changes no analyzed production or formal
+  source. Lore consequently proves no production heap, elapsed-time,
+  backend-operation, or whole-engine resource claim without checked source
+  refinement and platform contracts.
 - A full verifier replay found that the transparent recursive
   `DriveReverseSpec` made the iterative reverse-driver invariant exceed its
   60-second assertion-batch budget. Raising the timeout would have hidden a

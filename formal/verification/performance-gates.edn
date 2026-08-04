@@ -33,12 +33,40 @@
    :worst-case-elapsed-nanoseconds :not-established
    :whole-engine-resource-safety :not-established}
   :current-revision-reanalysis
-  {:scope :production-and-test-source-before-report-finalization
-   :status :pending-current-immutable-reanalysis
-   :reason
-   :production-source-and-formal-artifacts-changed-after-the-prior-lore-witness
-   :superseded-immutable-analyzed-revision
-   "08ec9c74496ca27173cb4fb185f39fd505ad613a"}
+  {:scope :production-and-formal-source-before-evidence-only-report-update
+   :status :completed
+   :lore-revision
+   "dabb5634b0d44e196e2b6ec63003917b3d445bec"
+   :immutable-analyzed-revision
+   "b58338887bb7d3d2da2c5857f7878f595b60a5dc"
+   :tree "9a84c00b302e94b185849b153849e5187e860429"
+   :snapshot-sha256
+   "899d053faa98b32ee7bfbd2ed20ea5fa5fa5872060f6c34b293aa16a8f3e5138"
+   :input-counts
+   {:claim-documentation 1
+    :dafny 21
+    :tla 19
+    :formal-toolchain 1
+    :verification 31
+    :clojure-source 52
+    :benchmark 1}
+   :target-functions 22
+   :missing-target-functions []
+   :strict-core-supported 0
+   :source-structural-candidates 22
+   :maximum-nested-traversal-depth 3
+   :unique-unsupported-operators 142
+   :unsupported-operator-occurrences 331
+   :assurance :source-structural-candidates-only
+   :full-case-study
+   {:status :rejected
+    :error :invalid-eacl-resource-claim
+    :claim :production/unconditional-per-key-single-flight
+    :reason
+    :the-pinned-old-refutation-witness-does-not-match-the-new-revision}
+   :production-source-resource-refinement :unmatched
+   :evidence-update-qualification
+   :subsequent-commit-changes-reports-only-not-analyzed-production-or-formal-source}
   :status :claim-boundary-enforced}
 
  :formal-pipeline
