@@ -1,0 +1,11 @@
+{:indexed-generated-java-reflection-warnings []
+ :public-results :exactly-equal
+ :backend-operations :separately-bounded
+ :after
+ {:recursive
+  {:verified-p95-allocation-overhead-bytes 343576
+   :verified-to-legacy-p95-allocation-ratio 1.1797712831417593}
+  :cursor
+  {:verified-p95-allocation-overhead-bytes 706496
+   :verified-to-legacy-p95-allocation-ratio 1.236447609740425}}
+ :five-trial-authority-mode-gate :passed}

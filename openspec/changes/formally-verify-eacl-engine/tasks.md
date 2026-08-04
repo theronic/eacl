@@ -129,8 +129,8 @@
 
 ## 10. Runtime Boundary, Cryptographic Assumptions, and Cross-Target Parity
 
-- [ ] 10.1 Implement strict CLJ-to-generated-Java conversions for schema IR, relationships, queries, adapter callbacks, cache/cursor inputs, results, and typed errors.
-- [ ] 10.2 Implement the equivalent CLJS-to-generated-JavaScript conversions without duplicating authorization decisions.
+- [x] 10.1 Implement strict CLJ-to-generated-Java conversions for schema IR, relationships, queries, adapter callbacks, cache/cursor inputs, results, and typed errors.
+- [x] 10.2 Implement the equivalent CLJS-to-generated-JavaScript conversions without duplicating authorization decisions.
 - [x] 10.3 Reject unknown tags/fields, duplicate map fields, invalid object identities, unsafe integer ranges, oversized values, and invalid generated result variants at both boundaries.
 - [x] 10.4 Add runtime contract checks around every unproved extern callback and tests proving a callback violation fails closed.
 - [x] 10.5 Expand secure-format tests for domain/key/field confusion, tampering, canonical ordering, numeric extremes, size/depth limits, expiry boundaries, and constant-time tag comparison hooks.
@@ -155,10 +155,10 @@
 
 - [x] 12.1 Add an internal engine-selection option with legacy-authoritative, verified-shadow, and verified-authoritative modes while preserving public request/response shapes.
 - [x] 12.2 Invoke the verified kernel in shadow mode without allowing it to alter legacy responses, cache state, cursors, or backend transactions.
-- [ ] 12.3 Compare shadow results, ordering, page flags, counts, typed errors, cache provenance, graph identity, and limit behavior with redacted structured diagnostics.
-- [ ] 12.4 Classify every shadow divergence against the formal semantics; add a minimized regression and bug-ledger entry before fixing either implementation.
+- [x] 12.3 Compare shadow results, ordering, page flags, counts, typed errors, cache provenance, graph identity, and limit behavior with redacted structured diagnostics.
+- [x] 12.4 Classify every shadow divergence against the formal semantics; add a minimized regression and bug-ledger entry before fixing either implementation.
 - [x] 12.5 Fix every demonstrated false grant, stale reuse, mixed-snapshot page, omission, duplicate, or fail-open path and attach its closing Dafny lemma/model invariant/test.
-- [ ] 12.6 Run representative direct, acyclic, recursive, cursor, and cache load benchmarks in legacy and verified modes and meet the recorded cutover thresholds.
+- [x] 12.6 Run representative direct, acyclic, recursive, cursor, and cache load benchmarks in legacy and verified modes and meet the recorded cutover thresholds.
 - [ ] 12.7 Make verified-authoritative mode opt-in after all proof, adapter, cross-target, mutation, regression, and performance gates pass.
 - [ ] 12.8 Run the full non-benchmark and heavy suites through nREPL with verified authority on Datomic, DataScript CLJ/CLJS, and Datahike.
 - [ ] 12.9 Make verified authority the default while retaining the legacy rollback path for the documented compatibility window.

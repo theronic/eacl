@@ -9,11 +9,14 @@
    [datahike.api :as dh]
    [datomic.api :as d]
    [datascript.core :as ds]
+   [eacl.backend.v8 :as backend]
    [eacl.cache :as shared-cache]
    [eacl.core :as eacl]
+   [eacl.datahike.backend :as datahike-backend]
    [eacl.datahike.core :as datahike]
    [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
+   [eacl.datomic.backend :as datomic-backend]
    [eacl.datomic.cache :as datomic-cache]
    [eacl.datomic.core :as datomic]
    [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -573,6 +576,252 @@
   {:mode :verified-shadow
    :kernel production/generated-java-kernel
    :report-divergence #(swap! reports conj %)})
+
+(defn- selected-graph-identity
+  [adapter]
+  (let [graph-head (backend/invoke adapter :graph-head)]
+    {:snapshot-id (backend/invoke adapter :snapshot-id)
+     ;; Exact locators are client-local reconstruction capabilities. DataScript
+     ;; clients legitimately mint different registry handles for the same
+     ;; immutable graph, so graph identity is the authenticated anchor/order
+     ;; pair in one source scope, not the locator representation.
+     :graph-head (select-keys graph-head [:graph-anchor :order-hint])
+     :source-scope (backend/invoke adapter :source-scope)}))
+
+(defn- page-info-shadow-view
+  [page-info]
+  (cond->
+   (select-keys
+    page-info
+    [:has-next-page? :has-previous-page?])
+    (contains? page-info :start-cursor)
+    (assoc :start-cursor? (some? (:start-cursor page-info)))
+
+    (contains? page-info :end-cursor)
+    (assoc :end-cursor? (some? (:end-cursor page-info)))))
+
+(defn- public-value-shadow-view
+  [value]
+  (if (map? value)
+    (cond-> (dissoc value :cached? :cache-basis :data :page-info)
+      (contains? value :data)
+      (assoc :data
+             (mapv
+              (fn [object]
+                (select-keys object [:type :id]))
+              (:data value)))
+
+      (contains? value :page-info)
+      (assoc :page-info
+             (page-info-shadow-view (:page-info value))))
+    value))
+
+(defn- public-result-shadow-view
+  [selected-graph result]
+  (if (and (map? result) (contains? result :outcome))
+    result
+    {:outcome :value
+     :value (public-value-shadow-view result)
+     :cache-provenance
+     (when (map? result)
+       {:cached? (:cached? result)
+        :cache-basis (:cache-basis result)})
+     :selected-graph selected-graph}))
+
+(defn- invoke-public-shadow
+  [selected-graph-fn operation call]
+  (try
+    (let [value (call)]
+      (public-result-shadow-view (selected-graph-fn) value))
+    (catch Exception error
+      (assoc
+       (verified/error-shadow-view error)
+       :selected-graph (selected-graph-fn)
+       :operation operation))))
+
+(defn- compare-public-shadow!
+  [reports operation legacy-graph verified-graph legacy-call verified-call]
+  (let [legacy
+        (invoke-public-shadow legacy-graph operation legacy-call)]
+    (verified/compare-shadow!
+     (shadow-selection reports)
+     operation
+     legacy
+     #(invoke-public-shadow verified-graph operation verified-call))))
+
+(defn- assert-public-provenance-and-graph-shadow!
+  [label legacy verified legacy-graph verified-graph unrelated-write!]
+  (testing label
+    (eacl/create-relationships!
+     legacy
+     (into [relationship-1 relationship-2]
+           support-relationships))
+    (let [query
+          {:subject user
+           :permission :view
+           :resource/type :document
+           :first 10}
+          first-query (assoc query :first 1)
+          reports (atom [])
+          compare!
+          (fn [operation legacy-call verified-call]
+            (compare-public-shadow!
+             reports operation legacy-graph verified-graph
+             legacy-call verified-call))]
+      (compare!
+       :public-lookup-resources-cache-miss
+       #(eacl/lookup-resources legacy query)
+       #(eacl/lookup-resources verified query))
+      (compare!
+       :public-lookup-resources-cache-hit
+       #(eacl/lookup-resources legacy query)
+       #(eacl/lookup-resources verified query))
+      (compare!
+       :public-count-resources-cache-miss
+       #(eacl/count-resources legacy (dissoc query :first))
+       #(eacl/count-resources verified (dissoc query :first)))
+      (compare!
+       :public-count-resources-cache-hit
+       #(eacl/count-resources legacy (dissoc query :first))
+       #(eacl/count-resources verified (dissoc query :first)))
+      (compare!
+       :public-can
+       #(eacl/can? legacy user :view document-2)
+       #(eacl/can? verified user :view document-2))
+      (let [legacy-first (eacl/lookup-resources legacy first-query)
+            verified-first (eacl/lookup-resources verified first-query)]
+        (verified/compare-shadow!
+         (shadow-selection reports)
+         :public-forward-page-1
+         (public-result-shadow-view (legacy-graph) legacy-first)
+         #(public-result-shadow-view
+           (verified-graph) verified-first))
+        (compare!
+         :public-forward-page-2
+         #(eacl/lookup-resources
+           legacy
+           (assoc first-query
+                  :after
+                  (get-in legacy-first
+                          [:page-info :end-cursor])))
+         #(eacl/lookup-resources
+           verified
+           (assoc first-query
+                  :after
+                  (get-in verified-first
+                          [:page-info :end-cursor])))))
+      (compare!
+       :public-invalid-page-error
+       #(eacl/lookup-resources legacy (assoc query :first 0))
+       #(eacl/lookup-resources verified (assoc query :first 0)))
+      (unrelated-write!)
+      (compare!
+       :public-causal-proof-lift
+       #(eacl/lookup-resources legacy query)
+       #(eacl/lookup-resources verified query))
+      (is (empty? @reports)
+          (str "complete public shadow divergence: "
+               (pr-str @reports))))))
+
+(deftest public-shadow-compares-cache-provenance-and-selected-graph
+  (testing "DataScript"
+    (let [conn (datascript/create-conn)
+          common
+          {:coherence-authority :managed
+           :security-key
+           "01234567890123456789012345678901"
+           :exact-snapshot-registry-size 16}
+          legacy (datascript/make-client conn common)
+          verified
+          (datascript/make-client
+           conn
+           (assoc common :engine-selection engine-selection))]
+      (eacl/write-schema! legacy authorization-schema)
+      (ds/transact!
+       conn
+       [{:eacl/id "user"}
+        {:eacl/id "document-1"}
+        {:eacl/id "document-2"}
+        {:eacl/id "group"}])
+      (assert-public-provenance-and-graph-shadow!
+       "DataScript public provenance and graph"
+       legacy verified
+       #(selected-graph-identity
+         (datascript-backend/snapshot-adapter
+          (ds/db conn) (:opts legacy)))
+       #(selected-graph-identity
+         (datascript-backend/snapshot-adapter
+          (ds/db conn) (:opts verified)))
+       #(ds/transact! conn [{:db/doc "unrelated-shadow"}]))))
+
+  (testing "Datahike"
+    (let [conn (datahike/create-conn)
+          common
+          {:coherence-authority :managed
+           :security-key
+           "01234567890123456789012345678901"}
+          legacy (datahike/make-client conn common)
+          verified
+          (datahike/make-client
+           conn
+           (assoc common :engine-selection engine-selection))]
+      (eacl/write-schema! legacy authorization-schema)
+      (dh/transact
+       conn
+       [{:eacl/id "user"}
+        {:eacl/id "document-1"}
+        {:eacl/id "document-2"}
+        {:eacl/id "group"}])
+      (assert-public-provenance-and-graph-shadow!
+       "Datahike public provenance and graph"
+       legacy verified
+       #(selected-graph-identity
+         (datahike-backend/snapshot-adapter
+          (dh/db conn) (:opts legacy)))
+       #(selected-graph-identity
+         (datahike-backend/snapshot-adapter
+          (dh/db conn) (:opts verified)))
+       #(dh/transact conn [{:db/doc "unrelated-shadow"}]))))
+
+  (testing "Datomic"
+    (with-mem-conn [conn datomic-schema/v7-schema]
+      (let [common
+            {:coherence-authority :managed
+             :cache {:remember-answers true}
+             :page-token-key
+             "01234567890123456789012345678901"
+             :zed-token-key
+             "12345678901234567890123456789012"}
+            legacy (datomic/make-client conn common)
+            verified
+            (datomic/make-client
+             conn
+             (assoc common :engine-selection engine-selection))]
+        (eacl/write-schema! legacy authorization-schema)
+        @(d/transact
+          conn
+          [{:db/id (d/tempid :db.part/user)
+            :eacl/id "user"}
+           {:db/id (d/tempid :db.part/user)
+            :eacl/id "document-1"}
+           {:db/id (d/tempid :db.part/user)
+            :eacl/id "document-2"}
+           {:db/id (d/tempid :db.part/user)
+            :eacl/id "group"}])
+        (assert-public-provenance-and-graph-shadow!
+         "Datomic public provenance and graph"
+         legacy verified
+         #(selected-graph-identity
+           (datomic-backend/snapshot-adapter
+            (d/db conn) (:opts legacy)))
+         #(selected-graph-identity
+           (datomic-backend/snapshot-adapter
+            (d/db conn) (:opts verified)))
+         #(deref
+           (d/transact
+            conn
+            [{:db/id (d/tempid :db.part/user)
+              :db/doc "unrelated-shadow"}])))))))
 
 (defn- assert-recursive-shadow!
   [client limited-clients reports]

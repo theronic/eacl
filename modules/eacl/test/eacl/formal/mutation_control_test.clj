@@ -548,6 +548,100 @@
          (= (select-keys legacy mutant-fields)
             (select-keys generated mutant-fields)))))
 
+(defn- shadow-typed-error-drops-portable-values-killed?
+  []
+  (let [legacy
+        {:type :eacl.test/typed
+         :eacl/error :eacl.test/failure
+         :message-field "left"
+         :nested {:cursor ["a" 1] :retained? true}}
+        generated
+        {:type :eacl.test/typed
+         :eacl/error :eacl.test/failure
+         :message-field "right"
+         :nested {:cursor ["a" 2] :retained? false}}
+        old-scalar-projection
+        (fn [value]
+          (into
+           {}
+           (keep
+            (fn [[field field-value]]
+              (when (or (keyword? field-value)
+                        (integer? field-value))
+                [field field-value])))
+           value))]
+    (and (not= legacy generated)
+         (= (old-scalar-projection legacy)
+            (old-scalar-projection generated)))))
+
+(defn- graph-identity-includes-client-local-exact-locator-killed?
+  []
+  (let [common
+        {:snapshot-id {:database-id :datascript :basis-t 7}
+         :source-scope {:source-id "source" :branch nil}}
+        left
+        (assoc common
+               :graph-head
+               {:graph-anchor "graph"
+                :order-hint 7
+                :exact-locator "client-a"})
+        right
+        (assoc common
+               :graph-head
+               {:graph-anchor "graph"
+                :order-hint 7
+                :exact-locator "client-b"})
+        graph-identity
+        (fn [value]
+          (update
+           value :graph-head
+           select-keys [:graph-anchor :order-hint]))]
+    (and (= (graph-identity left)
+            (graph-identity right))
+         (not= left right))))
+
+(defn- formal-cljs-smoke-terminates-agent-executors-killed?
+  []
+  (let [correct
+        {:entrypoint :cljs.build.api/build
+         :shutdown-agents? false
+         :postcondition :future-completes}
+        mutant
+        {:entrypoint :cljs.main/-main
+         :shutdown-agents? true
+         :postcondition :future-rejected}]
+    (and (false? (:shutdown-agents? correct))
+         (= :future-completes (:postcondition correct))
+         (true? (:shutdown-agents? mutant))
+         (= :future-rejected (:postcondition mutant)))))
+
+(defn- generated-indexed-java-boundary-restores-reflection-killed?
+  []
+  (let [source
+        (slurp
+         (repo/file
+          "formal" "smoke" "clj" "eacl" "formal"
+          "production_kernel.clj"))
+        required-static-targets
+        ["^IndexedLimitKind kind"
+         "^RenderError error"
+         "^OptionalEid bound"
+         "^Projection projection"
+         "^ScanCommand command"
+         "^ResourceCounters counters"
+         "^ForwardInit outcome"
+         "^ReverseInit outcome"
+         "^ForwardStep outcome"
+         "^ReverseStep outcome"
+         "^ForwardResume outcome"
+         "^ReverseResume outcome"
+         "^ForwardState state"
+         "^ReverseState state"
+         "^PublicRenderResult result"]]
+    (every?
+     #(not= -1 (.indexOf ^String source ^String %))
+     required-static-targets)))
+
 (defn- routing-node-identity-drops-resource-type-killed?
   []
   (let [document-read [:document :read]
@@ -777,6 +871,14 @@
    generated-stale-cursor-leaks-render-details-killed?
    :shadow-typed-error-omits-page-size
    shadow-typed-error-omits-page-size-killed?
+   :shadow-typed-error-drops-portable-values
+   shadow-typed-error-drops-portable-values-killed?
+   :graph-identity-includes-client-local-exact-locator
+   graph-identity-includes-client-local-exact-locator-killed?
+   :formal-cljs-smoke-terminates-agent-executors
+   formal-cljs-smoke-terminates-agent-executors-killed?
+   :generated-indexed-java-boundary-restores-reflection
+   generated-indexed-java-boundary-restores-reflection-killed?
    :routing-node-identity-drops-resource-type
    routing-node-identity-drops-resource-type-killed?
    :routing-only-recursive-component-members

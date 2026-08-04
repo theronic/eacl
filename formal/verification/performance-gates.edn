@@ -742,6 +742,90 @@
     :p50-ratio 1.0427758076012636}}
   :status :passed}
 
+ :authority-mode-matrix
+ {:runner
+  "formal/smoke/clj/eacl/formal/authority_mode_benchmark.clj"
+  :fixture
+  {:backend :datascript
+   :documents 512
+   :recursive-groups 64
+   :page-size 20
+   :warmup 50
+   :samples 31
+   :independent-trials 5
+   :paired-order :alternating
+   :aggregation :median-of-trial-p95-values}
+  :engine-modes [:legacy-authoritative :verified-authoritative]
+  :scenarios [:direct :acyclic :recursive :cursor :cache-hot]
+  :resource-dimensions
+  {:public-result :exact-semantic-value
+   :elapsed-time :nanoseconds-per-public-call
+   :caller-thread-allocation :bytes-per-public-call
+   :backend-operations :executed-scan-or-probe-count
+   :retained-live-heap :not-measured
+   :whole-process-allocation :not-measured}
+  :required
+  {:maximum-median-p95-latency-ratio 2.0
+   :maximum-median-p95-absolute-overhead-ns 250000
+   :maximum-median-p95-allocation-ratio 2.0
+   :maximum-median-p95-allocation-overhead-bytes 32768
+   :maximum-median-p95-backend-operation-ratio 1.05
+   :maximum-median-p95-backend-operation-overhead 1
+   :exact-public-result-equality-every-call true}
+  :observed
+  {:direct
+   {:median-p95-latency-ratio 1.0622408776040997
+    :median-p95-absolute-overhead-ns 2417
+    :median-p95-allocation-ratio 1.0203134796238245
+    :median-p95-allocation-overhead-bytes 1296
+    :median-p95-backend-operation-ratio 1.0
+    :median-p95-backend-operation-overhead 0
+    :status :passed}
+   :acyclic
+   {:median-p95-latency-ratio 1.2203914077612552
+    :median-p95-absolute-overhead-ns 154834
+    :median-p95-allocation-ratio 1.0280316092760982
+    :median-p95-allocation-overhead-bytes 39928
+    :median-p95-backend-operation-ratio 1.0
+    :median-p95-backend-operation-overhead 0
+    :status :passed}
+   :recursive
+   {:median-p95-latency-ratio 1.6389052463594653
+    :median-p95-absolute-overhead-ns 838875
+    :median-p95-allocation-ratio 1.4439305189013232
+    :median-p95-allocation-overhead-bytes 1158648
+    :median-p95-backend-operation-ratio 0.9923076923076923
+    :median-p95-backend-operation-overhead -1
+    :status :passed}
+   :cursor
+   {:median-p95-latency-ratio 1.5546538227346123
+    :median-p95-absolute-overhead-ns 962833
+    :median-p95-allocation-ratio 1.4247445217481827
+    :median-p95-allocation-overhead-bytes 1566712
+    :median-p95-backend-operation-ratio 0.9923664122137404
+    :median-p95-backend-operation-overhead -1
+    :status :passed}
+   :cache-hot
+   {:median-p95-latency-ratio 1.0523339825343971
+    :median-p95-absolute-overhead-ns 1666
+    :median-p95-allocation-ratio 1.0216461785141635
+    :median-p95-allocation-overhead-bytes 1296
+    :median-p95-backend-operation-ratio 0.0
+    :median-p95-backend-operation-overhead 0
+    :status :passed}}
+  :reflection-removal
+  {:counterexample :EACL-FORMAL-035
+   :jfr-diagnosis
+   :reflective-handwritten-clj-to-generated-java-indexed-calls
+   :minimized-recursive-p95-allocation-overhead-bytes
+   {:before 3677688 :after 343576}
+   :minimized-cursor-p95-allocation-overhead-bytes
+   {:before 4283960 :after 706496}
+   :indexed-hot-boundary-reflection-warnings 0}
+  :qualification
+  :host-specific-regression-gate-not-retained-heap-or-worst-case-bound
+  :status :passed}
+
  :memory-and-token
  {:maximum-retained-page-eids 16384
   :default-continuation-store-max-weight-bytes 16777216
@@ -791,10 +875,11 @@
     :source :generated-artifacts}
    :benchmark-noise
    {:status :passed
-    :source
+   :source
     [:generated-indexed-authority
      :ordered-merge-source-specialization
-     :layered-subproblem-cache]}}
+     :layered-subproblem-cache
+     :authority-mode-matrix]}}
   :required-dimensions
   [:retained-live-heap
    :entry-weight

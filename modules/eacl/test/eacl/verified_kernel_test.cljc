@@ -507,3 +507,90 @@
               :legacy
               #(do (reset! called? true) :generated))))
       (is (false? @called?)))))
+
+(deftest shadow-error-comparison-covers-complete-portable-ex-data
+  (let [legacy-error
+        (ex-info
+         "legacy"
+         {:type :eacl.test/typed
+          :eacl/error :eacl.test/failure
+          :message-field "left"
+          :nested {:cursor ["a" 1] :retained? true}})
+        equal-error
+        (ex-info
+         "generated"
+         {:nested {:retained? true :cursor ["a" 1]}
+          :message-field "left"
+          :eacl/error :eacl.test/failure
+          :type :eacl.test/typed})
+        different-error
+        (ex-info
+         "generated"
+         {:type :eacl.test/typed
+          :eacl/error :eacl.test/failure
+          :message-field "right"
+          :nested {:cursor ["a" 2] :retained? false}})
+        legacy (verified/error-shadow-view legacy-error)
+        reports (atom [])
+        selection
+        {:mode :verified-shadow
+         :kernel (->FunctionKernel (fn [_ _] nil))
+         :report-divergence #(swap! reports conj %)}]
+    (is (= legacy
+           (verified/error-shadow-view equal-error)))
+    (is (= legacy
+           (verified/compare-shadow!
+            selection
+            :typed-error-comparison
+            legacy
+            #(verified/error-shadow-view equal-error))))
+    (is (empty? @reports))
+    (is (= legacy
+           (verified/compare-shadow!
+            selection
+            :typed-error-comparison
+            legacy
+            #(verified/error-shadow-view different-error))))
+    (is (= [{:type :eacl.verification/shadow-divergence
+             :operation :typed-error-comparison
+             :changed-fields [:error]
+             :legacy-variant
+             {:outcome :error
+              :type :eacl.test/typed
+              :eacl/error :eacl.test/failure}
+             :verified-variant
+             {:outcome :error
+              :type :eacl.test/typed
+              :eacl/error :eacl.test/failure}}]
+           @reports))
+    (is (nil? (:legacy (first @reports))))
+    (is (nil? (:verified (first @reports))))))
+
+(deftest shadow-error-comparison-reports-unavailable-nonportable-data
+  (let [reports (atom [])
+        selection
+        {:mode :verified-shadow
+         :kernel (->FunctionKernel (fn [_ _] nil))
+         :report-divergence #(swap! reports conj %)}
+        unavailable
+        (verified/error-shadow-view
+         (ex-info
+          "nonportable"
+          {:type :eacl.test/nonportable
+           :opaque #?(:clj (Object.) :cljs (js-obj))}))]
+    (is (= :comparison-unavailable (:outcome unavailable)))
+    (is (= unavailable
+           (verified/compare-shadow!
+            selection
+            :typed-error-comparison
+            unavailable
+            (constantly unavailable))))
+    (is (= [{:type :eacl.verification/shadow-comparison-unavailable
+             :operation :typed-error-comparison
+             :legacy-variant
+             {:outcome :comparison-unavailable
+              :type :eacl.test/nonportable}
+             :verified-variant
+             {:outcome :comparison-unavailable
+              :type :eacl.test/nonportable}}]
+           @reports))))

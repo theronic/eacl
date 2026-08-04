@@ -1,0 +1,9 @@
+{:trace
+ [:start-persistent-nrepl
+  :invoke-cljs-main-minus-main
+  :run-node-smoke
+  :submit-clojure-future]
+ :observation
+ {:future :rejected
+  :exception "java.util.concurrent.RejectedExecutionException"
+  :executor-state :terminated}}

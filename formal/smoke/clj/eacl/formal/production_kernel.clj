@@ -9,14 +9,27 @@
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
    (dafny DafnySequence DafnySet TypeDescriptor)
+   (java.math BigInteger)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
     CursorBound
+    ForwardInit
+    ForwardResume
+    ForwardState
+    ForwardStep
     IndexedLimits
+    IndexedLimitKind
     IndexedRule
     OptionalEid
     Projection
+    PublicRenderResult
     RenderMode
+    RenderError
+    ResourceCounters
+    ReverseInit
+    ReverseResume
+    ReverseState
+    ReverseStep
     ScanCommand
     ScanResponse)
    (OrderedMerge MergeDirection OptionalHead)
@@ -42,6 +55,14 @@
 (defn- dafny-nat
   [value]
   (biginteger value))
+
+(defn- dafny-long
+  [^BigInteger value]
+  (.longValueExact value))
+
+(defn- dafny-unicode
+  [^DafnySequence value]
+  (.verbatimString value))
 
 (defn- dafny-sequence
   [values]
@@ -933,75 +954,75 @@
     (RenderMode/create_RenderBoolean (dafny-nat target-eid))))
 
 (defn- indexed-limit-kind
-  [kind]
+  [^IndexedLimitKind kind]
   (cond
     (.is_IndexedDerivedGrants kind) :derived-grants
     (.is_IndexedAdvancedDatoms kind) :advanced-datoms
     :else :queued-work))
 
 (defn- indexed-render-error
-  [error]
+  [^RenderError error]
   (if (.is_CursorSkipped error)
     {:reason :cursor-skipped
-     :expected-ordinal (.longValueExact (.dtor_expectedOrdinal error))
-     :actual-ordinal (.longValueExact (.dtor_actualOrdinal error))}
+     :expected-ordinal (dafny-long (.dtor_expectedOrdinal error))
+     :actual-ordinal (dafny-long (.dtor_actualOrdinal error))}
     {:reason :cursor-result-mismatch
-     :ordinal (.longValueExact (.dtor_ordinal error))
-     :expected-eid (.longValueExact (.dtor_expectedEid error))
-     :actual-eid (.longValueExact (.dtor_actualEid error))}))
+     :ordinal (dafny-long (.dtor_ordinal error))
+     :expected-eid (dafny-long (.dtor_expectedEid error))
+     :actual-eid (dafny-long (.dtor_actualEid error))}))
 
 (defn- indexed-bound-value
-  [bound]
+  [^OptionalEid bound]
   (when (.is_Bound bound)
-    (.longValueExact (.dtor_value bound))))
+    (dafny-long (.dtor_value bound))))
 
 (defn- indexed-projection-value
-  [projection]
+  [^Projection projection]
   (if (.is_SubjectToResources projection)
     {:kind :subject->resources
-     :subject-type (.verbatimString (.dtor_subjectType projection))
-     :subject-eid (.longValueExact (.dtor_subjectEid projection))
-     :relation-eid (.longValueExact (.dtor_relationEid projection))
-     :resource-type (.verbatimString (.dtor_resourceType projection))
+     :subject-type (dafny-unicode (.dtor_subjectType projection))
+     :subject-eid (dafny-long (.dtor_subjectEid projection))
+     :relation-eid (dafny-long (.dtor_relationEid projection))
+     :resource-type (dafny-unicode (.dtor_resourceType projection))
      :bound-eid (indexed-bound-value (.dtor_bound projection))}
     {:kind :resource->subjects
-     :resource-type (.verbatimString (.dtor_resourceType projection))
-     :resource-eid (.longValueExact (.dtor_resourceEid projection))
-     :relation-eid (.longValueExact (.dtor_relationEid projection))
-     :subject-type (.verbatimString (.dtor_subjectType projection))
+     :resource-type (dafny-unicode (.dtor_resourceType projection))
+     :resource-eid (dafny-long (.dtor_resourceEid projection))
+     :relation-eid (dafny-long (.dtor_relationEid projection))
+     :subject-type (dafny-unicode (.dtor_subjectType projection))
      :bound-eid (indexed-bound-value (.dtor_bound projection))}))
 
 (defn- indexed-command-value
-  [command]
-  {:request-scope (.longValueExact (.dtor_requestScope command))
-   :request-id (.longValueExact (.dtor_requestId command))
+  [^ScanCommand command]
+  {:request-scope (dafny-long (.dtor_requestScope command))
+   :request-id (dafny-long (.dtor_requestId command))
    :projection (indexed-projection-value (.dtor_projection command))
-   :chunk-size (.longValueExact (.dtor_chunkSize command))})
+   :chunk-size (dafny-long (.dtor_chunkSize command))})
 
 (defn- indexed-counters-value
-  [counters]
+  [^ResourceCounters counters]
   {:backend-commands
-   (.longValueExact (.dtor_backendCommands counters))
+   (dafny-long (.dtor_backendCommands counters))
    :adapter-fetched-values
-   (.longValueExact (.dtor_adapterFetchedValues counters))
+   (dafny-long (.dtor_adapterFetchedValues counters))
    :engine-consumed-values
-   (.longValueExact (.dtor_engineConsumedValues counters))
+   (dafny-long (.dtor_engineConsumedValues counters))
    :cumulative-enqueues
-   (.longValueExact (.dtor_cumulativeEnqueues counters))
+   (dafny-long (.dtor_cumulativeEnqueues counters))
    :current-queue-depth
-   (.longValueExact (.dtor_currentQueueDepth counters))
+   (dafny-long (.dtor_currentQueueDepth counters))
    :maximum-queue-depth
-   (.longValueExact (.dtor_maximumQueueDepth counters))
+   (dafny-long (.dtor_maximumQueueDepth counters))
    :unique-grants
-   (.longValueExact (.dtor_uniqueGrants counters))
+   (dafny-long (.dtor_uniqueGrants counters))
    :emitted-results
-   (.longValueExact (.dtor_emittedResults counters))
+   (dafny-long (.dtor_emittedResults counters))
    :rule-applications
-   (.longValueExact (.dtor_ruleApplications counters))
+   (dafny-long (.dtor_ruleApplications counters))
    :consumer-grant-joins
-   (.longValueExact (.dtor_consumerGrantJoins counters))
+   (dafny-long (.dtor_consumerGrantJoins counters))
    :render-advances
-   (.longValueExact (.dtor_renderAdvances counters))})
+   (dafny-long (.dtor_renderAdvances counters))})
 
 (defrecord GeneratedJavaIndexedPlan [plan seed-rules])
 
@@ -1061,12 +1082,19 @@
            (dafny-nat chunk-size)
            limits'))]
     (if (case direction
-          :forward (.is_ForwardInitialized outcome)
-          :reverse (.is_ReverseInitialized outcome))
+          :forward (.is_ForwardInitialized ^ForwardInit outcome)
+          :reverse (.is_ReverseInitialized ^ReverseInit outcome))
       {:status :initialized
-       :state (.dtor_state outcome)}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardInit outcome)
+         :reverse (.dtor_state ^ReverseInit outcome))}
       {:status :limit-exceeded
-       :limit-kind (indexed-limit-kind (.dtor_kind outcome))})))
+       :limit-kind
+       (indexed-limit-kind
+        (case direction
+          :forward (.dtor_kind ^ForwardInit outcome)
+          :reverse (.dtor_kind ^ReverseInit outcome)))})))
 
 (defn- indexed-drive
   [direction state limits fuel]
@@ -1085,37 +1113,64 @@
           :reverse "Reverse")]
     (cond
       (case direction
-        :forward (.is_ForwardNeedScan outcome)
-        :reverse (.is_ReverseNeedScan outcome))
+        :forward (.is_ForwardNeedScan ^ForwardStep outcome)
+        :reverse (.is_ReverseNeedScan ^ReverseStep outcome))
       {:status :need-scan
-       :state (.dtor_state outcome)
-       :command (indexed-command-value (.dtor_command outcome))}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardStep outcome)
+         :reverse (.dtor_state ^ReverseStep outcome))
+       :command
+       (indexed-command-value
+        (case direction
+          :forward (.dtor_command ^ForwardStep outcome)
+          :reverse (.dtor_command ^ReverseStep outcome)))}
 
       (case direction
-        :forward (.is_ForwardComplete outcome)
-        :reverse (.is_ReverseComplete outcome))
+        :forward (.is_ForwardComplete ^ForwardStep outcome)
+        :reverse (.is_ReverseComplete ^ReverseStep outcome))
       {:status :complete
-       :state (.dtor_state outcome)}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardStep outcome)
+         :reverse (.dtor_state ^ReverseStep outcome))}
 
       (case direction
-        :forward (.is_ForwardYielded outcome)
-        :reverse (.is_ReverseYielded outcome))
+        :forward (.is_ForwardYielded ^ForwardStep outcome)
+        :reverse (.is_ReverseYielded ^ReverseStep outcome))
       {:status :yielded
-       :state (.dtor_state outcome)}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardStep outcome)
+         :reverse (.dtor_state ^ReverseStep outcome))}
 
       (case direction
-        :forward (.is_ForwardRenderRejected outcome)
-        :reverse (.is_ReverseRenderRejected outcome))
+        :forward (.is_ForwardRenderRejected ^ForwardStep outcome)
+        :reverse (.is_ReverseRenderRejected ^ReverseStep outcome))
       {:status :render-rejected
-       :state (.dtor_state outcome)
-       :error (indexed-render-error (.dtor_error outcome))}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardStep outcome)
+         :reverse (.dtor_state ^ReverseStep outcome))
+       :error
+       (indexed-render-error
+        (case direction
+          :forward (.dtor_error ^ForwardStep outcome)
+          :reverse (.dtor_error ^ReverseStep outcome)))}
 
       (case direction
-        :forward (.is_ForwardStepLimitExceeded outcome)
-        :reverse (.is_ReverseStepLimitExceeded outcome))
+        :forward (.is_ForwardStepLimitExceeded ^ForwardStep outcome)
+        :reverse (.is_ReverseStepLimitExceeded ^ReverseStep outcome))
       {:status :limit-exceeded
-       :state (.dtor_state outcome)
-       :limit-kind (indexed-limit-kind (.dtor_kind outcome))}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardStep outcome)
+         :reverse (.dtor_state ^ReverseStep outcome))
+       :limit-kind
+       (indexed-limit-kind
+        (case direction
+          :forward (.dtor_kind ^ForwardStep outcome)
+          :reverse (.dtor_kind ^ReverseStep outcome)))}
 
       :else
       (throw
@@ -1144,44 +1199,67 @@
            state response' (indexed-limits limits)))]
     (cond
       (case direction
-        :forward (.is_ForwardScanResumed outcome)
-        :reverse (.is_ReverseScanResumed outcome))
+        :forward (.is_ForwardScanResumed ^ForwardResume outcome)
+        :reverse (.is_ReverseScanResumed ^ReverseResume outcome))
       {:status :resumed
-       :state (.dtor_state outcome)}
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardResume outcome)
+         :reverse (.dtor_state ^ReverseResume outcome))}
 
       (case direction
-        :forward (.is_ForwardScanRejected outcome)
-        :reverse (.is_ReverseScanRejected outcome))
+        :forward (.is_ForwardScanRejected ^ForwardResume outcome)
+        :reverse (.is_ReverseScanRejected ^ReverseResume outcome))
       {:status :scan-rejected
        :reason
-       (indexed-scan-rejection-reason (.dtor_error outcome))}
+       (indexed-scan-rejection-reason
+        (case direction
+          :forward (.dtor_error ^ForwardResume outcome)
+          :reverse (.dtor_error ^ReverseResume outcome)))}
 
       :else
       {:status :limit-exceeded
-       :state (.dtor_state outcome)
-       :limit-kind (indexed-limit-kind (.dtor_kind outcome))})))
+       :state
+       (case direction
+         :forward (.dtor_state ^ForwardResume outcome)
+         :reverse (.dtor_state ^ReverseResume outcome))
+       :limit-kind
+       (indexed-limit-kind
+        (case direction
+          :forward (.dtor_kind ^ForwardResume outcome)
+          :reverse (.dtor_kind ^ReverseResume outcome)))})))
 
 (defn- indexed-public-result
   [direction state]
-  (let [render (.dtor_render state)
-        result (IndexedTraversal.__default/ReadRenderResult render)
+  (let [render
+        (case direction
+          :forward (.dtor_render ^ForwardState state)
+          :reverse (.dtor_render ^ReverseState state))
+        ^PublicRenderResult result
+        (IndexedTraversal.__default/ReadRenderResult render)
         common
-        {:counters (indexed-counters-value (.dtor_counters state))
+        {:counters
+         (indexed-counters-value
+          (case direction
+            :forward (.dtor_counters ^ForwardState state)
+            :reverse (.dtor_counters ^ReverseState state)))
          :retained-logical-units
-         (.longValueExact
+         (dafny-long
           (case direction
             :forward
-            (IndexedTraversal.__default/ForwardRetainedLogicalUnits state)
+            (IndexedTraversal.__default/ForwardRetainedLogicalUnits
+             ^ForwardState state)
             :reverse
-            (IndexedTraversal.__default/ReverseRetainedLogicalUnits state)))}]
+            (IndexedTraversal.__default/ReverseRetainedLogicalUnits
+             ^ReverseState state)))}]
     (cond
       (.is_PageReady result)
       (merge
        common
        {:status :page
-        :items (mapv #(.longValueExact %) (.dtor_items result))
+        :items (mapv dafny-long (.dtor_items result))
         :start-ordinal
-        (.longValueExact (.dtor_startOrdinal result))
+        (dafny-long (.dtor_startOrdinal result))
         :has-next? (.dtor_hasNext result)
         :has-previous? (.dtor_hasPrevious result)})
 
@@ -1189,7 +1267,7 @@
       (merge
        common
        {:status :count
-        :count (.longValueExact (.dtor_count result))
+        :count (dafny-long (.dtor_count result))
         :truncated? (.dtor_truncated result)})
 
       :else

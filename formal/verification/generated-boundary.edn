@@ -1,6 +1,13 @@
 {:schema-version 1
  :status :indexed-recursive-generated-authority-routed-pending-release-gates
  :portable-boundary eacl.verified-kernel
+ :conversion-boundary
+ {:report "formal/verification/conversion-boundary.edn"
+  :clj-java :strict
+  :cljs-javascript :strict
+  :cross-runtime-converter-presence :machine-checked
+  :semantic-qualification :differential-evidence
+  :conversion-code :trusted-ffi-boundary}
  :modes
  [:legacy-authoritative :verified-shadow :verified-authoritative]
  :generated-providers
@@ -154,21 +161,22 @@
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 31 :suite-assertions 1484 :status :passed}
+   :suite-tests 44 :suite-assertions 1627 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
-   :clj {:tests 10 :assertions 131}
-   :cljs :passed-in-full-suite}
+   :clj {:tests 12 :assertions 141}
+   :cljs {:tests 12 :assertions 141 :status :passed}}
   :production-routing
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
     :tests 25
     :assertions 1033}
-   :cljs-javascript
-   {:namespace-tests 23
-    :suite-tests 31
-    :suite-assertions 1484
+ :cljs-javascript
+   {:namespace-tests 24
+    :suite-tests 44
+    :suite-assertions 1627
     :datascript-public-recursive-cache-mode-differential true
+    :datascript-complete-public-provenance-and-graph-shadow true
     :shared-scc-routing-differential true}}
   :materialized-reference
   {:comparison-contract
@@ -183,9 +191,9 @@
     :status :passed}
    :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 23
-    :suite-tests 31
-    :suite-assertions 1484
+    :namespace-tests 24
+    :suite-tests 44
+    :suite-assertions 1627
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace
@@ -209,13 +217,28 @@
    :limit-comparison-scope :generated-indexed-vs-production
    :generated-page-normalization true
    :typed-page-size-error-comparison true
+   :complete-portable-typed-error-data-comparison true
+   :nonportable-error-comparison-fails-observably true
    :stale-cursor-error-shape-comparison true
+   :complete-public-cache-provenance-comparison true
+   :complete-public-selected-graph-comparison
+   {:identity
+    [:source-scope :snapshot-id :graph-anchor :order-hint]
+    :client-local-exact-locator-excluded true}
    :current-cache-generated-selection true
-   :tests 5 :assertions 171 :status :passed}}
+   :tests 6 :assertions 174 :status :passed}
+  :cljs-public-state-trace
+  {:namespace eacl.formal.production-kernel-test
+   :backend :datascript
+   :runtime :cljs-javascript
+   :compared-operations 7
+   :complete-portable-typed-error-data-comparison true
+   :cache-provenance-comparison true
+   :selected-graph-comparison true
+   :status :passed}}
  :remaining
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-source-refinement
   :acyclic-optimized-leapfrog-source-refinement
-  :verified-shadow-complete-public-error-provenance-and-graph-comparison
   :cross-backend-generated-authority
   :independent-review]}

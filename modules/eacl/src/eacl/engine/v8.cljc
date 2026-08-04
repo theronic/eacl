@@ -1384,35 +1384,13 @@
          (traversal-shadow-view
           value @generated-stats compare-resources? true))))))
 
-(def ^:private typed-error-fields
-  [:type :eacl/error :operation :reason :direction :limit-kind :filter :key
-   :expected :actual :limit :size :max :count-limit :maximum :maximum-size])
-
-(defn- typed-error-view
-  [error]
-  (let [data (ex-data error)
-        typed
-        (into
-         {}
-         (keep
-          (fn [field]
-            (let [value (get data field)]
-              (when (or (keyword? value)
-                        (integer? value))
-                [field value]))))
-         typed-error-fields)]
-    (if (seq typed)
-      typed
-      {:type :eacl.verification/untyped-error})))
-
 (defn- compare-generated-shadow-error!
   [operation legacy-error generated-result]
   (let [selection subproblem/*engine-selection*]
     (verified/compare-shadow!
      selection
      operation
-     {:outcome :error
-      :error (typed-error-view legacy-error)}
+     (verified/error-shadow-view legacy-error)
      #(binding [subproblem/*engine-selection*
                 (shadow-authoritative-selection)
                 subproblem/*store* nil
@@ -1424,8 +1402,7 @@
           (generated-result)
           {:outcome :value}
           (catch #?(:clj Exception :cljs :default) error
-            {:outcome :error
-             :error (typed-error-view error)}))))
+            (verified/error-shadow-view error)))))
     (throw legacy-error)))
 
 (defn- track-dimensional-counters?

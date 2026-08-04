@@ -37,7 +37,6 @@
    :remaining
    [:acyclic-direct-and-arrow-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
-    :complete-public-typed-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
@@ -70,7 +69,6 @@
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
-    :complete-public-typed-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
@@ -94,7 +92,6 @@
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
-    :complete-public-typed-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel
@@ -128,7 +125,6 @@
    :remaining
    [:backend-selection-source-refinement
     :authenticated-token-decoder-refinement
-    :complete-public-typed-error-provenance
     :cross-backend-authoritative-gates
     :independent-review]
    :ci
@@ -230,7 +226,6 @@
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
     :production-adapter-certification
-    :verified-shadow-complete-public-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
    :ci [:generated-production-kernel

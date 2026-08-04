@@ -136,7 +136,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-031
+ {:latest :EACL-FORMAL-035
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -167,11 +167,21 @@
           :EACL-FORMAL-028
           :EACL-FORMAL-029
           :EACL-FORMAL-030
-          :EACL-FORMAL-031]}
+          :EACL-FORMAL-031
+          :EACL-FORMAL-032
+          :EACL-FORMAL-033
+          :EACL-FORMAL-034
+          :EACL-FORMAL-035]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 31}
+  :entries 35}
+ :conversion-boundary
+ {:status :passed
+  :report "formal/verification/conversion-boundary.edn"
+  :clj-java :strict-generated-conversion-boundary
+  :cljs-javascript :strict-generated-conversion-boundary
+  :qualification :trusted-ffi-boundary-not-source-proof}
  :residual-assumptions
  [:verification-toolchain
   :generated-code-compilers
@@ -196,6 +206,7 @@
    :completed-answer-hot-nonregression :passed
    :cache-disabled-nonregression :passed
    :cross-backend-workload-baseline :passed
+   :legacy-vs-verified-authority-mode-matrix :passed
    :retained-live-heap :not-established
    :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
    :blocking-findings
@@ -207,8 +218,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 59
-  :registered 59}
+  :killed 63
+  :registered 63}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -227,7 +238,6 @@
    :acyclic-optimized-leapfrog-source-refinement
    :recursive-scc-routing-source-refinement
    :production-ordered-adapter-certification
-   :verified-shadow-complete-public-error-provenance-and-graph-comparison
    :managed-derived-subproblem-proof
    :generated-subproblem-production-routing
    :shadow-rollout-gates

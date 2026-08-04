@@ -253,6 +253,30 @@
    :killed-by
    {:invariant :shadow-comparison-preserves-page-size-error-data
     :test :recursive-shadow-compares-complete-public-results}}
+  {:id :shadow-typed-error-drops-portable-values
+   :mechanism :compare-only-keyword-and-integer-error-fields-and-ignore-string-boolean-vector-and-map-fields
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :shadow-comparison-preserves-complete-portable-exception-data
+    :test :shadow-error-comparison-covers-complete-portable-ex-data}}
+  {:id :graph-identity-includes-client-local-exact-locator
+   :mechanism :treat-client-local-exact-reconstruction-handle-as-immutable-graph-identity
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :graph-identity-is-source-snapshot-anchor-and-order-not-client-local-locator
+    :test :public-shadow-compares-cache-provenance-and-selected-graph}}
+  {:id :formal-cljs-smoke-terminates-agent-executors
+   :mechanism :invoke-cljs-main-cli-lifecycle-inside-persistent-nrepl-and-call-shutdown-agents
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :formal-cljs-compile-preserves-persistent-nrepl-executors
+    :test :formal-cljs-smoke-preserves-persistent-nrepl-executors-test}}
+  {:id :generated-indexed-java-boundary-restores-reflection
+   :mechanism :remove-concrete-generated-java-type-hints-from-indexed-drive-resume-and-result-calls
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :indexed-generated-java-hot-boundary-has-no-reflective-invocation
+    :test :generated-java-indexed-hot-boundary-is-reflection-free-test}}
   {:id :routing-node-identity-drops-resource-type
    :mechanism :resolve-arrow-permission-targets-by-permission-name-alone
    :control {:kind :clojure}

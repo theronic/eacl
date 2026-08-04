@@ -3,7 +3,8 @@
    [cljs.nodejs :as nodejs]
    [cljs.test :as t]
    [eacl.formal.js-round-trip-test]
-   [eacl.formal.production-kernel-test]))
+   [eacl.formal.production-kernel-test]
+   [eacl.verified-kernel-test]))
 
 (nodejs/enable-util-print!)
 
@@ -21,6 +22,7 @@
   []
   (t/run-tests
    'eacl.formal.js-round-trip-test
-   'eacl.formal.production-kernel-test))
+   'eacl.formal.production-kernel-test
+   'eacl.verified-kernel-test))
 
 (set! *main-cli-fn* -main)

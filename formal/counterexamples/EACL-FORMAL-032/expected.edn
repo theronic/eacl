@@ -1,0 +1,14 @@
+{:complete-portable-error-data-equal false
+ :shadow-diagnostic
+ {:type :eacl.verification/shadow-divergence
+  :changed-fields [:error]
+  :legacy-variant
+  {:outcome :error
+   :type :eacl.test/typed
+   :eacl/error :eacl.test/failure}
+  :verified-variant
+  {:outcome :error
+   :type :eacl.test/typed
+   :eacl/error :eacl.test/failure}}
+ :public-error-values-disclosed false
+ :nonportable-error-status :comparison-unavailable}

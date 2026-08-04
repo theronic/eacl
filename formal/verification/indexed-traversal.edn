@@ -210,9 +210,12 @@
    :materialized-resource-counters-compared false
    :generated-page-normalization true
    :typed-page-size-error-comparison true
+   :complete-portable-typed-error-data-comparison true
+   :complete-public-cache-provenance-comparison true
+   :complete-public-selected-graph-comparison true
    :stale-cursor-error-shape-comparison true
-   :tests 5
-   :assertions 171
+   :tests 6
+   :assertions 174
    :status :passed}
   :heavy-pagination
   {:namespace eacl.bench.pagination-test
@@ -222,6 +225,5 @@
  :remaining
  [:production-ordered-adapter-certification
   :acyclic-generated-ordered-merge-refinement
-  :verified-shadow-complete-public-error-provenance-and-graph-comparison
   :cross-backend-authoritative-differential
   :independent-review]}

@@ -66,7 +66,15 @@
     :EACL-FORMAL-030
     eacl.formal.production-kernel-test/generated-java-classifies-production-recursive-routing
     :EACL-FORMAL-031
-    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test})
+    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    :EACL-FORMAL-032
+    eacl.verified-kernel-test/shadow-error-comparison-covers-complete-portable-ex-data
+    :EACL-FORMAL-033
+    eacl.formal.state-trace-differential-test/public-shadow-compares-cache-provenance-and-selected-graph
+    :EACL-FORMAL-034
+    eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
+    :EACL-FORMAL-035
+    eacl.characterization-fixture-test/generated-java-indexed-hot-boundary-is-reflection-free-test})
 
 (defn- read-edn
   [path]
@@ -145,8 +153,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-031 (:latest revision)))
-    (is (= 31 (count entries)))))
+    (is (= :EACL-FORMAL-035 (:latest revision)))
+    (is (= 35 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

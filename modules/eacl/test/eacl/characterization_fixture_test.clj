@@ -12,6 +12,9 @@
 (def ^:private performance-gates-path
   (repo/file "formal" "verification" "performance-gates.edn"))
 
+(def ^:private conversion-boundary-path
+  (repo/file "formal" "verification" "conversion-boundary.edn"))
+
 (defn- load-fixture
   []
   (edn/read-string (slurp fixture-path)))
@@ -31,6 +34,113 @@
                  resource)))
        (sort-by :id)
        vec))
+
+(deftest formal-cljs-smoke-preserves-persistent-nrepl-executors-test
+  (let [runner
+        (slurp (repo/file "formal" "smoke" "cljs" "run"))]
+    (is (str/includes? runner "cljs.build.api"))
+    (is (not (str/includes? runner "(cljs/-main")))
+    (is (str/includes?
+         runner
+         "@(future :eacl.formal/agent-executor-alive)"))))
+
+(defn- source-definitions
+  [path]
+  (into
+   #{}
+   (map (comp symbol second))
+   (re-seq
+    #"\(defn-?\s+([^\s\[\(\)]+)"
+    (slurp (repo/file path)))))
+
+(deftest generated-conversion-boundary-is-complete-and-cross-runtime-test
+  (let [{:keys [status categories runtimes strict-boundary]}
+        (edn/read-string (slurp conversion-boundary-path))
+        required-categories
+        #{:schema-ir :relationships :queries :adapter-callbacks
+          :cache-and-cursors :results :typed-errors}
+        required-converters
+        (into #{} cat (vals categories))
+        runtime-definitions
+        (into
+         {}
+         (map
+          (fn [[runtime {:keys [source]}]]
+            [runtime (source-definitions source)]))
+         runtimes)]
+    (is (= :passed status))
+    (is (= required-categories (set (keys categories))))
+    (is (= #{:clj-java :cljs-javascript}
+           (set (keys runtimes))))
+    (is (every? symbol? required-converters))
+    (doseq [[runtime definitions] runtime-definitions]
+      (is (every? definitions required-converters)
+          (str runtime " is missing required converters: "
+               (pr-str
+                (sort
+                 (remove definitions required-converters))))))
+    (is (= #{:input-validation :result-validation
+             :unknown-field-rejection :safe-integer-validation
+             :bounded-collection-validation
+             :complete-portable-error-comparison}
+           (set strict-boundary)))))
+
+(defn- source-line-number
+  [source marker]
+  (when-let [offset (str/index-of source marker)]
+    (inc
+     (count
+      (re-seq #"\n" (subs source 0 offset))))))
+
+(deftest generated-java-indexed-hot-boundary-is-reflection-free-test
+  (when
+   (try
+     (Class/forName "IndexedTraversal.ForwardStep")
+     true
+     (catch ClassNotFoundException _
+       false))
+    (let [source
+          (slurp
+           (repo/file
+            "formal" "smoke" "clj" "eacl" "formal"
+            "production_kernel.clj"))
+          start-line
+          (source-line-number source "(defn- indexed-limit-kind")
+          end-line
+          (source-line-number source "(defrecord GeneratedJavaKernel")
+          audit-namespace
+          (symbol
+           (str
+            "eacl.formal.production-kernel-reflection-audit-"
+            (gensym)))
+          isolated-source
+          (str/replace-first
+           source
+           "(ns eacl.formal.production-kernel"
+           (str "(ns " audit-namespace))
+          warnings (java.io.StringWriter.)]
+      (try
+        (binding [*warn-on-reflection* true
+                  *err* warnings]
+          (clojure.lang.Compiler/load
+           (clojure.lang.LineNumberingPushbackReader.
+            (java.io.StringReader. isolated-source))
+           "eacl/formal/production_kernel.clj"
+           (str audit-namespace)))
+        (finally
+          (remove-ns audit-namespace)))
+      (let [indexed-warning-lines
+            (->> (re-seq
+                  #"production_kernel\.clj:(\d+):"
+                  (str warnings))
+                 (map (comp parse-long second))
+                 (filter #(<= start-line % (dec end-line)))
+                 vec)]
+        (is (empty? indexed-warning-lines)
+            (str
+             "Generated indexed Java hot boundary restored reflective calls "
+             "at source lines "
+             indexed-warning-lines))))))
 
 (deftest versioned-characterization-fixture-replays-test
   (let [{:keys [fixture-format
@@ -89,6 +199,7 @@
                 ordered-merge-source-specialization
                 layered-subproblem-cache
                 cross-backend-managed-proof
+                authority-mode-matrix
                 memory-and-token
                 release-performance-evaluation
                 final-heavy-run
@@ -266,6 +377,35 @@
         (is (= :passed
                (get-in release-performance-evaluation
                        [:dimensions :throughput :status])))))
+
+    (testing "public authority modes gate like resource dimensions separately"
+      (let [required (:required authority-mode-matrix)]
+        (is (= #{:direct :acyclic :recursive :cursor :cache-hot}
+               (set (keys (:observed authority-mode-matrix)))))
+        (is (= :passed (:status authority-mode-matrix)))
+        (doseq [[_ observation] (:observed authority-mode-matrix)]
+          (is (or
+               (<= (:median-p95-latency-ratio observation)
+                   (:maximum-median-p95-latency-ratio required))
+               (<= (:median-p95-absolute-overhead-ns observation)
+                   (:maximum-median-p95-absolute-overhead-ns required))))
+          (is (or
+               (<= (:median-p95-allocation-ratio observation)
+                   (:maximum-median-p95-allocation-ratio required))
+               (<= (:median-p95-allocation-overhead-bytes observation)
+                   (:maximum-median-p95-allocation-overhead-bytes
+                    required))))
+          (is (or
+               (<= (:median-p95-backend-operation-ratio observation)
+                   (:maximum-median-p95-backend-operation-ratio required))
+               (<= (:median-p95-backend-operation-overhead observation)
+                   (:maximum-median-p95-backend-operation-overhead
+                    required))))
+          (is (= :passed (:status observation))))
+        (is (zero?
+             (get-in authority-mode-matrix
+                     [:reflection-removal
+                      :indexed-hot-boundary-reflection-warnings])))))
 
     (testing "shared-subgraph gates are recomputed rather than trusted"
       (let [required (:required layered-subproblem-cache)

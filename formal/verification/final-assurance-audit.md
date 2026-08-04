@@ -31,6 +31,15 @@ cryptography, collision resistance, entropy/key management, clocks, and
 configured resource limits listed in the manifest and trusted-boundary
 documents.
 
+The strict conversion ledger in
+`formal/verification/conversion-boundary.edn` machine-checks that both runtime
+boundaries implement the required schema, relationship, query, callback,
+cache/cursor, result, and typed-error converter families. Boundary tests check
+strict validation and differential behavior. This closes the implementation
+inventory for the CLJ-to-Java and CLJS-to-JavaScript conversions; it does not
+promote handwritten FFI conversion code, either host runtime, or either
+generated-code compiler out of the trusted computing base.
+
 ## Claims that are deliberately withheld
 
 - The indexed generated-to-adapter callback boundary is implemented for CLJ
@@ -51,11 +60,14 @@ documents.
   engine-selection overhead, but formal source refinement and independent
   review remain release gates.
 - Complete recursive page, count, Boolean, dimensional resource-counter,
-  retained-logical-state, and traversal-limit error outcomes are now compared
-  in `verified-shadow` mode on all JVM adapters; the same DataScript public
-  trace passes against generated JavaScript. Complete public error,
-  provenance, graph-identity, cross-backend generated-authority, and release
-  cutover gates remain incomplete.
+  retained-logical-state, traversal-limit, and portable typed-error outcomes
+  are compared in `verified-shadow` mode on all JVM adapters. Separate
+  complete-public traces compare cache provenance and selected graph identity
+  between legacy and generated authority on Datomic, Datahike, DataScript/JVM,
+  and DataScript/JavaScript. Non-portable exception data is observable as
+  comparison-unavailable rather than passing. Required rollout volumes,
+  cross-backend generated-authority, source refinement, and release cutover
+  gates remain incomplete.
 - The current-generation cache, exact/arbitrary-DB bypass, scalar stamp law,
   least-fixed-point managed frame, and selected-snapshot rendering are proved
   and integrated for all three adapters. This is a conditional cache
@@ -192,6 +204,39 @@ documents.
   directory` before size measurement. Formal CI now installs Babashka
   1.12.213 explicitly, and the retained regression checks both that dependency
   and that measurement follows the browser build.
+- EACL-FORMAL-032 found that recursive shadow comparison still projected
+  `ExceptionInfo` data through a keyword/integer allowlist. Public string,
+  boolean, vector, and nested-map fields could therefore diverge while rollout
+  telemetry reported equality. The portable boundary now canonicalizes and
+  compares the complete portable error-data map internally. Diagnostics expose
+  only changed top-level field names and typed error keywords; non-portable or
+  untyped exceptions produce an explicit comparison-unavailable diagnostic
+  and cannot count toward a rollout gate. This closes a comparator defect, not
+  the remaining obligation to exercise every documented public error variant
+  on every runtime and backend.
+- EACL-FORMAL-033 classified the first complete-public graph-identity
+  divergence as a harness defect. DataScript clients reading the same immutable
+  graph mint distinct exact-registry locator strings. Those strings are
+  reconstruction capabilities, not graph identity. Cross-backend shadow
+  comparison now uses source scope, snapshot identity, graph anchor, and order
+  hint; exact-locator resolution retains a separate authenticated
+  postcondition.
+- EACL-FORMAL-034 found that `formal/smoke/cljs/run` invoked
+  `cljs.main/-main` inside the required persistent nREPL. The CLI lifecycle
+  terminated Clojure's global agent executors, so later concurrency
+  counterexamples failed with `RejectedExecutionException` depending on test
+  order. The launcher now uses `cljs.build.api/build`, runs the Node suite, and
+  verifies through the same nREPL that a new `future` completes. The CLJS smoke
+  suite and all 35 counterexamples now pass sequentially in one nREPL.
+- EACL-FORMAL-035 found that the CLJ-to-generated-Java indexed boundary used
+  reflective variant, destructor, and numeric method calls on every generated
+  drive/resume round trip. JFR attribution and compilation with reflection
+  warnings localized the defect to handwritten FFI code, not Dafny's opaque
+  traversal state. Concrete generated-class type hints reduced the minimized
+  recursive p95 allocation premium from 3,677,688 to 343,576 bytes and the
+  cursor premium from 4,283,960 to 706,496 bytes. A compile-time audit now
+  requires zero reflection warnings across the complete indexed hot-boundary
+  span. These are host measurements and source checks, not formal heap bounds.
 - Snapshot-consistency planning and post-selection validation now route
   through `ConsistencyDecision.dfy` in verified modes. Its 24 plan states and
   48 well-formed validation states are exhausted in generated Java and
@@ -226,12 +271,12 @@ documents.
   backend selection can perform fewer scope reads.
 - Production shadow comparison covers recursive traversal values, ordering,
   page flags, counts, Boolean decisions, dimensionally matching cache-free
-  resource counters, logical retained-state units, and typed traversal-limit
-  failures including configured numeric limits, and recursive stale-cursor
-  render rejection. It does not yet cover the complete public typed-error surface,
-  provenance, graph identity, or required rollout volumes. Shadow diagnostics
-  are fail-open with respect to legacy authority and redact request/result
-  values without emitting guessable hashes.
+  resource counters, logical retained-state units, typed traversal-limit
+  failures including configured numeric limits, recursive stale-cursor render
+  rejection, complete portable `ExceptionInfo` data, cache provenance, and
+  selected graph identity. Shadow diagnostics are fail-open with respect to
+  legacy authority and redact request/result values without emitting guessable
+  hashes. Required rollout volumes remain incomplete.
 - No independent security/formal-methods review has been obtained.
 - The current-cache performance gate passes. On the routed 100,000-result
   recursive-chain fixture, the retained raw gate measured generated authority
@@ -240,6 +285,14 @@ documents.
   logical resource measures equal, inside the existing 2.0x p95 gate. Full
   cutover remains blocked by acyclic ordered-merge source refinement, shadow
   coverage, and review rather than recursive cache-hit cost.
+- The representative public authority-mode gate passes on DataScript across
+  direct, acyclic, recursive, cursor-continuation, and hot-cache calls. Median
+  verified/legacy p95 latency ratios over five paired trials are 1.06x, 1.22x,
+  1.64x, 1.55x, and 1.05x respectively; caller-thread allocation ratios are
+  1.02x, 1.03x, 1.44x, 1.42x, and 1.02x. Recursive and cursor operations each
+  use one fewer backend operation at p95. Exact public values match on every
+  call. This gate does not establish retained heap, whole-process allocation,
+  worst-case latency, or all-backend verified-authority cutover.
 - The optimized ordered merge passes the source-specialization non-regression
   gate for both a 20-value page prefix and complete 20,000-value consumption.
   After the explicit-presence fixes, ascending/descending median trial-level
@@ -291,17 +344,17 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 31 minimized entries replayed by 33 tests and 1,695
+- Counterexample corpus: 35 minimized entries replayed by 37 tests and 1,903
   assertions, zero failures/errors.
-- Mutation controls: 51 Clojure detectors and 8 Apalache counterexample
-  controls; all 59 registered mutants killed.
-- Public non-benchmark CLJ suite: 465 tests, 18,077 assertions, zero
+- Mutation controls: 55 Clojure detectors and 8 Apalache counterexample
+  controls; all 63 registered mutants killed.
+- Public non-benchmark CLJ suite: 485 tests, 18,601 assertions, zero
   failures/errors.
 - DataScript CLJS suite: 141 tests, 4,434 assertions, zero failures/errors.
 - Generated Java suite: 43 tests, 8,228 assertions, zero failures/errors.
-- Generated JavaScript suite: 31 tests, 1,484 assertions, zero
+- Generated JavaScript suite: 44 tests, 1,627 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,306 unique
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,305 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent

@@ -1861,3 +1861,161 @@
       (is (empty? @reports)
           (str "generated JavaScript shadow divergence: "
                (pr-str @reports))))))
+
+(defn- cljs-selected-graph-identity
+  [client conn]
+  (let [adapter
+        (datascript-backend/snapshot-adapter
+         (ds/db conn) (:opts client))
+        graph-head (backend/invoke adapter :graph-head)]
+    {:snapshot-id (backend/invoke adapter :snapshot-id)
+     :graph-head (select-keys graph-head [:graph-anchor :order-hint])
+     :source-scope (backend/invoke adapter :source-scope)}))
+
+(defn- cljs-public-value-shadow-view
+  [value]
+  (if (map? value)
+    (cond-> (dissoc value :cached? :cache-basis :data :page-info)
+      (contains? value :data)
+      (assoc :data
+             (mapv #(select-keys % [:type :id])
+                   (:data value)))
+
+      (contains? value :page-info)
+      (assoc
+       :page-info
+       (let [page-info (:page-info value)]
+         (cond->
+          (select-keys
+           page-info
+           [:has-next-page? :has-previous-page?])
+           (contains? page-info :start-cursor)
+           (assoc :start-cursor?
+                  (some? (:start-cursor page-info)))
+
+           (contains? page-info :end-cursor)
+           (assoc :end-cursor?
+                  (some? (:end-cursor page-info)))))))
+    value))
+
+(defn- cljs-public-shadow-view
+  [client conn call]
+  (try
+    (let [value (call)]
+      {:outcome :value
+       :value (cljs-public-value-shadow-view value)
+       :cache-provenance
+       (when (map? value)
+         {:cached? (:cached? value)
+          :cache-basis (:cache-basis value)})
+       :selected-graph
+       (cljs-selected-graph-identity client conn)})
+    (catch :default error
+      (assoc
+       (verified/error-shadow-view error)
+       :selected-graph
+       (cljs-selected-graph-identity client conn)))))
+
+(deftest datascript-complete-public-shadow-compares-generated-javascript
+  (let [conn (datascript/create-conn)
+        common
+        {:coherence-authority :managed
+         :security-key "01234567890123456789012345678901"
+         :exact-snapshot-registry-size 16
+         :cache {:remember-answers true}}
+        legacy (datascript/make-client conn common)
+        authoritative
+        (datascript/make-client
+         conn
+         (assoc common :engine-selection selection))
+        reports (atom [])
+        compared (atom 0)
+        shadow
+        {:mode :verified-shadow
+         :kernel production/generated-javascript-kernel
+         :report-divergence #(swap! reports conj %)}
+        user (spice-object :user "complete-user")
+        document-1 (spice-object :document "complete-document-1")
+        document-2 (spice-object :document "complete-document-2")
+        query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 10}
+        compare!
+        (fn [operation legacy-call verified-call]
+          (swap! compared inc)
+          (let [legacy-result
+                (cljs-public-shadow-view legacy conn legacy-call)]
+            (verified/compare-shadow!
+             shadow
+             operation
+             legacy-result
+             #(cljs-public-shadow-view
+               authoritative conn verified-call))))]
+    (eacl/write-schema!
+     legacy
+     "definition user {}
+      definition document {
+        relation reader: user
+        relation parent: document
+        permission view = reader + parent->view
+      }")
+    (ds/transact!
+     conn
+     [{:eacl/id "complete-user"}
+      {:eacl/id "complete-document-1"}
+      {:eacl/id "complete-document-2"}])
+    (eacl/create-relationships!
+     legacy
+     [(eacl/->Relationship user :reader document-1)
+      (eacl/->Relationship document-1 :parent document-2)])
+    (compare!
+     :cljs-public-cache-miss
+     #(eacl/lookup-resources legacy query)
+     #(eacl/lookup-resources authoritative query))
+    (compare!
+     :cljs-public-cache-hit
+     #(eacl/lookup-resources legacy query)
+     #(eacl/lookup-resources authoritative query))
+    (compare!
+     :cljs-public-count
+     #(eacl/count-resources legacy (dissoc query :first))
+     #(eacl/count-resources authoritative (dissoc query :first)))
+    (compare!
+     :cljs-public-can
+     #(eacl/can? legacy user :view document-2)
+     #(eacl/can? authoritative user :view document-2))
+    (let [first-query (assoc query :first 1)
+          legacy-first (eacl/lookup-resources legacy first-query)
+          verified-first
+          (eacl/lookup-resources authoritative first-query)]
+      (swap! compared inc)
+      (verified/compare-shadow!
+       shadow
+       :cljs-public-page-1
+       (cljs-public-shadow-view
+        legacy conn (constantly legacy-first))
+       #(cljs-public-shadow-view
+         authoritative conn (constantly verified-first)))
+      (compare!
+       :cljs-public-page-2
+       #(eacl/lookup-resources
+         legacy
+         (assoc first-query
+                :after
+                (get-in legacy-first [:page-info :end-cursor])))
+       #(eacl/lookup-resources
+         authoritative
+         (assoc first-query
+                :after
+                (get-in verified-first [:page-info :end-cursor])))))
+    (compare!
+     :cljs-public-invalid-page-error
+     #(eacl/lookup-resources legacy (assoc query :first 0))
+     #(eacl/lookup-resources
+       authoritative (assoc query :first 0)))
+    (is (= 7 @compared))
+    (is (empty? @reports)
+        (str "complete DataScript JavaScript public divergence: "
+             (pr-str @reports)))))

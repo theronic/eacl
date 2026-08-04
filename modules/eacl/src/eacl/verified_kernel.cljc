@@ -2141,6 +2141,28 @@
   (cond
     (keyword? result) result
     (boolean? result) :boolean
+    (and (map? result)
+         (= :error (:outcome result))
+         (map? (get-in result [:error :data])))
+    (let [error-data (get-in result [:error :data])]
+      (cond->
+       {:outcome :error}
+        (keyword? (:type error-data))
+        (assoc :type (:type error-data))
+
+        (keyword? (:eacl/error error-data))
+        (assoc :eacl/error (:eacl/error error-data))))
+
+    (and (map? result)
+         (= :comparison-unavailable (:outcome result)))
+    (cond->
+     {:outcome :comparison-unavailable}
+      (keyword? (get-in result [:error :type]))
+      (assoc :type (get-in result [:error :type]))
+
+      (keyword? (get-in result [:error :eacl/error]))
+      (assoc :eacl/error (get-in result [:error :eacl/error])))
+
     (map? result)
     (select-keys result
                  [:status :operation :reason :provenance :direction
@@ -2149,6 +2171,34 @@
     (set? result) :set
     (nil? result) :nil
     :else :scalar))
+
+(defn error-shadow-view
+  "Builds the internal comparison value for one thrown public operation.
+
+  Every portable `ExceptionInfo` data field participates in equality. The
+  value is never sent to the shadow reporter: `result-variant` exposes only
+  stable typed-error keywords and `changed-result-fields` exposes only changed
+  top-level field names. An untyped or non-portable exception is explicitly
+  marked unavailable so rollout telemetry cannot silently count it as an
+  equality."
+  [error]
+  (let [data (ex-data error)]
+    (if (map? data)
+      (try
+        {:outcome :error
+         :error {:data (secure/canonicalize data)}}
+        (catch #?(:clj Exception :cljs :default) _
+          {:outcome :comparison-unavailable
+           :error
+           (cond->
+            {:field-count (count data)}
+             (keyword? (:type data))
+             (assoc :type (:type data))
+
+             (keyword? (:eacl/error data))
+             (assoc :eacl/error (:eacl/error data)))}))
+      {:outcome :comparison-unavailable
+       :error {}})))
 
 (defn- changed-result-fields
   [legacy verified]
@@ -2221,16 +2271,24 @@
     (when (= :verified-shadow mode)
       (try
         (let [verified (verified-result)]
-          (when-not (= (secure/canonicalize legacy)
-                       (secure/canonicalize verified))
+          (if (or (= :comparison-unavailable (:outcome legacy))
+                  (= :comparison-unavailable (:outcome verified)))
             (report!
              report-divergence
-             {:type :eacl.verification/shadow-divergence
+             {:type :eacl.verification/shadow-comparison-unavailable
               :operation operation
-              :changed-fields
-              (changed-result-fields legacy verified)
               :legacy-variant (result-variant legacy)
-              :verified-variant (result-variant verified)})))
+              :verified-variant (result-variant verified)})
+            (when-not (= (secure/canonicalize legacy)
+                         (secure/canonicalize verified))
+              (report!
+               report-divergence
+               {:type :eacl.verification/shadow-divergence
+                :operation operation
+                :changed-fields
+                (changed-result-fields legacy verified)
+                :legacy-variant (result-variant legacy)
+                :verified-variant (result-variant verified)}))))
         (catch #?(:clj Exception :cljs :default) error
           (report!
            report-divergence

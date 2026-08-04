@@ -194,5 +194,4 @@
  [:formal-refinement-of-each-backend-selection-implementation
   :formal-authenticated-token-decoder-refinement
   :cross-backend-authoritative-state-trace
-  :complete-public-typed-error-provenance
   :independent-review]}
