@@ -308,9 +308,9 @@ that the complete v8.0 engine is formally verified.
   micro-measurement for a heap bound.
 - Lore revision `dabb5634b0d44e196e2b6ec63003917b3d445bec`
   reanalyzed immutable EACL revision
-  `b58338887bb7d3d2da2c5857f7878f595b60a5dc` (tree
-  `9a84c00b302e94b185849b153849e5187e860429`, snapshot SHA-256
-  `899d053faa98b32ee7bfbd2ed20ea5fa5fa5872060f6c34b293aa16a8f3e5138`).
+  `401d15c3d058a00770856d25f5328289cbcd7971` (tree
+  `572a79347573dca2c8b1ff07f9e1156a10d978bd`, snapshot SHA-256
+  `0c485a8e4bd48c15db7ebb1c147b8931f14939ca5d57d0a971e241cbc3233580`).
   It found all 22 named source targets, but zero fit Lore's strict Core; all
   remain source-structural candidates (maximum nested traversal depth 3, 142
   unique unsupported operators, and 331 per-function operator occurrences).

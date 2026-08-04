@@ -38,10 +38,10 @@
    :lore-revision
    "dabb5634b0d44e196e2b6ec63003917b3d445bec"
    :immutable-analyzed-revision
-   "b58338887bb7d3d2da2c5857f7878f595b60a5dc"
-   :tree "9a84c00b302e94b185849b153849e5187e860429"
+   "401d15c3d058a00770856d25f5328289cbcd7971"
+   :tree "572a79347573dca2c8b1ff07f9e1156a10d978bd"
    :snapshot-sha256
-   "899d053faa98b32ee7bfbd2ed20ea5fa5fa5872060f6c34b293aa16a8f3e5138"
+   "0c485a8e4bd48c15db7ebb1c147b8931f14939ca5d57d0a971e241cbc3233580"
    :input-counts
    {:claim-documentation 1
     :dafny 21
