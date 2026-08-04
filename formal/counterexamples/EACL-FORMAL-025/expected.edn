@@ -1,0 +1,8 @@
+{:semantic-refinement
+ {:when-both-complete :authorization-values-equal}
+ :resource-refinement
+ {:materialized-to-production :not-claimed
+  :indexed-generated-to-production
+  :conditional-on-certified-ordered-adapter}
+ :comparison-rule
+ :same-unit-same-scope-same-clock-only}

@@ -14,7 +14,16 @@
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :direct-scan-equivalence]
    :runtime-targets [:clj-java :cljs-javascript]
-   :ci []}
+   :production-authoritative
+   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :remaining
+   [:acyclic-direct-and-arrow-source-refinement
+    :complete-public-typed-error-provenance-and-graph-comparison
+    :cross-backend-authoritative-gates
+    :independent-review]
+   :ci [:generated-production-kernel
+        :recursive-contract
+        :cross-adapter-state-trace]}
   {:operation :lookup
    :entry-points ['eacl.core/lookup-resources
                   'eacl.core/lookup-subjects]
@@ -37,7 +46,17 @@
                          :schema-completeness :ordered-complete-scans
                          :permission-node-completeness]
    :runtime-targets [:clj-java :cljs-javascript]
-   :ci []}
+   :production-authoritative
+   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :remaining
+   [:acyclic-optimized-ordered-merge-source-refinement
+    :complete-public-typed-error-provenance-and-graph-comparison
+    :cross-backend-authoritative-gates
+    :independent-review]
+   :ci [:generated-production-kernel
+        :recursive-contract
+        :cross-adapter-state-trace
+        :heavy-pagination]}
   {:operation :count
    :entry-points ['eacl.core/count-resources
                   'eacl.core/count-subjects]
@@ -50,7 +69,16 @@
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :ordered-complete-scans]
    :runtime-targets [:clj-java :cljs-javascript]
-   :ci []}
+   :production-authoritative
+   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :remaining
+   [:acyclic-optimized-ordered-merge-source-refinement
+    :complete-public-typed-error-provenance-and-graph-comparison
+    :cross-backend-authoritative-gates
+    :independent-review]
+   :ci [:generated-production-kernel
+        :recursive-contract
+        :cross-adapter-state-trace]}
   {:operation :lookup-cursor-continuation
    :entry-points ['eacl.relay]
    :theorems [:cursor-scope-before-influence :page-walk-complete

@@ -3030,7 +3030,7 @@ module IndexedTraversal {
     return ForwardAdvanced(updated);
   }
 
-  function DriveForwardSpec(
+  opaque function DriveForwardSpec(
     state: ForwardState,
     limits: IndexedLimits,
     fuel: nat
@@ -3060,6 +3060,40 @@ module IndexedTraversal {
         ForwardRenderRejected(error, next)
       case ForwardStepLimitExceeded(kind, next) =>
         ForwardStepLimitExceeded(kind, next)
+  }
+
+  lemma UnfoldDriveForwardSpec(
+    state: ForwardState,
+    limits: IndexedLimits,
+    fuel: nat
+  )
+    requires ForwardStateInvariant(state)
+    requires CountersWithinLimits(state.counters, limits)
+    requires state.pending.NoForwardPending?
+    requires ValidForwardQueuedEids(state.queue)
+    ensures
+      DriveForwardSpec(state, limits, fuel) ==
+      (if fuel == 0
+       then ForwardYielded(state)
+       else
+         var step := ForwardStepSpec(state, limits);
+         match step
+         case ForwardAdvanced(next) =>
+           DriveForwardSpec(next, limits, fuel - 1)
+         case ForwardEmitted(next, _, _) =>
+           DriveForwardSpec(next, limits, fuel - 1)
+         case ForwardYielded(next) =>
+           ForwardYielded(next)
+         case ForwardNeedScan(next, command) =>
+           ForwardNeedScan(next, command)
+         case ForwardComplete(next) =>
+           ForwardComplete(next)
+         case ForwardRenderRejected(error, next) =>
+           ForwardRenderRejected(error, next)
+         case ForwardStepLimitExceeded(kind, next) =>
+           ForwardStepLimitExceeded(kind, next))
+  {
+    reveal DriveForwardSpec();
   }
 
   method DriveForward(
@@ -3106,6 +3140,7 @@ module IndexedTraversal {
               CountersWithinLimits(outcome.state.counters, limits) &&
               ValidForwardQueuedEids(outcome.state.queue)
   {
+    UnfoldDriveForwardSpec(state, limits, fuel);
     if fuel == 0 {
       return ForwardYielded(state);
     }
@@ -3154,6 +3189,7 @@ module IndexedTraversal {
         DriveForwardSpec(state, limits, fuel)
       decreases remaining
     {
+      UnfoldDriveForwardSpec(current, limits, remaining);
       var step := StepForward(current, limits);
       match step
       case ForwardAdvanced(next) => {
@@ -3175,6 +3211,7 @@ module IndexedTraversal {
       case ForwardStepLimitExceeded(kind, next) =>
         return ForwardStepLimitExceeded(kind, next);
     }
+    UnfoldDriveForwardSpec(current, limits, remaining);
     return ForwardYielded(current);
   }
 
@@ -4609,7 +4646,7 @@ module IndexedTraversal {
     return ReverseAdvanced(updated);
   }
 
-  function DriveReverseSpec(
+  opaque function DriveReverseSpec(
     state: ReverseState,
     limits: IndexedLimits,
     fuel: nat
@@ -4639,6 +4676,40 @@ module IndexedTraversal {
         ReverseRenderRejected(error, next)
       case ReverseStepLimitExceeded(kind, next) =>
         ReverseStepLimitExceeded(kind, next)
+  }
+
+  lemma UnfoldDriveReverseSpec(
+    state: ReverseState,
+    limits: IndexedLimits,
+    fuel: nat
+  )
+    requires ReverseStateInvariant(state)
+    requires CountersWithinLimits(state.counters, limits)
+    requires state.pending.NoReversePending?
+    requires ValidReverseQueuedEids(state.queue)
+    ensures
+      DriveReverseSpec(state, limits, fuel) ==
+      (if fuel == 0
+       then ReverseYielded(state)
+       else
+         var step := ReverseStepSpec(state, limits);
+         match step
+         case ReverseAdvanced(next) =>
+           DriveReverseSpec(next, limits, fuel - 1)
+         case ReverseEmitted(next, _, _) =>
+           DriveReverseSpec(next, limits, fuel - 1)
+         case ReverseYielded(next) =>
+           ReverseYielded(next)
+         case ReverseNeedScan(next, command) =>
+           ReverseNeedScan(next, command)
+         case ReverseComplete(next) =>
+           ReverseComplete(next)
+         case ReverseRenderRejected(error, next) =>
+           ReverseRenderRejected(error, next)
+         case ReverseStepLimitExceeded(kind, next) =>
+           ReverseStepLimitExceeded(kind, next))
+  {
+    reveal DriveReverseSpec();
   }
 
   method DriveReverse(
@@ -4685,6 +4756,7 @@ module IndexedTraversal {
               CountersWithinLimits(outcome.state.counters, limits) &&
               ValidReverseQueuedEids(outcome.state.queue)
   {
+    UnfoldDriveReverseSpec(state, limits, fuel);
     if fuel == 0 {
       return ReverseYielded(state);
     }
@@ -4733,6 +4805,7 @@ module IndexedTraversal {
         DriveReverseSpec(state, limits, fuel)
       decreases remaining
     {
+      UnfoldDriveReverseSpec(current, limits, remaining);
       var step := StepReverse(current, limits);
       match step
       case ReverseAdvanced(next) => {
@@ -4754,6 +4827,7 @@ module IndexedTraversal {
       case ReverseStepLimitExceeded(kind, next) =>
         return ReverseStepLimitExceeded(kind, next);
     }
+    UnfoldDriveReverseSpec(current, limits, remaining);
     return ReverseYielded(current);
   }
 

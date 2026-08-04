@@ -35,10 +35,10 @@
   :current-revision-reanalysis
   {:scope :production-and-test-source-before-report-finalization
    :immutable-synthetic-revision
-   "7cace3f6febafa99fcf707be02af6bb7332e5de3"
-   :tree "a035685ed7d6a9f303f3baf65318b849e49fa922"
+   "4794b7e5f0b12ccd2e4818513b2a9637ae8b6e05"
+   :tree "3494b94c0ea8189615c2e6c4cf681f7935348ff1"
    :snapshot-sha256
-   "329d40edd8ba3d718f012c0f38cb3234e1eee6d31c9d030f23676287c340ec06"
+   "5b189c47aedcf58ac2626e343b68c364744ef482e6d157246cb8f00f22e24a4b"
    :input-counts
    {:claim-documentation 1
     :dafny 21
@@ -51,6 +51,8 @@
    :strict-core-supported 0
    :source-structural-candidates 22
    :maximum-nested-traversal-depth 3
+   :unique-unsupported-operators 142
+   :unsupported-operator-occurrences 331
    :assurance :source-structural-candidates-only
    :full-case-study
    {:status :rejected
@@ -62,10 +64,29 @@
   :status :claim-boundary-enforced}
 
  :formal-pipeline
- {:baseline-wall-seconds 39.73
-  :pull-request-max-seconds 90
-  :scheduled-max-seconds 180
- :timeout-is-failure true}
+ {:scope :all-21-dafny-modules
+  :proof-efforts 9193
+  :last-observed-local-wall-seconds 1114.31
+  :wall-clock-assurance :host-specific-measurement
+  :github-job-timeout-seconds 1800
+  :assertion-batch-time-limit-seconds 60
+  :proof-effort-resource-limit 50000000
+  :resource-kind :z3-rlimit
+  :resource-assurance :deterministic-for-locked-toolchain-and-seed
+  :total-observed-resource-count 3643877525
+  :maximum-observed-proof-effort
+  {:source "IndexedReverseCompleteness.dfy"
+   :display-name
+   "IndexedReverseCompleteness.ArrowRelationReachedDerivationIsSeen (correctness) (assertion batch 122)"
+   :resource-count 34908028}
+  :recursive-driver-proof-optimization
+  {:transparent-specification-maximum-resource-count 161654668
+   :opaque-explicit-unfold-maximum-resource-count 10270077
+   :reduction-ratio 15.740355987593862}
+  :machine-readable-report "target/formal/dafny-verification.json"
+  :qualification
+  :solver-cost-is-not-engine-runtime-memory-or-logical-work
+  :timeout-is-failure true}
 
  :indexed-plan-certification
  {:scope :schema-proof-root-plan-compilation-not-query-latency

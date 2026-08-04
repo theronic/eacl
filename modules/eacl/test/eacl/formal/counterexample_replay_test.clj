@@ -46,7 +46,17 @@
     :EACL-FORMAL-020
     eacl.backend.v8-test/generic-merge-retains-nil-key-test
     :EACL-FORMAL-021
-    eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test})
+    eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test
+    :EACL-FORMAL-022
+    eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results
+    :EACL-FORMAL-023
+    eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape
+    :EACL-FORMAL-024
+    eacl.formal.production-kernel-test/generated-materialized-queue-limit-is-instantaneous
+    :EACL-FORMAL-025
+    eacl.formal.state-trace-differential-test/recursive-shadow-queue-limit-is-query-local
+    :EACL-FORMAL-026
+    eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape})
 
 (defn- read-edn
   [path]
@@ -99,8 +109,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-021 (:latest revision)))
-    (is (= 21 (count entries)))))
+    (is (= :EACL-FORMAL-026 (:latest revision)))
+    (is (= 26 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

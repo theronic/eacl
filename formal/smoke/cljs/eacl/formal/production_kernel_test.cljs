@@ -5,6 +5,7 @@
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
    [eacl.core :as eacl :refer [spice-object]]
+   [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
    [eacl.engine.v8 :as engine]
    [eacl.engine.relationships :as relationship-engine]
@@ -510,7 +511,8 @@
                      :has-legacy-cursor? false}
            :default-size 1000
            :maximum-size 10000}
-          #(throw (ex-info "legacy must not run" {})))))
+    #(throw (ex-info "legacy must not run" {})))))
+
   (is (= {:take-count 20
           :reverse? false
           :has-next? true
@@ -556,6 +558,22 @@
                    :graph 2
                    :proof "proof"}}
           #(throw (ex-info "legacy must not run" {}))))))
+
+(deftest generated-javascript-materialized-queue-limit-is-instantaneous
+  (let [result
+        (evaluate-public-generated
+         {:operation :count-resources
+          :subject {:type "user" :id "user"}
+          :permission "view"
+          :resource-type "document"
+          :count-limit 10}
+         {:max-derived-grants 1000
+          :max-advanced-datoms 1000
+          :max-queued-work 1})]
+    (is (= :complete (:status result)))
+    (is (= {:count 2 :truncated? false}
+           (select-keys result [:count :truncated?])))
+    (is (= 1 (get-in result [:counters :queued-work])))))
 
 (deftest generated-javascript-subproblem-cache-decisions
   (is (= :use-completed-value
@@ -1160,13 +1178,21 @@
         (datascript/make-client
          conn
          (assoc common :cache cache/no-cache))
-        limited-client
-        (datascript/make-client
-         conn
-         (assoc common
-                :cache cache/no-cache
-                :recursive-traversal-limits
-                {:max-derived-grants 1}))
+        limited-clients
+        (into
+         {}
+         (map
+          (fn [[limit-kind limit-option]]
+            [limit-kind
+             (datascript/make-client
+              conn
+              (assoc common
+                     :cache cache/no-cache
+                     :recursive-traversal-limits
+                     {limit-option 1}))]))
+         {:derived-grants :max-derived-grants
+          :advanced-datoms :max-advanced-datoms
+          :queued-work :max-queued-work})
         user (spice-object :user "user")
         document-1 (spice-object :document "document-1")
         document-2 (spice-object :document "document-2")]
@@ -1220,12 +1246,6 @@
           (evaluate-public-generated count-reverse-request)
           generated-can
           (evaluate-public-generated can-request)
-          generated-limit
-          (evaluate-public-generated
-           count-forward-request
-           {:max-derived-grants 1
-            :max-advanced-datoms 1000
-            :max-queued-work 1000})
           query
           {:subject user
            :permission :view
@@ -1267,14 +1287,34 @@
            (assoc page-query
                   :after
                   (get-in page-1 [:page-info :end-cursor])))
-          limit-error
+          limit-errors
+          (into
+           {}
+           (map
+            (fn [[limit-kind limited-client]]
+              [limit-kind
+               (try
+                 (eacl/count-resources
+                  limited-client
+                  (assoc (dissoc query :first) :count-limit 10))
+                 nil
+                 (catch :default error
+                   error))]))
+           limited-clients)
+          invalid-page-error
           (try
-            (eacl/count-resources
-             limited-client
-             (assoc (dissoc query :first) :count-limit 10))
+            (eacl/lookup-resources uncached (assoc query :first 0))
             nil
             (catch :default error
               error))
+          raw-adapter
+          (datascript-backend/snapshot-adapter
+           (ds/db conn)
+           (:opts uncached))
+          raw-page
+          (binding [subproblem/*engine-selection* shadow]
+            (engine/lookup-resources raw-adapter page-query))
+          raw-bound (get-in raw-page [:page-info :end-cursor])
           compare!
           (fn [case-id values]
             (is
@@ -1349,18 +1389,37 @@
          (into
           (mapv :id (:data page-1))
           (mapv :id (:data page-2)))]])
-      (compare!
-       :cljs-public-typed-limit
-       [[:verified-generated-javascript
-         (select-keys generated-limit [:status :limit-kind])]
-        [:public-cache-disabled
-         {:status :limit-exceeded
-          :limit-kind (:limit-kind (ex-data limit-error))}]])
+      (doseq [limit-kind [:derived-grants :advanced-datoms]]
+        (let [limit-error (get limit-errors limit-kind)]
+          (is (= :eacl.recursive-traversal/limit-exceeded
+                 (:eacl/error (ex-data limit-error))))
+          (is (= limit-kind (:limit-kind (ex-data limit-error))))
+          (is (= 1 (:limit (ex-data limit-error))))))
+      (is (nil? (get limit-errors :queued-work)))
+      (is (= {:size 0} (ex-data invalid-page-error)))
       (is (false? (:cached? cached-forward)))
       (is (true? (:cached? cached-hit)))
       (is (false? (:cached? uncached-forward)))
-      (is (= :eacl.recursive-traversal/limit-exceeded
-             (:eacl/error (ex-data limit-error))))
+      (eacl/delete-relationships!
+       uncached
+       [(eacl/->Relationship user :reader document-1)])
+      (let [changed-adapter
+            (datascript-backend/snapshot-adapter
+             (ds/db conn)
+             (:opts uncached))
+            stale-error
+            (try
+              (binding [subproblem/*engine-selection* shadow]
+                (engine/lookup-resources
+                 changed-adapter
+                 (assoc page-query :after raw-bound)))
+              nil
+              (catch :default error
+                error))]
+        (is (= :eacl.pagination/stale-cursor
+               (:eacl/error (ex-data stale-error))))
+        (is (= {:eacl/error :eacl.pagination/stale-cursor}
+               (ex-data stale-error))))
       (is (empty? @reports)
           (str "generated JavaScript shadow divergence: "
                (pr-str @reports))))))

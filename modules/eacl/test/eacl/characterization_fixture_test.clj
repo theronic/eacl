@@ -91,9 +91,17 @@
                 final-heavy-run
                 shadow-rollout]}
         (edn/read-string (slurp performance-gates-path))]
-    (is (< (:baseline-wall-seconds formal-pipeline)
-           (:pull-request-max-seconds formal-pipeline)
-           (:scheduled-max-seconds formal-pipeline)))
+    (is (= :host-specific-measurement
+           (:wall-clock-assurance formal-pipeline)))
+    (is (< 0
+           (:last-observed-local-wall-seconds formal-pipeline)
+           (:github-job-timeout-seconds formal-pipeline)))
+    (is (pos-int?
+         (:assertion-batch-time-limit-seconds formal-pipeline)))
+    (is (pos-int? (:proof-effort-resource-limit formal-pipeline)))
+    (is (< (get-in formal-pipeline
+                   [:maximum-observed-proof-effort :resource-count])
+           (:proof-effort-resource-limit formal-pipeline)))
     (doseq [[_ {:keys [baseline-bytes] :as artifact}]
             (dissoc generated-artifacts :cutover-rule)]
       (is (pos-int? baseline-bytes))
@@ -211,8 +219,13 @@
 
     (testing "verification-time and generated-byte gates fail closed"
       (is (true? (:timeout-is-failure formal-pipeline)))
-      (is (<= (:baseline-wall-seconds formal-pipeline)
-              (:pull-request-max-seconds formal-pipeline)))
+      (is (< (:last-observed-local-wall-seconds formal-pipeline)
+             (:github-job-timeout-seconds formal-pipeline)))
+      (is (= :deterministic-for-locked-toolchain-and-seed
+             (:resource-assurance formal-pipeline)))
+      (is (< (get-in formal-pipeline
+                     [:maximum-observed-proof-effort :resource-count])
+             (:proof-effort-resource-limit formal-pipeline)))
       (doseq [[_ {:keys [baseline-bytes foundation-max-bytes]}]
               (dissoc generated-artifacts :cutover-rule)]
         (is (<= baseline-bytes foundation-max-bytes)))

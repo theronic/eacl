@@ -63,7 +63,7 @@
   [message data]
   (throw (ex-info message data)))
 
-(defn normalize-page-request
+(defn- legacy-normalize-page-request
   [query]
   (let [has-first? (contains? query :first)
         has-last? (contains? query :last)
@@ -121,6 +121,133 @@
       {:direction direction
        :size size
        :bound bound})))
+
+(defn- portable-page-natural?
+  [value]
+  (and
+   #?(:clj (integer? value)
+      :cljs (and (number? value)
+                 (js/Number.isSafeInteger value)))
+   (<= 0 value backend/maximum-exact-integer)))
+
+(defn- generated-page-request-encodable?
+  [query]
+  (every?
+   (fn [field]
+     (or (not (contains? query field))
+         (nil? (get query field))
+         (portable-page-natural? (get query field))))
+   [:first :last]))
+
+(defn- generated-page-presence
+  [query field boundary?]
+  (cond
+    (not (contains? query field)) :absent
+    (nil? (get query field)) :nil
+    boundary? 0
+    :else (get query field)))
+
+(defn- generated-page-input
+  [query]
+  {:length 0
+   :request
+   {:first (generated-page-presence query :first false)
+    :last (generated-page-presence query :last false)
+    :after (generated-page-presence query :after true)
+    :before (generated-page-presence query :before true)
+    :has-legacy-limit? (contains? query :limit)
+    :has-legacy-cursor? (contains? query :cursor)}
+   :default-size default-page-size
+   :maximum-size max-page-size})
+
+(defn- generated-page-error!
+  [query reason]
+  (let [size (or (when (contains? query :first) (:first query))
+                 (when (contains? query :last) (:last query))
+                 default-page-size)]
+    (case reason
+      :legacy-pagination
+      (if (contains? query :cursor)
+        (page-error!
+         ":cursor is not supported; use :first/:after or :last/:before."
+         {:key :cursor})
+        (page-error!
+         ":limit is not supported for list pagination; use :first or :last."
+         {:key :limit}))
+
+      :both-directions
+      (page-error!
+       "Use exactly one of :first or :last."
+       {:first (:first query) :last (:last query)})
+
+      :both-bounds
+      (page-error!
+       "Use only one cursor boundary, :after or :before."
+       {:after (:after query) :before (:before query)})
+
+      :after-without-first
+      (page-error! ":after is valid only with :first."
+                   {:after (:after query)})
+
+      :before-without-last
+      (page-error! ":before is valid only with :last."
+                   {:before (:before query)})
+
+      :nil-after
+      (page-error! ":after was passed as nil. Omit it for the first page."
+                   {:eacl/error :eacl.pagination/invalid-cursor
+                    :key :after})
+
+      :nil-before
+      (page-error! ":before was passed as nil. Omit it for the last page."
+                   {:eacl/error :eacl.pagination/invalid-cursor
+                    :key :before})
+
+      :non-positive-size
+      (page-error! "Page size must be a positive integer." {:size size})
+
+      :oversized-page
+      (page-error! "Page size exceeds configured maximum."
+                   {:size size :max max-page-size})
+
+      (page-error!
+       "Generated page normalization returned an unknown error."
+       {:type :eacl.verification/kernel-failure
+        :operation :relationship-page
+        :reason reason}))))
+
+(defn normalize-page-request
+  [query]
+  (let [selection subproblem/*engine-selection*
+        mode (if (map? selection) (:mode selection) selection)
+        verified? (and (some? selection)
+                       (not= :legacy-authoritative mode))]
+    (if-not (and verified? (generated-page-request-encodable? query))
+      (legacy-normalize-page-request query)
+      (let [legacy
+            #(let [{:keys [direction size]}
+                   (legacy-normalize-page-request query)]
+               {:status :valid
+                :direction direction
+                :size size
+                :start 0
+                :end 0
+                :has-next? false
+                :has-previous? false})
+            decision
+            (verified/decide
+             selection
+             :relationship-page
+             (generated-page-input query)
+             legacy)]
+        (if (= :valid (:status decision))
+          {:direction (:direction decision)
+           :size (:size decision)
+           :bound
+           (case (:direction decision)
+             :asc (:after query)
+             :desc (:before query))}
+          (generated-page-error! query (:reason decision)))))))
 
 (defn- scan-opts
   [cursor-or-opts]
@@ -1258,7 +1385,8 @@
           value @generated-stats compare-resources? true))))))
 
 (def ^:private typed-error-fields
-  [:type :eacl/error :operation :reason :limit-kind :filter :key])
+  [:type :eacl/error :operation :reason :direction :limit-kind :filter :key
+   :expected :actual :limit :size :max :count-limit :maximum :maximum-size])
 
 (defn- typed-error-view
   [error]
@@ -1269,7 +1397,8 @@
          (keep
           (fn [field]
             (let [value (get data field)]
-              (when (keyword? value)
+              (when (or (keyword? value)
+                        (integer? value))
                 [field value]))))
          typed-error-fields)]
     (if (seq typed)
@@ -1307,6 +1436,12 @@
 (defn- recursive-traversal-error!
   [message data]
   (throw (ex-info message data)))
+
+(defn- stale-recursive-cursor!
+  [message]
+  (recursive-traversal-error!
+   message
+   {:eacl/error :eacl.pagination/stale-cursor}))
 
 (defn- inc-stat!
   [k]
@@ -2514,22 +2649,26 @@
      :terminal? (not more?)
      :fetched-values (count realized)}))
 
+(def ^:private generated-limit-option
+  {:derived-grants :max-derived-grants
+   :advanced-datoms :max-advanced-datoms
+   :queued-work :max-queued-work})
+
 (defn- generated-traversal-error!
-  [direction outcome]
+  [direction limits outcome]
   (case (:status outcome)
     :limit-exceeded
-    (recursive-traversal-error!
-     "Generated recursive traversal safety limit exceeded."
-     {:eacl/error :eacl.recursive-traversal/limit-exceeded
-      :direction direction
-      :limit-kind (:limit-kind outcome)})
+    (let [limit-kind (:limit-kind outcome)
+          limit (get limits (get generated-limit-option limit-kind))]
+      (recursive-traversal-error!
+       "Generated recursive traversal safety limit exceeded."
+       {:eacl/error :eacl.recursive-traversal/limit-exceeded
+        :limit-kind limit-kind
+        :limit limit}))
 
     :render-rejected
-    (recursive-traversal-error!
-     "Generated recursive traversal rejected the cursor boundary."
-     {:eacl/error :eacl.pagination/stale-cursor
-      :direction direction
-      :render-error (:error outcome)})
+    (stale-recursive-cursor!
+     "Generated recursive traversal rejected the cursor boundary.")
 
     :scan-rejected
     (throw
@@ -2559,7 +2698,7 @@
         (verified/initialize-indexed
          selection direction initialization)]
     (when-not (= :initialized (:status initialized))
-      (generated-traversal-error! direction initialized))
+      (generated-traversal-error! direction limits initialized))
     (loop [state (:state initialized)]
       (let [outcome
             (verified/drive-indexed
@@ -2576,7 +2715,7 @@
                  selection direction (:state outcome) response limits)]
             (if (= :resumed (:status resumed))
               (recur (:state resumed))
-              (generated-traversal-error! direction resumed)))
+              (generated-traversal-error! direction limits resumed)))
 
           :complete
           (let [result
@@ -2596,7 +2735,7 @@
                       (:retained-logical-units result))))))
             result)
 
-          (generated-traversal-error! direction outcome))))))
+          (generated-traversal-error! direction limits outcome))))))
 
 (defn- generated-render
   [direction size bound]
@@ -3041,10 +3180,8 @@
         (cond
           (nil? item)
           (if (= mode :seek)
-            (recursive-traversal-error!
-             "Recursive traversal cursor no longer exists."
-             {:eacl/error :eacl.pagination/stale-cursor
-              :bound bound})
+            (stale-recursive-cursor!
+             "Recursive traversal cursor no longer exists.")
             (do
               (record-retained-logical-units! state')
               {:items items
@@ -3060,18 +3197,12 @@
               (= ordinal (:ordinal bound))
               (if (same-recursive-bound-result? bound item)
                 (recur state' :collect items page-end-state)
-                (recursive-traversal-error!
-                 "Recursive traversal cursor points at a different result."
-                 {:eacl/error :eacl.pagination/stale-cursor
-                  :bound bound
-                  :actual (:cursor item)}))
+                (stale-recursive-cursor!
+                 "Recursive traversal cursor points at a different result."))
 
               :else
-              (recursive-traversal-error!
-               "Recursive traversal cursor was skipped."
-               {:eacl/error :eacl.pagination/stale-cursor
-                :bound bound
-                :actual (:cursor item)})))
+              (stale-recursive-cursor!
+               "Recursive traversal cursor was skipped.")))
 
           :else
           (let [items' (conj items item)]
@@ -3090,10 +3221,8 @@
     (let [[state' item] (next-forward-item db root-node result-type state)]
       (cond
         (nil? item)
-        (recursive-traversal-error!
-         "Recursive traversal cursor no longer exists."
-         {:eacl/error :eacl.pagination/stale-cursor
-          :bound bound})
+        (stale-recursive-cursor!
+         "Recursive traversal cursor no longer exists.")
 
         (= (:ordinal bound) (get-in item [:cursor :ordinal]))
         (if (same-recursive-bound-result? bound item)
@@ -3105,18 +3234,12 @@
             (record-retained-logical-units! state')
             {:items page-items
              :has-sentinel? has-sentinel?})
-          (recursive-traversal-error!
-           "Recursive traversal cursor points at a different result."
-           {:eacl/error :eacl.pagination/stale-cursor
-            :bound bound
-            :actual (:cursor item)}))
+          (stale-recursive-cursor!
+           "Recursive traversal cursor points at a different result."))
 
         (> (get-in item [:cursor :ordinal]) (:ordinal bound))
-        (recursive-traversal-error!
-         "Recursive traversal cursor was skipped."
-         {:eacl/error :eacl.pagination/stale-cursor
-          :bound bound
-          :actual (:cursor item)})
+        (stale-recursive-cursor!
+         "Recursive traversal cursor was skipped.")
 
         :else
         (let [ring' (conj ring item)
@@ -3700,10 +3823,8 @@
         (cond
           (nil? item)
           (if (= mode :seek)
-            (recursive-traversal-error!
-             "Recursive traversal cursor no longer exists."
-             {:eacl/error :eacl.pagination/stale-cursor
-              :bound bound})
+            (stale-recursive-cursor!
+             "Recursive traversal cursor no longer exists.")
             (do
               (record-retained-logical-units! state')
               {:items items
@@ -3719,18 +3840,12 @@
               (= ordinal (:ordinal bound))
               (if (same-recursive-bound-result? bound item)
                 (recur state' :collect items page-end-state)
-                (recursive-traversal-error!
-                 "Recursive traversal cursor points at a different result."
-                 {:eacl/error :eacl.pagination/stale-cursor
-                  :bound bound
-                  :actual (:cursor item)}))
+                (stale-recursive-cursor!
+                 "Recursive traversal cursor points at a different result."))
 
               :else
-              (recursive-traversal-error!
-               "Recursive traversal cursor was skipped."
-               {:eacl/error :eacl.pagination/stale-cursor
-                :bound bound
-                :actual (:cursor item)})))
+              (stale-recursive-cursor!
+               "Recursive traversal cursor was skipped.")))
 
           :else
           (let [items' (conj items item)]
@@ -3749,10 +3864,8 @@
     (let [[state' item] (next-reverse-item db root-node root-resource-eid result-type state)]
       (cond
         (nil? item)
-        (recursive-traversal-error!
-         "Recursive traversal cursor no longer exists."
-         {:eacl/error :eacl.pagination/stale-cursor
-          :bound bound})
+        (stale-recursive-cursor!
+         "Recursive traversal cursor no longer exists.")
 
         (= (:ordinal bound) (get-in item [:cursor :ordinal]))
         (if (same-recursive-bound-result? bound item)
@@ -3764,18 +3877,12 @@
             (record-retained-logical-units! state')
             {:items page-items
              :has-sentinel? has-sentinel?})
-          (recursive-traversal-error!
-           "Recursive traversal cursor points at a different result."
-           {:eacl/error :eacl.pagination/stale-cursor
-            :bound bound
-            :actual (:cursor item)}))
+          (stale-recursive-cursor!
+           "Recursive traversal cursor points at a different result."))
 
         (> (get-in item [:cursor :ordinal]) (:ordinal bound))
-        (recursive-traversal-error!
-         "Recursive traversal cursor was skipped."
-         {:eacl/error :eacl.pagination/stale-cursor
-          :bound bound
-          :actual (:cursor item)})
+        (stale-recursive-cursor!
+         "Recursive traversal cursor was skipped.")
 
         :else
         (let [ring' (conj ring item)

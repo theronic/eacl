@@ -433,7 +433,7 @@
      (run-backend! (fixture-fn)))
    [datomic-fixture datahike-fixture datascript-fixture]))
 
-(deftest all-backend-cache-mode-workload-matrix-test
+(deftest ^:benchmark all-backend-cache-mode-workload-matrix-test
   (let [results (run-matrix!)]
     (println "EACL cross-backend workload samples" (pr-str results))
     (is (= [:datomic :datahike :datascript]

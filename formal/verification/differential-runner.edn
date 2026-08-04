@@ -37,8 +37,8 @@
    :status :passed}
   {:name :cross-adapter-cache-cursor-state-trace
    :namespace eacl.formal.state-trace-differential-test
-   :tests 3
-   :assertions 137
+   :tests 5
+   :assertions 171
    :adapters [:datomic :datascript :datahike]
    :cache-modes [:enabled :disabled]
    :cursor-directions [:forward :backward]
@@ -60,10 +60,15 @@
     :lookup-subjects
     :count-resources
     :count-subjects
-    :cursor-continuation
-    :typed-limit]
-   :suite-tests 24
-   :suite-assertions 836
+   :cursor-continuation
+    :typed-indexed-limit-shadow
+    :typed-page-normalization
+    :typed-stale-cursor]
+   :materialized-reference
+   {:authorization-values :complete-results-only
+    :operational-limit-refinement :not-claimed}
+   :suite-tests 25
+   :suite-assertions 847
    :status :passed}
   {:name :portable-runner-clj-cljs
    :namespace eacl.formal.differential-runner-test

@@ -87,7 +87,7 @@
    :conditional-exact-and-managed-atomic-projection-refinement}
   :indexed-recursive-public-engine
   {:status :passed
-   :verified-obligations 8638
+   :verified-obligations 8770
    :sources
    ["formal/dafny/IndexedTraversal.dfy"
     "formal/dafny/IndexedRefinement.dfy"
@@ -125,7 +125,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-021
+ {:latest :EACL-FORMAL-026
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -146,11 +146,16 @@
           :EACL-FORMAL-018
           :EACL-FORMAL-019
           :EACL-FORMAL-020
-          :EACL-FORMAL-021]}
+          :EACL-FORMAL-021
+          :EACL-FORMAL-022
+          :EACL-FORMAL-023
+          :EACL-FORMAL-024
+          :EACL-FORMAL-025
+          :EACL-FORMAL-026]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 21}
+  :entries 26}
  :residual-assumptions
  [:verification-toolchain
   :generated-code-compilers
@@ -182,8 +187,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 37
-  :registered 37}
+  :killed 43
+  :registered 43}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"

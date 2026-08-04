@@ -1,0 +1,6 @@
+{:legacy-error
+ {:eacl/error :eacl.pagination/stale-cursor}
+ :generated-error
+ {:eacl/error :eacl.pagination/stale-cursor}
+ :full-public-ex-data-equal true
+ :internal-cursor-diagnostics-exposed false}

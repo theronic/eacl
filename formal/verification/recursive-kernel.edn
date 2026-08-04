@@ -23,6 +23,13 @@
    :queued-work-limit-fails-closed
    :strict-traversal-ordinals
    :retained-replay-suffix-equivalence]}
+ :resource-interpretation
+ {:queued-work :maximum-instantaneous-pending-set-cardinality
+  :cumulative-enqueues :separate-production-request-counter
+  :scope :whole-graph-materialized-closure
+  :production-indexed-resource-refinement :not-claimed
+  :qualification
+  :the-materialized-counter-is-not-a-query-local-cumulative-work-or-runtime-bound}
  :generated-targets
  {:java
   {:status :passed

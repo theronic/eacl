@@ -22,6 +22,8 @@ lock_value() {
 dafny_version=$(lock_value tools.dafny.version)
 apalache_version=$(lock_value tools.apalache.version)
 tla_version=$(lock_value tools.tla2tools.version)
+dafny_time_limit=$(lock_value verificationPolicy.dafny.assertionBatchTimeLimitSeconds)
+dafny_resource_limit=$(lock_value verificationPolicy.dafny.proofEffortResourceLimit)
 dafny="$cache_root/dafny-$dafny_version/dafny/dafny"
 apalache="$cache_root/apalache-$apalache_version/bin/apalache-mc"
 tla_jar="$cache_root/tla2tools-$tla_version.jar"
@@ -165,11 +167,23 @@ case "$command" in
     ;;
   verify)
     need_tools
+    resource_output_dir="$output_root/dafny-resources"
+    resource_summary="$output_root/dafny-verification.json"
+    rm -rf "$resource_output_dir"
+    mkdir -p "$resource_output_dir"
     for source in $(dafny_sources); do
+      source_name=$(basename "$source" .dfy)
       "$dafny" verify \
-        --verification-time-limit 60 \
+        --verification-time-limit "$dafny_time_limit" \
+        --resource-limit "$dafny_resource_limit" \
+        --log-format \
+        "csv;LogFileName=$resource_output_dir/$source_name.csv" \
         "$source"
     done
+    exec node "$repo_root/bin/summarize-dafny-verification.mjs" \
+      "$resource_output_dir" \
+      "$dafny_resource_limit" \
+      "$resource_summary"
     ;;
   compile-java)
     need_tools

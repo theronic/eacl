@@ -363,6 +363,14 @@ about cumulative work; a logical retained-weight theorem says nothing about
 JVM bytes; a backend-command theorem requires the adapter command/refinement
 edge. Wall time remains a benchmark gate, not a theorem.
 
+The finite materializing oracle and production indexed traversal also have
+different resource scopes. The oracle closes the whole supplied graph before
+projecting a request, while the indexed engine seeds query-local work.
+Completed authorization values may be compared; their limit outcomes and work
+counters may not be substituted. Production resource refinement belongs to
+the generated indexed state machine under its certified ordered-adapter
+contract.
+
 The referenced Lore revision was also run against an immutable synthetic Git
 snapshot of the current worktree. All 22 selected cache/traversal functions
 remained source-structural candidates because Lore's strict Core does not yet
@@ -415,6 +423,26 @@ with `OptionalLast`; maximum-EID and nil-key regressions run in CLJ and CLJS.
 The Dafny integer domain is an oracle for EID ordering and the optional-state
 shape, not a proof of every generic host comparator or value domain.
 
+### 11. Bound proof-pipeline resources without confusing them with engine resources
+
+Lore's no-cross-dimensional-substitution rule applies to the verifier itself.
+Z3 resource counts and assertion-batch duration measure proof search; they are
+not EACL queue depth, backend operations, request latency, allocation, or live
+heap. A full replay found that transparent expansion of the recursive
+forward/reverse drive specifications made an iterative-loop invariant consume
+an unstable amount of solver work, with the reverse obligation exceeding its
+60-second batch ceiling.
+
+The drive specifications are therefore opaque outside explicit one-step
+unfolding lemmas. The checksum-locked formal policy supplies both the existing
+time ceiling and a deterministic per-proof-effort Z3 resource limit.
+`bin/formal verify` writes per-module CSV and an aggregate JSON resource report
+and fails on a timeout, non-passing effort, malformed report, or resource-limit
+breach. The GitHub formal job has a separate total wall-clock ceiling. This
+catches proof-engineering regressions while the parameterized Dafny resource
+theorems and production benchmark gates continue to police their own distinct
+dimensions.
+
 ## Risks / Trade-offs
 
 - **Projection caching duplicates database page-cache data** → Admit only
@@ -449,6 +477,9 @@ shape, not a proof of every generic host comparator or value domain.
   backend commands, fetched values, consumed values, cumulative enqueues,
   queue depth, derived grants, emitted results and retained logical weight as
   separate fields with separate theorems and adapter obligations.
+- **A correct proof becomes operationally unbounded** → Keep a deterministic
+  per-effort solver-resource ceiling, a per-batch time ceiling, and a separate
+  CI wall-clock ceiling; report those as proof-pipeline measures only.
 
 ## Migration Plan
 

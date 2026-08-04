@@ -241,7 +241,7 @@
        (ds/db connection) (:opts client))
      :close! (constantly nil)}))
 
-(deftest cross-backend-write-amplification-and-proof-cost-test
+(deftest ^:benchmark cross-backend-write-amplification-and-proof-cost-test
   (testing "Datomic, Datahike, and DataScript retain constant-cardinality proofs"
     (let [results
           (mapv

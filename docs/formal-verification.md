@@ -25,7 +25,13 @@ bin/formal bootstrap
 
 The bootstrap installs only under `target/formal-tools/`. Tool versions,
 platform artifacts, licenses, upstream URLs, and SHA-256 values are committed
-in `formal/toolchain.lock.json`.
+in `formal/toolchain.lock.json`. That lock also carries the Dafny
+per-assertion-batch time ceiling and deterministic Z3 resource limit. `verify`
+writes one CSV per Dafny module plus
+`target/formal/dafny-verification.json`; any failed effort, timeout, or effort
+over the locked resource limit fails the command. The solver resource count is
+a proof-pipeline measure, not evidence about EACL request latency, heap, or
+backend work.
 
 Run proof and model targets independently:
 
@@ -149,9 +155,14 @@ exception, invalid result, or disagreement cannot alter the legacy decision.
 The same boundary now converts complete materialized schema IR, objects,
 relationships, traversal limits, all five authorization request variants, and
 typed results to generated Java and JavaScript. This is the executable
-cache-free reference implementation used by differential tests. It is run
-against cached and uncached public-client state traces for Datomic, Datahike,
-and DataScript, including unrelated transactions and revocation.
+cache-free semantic reference used by differential tests. Its completed
+authorization values are compared with completed indexed results. Its work
+counters and typed limit outcomes are not production resource refinements:
+the reference closes the whole finite fixture, while production is
+query-local. Production limits and dimensionally matching counters are instead
+shadowed against the generated indexed state machine. Cached and uncached
+public-client state traces cover Datomic, Datahike, and DataScript, including
+unrelated transactions and revocation.
 
 This is still not a full-engine cutover. Materializing an entire database is
 not an acceptable hot-path implementation for large EACL graphs. Public

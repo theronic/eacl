@@ -8,13 +8,13 @@
   "formal/dafny/IndexedRendering.dfy"
   "formal/dafny/IndexedCertification.dfy"]
  :verified-obligations
- {:indexed-transition-state-machine 504
+ {:indexed-transition-state-machine 636
   :indexed-semantic-soundness-refinement 1783
   :forward-least-fixed-point-completeness 1299
   :reverse-least-fixed-point-completeness 4975
   :traversal-order-rendering-and-ordered-nonimplication-witness 29
   :source-plan-and-seed-certification 48
-  :total 8638}
+  :total 8770}
  :generated-targets [:java :javascript]
  :production-authoritative false
  :production-routing
@@ -147,16 +147,19 @@
  :evidence
  {:dafny
   {:commands
-   ["dafny verify formal/dafny/IndexedTraversal.dfy --verification-time-limit:60"
-    "dafny verify formal/dafny/IndexedRefinement.dfy --verification-time-limit:60"
-    "dafny verify formal/dafny/IndexedForwardCompleteness.dfy --verification-time-limit:60"
-    "dafny verify formal/dafny/IndexedReverseCompleteness.dfy --verification-time-limit:60"
-    "dafny verify formal/dafny/IndexedRendering.dfy --verification-time-limit:60"
-    "dafny verify formal/dafny/IndexedCertification.dfy --verification-time-limit:60"]
+   ["dafny verify formal/dafny/IndexedTraversal.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedRefinement.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedForwardCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedReverseCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedRendering.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedCertification.dfy --verification-time-limit 60 --resource-limit 50000000"]
    :status :passed
    :measurements
    {:indexed-transition-state-machine
-    {:obligations 504}
+    {:obligations 636
+     :transparent-recursive-spec-maximum-resource-count 161654668
+     :opaque-explicit-unfold-maximum-resource-count 10270077
+     :resource-reduction-ratio 15.740355987593862}
     :indexed-semantic-soundness-refinement
     {:obligations 1783}
     :forward-least-fixed-point-completeness
@@ -168,20 +171,22 @@
     :source-plan-and-seed-certification
     {:obligations 48}}
    :aggregate
-   {:obligations 8638
-    :timing-recheck :pending}
+   {:obligations 8770
+    :deterministic-proof-effort-resource-limit 50000000
+    :machine-readable-report "target/formal/dafny-verification.json"
+    :timing-recheck :passed-within-formal-job-bound}
    :qualification
    :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
   :generated-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 17
-   :assertions 390
+   :tests 19
+   :assertions 396
    :qualification :namespace-includes-non-indexed-production-decisions
    :status :passed}
   :generated-javascript
   {:runner "formal/smoke/cljs/run"
-   :suite-tests 24
-   :suite-assertions 836
+   :suite-tests 25
+   :suite-assertions 847
    :datascript-public-recursive-cache-mode-differential true
    :status :passed}
   :production-recursive-contract
@@ -202,8 +207,12 @@
    :dimensionally-matched-resource-counter-comparison true
    :logical-retained-state-comparison true
    :typed-limit-error-comparison true
-   :tests 3
-   :assertions 137
+   :materialized-resource-counters-compared false
+   :generated-page-normalization true
+   :typed-page-size-error-comparison true
+   :stale-cursor-error-shape-comparison true
+   :tests 5
+   :assertions 171
    :status :passed}
   :heavy-pagination
   {:namespace eacl.bench.pagination-test
@@ -214,6 +223,5 @@
  [:production-ordered-adapter-certification
   :acyclic-generated-ordered-merge-refinement
   :verified-shadow-complete-public-error-provenance-and-graph-comparison
-  :verification-wall-time-budget
   :cross-backend-authoritative-differential
   :independent-review]}

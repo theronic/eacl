@@ -359,6 +359,86 @@
     (and (= requested (:native-subproblem-cache normalized))
          (not= requested (:native-subproblem-cache mutant)))))
 
+(defn- shadow-typed-error-omits-limit-killed?
+  []
+  (let [legacy
+        {:eacl/error :eacl.recursive-traversal/limit-exceeded
+         :limit-kind :derived-grants
+         :limit 1}
+        generated
+        (dissoc legacy :limit)
+        correct-fields [:eacl/error :limit-kind :limit]
+        mutant-fields [:eacl/error :limit-kind]
+        projection
+        (fn [fields value]
+          (select-keys value fields))]
+    (and (not= (projection correct-fields legacy)
+               (projection correct-fields generated))
+         (= (projection mutant-fields legacy)
+            (projection mutant-fields generated)))))
+
+(defn- shadow-generated-stale-cursor-adds-direction-killed?
+  []
+  (let [legacy
+        {:eacl/error :eacl.pagination/stale-cursor}
+        generated
+        {:eacl/error :eacl.pagination/stale-cursor}
+        mutant
+        (assoc generated :direction :forward)
+        fields [:eacl/error :direction]]
+    (and (= (select-keys legacy fields)
+            (select-keys generated fields))
+         (not= (select-keys legacy fields)
+               (select-keys mutant fields)))))
+
+(defn- materialized-queue-limit-counts-cumulative-enqueues-killed?
+  []
+  (let [round-depths [1 1]
+        limit 1
+        instantaneous-maximum (reduce max 0 round-depths)
+        cumulative-enqueues (reduce + 0 round-depths)]
+    (and (<= instantaneous-maximum limit)
+         (> cumulative-enqueues limit))))
+
+(defn- materialized-resource-counter-promoted-to-production-killed?
+  []
+  (let [materialized
+        {:scope :whole-graph-closure
+         :measure :maximum-pending-set-cardinality}
+        production
+        {:scope :query-local-indexed-traversal
+         :measure :maximum-queue-depth}
+        comparable?
+        (fn [left right]
+          (= (select-keys left [:scope :measure])
+             (select-keys right [:scope :measure])))]
+    (not (comparable? materialized production))))
+
+(defn- generated-stale-cursor-leaks-render-details-killed?
+  []
+  (let [expected
+        {:eacl/error :eacl.pagination/stale-cursor}
+        mutant
+        (assoc expected
+               :render-error
+               {:reason :cursor-result-mismatch
+                :ordinal 0
+                :expected-eid 1
+                :actual-eid 2})]
+    (and (= #{:eacl/error} (set (keys expected)))
+         (not= expected mutant))))
+
+(defn- shadow-typed-error-omits-page-size-killed?
+  []
+  (let [legacy {:size 0}
+        generated {:size 1}
+        correct-fields [:size]
+        mutant-fields []]
+    (and (not= (select-keys legacy correct-fields)
+               (select-keys generated correct-fields))
+         (= (select-keys legacy mutant-fields)
+            (select-keys generated mutant-fields)))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -408,7 +488,19 @@
    :flight-removal-outside-selection-lock
    flight-removal-outside-selection-lock-killed?
    :datomic-subproblem-config-dropped
-   datomic-subproblem-config-dropped-killed?})
+   datomic-subproblem-config-dropped-killed?
+   :shadow-typed-error-omits-limit
+   shadow-typed-error-omits-limit-killed?
+   :shadow-generated-stale-cursor-adds-direction
+   shadow-generated-stale-cursor-adds-direction-killed?
+   :materialized-queue-limit-counts-cumulative-enqueues
+   materialized-queue-limit-counts-cumulative-enqueues-killed?
+   :materialized-resource-counter-promoted-to-production
+   materialized-resource-counter-promoted-to-production-killed?
+   :generated-stale-cursor-leaks-render-details
+   generated-stale-cursor-leaks-render-details-killed?
+   :shadow-typed-error-omits-page-size
+   shadow-typed-error-omits-page-size-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

@@ -175,6 +175,42 @@
    :killed-by
    {:invariant :all-backends-forward-one-shared-subproblem-cache-configuration
     :test :shared-subproblem-cache-config-is-forwarded-and-validated}}
+  {:id :shadow-typed-error-omits-limit
+   :mechanism :compare-only-keyword-valued-error-data-and-drop-the-configured-numeric-limit
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :shadow-comparison-preserves-public-typed-limit-data
+    :test :recursive-shadow-compares-complete-public-results}}
+  {:id :shadow-generated-stale-cursor-adds-direction
+   :mechanism :add-generated-only-direction-to-the-established-stale-cursor-error-shape
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :generated-and-legacy-stale-cursor-errors-have-the-same-public-shape
+    :test :recursive-shadow-compares-stale-cursor-error-shape}}
+  {:id :materialized-queue-limit-counts-cumulative-enqueues
+   :mechanism :sum-each-fixed-point-round-queue-instead-of-bounding-instantaneous-pending-work
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :max-queued-work-bounds-the-instantaneous-queue-gauge
+    :test :generated-materialized-queue-limit-is-instantaneous}}
+  {:id :materialized-resource-counter-promoted-to-production
+   :mechanism :treat-whole-closure-model-work-as-query-local-indexed-production-work
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :resource-evidence-requires-identical-scope-and-unit
+    :test :recursive-shadow-queue-limit-is-query-local}}
+  {:id :generated-stale-cursor-leaks-render-details
+   :mechanism :retain-generated-render-error-while-legacy-retains-bound-and-actual-cursor-maps
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :stale-recursive-cursor-public-data-is-identical-and-minimal
+    :test :recursive-shadow-compares-stale-cursor-error-shape}}
+  {:id :shadow-typed-error-omits-page-size
+   :mechanism :drop-numeric-page-size-from-generated-vs-legacy-error-comparison
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :shadow-comparison-preserves-page-size-error-data
+    :test :recursive-shadow-compares-complete-public-results}}
   {:id :partial-denotation-hit
    :mechanism :allow-partial-denotation-as-cache-hit
    :control

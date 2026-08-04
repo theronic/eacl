@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-022
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recursive-shadow/typed-limit-error/full-public-ex-data"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree before complete typed-limit shadow comparison"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "The host recursive traversal error included the configured numeric :limit, but the generated authoritative adapter discarded that value. The shadow error projection compared only keyword-valued fields, so it reported equality despite the public ExceptionInfo data differing."
+ :fix
+ "Generated traversal errors now recover the exact configured limit from the validated limit map without adding generated-only direction data, and the redacted shadow projection compares bounded numeric limit fields internally while diagnostics continue to expose only changed field names and result variants."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results"
+  "formal mutation :shadow-typed-error-omits-limit"]}

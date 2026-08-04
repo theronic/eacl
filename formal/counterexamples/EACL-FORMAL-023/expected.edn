@@ -1,0 +1,23 @@
+{:legacy-error
+ {:eacl/error :eacl.pagination/stale-cursor}
+ :generated-error
+ {:eacl/error :eacl.pagination/stale-cursor}
+ :shadow-compared-fields
+ [:type
+  :eacl/error
+  :operation
+  :reason
+  :direction
+  :limit-kind
+  :filter
+  :key
+  :expected
+  :actual
+  :limit
+  :size
+  :max
+  :count-limit
+  :maximum
+  :maximum-size]
+ :diagnostic-policy
+ :changed-field-names-and-result-variants-only}

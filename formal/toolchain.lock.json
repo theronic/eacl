@@ -1,5 +1,11 @@
 {
   "schemaVersion": 1,
+  "verificationPolicy": {
+    "dafny": {
+      "assertionBatchTimeLimitSeconds": 60,
+      "proofEffortResourceLimit": 50000000
+    }
+  },
   "tools": {
     "dafny": {
       "version": "4.11.0",

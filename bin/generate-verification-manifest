@@ -75,6 +75,7 @@
     (map repo-file
          ["bin/formal"
           "bin/generate-verification-manifest"
+          "bin/summarize-dafny-verification.mjs"
           "bin/validate-verification-manifest"
           "formal/smoke/clj/eacl/formal/ordered_merge_benchmark.clj"
           "formal/smoke/cljs/run"
@@ -118,7 +119,14 @@
            #(or (str/ends-with? (.getName %) ".java")
                 (str/ends-with? (.getName %) ".class"))))
         candidates
-        {:java (aggregate-digest java-files)
+        {:dafny-verification
+         (when-let [file
+                    (let [file
+                          (repo-file
+                           "target/formal/dafny-verification.json")]
+                      (when (.isFile file) file))]
+           (file-digest file))
+         :java (aggregate-digest java-files)
          :javascript
          (when-let [file (let [file (repo-file
                                      "target/formal/js/EaclKernel.js")]

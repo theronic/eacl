@@ -45,7 +45,11 @@ changes discovered by this work are listed in
 
 The tool bootstrap reads `toolchain.lock.json`, accepts only supported platform
 artifacts, validates SHA-256 before extraction, and fails rather than silently
-replacing an existing mismatched download.
+replacing an existing mismatched download. The same lock fixes the Dafny
+assertion-batch time and deterministic Z3 resource ceilings. A successful
+`bin/formal verify` emits `target/formal/dafny-verification.json` and the
+per-module CSV inputs from which it was derived; these measure proof search,
+not EACL runtime resources.
 
 ## Assurance status
 

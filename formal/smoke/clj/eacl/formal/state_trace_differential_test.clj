@@ -12,13 +12,16 @@
    [eacl.cache :as shared-cache]
    [eacl.core :as eacl]
    [eacl.datahike.core :as datahike]
+   [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
    [eacl.datomic.cache :as datomic-cache]
    [eacl.datomic.core :as datomic]
    [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
    [eacl.datomic.schema :as datomic-schema]
+   [eacl.engine.v8 :as engine]
    [eacl.formal.differential-runner :as differential]
    [eacl.formal.production-kernel :as production]
+   [eacl.subproblem-cache :as subproblem]
    [eacl.verified-kernel :as verified]))
 
 (def authorization-schema
@@ -347,6 +350,9 @@
       (is (pos?
            (get @calls :current-cache-decision 0))
           "cache eligibility and hit/miss selection cross generated authority")
+      (is (pos?
+           (get @calls :relationship-page 0))
+          "lookup pagination normalization crosses generated authority")
       (is (= ["document-1" "document-2"]
              (into (ids page-1) (ids page-2))))
       (is (false? (get-in page-2
@@ -569,7 +575,7 @@
    :report-divergence #(swap! reports conj %)})
 
 (defn- assert-recursive-shadow!
-  [client limited-client reports]
+  [client limited-clients reports]
   (eacl/create-relationships!
    client [relationship-1 relationship-2])
   (let [query
@@ -591,11 +597,23 @@
           :permission :view
           :subject/type :user
           :first 1})
-        limit-error
+        limit-errors
+        (into
+         {}
+         (map
+          (fn [[limit-kind limited-client]]
+            [limit-kind
+             (try
+               (eacl/count-resources
+                limited-client
+                (dissoc query :first))
+               nil
+               (catch Exception error
+                 error))]))
+         limited-clients)
+        page-error
         (try
-          (eacl/count-resources
-           limited-client
-           (dissoc query :first))
+          (eacl/lookup-resources client (assoc query :first 0))
           nil
           (catch Exception error
             error))]
@@ -615,10 +633,14 @@
               :permission :view
               :subject/type :user}))))
     (is (true? (eacl/can? client user :view document-1)))
-    (is (= :eacl.recursive-traversal/limit-exceeded
-           (:eacl/error (ex-data limit-error))))
-    (is (= :derived-grants
-           (:limit-kind (ex-data limit-error))))
+    (doseq [[limit-kind limit-error] limit-errors]
+      (is (= :eacl.recursive-traversal/limit-exceeded
+             (:eacl/error (ex-data limit-error))))
+      (is (= limit-kind
+             (:limit-kind (ex-data limit-error))))
+      (is (= 1
+             (:limit (ex-data limit-error)))))
+    (is (= {:size 0} (ex-data page-error)))
     (is (empty? @reports)
         (str "generated recursive shadow divergence: "
              (pr-str @reports)))))
@@ -633,19 +655,27 @@
            "01234567890123456789012345678901"
            :engine-selection (shadow-selection reports)}
           client (datascript/make-client conn common)
-          limited-client
-          (datascript/make-client
-           conn
-           (assoc common
-                  :recursive-traversal-limits
-                  {:max-derived-grants 1}))]
+          limited-clients
+          (into
+           {}
+           (map
+            (fn [[limit-kind limit-option]]
+              [limit-kind
+               (datascript/make-client
+                conn
+                (assoc common
+                       :recursive-traversal-limits
+                       {limit-option 1}))]))
+           {:derived-grants :max-derived-grants
+            :advanced-datoms :max-advanced-datoms
+            :queued-work :max-queued-work})]
       (eacl/write-schema! client authorization-schema)
       (ds/transact!
        conn
        [{:eacl/id "user"}
         {:eacl/id "document-1"}
         {:eacl/id "document-2"}])
-      (assert-recursive-shadow! client limited-client reports)))
+      (assert-recursive-shadow! client limited-clients reports)))
 
   (testing "Datahike"
     (let [conn (datahike/create-conn)
@@ -656,19 +686,27 @@
            "01234567890123456789012345678901"
            :engine-selection (shadow-selection reports)}
           client (datahike/make-client conn common)
-          limited-client
-          (datahike/make-client
-           conn
-           (assoc common
-                  :recursive-traversal-limits
-                  {:max-derived-grants 1}))]
+          limited-clients
+          (into
+           {}
+           (map
+            (fn [[limit-kind limit-option]]
+              [limit-kind
+               (datahike/make-client
+                conn
+                (assoc common
+                       :recursive-traversal-limits
+                       {limit-option 1}))]))
+           {:derived-grants :max-derived-grants
+            :advanced-datoms :max-advanced-datoms
+            :queued-work :max-queued-work})]
       (eacl/write-schema! client authorization-schema)
       (dh/transact
        conn
        [{:eacl/id "user"}
         {:eacl/id "document-1"}
         {:eacl/id "document-2"}])
-      (assert-recursive-shadow! client limited-client reports)))
+      (assert-recursive-shadow! client limited-clients reports)))
 
   (testing "Datomic"
     (with-mem-conn [conn datomic-schema/v7-schema]
@@ -681,12 +719,20 @@
              "12345678901234567890123456789012"
              :engine-selection (shadow-selection reports)}
             client (datomic/make-client conn common)
-            limited-client
-            (datomic/make-client
-             conn
-             (assoc common
-                    :recursive-traversal-limits
-                    {:max-derived-grants 1}))]
+            limited-clients
+            (into
+             {}
+             (map
+              (fn [[limit-kind limit-option]]
+                [limit-kind
+                 (datomic/make-client
+                  conn
+                  (assoc common
+                         :recursive-traversal-limits
+                         {limit-option 1}))]))
+             {:derived-grants :max-derived-grants
+              :advanced-datoms :max-advanced-datoms
+              :queued-work :max-queued-work})]
         (eacl/write-schema! client authorization-schema)
         @(d/transact
           conn
@@ -696,4 +742,110 @@
             :eacl/id "document-1"}
            {:db/id (d/tempid :db.part/user)
             :eacl/id "document-2"}])
-        (assert-recursive-shadow! client limited-client reports)))))
+        (assert-recursive-shadow! client limited-clients reports)))))
+
+(deftest recursive-shadow-compares-stale-cursor-error-shape
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:cache shared-cache/no-cache
+          :security-key
+          "01234567890123456789012345678901"})
+        reports (atom [])
+        selection (shadow-selection reports)
+        query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 1}]
+    (eacl/write-schema! client authorization-schema)
+    (ds/transact!
+     conn
+     [{:eacl/id "user"}
+      {:eacl/id "document-1"}
+      {:eacl/id "document-2"}])
+    (eacl/create-relationships!
+     client
+     [relationship-1 relationship-2])
+    (let [adapter
+          (datascript-backend/snapshot-adapter
+           (ds/db conn)
+           (:opts client))
+          page
+          (binding [subproblem/*engine-selection* selection]
+            (engine/lookup-resources adapter query))
+          bound (get-in page [:page-info :end-cursor])]
+      (eacl/delete-relationships! client [relationship-1])
+      (let [changed-adapter
+            (datascript-backend/snapshot-adapter
+             (ds/db conn)
+             (:opts client))
+            error
+            (try
+              (binding [subproblem/*engine-selection* selection]
+                (engine/lookup-resources
+                 changed-adapter
+                 (assoc query :after bound)))
+              nil
+              (catch Exception exception
+                exception))]
+        (is (= [(get-in bound [:result :eid])]
+               (mapv :id (:data page))))
+        (is (= :eacl.pagination/stale-cursor
+               (:eacl/error (ex-data error))))
+        (is (= {:eacl/error :eacl.pagination/stale-cursor}
+               (ex-data error)))
+        (is (empty? @reports)
+            (str "generated stale-cursor shadow divergence: "
+                 (pr-str @reports)))))))
+
+(deftest recursive-shadow-queue-limit-is-query-local
+  (let [conn (datascript/create-conn)
+        reports (atom [])
+        client
+        (datascript/make-client
+         conn
+         {:cache shared-cache/no-cache
+          :security-key
+          "01234567890123456789012345678901"
+          :engine-selection (shadow-selection reports)
+          :recursive-traversal-limits
+          {:max-queued-work 1}})
+        subject (eacl/spice-object :user "u1")
+        unrelated-subject (eacl/spice-object :team "t1")
+        folder-0 (eacl/spice-object :folder "f0")
+        folder-1 (eacl/spice-object :folder "f1")]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition team {}
+      definition folder {
+        relation reader: user
+        relation parent: folder
+        relation team_reader: team
+        permission read = reader + parent->read + team_reader
+      }")
+    (ds/transact!
+     conn
+     [{:eacl/id "u1"}
+      {:eacl/id "t1"}
+      {:eacl/id "f0"}
+      {:eacl/id "f1"}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship subject :reader folder-0)
+      (eacl/->Relationship folder-0 :parent folder-1)
+      (eacl/->Relationship unrelated-subject :team_reader folder-1)])
+    (let [result
+          (eacl/count-resources
+           client
+           {:subject subject
+            :permission :read
+            :resource/type :folder
+            :count-limit 10})]
+      (is (= 2 (:count result)))
+      (is (false? (:truncated? result)))
+      (is (empty? @reports)
+          (str "query-local queue-limit shadow divergence: "
+               (pr-str @reports))))))

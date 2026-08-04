@@ -61,13 +61,13 @@
             "formal/dafny/IndexedRendering.dfy"
             "formal/dafny/IndexedCertification.dfy"]
   :verified-obligations
-  {:transition-state-machine 504
+  {:transition-state-machine 636
    :semantic-soundness-refinement 1783
    :forward-least-fixed-point-completeness 1299
    :reverse-least-fixed-point-completeness 4975
    :traversal-order-rendering-and-ordered-nonimplication-witness 29
    :source-plan-and-seed-certification 48
-   :total 8638}
+   :total 8770}
   :generated-state-shape true
   :generated-forward-transitions true
   :generated-reverse-transitions true
@@ -93,29 +93,33 @@
    :tests 1 :assertions 7 :status :passed}
   :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 24 :suite-assertions 836 :status :passed}
+   :suite-tests 25 :suite-assertions 847 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 9 :assertions 53}
    :cljs :passed-in-full-suite}
   :production-routing
-  {:clj-java {:tests 17 :assertions 390}
+  {:clj-java {:tests 19 :assertions 396}
    :cljs-javascript
-   {:suite-tests 24
-    :suite-assertions 836
+   {:suite-tests 25
+    :suite-assertions 847
     :datascript-public-recursive-cache-mode-differential true}}
   :materialized-reference
-  {:clj-java
+  {:comparison-contract
+   {:authorization-values :compare-only-when-both-complete
+    :operational-limits :not-a-production-refinement
+    :resource-counters :whole-graph-model-only}
+   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 17
-    :namespace-assertions 390
+    :namespace-tests 19
+    :namespace-assertions 396
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
    :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 16
-    :suite-tests 24
-    :suite-assertions 836
+    :namespace-tests 17
+    :suite-tests 25
+    :suite-assertions 847
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace
@@ -136,8 +140,12 @@
    :dimensionally-matched-resource-counter-comparison true
    :logical-retained-state-comparison true
    :typed-limit-error-comparison true
+   :limit-comparison-scope :generated-indexed-vs-production
+   :generated-page-normalization true
+   :typed-page-size-error-comparison true
+   :stale-cursor-error-shape-comparison true
    :current-cache-generated-selection true
-   :tests 3 :assertions 137 :status :passed}}
+   :tests 5 :assertions 171 :status :passed}}
  :remaining
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-source-refinement

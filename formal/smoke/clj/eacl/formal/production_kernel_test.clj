@@ -1088,6 +1088,71 @@
             reverse-count-result
             [:count :truncated?])))))
 
+(deftest generated-materialized-queue-limit-is-instantaneous
+  (let [queue-input
+        (-> authorization-input
+            (update
+             :objects
+             #(vec (remove (fn [object] (= "team" (:type object))) %)))
+            (update-in
+             [:schema :relations]
+             #(vec (remove (fn [relation]
+                             (= "team-reader" (:relation relation)))
+                           %)))
+            (update-in
+             [:schema :definitions]
+             #(vec (remove (fn [definition]
+                             (= "team-reader" (:relation definition)))
+                           %)))
+            (update
+             :relationships
+             #(vec (remove (fn [relationship]
+                             (= "team-reader" (:relation relationship)))
+                           %))))
+        result
+        (verified/decide
+         selection
+         :authorization-evaluation
+         (assoc
+          queue-input
+          :request
+          {:operation :count-resources
+           :subject {:type "user" :id "u1"}
+           :permission "read"
+           :resource-type "folder"
+           :count-limit 10}
+          :limits
+          {:max-derived-grants 1000
+           :max-advanced-datoms 1000
+           :max-queued-work 1})
+         #(throw (ex-info "legacy must not run" {})))]
+    (is (= :complete (:status result)))
+    (is (= {:count 2 :truncated? false}
+           (select-keys result [:count :truncated?])))
+    (is (= 1 (get-in result [:counters :queued-work])))))
+
+(deftest materialized-resource-limits-are-whole-closure-scoped
+  (let [result
+        (verified/decide
+         selection
+         :authorization-evaluation
+         (assoc
+          authorization-input
+          :request
+          {:operation :count-resources
+           :subject {:type "user" :id "u1"}
+           :permission "read"
+           :resource-type "folder"
+           :count-limit 10}
+          :limits
+          {:max-derived-grants 1000
+           :max-advanced-datoms 1000
+           :max-queued-work 1})
+         #(throw (ex-info "legacy must not run" {})))]
+    (is (= :limit-exceeded (:status result)))
+    (is (= :queued-work (:limit-kind result)))
+    (is (= 0 (get-in result [:counters :queued-work])))))
+
 (deftest production-relationship-pages-use-generated-java-decisions
   (let [scan-specs [{:idx 0 :scan-kind :forward-anchored}]
         rows (mapv (fn [id]

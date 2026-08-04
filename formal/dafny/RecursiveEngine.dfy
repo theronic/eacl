@@ -20,6 +20,8 @@ module RecursiveEngine {
   datatype WorkCounters = WorkCounters(
     derivedGrants: nat,
     advancedDatoms: nat,
+    // Maximum pending-work cardinality observed so far. This is an
+    // instantaneous queue gauge, not cumulative enqueue work.
     queuedWork: nat
   )
 
@@ -771,8 +773,7 @@ module RecursiveEngine {
        limits.maxAdvancedDatoms {
       return ClosureLimitExceeded(AdvancedDatoms, state.counters);
     }
-    if state.counters.queuedWork + queued >
-       limits.maxQueuedWork {
+    if queued > limits.maxQueuedWork {
       return ClosureLimitExceeded(QueuedWork, state.counters);
     }
 
@@ -788,7 +789,9 @@ module RecursiveEngine {
     var nextCounters := WorkCounters(
       state.counters.derivedGrants + derived,
       state.counters.advancedDatoms + advanced,
-      state.counters.queuedWork + queued
+      if state.counters.queuedWork < queued
+      then queued
+      else state.counters.queuedWork
     );
     var nextState := WorklistState(
       state.direction,

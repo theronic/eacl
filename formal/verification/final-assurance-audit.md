@@ -115,10 +115,40 @@ documents.
   only by defaults after the rejected request was removed. Datomic now forwards
   the exact nested map to the shared constructor, which validates it before
   returning a client.
+- EACL-FORMAL-022 found that generated recursive limit errors omitted the
+  configured numeric `:limit`, while shadow comparison discarded every
+  non-keyword error field and therefore concealed the public `ExceptionInfo`
+  divergence. Generated adaptation now restores the exact validated limit and
+  the redacted shadow view compares bounded numeric limit fields internally.
+  Diagnostics still expose only changed field names and safe result variants.
+- EACL-FORMAL-023 found that generated recursive render rejection added a
+  generated-only `:direction` field to the established stale-cursor public
+  error shape. The shadow comparator would report the difference, but no
+  campaign invalidated a retained result between raw-engine pages. Generated
+  adaptation now preserves the legacy shape, and JVM plus JavaScript shadow
+  traces exercise the rejected-render branch.
+- EACL-FORMAL-024 found that the materialized Dafny reference compared
+  production's instantaneous `:max-queued-work` limit with cumulative
+  fixed-point-round enqueues. Two sequential singleton rounds were therefore
+  rejected even though queue depth never exceeded one. The model now records
+  maximum pending-set cardinality; cumulative enqueues remain a separate Lore
+  resource dimension.
+- EACL-FORMAL-025 found a second invalid resource substitution: the
+  materializing oracle closes the whole finite graph, while production seeds
+  query-local indexed work. An unrelated subject-type grant can therefore
+  trip the model limit without consuming production queue depth. Reports now
+  compare completed authorization values only; operational limits and
+  counters refine production solely through the generated indexed engine.
+- EACL-FORMAL-026 found that EACL-FORMAL-023 had normalized only the redacted
+  stale-cursor shadow view. Full public exception data still differed between
+  legacy `:bound`/`:actual` maps and generated `:render-error` data. Both paths
+  now expose one minimal typed stale-cursor map, and JVM/JavaScript regressions
+  compare the entire map.
 - Production shadow comparison covers recursive traversal values, ordering,
   page flags, counts, Boolean decisions, dimensionally matching cache-free
   resource counters, logical retained-state units, and typed traversal-limit
-  failures. It does not yet cover the complete public typed-error surface,
+  failures including configured numeric limits, and recursive stale-cursor
+  render rejection. It does not yet cover the complete public typed-error surface,
   provenance, graph identity, or required rollout volumes. Shadow diagnostics
   are fail-open with respect to legacy authority and redact request/result
   values without emitting guessable hashes.
@@ -153,25 +183,27 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,061 verifier obligations across 21
+- Clean checksum-locked Dafny cache: 9,193 proof efforts across 21
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
-  `assume`, `axiom`, `{:verify false}`, opaque, or extern declarations. The
-  count includes dependency obligations repeated by multiple top-level
-  verification invocations; it is pipeline work, not a count of unique
-  theorems.
+  `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
+  and reverse drive specification functions are opaque but defined, and are
+  exposed only through verified one-step unfolding lemmas; opacity is not an
+  assumption. The count includes dependency obligations repeated by multiple
+  top-level verification invocations; it is pipeline work, not a count of
+  unique theorems.
 - TLA+/Apalache: all five models typechecked; compact length 12, detailed
   length 6, subproblem length 8, tiered-subproblem length 5, and managed
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 21 minimized entries replayed by 23 tests and 413
+- Counterexample corpus: 26 minimized entries replayed by 28 tests and 545
   assertions, zero failures/errors.
-- Mutation controls: 29 Clojure detectors and 8 Apalache counterexample
-  controls; all 37 registered mutants killed.
-- Public non-benchmark CLJ suite: 455 tests, 16,613 assertions, zero failures/errors.
+- Mutation controls: 35 Clojure detectors and 8 Apalache counterexample
+  controls; all 43 registered mutants killed.
+- Public non-benchmark CLJ suite: 463 tests, 16,911 assertions, zero failures/errors.
 - DataScript CLJS suite: 135 tests, 4,227 assertions, zero failures/errors.
-- Generated Java suite: 33 tests, 7,551 assertions, zero failures/errors.
-- Generated JavaScript suite: 24 tests, 836 assertions, zero failures/errors.
+- Generated Java suite: 37 tests, 7,591 assertions, zero failures/errors.
+- Generated JavaScript suite: 25 tests, 847 assertions, zero failures/errors.
 - OpenSpec strict validation: passed.
 - Heavy benchmark: 9 tests, 3,403 assertions, zero failures/errors; the
   current-cache measurements are recorded in
@@ -200,15 +232,29 @@ that the complete v8.0 engine is formally verified.
   cutover instead of substituting logical cache weight or the noise-dominated
   GC micro-measurement for a heap bound.
 - Lore revision `dabb5634` reanalyzed immutable synthetic EACL revision
-  `7cace3f6febafa99fcf707be02af6bb7332e5de3` (tree
-  `a035685ed7d6a9f303f3baf65318b849e49fa922`, snapshot SHA-256
-  `329d40edd8ba3d718f012c0f38cb3234e1eee6d31c9d030f23676287c340ec06`).
+  `4794b7e5f0b12ccd2e4818513b2a9637ae8b6e05` (tree
+  `3494b94c0ea8189615c2e6c4cf681f7935348ff1`, snapshot SHA-256
+  `5b189c47aedcf58ac2626e343b68c364744ef482e6d157246cb8f00f22e24a4b`).
   It found all 22 named source targets, but zero fit Lore's strict Core; all
-  remain source-structural candidates. Lore also correctly rejected its old
+  remain source-structural candidates (maximum nested traversal depth 3, 142
+  unique unsupported operators and 331 per-function operator occurrences).
+  Lore also correctly rejected its old
   PR #101 production-refutation witness as revision-invalid rather than
   applying it to the changed cache. Consequently it proves no current
   production heap, elapsed-time, backend-operation, or whole-engine resource
   claim.
+- A full verifier replay found that the transparent recursive
+  `DriveReverseSpec` made the iterative reverse-driver invariant exceed its
+  60-second assertion-batch budget. Raising the timeout would have hidden a
+  proof-resource regression. Forward and reverse drive specifications are now
+  opaque outside explicit one-step unfolding lemmas. The locked pipeline also
+  applies a deterministic Z3 resource limit to every proof effort and emits
+  per-module CSV plus an aggregate JSON report. The exact 21-module replay
+  passed 9,193 proof efforts in 1,114.31 local wall seconds; its maximum effort
+  used 34,908,028 of the 50,000,000-unit limit. Explicit unfolding reduced the
+  indexed-driver maximum from 161,654,668 to 10,270,077 resource units
+  (15.74x). These are solver-cost gates, deliberately separate from production
+  request latency, heap, and logical traversal work.
 
 ## Manifest audit result
 

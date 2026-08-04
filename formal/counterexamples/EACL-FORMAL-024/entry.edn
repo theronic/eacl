@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-024
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "materialized-reference/two-singleton-fixed-point-rounds/max-queued-work-1"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 formal model before instantaneous queue-gauge correction"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "RecursiveEngine.dfy accumulated the cardinality of every fixed-point queue round into queuedWork and compared that request counter with :max-queued-work. Production and the generated indexed engine correctly enforce :max-queued-work against instantaneous pending queue depth. Two sequential singleton rounds were therefore rejected by the materialized formal evaluator even though the queue never exceeded one."
+ :fix
+ "The materialized model now treats queuedWork as the maximum observed pending-work cardinality, checks the current queue cardinality directly against maxQueuedWork, and retains cumulative enqueue accounting as a separate resource dimension outside this safety limit."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/generated-materialized-queue-limit-is-instantaneous"
+  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-compare-generated-javascript"
+  "formal mutation :materialized-queue-limit-counts-cumulative-enqueues"]}
