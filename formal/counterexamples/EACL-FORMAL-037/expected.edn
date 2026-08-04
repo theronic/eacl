@@ -1,0 +1,11 @@
+{:schema-cache-after
+ {:traversal-permissions :present
+  :traversal-analysis :present
+  :recursive-plans :present}
+ :generation-eviction
+ {:traversal-analysis nil
+  :recursive-plans {}}
+ :verified-authoritative
+ {:classification-authority :generated-accepted-traversal-vector
+  :required-routing-certificate-calls :positive}
+ :all-backends [:datomic :datahike :datascript]}

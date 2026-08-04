@@ -76,7 +76,11 @@
     :EACL-FORMAL-035
     eacl.characterization-fixture-test/generated-java-boundary-is-reflection-free-test
     :EACL-FORMAL-036
-    eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead})
+    eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead
+    :EACL-FORMAL-037
+    eacl.datomic.impl.indexed-test/schema-cache-carries-shared-engine-analysis-test
+    :EACL-FORMAL-038
+    eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input})
 
 (defn- read-edn
   [path]
@@ -155,8 +159,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-036 (:latest revision)))
-    (is (= 36 (count entries)))))
+    (is (= :EACL-FORMAL-038 (:latest revision)))
+    (is (= 38 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available
