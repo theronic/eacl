@@ -28,6 +28,18 @@
    :queued-work-limit-fails-closed
    :strict-traversal-ordinals
    :retained-replay-suffix-equivalence]}
+ :routing-certificate-proof
+ {:source "formal/dafny/RoutingCertificate.dfy"
+  :verified-obligations 42
+  :claims
+  [:accepted-component-forest-proves-mutual-reachability
+   :component-ranks-prove-distinct-components-are-not-mutually-reachable
+   :multi-member-or-self-loop-recursion-witness-is-exact
+   :traversal-witness-chain-is-sound
+   :reverse-edge-propagation-is-complete
+   :accepted-traversal-vector-is-exact
+   :accepted-checker-node-checks-equal-two-times-node-count
+   :accepted-checker-edge-checks-equal-edge-count]}
  :resource-interpretation
  {:queued-work :maximum-instantaneous-pending-set-cardinality
   :cumulative-enqueues :separate-production-request-counter
@@ -38,16 +50,19 @@
  :generated-targets
   {:java
   {:status :passed
-   :tests 10
-   :assertions 784
+   :tests 30
+   :assertions 1576
    :failures 0
-   :errors 0}
+   :errors 0
+   :qualification :suite-spans-all-generated-java-production-kernel-operations}
   :javascript
   {:status :passed
-   :tests 5
-   :assertions 545
+   :suite :generated-kernel-cljs-smoke
+   :tests 50
+   :assertions 2176
    :failures 0
-   :errors 0}}
+   :errors 0
+   :qualification :suite-spans-generated-javascript-and-portable-boundary-operations}}
  :differential
  {:implementations
   [:independent-least-fixed-point-oracle
@@ -71,26 +86,54 @@
    :routing-acyclic-diamond
    :routing-deep-ancestor-chain
    :routing-same-permission-name-distinct-resource-types
-   :all-512-labeled-directed-graphs-on-three-typed-nodes]
+   :all-512-labeled-directed-graphs-on-three-typed-nodes
+   :mutated-routing-certificates
+   :4096-node-production-certificate-chain]
   :status :passed
   :retained-mismatches 0}
  :routing-refinement
- {:production-algorithm :iterative-kosaraju-plus-reverse-reachability
-  :formal-oracle :typed-permission-dependency-edge-least-closure
+ {:production-algorithm
+  :deterministic-indexing-plus-iterative-kosaraju-reverse-reachability-and-certificate-construction
+  :formal-oracle
+  :typed-permission-dependency-edge-least-closure
+  :generated-authority
+  :accepted-proof-carrying-routing-certificate
   :complete-node-identity [:resource-type :permission]
   :counterexample :EACL-FORMAL-030
   :source-specialization-report
   "formal/verification/source-specializations.edn"
   :source-refinement-review :pending-independent-review
-  :resource-refinement :not-claimed}
+  :stamped-schema-generations
+  {:authority :generated-traversal-vector
+   :certificate-runs :once-per-schema-cache-generation
+   :all-backends
+   {:datomic :exercised
+    :datahike :exercised
+    :datascript :exercised}}
+  :proofless-or-raw-snapshots
+  :host-per-root-fallback-no-persistent-cross-snapshot-derived-state
+  :resource-refinement
+  {:generated-checker
+   {:node-checks "2V"
+    :edge-checks "E"
+    :logical-checks "2V+E"}
+   :production-construction
+   "O(V log V + E) after permission paths are materialized"
+   :allocation-retained-heap-latency :not-formally-proved}}
  :performance-observation
- {:status :not-cutover-ready
-  :reason :generated-kernel-recomputes-the-finite-closure-per-operation
-  :representative-jvm-formal-suite-seconds 15.45}
+ {:status :schema-generation-cutover-ready
+  :scale-fixture
+  {:nodes 4096
+   :edges 4096
+   :node-checks 8192
+   :edge-checks 4096
+   :certificate-runs-per-generation 1}
+  :qualification
+  :logical-work-is-proved-but-jvm-and-javascript-runtime-peaks-remain-measured-platform-properties}
  :limitations
- [:generated-kernel-is-not-yet-production-authoritative
+ [:backend-permission-path-to-indexed-edge-extraction-remains-a-source-refinement-obligation
+  :proofless-raw-snapshots-do-not-call-the-generated-certificate
   :older-name-only-path-dependency-is-conservative-cache-scope-not-exact-routing
-  :typed-routing-oracle-is-semantic-not-production-resource-model
+  :typed-routing-oracle-and-certificate-do-not-model-host-allocation-or-retained-heap
   :full-pagination-and-cursor-obligations-remain
-  :cross-adapter-recursive-differential-campaign-remains
-  :performance-cutover-gate-remains]}
+  :independent-source-refinement-review-remains]}

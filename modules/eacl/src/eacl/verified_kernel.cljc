@@ -24,6 +24,7 @@
     :subproblem-cache-decision
     :ordered-merge-step
     :ordered-merge-chunk
+    :recursive-routing-certificate
     :indexed-scan-response
     :indexed-plan-certification
     :indexed-seed-certification
@@ -404,6 +405,95 @@
 (declare bounded-vector!)
 (declare indexed-scan-rejection-reasons)
 (declare validate-indexed-state!)
+
+(def ^:private routing-certificate-natural-fields
+  #{:component-root
+    :forward-depth
+    :reverse-depth
+    :component-rank})
+
+(def ^:private routing-certificate-signed-fields
+  #{:forward-parent-edge
+    :reverse-parent-edge
+    :multiple-member-witness
+    :self-loop-witness-edge
+    :traversal-witness-edge})
+
+(def ^:private routing-certificate-fields
+  (into
+   (conj routing-certificate-natural-fields :traversal)
+   routing-certificate-signed-fields))
+
+(defn- validate-routing-certificate-input!
+  [input]
+  (let [operation :recursive-routing-certificate
+        {:keys [node-count edges certificate]}
+        (exact-keys!
+         operation
+         :input
+         input
+         #{:node-count :edges :certificate})]
+    (require-value! operation :node-count safe-natural? node-count)
+    (when (> node-count maximum-boundary-items)
+      (boundary-error!
+       "Generated routing certificate exceeds the boundary node limit."
+       {:operation operation :node-count node-count}))
+    (doseq [[index edge]
+            (map-indexed
+             vector
+             (bounded-vector! operation :edges edges))]
+      (let [field [:edges index]]
+        (exact-keys! operation field edge #{:head :target})
+        (doseq [key [:head :target]]
+          (require-value!
+           operation
+           [field key]
+           safe-natural?
+           (get edge key)))))
+    (exact-keys!
+     operation
+     :certificate
+     certificate
+     routing-certificate-fields)
+    (doseq [field routing-certificate-natural-fields
+            [index value]
+            (map-indexed
+             vector
+             (bounded-vector!
+              operation
+              [:certificate field]
+              (get certificate field)))]
+      (require-value!
+       operation
+       [:certificate field index]
+       safe-natural?
+       value))
+    (doseq [field routing-certificate-signed-fields
+            [index value]
+            (map-indexed
+             vector
+             (bounded-vector!
+              operation
+              [:certificate field]
+              (get certificate field)))]
+      (require-value!
+       operation
+       [:certificate field index]
+       safe-integer?
+       value))
+    (doseq [[index value]
+            (map-indexed
+             vector
+             (bounded-vector!
+              operation
+              [:certificate :traversal]
+              (:traversal certificate)))]
+      (require-value!
+       operation
+       [:certificate :traversal index]
+       boolean?
+       value))
+    input))
 
 (defn- strictly-ordered-values?
   [direction values]
@@ -1438,6 +1528,8 @@
     (validate-subproblem-cache-input! input)
     :ordered-merge-step (validate-ordered-merge-input! input)
     :ordered-merge-chunk (validate-ordered-merge-chunk-input! input)
+    :recursive-routing-certificate
+    (validate-routing-certificate-input! input)
     :indexed-scan-response (validate-indexed-scan-input! input)
     :indexed-plan-certification (validate-indexed-plan-input! input)
     :indexed-seed-certification (validate-indexed-seed-input! input)
@@ -1790,6 +1882,64 @@
     :duplicate-seed-rule
     :seed-bucket-mismatch})
 
+(def ^:private routing-certificate-rejection-reasons
+  #{:shape-mismatch
+    :invalid-component
+    :invalid-dependency-edge
+    :invalid-component-witness})
+
+(defn- validate-routing-certificate-result!
+  [result]
+  (let [operation :recursive-routing-certificate]
+    (when-not (map? result)
+      (boundary-error!
+       "Generated routing-certificate result must be a map."
+       {:operation operation :result result}))
+    (case (:status result)
+      :accepted
+      (do
+        (exact-keys!
+         operation
+         :result
+         result
+         #{:status :traversal :node-checks :edge-checks})
+        (doseq [[index value]
+                (map-indexed
+                 vector
+                 (bounded-vector!
+                  operation
+                  :traversal
+                  (:traversal result)))]
+          (require-value!
+           operation
+           [:traversal index]
+           boolean?
+           value)))
+
+      :rejected
+      (do
+        (exact-keys!
+         operation
+         :result
+         result
+         #{:status :reason :node-checks :edge-checks})
+        (require-value!
+         operation
+         :reason
+         routing-certificate-rejection-reasons
+         (:reason result)))
+
+      (boundary-error!
+       "Generated routing-certificate result has an unknown variant."
+       {:operation operation :result result}))
+    (doseq [field [:node-checks :edge-checks]]
+      (require-value!
+       operation
+       field
+       safe-natural?
+       (get result field)))
+    result))
+
 (defn- validate-indexed-plan-result!
   [operation result]
   (when-not (map? result)
@@ -1927,6 +2077,8 @@
     (validate-subproblem-cache-result! result)
     :ordered-merge-step (validate-ordered-merge-result! result)
     :ordered-merge-chunk (validate-ordered-merge-chunk-result! result)
+    :recursive-routing-certificate
+    (validate-routing-certificate-result! result)
     :indexed-scan-response (validate-indexed-scan-result! result)
     :indexed-plan-certification
     (validate-indexed-plan-result! operation result)
@@ -2030,6 +2182,31 @@
          {:operation operation
           :decision (:decision input)
           :result result}))
+      (when (= :recursive-routing-certificate operation)
+        (let [node-count (:node-count input)
+              edge-count (count (:edges input))
+              accepted? (= :accepted (:status result))]
+          (when (or (> (:node-checks result) (* 2 node-count))
+                    (> (:edge-checks result) edge-count)
+                    (and
+                     accepted?
+                     (or (not= node-count
+                               (count (:traversal result)))
+                         (not= (* 2 node-count)
+                               (:node-checks result))
+                         (not= edge-count
+                               (:edge-checks result)))))
+            (boundary-error!
+             "Generated routing certificate result contradicts its validated input."
+             {:operation operation
+              :node-count node-count
+              :edge-count edge-count
+              :result-status (:status result)
+              :result-traversal-count
+              (when accepted?
+                (count (:traversal result)))
+              :result-node-checks (:node-checks result)
+              :result-edge-checks (:edge-checks result)}))))
       (when (= :ordered-merge-chunk operation)
         (let [left-consumed (:left-consumed result)
               right-consumed (:right-consumed result)

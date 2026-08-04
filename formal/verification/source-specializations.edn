@@ -120,12 +120,17 @@
      eacl.engine.v8/transpose-graph
      eacl.engine.v8/graph-components
      eacl.engine.v8/reachable-from-many
+     eacl.engine.v8/component-parent-tree
+     eacl.engine.v8/calc-traversal-artifacts
      eacl.engine.v8/calc-traversal-analysis
      eacl.engine.v8/traversal-permission?]
-    :algorithm :iterative-kosaraju-plus-reverse-reachability
+    :algorithm
+    :deterministic-indexing-plus-iterative-kosaraju-reverse-reachability-and-proof-carrying-certificate
     :runtime-targets [:clj-java :cljs-javascript]}
    :formal
-   {:source "formal/dafny/RecursiveEngine.dfy"
+   {:sources
+    ["formal/dafny/RecursiveEngine.dfy"
+     "formal/dafny/RoutingCertificate.dfy"]
     :definitions
     [RecursiveEngine.PermissionDependencyEdge
      RecursiveEngine.RoutingStep
@@ -134,7 +139,10 @@
      RecursiveEngine.RoutingStrongComponent
      RecursiveEngine.RoutingRecursiveComponent
      RecursiveEngine.RoutingDependsOnRecursiveComponent
-     RecursiveEngine.DecideTypedTraversalPermission]
+     RecursiveEngine.DecideTypedTraversalPermission
+     RoutingCertificate.RoutingProof
+     RoutingCertificate.ValidRoutingCertificate
+     RoutingCertificate.CheckRoutingCertificate]
     :lemmas
     [RecursiveEngine.RoutingStepIsMonotone
      RecursiveEngine.RoutingClosureIsFixed
@@ -143,7 +151,13 @@
      RecursiveEngine.RoutingSelfEdgeScanIsExact
      RecursiveEngine.RoutingComponentSelfScanIsExact
      RecursiveEngine.IsRoutingRecursiveNodeIsExact
-     RecursiveEngine.RoutingTraversalScanIsExact]}
+     RecursiveEngine.RoutingTraversalScanIsExact
+     RoutingCertificate.SameCertificateComponentIsMutuallyReachable
+     RoutingCertificate.MutuallyReachableNodesShareCertificateComponent
+     RoutingCertificate.CertificateRecursiveComponentIsExact
+     RoutingCertificate.CertificateTraversalIsSound
+     RoutingCertificate.CertificateTraversalIsComplete
+     RoutingCertificate.AcceptedRoutingCertificateIsExact]}
    :abstract-domain
    {:nodes :complete-resource-type-and-permission-identities
     :edges :fully-resolved-head-to-target-permission-dependencies
@@ -154,6 +168,9 @@
    :evidence
    {:java-source-differential-graph-shapes 519
     :javascript-source-differential-graph-shapes 519
+    :certificate-backed-production-graph-shapes
+    {:java 519
+     :javascript 519}
     :exhaustive-subcampaign
     {:typed-nodes 3
      :possible-directed-edges 9
@@ -171,20 +188,42 @@
     [:routing-node-identity-drops-resource-type
      :routing-only-recursive-component-members
      :routing-singleton-self-loop-ignored
-     :routing-dependency-direction-reversed]
+     :routing-dependency-direction-reversed
+     :routing-certificate-splits-one-scc
+     :routing-certificate-reverses-parent-edge
+     :routing-certificate-omits-multi-member-witness
+     :routing-certificate-hides-recursive-traversal
+     :routing-certificate-result-length-unbound
+     :routing-certificate-result-counters-unbound]
+    :scale-fixture
+    {:nodes 4096
+     :edges 4096
+     :generated-node-checks 8192
+     :generated-edge-checks 4096
+     :certificate-runs-per-stamped-schema-generation 1
+     :runtime-targets [:clj-java :cljs-javascript]}
     :source-digests-required
     ["modules/eacl/src/eacl/engine/v8.cljc"
-     "formal/dafny/RecursiveEngine.dfy"]}
+     "modules/eacl/src/eacl/verified_kernel.cljc"
+     "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj"
+     "formal/dafny/RecursiveEngine.dfy"
+     "formal/dafny/RoutingCertificate.dfy"]}
    :resource-claim
-   {:production "O(V+E) time and memory after permission paths are materialized"
-    :generated-oracle
-    :semantic-only-closure-scans-do-not-refine-production-resource-cost
+   {:production
+    "O(V log V + E) comparison/logical work after permission paths are materialized: deterministic indexing is O(V log V), graph and certificate construction are O(V+E)"
+    :generated-certificate-checker
+    {:node-checks "2V"
+     :edge-checks "E"
+     :logical-checks "2V+E"
+     :allocation-heap-latency :runtime-measurements-not-formal-theorems}
     :lore-qualification
-    :structural-traversal-evidence-only-without-checked-source-and-platform-cost-models}
+    :historical-techniques-only-no-analyser-result-or-release-gate}
    :limitations
-   [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
-    :production-o-v-plus-e-comment-is-not-a-dafny-resource-theorem
+   [:accepted-certificate-is-exact-for-the-indexed-edge-list-but-does-not-prove-backend-to-edge-extraction
+    :proofless-raw-snapshots-use-the-temporal-safe-host-per-root-fallback
+    :externally-constructed-legacy-schema-cache-maps-use-the-host-per-root-fallback
     :path-materialization-cost-is-outside-this-specialization
     :host-hash-map-set-and-vector-semantics-remain-trusted
-    :no-formal-bound-on-allocation-heap-backend-work-or-wall-time
+    :deterministic-pr-str-comparison-cost-is-a-host-assumption
+    :no-formal-bound-on-allocation-retained-heap-backend-work-or-wall-time
     :independent-source-refinement-review-not-recorded]}]}

@@ -30,6 +30,7 @@ module.exports = {
   PageWindow,
   Pagination,
   RecursiveEngine,
+  RoutingCertificate,
   SubproblemCache,
   TemporalSafety,
   WireFormat,

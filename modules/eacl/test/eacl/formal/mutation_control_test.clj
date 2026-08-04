@@ -747,6 +747,63 @@
     (and (contains? forward-targets recursive)
          (not (contains? reversed-targets recursive)))))
 
+(defn- routing-certificate-splits-one-scc-killed?
+  []
+  (let [forward-rank 0
+        reverse-rank 1
+        correct-same-component? true
+        mutant-distinct-components?
+        (and (< forward-rank reverse-rank)
+             (< reverse-rank forward-rank))]
+    (and (true? correct-same-component?)
+         (false? mutant-distinct-components?))))
+
+(defn- routing-certificate-reverses-parent-edge-killed?
+  []
+  (let [child 1
+        correct-edge {:head 0 :target 1}
+        mutant-edge {:head 1 :target 0}]
+    (and (= child (:target correct-edge))
+         (not= child (:target mutant-edge)))))
+
+(defn- routing-certificate-omits-multi-member-witness-killed?
+  []
+  (let [root 0
+        non-root 1
+        correct-witness non-root
+        mutant-witness -1]
+    (and (not= root non-root)
+         (= non-root correct-witness)
+         (= -1 mutant-witness))))
+
+(defn- routing-certificate-hides-recursive-traversal-killed?
+  []
+  (let [recursive-component? true
+        correct-traversal? true
+        mutant-traversal? false]
+    (and recursive-component?
+         correct-traversal?
+         (not mutant-traversal?))))
+
+(defn- routing-certificate-result-length-unbound-killed?
+  []
+  (let [node-count 2
+        correct-result [true true]
+        mutant-result [true]]
+    (and (= node-count (count correct-result))
+         (not= node-count (count mutant-result)))))
+
+(defn- routing-certificate-result-counters-unbound-killed?
+  []
+  (let [node-count 2
+        edge-count 2
+        correct {:node-checks 4 :edge-checks 2}
+        mutant {:node-checks 3 :edge-checks 1}]
+    (and (= (* 2 node-count) (:node-checks correct))
+         (= edge-count (:edge-checks correct))
+         (or (not= (* 2 node-count) (:node-checks mutant))
+             (not= edge-count (:edge-checks mutant))))))
+
 (defn- consistency-plan-drops-managed-authority-killed?
   []
   (let [mode :at-least-as-fresh
@@ -925,6 +982,18 @@
    routing-singleton-self-loop-ignored-killed?
    :routing-dependency-direction-reversed
    routing-dependency-direction-reversed-killed?
+   :routing-certificate-splits-one-scc
+   routing-certificate-splits-one-scc-killed?
+   :routing-certificate-reverses-parent-edge
+   routing-certificate-reverses-parent-edge-killed?
+   :routing-certificate-omits-multi-member-witness
+   routing-certificate-omits-multi-member-witness-killed?
+   :routing-certificate-hides-recursive-traversal
+   routing-certificate-hides-recursive-traversal-killed?
+   :routing-certificate-result-length-unbound
+   routing-certificate-result-length-unbound-killed?
+   :routing-certificate-result-counters-unbound
+   routing-certificate-result-counters-unbound-killed?
    :consistency-plan-drops-managed-authority
    consistency-plan-drops-managed-authority-killed?
    :consistency-malformed-exact-treated-absent

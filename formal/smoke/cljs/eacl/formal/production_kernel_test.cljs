@@ -357,18 +357,195 @@
         (constantly (set nodes))})})))
 
 (defn- source-traversal-analysis
-  [nodes edges]
-  (let [adapter (routing-test-adapter nodes edges)
-        schema-cache (engine/make-schema-cache adapter :schema-proof)]
-    (binding [engine/*schema-cache* schema-cache]
-      (into
-       {}
-       (map
-        (fn [[resource-type permission :as node]]
-          [node
-           (engine/traversal-permission?
-            adapter resource-type permission)])
-        nodes)))))
+  ([nodes edges]
+   (source-traversal-analysis nodes edges nil))
+  ([nodes edges engine-selection]
+   (let [adapter (routing-test-adapter nodes edges)
+         schema-cache (engine/make-schema-cache adapter :schema-proof)]
+     (binding [engine/*schema-cache* schema-cache
+               subproblem/*engine-selection* engine-selection]
+       (into
+        {}
+        (map
+         (fn [[resource-type permission :as node]]
+           [node
+            (engine/traversal-permission?
+             adapter resource-type permission)])
+         nodes))))))
+
+(def routing-certificate-input
+  {:node-count 2
+   :edges [{:head 0 :target 1}
+           {:head 1 :target 1}]
+   :certificate
+   {:component-root [0 1]
+    :forward-parent-edge [-1 -1]
+    :reverse-parent-edge [-1 -1]
+    :forward-depth [0 0]
+    :reverse-depth [0 0]
+    :component-rank [0 1]
+    :multiple-member-witness [-1 -1]
+    :self-loop-witness-edge [-1 1]
+    :traversal [true true]
+    :traversal-witness-edge [0 -1]}})
+
+(def scc-routing-certificate-input
+  {:node-count 2
+   :edges [{:head 0 :target 1}
+           {:head 1 :target 0}]
+   :certificate
+   {:component-root [0 0]
+    :forward-parent-edge [-1 0]
+    :reverse-parent-edge [-1 1]
+    :forward-depth [0 1]
+    :reverse-depth [0 1]
+    :component-rank [0 0]
+    :multiple-member-witness [1 -1]
+    :self-loop-witness-edge [-1 -1]
+    :traversal [true true]
+    :traversal-witness-edge [-1 -1]}})
+
+(defn- chain-routing-certificate-input
+  [node-count]
+  (let [last-node (dec node-count)
+        edges
+        (conj
+         (mapv
+          (fn [node]
+            {:head node :target (inc node)})
+          (range last-node))
+         {:head last-node :target last-node})]
+    {:node-count node-count
+     :edges edges
+     :certificate
+     {:component-root (vec (range node-count))
+      :forward-parent-edge (vec (repeat node-count -1))
+      :reverse-parent-edge (vec (repeat node-count -1))
+      :forward-depth (vec (repeat node-count 0))
+      :reverse-depth (vec (repeat node-count 0))
+      :component-rank (vec (range node-count))
+      :multiple-member-witness (vec (repeat node-count -1))
+      :self-loop-witness-edge
+      (assoc (vec (repeat node-count -1)) last-node last-node)
+      :traversal (vec (repeat node-count true))
+      :traversal-witness-edge
+      (conj (vec (range last-node)) -1)}}))
+
+(deftest generated-javascript-checks-linear-routing-certificates
+  (is (= {:status :accepted
+          :traversal [true true]
+          :node-checks 4
+          :edge-checks 2}
+         (verified/decide
+          selection
+          :recursive-routing-certificate
+          routing-certificate-input
+          (constantly nil))))
+  (is (= :invalid-dependency-edge
+         (:reason
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           (assoc-in
+            routing-certificate-input
+            [:certificate :traversal]
+            [false true])
+           (constantly nil)))))
+  (is (= :invalid-component-witness
+         (:reason
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           (assoc-in
+            routing-certificate-input
+            [:certificate :traversal-witness-edge]
+            [-1 -1])
+           (constantly nil)))))
+  (is (= :accepted
+         (:status
+          (verified/decide
+           selection
+           :recursive-routing-certificate
+           scc-routing-certificate-input
+           (constantly nil)))))
+  (doseq [[label input expected-reason]
+          [["split one SCC into two claimed components"
+            (-> scc-routing-certificate-input
+                (assoc-in [:certificate :component-root] [0 1])
+                (assoc-in [:certificate :forward-parent-edge] [-1 -1])
+                (assoc-in [:certificate :reverse-parent-edge] [-1 -1]))
+            :invalid-dependency-edge]
+           ["use a reverse edge as a forward parent"
+            (assoc-in
+             scc-routing-certificate-input
+             [:certificate :forward-parent-edge 1]
+             1)
+            :invalid-component-witness]
+           ["omit the multi-member SCC witness"
+            (assoc-in
+             scc-routing-certificate-input
+             [:certificate :multiple-member-witness 0]
+             -1)
+            :invalid-component-witness]
+           ["hide traversal through a recursive SCC"
+            (assoc-in
+             scc-routing-certificate-input
+             [:certificate :traversal]
+             [false false])
+            :invalid-component-witness]]]
+    (testing label
+      (is (= expected-reason
+             (:reason
+              (verified/decide
+               selection
+               :recursive-routing-certificate
+               input
+               (constantly nil))))))))
+
+(deftest generated-javascript-routing-certificate-scales-linearly
+  (let [node-count 4096
+        decision
+        (verified/decide
+         selection
+         :recursive-routing-certificate
+         (chain-routing-certificate-input node-count)
+         (constantly nil))]
+    (is (= :accepted (:status decision)))
+    (is (= (* 2 node-count) (:node-checks decision)))
+    (is (= node-count (:edge-checks decision)))
+    (is (= node-count (count (:traversal decision))))
+    (is (every? true? (:traversal decision)))))
+
+(deftest generated-javascript-production-routing-is-certified-once-per-schema-generation
+  (let [node-count 4096
+        nodes
+        (mapv
+         #(vector :resource (keyword (str "permission-" %)))
+         (range node-count))
+        edges
+        (conj
+         (mapv vector nodes (subvec nodes 1))
+         [(peek nodes) (peek nodes)])
+        calls (atom 0)
+        counting-kernel
+        (reify
+          verified/DecisionKernel
+          (-decide [_ operation input]
+            (when (= :recursive-routing-certificate operation)
+              (swap! calls inc))
+            (verified/-decide
+             production/generated-javascript-kernel
+             operation
+             input)))
+        certified
+        (source-traversal-analysis
+         nodes
+         edges
+         {:mode :verified-authoritative
+          :kernel counting-kernel})]
+    (is (= 1 @calls))
+    (is (= node-count (count certified)))
+    (is (every? true? (vals certified)))))
 
 (deftest generated-javascript-classifies-production-recursive-routing
   (let [a [:alpha :read]
@@ -415,8 +592,11 @@
     (doseq [{:keys [label nodes edges expected]} cases]
       (testing label
         (let [source (source-traversal-analysis nodes edges)
+              certified
+              (source-traversal-analysis nodes edges selection)
               generated (generated-traversal-analysis nodes edges)]
           (is (= expected source))
+          (is (= source certified))
           (is (= source generated)))))))
 
 (deftest generated-javascript-exhausts-three-node-recursive-routing-graphs
@@ -432,9 +612,13 @@
         graphs (power-set possible-edges)]
     (is (= 512 (count graphs)))
     (doseq [edges graphs]
-      (is (= (source-traversal-analysis nodes edges)
-             (generated-traversal-analysis nodes edges))
-          (str "routing mismatch for edges " (pr-str edges))))))
+      (let [source (source-traversal-analysis nodes edges)]
+        (is (= source
+               (source-traversal-analysis nodes edges selection))
+            (str "certificate mismatch for edges " (pr-str edges)))
+        (is (= source
+               (generated-traversal-analysis nodes edges))
+            (str "routing mismatch for edges " (pr-str edges)))))))
 
 (def authorization-input
   {:objects [{:type "user" :id "u1"}

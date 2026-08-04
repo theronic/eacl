@@ -188,17 +188,23 @@ generated-code compiler out of the trusted computing base.
   classification, singleton self-loop rule, and inclusion of every transitive
   acyclic ancestor. Generated Java and JavaScript agree with the actual shared
   production analysis on seven adversarial graph shapes and all 512 labeled
-  directed graphs over three typed nodes. This is semantic differential
-  evidence, not an independent proof that the host Kosaraju implementation
-  refines the model.
+  directed graphs over three typed nodes. A subsequent proof-carrying
+  `RoutingCertificate` checker now verifies the host partition, mutual
+  reachability forests, component ranks, recursion witnesses, and traversal
+  propagation before accepting the traversal vector. The generated vector is
+  authoritative for stamped schema generations on Datomic, Datahike, and
+  DataScript. The remaining source-refinement gap is earlier: the checker is
+  exact for the indexed edge list, while adapter materialization and Clojure
+  path-to-edge extraction are still trusted and differentially tested.
 - Lore prompted the resource-accounting question for that routing result, but
-  its historical analyser is outdated and untrusted. Production
-  advertises an iterative O(V+E) Kosaraju pass plus reverse reachability after
-  paths are materialized, while the generated semantic oracle performs finite
-  least-closure scans. Those implementations have deliberately different cost
-  structures. No generated-oracle timing or Lore analyser result
-  is accepted as a proof of production time, allocation, heap, or backend
-  work; a checked host-source/platform cost refinement would be required.
+  its historical analyser is outdated and untrusted. EACL does not run it as
+  an oracle or release gate. Production deterministic indexing is
+  `O(V log V)` comparison work, followed by `O(V+E)` graph/certificate work.
+  The generated certificate checker proves exactly `2V+E` logical checks on
+  acceptance. Those statements still do not bound string-comparison cost,
+  allocation, retained heap, CPU, wall time, or backend work. JVM/Node
+  measurements gate those dimensions separately; no Lore result or Dafny
+  logical counter substitutes for a runtime peak.
 - EACL-FORMAL-031 found that the post-build artifact gate was correctly
   fail-closed but could not execute in GitHub Actions: its Babashka shebang had
   no installed `bb` runtime. The previous CI run completed all 9,207 proof

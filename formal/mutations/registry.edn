@@ -307,6 +307,42 @@
    :killed-by
    {:proof :routing-reachability-follows-head-to-target
     :test :generated-runtime-classifies-production-recursive-routing}}
+  {:id :routing-certificate-splits-one-scc
+   :mechanism :claim-mutually-reachable-nodes-as-distinct-components
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :component-ranks-preclude-cross-component-cycles
+    :test :generated-runtime-rejects-mutated-routing-certificates}}
+  {:id :routing-certificate-reverses-parent-edge
+   :mechanism :use-an-edge-that-does-not-end-at-the-forward-tree-child
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :forward-parent-forest-proves-root-to-member-reachability
+    :test :generated-runtime-rejects-mutated-routing-certificates}}
+  {:id :routing-certificate-omits-multi-member-witness
+   :mechanism :claim-a-multi-node-component-without-a-distinct-member
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :recursive-component-witness-is-exact
+    :test :generated-runtime-rejects-mutated-routing-certificates}}
+  {:id :routing-certificate-hides-recursive-traversal
+   :mechanism :mark-a-recursive-component-as-non-traversal
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :accepted-routing-classification-is-complete
+    :test :generated-runtime-rejects-mutated-routing-certificates}}
+  {:id :routing-certificate-result-length-unbound
+   :mechanism :accept-a-generated-traversal-vector-shorter-than-node-count
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :generated-routing-vector-length-equals-validated-node-count
+    :test :routing-certificate-result-is-bound-to-its-input}}
+  {:id :routing-certificate-result-counters-unbound
+   :mechanism :accept-generated-routing-counters-that-contradict-the-request
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :accepted-checker-counters-are-exactly-two-v-and-e
+    :test :routing-certificate-result-is-bound-to-its-input}}
   {:id :consistency-plan-drops-managed-authority
    :mechanism :perform-causal-selection-without-complete-writer-authority
    :control {:kind :clojure}

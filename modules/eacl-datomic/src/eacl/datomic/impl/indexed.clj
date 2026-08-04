@@ -67,7 +67,9 @@
     :schema-version known-schema-version
     :permission-paths (atom {})
     :traversal-permissions (atom {})
+    :traversal-analysis (atom nil)
     :relationship-dependencies (atom {})
+    :recursive-plans (atom {})
     :direct-grant-relations (atom {})}))
 
 (defn evict-permission-paths-cache!
@@ -77,7 +79,9 @@
   ([schema-cache]
    (reset! (:permission-paths schema-cache) {})
    (reset! (:traversal-permissions schema-cache) {})
+   (some-> (:traversal-analysis schema-cache) (reset! nil))
    (reset! (:relationship-dependencies schema-cache) {})
+   (some-> (:recursive-plans schema-cache) (reset! {}))
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
 

@@ -1490,6 +1490,16 @@
                   (is (pos? (count paths3)))
                   (is (pos? @calc-calls) "Should call calc-permission-paths after eviction"))))))))))
 
+(deftest schema-cache-carries-shared-engine-analysis-test
+  (let [cache (impl.indexed/make-schema-cache (d/db *conn*))]
+    (is (some? (:traversal-analysis cache)))
+    (is (some? (:recursive-plans cache)))
+    (reset! (:traversal-analysis cache) (delay {:account/view true}))
+    (reset! (:recursive-plans cache) {:account/view :compiled})
+    (impl.indexed/evict-permission-paths-cache! cache)
+    (is (nil? @(:traversal-analysis cache)))
+    (is (= {} @(:recursive-plans cache)))))
+
 (deftest permission-paths-cache-is-scoped-per-database-test
   (with-mem-conn [conn1 schema/v7-schema]
     (with-mem-conn [conn2 schema/v7-schema]

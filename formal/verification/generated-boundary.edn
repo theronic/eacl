@@ -32,6 +32,7 @@
   :relationship-cursor-continuation
   :cache-validation
   :current-cache-selection
+  :recursive-routing-certificate
   :indexed-scan-response-validation
   :indexed-source-plan-certification
   :indexed-forward-seed-certification
@@ -64,22 +65,41 @@
   :per-eid-generated-routing :rejected-by-performance-gate
   :formal-source-refinement :pending-independent-review}
  :recursive-routing-proof-oracle
- {:source "formal/dafny/RecursiveEngine.dfy"
-  :operation RecursiveEngine.DecideTypedTraversalPermission
+ {:sources
+  ["formal/dafny/RecursiveEngine.dfy"
+   "formal/dafny/RoutingCertificate.dfy"]
+  :operation :recursive-routing-certificate
   :input :fully-typed-head-to-target-permission-edges
   :result
-  :root-transitively-depends-on-a-recursive-strong-component
+  :exact-traversal-vector-for-all-indexed-nodes
   :java-source-differential-graph-shapes 519
   :javascript-source-differential-graph-shapes 519
   :exhaustive-subcampaign
   {:typed-nodes 3
    :possible-directed-edges 9
    :graphs 512}
-  :production-algorithm :iterative-kosaraju-plus-reverse-reachability
-  :generated-algorithm :verified-finite-least-closure-scans
+  :production-algorithm
+  :deterministic-indexing-plus-iterative-kosaraju-reverse-reachability-and-certificate-construction
+  :generated-algorithm
+  :verified-two-node-pass-one-edge-pass-certificate-checker
+  :generated-logical-work
+  {:node-checks "2V"
+   :edge-checks "E"}
+  :stamped-schema-generation-authority
+  :generated-accepted-traversal-vector
+  :proofless-raw-snapshot-authority
+  :host-per-root-fallback
   :semantic-refinement-evidence :passed
   :formal-source-refinement :pending-independent-review
-  :production-resource-refinement false
+  :remaining-source-boundary
+  :backend-materialized-permission-paths-to-indexed-edges
+  :runtime-resource-refinement
+  :allocation-retained-heap-and-latency-not-formally-proved
+  :scale-fixture
+  {:nodes 4096
+   :edges 4096
+   :certificate-runs-per-stamped-generation 1
+   :runtime-targets [:clj-java :cljs-javascript]}
   :counterexample :EACL-FORMAL-030}
  :consistency-selection-boundary
  {:source "formal/dafny/ConsistencyDecision.dfy"
@@ -165,20 +185,20 @@
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 46 :suite-assertions 1635 :status :passed}
+   :suite-tests 50 :suite-assertions 2176 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
-   :clj {:tests 12 :assertions 141}
-   :cljs {:tests 12 :assertions 141 :status :passed}}
+   :clj {:tests 13 :assertions 147}
+   :cljs {:tests 13 :assertions 147 :status :passed}}
   :production-routing
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
-    :tests 27
-    :assertions 1041}
+    :tests 30
+    :assertions 1576}
  :cljs-javascript
-   {:namespace-tests 26
-    :suite-tests 46
-    :suite-assertions 1635
+   {:namespace-tests 29
+    :suite-tests 50
+    :suite-assertions 2176
     :datascript-public-recursive-cache-mode-differential true
     :datascript-complete-public-provenance-and-graph-shadow true
     :shared-scc-routing-differential true}}
@@ -189,15 +209,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 27
-    :namespace-assertions 1041
+    :namespace-tests 30
+    :namespace-assertions 1576
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 26
-    :suite-tests 46
-    :suite-assertions 1635
+    :namespace-tests 29
+    :suite-tests 50
+    :suite-assertions 2176
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace

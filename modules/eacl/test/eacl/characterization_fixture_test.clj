@@ -184,6 +184,7 @@
 (deftest quantitative-performance-gates-are-well-formed-test
   (let [{:keys [lore-resource-boundary
                 formal-pipeline
+                routing-certificate-boundary
                 consistency-selection-boundary
                 generated-artifacts
                 legacy-runtime
@@ -227,6 +228,35 @@
     (is (< (get-in formal-pipeline
                    [:maximum-observed-proof-effort :resource-count])
            (:proof-effort-resource-limit formal-pipeline)))
+    (testing "routing certificate keeps proof and runtime dimensions separate"
+      (let [required (:required routing-certificate-boundary)
+            observed (:observed routing-certificate-boundary)]
+        (is (= :passed (:status routing-certificate-boundary)))
+        (is (= :dafny-theorem
+               (get-in routing-certificate-boundary
+                       [:formal-logical-work :assurance])))
+        (is (= :not-established
+               (get-in routing-certificate-boundary
+                       [:resource-qualification
+                        :retained-live-heap])))
+        (is (= :none
+               (get-in routing-certificate-boundary
+                       [:resource-qualification
+                        :lore-analyser-contribution])))
+        (is (every?
+             #(<= (:p50-allocated-bytes-per-node %)
+                  (:maximum-p50-allocated-bytes-per-node required))
+             (:sizes observed)))
+        (is (<= (:normalized-allocation-ratio observed)
+                (:maximum-normalized-allocation-ratio required)))
+        (is (<= (:normalized-latency-ratio observed)
+                (:maximum-normalized-latency-ratio required)))
+        (is (= :passed (:logical-status observed)))
+        (is (= :passed (:allocation-status observed)))
+        (is (= :passed (:latency-status observed)))
+        (is (str/includes?
+             formal-workflow
+             "routing-certificate-benchmark/run-gate!"))))
     (testing "consistency boundary gates keep logic and wall time separate"
       (is (= :passed (:status consistency-selection-boundary)))
       (is (= :dafny-bounded-and-source-instrumentation-matched

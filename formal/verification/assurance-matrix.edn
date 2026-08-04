@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated-verification-incomplete
   :source-files 51
   :public-roots 60
-  :reachable-definitions 1319
+  :reachable-definitions 1328
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -27,6 +27,7 @@
               :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
            "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/RoutingCertificate.dfy"
            "formal/dafny/SchemaPlanCost.dfy"
            "formal/dafny/Semantics.dfy"]
    :adapter-obligations [:immutable-snapshot :identity-round-trip
@@ -37,6 +38,7 @@
    :remaining
    [:acyclic-direct-and-arrow-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
+    :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
         :recursive-contract
@@ -58,6 +60,7 @@
            "formal/dafny/OrderedMerge.dfy"
            "formal/dafny/Pagination.dfy"
            "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/RoutingCertificate.dfy"
            "formal/dafny/SchemaPlanCost.dfy"]
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :ordered-complete-scans
@@ -68,6 +71,7 @@
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
+    :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
         :recursive-contract
@@ -81,6 +85,7 @@
               :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
            "formal/dafny/RecursiveEngine.dfy"
+           "formal/dafny/RoutingCertificate.dfy"
            "formal/dafny/SchemaPlanCost.dfy"]
    :adapter-obligations [:immutable-snapshot :identity-round-trip
                          :schema-completeness :ordered-complete-scans]
@@ -90,6 +95,7 @@
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
     :acyclic-optimized-leapfrog-source-refinement
+    :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
         :recursive-contract
@@ -162,20 +168,31 @@
     :routing-least-fixed-point-reachability
     :routing-strong-component-exactness
     :singleton-self-edge-is-recursive
-    :acyclic-ancestors-of-recursive-components-are-routed]
-   :dafny ["formal/dafny/RecursiveEngine.dfy"]
+    :acyclic-ancestors-of-recursive-components-are-routed
+    :accepted-certificate-component-partition-is-exact
+    :accepted-certificate-recursion-witness-is-exact
+    :accepted-certificate-traversal-vector-is-sound-and-complete
+    :accepted-certificate-checker-performs-exactly-two-node-passes-and-one-edge-pass]
+   :dafny
+   ["formal/dafny/RecursiveEngine.dfy"
+    "formal/dafny/RoutingCertificate.dfy"]
    :adapter-obligations
    [:complete-permission-node-enumeration
     :complete-materialized-permission-dependencies
     :full-resource-type-and-permission-node-identity]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :host-iterative-kosaraju-and-reverse-reachability
+   :generated-accepted-certificate-result-for-stamped-schema-generations
    :resource-claim
-   :semantic-oracle-only-no-generated-to-production-cost-refinement
+   {:generated-checker :exact-2v-plus-e-logical-checks
+    :host-construction
+    :o-v-log-v-plus-e-after-materialized-permission-paths
+    :runtime-peaks :measured-not-proved}
    :remaining
-   [:independent-host-source-refinement-review
-    :formal-production-o-v-plus-e-resource-refinement]
+   [:backend-permission-path-to-indexed-edge-source-refinement
+    :proofless-and-raw-snapshot-generated-authority
+    :independent-host-source-refinement-review
+    :allocation-retained-heap-and-latency-platform-contracts]
    :ci [:generated-production-kernel
         :recursive-contract
         :mutation-control

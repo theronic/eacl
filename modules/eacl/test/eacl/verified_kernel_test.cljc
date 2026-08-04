@@ -44,6 +44,22 @@
             :max-advanced-datoms 100
             :max-queued-work 100}})
 
+(def valid-routing-certificate-input
+  {:node-count 2
+   :edges [{:head 0 :target 1}
+           {:head 1 :target 1}]
+   :certificate
+   {:component-root [0 1]
+    :forward-parent-edge [-1 -1]
+    :reverse-parent-edge [-1 -1]
+    :forward-depth [0 0]
+    :reverse-depth [0 0]
+    :component-rank [0 1]
+    :multiple-member-witness [-1 -1]
+    :self-loop-witness-edge [-1 1]
+    :traversal [true true]
+    :traversal-witness-edge [0 -1]}})
+
 (defrecord FunctionKernel [f]
   verified/DecisionKernel
   (-decide [_ operation input]
@@ -82,6 +98,38 @@
           :cache-validation
           valid-cache-input
           #(throw (ex-info "legacy must not run" {})))))))
+
+(deftest routing-certificate-result-is-bound-to-its-input
+  (let [accepted
+        {:status :accepted
+         :traversal [true true]
+         :node-checks 4
+         :edge-checks 2}
+        decide
+        (fn [result]
+          (verified/decide
+           {:mode :verified-authoritative
+            :kernel (->FunctionKernel (fn [_ _] result))}
+           :recursive-routing-certificate
+           valid-routing-certificate-input
+           #(throw (ex-info "legacy must not run" {}))))]
+    (is (= accepted (decide accepted)))
+    (doseq [result
+            [(assoc accepted :traversal [true])
+             (assoc accepted :node-checks 3)
+             (assoc accepted :edge-checks 1)
+             {:status :rejected
+              :reason :invalid-component-witness
+              :node-checks 5
+              :edge-checks 2}
+             {:status :rejected
+              :reason :invalid-dependency-edge
+              :node-checks 2
+              :edge-checks 3}]]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (decide result))))))
 
 (deftest authoritative-kernel-controls-the-result
   (let [kernel

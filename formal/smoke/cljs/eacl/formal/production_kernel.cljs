@@ -68,6 +68,72 @@
    (dafny-sequence (map permission-dependency-edge edges))
    (dafny-sequence (map permission-node permissions))))
 
+(defn- indexed-routing-edge
+  [{:keys [head target]}]
+  (js-invoke
+   (.-IndexedDependencyEdge (.-RoutingCertificate generated))
+   "create_IndexedDependencyEdge"
+   (big-number head)
+   (big-number target)))
+
+(defn- routing-proof
+  [{:keys [component-root
+           forward-parent-edge
+           reverse-parent-edge
+           forward-depth
+           reverse-depth
+           component-rank
+           multiple-member-witness
+           self-loop-witness-edge
+           traversal
+           traversal-witness-edge]}]
+  (js-invoke
+   (.-RoutingProof (.-RoutingCertificate generated))
+   "create_RoutingProof"
+   (dafny-sequence (map big-number component-root))
+   (dafny-sequence (map big-number forward-parent-edge))
+   (dafny-sequence (map big-number reverse-parent-edge))
+   (dafny-sequence (map big-number forward-depth))
+   (dafny-sequence (map big-number reverse-depth))
+   (dafny-sequence (map big-number component-rank))
+   (dafny-sequence (map big-number multiple-member-witness))
+   (dafny-sequence (map big-number self-loop-witness-edge))
+   (dafny-sequence traversal)
+   (dafny-sequence (map big-number traversal-witness-edge))))
+
+(defn- routing-certificate-error
+  [error]
+  (cond
+    (.-is_ShapeMismatch error) :shape-mismatch
+    (.-is_InvalidComponent error) :invalid-component
+    (.-is_InvalidDependencyEdge error) :invalid-dependency-edge
+    :else :invalid-component-witness))
+
+(defn- routing-certificate-decision
+  [{:keys [node-count edges certificate]}]
+  (let [routing (.-RoutingCertificate generated)
+        decision
+        (js-invoke
+         (.-__default routing)
+         "CheckRoutingCertificate"
+         (big-number node-count)
+         (dafny-sequence (map indexed-routing-edge edges))
+         (routing-proof certificate))
+        counters (.-dtor_counters decision)
+        work
+        {:node-checks (.toNumber (.-dtor_nodeChecks counters))
+         :edge-checks (.toNumber (.-dtor_edgeChecks counters))}]
+    (if (.-is_RoutingCertificateAccepted decision)
+      (merge
+       {:status :accepted
+        :traversal (mapv boolean (.-dtor_traversal decision))}
+       work)
+      (merge
+       {:status :rejected
+        :reason
+        (routing-certificate-error (.-dtor_error decision))}
+       work))))
+
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]
   (js-invoke
@@ -1418,6 +1484,8 @@
       (subproblem-cache-decision input)
       :ordered-merge-step (ordered-merge-decision input)
       :ordered-merge-chunk (ordered-merge-chunk input)
+      :recursive-routing-certificate
+      (routing-certificate-decision input)
       :indexed-scan-response (indexed-scan-decision input)
       :indexed-plan-certification (indexed-plan-decision input)
       :indexed-seed-certification (indexed-seed-decision input)

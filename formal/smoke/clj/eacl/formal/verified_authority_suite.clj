@@ -145,7 +145,7 @@
    (vals (get-in calls [backend :generated-calls] {}))))
 
 (defn- assert-cutover!
-  [summary calls]
+  [summary calls required-operations]
   (let [failed-tests (+ (:fail summary 0) (:error summary 0))
         missing-clients
         (filterv
@@ -154,23 +154,42 @@
         missing-generated-calls
         (filterv
          #(zero? (backend-generated-call-count calls %))
+         backends)
+        missing-required-operations
+        (into
+         {}
+         (keep
+          (fn [backend]
+            (let [missing
+                  (filterv
+                   #(zero?
+                     (get-in
+                      calls
+                      [backend :generated-calls %]
+                      0))
+                   required-operations)]
+              (when (seq missing)
+                [backend missing]))))
          backends)]
     (when (or (pos? failed-tests)
               (seq missing-clients)
-              (seq missing-generated-calls))
+              (seq missing-generated-calls)
+              (seq missing-required-operations))
       (throw
        (ex-info
         "Verified-authority JVM cutover suite failed."
         {:summary summary
          :missing-injected-client-backends missing-clients
          :missing-generated-call-backends missing-generated-calls
+         :missing-required-generated-operations
+         missing-required-operations
          :calls calls}))))
   {:status :passed
    :summary summary
    :authority calls})
 
 (defn run-suite!
-  [namespaces]
+  [namespaces required-operations]
   (load-namespaces! namespaces)
   (let [calls (atom {})
         datomic-constructor datomic/make-client
@@ -184,12 +203,17 @@
       datascript/make-client
       (injecting-constructor :datascript datascript-constructor calls)]
       (let [summary (apply test/run-tests namespaces)]
-        (assert-cutover! summary @calls)))))
+        (assert-cutover!
+         summary
+         @calls
+         required-operations)))))
 
 (defn run-nonbenchmark!
   []
-  (run-suite! nonbenchmark-namespaces))
+  (run-suite!
+   nonbenchmark-namespaces
+   #{:recursive-routing-certificate}))
 
 (defn run-heavy!
   []
-  (run-suite! heavy-namespaces))
+  (run-suite! heavy-namespaces #{}))

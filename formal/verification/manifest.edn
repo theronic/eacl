@@ -48,6 +48,18 @@
    :report "formal/verification/recursive-kernel.edn"
    :typed-routing-source-refinement :pending-independent-review
    :routing-resource-refinement :not-claimed}
+  :recursive-routing-certificate
+  {:status :passed
+   :verified-obligations 42
+   :source "formal/dafny/RoutingCertificate.dfy"
+   :integration-status
+   :generated-authority-for-stamped-schema-generations-on-all-three-backends
+   :claim
+   :conditional-exact-classification-and-exact-2v-plus-e-logical-checker-work
+   :remaining
+   [:backend-materialized-permission-path-to-indexed-edge-source-refinement
+    :proofless-raw-snapshot-generated-authority
+    :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
   {:status :passed
    :verified-obligations 27

@@ -54,6 +54,25 @@ For an operation to inherit a kernel theorem, its adapter must establish:
 Backend certification provides evidence for these assumptions. It does not
 verify DataScript, Datomic, Datahike, their storage engines, or host databases.
 
+### Recursive-routing certificate boundary
+
+`RoutingCertificate.dfy` proves that an accepted certificate classifies every
+indexed permission node exactly according to reachability of a recursive
+strongly connected component. It also proves that the generated checker makes
+exactly two node passes and one edge pass on acceptance. In
+verified-authoritative mode, stamped schema generations consume only that
+generated traversal vector; the host classification is not the returned
+authority.
+
+The theorem is conditional on the indexed edge list. Clojure still obtains
+materialized permission paths from the selected adapter, maps self-permission
+and arrow-permission paths to fully typed dependency nodes, and assigns stable
+indices. Exhaustive typed-graph differentials, certificate mutations, backend
+certification, and forced-authority suites test this extraction, but do not
+prove it as a Clojure fact. Proofless/raw snapshots deliberately retain the
+uncached host per-root classifier rather than paying schema-wide certification
+on every query or publishing derived state across snapshot boundaries.
+
 ### Snapshot-consistency observation boundary
 
 `ConsistencyDecision.dfy` proves the finite decision made *after* production

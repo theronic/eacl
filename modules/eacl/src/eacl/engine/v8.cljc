@@ -966,6 +966,226 @@
                (conj seen node)))
       seen)))
 
+(defn- routing-certificate-error!
+  [message data]
+  (throw
+   (ex-info
+    message
+    (merge
+     {:type :eacl/internal-schema-error
+      :eacl/error :eacl/internal-schema-error}
+     data))))
+
+(defn- component-parent-tree
+  "Builds one linear-size reachability witness tree inside an SCC.
+
+  `reverse?` means `graph` is transposed: discovering `child` from `parent`
+  then records the original edge child -> parent, proving child reaches the
+  component root."
+  [graph component root edge-index reverse?]
+  (let [component-set (set component)]
+    (loop [stack [root]
+           seen #{root}
+           parents {root -1}
+           depths {root 0}]
+      (if-let [node (peek stack)]
+        (let [state
+              (reduce
+               (fn [{:keys [stack seen parents depths] :as state}
+                    neighbor]
+                 (if (or (not (contains? component-set neighbor))
+                         (contains? seen neighbor))
+                   state
+                   (let [edge-key
+                         (if reverse?
+                           [neighbor node]
+                           [node neighbor])
+                         parent-edge (get edge-index edge-key)]
+                     (when-not (some? parent-edge)
+                       (routing-certificate-error!
+                        "Recursive routing witness references a missing edge."
+                        {:edge edge-key :reverse? reverse?}))
+                     {:stack (conj stack neighbor)
+                      :seen (conj seen neighbor)
+                      :parents (assoc parents neighbor parent-edge)
+                      :depths
+                      (assoc depths neighbor (inc (get depths node)))})))
+               {:stack (pop stack)
+                :seen seen
+                :parents parents
+                :depths depths}
+               (get graph node []))]
+          (recur
+           (:stack state)
+           (:seen state)
+           (:parents state)
+           (:depths state)))
+        (do
+          (when-not (= component-set seen)
+            (routing-certificate-error!
+             "Recursive routing witness does not span its claimed SCC."
+             {:component component
+              :root root
+              :reverse? reverse?
+              :missing (vec (sort-by pr-str (remove seen component-set)))}))
+          {:parents parents :depths depths})))))
+
+(defn- calc-traversal-artifacts
+  "Produces the fast host classification and its Dafny-checkable certificate.
+
+  The certificate is linear in the permission graph. Its two parent forests
+  prove mutual reachability inside each claimed SCC; component ranks prove
+  distinct SCCs cannot be mutually reachable; local witnesses prove recursion
+  and exact reverse propagation through the condensation DAG."
+  [db]
+  (let [nodes
+        (vec
+         (sort-by
+          pr-str
+          (set (backend/invoke db :all-permission-nodes))))
+        node-index (zipmap nodes (range))
+        graph (permission-graph db nodes)
+        transposed (transpose-graph nodes graph)
+        components (mapv vec (graph-components nodes graph))
+        component-root
+        (into {}
+              (mapcat
+               (fn [component]
+                 (let [root (first component)]
+                   (map #(vector % root) component)))
+               components))
+        component-rank
+        (into {}
+              (map-indexed
+               (fn [rank component]
+                 [(first component) rank])
+               components))
+        recursive-roots
+        (->> components
+             (filter
+              (fn [component]
+                (or (> (count component) 1)
+                    (let [node (first component)]
+                      (some #{node} (get graph node))))))
+             (map first)
+             set)
+        recursive-nodes
+        (into #{}
+              (filter
+               #(contains?
+                 recursive-roots
+                 (get component-root %)))
+              nodes)
+        traversal-nodes
+        (reachable-from-many transposed recursive-nodes)
+        analysis
+        (into {}
+              (map
+               (fn [node]
+                 [node (contains? traversal-nodes node)])
+               nodes))
+        indexed-edges
+        (vec
+         (mapcat
+          (fn [head]
+            (map
+             (fn [target]
+               {:head (get node-index head)
+                :target (get node-index target)})
+             (get graph head [])))
+          nodes))
+        edge-index
+        (into {}
+              (map-indexed
+               (fn [index {:keys [head target]}]
+                 [[(nth nodes head) (nth nodes target)] index])
+               indexed-edges))
+        trees
+        (reduce
+         (fn [result component]
+           (let [root (first component)
+                 forward
+                 (component-parent-tree
+                  graph component root edge-index false)
+                 reverse
+                 (component-parent-tree
+                  transposed component root edge-index true)]
+             (-> result
+                 (update :forward-parents merge (:parents forward))
+                 (update :forward-depths merge (:depths forward))
+                 (update :reverse-parents merge (:parents reverse))
+                 (update :reverse-depths merge (:depths reverse)))))
+         {:forward-parents {}
+          :forward-depths {}
+          :reverse-parents {}
+          :reverse-depths {}}
+         components)
+        multiple-member-witnesses
+        (into {}
+              (keep
+               (fn [component]
+                 (when (> (count component) 1)
+                   [(first component) (second component)])))
+              components)
+        self-loop-witnesses
+        (reduce
+         (fn [result [index {:keys [head target]}]]
+           (if (= head target)
+             (let [node (nth nodes head)]
+               (assoc
+                result
+                (get component-root node)
+                index))
+             result))
+         {}
+         (map-indexed vector indexed-edges))
+        traversal-witnesses
+        (reduce
+         (fn [result [index {:keys [head target]}]]
+           (let [head-node (nth nodes head)
+                 target-node (nth nodes target)
+                 head-root (get component-root head-node)
+                 target-root (get component-root target-node)]
+             (if (and (not= head-root target-root)
+                      (contains? traversal-nodes target-node)
+                      (not (contains? recursive-roots head-root))
+                      (not (contains? result head-root)))
+               (assoc result head-root index)
+               result)))
+         {}
+         (map-indexed vector indexed-edges))
+        certificate
+        {:component-root
+         (mapv #(get node-index (get component-root %)) nodes)
+         :forward-parent-edge
+         (mapv #(get (:forward-parents trees) %) nodes)
+         :reverse-parent-edge
+         (mapv #(get (:reverse-parents trees) %) nodes)
+         :forward-depth
+         (mapv #(get (:forward-depths trees) %) nodes)
+         :reverse-depth
+         (mapv #(get (:reverse-depths trees) %) nodes)
+         :component-rank
+         (mapv #(get component-rank (get component-root %)) nodes)
+         :multiple-member-witness
+         (mapv
+          (fn [node]
+            (if-let [member (get multiple-member-witnesses node)]
+              (get node-index member)
+              -1))
+          nodes)
+         :self-loop-witness-edge
+         (mapv #(get self-loop-witnesses % -1) nodes)
+         :traversal (mapv #(get analysis %) nodes)
+         :traversal-witness-edge
+         (mapv #(get traversal-witnesses % -1) nodes)}]
+    {:nodes nodes
+     :analysis analysis
+     :certificate-input
+     {:node-count (count nodes)
+      :edges indexed-edges
+      :certificate certificate}}))
+
 (defn permission-schema-components
   "Returns deterministic strongly connected permission components reachable
   from one permission root. The implementation is deliberately iterative:
@@ -989,31 +1209,40 @@
                          (permission-query-dependencies db node)))))
            components))))
 
+(declare verified-engine-selection?)
+
 (defn- calc-traversal-analysis
   "Classifies every permission node into one shared schema-generation result.
 
-  Once permission paths are materialized, one iterative SCC pass plus reverse
-  reachability is O(V+E) in the permission graph. Sharing the resulting map
-  prevents a large schema from recompiling recursive routing independently for
-  every first-read root."
+  Once permission paths are materialized, deterministic node indexing costs
+  O(V log V) `pr-str` comparisons; the iterative graph analysis and certificate
+  construction are O(V+E). The generated checker performs exactly 2V+E logical
+  checks. Sharing the result prevents a large schema from recompiling or
+  recertifying recursive routing independently for every first-read root."
   [db]
-  (let [nodes (vec (set (backend/invoke db :all-permission-nodes)))
-        graph (permission-graph db nodes)
-        transposed (transpose-graph nodes graph)
-        recursive-nodes
-        (->> (graph-components nodes graph)
-             (filter (fn [component]
-                       (or (> (count component) 1)
-                           (let [node (first component)]
-                             (some #{node} (get graph node))))))
-             (mapcat identity)
-             set)
-        traversal-nodes
-        (reachable-from-many transposed recursive-nodes)]
-    (into {}
-          (map (fn [node]
-                 [node (contains? traversal-nodes node)])
-               nodes))))
+  (let [{:keys [nodes analysis certificate-input]}
+        (calc-traversal-artifacts db)]
+    (if-not (verified-engine-selection?)
+      analysis
+      (let [expected
+            {:status :accepted
+             :traversal
+             (mapv #(get analysis %) nodes)
+             :node-checks (* 2 (count nodes))
+             :edge-checks (count (:edges certificate-input))}
+            decision
+            (verified/decide
+             subproblem/*engine-selection*
+             :recursive-routing-certificate
+             certificate-input
+             (constantly expected))]
+        (when-not (= :accepted (:status decision))
+          (routing-certificate-error!
+           "Generated verification rejected recursive SCC routing."
+           {:reason (:reason decision)
+            :node-checks (:node-checks decision)
+            :edge-checks (:edge-checks decision)}))
+        (zipmap nodes (:traversal decision))))))
 
 (defn- resume-scan-opts
   "Scan options that resume an intermediate's result stream strictly after
