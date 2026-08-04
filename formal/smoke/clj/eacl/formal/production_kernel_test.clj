@@ -1346,6 +1346,35 @@
            (catch clojure.lang.ExceptionInfo error
              (:type (ex-data error)))))))
 
+(deftest production-jvm-two-stream-merge-refines-exact-source-model
+  (let [subsets
+        (power-set [0 1 2 3 17 9007199254740991])]
+    (doseq [ascending-left subsets
+            ascending-right subsets
+            direction [:asc :desc]]
+      (let [[left right]
+            (if (= :asc direction)
+              [ascending-left ascending-right]
+              [(vec (reverse ascending-left))
+               (vec (reverse ascending-right))])
+            actual
+            (vec
+             ((case direction
+                :asc lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+                :desc lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc)
+              identity
+              [left right]))
+            modeled
+            (production/production-ordered-merge
+             {:direction direction
+              :left left
+              :right right})]
+        (is (= modeled actual)
+            (str
+             "left=" left
+             " right=" right
+             " direction=" direction))))))
+
 (deftest optimized-jvm-ordered-merge-refines-generated-chunks
   (doseq [seed (range 100)
           direction [:asc :desc]]
@@ -1380,8 +1409,12 @@
            [2 3 5 7 11])
           streams
           (if (= :asc direction)
-            ascending-streams
-            (mapv #(vec (reverse %)) ascending-streams))
+            (vec (concat [[]] ascending-streams [[]]))
+            (vec
+             (concat
+              [[]]
+              (mapv #(vec (reverse %)) ascending-streams)
+              [[]])))
           expected
           (->> streams
                (apply concat)
@@ -1393,10 +1426,17 @@
            ((case direction
               :asc lazy-sort/lazy-fold2-merge-dedupe-sorted-by
               :desc lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc)
-            identity
-            streams))]
+              identity
+              streams))]
       (is (= expected actual)
-          (str "balanced seed=" seed " direction=" direction)))))
+          (str "balanced seed=" seed " direction=" direction))
+      (is (= (production/production-ordered-fold
+              {:direction direction
+               :streams streams})
+             actual)
+          (str
+           "modeled balanced seed=" seed
+           " direction=" direction)))))
 
 (deftest optimized-jvm-leapfrog-intersection-refines-bounded-proof
   (let [subsets (power-set [0 1 2 17 1000 9007199254740991])

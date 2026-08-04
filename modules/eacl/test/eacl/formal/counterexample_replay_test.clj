@@ -82,7 +82,9 @@
     :EACL-FORMAL-038
     eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
     :EACL-FORMAL-039
-    eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation})
+    eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation
+    :EACL-FORMAL-040
+    eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model})
 
 (defn- read-edn
   [path]
@@ -161,8 +163,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-039 (:latest revision)))
-    (is (= 39 (count entries)))))
+    (is (= :EACL-FORMAL-040 (:latest revision)))
+    (is (= 40 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

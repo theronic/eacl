@@ -58,12 +58,18 @@
  :ordered-merge-proof-oracle
  {:source "formal/dafny/OrderedMerge.dfy"
   :operations [:ordered-merge-step :ordered-merge-chunk]
-  :verified-obligations 48
-  :java-source-differential-fixtures 300
-  :javascript-source-differential-fixtures 150
+  :source-model-test-methods
+  [OrderedMerge.ExecuteProductionMerge
+   OrderedMerge.ExecuteProductionFold]
+  :verified-obligations 82
+  :java-source-model-two-stream-fixtures 8192
+  :javascript-source-model-two-stream-fixtures 8192
+  :java-source-model-balanced-fold-fixtures 100
+  :javascript-source-model-balanced-fold-fixtures 50
   :hot-production-path :optimized-clj-cljs-specialization
   :per-eid-generated-routing :rejected-by-performance-gate
-  :formal-source-refinement :pending-independent-review}
+  :formal-source-refinement
+  :exact-source-control-model-proved-clojure-language-correspondence-and-independent-review-remain-trusted}
  :recursive-routing-proof-oracle
  {:sources
   ["formal/dafny/RecursiveEngine.dfy"
@@ -187,7 +193,7 @@
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 51 :suite-assertions 2187 :status :passed}
+   :suite-tests 52 :suite-assertions 10429 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 13 :assertions 149}
@@ -195,12 +201,12 @@
   :production-routing
   {:clj-java
    {:namespace eacl.formal.production-kernel-test
-    :tests 31
-    :assertions 1585}
+    :tests 32
+    :assertions 9877}
  :cljs-javascript
    {:namespace-tests 30
-    :suite-tests 51
-    :suite-assertions 2187
+    :suite-tests 52
+    :suite-assertions 10429
     :datascript-public-recursive-cache-mode-differential true
     :datascript-complete-public-provenance-and-graph-shadow true
     :shared-scc-routing-differential true}}
@@ -211,15 +217,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 31
-    :namespace-assertions 1585
+    :namespace-tests 32
+    :namespace-assertions 9877
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
     :namespace-tests 30
-    :suite-tests 51
-    :suite-assertions 2187
+    :suite-tests 52
+    :suite-assertions 10429
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace
@@ -264,6 +270,6 @@
    :status :passed}}
  :remaining
  [:production-adapter-trace-refinement
-  :acyclic-optimized-ordered-merge-source-refinement
+  :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
   :acyclic-optimized-leapfrog-source-refinement
   :independent-review]}

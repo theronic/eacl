@@ -1,5 +1,5 @@
 {:schema-version 1
- :status :source-refinement-review-pending
+ :status :source-model-fidelity-established-independent-review-pending
  :specializations
  [{:id :ordered-eid-fold-merge
    :production
@@ -9,18 +9,21 @@
      eacl.lazy-merge-sort/fold2-merge-dedupe-longs
      eacl.lazy-merge-sort/lazy-merge2-dedupe-longs-desc
      eacl.lazy-merge-sort/fold2-merge-dedupe-longs-desc
-     eacl.lazy-merge-sort/lazy-merge2-dedupe-by
-     eacl.lazy-merge-sort/fold2-merge-dedupe-generic
      eacl.lazy-merge-sort/lazy-fold2-merge-dedupe-sorted-by
      eacl.lazy-merge-sort/lazy-fold2-merge-dedupe-sorted-by-desc]
     :caller
     eacl.engine.v8/merge-eid-seqs
+    :caller-key-function clojure.core/identity
     :runtime-targets [:clj-java :cljs-javascript]}
    :formal
    {:source "formal/dafny/OrderedMerge.dfy"
     :definitions
     [OrderedMerge.MergeAscending
      OrderedMerge.MergeDescending
+     OrderedMerge.SourceDropLeadingValue
+     OrderedMerge.SourceMergeAscending
+     OrderedMerge.SourceMergeDescending
+     OrderedMerge.SourceNonEmptyStreams
      OrderedMerge.DecideMergeStepSpec
      OrderedMerge.MergeAscendingChunkSpec
      OrderedMerge.MergeDescendingChunkSpec]
@@ -29,20 +32,39 @@
      OrderedMerge.DescendingMergeStepRefinesDefinition
      OrderedMerge.AscendingChunkReconstructsMerge
      OrderedMerge.DescendingChunkReconstructsMerge
+     OrderedMerge.ProductionAscendingMergeRefinesCanonical
+     OrderedMerge.ProductionDescendingMergeRefinesCanonical
+     OrderedMerge.SourceMergeAscendingIterationsAreLinear
+     OrderedMerge.SourceMergeDescendingIterationsAreLinear
+     OrderedMerge.SourceFoldBalancedAscending
+     OrderedMerge.SourceFoldBalancedDescending
+     OrderedMerge.StrictAscendingSequenceIsDeterminedBySet
+     OrderedMerge.StrictDescendingSequenceIsDeterminedBySet
+     OrderedMerge.ProductionAscendingFoldRefinesCanonical
+     OrderedMerge.ProductionDescendingFoldRefinesCanonical
      OrderedMerge.FoldBalancedAscending
      OrderedMerge.FoldBalancedDescending]}
    :abstract-domain
    {:values :safe-natural-eids
     :inputs :finite-strictly-ordered-streams
     :directions [:asc :desc]
+    :source-state
+    [:explicit-last-presence
+     :last-value
+     :exhausted-tail-drop-while
+     :empty-stream-filter
+     :adjacent-pairwise-fold]
     :head-partitions
     [:left-empty :right-empty :left-less :equal :right-less]}
    :evidence
-   {:java-generated-oracle-fixtures 300
-    :javascript-generated-oracle-fixtures 150
+   {:java-exhaustive-source-model-fixtures 8192
+    :javascript-exhaustive-source-model-fixtures 8192
+    :java-balanced-fold-source-model-fixtures 100
+    :javascript-balanced-fold-source-model-fixtures 50
+    :formal-two-stream-comparison-bound "|left|+|right|"
     :mutation :ordered-merge-wrong-comparator
     :counterexample-regressions
-    [:EACL-FORMAL-019 :EACL-FORMAL-020]
+    [:EACL-FORMAL-019 :EACL-FORMAL-020 :EACL-FORMAL-040]
     :uninitialized-last-value-representation :explicit-presence-bit
     :performance-report
     "formal/verification/performance-gates.edn"
@@ -51,8 +73,8 @@
      "modules/eacl/src/eacl/engine/v8.cljc"
      "formal/dafny/OrderedMerge.dfy"]}
    :limitations
-   [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
-    :dafny-integer-values-do-not-model-generic-host-key-domains
+   [:clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
+    :generic-host-key-merge-is-outside-the-eacl-identity-eid-caller-scope
     :host-integer-comparison-and-sequence-semantics-remain-trusted
     :independent-source-refinement-review-not-recorded]}
   {:id :acyclic-leapfrog-sorted-eid-intersection

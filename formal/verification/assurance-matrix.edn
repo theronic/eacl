@@ -52,6 +52,9 @@
               :ordered-merge-step-refines-definition
               :bounded-merge-chunk-reconstructs-complete-merge
               :balanced-fold-merge-preserves-order-and-complete-union
+              :production-merge-control-refines-canonical-merge
+              :production-balanced-fold-preserves-order-and-complete-union
+              :production-two-stream-merge-comparisons-are-linear
               :page-walk-complete
               :limit-fails-closed
               :bounded-page-stream-prefetch
@@ -69,7 +72,7 @@
    :production-authoritative
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
-   [:acyclic-optimized-ordered-merge-source-refinement
+   [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-source-refinement
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
@@ -93,7 +96,7 @@
    :production-authoritative
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
-   [:acyclic-optimized-ordered-merge-source-refinement
+   [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-source-refinement
     :backend-permission-path-to-indexed-routing-edge-source-refinement
     :independent-review]
@@ -240,7 +243,7 @@
    :production-authoritative
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
-   [:acyclic-optimized-ordered-merge-source-refinement
+   [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-source-refinement
     :production-adapter-certification
     :independent-review]

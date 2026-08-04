@@ -77,9 +77,9 @@
 
  :formal-pipeline
  {:scope :all-23-dafny-modules
-  :proof-efforts 9299
+  :proof-efforts 9333
   :last-observed-local-wall-seconds 1129.21
-  :last-observed-wall-proof-efforts 9299
+  :last-observed-wall-proof-efforts 9207
   :current-run-wall-clock :not-captured
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -87,7 +87,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3651718990
+  :total-observed-resource-count 3653248656
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -518,7 +518,12 @@
   :proof-oracle
   {:source "formal/dafny/OrderedMerge.dfy"
    :runtime-targets [:java :javascript]
-   :production-role :differential-oracle-not-per-eid-hot-path}
+   :production-role :exact-source-control-model-not-per-eid-hot-path
+   :two-stream-comparison-iterations-at-most "|left|+|right|"
+   :balanced-fold-properties
+   [:strict-output
+    :complete-union
+    :empty-stream-filter-preservation]}
   :rejected-prototypes
   [{:shape :generated-decision-per-merged-eid
     :fixture {:input-values 20000 :demanded-values 20000}
@@ -538,10 +543,12 @@
   :selected-design
   {:hot-path :optimized-clj-cljs-lazy-merge
    :engine-selection-branches 0
-   :generated-cross-runtime-oracle-cases
-   {:java 300 :javascript 150}
+   :generated-exact-source-model-cases
+   {:java {:two-stream 8192 :balanced-fold 100}
+    :javascript {:two-stream 8192 :balanced-fold 50}}
    :wrong-comparator-mutation-killed true
-   :formal-source-refinement :pending-independent-review}
+   :formal-source-refinement
+   :source-control-proved-language-semantics-and-independent-review-remain-trusted}
   :page-prefix-gate
   {:fixture
    {:value-count 20000
@@ -623,7 +630,8 @@
    :logical-output-values :equal-to-demand
    :host-heap-bytes :not-established
    :wall-time :benchmark-only}
-  :status :passed-with-source-refinement-claim-withheld}
+  :status
+  :passed-with-exact-source-control-model-and-language-refinement-review-pending}
 
  :rejected-acyclic-generated-prototype
  {:witness :interleaved-owner-and-viewer-eid-streams

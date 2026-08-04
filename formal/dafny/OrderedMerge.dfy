@@ -314,6 +314,89 @@ module OrderedMerge {
       StrictDescending(streams[index])
   }
 
+  function SourceNonEmptyStreams(
+    streams: seq<seq<int>>
+  ): seq<seq<int>>
+    ensures |SourceNonEmptyStreams(streams)| <= |streams|
+    decreases |streams|
+  {
+    if |streams| == 0 then
+      []
+    else
+      (if |streams[0]| == 0 then [] else [streams[0]]) +
+      SourceNonEmptyStreams(streams[1..])
+  }
+
+  lemma SourceNonEmptyAscendingProperties(
+    streams: seq<seq<int>>
+  )
+    requires AllStrictAscending(streams)
+    ensures AllStrictAscending(SourceNonEmptyStreams(streams))
+    ensures StreamSet(SourceNonEmptyStreams(streams)) ==
+            StreamSet(streams)
+    decreases |streams|
+  {
+    if |streams| != 0 {
+      assert AllStrictAscending(streams[1..]);
+      SourceNonEmptyAscendingProperties(streams[1..]);
+      if |streams[0]| != 0 {
+        assert StreamSet(SourceNonEmptyStreams(streams)) ==
+               SequenceSet(streams[0]) +
+               StreamSet(SourceNonEmptyStreams(streams[1..]));
+        forall index | 0 <= index <
+                       |SourceNonEmptyStreams(streams)|
+          ensures StrictAscending(
+                    SourceNonEmptyStreams(streams)[index]
+                  )
+        {
+          if index != 0 {
+            assert SourceNonEmptyStreams(streams)[index] ==
+                   SourceNonEmptyStreams(streams[1..])[index - 1];
+          }
+        }
+      } else {
+        assert SequenceSet(streams[0]) == {};
+        assert SourceNonEmptyStreams(streams) ==
+               SourceNonEmptyStreams(streams[1..]);
+      }
+    }
+  }
+
+  lemma SourceNonEmptyDescendingProperties(
+    streams: seq<seq<int>>
+  )
+    requires AllStrictDescending(streams)
+    ensures AllStrictDescending(SourceNonEmptyStreams(streams))
+    ensures StreamSet(SourceNonEmptyStreams(streams)) ==
+            StreamSet(streams)
+    decreases |streams|
+  {
+    if |streams| != 0 {
+      assert AllStrictDescending(streams[1..]);
+      SourceNonEmptyDescendingProperties(streams[1..]);
+      if |streams[0]| != 0 {
+        assert StreamSet(SourceNonEmptyStreams(streams)) ==
+               SequenceSet(streams[0]) +
+               StreamSet(SourceNonEmptyStreams(streams[1..]));
+        forall index | 0 <= index <
+                       |SourceNonEmptyStreams(streams)|
+          ensures StrictDescending(
+                    SourceNonEmptyStreams(streams)[index]
+                  )
+        {
+          if index != 0 {
+            assert SourceNonEmptyStreams(streams)[index] ==
+                   SourceNonEmptyStreams(streams[1..])[index - 1];
+          }
+        }
+      } else {
+        assert SequenceSet(streams[0]) == {};
+        assert SourceNonEmptyStreams(streams) ==
+               SourceNonEmptyStreams(streams[1..]);
+      }
+    }
+  }
+
   lemma AscendingTail(values: seq<int>)
     requires StrictAscending(values)
     requires |values| != 0
@@ -432,6 +515,416 @@ module OrderedMerge {
       [right[0]] + MergeDescending(left, right[1..])
     else
       [left[0]] + MergeDescending(left[1..], right[1..])
+  }
+
+  function SourceDropLeadingValue(
+    values: seq<int>,
+    last: OptionalLast
+  ): seq<int>
+    decreases |values|
+  {
+    if |values| == 0 || last.NoLast? || values[0] != last.value then
+      values
+    else
+      SourceDropLeadingValue(values[1..], last)
+  }
+
+  function SourceMergeAscending(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  ): seq<int>
+    decreases |left| + |right|
+  {
+    if |left| == 0 then
+      SourceDropLeadingValue(right, last)
+    else if |right| == 0 then
+      SourceDropLeadingValue(left, last)
+    else if left[0] == right[0] then
+      if PreviouslyEmitted(last, left[0]) then
+        SourceMergeAscending(last, left[1..], right[1..])
+      else
+        [left[0]] +
+        SourceMergeAscending(Last(left[0]), left[1..], right[1..])
+    else if left[0] < right[0] then
+      if PreviouslyEmitted(last, left[0]) then
+        SourceMergeAscending(last, left[1..], right)
+      else
+        [left[0]] +
+        SourceMergeAscending(Last(left[0]), left[1..], right)
+    else
+    if PreviouslyEmitted(last, right[0]) then
+      SourceMergeAscending(last, left, right[1..])
+    else
+      [right[0]] +
+      SourceMergeAscending(Last(right[0]), left, right[1..])
+  }
+
+  function SourceMergeDescending(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  ): seq<int>
+    decreases |left| + |right|
+  {
+    if |left| == 0 then
+      SourceDropLeadingValue(right, last)
+    else if |right| == 0 then
+      SourceDropLeadingValue(left, last)
+    else if left[0] == right[0] then
+      if PreviouslyEmitted(last, left[0]) then
+        SourceMergeDescending(last, left[1..], right[1..])
+      else
+        [left[0]] +
+        SourceMergeDescending(Last(left[0]), left[1..], right[1..])
+    else if left[0] > right[0] then
+      if PreviouslyEmitted(last, left[0]) then
+        SourceMergeDescending(last, left[1..], right)
+      else
+        [left[0]] +
+        SourceMergeDescending(Last(left[0]), left[1..], right)
+    else
+    if PreviouslyEmitted(last, right[0]) then
+      SourceMergeDescending(last, left, right[1..])
+    else
+      [right[0]] +
+      SourceMergeDescending(Last(right[0]), left, right[1..])
+  }
+
+  function SourceMergeAscendingIterations(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  ): nat
+    decreases |left| + |right|
+  {
+    if |left| == 0 || |right| == 0 then
+      0
+    else if left[0] == right[0] then
+      1 +
+      SourceMergeAscendingIterations(last, left[1..], right[1..])
+    else if left[0] < right[0] then
+      1 + SourceMergeAscendingIterations(last, left[1..], right)
+    else
+      1 + SourceMergeAscendingIterations(last, left, right[1..])
+  }
+
+  function SourceMergeDescendingIterations(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  ): nat
+    decreases |left| + |right|
+  {
+    if |left| == 0 || |right| == 0 then
+      0
+    else if left[0] == right[0] then
+      1 +
+      SourceMergeDescendingIterations(last, left[1..], right[1..])
+    else if left[0] > right[0] then
+      1 + SourceMergeDescendingIterations(last, left[1..], right)
+    else
+      1 + SourceMergeDescendingIterations(last, left, right[1..])
+  }
+
+  lemma SourceMergeAscendingIterationsAreLinear(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  )
+    ensures SourceMergeAscendingIterations(last, left, right) <=
+            |left| + |right|
+    decreases |left| + |right|
+  {
+    if |left| != 0 && |right| != 0 {
+      if left[0] == right[0] {
+        SourceMergeAscendingIterationsAreLinear(
+          last,
+          left[1..],
+          right[1..]
+        );
+      } else if left[0] < right[0] {
+        SourceMergeAscendingIterationsAreLinear(
+          last,
+          left[1..],
+          right
+        );
+      } else {
+        SourceMergeAscendingIterationsAreLinear(
+          last,
+          left,
+          right[1..]
+        );
+      }
+    }
+  }
+
+  lemma SourceMergeDescendingIterationsAreLinear(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  )
+    ensures SourceMergeDescendingIterations(last, left, right) <=
+            |left| + |right|
+    decreases |left| + |right|
+  {
+    if |left| != 0 && |right| != 0 {
+      if left[0] == right[0] {
+        SourceMergeDescendingIterationsAreLinear(
+          last,
+          left[1..],
+          right[1..]
+        );
+      } else if left[0] > right[0] {
+        SourceMergeDescendingIterationsAreLinear(
+          last,
+          left[1..],
+          right
+        );
+      } else {
+        SourceMergeDescendingIterationsAreLinear(
+          last,
+          left,
+          right[1..]
+        );
+      }
+    }
+  }
+
+  predicate AscendingAfterLast(
+    last: OptionalLast,
+    values: seq<int>
+  ) {
+    last.NoLast? ||
+    forall value | value in values :: last.value < value
+  }
+
+  predicate DescendingAfterLast(
+    last: OptionalLast,
+    values: seq<int>
+  ) {
+    last.NoLast? ||
+    forall value | value in values :: last.value > value
+  }
+
+  lemma SourceDropLeadingAscendingLastIsAbsent(
+    values: seq<int>,
+    last: OptionalLast
+  )
+    requires AscendingAfterLast(last, values)
+    ensures SourceDropLeadingValue(values, last) == values
+  {
+    if |values| != 0 && last.Last? {
+      assert values[0] in values;
+      assert last.value < values[0];
+    }
+  }
+
+  lemma SourceDropLeadingDescendingLastIsAbsent(
+    values: seq<int>,
+    last: OptionalLast
+  )
+    requires DescendingAfterLast(last, values)
+    ensures SourceDropLeadingValue(values, last) == values
+  {
+    if |values| != 0 && last.Last? {
+      assert values[0] in values;
+      assert last.value > values[0];
+    }
+  }
+
+  lemma SourceMergeAscendingRefinesCanonical(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  )
+    requires StrictAscending(left)
+    requires StrictAscending(right)
+    requires AscendingAfterLast(last, left)
+    requires AscendingAfterLast(last, right)
+    ensures SourceMergeAscending(last, left, right) ==
+            MergeAscending(left, right)
+    decreases |left| + |right|
+  {
+    if |left| == 0 {
+      SourceDropLeadingAscendingLastIsAbsent(right, last);
+    } else if |right| == 0 {
+      SourceDropLeadingAscendingLastIsAbsent(left, last);
+    } else {
+      AscendingTail(left);
+      AscendingTail(right);
+      if left[0] == right[0] {
+        if last.Last? {
+          assert left[0] in left;
+          assert last.value < left[0];
+        }
+        assert !PreviouslyEmitted(last, left[0]);
+        assert AscendingAfterLast(Last(left[0]), left[1..]);
+        assert AscendingAfterLast(Last(left[0]), right[1..]);
+        SourceMergeAscendingRefinesCanonical(
+          Last(left[0]),
+          left[1..],
+          right[1..]
+        );
+      } else if left[0] < right[0] {
+        if last.Last? {
+          assert left[0] in left;
+          assert last.value < left[0];
+        }
+        assert !PreviouslyEmitted(last, left[0]);
+        assert AscendingAfterLast(Last(left[0]), left[1..]);
+        forall value | value in right
+          ensures left[0] < value
+        {
+          AscendingHeadBound(right, value);
+        }
+        assert AscendingAfterLast(Last(left[0]), right);
+        SourceMergeAscendingRefinesCanonical(
+          Last(left[0]),
+          left[1..],
+          right
+        );
+      } else {
+        assert right[0] < left[0];
+        if last.Last? {
+          assert right[0] in right;
+          assert last.value < right[0];
+        }
+        assert !PreviouslyEmitted(last, right[0]);
+        forall value | value in left
+          ensures right[0] < value
+        {
+          AscendingHeadBound(left, value);
+        }
+        assert AscendingAfterLast(Last(right[0]), left);
+        assert AscendingAfterLast(Last(right[0]), right[1..]);
+        SourceMergeAscendingRefinesCanonical(
+          Last(right[0]),
+          left,
+          right[1..]
+        );
+      }
+    }
+  }
+
+  lemma SourceMergeDescendingRefinesCanonical(
+    last: OptionalLast,
+    left: seq<int>,
+    right: seq<int>
+  )
+    requires StrictDescending(left)
+    requires StrictDescending(right)
+    requires DescendingAfterLast(last, left)
+    requires DescendingAfterLast(last, right)
+    ensures SourceMergeDescending(last, left, right) ==
+            MergeDescending(left, right)
+    decreases |left| + |right|
+  {
+    if |left| == 0 {
+      SourceDropLeadingDescendingLastIsAbsent(right, last);
+    } else if |right| == 0 {
+      SourceDropLeadingDescendingLastIsAbsent(left, last);
+    } else {
+      DescendingTail(left);
+      DescendingTail(right);
+      if left[0] == right[0] {
+        if last.Last? {
+          assert left[0] in left;
+          assert last.value > left[0];
+        }
+        assert !PreviouslyEmitted(last, left[0]);
+        assert DescendingAfterLast(Last(left[0]), left[1..]);
+        assert DescendingAfterLast(Last(left[0]), right[1..]);
+        SourceMergeDescendingRefinesCanonical(
+          Last(left[0]),
+          left[1..],
+          right[1..]
+        );
+      } else if left[0] > right[0] {
+        if last.Last? {
+          assert left[0] in left;
+          assert last.value > left[0];
+        }
+        assert !PreviouslyEmitted(last, left[0]);
+        assert DescendingAfterLast(Last(left[0]), left[1..]);
+        forall value | value in right
+          ensures left[0] > value
+        {
+          DescendingHeadBound(right, value);
+        }
+        assert DescendingAfterLast(Last(left[0]), right);
+        SourceMergeDescendingRefinesCanonical(
+          Last(left[0]),
+          left[1..],
+          right
+        );
+      } else {
+        assert right[0] > left[0];
+        if last.Last? {
+          assert right[0] in right;
+          assert last.value > right[0];
+        }
+        assert !PreviouslyEmitted(last, right[0]);
+        forall value | value in left
+          ensures right[0] > value
+        {
+          DescendingHeadBound(left, value);
+        }
+        assert DescendingAfterLast(Last(right[0]), left);
+        assert DescendingAfterLast(Last(right[0]), right[1..]);
+        SourceMergeDescendingRefinesCanonical(
+          Last(right[0]),
+          left,
+          right[1..]
+        );
+      }
+    }
+  }
+
+  lemma ProductionAscendingMergeRefinesCanonical(
+    left: seq<int>,
+    right: seq<int>
+  )
+    requires StrictAscending(left)
+    requires StrictAscending(right)
+    ensures SourceMergeAscending(NoLast, left, right) ==
+            MergeAscending(left, right)
+  {
+    SourceMergeAscendingRefinesCanonical(NoLast, left, right);
+  }
+
+  lemma ProductionDescendingMergeRefinesCanonical(
+    left: seq<int>,
+    right: seq<int>
+  )
+    requires StrictDescending(left)
+    requires StrictDescending(right)
+    ensures SourceMergeDescending(NoLast, left, right) ==
+            MergeDescending(left, right)
+  {
+    SourceMergeDescendingRefinesCanonical(NoLast, left, right);
+  }
+
+  method ExecuteProductionMerge(
+    direction: MergeDirection,
+    left: seq<int>,
+    right: seq<int>
+  ) returns (merged: seq<int>)
+    requires direction.Ascending? ==>
+               StrictAscending(left) && StrictAscending(right)
+    requires direction.Descending? ==>
+               StrictDescending(left) && StrictDescending(right)
+    ensures direction.Ascending? ==>
+              merged == MergeAscending(left, right)
+    ensures direction.Descending? ==>
+              merged == MergeDescending(left, right)
+  {
+    if direction.Ascending? {
+      ProductionAscendingMergeRefinesCanonical(left, right);
+      return SourceMergeAscending(NoLast, left, right);
+    }
+    ProductionDescendingMergeRefinesCanonical(left, right);
+    return SourceMergeDescending(NoLast, left, right);
   }
 
   lemma AscendingChunkReconstructsMerge(
@@ -602,6 +1095,126 @@ module OrderedMerge {
     }
   }
 
+  lemma SequenceSetMembership(
+    values: seq<int>,
+    value: int
+  )
+    ensures value in SequenceSet(values) <==> value in values
+  {
+  }
+
+  lemma StrictAscendingSequenceIsDeterminedBySet(
+    left: seq<int>,
+    right: seq<int>
+  )
+    requires StrictAscending(left)
+    requires StrictAscending(right)
+    requires SequenceSet(left) == SequenceSet(right)
+    ensures left == right
+    decreases |left| + |right|
+  {
+    if |left| == 0 {
+      if |right| != 0 {
+        SequenceSetMembership(right, right[0]);
+        assert right[0] in SequenceSet(right);
+        assert right[0] in SequenceSet(left);
+        SequenceSetMembership(left, right[0]);
+      }
+    } else if |right| == 0 {
+      SequenceSetMembership(left, left[0]);
+      assert left[0] in SequenceSet(left);
+      assert left[0] in SequenceSet(right);
+      SequenceSetMembership(right, left[0]);
+    } else {
+      SequenceSetMembership(left, left[0]);
+      SequenceSetMembership(right, left[0]);
+      assert left[0] in right;
+      AscendingHeadBound(right, left[0]);
+
+      SequenceSetMembership(right, right[0]);
+      SequenceSetMembership(left, right[0]);
+      assert right[0] in left;
+      AscendingHeadBound(left, right[0]);
+      assert left[0] == right[0];
+
+      AscendingTail(left);
+      AscendingTail(right);
+      assert left[0] !in left[1..];
+      assert right[0] !in right[1..];
+      forall value
+        ensures value in left[1..] <==> value in right[1..]
+      {
+        SequenceSetMembership(left, value);
+        SequenceSetMembership(right, value);
+        if value == left[0] {
+          assert value !in left[1..];
+          assert value !in right[1..];
+        }
+      }
+      assert SequenceSet(left[1..]) == SequenceSet(right[1..]);
+      StrictAscendingSequenceIsDeterminedBySet(
+        left[1..],
+        right[1..]
+      );
+    }
+  }
+
+  lemma StrictDescendingSequenceIsDeterminedBySet(
+    left: seq<int>,
+    right: seq<int>
+  )
+    requires StrictDescending(left)
+    requires StrictDescending(right)
+    requires SequenceSet(left) == SequenceSet(right)
+    ensures left == right
+    decreases |left| + |right|
+  {
+    if |left| == 0 {
+      if |right| != 0 {
+        SequenceSetMembership(right, right[0]);
+        assert right[0] in SequenceSet(right);
+        assert right[0] in SequenceSet(left);
+        SequenceSetMembership(left, right[0]);
+      }
+    } else if |right| == 0 {
+      SequenceSetMembership(left, left[0]);
+      assert left[0] in SequenceSet(left);
+      assert left[0] in SequenceSet(right);
+      SequenceSetMembership(right, left[0]);
+    } else {
+      SequenceSetMembership(left, left[0]);
+      SequenceSetMembership(right, left[0]);
+      assert left[0] in right;
+      DescendingHeadBound(right, left[0]);
+
+      SequenceSetMembership(right, right[0]);
+      SequenceSetMembership(left, right[0]);
+      assert right[0] in left;
+      DescendingHeadBound(left, right[0]);
+      assert left[0] == right[0];
+
+      DescendingTail(left);
+      DescendingTail(right);
+      assert left[0] !in left[1..];
+      assert right[0] !in right[1..];
+      forall value
+        ensures value in left[1..] <==> value in right[1..]
+      {
+        SequenceSetMembership(left, value);
+        SequenceSetMembership(right, value);
+        if value == left[0] {
+          assert value !in left[1..];
+          assert value !in right[1..];
+        }
+      }
+      assert SequenceSet(left[1..]) == SequenceSet(right[1..]);
+      StrictDescendingSequenceIsDeterminedBySet(
+        left[1..],
+        right[1..]
+      );
+    }
+  }
+
   method MergeAscendingRound(
     streams: seq<seq<int>>
   ) returns (round: seq<seq<int>>)
@@ -648,6 +1261,121 @@ module OrderedMerge {
       [MergeDescending(streams[0], streams[1])] + tail;
   }
 
+  method SourceMergeAscendingRound(
+    streams: seq<seq<int>>
+  ) returns (round: seq<seq<int>>)
+    requires AllStrictAscending(streams)
+    ensures AllStrictAscending(round)
+    ensures StreamSet(round) == StreamSet(streams)
+    ensures |streams| == 0 ==> round == []
+    ensures |streams| == 1 ==> round == streams
+    ensures |streams| > 1 ==> 0 < |round| < |streams|
+    decreases |streams|
+  {
+    if |streams| == 0 {
+      return [];
+    }
+    if |streams| == 1 {
+      return streams;
+    }
+    ProductionAscendingMergeRefinesCanonical(
+      streams[0],
+      streams[1]
+    );
+    MergeAscendingIsStrict(streams[0], streams[1]);
+    var tail := SourceMergeAscendingRound(streams[2..]);
+    round :=
+      [SourceMergeAscending(NoLast, streams[0], streams[1])] +
+      tail;
+  }
+
+  method SourceMergeDescendingRound(
+    streams: seq<seq<int>>
+  ) returns (round: seq<seq<int>>)
+    requires AllStrictDescending(streams)
+    ensures AllStrictDescending(round)
+    ensures StreamSet(round) == StreamSet(streams)
+    ensures |streams| == 0 ==> round == []
+    ensures |streams| == 1 ==> round == streams
+    ensures |streams| > 1 ==> 0 < |round| < |streams|
+    decreases |streams|
+  {
+    if |streams| == 0 {
+      return [];
+    }
+    if |streams| == 1 {
+      return streams;
+    }
+    ProductionDescendingMergeRefinesCanonical(
+      streams[0],
+      streams[1]
+    );
+    MergeDescendingIsStrict(streams[0], streams[1]);
+    var tail := SourceMergeDescendingRound(streams[2..]);
+    round :=
+      [SourceMergeDescending(NoLast, streams[0], streams[1])] +
+      tail;
+  }
+
+  method SourceFoldBalancedAscending(
+    streams: seq<seq<int>>
+  ) returns (merged: seq<int>)
+    requires AllStrictAscending(streams)
+    ensures StrictAscending(merged)
+    ensures SequenceSet(merged) == StreamSet(streams)
+    decreases |streams|
+  {
+    SourceNonEmptyAscendingProperties(streams);
+    var nonEmpty := SourceNonEmptyStreams(streams);
+    if |nonEmpty| == 0 {
+      return [];
+    }
+    if |nonEmpty| == 1 {
+      return nonEmpty[0];
+    }
+    var round := SourceMergeAscendingRound(nonEmpty);
+    assert |round| < |nonEmpty| <= |streams|;
+    merged := SourceFoldBalancedAscending(round);
+  }
+
+  method SourceFoldBalancedDescending(
+    streams: seq<seq<int>>
+  ) returns (merged: seq<int>)
+    requires AllStrictDescending(streams)
+    ensures StrictDescending(merged)
+    ensures SequenceSet(merged) == StreamSet(streams)
+    decreases |streams|
+  {
+    SourceNonEmptyDescendingProperties(streams);
+    var nonEmpty := SourceNonEmptyStreams(streams);
+    if |nonEmpty| == 0 {
+      return [];
+    }
+    if |nonEmpty| == 1 {
+      return nonEmpty[0];
+    }
+    var round := SourceMergeDescendingRound(nonEmpty);
+    assert |round| < |nonEmpty| <= |streams|;
+    merged := SourceFoldBalancedDescending(round);
+  }
+
+  method ExecuteProductionFold(
+    direction: MergeDirection,
+    streams: seq<seq<int>>
+  ) returns (merged: seq<int>)
+    requires direction.Ascending? ==> AllStrictAscending(streams)
+    requires direction.Descending? ==> AllStrictDescending(streams)
+    ensures direction.Ascending? ==> StrictAscending(merged)
+    ensures direction.Descending? ==> StrictDescending(merged)
+    ensures SequenceSet(merged) == StreamSet(streams)
+  {
+    if direction.Ascending? {
+      merged := SourceFoldBalancedAscending(streams);
+      return;
+    }
+    merged := SourceFoldBalancedDescending(streams);
+  }
+
   method FoldBalancedAscending(
     streams: seq<seq<int>>
   ) returns (merged: seq<int>)
@@ -682,6 +1410,40 @@ module OrderedMerge {
     }
     var round := MergeDescendingRound(streams);
     merged := FoldBalancedDescending(round);
+  }
+
+  method ProductionAscendingFoldRefinesCanonical(
+    streams: seq<seq<int>>
+  ) returns (
+      sourceMerged: seq<int>,
+      canonicalMerged: seq<int>
+    )
+    requires AllStrictAscending(streams)
+    ensures sourceMerged == canonicalMerged
+  {
+    sourceMerged := SourceFoldBalancedAscending(streams);
+    canonicalMerged := FoldBalancedAscending(streams);
+    StrictAscendingSequenceIsDeterminedBySet(
+      sourceMerged,
+      canonicalMerged
+    );
+  }
+
+  method ProductionDescendingFoldRefinesCanonical(
+    streams: seq<seq<int>>
+  ) returns (
+      sourceMerged: seq<int>,
+      canonicalMerged: seq<int>
+    )
+    requires AllStrictDescending(streams)
+    ensures sourceMerged == canonicalMerged
+  {
+    sourceMerged := SourceFoldBalancedDescending(streams);
+    canonicalMerged := FoldBalancedDescending(streams);
+    StrictDescendingSequenceIsDeterminedBySet(
+      sourceMerged,
+      canonicalMerged
+    );
   }
 
   lemma AscendingMergePreservesSetAndUniqueness(

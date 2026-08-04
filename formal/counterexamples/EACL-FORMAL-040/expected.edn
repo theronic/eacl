@@ -1,0 +1,9 @@
+{:merged [1 2 3]
+ :source-model-equals-canonical true
+ :balanced-source-model
+ {:strictly-ordered true
+  :complete-union true}
+ :two-stream-comparison-iterations-at-most "|left|+|right|"
+ :runtime-targets [:clj-java :cljs-javascript]
+ :qualification
+ :strict-safe-natural-stream-domain-with-host-language-and-sequence-semantics-trusted}

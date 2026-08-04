@@ -93,6 +93,12 @@
    TypeDescriptor/BIG_INTEGER
    (mapv dafny-nat values)))
 
+(defn- dafny-sequences
+  [streams]
+  (DafnySequence/fromList
+   (DafnySequence/_typeDescriptor TypeDescriptor/BIG_INTEGER)
+   (mapv dafny-sequence streams)))
+
 (defn- typed-sequence
   [descriptor values]
   (DafnySequence/fromList descriptor values))
@@ -862,6 +868,39 @@
     {:values (mapv dafny-long (.dtor_values chunk))
      :left-consumed (dafny-long (.dtor_leftConsumed chunk))
      :right-consumed (dafny-long (.dtor_rightConsumed chunk))}))
+
+(defn production-ordered-merge
+  "Executes the generated model of the production `has-last?` two-stream
+  recursion. This is source-refinement test support, not a production SPI
+  operation."
+  [{:keys [direction left right]}]
+  (let [^MergeDirection direction'
+        (case direction
+          :asc (MergeDirection/create_Ascending)
+          :desc (MergeDirection/create_Descending))
+        ^DafnySequence left' (dafny-sequence left)
+        ^DafnySequence right' (dafny-sequence right)
+        ^DafnySequence merged
+        (OrderedMerge.__default/ExecuteProductionMerge
+         direction'
+         left'
+         right')]
+    (mapv dafny-long merged)))
+
+(defn production-ordered-fold
+  "Executes the generated model of production's non-empty filtering and
+  pairwise balanced-fold schedule. This is source-refinement test support."
+  [{:keys [direction streams]}]
+  (let [^MergeDirection direction'
+        (case direction
+          :asc (MergeDirection/create_Ascending)
+          :desc (MergeDirection/create_Descending))
+        ^DafnySequence streams' (dafny-sequences streams)
+        ^DafnySequence merged
+        (OrderedMerge.__default/ExecuteProductionFold
+         direction'
+         streams')]
+    (mapv dafny-long merged)))
 
 (defn acyclic-leapfrog-intersection
   "Executes the generated bounded leapfrog oracle for source-specialization

@@ -32,7 +32,7 @@
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
   {:status :passed
-   :verified-obligations 48
+   :verified-obligations 82
    :source "formal/dafny/OrderedMerge.dfy"
    :source-specialization-report
    "formal/verification/source-specializations.edn"}
@@ -155,7 +155,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-039
+ {:latest :EACL-FORMAL-040
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -194,11 +194,12 @@
           :EACL-FORMAL-036
           :EACL-FORMAL-037
           :EACL-FORMAL-038
-          :EACL-FORMAL-039]}
+          :EACL-FORMAL-039
+          :EACL-FORMAL-040]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 39}
+  :entries 40}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -234,15 +235,15 @@
    :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
    :blocking-findings
    [:retained-live-heap-not-established
-    :acyclic-optimized-merge-source-refinement-and-review-pending
+    :acyclic-optimized-merge-clojure-language-refinement-and-independent-review-pending
     :acyclic-optimized-leapfrog-source-refinement-and-review-pending
     :recursive-scc-routing-source-refinement-and-review-pending]}
  :mutation-control
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 64
-  :registered 64}
+  :killed 73
+  :registered 73}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -257,7 +258,7 @@
   :decision :refused
   :unmet-required-obligations
   [:complete-public-engine
-   :acyclic-optimized-ordered-merge-source-refinement
+   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
    :acyclic-optimized-leapfrog-source-refinement
    :recursive-scc-routing-source-refinement
    :retained-live-heap-performance-gate

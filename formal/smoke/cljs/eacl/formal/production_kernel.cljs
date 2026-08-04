@@ -921,6 +921,59 @@
      :left-consumed (.toNumber (.-dtor_leftConsumed chunk))
      :right-consumed (.toNumber (.-dtor_rightConsumed chunk))}))
 
+(defn production-ordered-merge
+  "Executes the generated model of the production `has-last?` two-stream
+  recursion. This is source-refinement test support, not a production SPI
+  operation."
+  [{:keys [direction left right]}]
+  (let [ordered-merge (.-OrderedMerge generated)
+        direction'
+        (case direction
+          :asc
+          (js-invoke
+           (.-MergeDirection ordered-merge)
+           "create_Ascending")
+          :desc
+          (js-invoke
+           (.-MergeDirection ordered-merge)
+           "create_Descending"))
+        merged
+        (js-invoke
+         (.-__default ordered-merge)
+         "ExecuteProductionMerge"
+         direction'
+         (dafny-sequence (mapv big-number left))
+         (dafny-sequence (mapv big-number right)))]
+    (mapv #(.toNumber %) merged)))
+
+(defn production-ordered-fold
+  "Executes the generated model of production's non-empty filtering and
+  pairwise balanced-fold schedule. This is source-refinement test support."
+  [{:keys [direction streams]}]
+  (let [ordered-merge (.-OrderedMerge generated)
+        direction'
+        (case direction
+          :asc
+          (js-invoke
+           (.-MergeDirection ordered-merge)
+           "create_Ascending")
+          :desc
+          (js-invoke
+           (.-MergeDirection ordered-merge)
+           "create_Descending"))
+        streams'
+        (dafny-sequence
+         (mapv
+          #(dafny-sequence (mapv big-number %))
+          streams))
+        merged
+        (js-invoke
+         (.-__default ordered-merge)
+         "ExecuteProductionFold"
+         direction'
+         streams')]
+    (mapv #(.toNumber %) merged)))
+
 (defn acyclic-leapfrog-intersection
   "Executes the generated bounded leapfrog oracle for source-specialization
   tests. This is test-support code, not part of EACL's production kernel SPI."

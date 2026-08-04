@@ -1,0 +1,14 @@
+{:direction :ascending
+ :left [1 3]
+ :right [1 2]
+ :initial-last {:present? false :value 0}
+ :source-control
+ [:equal-head-consumes-both-and-records-last
+  :right-head-precedes-left
+  :right-exhausted-returns-left-tail]
+ :fold-streams [[] [1 3] [] [1 2] []]
+ :previously-unmodeled
+ [:explicit-last-presence
+  :drop-leading-last-on-exhaustion
+  :empty-stream-filter
+  :pairwise-fold-rounds]}

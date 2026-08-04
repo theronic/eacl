@@ -123,6 +123,22 @@ generated-code compiler out of the trusted computing base.
   This is covered by portable regression and mutation control; Dafny's integer
   value domain proves the optional-state shape for EIDs, not arbitrary host
   comparator semantics.
+- EACL-FORMAL-040 found that the ordered-merge theorem still modeled only the
+  canonical merge and an abstract balanced fold, not production's explicit
+  `has-last?` state, exhausted-tail `drop-while`, empty-stream filtering, or
+  adjacent pairwise round schedule. Dafny now models those source-control
+  states directly, proves that the exact ascending and descending source
+  recursions equal the canonical merge for finite strictly ordered streams,
+  proves the filtered balanced fold preserves strict order and the complete
+  union, proves that strict order plus set equality determines the exact
+  sequence and hence that the production fold equals the canonical fold, and
+  bounds two-stream comparison iterations by `|left|+|right|`.
+  Generated Java and JavaScript each agree with the actual host source on all
+  8,192 pairs of subsets of a six-value safe-natural domain in both
+  directions, plus 100 JVM and 50 JavaScript multi-stream folds containing
+  empty streams. Clojure language/sequence semantics and independent review
+  remain trusted; the report does not call executable correspondence a proof
+  of Clojure itself.
 - EACL-FORMAL-021 found that Datomic's separate cache-compatibility normalizer
   rejected and failed to forward the shared `:subproblem-cache` configuration.
   DataScript and Datahike honored those projection, denotation, proof-atom,
@@ -333,8 +349,9 @@ generated-code compiler out of the trusted computing base.
   at 1.49x legacy p50 and 1.82x legacy p95. A 2026-08-03 dimensional recheck
   measured 1.17x p50 and 1.38x p95, with identical page results and all twelve
   logical resource measures equal, inside the existing 2.0x p95 gate. Full
-  cutover remains blocked by acyclic ordered-merge source refinement, shadow
-  coverage, and review rather than recursive cache-hit cost.
+  cutover remains blocked by the digest-locked Clojure-to-Dafny language
+  correspondence for source specializations, shadow coverage, and independent
+  review rather than recursive cache-hit cost.
 - The representative public authority-mode gate passes on DataScript across
   direct, acyclic, recursive, cursor-continuation, and hot-cache calls. Median
   verified/legacy p95 latency ratios over five paired trials are 1.18x, 0.92x,
@@ -345,6 +362,9 @@ generated-code compiler out of the trusted computing base.
   worst-case latency, or all-backend verified-authority cutover.
 - The optimized ordered merge passes the source-specialization non-regression
   gate for both a 20-value page prefix and complete 20,000-value consumption.
+  Its exact `has-last?`, exhausted-tail, empty-filter, and pairwise-fold
+  control model is now proved separately from the canonical merge, and its
+  two-stream comparison loop is formally linear in the combined input length.
   After the explicit-presence fixes, ascending/descending median trial-level
   p95 ratios were 0.983/0.998 for the prefix and 0.974/0.970 for complete
   consumption against the identical legacy selection. These are wall-time
@@ -381,7 +401,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,299 proof efforts across 23
+- Clean checksum-locked Dafny cache: 9,333 proof efforts across 23
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -394,7 +414,7 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 39 minimized entries replayed by 41 tests and 2,102
+- Counterexample corpus: 40 minimized entries replayed by 42 tests and 10,332
   assertions, zero failures/errors.
 - Mutation controls: 65 Clojure detectors and 8 Apalache counterexample
   controls; all 73 registered mutants killed.
@@ -404,9 +424,9 @@ that the complete v8.0 engine is formally verified.
   failures/errors.
 - Ordinary and forced-authority DataScript CLJS suites: 152 tests, 4,499
   assertions each, zero failures/errors.
-- Generated Java production-kernel namespace: 31 tests, 1,585 assertions,
+- Generated Java production-kernel namespace: 32 tests, 9,877 assertions,
   zero failures/errors.
-- Generated JavaScript smoke suite: 51 tests, 2,187 assertions, zero
+- Generated JavaScript smoke suite: 52 tests, 10,429 assertions, zero
   failures/errors.
 - Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,330 unique
   reachable definitions across 51 source files, with exact per-root internal
@@ -440,9 +460,9 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,893,987 Java
-  source bytes, 1,719,811 Java class bytes, 835,928
-  JavaScript-with-runtime bytes, and a 917,930-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 1,952,511 Java
+  source bytes, 1,752,063 Java class bytes, 865,378
+  JavaScript-with-runtime bytes, and a 948,396-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. Retained
   live heap remains `:not-established`, so the
@@ -485,7 +505,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 23-module
-  replay passed 9,299 proof efforts and consumed 3,651,718,990 deterministic
+  replay passed 9,333 proof efforts and consumed 3,653,248,656 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

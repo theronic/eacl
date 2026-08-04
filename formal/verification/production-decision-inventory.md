@@ -53,6 +53,22 @@ an adapter's source scope, ancestry predicate, exact reconstruction, or
 authoritative barrier is truthful, and it does not prove token cryptography.
 Those remain explicit adapter and cryptographic refinement obligations.
 
+The acyclic ordered-EID merge now has an exact production control model rather
+than only a canonical sorted-union oracle. `OrderedMerge.dfy` represents the
+explicit last-value presence bit, exhausted-tail `drop-while`, empty-stream
+filtering, and adjacent pairwise fold rounds used by
+`eacl.lazy-merge-sort`. It proves that the source recursion equals the
+canonical ascending/descending merge for finite strictly ordered streams, that
+the complete fold is strictly ordered with the exact input union, and that one
+two-stream merge performs at most `|left|+|right|` comparison iterations.
+It also proves that strict order plus set equality determines one exact
+sequence and therefore that the modeled production fold equals the canonical
+balanced fold, rather than relying on that implication informally.
+Generated Java and JavaScript execute that source model against the CLJ/CLJS
+implementation. The final Clojure-language/sequence-semantics correspondence is
+digest-locked trusted refinement pending independent review, not a Dafny proof
+of the Clojure runtime.
+
 ## Public operation coverage
 
 The decisions above flow into these externally observable families:
