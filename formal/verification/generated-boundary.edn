@@ -53,6 +53,24 @@
   :hot-production-path :optimized-clj-cljs-specialization
   :per-eid-generated-routing :rejected-by-performance-gate
   :formal-source-refinement :pending-independent-review}
+ :recursive-routing-proof-oracle
+ {:source "formal/dafny/RecursiveEngine.dfy"
+  :operation RecursiveEngine.DecideTypedTraversalPermission
+  :input :fully-typed-head-to-target-permission-edges
+  :result
+  :root-transitively-depends-on-a-recursive-strong-component
+  :java-source-differential-graph-shapes 519
+  :javascript-source-differential-graph-shapes 519
+  :exhaustive-subcampaign
+  {:typed-nodes 3
+   :possible-directed-edges 9
+   :graphs 512}
+  :production-algorithm :iterative-kosaraju-plus-reverse-reachability
+  :generated-algorithm :verified-finite-least-closure-scans
+  :semantic-refinement-evidence :passed
+  :formal-source-refinement :pending-independent-review
+  :production-resource-refinement false
+  :counterexample :EACL-FORMAL-030}
  :indexed-transition-boundary
  {:sources ["formal/dafny/IndexedTraversal.dfy"
             "formal/dafny/IndexedRefinement.dfy"
@@ -93,17 +111,18 @@
    :tests 1 :assertions 7 :status :passed}
   :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 26 :suite-assertions 851 :status :passed}
+   :suite-tests 28 :suite-assertions 1378 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 9 :assertions 53}
    :cljs :passed-in-full-suite}
   :production-routing
-  {:clj-java {:tests 20 :assertions 400}
+  {:clj-java {:tests 22 :assertions 927}
    :cljs-javascript
-   {:suite-tests 26
-    :suite-assertions 851
-    :datascript-public-recursive-cache-mode-differential true}}
+   {:suite-tests 28
+    :suite-assertions 1378
+    :datascript-public-recursive-cache-mode-differential true
+    :shared-scc-routing-differential true}}
   :materialized-reference
   {:comparison-contract
    {:authorization-values :compare-only-when-both-complete
@@ -111,15 +130,15 @@
     :resource-counters :whole-graph-model-only}
    :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 20
-    :namespace-assertions 400
+    :namespace-tests 22
+    :namespace-assertions 927
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
    :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 18
-    :suite-tests 26
-    :suite-assertions 851
+    :namespace-tests 20
+    :suite-tests 28
+    :suite-assertions 1378
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace

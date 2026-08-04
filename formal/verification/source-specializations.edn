@@ -110,4 +110,81 @@
     :backend-seek-complexity-and-allocation-remain-trusted
     :no-formal-bound-on-lazy-realization-allocation-heap-or-wall-time
     :host-long-and-javascript-safe-integer-semantics-remain-trusted
+    :independent-source-refinement-review-not-recorded]}
+  {:id :recursive-scc-routing
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbols
+    [eacl.engine.v8/permission-query-dependencies
+     eacl.engine.v8/permission-graph
+     eacl.engine.v8/transpose-graph
+     eacl.engine.v8/graph-components
+     eacl.engine.v8/reachable-from-many
+     eacl.engine.v8/calc-traversal-analysis
+     eacl.engine.v8/traversal-permission?]
+    :algorithm :iterative-kosaraju-plus-reverse-reachability
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/RecursiveEngine.dfy"
+    :definitions
+    [RecursiveEngine.PermissionDependencyEdge
+     RecursiveEngine.RoutingStep
+     RecursiveEngine.RoutingClosure
+     RecursiveEngine.RoutingReachability
+     RecursiveEngine.RoutingStrongComponent
+     RecursiveEngine.RoutingRecursiveComponent
+     RecursiveEngine.RoutingDependsOnRecursiveComponent
+     RecursiveEngine.DecideTypedTraversalPermission]
+    :lemmas
+    [RecursiveEngine.RoutingStepIsMonotone
+     RecursiveEngine.RoutingClosureIsFixed
+     RecursiveEngine.RoutingClosureIsLeast
+     RecursiveEngine.RoutingReachabilityIsExactLeastClosure
+     RecursiveEngine.RoutingSelfEdgeScanIsExact
+     RecursiveEngine.RoutingComponentSelfScanIsExact
+     RecursiveEngine.IsRoutingRecursiveNodeIsExact
+     RecursiveEngine.RoutingTraversalScanIsExact]}
+   :abstract-domain
+   {:nodes :complete-resource-type-and-permission-identities
+    :edges :fully-resolved-head-to-target-permission-dependencies
+    :recursive-component
+    :multi-node-strong-component-or-singleton-self-edge
+    :routed-roots
+    :recursive-component-members-and-every-transitive-acyclic-ancestor}
+   :evidence
+   {:java-source-differential-graph-shapes 519
+    :javascript-source-differential-graph-shapes 519
+    :exhaustive-subcampaign
+    {:typed-nodes 3
+     :possible-directed-edges 9
+     :graphs 512}
+    :graph-shapes
+    [:empty
+     :singleton-self-loop
+     :multi-node-scc-with-ancestor
+     :disconnected-recursion
+     :acyclic-diamond
+     :deep-ancestor-chain
+     :same-permission-name-on-distinct-resource-types]
+    :counterexample-regressions [:EACL-FORMAL-030]
+    :mutations
+    [:routing-node-identity-drops-resource-type
+     :routing-only-recursive-component-members
+     :routing-singleton-self-loop-ignored
+     :routing-dependency-direction-reversed]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/RecursiveEngine.dfy"]}
+   :resource-claim
+   {:production "O(V+E) time and memory after permission paths are materialized"
+    :generated-oracle
+    :semantic-only-closure-scans-do-not-refine-production-resource-cost
+    :lore-qualification
+    :structural-traversal-evidence-only-without-checked-source-and-platform-cost-models}
+   :limitations
+   [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
+    :production-o-v-plus-e-comment-is-not-a-dafny-resource-theorem
+    :path-materialization-cost-is-outside-this-specialization
+    :host-hash-map-set-and-vector-semantics-remain-trusted
+    :no-formal-bound-on-allocation-heap-backend-work-or-wall-time
     :independent-source-refinement-review-not-recorded]}]}

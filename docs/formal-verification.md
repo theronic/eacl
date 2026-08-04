@@ -23,6 +23,11 @@ Install the checksum-locked Dafny/Boogie/Z3, Apalache, and TLA+ tools:
 bin/formal bootstrap
 ```
 
+The generated-artifact gate additionally requires Babashka 1.12.213. Formal
+CI installs that exact gate runtime before rebuilding and measuring artifacts;
+the committed gate configuration and regression test reject version or
+workflow drift.
+
 The bootstrap installs only under `target/formal-tools/`. Tool versions,
 platform artifacts, licenses, upstream URLs, and SHA-256 values are committed
 in `formal/toolchain.lock.json`. That lock also carries the Dafny
@@ -82,7 +87,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
 | `AcyclicEngine.dfy` | path compilation, direct checks, acyclic projections and counts |
-| `RecursiveEngine.dfy` | SCC reachability, forward/reverse worklists, limits, continuation replay |
+| `RecursiveEngine.dfy` | typed SCC routing, recursive reachability, forward/reverse worklists, limits, continuation replay |
 | `OrderedMerge.dfy` | ordered union and uniqueness |
 | `Pagination.dfy` | frontier and direction laws |
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
@@ -182,6 +187,24 @@ query-local. Production limits and dimensionally matching counters are instead
 shadowed against the generated indexed state machine. Cached and uncached
 public-client state traces cover Datomic, Datahike, and DataScript, including
 unrelated transactions and revocation.
+
+Recursive engine selection has a narrower generated oracle. Production first
+materializes complete permission dependencies as
+`[resource-type permission] -> [resource-type permission]` edges, then uses
+iterative Kosaraju SCC detection and reverse reachability to route SCC members
+and all transitive acyclic ancestors. The generated
+`DecideTypedTraversalPermission` method proves the equivalent typed
+least-closure predicate and is differentially checked in Java and JavaScript.
+The older `AcyclicEngine.PathDependencies` name-only arrow abstraction remains
+a conservative cache-scope model; it is not used as the exact routing claim.
+EACL-FORMAL-030 retains the same-permission-name counterexample.
+
+That semantic comparison is not a resource refinement. Production's stated
+O(V+E) routing cost begins after permission paths are materialized, while the
+generated oracle uses repeated finite closure scans. Lore commit
+`dabb5634b0d44e196e2b6ec63003917b3d445bec` informs the structural-risk
+inventory, but unsupported host operators and missing platform cost contracts
+mean it proves no production time, allocation, heap, or backend-work bound.
 
 This is still not a full-engine cutover. Materializing an entire database is
 not an acceptable hot-path implementation for large EACL graphs. Public

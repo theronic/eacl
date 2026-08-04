@@ -164,6 +164,32 @@ documents.
   entries had drifted into undeclared taxonomies. Replay now interprets and
   enforces every scalar, enumeration, union, vector, and relative-path field;
   existing entries were normalized without weakening the schema.
+- EACL-FORMAL-030 found that the older formal permission-dependency abstraction
+  drops the resolved resource type from arrow-permission targets. Reusing it as
+  an exact SCC-routing oracle can spuriously connect an unrelated same-named
+  permission to a recursive component. Production already retains the complete
+  `[resource-type permission]` node; a new `PermissionDependencyEdge` model now
+  does the same and proves the typed least closure, strong-component
+  classification, singleton self-loop rule, and inclusion of every transitive
+  acyclic ancestor. Generated Java and JavaScript agree with the actual shared
+  production analysis on seven adversarial graph shapes and all 512 labeled
+  directed graphs over three typed nodes. This is semantic differential
+  evidence, not an independent proof that the host Kosaraju implementation
+  refines the model.
+- Lore informs the resource boundary of that routing result: production
+  advertises an iterative O(V+E) Kosaraju pass plus reverse reachability after
+  paths are materialized, while the generated semantic oracle performs finite
+  least-closure scans. Those implementations have deliberately different cost
+  structures. No generated-oracle timing or structural Lore traversal finding
+  is accepted as a proof of production time, allocation, heap, or backend
+  work; a checked host-source/platform cost refinement would be required.
+- EACL-FORMAL-031 found that the post-build artifact gate was correctly
+  fail-closed but could not execute in GitHub Actions: its Babashka shebang had
+  no installed `bb` runtime. The previous CI run completed all 9,207 proof
+  efforts and generated builds, then failed with `bb: No such file or
+  directory` before size measurement. Formal CI now installs Babashka
+  1.12.213 explicitly, and the retained regression checks both that dependency
+  and that measurement follows the browser build.
 - Production shadow comparison covers recursive traversal values, ordering,
   page flags, counts, Boolean decisions, dimensionally matching cache-free
   resource counters, logical retained-state units, and typed traversal-limit
@@ -218,7 +244,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,207 proof efforts across 21
+- Clean checksum-locked Dafny cache: 9,234 proof efforts across 21
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -231,14 +257,14 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 29 minimized entries replayed by 31 tests and 1,495
+- Counterexample corpus: 31 minimized entries replayed by 33 tests and 1,669
   assertions, zero failures/errors.
-- Mutation controls: 41 Clojure detectors and 8 Apalache counterexample
-  controls; all 49 registered mutants killed.
-- Public non-benchmark CLJ suite: 468 tests, 17,901 assertions, zero failures/errors.
+- Mutation controls: 46 Clojure detectors and 8 Apalache counterexample
+  controls; all 54 registered mutants killed.
+- Public non-benchmark CLJ suite: 470 tests, 18,091 assertions, zero failures/errors.
 - DataScript CLJS suite: 136 tests, 4,235 assertions, zero failures/errors.
-- Generated Java suite: 38 tests, 7,595 assertions, zero failures/errors.
-- Generated JavaScript suite: 26 tests, 851 assertions, zero failures/errors.
+- Generated Java suite: 40 tests, 8,122 assertions, zero failures/errors.
+- Generated JavaScript suite: 28 tests, 1,378 assertions, zero failures/errors.
 - Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,288 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
@@ -271,11 +297,12 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,749,970 Java
-  source bytes, 1,597,574 Java class bytes, 766,357
-  JavaScript-with-runtime bytes, and an 845,730-byte browser bundle, each
-  against its own reviewed full-kernel baseline and 125-percent ceiling. Those
-  dimensions pass. Retained live heap remains `:not-established`, so the
+  benchmark-noise rules. The post-build artifact gate measured 1,765,891 Java
+  source bytes, 1,607,907 Java class bytes, 774,017
+  JavaScript-with-runtime bytes, and an 853,528-byte browser bundle against
+  reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
+  respectively, with a 125-percent ceiling. Those dimensions pass. Retained
+  live heap remains `:not-established`, so the
   evaluator and release manifest refuse performance cutover instead of
   substituting logical cache weight or the noise-dominated GC
   micro-measurement for a heap bound.
@@ -299,9 +326,12 @@ that the complete v8.0 engine is formally verified.
   proof-resource regression. Forward and reverse drive specifications are now
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
-  per-module CSV plus an aggregate JSON report. The exact 21-module replay
-  passed 9,207 proof efforts in 1,129.21 local wall seconds; its maximum effort
-  used 34,908,028 of the 50,000,000-unit limit. Explicit unfolding reduced the
+  per-module CSV plus an aggregate JSON report. The exact current 21-module
+  replay passed 9,234 proof efforts and consumed 3,645,506,567 deterministic
+  Z3 resource units; its maximum effort used 34,908,028 of the
+  50,000,000-unit limit. End-to-end wall time was not captured for that replay;
+  the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit
+  unfolding reduced the
   indexed-driver maximum from 161,654,668 to 10,270,077 resource units
   (15.74x). These are solver-cost gates, deliberately separate from production
   request latency, heap, and logical traversal work.

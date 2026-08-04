@@ -605,6 +605,760 @@ module RecursiveEngine {
   {
   }
 
+  ghost function HasSelfDependencyInPaths(
+    node: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  ): bool
+    decreases |paths|
+  {
+    if |paths| == 0 then
+      false
+    else
+      (AcyclicEngine.PathHead(paths[0]) == node &&
+       node in AcyclicEngine.PathDependencies(paths[0], permissions)) ||
+      HasSelfDependencyInPaths(node, paths[1..], permissions)
+  }
+
+  lemma HasSelfDependencyInPathsIsExact(
+    node: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures HasSelfDependencyInPaths(node, paths, permissions) <==>
+            HasSelfDependency(node, paths, permissions)
+    decreases |paths|
+  {
+    if |paths| != 0 {
+      HasSelfDependencyInPathsIsExact(
+        node,
+        paths[1..],
+        permissions
+      );
+    }
+  }
+
+  ghost function ComponentHasSelfDependencyScan(
+    component: set<Semantics.PermissionNode>,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>,
+    candidates: seq<Semantics.PermissionNode>
+  ): bool
+    decreases |candidates|
+  {
+    if |candidates| == 0 then
+      false
+    else
+      (candidates[0] in component &&
+       HasSelfDependencyInPaths(
+         candidates[0],
+         paths,
+         permissions
+       )) ||
+      ComponentHasSelfDependencyScan(
+        component,
+        paths,
+        permissions,
+        candidates[1..]
+      )
+  }
+
+  lemma ComponentHasSelfDependencyScanIsExact(
+    component: set<Semantics.PermissionNode>,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>,
+    candidates: seq<Semantics.PermissionNode>
+  )
+    ensures ComponentHasSelfDependencyScan(
+              component,
+              paths,
+              permissions,
+              candidates
+            ) <==>
+            exists node <- candidates ::
+              node in component &&
+              HasSelfDependency(node, paths, permissions)
+    decreases |candidates|
+  {
+    if |candidates| != 0 {
+      HasSelfDependencyInPathsIsExact(
+        candidates[0],
+        paths,
+        permissions
+      );
+      ComponentHasSelfDependencyScanIsExact(
+        component,
+        paths,
+        permissions,
+        candidates[1..]
+      );
+    }
+  }
+
+  lemma StrongComponentIsInPermissionUniverse(
+    node: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures StrongComponent(node, paths, permissions) <=
+            AcyclicEngine.PermissionUniverse(permissions)
+  {
+    BoundedReachabilityIsExactLeastClosure(
+      node,
+      paths,
+      permissions
+    );
+  }
+
+  ghost function IsRecursivePermissionNode(
+    node: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  ): bool
+  {
+    var component := StrongComponent(node, paths, permissions);
+    |component| > 1 ||
+    ComponentHasSelfDependencyScan(
+      component,
+      paths,
+      permissions,
+      permissions
+    )
+  }
+
+  lemma IsRecursivePermissionNodeIsExact(
+    node: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures IsRecursivePermissionNode(node, paths, permissions) <==>
+            RecursiveComponent(
+              StrongComponent(node, paths, permissions),
+              paths,
+              permissions
+            )
+  {
+    var component := StrongComponent(node, paths, permissions);
+    ComponentHasSelfDependencyScanIsExact(
+      component,
+      paths,
+      permissions,
+      permissions
+    );
+    StrongComponentIsInPermissionUniverse(
+      node,
+      paths,
+      permissions
+    );
+    if RecursiveComponent(component, paths, permissions) &&
+       |component| <= 1 {
+      var candidate :| candidate in component &&
+                       HasSelfDependency(
+                         candidate,
+                         paths,
+                         permissions
+                       );
+      assert candidate in
+               AcyclicEngine.PermissionUniverse(permissions);
+      assert candidate in permissions;
+    }
+  }
+
+  predicate DependsOnRecursiveComponent(
+    root: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  ) {
+    exists node <- permissions ::
+      node in BoundedReachability(root, paths, permissions) &&
+      RecursiveComponent(
+        StrongComponent(node, paths, permissions),
+        paths,
+        permissions
+      )
+  }
+
+  ghost function TraversalPermissionScan(
+    root: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>,
+    candidates: seq<Semantics.PermissionNode>
+  ): bool
+    decreases |candidates|
+  {
+    if |candidates| == 0 then
+      false
+    else
+      (candidates[0] in
+         BoundedReachability(root, paths, permissions) &&
+       IsRecursivePermissionNode(
+         candidates[0],
+         paths,
+         permissions
+       )) ||
+      TraversalPermissionScan(
+        root,
+        paths,
+        permissions,
+        candidates[1..]
+      )
+  }
+
+  lemma TraversalPermissionScanIsExact(
+    root: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>,
+    candidates: seq<Semantics.PermissionNode>
+  )
+    ensures TraversalPermissionScan(
+              root,
+              paths,
+              permissions,
+              candidates
+            ) <==>
+            exists node <- candidates ::
+              node in
+                BoundedReachability(root, paths, permissions) &&
+              RecursiveComponent(
+                StrongComponent(node, paths, permissions),
+                paths,
+                permissions
+              )
+    decreases |candidates|
+  {
+    if |candidates| != 0 {
+      IsRecursivePermissionNodeIsExact(
+        candidates[0],
+        paths,
+        permissions
+      );
+      TraversalPermissionScanIsExact(
+        root,
+        paths,
+        permissions,
+        candidates[1..]
+      );
+    }
+  }
+
+  lemma RecursiveDependencyMatchesReachableComponents(
+    root: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures DependsOnRecursiveComponent(root, paths, permissions) <==>
+            ReachableRecursiveComponents(
+              root,
+              paths,
+              permissions
+            ) != {}
+  {
+    BoundedReachabilityIsExactLeastClosure(
+      root,
+      paths,
+      permissions
+    );
+    if DependsOnRecursiveComponent(root, paths, permissions) {
+      var node :| node in permissions &&
+                  node in
+                    BoundedReachability(root, paths, permissions) &&
+                  RecursiveComponent(
+                    StrongComponent(node, paths, permissions),
+                    paths,
+                    permissions
+                  );
+      assert StrongComponent(node, paths, permissions) in
+               ReachableRecursiveComponents(root, paths, permissions);
+    }
+    if ReachableRecursiveComponents(
+        root,
+        paths,
+        permissions
+      ) != {} {
+      var component :|
+        component in
+          ReachableRecursiveComponents(root, paths, permissions);
+      RecursiveComponentDetectionIsExact(
+        root,
+        paths,
+        permissions,
+        component
+      );
+      var node :|
+        node in BoundedReachability(root, paths, permissions) &&
+        component ==
+        StrongComponent(node, paths, permissions) &&
+        RecursiveComponent(component, paths, permissions);
+      assert node in
+               AcyclicEngine.PermissionUniverse(permissions);
+      assert node in permissions;
+    }
+  }
+
+  ghost method DecideAbstractTraversalPermission(
+    root: Semantics.PermissionNode,
+    paths: seq<AcyclicEngine.CompiledPath>,
+    permissions: seq<Semantics.PermissionNode>
+  ) returns (traversal: bool)
+    ensures traversal <==>
+            DependsOnRecursiveComponent(root, paths, permissions)
+    ensures traversal <==>
+            ReachableRecursiveComponents(
+              root,
+              paths,
+              permissions
+            ) != {}
+  {
+    traversal :=
+      TraversalPermissionScan(
+        root,
+        paths,
+        permissions,
+        permissions
+      );
+    TraversalPermissionScanIsExact(
+      root,
+      paths,
+      permissions,
+      permissions
+    );
+    RecursiveDependencyMatchesReachableComponents(
+      root,
+      paths,
+      permissions
+    );
+  }
+
+  // `AcyclicEngine.PathDependencies` is deliberately independent of a
+  // relation catalog.  For an arrow permission it therefore identifies the
+  // target by permission name, which is a safe over-approximation for cache
+  // proof scopes but is not an exact representation of production routing
+  // when different resource types reuse a permission name.
+  //
+  // Production materialization has already resolved every dependency to its
+  // complete PermissionNode.  The following edge model preserves that typed
+  // identity and is the exact semantic oracle for `calc-traversal-analysis`.
+  datatype PermissionDependencyEdge = PermissionDependencyEdge(
+    head: Semantics.PermissionNode,
+    target: Semantics.PermissionNode
+  )
+
+  function RoutingUniverse(
+    permissions: seq<Semantics.PermissionNode>
+  ): set<Semantics.PermissionNode> {
+    set node <- permissions
+  }
+
+  function RoutingStep(
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    current: set<Semantics.PermissionNode>
+  ): set<Semantics.PermissionNode> {
+    current +
+    set target <- RoutingUniverse(permissions) |
+        exists edge <- edges ::
+          edge.head in current && edge.target == target
+  }
+
+  lemma RoutingStepIsMonotone(
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    smaller: set<Semantics.PermissionNode>,
+    larger: set<Semantics.PermissionNode>
+  )
+    requires smaller <= larger
+    ensures RoutingStep(edges, permissions, smaller) <=
+            RoutingStep(edges, permissions, larger)
+  {
+  }
+
+  function RoutingClosure(
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    current: set<Semantics.PermissionNode>
+  ): set<Semantics.PermissionNode>
+    requires current <= RoutingUniverse(permissions)
+    decreases RoutingUniverse(permissions) - current
+  {
+    var next := RoutingStep(edges, permissions, current);
+    if next == current then
+      current
+    else
+      RoutingClosure(edges, permissions, next)
+  }
+
+  lemma RoutingClosureIsFixed(
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    current: set<Semantics.PermissionNode>
+  )
+    requires current <= RoutingUniverse(permissions)
+    ensures current <= RoutingClosure(edges, permissions, current)
+    ensures RoutingClosure(edges, permissions, current) <=
+            RoutingUniverse(permissions)
+    ensures RoutingStep(
+              edges,
+              permissions,
+              RoutingClosure(edges, permissions, current)
+            ) ==
+            RoutingClosure(edges, permissions, current)
+    decreases RoutingUniverse(permissions) - current
+  {
+    var next := RoutingStep(edges, permissions, current);
+    if next != current {
+      RoutingClosureIsFixed(edges, permissions, next);
+    }
+  }
+
+  lemma RoutingClosureIsLeast(
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    current: set<Semantics.PermissionNode>,
+    fixed: set<Semantics.PermissionNode>
+  )
+    requires current <= fixed
+    requires fixed <= RoutingUniverse(permissions)
+    requires RoutingStep(edges, permissions, fixed) == fixed
+    ensures RoutingClosure(edges, permissions, current) <= fixed
+    decreases RoutingUniverse(permissions) - current
+  {
+    var next := RoutingStep(edges, permissions, current);
+    RoutingStepIsMonotone(
+      edges,
+      permissions,
+      current,
+      fixed
+    );
+    if next != current {
+      RoutingClosureIsLeast(
+        edges,
+        permissions,
+        next,
+        fixed
+      );
+    }
+  }
+
+  function RoutingReachability(
+    root: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  ): set<Semantics.PermissionNode> {
+    RoutingClosure(
+      edges,
+      permissions,
+      if root in RoutingUniverse(permissions)
+      then {root}
+      else {}
+    )
+  }
+
+  lemma RoutingReachabilityIsExactLeastClosure(
+    root: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures RoutingReachability(root, edges, permissions) <=
+            RoutingUniverse(permissions)
+    ensures RoutingStep(
+              edges,
+              permissions,
+              RoutingReachability(root, edges, permissions)
+            ) ==
+            RoutingReachability(root, edges, permissions)
+    ensures root in RoutingUniverse(permissions) ==>
+              root in RoutingReachability(root, edges, permissions)
+    ensures forall fixed |
+              (root in RoutingUniverse(permissions) ==>
+                 root in fixed) &&
+              fixed <= RoutingUniverse(permissions) &&
+              RoutingStep(edges, permissions, fixed) == fixed ::
+              RoutingReachability(root, edges, permissions) <= fixed
+  {
+    var initial :=
+      if root in RoutingUniverse(permissions)
+      then {root}
+      else {};
+    RoutingClosureIsFixed(edges, permissions, initial);
+    forall fixed |
+      (root in RoutingUniverse(permissions) ==> root in fixed) &&
+      fixed <= RoutingUniverse(permissions) &&
+      RoutingStep(edges, permissions, fixed) == fixed
+      ensures RoutingReachability(root, edges, permissions) <= fixed
+    {
+      RoutingClosureIsLeast(
+        edges,
+        permissions,
+        initial,
+        fixed
+      );
+    }
+  }
+
+  function RoutingStrongComponent(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  ): set<Semantics.PermissionNode> {
+    set candidate <- RoutingUniverse(permissions) |
+        candidate in RoutingReachability(node, edges, permissions) &&
+        node in RoutingReachability(candidate, edges, permissions)
+  }
+
+  predicate RoutingHasSelfDependency(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>
+  ) {
+    exists edge <- edges ::
+      edge.head == node && edge.target == node
+  }
+
+  predicate RoutingRecursiveComponent(
+    component: set<Semantics.PermissionNode>,
+    edges: seq<PermissionDependencyEdge>
+  ) {
+    |component| > 1 ||
+    exists node <- component ::
+      RoutingHasSelfDependency(node, edges)
+  }
+
+  predicate RoutingDependsOnRecursiveComponent(
+    root: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  ) {
+    exists node <- permissions ::
+      node in RoutingReachability(root, edges, permissions) &&
+      RoutingRecursiveComponent(
+        RoutingStrongComponent(node, edges, permissions),
+        edges
+      )
+  }
+
+  function RoutingSelfEdgeScan(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>
+  ): bool
+    decreases |edges|
+  {
+    if |edges| == 0 then
+      false
+    else
+      (edges[0].head == node && edges[0].target == node) ||
+      RoutingSelfEdgeScan(node, edges[1..])
+  }
+
+  lemma RoutingSelfEdgeScanIsExact(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>
+  )
+    ensures RoutingSelfEdgeScan(node, edges) <==>
+            RoutingHasSelfDependency(node, edges)
+    decreases |edges|
+  {
+    if |edges| != 0 {
+      RoutingSelfEdgeScanIsExact(node, edges[1..]);
+    }
+  }
+
+  function RoutingComponentSelfScan(
+    component: set<Semantics.PermissionNode>,
+    edges: seq<PermissionDependencyEdge>,
+    candidates: seq<Semantics.PermissionNode>
+  ): bool
+    decreases |candidates|
+  {
+    if |candidates| == 0 then
+      false
+    else
+      (candidates[0] in component &&
+       RoutingSelfEdgeScan(candidates[0], edges)) ||
+      RoutingComponentSelfScan(
+        component,
+        edges,
+        candidates[1..]
+      )
+  }
+
+  lemma RoutingComponentSelfScanIsExact(
+    component: set<Semantics.PermissionNode>,
+    edges: seq<PermissionDependencyEdge>,
+    candidates: seq<Semantics.PermissionNode>
+  )
+    ensures RoutingComponentSelfScan(
+              component,
+              edges,
+              candidates
+            ) <==>
+            exists node <- candidates ::
+              node in component &&
+              RoutingHasSelfDependency(node, edges)
+    decreases |candidates|
+  {
+    if |candidates| != 0 {
+      RoutingSelfEdgeScanIsExact(candidates[0], edges);
+      RoutingComponentSelfScanIsExact(
+        component,
+        edges,
+        candidates[1..]
+      );
+    }
+  }
+
+  lemma RoutingStrongComponentIsInUniverse(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures RoutingStrongComponent(node, edges, permissions) <=
+            RoutingUniverse(permissions)
+  {
+    RoutingReachabilityIsExactLeastClosure(
+      node,
+      edges,
+      permissions
+    );
+  }
+
+  function IsRoutingRecursiveNode(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  ): bool {
+    var component :=
+      RoutingStrongComponent(node, edges, permissions);
+    |component| > 1 ||
+    RoutingComponentSelfScan(component, edges, permissions)
+  }
+
+  lemma IsRoutingRecursiveNodeIsExact(
+    node: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  )
+    ensures IsRoutingRecursiveNode(node, edges, permissions) <==>
+            RoutingRecursiveComponent(
+              RoutingStrongComponent(node, edges, permissions),
+              edges
+            )
+  {
+    var component :=
+      RoutingStrongComponent(node, edges, permissions);
+    RoutingComponentSelfScanIsExact(
+      component,
+      edges,
+      permissions
+    );
+    RoutingStrongComponentIsInUniverse(
+      node,
+      edges,
+      permissions
+    );
+    if RoutingRecursiveComponent(component, edges) &&
+       |component| <= 1 {
+      var candidate :| candidate in component &&
+                       RoutingHasSelfDependency(candidate, edges);
+      assert candidate in RoutingUniverse(permissions);
+      assert candidate in permissions;
+    }
+  }
+
+  function RoutingTraversalScan(
+    root: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    candidates: seq<Semantics.PermissionNode>
+  ): bool
+    decreases |candidates|
+  {
+    if |candidates| == 0 then
+      false
+    else
+      (candidates[0] in
+         RoutingReachability(root, edges, permissions) &&
+       IsRoutingRecursiveNode(
+         candidates[0],
+         edges,
+         permissions
+       )) ||
+      RoutingTraversalScan(
+        root,
+        edges,
+        permissions,
+        candidates[1..]
+      )
+  }
+
+  lemma RoutingTraversalScanIsExact(
+    root: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>,
+    candidates: seq<Semantics.PermissionNode>
+  )
+    ensures RoutingTraversalScan(
+              root,
+              edges,
+              permissions,
+              candidates
+            ) <==>
+            exists node <- candidates ::
+              node in RoutingReachability(
+                        root,
+                        edges,
+                        permissions
+                      ) &&
+              RoutingRecursiveComponent(
+                RoutingStrongComponent(
+                  node,
+                  edges,
+                  permissions
+                ),
+                edges
+              )
+    decreases |candidates|
+  {
+    if |candidates| != 0 {
+      IsRoutingRecursiveNodeIsExact(
+        candidates[0],
+        edges,
+        permissions
+      );
+      RoutingTraversalScanIsExact(
+        root,
+        edges,
+        permissions,
+        candidates[1..]
+      );
+    }
+  }
+
+  method DecideTypedTraversalPermission(
+    root: Semantics.PermissionNode,
+    edges: seq<PermissionDependencyEdge>,
+    permissions: seq<Semantics.PermissionNode>
+  ) returns (traversal: bool)
+    ensures traversal <==>
+            RoutingDependsOnRecursiveComponent(
+              root,
+              edges,
+              permissions
+            )
+  {
+    traversal :=
+      RoutingTraversalScan(
+        root,
+        edges,
+        permissions,
+        permissions
+      );
+    RoutingTraversalScanIsExact(
+      root,
+      edges,
+      permissions,
+      permissions
+    );
+  }
+
   function CompileRecursiveRules(
     definitions: seq<Semantics.RuleDefinition>,
     reachable: set<Semantics.PermissionNode>

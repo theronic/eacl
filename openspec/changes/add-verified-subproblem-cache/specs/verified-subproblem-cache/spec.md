@@ -321,3 +321,9 @@ refinement contract for that measure.
   reviewed full-kernel baseline and the gate fails above its configured growth
   bound
 - **AND** a stale foundation baseline cannot satisfy the current-build gate
+
+#### Scenario: Artifact gate runtime is unavailable or drifts
+- **WHEN** formal CI reaches generated-artifact measurement
+- **THEN** the exact versioned gate runtime is already installed and validated
+- **AND** a missing or different runtime fails the job rather than skipping,
+  weakening, or marking the measurement passed

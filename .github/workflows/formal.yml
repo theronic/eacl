@@ -31,6 +31,7 @@ jobs:
         with:
           cli: latest
           clj-kondo: '2025.02.20'
+          bb: '1.12.213'
 
       - name: Set up Node
         uses: actions/setup-node@v4

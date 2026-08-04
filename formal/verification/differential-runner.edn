@@ -67,8 +67,23 @@
    :materialized-reference
    {:authorization-values :complete-results-only
     :operational-limit-refinement :not-claimed}
-   :suite-tests 26
-   :suite-assertions 851
+   :suite-tests 28
+   :suite-assertions 1378
+   :status :passed}
+  {:name :shared-recursive-scc-routing
+   :namespace eacl.formal.production-kernel-test
+   :tests
+   [generated-java-classifies-production-recursive-routing
+    generated-java-exhausts-three-node-recursive-routing-graphs
+    generated-javascript-classifies-production-recursive-routing
+    generated-javascript-exhausts-three-node-recursive-routing-graphs]
+   :implementation-classes
+   [:production-iterative-kosaraju
+    :verified-generated-java-typed-least-closure
+    :verified-generated-javascript-typed-least-closure]
+   :adversarial-graph-shapes-per-runtime 7
+   :exhaustive-labeled-three-node-graphs-per-runtime 512
+   :counterexample :EACL-FORMAL-030
    :status :passed}
   {:name :portable-runner-clj-cljs
    :namespace eacl.formal.differential-runner-test

@@ -22,7 +22,7 @@
     Presence
     RawPageRequest)
    (Pagination Direction)
-   (RecursiveEngine TraversalLimits)
+   (RecursiveEngine PermissionDependencyEdge TraversalLimits)
    (SubproblemCache CandidateState)
    (Semantics
     ObjectRef
@@ -65,6 +65,26 @@
   (PermissionNode/create
    (dafny-string resource-type)
    (dafny-string permission)))
+
+(defn- permission-dependency-edge
+  [{:keys [head target]}]
+  (PermissionDependencyEdge/create
+   (permission-node head)
+   (permission-node target)))
+
+(defn typed-traversal-permission?
+  "Runs the generated exact SCC-routing oracle over fully typed dependency
+  edges. This is a semantic oracle; its closure scans are not a resource model
+  of production's iterative O(V+E) Kosaraju implementation."
+  [{:keys [root edges permissions]}]
+  (RecursiveEngine.__default/DecideTypedTraversalPermission
+   (permission-node root)
+   (typed-sequence
+    (PermissionDependencyEdge/_typeDescriptor)
+    (mapv permission-dependency-edge edges))
+   (typed-sequence
+    (PermissionNode/_typeDescriptor)
+    (mapv permission-node permissions))))
 
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]

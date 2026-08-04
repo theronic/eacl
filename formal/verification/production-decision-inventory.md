@@ -21,6 +21,17 @@ reused.
 | Cache provider failure/tamper handling | `eacl.cache` read, authentication, proof-provider, and validation paths | whether a cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
 
+Recursive routing now has a typed semantic oracle:
+`RecursiveEngine.DecideTypedTraversalPermission` consumes complete
+`[resource-type permission]` dependency edges and proves that a root is routed
+exactly when it transitively reaches a multi-node SCC or a singleton self-loop.
+Generated Java and JavaScript agree with production's shared iterative
+Kosaraju/reverse-reachability analysis on seven adversarial shapes and all 512
+labeled directed graphs over three typed nodes. EACL-FORMAL-030 records why
+the older permission-name-only arrow abstraction cannot support this exact
+claim. The host-source refinement and production O(V+E) resource proof remain
+open and are not implied by the differential campaign.
+
 ## Public operation coverage
 
 The decisions above flow into these externally observable families:

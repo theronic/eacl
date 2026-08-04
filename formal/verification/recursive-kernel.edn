@@ -4,10 +4,15 @@
  :scope :recursive-kernel
  :proof
  {:source "formal/dafny/RecursiveEngine.dfy"
-  :verified-obligations 46
+  :verified-obligations 73
   :claims
   [:least-dependency-closure
    :reachable-recursive-scc-detection
+   :typed-production-routing-edge-identity
+   :typed-production-routing-least-closure
+   :typed-production-routing-strong-components
+   :typed-production-routing-singleton-self-loop
+   :typed-production-routing-includes-acyclic-ancestors
    :recursive-rule-compilation-denotation
    :finite-forward-worklist-termination
    :forward-soundness-and-completeness
@@ -31,22 +36,24 @@
   :qualification
   :the-materialized-counter-is-not-a-query-local-cumulative-work-or-runtime-bound}
  :generated-targets
- {:java
+  {:java
   {:status :passed
-   :tests 8
-   :assertions 257
+   :tests 10
+   :assertions 784
    :failures 0
    :errors 0}
   :javascript
   {:status :passed
-   :tests 3
-   :assertions 18
+   :tests 5
+   :assertions 545
    :failures 0
    :errors 0}}
  :differential
  {:implementations
   [:independent-least-fixed-point-oracle
    :generated-java
+   :generated-javascript
+   :eacl-engine-v8-shared-traversal-analysis
    :eacl-engine-v8-datascript]
   :fixtures
   [:recursive-chain
@@ -56,15 +63,34 @@
    :wide
    :duplicate-path
    :empty-seed
-   :limit-exceeded]
+   :limit-exceeded
+   :routing-empty
+   :routing-singleton-self-loop
+   :routing-two-node-scc-with-ancestor
+   :routing-disconnected-scc
+   :routing-acyclic-diamond
+   :routing-deep-ancestor-chain
+   :routing-same-permission-name-distinct-resource-types
+   :all-512-labeled-directed-graphs-on-three-typed-nodes]
   :status :passed
   :retained-mismatches 0}
+ :routing-refinement
+ {:production-algorithm :iterative-kosaraju-plus-reverse-reachability
+  :formal-oracle :typed-permission-dependency-edge-least-closure
+  :complete-node-identity [:resource-type :permission]
+  :counterexample :EACL-FORMAL-030
+  :source-specialization-report
+  "formal/verification/source-specializations.edn"
+  :source-refinement-review :pending-independent-review
+  :resource-refinement :not-claimed}
  :performance-observation
  {:status :not-cutover-ready
   :reason :generated-kernel-recomputes-the-finite-closure-per-operation
   :representative-jvm-formal-suite-seconds 15.45}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
+  :older-name-only-path-dependency-is-conservative-cache-scope-not-exact-routing
+  :typed-routing-oracle-is-semantic-not-production-resource-model
   :full-pagination-and-cursor-obligations-remain
   :cross-adapter-recursive-differential-campaign-remains
   :performance-cutover-gate-remains]}

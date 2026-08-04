@@ -1,5 +1,6 @@
 (ns eacl.characterization-fixture-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [eacl.authorization-oracle :as oracle]
             [eacl.subproblem-cache :as subproblem]
@@ -95,7 +96,9 @@
         (edn/read-string
          (slurp
           (repo/file
-           (:machine-readable-config generated-artifacts))))]
+           (:machine-readable-config generated-artifacts))))
+        formal-workflow
+        (slurp (repo/file ".github" "workflows" "formal.yml"))]
     (is (= :host-specific-measurement
            (:wall-clock-assurance formal-pipeline)))
     (is (< 0
@@ -111,12 +114,23 @@
            (:measurement-command generated-artifacts)))
     (is (= :after-all-generated-artifacts-are-rebuilt
            (:measurement-order generated-artifacts)))
+    (is (= {:tool :babashka
+            :version "1.12.213"
+            :ci-installed true}
+           (:gate-runtime generated-artifacts)))
+    (is (str/includes? formal-workflow "bb: '1.12.213'"))
+    (is (str/includes? formal-workflow "bin/formal browser-bundle"))
+    (is (str/includes? formal-workflow "bin/formal artifact-size"))
+    (is (< (.indexOf formal-workflow "bin/formal browser-bundle")
+           (.indexOf formal-workflow "bin/formal artifact-size")))
     (is (= :reviewed-full-kernel-baseline
            (get-in generated-artifacts [:cutover-rule :status])))
     (is (.isFile
          (repo/file (:machine-readable-config generated-artifacts))))
     (is (= :uncompressed-byte-length
            (:measurement generated-artifact-config)))
+    (is (= (dissoc (:gate-runtime generated-artifacts) :ci-installed)
+           (:gate-runtime generated-artifact-config)))
     (is (= (get-in generated-artifacts
                    [:cutover-rule
                     :maximum-growth-over-reviewed-full-kernel])

@@ -1,6 +1,6 @@
 (ns eacl.formal.production-kernel-test
   (:require
-   [cljs.test :refer-macros [deftest is]]
+   [cljs.test :refer-macros [deftest is testing]]
    [datascript.core :as ds]
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
@@ -66,6 +66,189 @@
   [left right]
   (production/acyclic-leapfrog-intersection
    {:left left :right right}))
+
+(defn- routing-node
+  [[resource-type permission]]
+  {:resource-type (pr-str resource-type)
+   :permission (pr-str permission)})
+
+(defn- generated-traversal-analysis
+  [nodes edges]
+  (let [permissions (mapv routing-node nodes)
+        input-edges
+        (mapv
+         (fn [[head target]]
+           {:head (routing-node head)
+            :target (routing-node target)})
+         edges)]
+    (into
+     {}
+     (map
+      (fn [root]
+        [root
+         (production/typed-traversal-permission?
+          {:root (routing-node root)
+           :edges input-edges
+           :permissions permissions})])
+      nodes))))
+
+(defn- routing-test-adapter
+  [nodes edges]
+  (let [edge-records
+        (map-indexed
+         (fn [index [[source-type source-permission :as head]
+                    [target-type target-permission]]]
+           (let [relation-name
+                 (keyword "formal.routing" (str "edge-" index))]
+             {:head head
+              :relation-name relation-name
+              :relation
+              (when (not= source-type target-type)
+                {:relation-id (inc index)
+                 :resource-type source-type
+                 :relation-name relation-name
+                 :subject-type target-type})
+              :permission
+              {:permission-id (+ 1000 index)
+               :resource-type source-type
+               :permission-name source-permission
+               :source-relation-name
+               (if (= source-type target-type)
+                 :self
+                 relation-name)
+               :target-type :permission
+               :target-name target-permission}}))
+         edges)
+        relations
+        (into
+         {}
+         (keep
+          (fn [{:keys [relation]}]
+            (when relation
+              [[(:resource-type relation)
+                (:relation-name relation)]
+               [relation]])))
+         edge-records)
+        permissions
+        (->> edge-records
+             (group-by :head)
+             (into {}
+                   (map
+                    (fn [[head records]]
+                      [head (mapv :permission records)]))))]
+    (backend/make-adapter
+     {:id :formal-routing-test
+      :capabilities
+      {:consistency #{:minimize-latency}
+       :snapshots #{:current}
+       :source #{:scoped}
+       :cursor #{:forward :backward}
+       :transactions #{}
+       :cache-proofs #{:schema :relations}
+       :runtime #{:cljs}}
+      :operations
+      (merge
+       (into {}
+             (map
+              (fn [operation]
+                [operation (fn [& _] nil)]))
+             backend/required-snapshot-operations)
+       {:snapshot-id
+        (constantly {:database-id :formal-routing :basis-t 1})
+        :source-scope
+        (constantly {:source-id :formal-routing :branch nil})
+        :schema-proof
+        (fn
+          ([] :schema-proof)
+          ([_] :schema-proof))
+        :relation-defs
+        (fn [resource-type relation-name]
+          (get relations [resource-type relation-name] []))
+        :permission-defs
+        (fn [resource-type permission-name]
+          (get permissions [resource-type permission-name] []))
+        :all-permission-nodes
+        (constantly (set nodes))})})))
+
+(defn- source-traversal-analysis
+  [nodes edges]
+  (let [adapter (routing-test-adapter nodes edges)
+        schema-cache (engine/make-schema-cache adapter :schema-proof)]
+    (binding [engine/*schema-cache* schema-cache]
+      (into
+       {}
+       (map
+        (fn [[resource-type permission :as node]]
+          [node
+           (engine/traversal-permission?
+            adapter resource-type permission)])
+        nodes)))))
+
+(deftest generated-javascript-classifies-production-recursive-routing
+  (let [a [:alpha :read]
+        b [:beta :read]
+        c [:charlie :read]
+        d [:delta :read]
+        e [:echo :read]
+        document-read [:document :read]
+        team-view [:team :view]
+        folder-view [:folder :view]
+        cases
+        [{:label "empty graph"
+          :nodes [a b]
+          :edges []
+          :expected {a false b false}}
+         {:label "singleton self-loop"
+          :nodes [a b]
+          :edges [[a a]]
+          :expected {a true b false}}
+         {:label "two-node SCC and acyclic ancestor"
+          :nodes [a b c d]
+          :edges [[a b] [b a] [c a]]
+          :expected {a true b true c true d false}}
+         {:label "disconnected recursive component"
+          :nodes [a b c d]
+          :edges [[a b] [b a] [c d]]
+          :expected {a true b true c false d false}}
+         {:label "acyclic diamond"
+          :nodes [a b c d]
+          :edges [[a b] [a c] [b d] [c d]]
+          :expected {a false b false c false d false}}
+         {:label "deep ancestor chain"
+          :nodes [a b c d e]
+          :edges [[a b] [b c] [c d] [d e] [e e]]
+          :expected {a true b true c true d true e true}}
+         {:label "same permission name on unrelated resource types"
+          :nodes [document-read team-view folder-view]
+          :edges [[document-read team-view]
+                  [folder-view folder-view]]
+          :expected
+          {document-read false
+           team-view false
+           folder-view true}}]]
+    (doseq [{:keys [label nodes edges expected]} cases]
+      (testing label
+        (let [source (source-traversal-analysis nodes edges)
+              generated (generated-traversal-analysis nodes edges)]
+          (is (= expected source))
+          (is (= source generated)))))))
+
+(deftest generated-javascript-exhausts-three-node-recursive-routing-graphs
+  (let [nodes
+        [[:document :view]
+         [:team :view]
+         [:folder :read]]
+        possible-edges
+        (vec
+         (for [head nodes
+               target nodes]
+           [head target]))
+        graphs (power-set possible-edges)]
+    (is (= 512 (count graphs)))
+    (doseq [edges graphs]
+      (is (= (source-traversal-analysis nodes edges)
+             (generated-traversal-analysis nodes edges))
+          (str "routing mismatch for edges " (pr-str edges))))))
 
 (def authorization-input
   {:objects [{:type "user" :id "u1"}

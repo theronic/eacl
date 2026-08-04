@@ -62,7 +62,11 @@
     :EACL-FORMAL-028
     eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
     :EACL-FORMAL-029
-    eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test})
+    eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test
+    :EACL-FORMAL-030
+    eacl.formal.production-kernel-test/generated-java-classifies-production-recursive-routing
+    :EACL-FORMAL-031
+    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test})
 
 (defn- read-edn
   [path]
@@ -141,8 +145,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-029 (:latest revision)))
-    (is (= 29 (count entries)))))
+    (is (= :EACL-FORMAL-031 (:latest revision)))
+    (is (= 31 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

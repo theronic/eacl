@@ -71,15 +71,17 @@
 
  :formal-pipeline
  {:scope :all-21-dafny-modules
-  :proof-efforts 9207
+  :proof-efforts 9234
   :last-observed-local-wall-seconds 1129.21
+  :last-observed-wall-proof-efforts 9207
+  :current-run-wall-clock :not-captured
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 1800
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3644291391
+  :total-observed-resource-count 3645506567
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -134,6 +136,10 @@
  :generated-artifacts
  {:measurement-command "bin/formal artifact-size"
   :measurement-order :after-all-generated-artifacts-are-rebuilt
+  :gate-runtime
+  {:tool :babashka
+   :version "1.12.213"
+   :ci-installed true}
   :machine-readable-config
   "formal/verification/generated-artifact-size.edn"
   :machine-readable-observation

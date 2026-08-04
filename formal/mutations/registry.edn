@@ -229,6 +229,12 @@
    :killed-by
    {:invariant :generated-artifact-size-gate-measures-current-rebuilt-files
     :test :quantitative-performance-gates-are-well-formed-test}}
+  {:id :generated-artifact-gate-runtime-not-installed
+   :mechanism :invoke-the-babashka-artifact-gate-without-installing-babashka
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :formal-ci-installs-every-gate-runtime-before-use
+    :test :quantitative-performance-gates-are-well-formed-test}}
   {:id :counterexample-ledger-values-unvalidated
    :mechanism :check-required-field-presence-without-validating-the-declared-value-schema
    :control {:kind :clojure}
@@ -247,6 +253,30 @@
    :killed-by
    {:invariant :shadow-comparison-preserves-page-size-error-data
     :test :recursive-shadow-compares-complete-public-results}}
+  {:id :routing-node-identity-drops-resource-type
+   :mechanism :resolve-arrow-permission-targets-by-permission-name-alone
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :typed-routing-edge-preserves-complete-permission-node
+    :test :generated-runtime-classifies-production-recursive-routing}}
+  {:id :routing-only-recursive-component-members
+   :mechanism :route-only-nodes-inside-a-recursive-scc-through-traversal
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :routing-traversal-includes-every-acyclic-ancestor
+    :test :generated-runtime-classifies-production-recursive-routing}}
+  {:id :routing-singleton-self-loop-ignored
+   :mechanism :classify-recursion-only-when-an-scc-has-more-than-one-node
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :singleton-self-edge-is-a-recursive-component
+    :test :generated-runtime-classifies-production-recursive-routing}}
+  {:id :routing-dependency-direction-reversed
+   :mechanism :follow-permission-dependencies-from-target-to-head
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :routing-reachability-follows-head-to-target
+    :test :generated-runtime-classifies-production-recursive-routing}}
   {:id :partial-denotation-hit
    :mechanism :allow-partial-denotation-as-cache-hit
    :control

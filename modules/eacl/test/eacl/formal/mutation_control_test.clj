@@ -503,6 +503,17 @@
     (and (true? stale-gate-passed?)
          (true? current-exceeds-old-maxima?))))
 
+(defn- generated-artifact-gate-runtime-not-installed-killed?
+  []
+  (let [gate-interpreter :bb
+        installed-runtimes #{:clojure :node :clj-kondo}
+        correct
+        (contains? (conj installed-runtimes :bb) gate-interpreter)
+        mutant
+        (contains? installed-runtimes gate-interpreter)]
+    (and (true? correct)
+         (false? mutant))))
+
 (defn- counterexample-ledger-values-unvalidated-killed?
   []
   (let [allowed #{:manual-review :dafny :apalache :differential :property}
@@ -536,6 +547,75 @@
                (select-keys generated correct-fields))
          (= (select-keys legacy mutant-fields)
             (select-keys generated mutant-fields)))))
+
+(defn- routing-node-identity-drops-resource-type-killed?
+  []
+  (let [document-read [:document :read]
+        team-view [:team :view]
+        folder-view [:folder :view]
+        typed-edges
+        #{[document-read team-view]
+          [folder-view folder-view]}
+        correct-targets
+        (into #{}
+              (keep
+               (fn [[head target]]
+                 (when (= document-read head) target)))
+              typed-edges)
+        mutant-targets
+        (into #{}
+              (for [[head target] typed-edges
+                    :when (= document-read head)
+                    candidate [team-view folder-view]
+                    :when (= (second target) (second candidate))]
+                candidate))]
+    (and (= #{team-view} correct-targets)
+         (= #{team-view folder-view} mutant-targets)
+         (contains? mutant-targets folder-view))))
+
+(defn- routing-only-recursive-component-members-killed?
+  []
+  (let [ancestor [:document :read]
+        recursive-a [:folder :read]
+        recursive-b [:team :read]
+        recursive-component #{recursive-a recursive-b}
+        reaches-recursive? true
+        correct reaches-recursive?
+        mutant (contains? recursive-component ancestor)]
+    (and (true? correct)
+         (false? mutant))))
+
+(defn- routing-singleton-self-loop-ignored-killed?
+  []
+  (let [node [:folder :read]
+        component #{node}
+        self-edge? true
+        correct
+        (or (> (count component) 1) self-edge?)
+        mutant
+        (> (count component) 1)]
+    (and (true? correct)
+         (false? mutant))))
+
+(defn- routing-dependency-direction-reversed-killed?
+  []
+  (let [ancestor [:document :read]
+        recursive [:folder :read]
+        edges #{[ancestor recursive] [recursive recursive]}
+        forward-targets
+        (into #{}
+              (keep
+               (fn [[head target]]
+                 (when (= ancestor head) target)))
+              edges)
+        reversed-targets
+        (into #{}
+              (keep
+               (fn [[head target]]
+                 (when (= ancestor target) head)))
+              edges)]
+    (and (contains? forward-targets recursive)
+         (not (contains? reversed-targets recursive)))))
 
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
@@ -605,12 +685,22 @@
    materialized-resource-counter-promoted-to-production-killed?
    :generated-artifact-gate-uses-stale-baseline
    generated-artifact-gate-uses-stale-baseline-killed?
+   :generated-artifact-gate-runtime-not-installed
+   generated-artifact-gate-runtime-not-installed-killed?
    :counterexample-ledger-values-unvalidated
    counterexample-ledger-values-unvalidated-killed?
    :generated-stale-cursor-leaks-render-details
    generated-stale-cursor-leaks-render-details-killed?
    :shadow-typed-error-omits-page-size
-   shadow-typed-error-omits-page-size-killed?})
+   shadow-typed-error-omits-page-size-killed?
+   :routing-node-identity-drops-resource-type
+   routing-node-identity-drops-resource-type-killed?
+   :routing-only-recursive-component-members
+   routing-only-recursive-component-members-killed?
+   :routing-singleton-self-loop-ignored
+   routing-singleton-self-loop-ignored-killed?
+   :routing-dependency-direction-reversed
+   routing-dependency-direction-reversed-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

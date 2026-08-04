@@ -126,6 +126,32 @@
    :ci [:generated-production-kernel
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
+  {:operation :recursive-scc-routing
+   :entry-points ['eacl.engine.v8/traversal-permission?]
+   :theorems
+   [:typed-permission-dependency-edge-identity
+    :routing-step-monotonicity
+    :routing-least-fixed-point-reachability
+    :routing-strong-component-exactness
+    :singleton-self-edge-is-recursive
+    :acyclic-ancestors-of-recursive-components-are-routed]
+   :dafny ["formal/dafny/RecursiveEngine.dfy"]
+   :adapter-obligations
+   [:complete-permission-node-enumeration
+    :complete-materialized-permission-dependencies
+    :full-resource-type-and-permission-node-identity]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   :host-iterative-kosaraju-and-reverse-reachability
+   :resource-claim
+   :semantic-oracle-only-no-generated-to-production-cost-refinement
+   :remaining
+   [:independent-host-source-refinement-review
+    :formal-production-o-v-plus-e-resource-refinement]
+   :ci [:generated-production-kernel
+        :recursive-contract
+        :mutation-control
+        :counterexample-replay]}
   {:operation :indexed-traversal-transition
    :entry-points ['eacl.engine.v8/recursive-forward-page
                   'eacl.engine.v8/recursive-reverse-page]

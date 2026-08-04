@@ -48,6 +48,26 @@
    (dafny-string resource-type)
    (dafny-string permission)))
 
+(defn- permission-dependency-edge
+  [{:keys [head target]}]
+  (js-invoke
+   (.-PermissionDependencyEdge (.-RecursiveEngine generated))
+   "create_PermissionDependencyEdge"
+   (permission-node head)
+   (permission-node target)))
+
+(defn typed-traversal-permission?
+  "Runs the generated exact SCC-routing oracle over fully typed dependency
+  edges. This is a semantic oracle; its closure scans are not a resource model
+  of production's iterative O(V+E) Kosaraju implementation."
+  [{:keys [root edges permissions]}]
+  (js-invoke
+   (.-__default (.-RecursiveEngine generated))
+   "DecideTypedTraversalPermission"
+   (permission-node root)
+   (dafny-sequence (map permission-dependency-edge edges))
+   (dafny-sequence (map permission-node permissions))))
+
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]
   (js-invoke

@@ -43,9 +43,11 @@
    :claim :frontier-laws-only}
   :recursive-engine
   {:status :passed
-   :verified-obligations 46
+   :verified-obligations 73
    :source "formal/dafny/RecursiveEngine.dfy"
-   :report "formal/verification/recursive-kernel.edn"}
+   :report "formal/verification/recursive-kernel.edn"
+   :typed-routing-source-refinement :pending-independent-review
+   :routing-resource-refinement :not-claimed}
   :pagination-and-cursor-kernel
   {:status :passed
    :verified-obligations 27
@@ -125,7 +127,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-029
+ {:latest :EACL-FORMAL-031
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -154,11 +156,13 @@
           :EACL-FORMAL-026
           :EACL-FORMAL-027
           :EACL-FORMAL-028
-          :EACL-FORMAL-029]}
+          :EACL-FORMAL-029
+          :EACL-FORMAL-030
+          :EACL-FORMAL-031]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 29}
+  :entries 31}
  :residual-assumptions
  [:verification-toolchain
   :generated-code-compilers
@@ -186,13 +190,14 @@
    :blocking-findings
    [:retained-live-heap-not-established
     :acyclic-optimized-merge-source-refinement-and-review-pending
-    :acyclic-optimized-leapfrog-source-refinement-and-review-pending]}
+    :acyclic-optimized-leapfrog-source-refinement-and-review-pending
+    :recursive-scc-routing-source-refinement-and-review-pending]}
  :mutation-control
  {:status :passed
-   :report "formal/verification/mutation-control.edn"
+  :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 49
-  :registered 49}
+  :killed 54
+  :registered 54}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -209,6 +214,7 @@
   [:complete-public-engine
    :acyclic-optimized-ordered-merge-source-refinement
    :acyclic-optimized-leapfrog-source-refinement
+   :recursive-scc-routing-source-refinement
    :production-ordered-adapter-certification
    :verified-shadow-complete-public-error-provenance-and-graph-comparison
    :managed-derived-subproblem-proof

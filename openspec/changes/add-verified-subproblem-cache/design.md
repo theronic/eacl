@@ -381,6 +381,18 @@ informs the dimensional model and rejects overclaiming here; it does not
 currently discharge production source-to-resource refinement, JVM heap, or
 worst-case elapsed-time obligations.
 
+Recursive SCC routing follows the same separation. Production resolves every
+permission dependency to a complete `[resource-type permission]` edge and
+uses iterative Kosaraju plus reverse reachability. The earlier Dafny path
+abstraction identifies arrow targets by permission name alone; that is a safe
+over-approximation for invalidation scope but not an exact routing refinement
+when resource types reuse a name. EACL-FORMAL-030 introduces a typed-edge
+least-closure oracle and compares it with production on seven adversarial
+graphs and all 512 directed graphs over three typed nodes. This closes a
+semantic-model mismatch, but it does not turn the generated repeated-closure
+algorithm into a resource model of the host O(V+E) implementation. Lore's
+source-refinement and platform-cost requirements remain open.
+
 The existing cache-free host evaluator remains the differential oracle during
 rollout. Generated authority is enabled only after all command/response
 transitions, public rendering, errors, counters, and cursor/page state agree
@@ -474,6 +486,14 @@ forms independently against a reviewed full-kernel baseline, writes the exact
 observation, and fails above 125 percent growth. Raw source bytes, class bytes,
 JavaScript bytes, solver effort, allocation, live heap, and latency remain
 different measures.
+
+EACL-FORMAL-031 then showed that a correct fail-closed gate can still be
+unavailable: GitHub Actions rebuilt every generated form but had not installed
+the Babashka interpreter named by the measurement script's shebang. The gate
+runtime is now versioned separately as Babashka 1.12.213, installed explicitly
+in formal CI, validated at script startup, and checked by the quantitative
+regression. Missing tooling remains a hard CI failure; it is never converted
+into a passing or stale measurement.
 
 ### 12. Make public decision-source closure machine-enforced
 
