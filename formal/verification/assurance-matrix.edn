@@ -100,6 +100,42 @@
    :ci [:generated-production-kernel
         :recursive-contract
         :cross-adapter-state-trace]}
+  {:operation :snapshot-consistency-selection
+   :entry-points
+   ['eacl.consistency/selection-plan
+    'eacl.consistency/captured-current-selection
+    'eacl.consistency/select]
+   :theorems
+   [:causal-selection-plan-requires-managed-authority
+    :unsupported-exact-plan-is-exact-snapshot-unavailable
+    :at-least-acceptance-requires-ancestor
+    :exact-acceptance-requires-pinned-graph
+    :present-malformed-selection-is-not-snapshot-absence
+    :captured-current-needs-no-post-selection-decision
+    :selected-current-has-one-selection-and-validation
+    :successful-selection-logical-work-is-constant-bounded]
+   :dafny ["formal/dafny/ConsistencyDecision.dfy"
+           "formal/dafny/SnapshotOracle.dfy"]
+   :adapter-obligations
+   [:immutable-snapshot
+    :same-source-selection
+    :authoritative-or-fails-closed
+    :at-least-anchor-completeness
+    :exact-locator-and-graph-anchor-identity]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   :generated-in-verified-authoritative-host-specialized-in-legacy
+   :remaining
+   [:backend-selection-source-refinement
+    :authenticated-token-decoder-refinement
+    :complete-public-typed-error-provenance
+    :cross-backend-authoritative-gates
+    :independent-review]
+   :ci
+   [:generated-production-kernel
+    :cross-runtime-vectors
+    :consistency-boundary-performance
+    :mutation-control]}
   {:operation :lookup-cursor-continuation
    :entry-points ['eacl.relay]
    :theorems [:cursor-scope-before-influence :page-walk-complete

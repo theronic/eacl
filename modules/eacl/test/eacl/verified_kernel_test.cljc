@@ -125,6 +125,130 @@
            (fn [_ _] :use-managed-entry))
 	          input)))))
 
+(defn- expected-consistency-plan
+  [{:keys [mode capability-supported? managed-authority?]}]
+  (cond
+    (not capability-supported?)
+    (case mode
+      (:local-snapshot :minimize-latency) :unsupported-capability
+      :at-exact-snapshot :exact-snapshot-unavailable
+      :unsupported-head-barrier)
+
+    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
+         (not managed-authority?))
+    :unsupported-head-barrier
+
+    :else
+    (case mode
+      (:local-snapshot :minimize-latency) :select-current
+      (:fully-consistent :synchronized-head) :select-authoritative
+      :at-least-as-fresh :authenticate-and-select-at-least
+      :at-exact-snapshot :authenticate-and-select-exact)))
+
+(defn- expected-consistency-validation
+  [{:keys [kind selection-present? selected-adapter?
+           same-source-scope? anchor-satisfied?]}]
+  (cond
+    (not selection-present?)
+    (if (= :exact kind)
+      :exact-snapshot-unavailable
+      :invalid-selected-adapter)
+
+    (not selected-adapter?) :invalid-selected-adapter
+    (not same-source-scope?) :incomparable-scope
+    (and (#{:at-least :exact} kind)
+         (not anchor-satisfied?))
+    :history-divergence
+    :else :accept))
+
+(deftest consistency-boundaries-are-total-and-strict
+  (testing "all plan observations have one exact admissible decision"
+    (doseq [mode
+            [:local-snapshot :minimize-latency
+             :fully-consistent :synchronized-head
+             :at-least-as-fresh :at-exact-snapshot]
+            capability-supported? [false true]
+            managed-authority? [false true]]
+      (let [input {:mode mode
+                   :capability-supported? capability-supported?
+                   :managed-authority? managed-authority?}
+            expected (expected-consistency-plan input)]
+        (is (= expected
+               (verified/decide
+                {:mode :verified-authoritative
+                 :kernel
+                 (->FunctionKernel (fn [_ _] expected))}
+                :consistency-plan
+                input
+                #(throw (ex-info "legacy must not run" {}))))))))
+  (testing "all well-formed post-selection observations are exact"
+    (doseq [kind [:current :authoritative :at-least :exact]
+            selection-present? [false true]
+            selected-adapter? [false true]
+            :when (or selection-present? (not selected-adapter?))
+            same-source-scope? [false true]
+            anchor-satisfied? [false true]]
+      (let [input {:kind kind
+                   :selection-present? selection-present?
+                   :selected-adapter? selected-adapter?
+                   :same-source-scope? same-source-scope?
+                   :anchor-satisfied? anchor-satisfied?}
+            expected (expected-consistency-validation input)]
+        (is (= expected
+               (verified/decide
+                {:mode :verified-authoritative
+                 :kernel
+                 (->FunctionKernel (fn [_ _] expected))}
+                :consistency-validation
+                input
+                #(throw (ex-info "legacy must not run" {}))))))))
+  (testing "snapshot absence and a malformed present value remain distinct"
+    (let [absent {:kind :exact
+                  :selection-present? false
+                  :selected-adapter? false
+                  :same-source-scope? false
+                  :anchor-satisfied? false}
+          malformed (assoc absent
+                           :selection-present? true)]
+      (is (= :exact-snapshot-unavailable
+             (expected-consistency-validation absent)))
+      (is (= :invalid-selected-adapter
+             (expected-consistency-validation malformed)))))
+  (testing "unknown fields, impossible observations, and lying kernels fail"
+    (let [plan {:mode :local-snapshot
+                :capability-supported? true
+                :managed-authority? false}
+          validation {:kind :exact
+                      :selection-present? true
+                      :selected-adapter? true
+                      :same-source-scope? true
+                      :anchor-satisfied? true}
+          decide
+          (fn [operation input result]
+            (verified/decide
+             {:mode :verified-authoritative
+              :kernel (->FunctionKernel (fn [_ _] result))}
+             operation input
+             #(throw (ex-info "legacy must not run" {}))))]
+      (doseq [[operation input result]
+              [[:consistency-plan
+                (assoc plan :unknown true)
+                :select-current]
+               [:consistency-plan
+                plan
+                :select-authoritative]
+               [:consistency-validation
+                (assoc validation
+                       :selection-present? false)
+                :accept]
+               [:consistency-validation
+                validation
+                :history-divergence]]]
+        (is (thrown?
+             #?(:clj clojure.lang.ExceptionInfo
+                :cljs cljs.core.ExceptionInfo)
+             (decide operation input result)))))))
+
 (deftest subproblem-cache-transition-boundary-is-strict
   (let [input {:decision :lookup
                :recursive-self? false

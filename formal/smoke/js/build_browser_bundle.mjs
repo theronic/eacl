@@ -20,6 +20,7 @@ await esbuild.build({
 globalThis.EaclFormal = {
   EaclKernel,
   Semantics,
+  ConsistencyDecision,
   TemporalSafety,
   _dafny,
   BigNumber,

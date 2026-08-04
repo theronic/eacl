@@ -617,6 +617,90 @@
     (and (contains? forward-targets recursive)
          (not (contains? reversed-targets recursive)))))
 
+(defn- consistency-plan-drops-managed-authority-killed?
+  []
+  (let [mode :at-least-as-fresh
+        capability-supported? true
+        managed-authority? false
+        correct
+        (if (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
+                 (not managed-authority?))
+          :unsupported-head-barrier
+          :authenticate-and-select-at-least)
+        mutant
+        (if capability-supported?
+          :authenticate-and-select-at-least
+          :unsupported-head-barrier)]
+    (and (= :unsupported-head-barrier correct)
+         (= :authenticate-and-select-at-least mutant))))
+
+(defn- consistency-malformed-exact-treated-absent-killed?
+  []
+  (let [kind :exact
+        selection-present? true
+        selected-adapter? false
+        correct
+        (cond
+          (not selection-present?)
+          (if (= :exact kind)
+            :exact-snapshot-unavailable
+            :invalid-selected-adapter)
+          (not selected-adapter?) :invalid-selected-adapter
+          :else :accept)
+        mutant
+        (if selected-adapter?
+          :accept
+          :exact-snapshot-unavailable)]
+    (and (= :invalid-selected-adapter correct)
+         (= :exact-snapshot-unavailable mutant))))
+
+(defn- consistency-at-least-anchor-ignored-killed?
+  []
+  (let [kind :at-least
+        selected-adapter? true
+        same-source-scope? true
+        anchor-satisfied? false
+        correct
+        (and selected-adapter?
+             same-source-scope?
+             (or (not (#{:at-least :exact} kind))
+                 anchor-satisfied?))
+        mutant
+        (and selected-adapter? same-source-scope?)]
+    (and (false? correct) (true? mutant))))
+
+(defn- consistency-exact-anchor-ignored-killed?
+  []
+  (let [kind :exact
+        selected-adapter? true
+        same-source-scope? true
+        graph-anchor-matches? false
+        correct
+        (and selected-adapter?
+             same-source-scope?
+             (or (not (#{:at-least :exact} kind))
+                 graph-anchor-matches?))
+        mutant
+        (and selected-adapter? same-source-scope?)]
+    (and (false? correct) (true? mutant))))
+
+(defn- consistency-unsupported-exact-becomes-generic-killed?
+  []
+  (let [mode :at-exact-snapshot
+        capability-supported? false
+        correct
+        (if capability-supported?
+          :authenticate-and-select-exact
+          (if (= :at-exact-snapshot mode)
+            :exact-snapshot-unavailable
+            :unsupported-head-barrier))
+        mutant
+        (if capability-supported?
+          :authenticate-and-select-exact
+          :unsupported-head-barrier)]
+    (and (= :exact-snapshot-unavailable correct)
+         (= :unsupported-head-barrier mutant))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -700,7 +784,17 @@
    :routing-singleton-self-loop-ignored
    routing-singleton-self-loop-ignored-killed?
    :routing-dependency-direction-reversed
-   routing-dependency-direction-reversed-killed?})
+   routing-dependency-direction-reversed-killed?
+   :consistency-plan-drops-managed-authority
+   consistency-plan-drops-managed-authority-killed?
+   :consistency-malformed-exact-treated-absent
+   consistency-malformed-exact-treated-absent-killed?
+   :consistency-at-least-anchor-ignored
+   consistency-at-least-anchor-ignored-killed?
+   :consistency-exact-anchor-ignored
+   consistency-exact-anchor-ignored-killed?
+   :consistency-unsupported-exact-becomes-generic
+   consistency-unsupported-exact-becomes-generic-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

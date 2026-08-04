@@ -2,7 +2,8 @@
   "Shared v3 consistency selection over validated backend adapters."
   (:require [eacl.backend.v8 :as backend]
             [eacl.causal-token :as causal-token]
-            [eacl.spicedb.consistency :as public-consistency]))
+            [eacl.spicedb.consistency :as public-consistency]
+            [eacl.verified-kernel :as verified]))
 
 (def error-types
   {:unsupported-head-barrier
@@ -101,61 +102,237 @@
 
         (throw error)))))
 
-(defn- selected-adapter!
-  [source selected]
-  (when-not (backend/adapter? selected)
-    (throw
-     (ex-info
-      "A backend selection operation did not return an immutable adapter."
-      {:type :eacl/invalid-backend-adapter
-       :eacl/error :eacl/invalid-backend-adapter
-       :backend (backend/backend-id source)
-       :selected selected})))
-  (when-not (= (source-scope source) (source-scope selected))
-    (fail! :incomparable-scope
-           "Backend selection crossed source or branch scope."
-           {:source (source-scope source)
-            :selected (source-scope selected)}))
-  selected)
+(defn- legacy-engine-selection?
+  [selection]
+  (or (nil? selection)
+      (= :legacy-authoritative selection)
+      (and (map? selection)
+           (= :legacy-authoritative
+              (or (:mode selection) :legacy-authoritative)))))
 
-(defn- require-authority!
-  [{:keys [coherence-authority]}]
-  (when-not (= :managed coherence-authority)
-    (fail! :unsupported-head-barrier
-           "Causal selection requires complete writer authority."
-           {:coherence-authority
-            (or coherence-authority :unknown)})))
+(defn- decide
+  [options operation input legacy-decision]
+  (let [selection (:engine-selection options)]
+    (if (legacy-engine-selection? selection)
+      (legacy-decision)
+      (verified/decide selection operation input legacy-decision))))
+
+(defn- expected-selection-plan
+  [{:keys [mode capability-supported? managed-authority?]}]
+  (cond
+    (not capability-supported?)
+    (case mode
+      (:local-snapshot :minimize-latency)
+      :unsupported-capability
+
+      :at-exact-snapshot
+      :exact-snapshot-unavailable
+
+      :unsupported-head-barrier)
+
+    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
+         (not managed-authority?))
+    :unsupported-head-barrier
+
+    :else
+    (case mode
+      (:local-snapshot :minimize-latency) :select-current
+      (:fully-consistent :synchronized-head) :select-authoritative
+      :at-least-as-fresh :authenticate-and-select-at-least
+      :at-exact-snapshot :authenticate-and-select-exact)))
+
+(defn- capability-error
+  [source mode]
+  (try
+    (backend/require-capability! source :consistency mode)
+    nil
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
+      error
+      error)))
+
+(defn- reject-plan!
+  [source mode options decision capability-supported?]
+  (let [cause
+        (when-not capability-supported?
+          (capability-error source mode))]
+    (case decision
+      :unsupported-capability
+      (if cause
+        (throw cause)
+        (throw
+         (ex-info
+          "The verified consistency plan contradicted backend capabilities."
+          {:type :eacl.verification/invalid-boundary
+           :eacl/error :eacl.verification/invalid-boundary
+           :mode mode})))
+
+      :exact-snapshot-unavailable
+      (fail! :exact-snapshot-unavailable
+             "The backend cannot reconstruct exact snapshots."
+             {}
+             cause)
+
+      :unsupported-head-barrier
+      (cond
+        (and capability-supported?
+             (#{:at-least-as-fresh :at-exact-snapshot} mode))
+        (fail! :unsupported-head-barrier
+               "Causal selection requires complete writer authority."
+               {:coherence-authority
+                (or (:coherence-authority options) :unknown)})
+
+        (= :at-least-as-fresh mode)
+        (fail! :unsupported-head-barrier
+               "The backend cannot establish causal freshness."
+               {}
+               cause)
+
+        :else
+        (fail! :unsupported-head-barrier
+               "The backend cannot establish an authoritative head."
+               {}
+               cause)))))
+
+(defn selection-plan
+  "Returns the validated selection action for one normalized descriptor.
+
+  The capability observation and writer-authority observation remain adapter
+  boundary facts. The finite decision over those facts is generated in
+  verified modes and remains allocation-light on the default legacy path."
+  [source {:keys [mode]} options]
+  (let [capability-supported?
+        (backend/supports? source :consistency mode)
+        input
+        {:mode mode
+         :capability-supported? capability-supported?
+         :managed-authority?
+         (= :managed (:coherence-authority options))}
+        decision
+        (decide
+         options
+         :consistency-plan
+         input
+         #(expected-selection-plan input))]
+    (if (contains?
+         #{:select-current
+           :select-authoritative
+           :authenticate-and-select-at-least
+           :authenticate-and-select-exact}
+         decision)
+      decision
+      (reject-plan!
+       source mode options decision capability-supported?))))
+
+(defn- expected-selection-validation
+  [{:keys [kind selection-present? selected-adapter?
+           same-source-scope? anchor-satisfied?]}]
+  (cond
+    (not selection-present?)
+    (if (= :exact kind)
+      :exact-snapshot-unavailable
+      :invalid-selected-adapter)
+
+    (not selected-adapter?)
+    :invalid-selected-adapter
+
+    (not same-source-scope?)
+    :incomparable-scope
+
+    (and (#{:at-least :exact} kind)
+         (not anchor-satisfied?))
+    :history-divergence
+
+    :else
+    :accept))
+
+(defn- selected-adapter!
+  [source selected kind anchor-check options]
+  (let [selection-present? (some? selected)
+        selected-adapter?
+        (and selection-present? (backend/adapter? selected))
+        identical-selection?
+        (and selected-adapter? (identical? source selected))
+        source-scope-value
+        (when (and selected-adapter? (not identical-selection?))
+          (source-scope source))
+        selected-scope-value
+        (when (and selected-adapter? (not identical-selection?))
+          (source-scope selected))
+        same-source-scope?
+        (and selected-adapter?
+             (or identical-selection?
+                 (= source-scope-value selected-scope-value)))
+        anchor-observation
+        (if (and same-source-scope? anchor-check)
+          (anchor-check selected)
+          {:satisfied? (nil? anchor-check)})
+        input
+        {:kind kind
+         :selection-present? selection-present?
+         :selected-adapter? selected-adapter?
+         :same-source-scope? same-source-scope?
+         :anchor-satisfied? (boolean (:satisfied? anchor-observation))}
+        decision
+        (decide
+         options
+         :consistency-validation
+         input
+         #(expected-selection-validation input))]
+    (case decision
+      :accept selected
+
+      :exact-snapshot-unavailable
+      (fail! :exact-snapshot-unavailable
+             "The requested exact snapshot is unavailable.")
+
+      :invalid-selected-adapter
+      (throw
+       (ex-info
+        "A backend selection operation did not return an immutable adapter."
+        {:type :eacl/invalid-backend-adapter
+         :eacl/error :eacl/invalid-backend-adapter
+         :backend (backend/backend-id source)
+         :selected selected}))
+
+      :incomparable-scope
+      (fail! :incomparable-scope
+             "Backend selection crossed source or branch scope."
+             {:source source-scope-value
+              :selected selected-scope-value})
+
+      :history-divergence
+      (fail! :history-divergence
+             (:message anchor-observation)
+             (:data anchor-observation)))))
+
+(defn captured-current-selection
+  "Validates the zero-coordination path over an already captured immutable DB.
+
+  Backends use this instead of refreshing a connection through
+  `:select-current`, preserving the request's single-snapshot invariant."
+  [source consistency-value options]
+  (let [descriptor (public-consistency/descriptor consistency-value)
+        action (selection-plan source descriptor options)]
+    (when-not (= :select-current action)
+      (throw
+       (ex-info
+        "Captured-current selection requires a local consistency mode."
+        {:type :eacl.verification/invalid-boundary
+         :eacl/error :eacl.verification/invalid-boundary
+         :mode (:mode descriptor)
+         :action action})))
+    ;; `selection-plan` observes capabilities through the validated source
+    ;; adapter. Returning that identical immutable value cannot cross scope and
+    ;; therefore needs no second generated FFI decision.
+    {:adapter source
+     :descriptor descriptor
+     :request-token nil
+     :response-token nil}))
 
 (defn- select-adapter
   [source {:keys [mode token]} options]
-  (try
-    (backend/require-capability! source :consistency mode)
-    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
-      error
-      (if (= :eacl/unsupported-capability (:type (ex-data error)))
-        (case mode
-          (:fully-consistent :synchronized-head)
-          (fail! :unsupported-head-barrier
-                 "The backend cannot establish an authoritative head."
-                 {}
-                 error)
-
-          :at-exact-snapshot
-          (fail! :exact-snapshot-unavailable
-                 "The backend cannot reconstruct exact snapshots."
-                 {}
-                 error)
-
-          :at-least-as-fresh
-          (fail! :unsupported-head-barrier
-                 "The backend cannot establish causal freshness."
-                 {}
-                 error)
-
-          (throw error))
-        (throw error))))
-  (case mode
-    (:fully-consistent :synchronized-head)
+  (case (selection-plan source {:mode mode} options)
+    :select-authoritative
     {:adapter
      (selected-adapter!
       source
@@ -170,64 +347,73 @@
                    "The backend cannot establish an authoritative head."
                    {}
                    error)
-            (throw error)))))}
+            (throw error))))
+      :authoritative
+      nil
+      options)}
 
-    (:local-snapshot :minimize-latency)
+    :select-current
     {:adapter
      (selected-adapter!
       source
-      (backend/invoke source :select-current))}
+      (backend/invoke source :select-current)
+      :current
+      nil
+      options)}
 
-    :at-least-as-fresh
-    (do
-      (require-authority! options)
-      (let [payload (authenticate source options token)
-            selected
-            (selected-adapter!
-             source
-             (backend/invoke
-              source :select-at-least payload (:timeout-ms options)))]
-        (when-not (backend/invoke
-                   selected :contains-anchor?
-                   (:graph-anchor payload))
-          (fail! :history-divergence
-                 "The selected history does not contain the requested mutation anchor."
-                 {:graph-anchor (:graph-anchor payload)}))
-        {:adapter selected
-         :request-token payload}))
-
-    :at-exact-snapshot
-    (do
-      (require-authority! options)
-      (let [payload (authenticate source options token)
-            selected
-            (try
+    :authenticate-and-select-at-least
+    (let [payload (authenticate source options token)
+          selected
+          (selected-adapter!
+           source
+           (backend/invoke
+            source :select-at-least payload (:timeout-ms options))
+           :at-least
+           (fn [selected]
+             {:satisfied?
               (backend/invoke
-               source :select-exact payload (:timeout-ms options))
-              (catch #?(:clj clojure.lang.ExceptionInfo
-                        :cljs cljs.core.ExceptionInfo)
-                error
-                (if (= :eacl/unsupported-capability
-                       (:type (ex-data error)))
-                  (fail! :exact-snapshot-unavailable
-                         "The requested exact snapshot is unavailable."
-                         {}
-                         error)
-                  (throw error))))
-            selected (when selected
-                       (selected-adapter! source selected))]
-        (when-not selected
-          (fail! :exact-snapshot-unavailable
-                 "The requested exact snapshot is unavailable."))
-        (when-not (= (:graph-anchor payload)
-                     (:graph-anchor (graph-head selected)))
-          (fail! :history-divergence
-                 "The exact locator resolved to a divergent graph."
-                 {:expected-anchor (:graph-anchor payload)
-                  :actual-anchor
-                  (:graph-anchor (graph-head selected))}))
-        {:adapter selected
-         :request-token payload}))))
+               selected :contains-anchor? (:graph-anchor payload))
+              :message
+              "The selected history does not contain the requested mutation anchor."
+              :data {:graph-anchor (:graph-anchor payload)}})
+           options)]
+      {:adapter selected
+       :request-token payload})
+
+    :authenticate-and-select-exact
+    (let [payload (authenticate source options token)
+          selected
+          (try
+            (backend/invoke
+             source :select-exact payload (:timeout-ms options))
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo)
+              error
+              (if (= :eacl/unsupported-capability
+                     (:type (ex-data error)))
+                (fail! :exact-snapshot-unavailable
+                       "The requested exact snapshot is unavailable."
+                       {}
+                       error)
+                (throw error))))
+          selected
+          (selected-adapter!
+           source
+           selected
+           :exact
+           (fn [selected]
+             (let [actual-anchor
+                   (:graph-anchor (graph-head selected))]
+               {:satisfied?
+                (= (:graph-anchor payload) actual-anchor)
+                :message
+                "The exact locator resolved to a divergent graph."
+                :data
+                {:expected-anchor (:graph-anchor payload)
+                 :actual-anchor actual-anchor}}))
+           options)]
+      {:adapter selected
+       :request-token payload})))
 
 (defn select
   "Authenticates and selects exactly one immutable snapshot adapter.

@@ -277,6 +277,36 @@
    :killed-by
    {:proof :routing-reachability-follows-head-to-target
     :test :generated-runtime-classifies-production-recursive-routing}}
+  {:id :consistency-plan-drops-managed-authority
+   :mechanism :perform-causal-selection-without-complete-writer-authority
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :causal-selection-plan-requires-managed-authority
+    :test :production-plan-observations-refine-the-complete-formal-matrix}}
+  {:id :consistency-malformed-exact-treated-absent
+   :mechanism :report-a-present-malformed-exact-selection-as-unavailable
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :present-malformed-selection-is-not-snapshot-absence
+    :test :malformed-present-exact-selection-is-invalid-adapter}}
+  {:id :consistency-at-least-anchor-ignored
+   :mechanism :accept-an-at-least-selection-without-the-requested-ancestor
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :at-least-acceptance-requires-ancestor
+    :test :consistency-boundaries-are-total-and-strict}}
+  {:id :consistency-exact-anchor-ignored
+   :mechanism :accept-an-exact-locator-resolving-to-a-divergent-graph
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :exact-acceptance-requires-pinned-graph
+    :test :consistency-boundaries-are-total-and-strict}}
+  {:id :consistency-unsupported-exact-becomes-generic
+   :mechanism :map-missing-exact-reconstruction-capability-to-a-generic-head-barrier
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :unsupported-exact-plan-is-exact-snapshot-unavailable
+    :test :production-plan-observations-refine-the-complete-formal-matrix}}
   {:id :partial-denotation-hit
    :mechanism :allow-partial-denotation-as-cache-hit
    :control

@@ -19,6 +19,8 @@
  :production-routed-decisions
  [:relationship-page
   :relationship-keyset-page
+  :consistency-selection-plan
+  :consistency-post-selection-validation
   :lookup-cursor-continuation
   :relationship-cursor-continuation
   :cache-validation
@@ -71,6 +73,47 @@
   :formal-source-refinement :pending-independent-review
   :production-resource-refinement false
   :counterexample :EACL-FORMAL-030}
+ :consistency-selection-boundary
+ {:source "formal/dafny/ConsistencyDecision.dfy"
+  :operations [:consistency-plan :consistency-validation]
+  :plan-cases 24
+  :well-formed-post-selection-cases 48
+  :generated-logical-work-paths 5
+  :generated-logical-work-response-token-states 2
+  :generated-java-exhaustive true
+  :generated-javascript-exhaustive true
+  :production-plan-observation-matrix
+  {:clj 24
+   :cljs 24
+   :legacy-and-generated-error-routing-equal true}
+  :production-validation-observation-scenarios
+  {:clj 24
+   :cljs 24
+   :selection-shapes
+   [:absent :malformed :identical :same-scope-anchor-pass
+    :same-scope-anchor-fail :different-scope]}
+  :production-callers [:datomic :datahike :datascript]
+  :captured-current-specialization
+  {:generated-plan-decisions 1
+   :generated-post-selection-decisions 0
+   :backend-selection-calls 0
+   :same-source-scope :identity-reflexivity}
+  :direct-selected-current-path
+  {:generated-plan-decisions 1
+   :generated-post-selection-decisions 1
+   :backend-selection-calls 1
+   :source-scope-reads-at-most 3
+   :graph-head-reads 1
+   :order-hint-reads 1
+   :exact-locator-reads 1}
+  :logical-work-report
+  "formal/verification/consistency-decision.edn"
+  :performance-report "formal/verification/performance-gates.edn"
+  :residual-trust
+  [:backend-selection-contracts
+   :token-authentication
+   :host-exceptions
+   :platform-costs]}
  :indexed-transition-boundary
  {:sources ["formal/dafny/IndexedTraversal.dfy"
             "formal/dafny/IndexedRefinement.dfy"
@@ -109,18 +152,22 @@
  {:generated-java-wire
   {:namespace eacl.formal.wire-format-bridge-test
    :tests 1 :assertions 7 :status :passed}
-  :generated-javascript-wire
+ :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 28 :suite-assertions 1378 :status :passed}
+   :suite-tests 31 :suite-assertions 1484 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
-   :clj {:tests 9 :assertions 53}
+   :clj {:tests 10 :assertions 131}
    :cljs :passed-in-full-suite}
   :production-routing
-  {:clj-java {:tests 22 :assertions 927}
+  {:clj-java
+   {:namespace eacl.formal.production-kernel-test
+    :tests 25
+    :assertions 1033}
    :cljs-javascript
-   {:suite-tests 28
-    :suite-assertions 1378
+   {:namespace-tests 23
+    :suite-tests 31
+    :suite-assertions 1484
     :datascript-public-recursive-cache-mode-differential true
     :shared-scc-routing-differential true}}
   :materialized-reference
@@ -128,17 +175,17 @@
    {:authorization-values :compare-only-when-both-complete
     :operational-limits :not-a-production-refinement
     :resource-counters :whole-graph-model-only}
-   :clj-java
+  :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 22
-    :namespace-assertions 927
+    :namespace-tests 25
+    :namespace-assertions 1033
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
    :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 20
-    :suite-tests 28
-    :suite-assertions 1378
+    :namespace-tests 23
+    :suite-tests 31
+    :suite-assertions 1484
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace

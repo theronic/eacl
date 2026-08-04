@@ -17,6 +17,7 @@ reused.
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
 | Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
+| Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
 | Semantic cache key and entry eligibility | `eacl.cache` request keys, execution/source identity, exact/causal/proof validation | `can?`, lookup, count cache-enabled responses |
 | Cache provider failure/tamper handling | `eacl.cache` read, authentication, proof-provider, and validation paths | whether a cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
@@ -31,6 +32,22 @@ labeled directed graphs over three typed nodes. EACL-FORMAL-030 records why
 the older permission-name-only arrow abstraction cannot support this exact
 claim. The host-source refinement and production O(V+E) resource proof remain
 open and are not implied by the differential campaign.
+
+Consistency selection now has a separate generated decision boundary.
+`ConsistencyDecision.dfy` distinguishes capability failure, missing managed
+writer authority, absent exact history, a present malformed adapter,
+cross-source selection, and failed causal/exact anchor postconditions. The
+24 plan states and 48 well-formed validation states are exhaustively compared
+through generated Java and JavaScript. Datomic, Datahike, and DataScript pass
+their configured engine selection into this boundary. The zero-coordination
+captured-current path makes one plan decision and returns the identical
+already-captured immutable adapter; scope equality is reflexive and therefore
+does not justify a second FFI call or backend scope read.
+
+This verifies the finite decision over observed facts. It does not prove that
+an adapter's source scope, ancestry predicate, exact reconstruction, or
+authoritative barrier is truthful, and it does not prove token cryptography.
+Those remain explicit adapter and cryptographic refinement obligations.
 
 ## Public operation coverage
 
@@ -54,7 +71,7 @@ does not imply a global, lexical, domain, or cross-backend order.
 51 shared and backend EACL source files. It currently closes the
 cross-namespace call graph from 60 engine, relationship-pagination, relay,
 cursor, cache, subproblem-cache, consistency, causal-token, and named
-Datomic/Datahike/DataScript roots over 1,288 definitions. Unattributed
+Datomic/Datahike/DataScript roots over 1,306 definitions. Unattributed
 clj-kondo usages inside exact `defrecord` spans are assigned to their
 containing protocol implementation, so those public client methods are
 included. CI checks the exact

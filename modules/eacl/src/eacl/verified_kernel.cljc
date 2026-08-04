@@ -17,6 +17,8 @@
   #{:relationship-page
     :relationship-keyset-page
     :cursor-continuation
+    :consistency-plan
+    :consistency-validation
     :cache-validation
     :current-cache-decision
     :subproblem-cache-decision
@@ -201,6 +203,53 @@
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
+    input))
+
+(def ^:private consistency-modes
+  #{:local-snapshot
+    :minimize-latency
+    :fully-consistent
+    :synchronized-head
+    :at-least-as-fresh
+    :at-exact-snapshot})
+
+(def ^:private consistency-selection-kinds
+  #{:current :authoritative :at-least :exact})
+
+(defn- validate-consistency-plan-input!
+  [input]
+  (let [operation :consistency-plan]
+    (exact-keys!
+     operation
+     :input
+     input
+     #{:mode :capability-supported? :managed-authority?})
+    (require-value! operation :mode consistency-modes (:mode input))
+    (doseq [field [:capability-supported? :managed-authority?]]
+      (require-value! operation field boolean? (get input field)))
+    input))
+
+(defn- validate-consistency-selection-input!
+  [input]
+  (let [operation :consistency-validation]
+    (exact-keys!
+     operation
+     :input
+     input
+     #{:kind :selection-present? :selected-adapter?
+       :same-source-scope? :anchor-satisfied?})
+    (require-value!
+     operation :kind consistency-selection-kinds (:kind input))
+    (doseq [field
+            [:selection-present? :selected-adapter?
+             :same-source-scope? :anchor-satisfied?]]
+      (require-value! operation field boolean? (get input field)))
+    (when (and (:selected-adapter? input)
+               (not (:selection-present? input)))
+      (boundary-error!
+       "A selected adapter cannot exist without a selected value."
+       {:operation operation
+        :field :selected-adapter?}))
     input))
 
 (defn- validate-cache-entry!
@@ -1328,6 +1377,9 @@
     :relationship-page (validate-page-input! input)
     :relationship-keyset-page (validate-keyset-page-input! input)
     :cursor-continuation (validate-continuation-input! input)
+    :consistency-plan (validate-consistency-plan-input! input)
+    :consistency-validation
+    (validate-consistency-selection-input! input)
     :cache-validation (validate-cache-input! input)
     :current-cache-decision (validate-current-cache-input! input)
     :subproblem-cache-decision
@@ -1410,6 +1462,81 @@
   [result]
   (require-value!
    :cursor-continuation :result continuation-decisions result))
+
+(def consistency-plan-decisions
+  #{:select-current
+    :select-authoritative
+    :authenticate-and-select-at-least
+    :authenticate-and-select-exact
+    :unsupported-capability
+    :unsupported-head-barrier
+    :exact-snapshot-unavailable})
+
+(def consistency-validation-decisions
+  #{:accept
+    :invalid-selected-adapter
+    :incomparable-scope
+    :history-divergence
+    :exact-snapshot-unavailable})
+
+(defn- validate-consistency-plan-result!
+  [result]
+  (require-value!
+   :consistency-plan :result consistency-plan-decisions result))
+
+(defn- validate-consistency-selection-result!
+  [result]
+  (require-value!
+   :consistency-validation
+   :result
+   consistency-validation-decisions
+   result))
+
+(defn- expected-consistency-plan
+  [{:keys [mode capability-supported? managed-authority?]}]
+  (cond
+    (not capability-supported?)
+    (case mode
+      (:local-snapshot :minimize-latency)
+      :unsupported-capability
+
+      :at-exact-snapshot
+      :exact-snapshot-unavailable
+
+      :unsupported-head-barrier)
+
+    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
+         (not managed-authority?))
+    :unsupported-head-barrier
+
+    :else
+    (case mode
+      (:local-snapshot :minimize-latency) :select-current
+      (:fully-consistent :synchronized-head) :select-authoritative
+      :at-least-as-fresh :authenticate-and-select-at-least
+      :at-exact-snapshot :authenticate-and-select-exact)))
+
+(defn- expected-consistency-selection
+  [{:keys [kind selection-present? selected-adapter?
+           same-source-scope? anchor-satisfied?]}]
+  (cond
+    (not selection-present?)
+    (if (= :exact kind)
+      :exact-snapshot-unavailable
+      :invalid-selected-adapter)
+
+    (not selected-adapter?)
+    :invalid-selected-adapter
+
+    (not same-source-scope?)
+    :incomparable-scope
+
+    (and (#{:at-least :exact} kind)
+         (not anchor-satisfied?))
+    :history-divergence
+
+    :else
+    :accept))
 
 (def cache-miss-reasons
   #{:missing
@@ -1738,6 +1865,9 @@
     :relationship-page (validate-page-result! result)
     :relationship-keyset-page (validate-keyset-page-result! result)
     :cursor-continuation (validate-continuation-result! result)
+    :consistency-plan (validate-consistency-plan-result! result)
+    :consistency-validation
+    (validate-consistency-selection-result! result)
     :cache-validation (validate-cache-result! result)
     :current-cache-decision
     (validate-current-cache-result! result)
@@ -1816,6 +1946,21 @@
          {:operation operation
           :size (:size input)
           :take-count (:take-count result)}))
+      (when (and (= :consistency-plan operation)
+                 (not= result (expected-consistency-plan input)))
+        (boundary-error!
+         "Generated consistency plan contradicts its validated input."
+         {:operation operation
+          :mode (:mode input)
+          :result result}))
+      (when (and (= :consistency-validation operation)
+                 (not= result
+                       (expected-consistency-selection input)))
+        (boundary-error!
+         "Generated snapshot validation contradicts its validated input."
+         {:operation operation
+          :kind (:kind input)
+          :result result}))
       (when (and (= :current-cache-decision operation)
                  (not= result
                        (expected-current-cache-action input)))

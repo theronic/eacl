@@ -80,7 +80,9 @@
                      evidence))))))))
 
 (deftest quantitative-performance-gates-are-well-formed-test
-  (let [{:keys [formal-pipeline
+  (let [{:keys [lore-resource-boundary
+                formal-pipeline
+                consistency-selection-boundary
                 generated-artifacts
                 legacy-runtime
                 generated-indexed-authority
@@ -99,6 +101,18 @@
            (:machine-readable-config generated-artifacts))))
         formal-workflow
         (slurp (repo/file ".github" "workflows" "formal.yml"))]
+    (is (= :outdated-untrusted-diagnostic
+           (:analyzer-status lore-resource-boundary)))
+    (is (= :none
+           (:assurance-contribution lore-resource-boundary)))
+    (is (= :diagnostic-only-no-release-gate-depends-on-analyzer
+           (:status lore-resource-boundary)))
+    (is (not-any?
+         #{:lore-resource-boundary}
+         (tree-seq
+          coll?
+          seq
+          release-performance-evaluation)))
     (is (= :host-specific-measurement
            (:wall-clock-assurance formal-pipeline)))
     (is (< 0
@@ -110,6 +124,26 @@
     (is (< (get-in formal-pipeline
                    [:maximum-observed-proof-effort :resource-count])
            (:proof-effort-resource-limit formal-pipeline)))
+    (testing "consistency boundary gates keep logic and wall time separate"
+      (is (= :passed (:status consistency-selection-boundary)))
+      (is (= :dafny-bounded-and-source-instrumentation-matched
+             (get-in consistency-selection-boundary
+                     [:resource-qualification :logical-counters])))
+      (is (= :host-specific-regression-measurement
+             (get-in consistency-selection-boundary
+                     [:resource-qualification :wall-time])))
+      (doseq [runtime [:clj-java :cljs-javascript]]
+        (let [required
+              (get-in consistency-selection-boundary
+                      [:required runtime])
+              observed
+              (get-in consistency-selection-boundary
+                      [:observed runtime])]
+          (is (<= (:median-p95-ratio observed)
+                  (:maximum-median-p95-ratio required)))
+          (is (<= (:median-p95-absolute-overhead-ns observed)
+                  (:maximum-median-p95-absolute-overhead-ns required)))
+          (is (= :passed (:status observed))))))
     (is (= "bin/formal artifact-size"
            (:measurement-command generated-artifacts)))
     (is (= :after-all-generated-artifacts-are-rebuilt
@@ -166,7 +200,7 @@
     (is (every? #(pos-int? (:minimum-compared-operations %))
                 (:stages shadow-rollout)))
 
-    (testing "each Lore resource dimension is evaluated independently"
+    (testing "each resource dimension is evaluated independently"
       (let [dimensions (:dimensions release-performance-evaluation)
             required (:required-dimensions release-performance-evaluation)
             failed

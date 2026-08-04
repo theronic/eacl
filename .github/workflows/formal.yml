@@ -111,6 +111,31 @@ jobs:
                 \"-c\" \"eacl.formal.cljs-test-runner\"))"
           node target/formal/cljs-smoke.js
 
+      - name: Gate generated consistency-boundary overhead
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require
+                'eacl.formal.consistency-boundary-benchmark
+                :reload)
+               (let [result
+                     (eacl.formal.consistency-boundary-benchmark/run-gate!)]
+                 (when (= :failed (get-in result [:summary :status]))
+                   (throw
+                    (ex-info
+                     \"generated JVM consistency boundary regressed\"
+                     result)))
+                 (:summary result)))"
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.main :as cljs] :reload)
+               (cljs/-main
+                \"-t\" \"node\" \"-O\" \"none\"
+                \"-o\" \"target/formal/consistency-boundary-cljs.js\"
+                \"-c\"
+                \"eacl.formal.consistency-boundary-benchmark\"))"
+          node target/formal/consistency-boundary-cljs.js
+
       - name: Assert verified status remains withheld while gates are unmet
         run: |
           if bin/formal manifest; then

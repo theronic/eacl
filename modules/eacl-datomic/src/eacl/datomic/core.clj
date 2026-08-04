@@ -1451,19 +1451,20 @@
 (defn- select-request-snapshot
   [conn opts consistency-value]
   (let [descriptor (consistency/descriptor consistency-value)
-        source-adapter ((:backend-adapter-fn opts) (d/db conn))]
+        source-adapter ((:backend-adapter-fn opts) (d/db conn))
+        selection-options
+        {:format-options (:format-options opts)
+         :coherence-authority (:coherence-authority opts)
+         :engine-selection (:engine-selection opts)
+         :issue-token? false
+         :timeout-ms (:consistency-sync-timeout-ms opts)}]
     (if (#{:local-snapshot :minimize-latency} (:mode descriptor))
-      {:adapter source-adapter
-       :descriptor descriptor
-       :request-token nil
-       :response-token nil}
+      (consistency-v3/captured-current-selection
+       source-adapter consistency-value selection-options)
       (consistency-v3/select
        source-adapter
        consistency-value
-       {:format-options (:format-options opts)
-        :coherence-authority (:coherence-authority opts)
-        :issue-token? false
-        :timeout-ms (:consistency-sync-timeout-ms opts)}))))
+       selection-options))))
 
 (defn- capture-result-context
   "Selects one immutable request snapshot. Exact-snapshot requests reconstruct

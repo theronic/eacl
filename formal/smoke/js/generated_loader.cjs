@@ -21,6 +21,7 @@ module.exports = {
   Semantics,
   AcyclicEngine,
   CacheKernel,
+  ConsistencyDecision,
   CurrentCache,
   IndexedCertification,
   IndexedRefinement,

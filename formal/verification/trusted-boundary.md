@@ -54,6 +54,35 @@ For an operation to inherit a kernel theorem, its adapter must establish:
 Backend certification provides evidence for these assumptions. It does not
 verify DataScript, Datomic, Datahike, their storage engines, or host databases.
 
+### Snapshot-consistency observation boundary
+
+`ConsistencyDecision.dfy` proves the finite decision made *after* production
+has observed backend and request facts. It does not prove those observations.
+The refinement map in `consistency-decision.edn` binds every Dafny input to its
+exact expression in `eacl.consistency`:
+
+- mode comes from the validated public consistency descriptor;
+- capability support comes from `backend/supports?`;
+- managed writer authority comes from the exact
+  `:coherence-authority :managed` option;
+- selection presence and adapter validity are separate observations made by
+  `some?` and `backend/adapter?`;
+- source comparability is adapter identity or equality of both validated
+  `source-scope` values;
+- at-least freshness is `contains-anchor?` for the authenticated graph anchor;
+- exact selection is equality between the authenticated graph anchor and the
+  selected adapter's validated `graph-head`.
+
+Consequently, the consistency theorem is conditional on the adapter reporting
+capabilities and source scopes truthfully, implementing an authoritative
+barrier or failing, treating anchor membership as ancestry, and resolving an
+exact locator to the requested immutable graph or failing. Token
+authentication, backend selection, host exceptions, and those adapter facts
+remain outside the pure decision theorem. Exhaustive generated-runtime tests,
+production fact-extraction tests, mutation controls, and adapter certification
+are executable refinement evidence; they are not a proof of the Clojure
+runtime or storage engines.
+
 ## Cryptographic and canonicalization axioms
 
 The formal model assumes:
@@ -82,6 +111,17 @@ compact framing model has one payload canonicalization and authentication pass;
 production exposes matching deterministic counters and tests that refinement
 boundary. Neither proof establishes wall-clock latency or the cost hidden
 inside a trusted canonicalization or cryptographic primitive.
+
+Lore's historical resource analyser is not in the TCB and contributes no
+correctness or resource theorem. EACL adopts only its useful accounting
+discipline: admission weight, represented candidates, registered flights,
+actually running computations, waiting callers, backend operations, logical
+work, retained heap, and elapsed time are different dimensions and cannot
+substitute for one another. Dafny proves bounds only for explicitly modeled
+logical counters. Source instrumentation checks the corresponding Clojure
+calls for named paths. JVM/JavaScript wall time and allocation are measured by
+host-specific regression gates; retained live heap, CPU time, scheduler peaks,
+and worst-case latency remain unproved unless separately named.
 
 ## Excluded claims
 

@@ -1,6 +1,6 @@
 # Final assurance-claim audit
 
-Date: 2026-08-03
+Date: 2026-08-04
 
 ## Decision
 
@@ -17,9 +17,10 @@ The implemented proof and runtime evidence supports narrower claims:
    semantics on the recorded fixtures and generated campaigns;
 3. Datomic, DataScript, and Datahike passed the recorded adapter certification
    tests for the exercised finite fixtures;
-4. decoded relationship-page, cursor-continuation, and authenticated
-   cache-validation decisions are routed through the generated decision
-   kernels in the internal verified modes; and
+4. decoded relationship-page, cursor-continuation, authenticated
+   cache-validation, and snapshot-selection plan/postcondition decisions are
+   routed through generated decision kernels in the internal verified modes;
+   and
 5. strict generated Java and JavaScript boundaries evaluate complete
    materialized `can?`, lookup, and count requests, and the Java reference
    agrees with cached and uncached public state traces on all three backends.
@@ -131,8 +132,8 @@ documents.
   production's instantaneous `:max-queued-work` limit with cumulative
   fixed-point-round enqueues. Two sequential singleton rounds were therefore
   rejected even though queue depth never exceeded one. The model now records
-  maximum pending-set cardinality; cumulative enqueues remain a separate Lore
-  resource dimension.
+  maximum pending-set cardinality; cumulative enqueues remain a separate
+  directly instrumented resource dimension.
 - EACL-FORMAL-025 found a second invalid resource substitution: the
   materializing oracle closes the whole finite graph, while production seeds
   query-local indexed work. An unrelated subject-type grant can therefore
@@ -176,11 +177,12 @@ documents.
   directed graphs over three typed nodes. This is semantic differential
   evidence, not an independent proof that the host Kosaraju implementation
   refines the model.
-- Lore informs the resource boundary of that routing result: production
+- Lore prompted the resource-accounting question for that routing result, but
+  its historical analyser is outdated and untrusted. Production
   advertises an iterative O(V+E) Kosaraju pass plus reverse reachability after
   paths are materialized, while the generated semantic oracle performs finite
   least-closure scans. Those implementations have deliberately different cost
-  structures. No generated-oracle timing or structural Lore traversal finding
+  structures. No generated-oracle timing or Lore analyser result
   is accepted as a proof of production time, allocation, heap, or backend
   work; a checked host-source/platform cost refinement would be required.
 - EACL-FORMAL-031 found that the post-build artifact gate was correctly
@@ -190,6 +192,38 @@ documents.
   directory` before size measurement. Formal CI now installs Babashka
   1.12.213 explicitly, and the retained regression checks both that dependency
   and that measurement follows the browser build.
+- Snapshot-consistency planning and post-selection validation now route
+  through `ConsistencyDecision.dfy` in verified modes. Its 24 plan states and
+  48 well-formed validation states are exhausted in generated Java and
+  JavaScript. A first model draft conflated an absent exact selection with a
+  present malformed adapter; production distinguishes the former as
+  `exact-snapshot-unavailable` and the latter as
+  `invalid-backend-adapter`. The model now carries presence and adapter
+  validity separately, with regression and mutation controls. This defect was
+  caught before the decision was routed, so it is recorded as a model-fidelity
+  regression rather than assigned a production counterexample identifier.
+  Token authentication, scope/ancestry truthfulness, exact reconstruction,
+  backend exceptions, and the host fact-extraction code remain explicit
+  refinement obligations.
+- A separate CLJ/CLJS production-observation matrix now checks the handwritten
+  post-selection fact extraction over 24 scenarios: absent, malformed,
+  identical, same-scope anchor pass, same-scope anchor failure, and
+  different-scope selections in all four selection kinds. This checks the
+  reachable Clojure-to-Dafny input map; it does not turn adapter-returned scope
+  or ancestry assertions into proved facts.
+- The same source audit rejected the first consistency work-counter model
+  because it represented the optimized backend-client captured-current path
+  but omitted the still-supported direct `eacl.consistency/select` current
+  path. The corrected datatype treats them separately: captured current has no
+  selection, validation, scope, or head calls; selected current has one backend
+  selection, one validation, at most three scope reads when issuing a response
+  token, and one each of graph-head, order-hint, and exact-locator reads.
+  Naming the latter two is necessary because production validates every graph
+  head against those separate adapter operations. Source instrumentation
+  exercises all five successful path kinds with response-token issuance both
+  disabled and enabled. The selected-path source-scope figures are upper
+  bounds matched by non-identity selection fixtures; an identity-preserving
+  backend selection can perform fewer scope reads.
 - Production shadow comparison covers recursive traversal values, ordering,
   page flags, counts, Boolean decisions, dimensionally matching cache-free
   resource counters, logical retained-state units, and typed traversal-limit
@@ -244,7 +278,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,234 proof efforts across 21
+- Clean checksum-locked Dafny cache: 9,248 proof efforts across 22
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -257,15 +291,17 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 31 minimized entries replayed by 33 tests and 1,669
+- Counterexample corpus: 31 minimized entries replayed by 33 tests and 1,695
   assertions, zero failures/errors.
-- Mutation controls: 46 Clojure detectors and 8 Apalache counterexample
-  controls; all 54 registered mutants killed.
-- Public non-benchmark CLJ suite: 470 tests, 18,091 assertions, zero failures/errors.
-- DataScript CLJS suite: 136 tests, 4,235 assertions, zero failures/errors.
-- Generated Java suite: 40 tests, 8,122 assertions, zero failures/errors.
-- Generated JavaScript suite: 28 tests, 1,378 assertions, zero failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,288 unique
+- Mutation controls: 51 Clojure detectors and 8 Apalache counterexample
+  controls; all 59 registered mutants killed.
+- Public non-benchmark CLJ suite: 465 tests, 18,077 assertions, zero
+  failures/errors.
+- DataScript CLJS suite: 141 tests, 4,434 assertions, zero failures/errors.
+- Generated Java suite: 43 tests, 8,228 assertions, zero failures/errors.
+- Generated JavaScript suite: 31 tests, 1,484 assertions, zero
+  failures/errors.
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,306 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent
@@ -297,16 +333,17 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 1,765,891 Java
-  source bytes, 1,607,907 Java class bytes, 774,017
-  JavaScript-with-runtime bytes, and an 853,528-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 1,824,050 Java
+  source bytes, 1,663,914 Java class bytes, 801,034
+  JavaScript-with-runtime bytes, and an 882,317-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. Retained
   live heap remains `:not-established`, so the
   evaluator and release manifest refuse performance cutover instead of
   substituting logical cache weight or the noise-dominated GC
   micro-measurement for a heap bound.
-- Lore revision `dabb5634b0d44e196e2b6ec63003917b3d445bec`
+- The outdated Lore revision
+  `dabb5634b0d44e196e2b6ec63003917b3d445bec`
   reanalyzed immutable EACL revision
   `401d15c3d058a00770856d25f5328289cbcd7971` (tree
   `572a79347573dca2c8b1ff07f9e1156a10d978bd`, snapshot SHA-256
@@ -314,20 +351,31 @@ that the complete v8.0 engine is formally verified.
   It found all 22 named source targets, but zero fit Lore's strict Core; all
   remain source-structural candidates (maximum nested traversal depth 3, 142
   unique unsupported operators, and 331 per-function operator occurrences).
-  Lore rejected its pinned old production-refutation witness as
+  The analyser rejected its pinned old production-refutation witness as
   revision-invalid instead of applying it to the changed implementation.
   This evidence-only report update changes no analyzed production or formal
-  source. Lore consequently proves no production heap, elapsed-time,
-  backend-operation, or whole-engine resource claim without checked source
-  refinement and platform contracts.
+  source. The analyser is not in the trusted computing base, no release gate
+  depends on it, and the diagnostic proves no production heap, elapsed-time,
+  backend-operation, or whole-engine resource claim. EACL retains only the
+  technique of separating incompatible resource dimensions.
+- The captured-current consistency boundary has a Dafny logical-work model
+  matched by exact source-call instrumentation: one capability observation,
+  one plan decision, and no authentication, backend selection, validation,
+  source-scope, ancestry, graph-head, order-hint, or exact-locator call. Paired
+  wall-time gates measured
+  median trial p95 ratios of 5.237 on the JVM and 3.073 in Node, but absolute
+  median p95 overheads of 690 ns and 1,817 ns respectively, within the
+  host-specific gates. The ratio is amplified by a roughly 140 ns JVM legacy
+  baseline. These measurements establish neither heap peaks nor worst-case
+  latency.
 - A full verifier replay found that the transparent recursive
   `DriveReverseSpec` made the iterative reverse-driver invariant exceed its
   60-second assertion-batch budget. Raising the timeout would have hidden a
   proof-resource regression. Forward and reverse drive specifications are now
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
-  per-module CSV plus an aggregate JSON report. The exact current 21-module
-  replay passed 9,234 proof efforts and consumed 3,645,506,567 deterministic
+  per-module CSV plus an aggregate JSON report. The exact current 22-module
+  replay passed 9,248 proof efforts and consumed 3,645,765,210 deterministic
   Z3 resource units; its maximum effort used 34,908,028 of the
   50,000,000-unit limit. End-to-end wall time was not captured for that replay;
   the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit

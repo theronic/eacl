@@ -149,7 +149,7 @@
          :samples samples
          :direction direction
          :shape :interleaved-two-stream-union}
-        :lore-dimensions
+        :resource-dimensions
         {:backend-operations 0
          :input-values value-count
          :demanded-values demand

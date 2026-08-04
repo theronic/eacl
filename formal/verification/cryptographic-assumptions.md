@@ -144,9 +144,43 @@ boundary. `EACL-FORMAL-005` retains the former cross-backend discrepancy.
 
 **Residual trust.** Host clock integrity and deployment clock synchronization.
 
+## A7. Snapshot selection consumes authenticated token facts
+
+**Formal assumption.** `ConsistencyDecision.dfy` starts after token processing.
+Its `anchorSatisfied` and `sameSourceScope` Booleans are observations, not a
+model of HMAC verification, expiry, scope decoding, ancestry, or exact-snapshot
+reconstruction.
+
+**Production boundary.**
+
+- `eacl.consistency/authenticate` calls `eacl.causal-token/token-data` before
+  any causal backend selection and translates expiry and scope failures into
+  their public typed errors.
+- `eacl.consistency/selected-adapter!` distinguishes an absent selection from
+  a present malformed value, validates source/branch scope, and only then
+  evaluates the relevant ancestry or exact-graph postcondition.
+- At-least freshness calls the selected adapter's `contains-anchor?` with the
+  authenticated graph anchor. Exact selection compares the selected adapter's
+  validated `graph-head` with that authenticated anchor.
+
+**Evidence.**
+
+- The generated Java and JavaScript boundaries exhaust all 24 plan states and
+  all 48 well-formed post-selection observation states.
+- Shared CLJ/CLJS consistency tests cover expired and wrong-scope tokens,
+  missing ancestry, divergent exact graphs, exact-snapshot absence, present
+  malformed selections, capability ordering, and writer-authority rejection.
+- Adapter certification checks ancestry, branch/reset/restore, authoritative
+  barriers, and exact selection for Datomic, Datahike, and DataScript.
+
+**Residual trust.** The token decoder and cryptographic primitives described
+by A1–A6, the Clojure fact-extraction code, and the truthfulness of backend
+scope, ancestry, and exact-selection operations remain in the TCB.
+
 ## Assurance wording
 
-The verification manifest must describe all six items as residual assumptions.
+The verification manifest must describe all seven items as residual
+assumptions.
 Passing their evidence suites permits a conditional kernel claim; it must never
 be described as a formal proof of cryptography, canonical EDN, backend content
-proofs, clocks, or key management.
+proofs, clocks, key management, or backend snapshot-selection facts.

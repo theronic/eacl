@@ -432,6 +432,153 @@
       :snapshot-unavailable
       :else :history-divergence)))
 
+(defn- snapshot-consistency-mode
+  [consistency mode]
+  (case mode
+    :local-snapshot
+    (js-invoke
+     (.-SnapshotConsistencyMode consistency)
+     "create_LocalSnapshot")
+
+    :minimize-latency
+    (js-invoke
+     (.-SnapshotConsistencyMode consistency)
+     "create_MinimizeLatency")
+
+    :fully-consistent
+    (js-invoke
+     (.-SnapshotConsistencyMode consistency)
+     "create_FullyConsistent")
+
+    :synchronized-head
+    (js-invoke
+     (.-SnapshotConsistencyMode consistency)
+     "create_SynchronizedHead")
+
+    :at-least-as-fresh
+    (js-invoke
+     (.-SnapshotConsistencyMode consistency)
+     "create_AtLeastAsFresh")
+
+    :at-exact-snapshot
+    (js-invoke
+     (.-SnapshotConsistencyMode consistency)
+     "create_AtExactSnapshot")))
+
+(defn- consistency-error
+  [error]
+  (cond
+    (.-is_UnsupportedCapability error) :unsupported-capability
+    (.-is_UnsupportedHeadBarrier error) :unsupported-head-barrier
+    (.-is_ExactSnapshotUnavailable error) :exact-snapshot-unavailable
+    (.-is_InvalidSelectedAdapter error) :invalid-selected-adapter
+    (.-is_IncomparableScope error) :incomparable-scope
+    :else :history-divergence))
+
+(defn- consistency-plan-decision
+  [{:keys [mode capability-supported? managed-authority?]}]
+  (let [consistency (.-ConsistencyDecision generated)
+        outcome
+        (js-invoke
+         (.-__default consistency)
+         "DecideSelectionPlan"
+         (snapshot-consistency-mode consistency mode)
+         capability-supported?
+         managed-authority?)]
+    (if (.-is_Planned outcome)
+      (let [action (.-dtor_action outcome)]
+        (cond
+          (.-is_SelectCurrent action) :select-current
+          (.-is_SelectAuthoritative action) :select-authoritative
+          (.-is_AuthenticateAndSelectAtLeast action)
+          :authenticate-and-select-at-least
+          :else :authenticate-and-select-exact))
+      (consistency-error (.-dtor_error outcome)))))
+
+(defn- consistency-selection-kind
+  [consistency kind]
+  (case kind
+    :current
+    (js-invoke
+     (.-SelectionKind consistency)
+     "create_CurrentSelection")
+
+    :authoritative
+    (js-invoke
+     (.-SelectionKind consistency)
+     "create_AuthoritativeSelection")
+
+    :at-least
+    (js-invoke
+     (.-SelectionKind consistency)
+     "create_AtLeastSelection")
+
+    :exact
+    (js-invoke
+     (.-SelectionKind consistency)
+     "create_ExactSelection")))
+
+(defn- consistency-selection-decision
+  [{:keys [kind selection-present? selected-adapter?
+           same-source-scope? anchor-satisfied?]}]
+  (let [consistency (.-ConsistencyDecision generated)
+        outcome
+        (js-invoke
+         (.-__default consistency)
+         "ValidateSelectedSnapshot"
+         (consistency-selection-kind consistency kind)
+         selection-present?
+         selected-adapter?
+         same-source-scope?
+         anchor-satisfied?)]
+    (if (.-is_SelectionAccepted outcome)
+      :accept
+      (consistency-error (.-dtor_error outcome)))))
+
+(defn consistency-selection-work
+  "Returns the generated Dafny logical-work vector for one successful path."
+  [path issue-response-token?]
+  (let [consistency (.-ConsistencyDecision generated)
+        paths (.-SuccessfulSelectionPath consistency)
+        formal-path
+        (case path
+          :captured-current
+          (js-invoke paths "create_CapturedCurrentPath")
+          :selected-current
+          (js-invoke paths "create_SelectedCurrentPath")
+          :authoritative
+          (js-invoke paths "create_AuthoritativePath")
+          :at-least
+          (js-invoke paths "create_AtLeastPath")
+          :exact
+          (js-invoke paths "create_ExactPath"))
+        work
+        (js-invoke
+         (.-__default consistency)
+         "SuccessfulSelectionWork"
+         formal-path
+         issue-response-token?)]
+    {:capability-observations
+     (.toNumber (.-dtor_capabilityObservations work))
+     :plan-decisions
+     (.toNumber (.-dtor_planDecisions work))
+     :authentication-attempts
+     (.toNumber (.-dtor_authenticationAttempts work))
+     :backend-selection-calls
+     (.toNumber (.-dtor_backendSelectionCalls work))
+     :validation-decisions
+     (.toNumber (.-dtor_validationDecisions work))
+     :source-scope-reads
+     (.toNumber (.-dtor_sourceScopeReads work))
+     :contains-anchor-calls
+     (.toNumber (.-dtor_containsAnchorCalls work))
+     :graph-head-reads
+     (.toNumber (.-dtor_graphHeadReads work))
+     :order-hint-reads
+     (.toNumber (.-dtor_orderHintReads work))
+     :exact-locator-reads
+     (.toNumber (.-dtor_exactLocatorReads work))}))
+
 (defn- proof-state
   [cache proof]
   (if (some? proof)
@@ -1229,6 +1376,9 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
+      :consistency-plan (consistency-plan-decision input)
+      :consistency-validation
+      (consistency-selection-decision input)
       :cache-validation (cache-decision input)
       :current-cache-decision (current-cache-decision input)
       :subproblem-cache-decision

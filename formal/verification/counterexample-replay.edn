@@ -3,5 +3,5 @@
  :entries 31
  :status :passed
  :tests 33
- :assertions 1669
+ :assertions 1695
  :command "EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay"}

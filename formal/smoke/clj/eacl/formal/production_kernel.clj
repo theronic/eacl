@@ -3,6 +3,10 @@
   (:require [eacl.verified-kernel :as verified])
   (:import
    (CacheKernel CacheCandidate ProofState Telemetry)
+   (ConsistencyDecision
+    SelectionKind
+    SnapshotConsistencyMode
+    SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
    (dafny DafnySequence DafnySet TypeDescriptor)
    (IndexedRefinement RelationBinding)
@@ -432,6 +436,116 @@
       (.is_SnapshotUnavailable (.dtor_reason decision))
       :snapshot-unavailable
       :else :history-divergence)))
+
+(defn- snapshot-consistency-mode
+  [mode]
+  (case mode
+    :local-snapshot
+    (SnapshotConsistencyMode/create_LocalSnapshot)
+
+    :minimize-latency
+    (SnapshotConsistencyMode/create_MinimizeLatency)
+
+    :fully-consistent
+    (SnapshotConsistencyMode/create_FullyConsistent)
+
+    :synchronized-head
+    (SnapshotConsistencyMode/create_SynchronizedHead)
+
+    :at-least-as-fresh
+    (SnapshotConsistencyMode/create_AtLeastAsFresh)
+
+    :at-exact-snapshot
+    (SnapshotConsistencyMode/create_AtExactSnapshot)))
+
+(defn- consistency-error
+  [error]
+  (cond
+    (.is_UnsupportedCapability error) :unsupported-capability
+    (.is_UnsupportedHeadBarrier error) :unsupported-head-barrier
+    (.is_ExactSnapshotUnavailable error) :exact-snapshot-unavailable
+    (.is_InvalidSelectedAdapter error) :invalid-selected-adapter
+    (.is_IncomparableScope error) :incomparable-scope
+    :else :history-divergence))
+
+(defn- consistency-plan-decision
+  [{:keys [mode capability-supported? managed-authority?]}]
+  (let [outcome
+        (ConsistencyDecision.__default/DecideSelectionPlan
+         (snapshot-consistency-mode mode)
+         capability-supported?
+         managed-authority?)]
+    (if (.is_Planned outcome)
+      (let [action (.dtor_action outcome)]
+        (cond
+          (.is_SelectCurrent action) :select-current
+          (.is_SelectAuthoritative action) :select-authoritative
+          (.is_AuthenticateAndSelectAtLeast action)
+          :authenticate-and-select-at-least
+          :else :authenticate-and-select-exact))
+      (consistency-error (.dtor_error outcome)))))
+
+(defn- consistency-selection-kind
+  [kind]
+  (case kind
+    :current (SelectionKind/create_CurrentSelection)
+    :authoritative (SelectionKind/create_AuthoritativeSelection)
+    :at-least (SelectionKind/create_AtLeastSelection)
+    :exact (SelectionKind/create_ExactSelection)))
+
+(defn- consistency-selection-decision
+  [{:keys [kind selection-present? selected-adapter?
+           same-source-scope? anchor-satisfied?]}]
+  (let [outcome
+        (ConsistencyDecision.__default/ValidateSelectedSnapshot
+         (consistency-selection-kind kind)
+         selection-present?
+         selected-adapter?
+         same-source-scope?
+         anchor-satisfied?)]
+    (if (.is_SelectionAccepted outcome)
+      :accept
+      (consistency-error (.dtor_error outcome)))))
+
+(defn consistency-selection-work
+  "Returns the generated Dafny logical-work vector for one successful path."
+  [path issue-response-token?]
+  (let [formal-path
+        (case path
+          :captured-current
+          (SuccessfulSelectionPath/create_CapturedCurrentPath)
+          :selected-current
+          (SuccessfulSelectionPath/create_SelectedCurrentPath)
+          :authoritative
+          (SuccessfulSelectionPath/create_AuthoritativePath)
+          :at-least
+          (SuccessfulSelectionPath/create_AtLeastPath)
+          :exact
+          (SuccessfulSelectionPath/create_ExactPath))
+        work
+        (ConsistencyDecision.__default/SuccessfulSelectionWork
+         formal-path
+         issue-response-token?)]
+    {:capability-observations
+     (.longValueExact (.dtor_capabilityObservations work))
+     :plan-decisions
+     (.longValueExact (.dtor_planDecisions work))
+     :authentication-attempts
+     (.longValueExact (.dtor_authenticationAttempts work))
+     :backend-selection-calls
+     (.longValueExact (.dtor_backendSelectionCalls work))
+     :validation-decisions
+     (.longValueExact (.dtor_validationDecisions work))
+     :source-scope-reads
+     (.longValueExact (.dtor_sourceScopeReads work))
+     :contains-anchor-calls
+     (.longValueExact (.dtor_containsAnchorCalls work))
+     :graph-head-reads
+     (.longValueExact (.dtor_graphHeadReads work))
+     :order-hint-reads
+     (.longValueExact (.dtor_orderHintReads work))
+     :exact-locator-reads
+     (.longValueExact (.dtor_exactLocatorReads work))}))
 
 (defn- proof-state
   [proof]
@@ -1091,6 +1205,9 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
+      :consistency-plan (consistency-plan-decision input)
+      :consistency-validation
+      (consistency-selection-decision input)
       :cache-validation (cache-decision input)
       :current-cache-decision (current-cache-decision input)
       :subproblem-cache-decision

@@ -90,19 +90,20 @@
   [db opts consistency-value]
   (let [descriptor (consistency/descriptor consistency-value)
         source-adapter (snapshot-adapter db opts)
+        selection-options
+        {:format-options (:format-options opts)
+         :coherence-authority (:coherence-authority opts)
+         :engine-selection (:engine-selection opts)
+         :issue-token? false
+         :timeout-ms (:consistency-sync-timeout-ms opts)}
         selection
         (if (#{:local-snapshot :minimize-latency} (:mode descriptor))
-          {:adapter source-adapter
-           :descriptor descriptor
-           :request-token nil
-           :response-token nil}
+          (consistency-v3/captured-current-selection
+           source-adapter consistency-value selection-options)
           (consistency-v3/select
            source-adapter
            consistency-value
-           {:format-options (:format-options opts)
-            :coherence-authority (:coherence-authority opts)
-            :issue-token? false
-            :timeout-ms (:consistency-sync-timeout-ms opts)}))
+           selection-options))
         adapter (:adapter selection)]
     {:adapter adapter
      :db (:db (backend/state adapter))

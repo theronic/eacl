@@ -4,6 +4,7 @@
    [datascript.core :as ds]
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
+   [eacl.consistency :as consistency]
    [eacl.core :as eacl :refer [spice-object]]
    [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
@@ -19,6 +20,191 @@
 (def selection
   {:mode :verified-authoritative
    :kernel production/generated-javascript-kernel})
+
+(defn- expected-consistency-plan
+  [{:keys [mode capability-supported? managed-authority?]}]
+  (cond
+    (not capability-supported?)
+    (case mode
+      (:local-snapshot :minimize-latency) :unsupported-capability
+      :at-exact-snapshot :exact-snapshot-unavailable
+      :unsupported-head-barrier)
+    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
+         (not managed-authority?))
+    :unsupported-head-barrier
+    :else
+    (case mode
+      (:local-snapshot :minimize-latency) :select-current
+      (:fully-consistent :synchronized-head) :select-authoritative
+      :at-least-as-fresh :authenticate-and-select-at-least
+      :at-exact-snapshot :authenticate-and-select-exact)))
+
+(defn- expected-consistency-validation
+  [{:keys [kind selection-present? selected-adapter?
+           same-source-scope? anchor-satisfied?]}]
+  (cond
+    (not selection-present?)
+    (if (= :exact kind)
+      :exact-snapshot-unavailable
+      :invalid-selected-adapter)
+    (not selected-adapter?) :invalid-selected-adapter
+    (not same-source-scope?) :incomparable-scope
+    (and (#{:at-least :exact} kind)
+         (not anchor-satisfied?))
+    :history-divergence
+    :else :accept))
+
+(deftest generated-javascript-consistency-decisions-are-exhaustive
+  (doseq [mode
+          [:local-snapshot :minimize-latency
+           :fully-consistent :synchronized-head
+           :at-least-as-fresh :at-exact-snapshot]
+          capability-supported? [false true]
+          managed-authority? [false true]]
+    (let [input {:mode mode
+                 :capability-supported? capability-supported?
+                 :managed-authority? managed-authority?}]
+      (is (= (expected-consistency-plan input)
+             (verified/decide
+              selection
+              :consistency-plan
+              input
+              #(throw (ex-info "legacy must not run" {})))))))
+  (doseq [kind [:current :authoritative :at-least :exact]
+          selection-present? [false true]
+          selected-adapter? [false true]
+          :when (or selection-present? (not selected-adapter?))
+          same-source-scope? [false true]
+          anchor-satisfied? [false true]]
+    (let [input {:kind kind
+                 :selection-present? selection-present?
+                 :selected-adapter? selected-adapter?
+                 :same-source-scope? same-source-scope?
+                 :anchor-satisfied? anchor-satisfied?}]
+      (is (= (expected-consistency-validation input)
+             (verified/decide
+              selection
+              :consistency-validation
+              input
+              #(throw (ex-info "legacy must not run" {}))))))))
+
+(defn- expected-consistency-work
+  [path issue-response-token?]
+  (let [response-scope (if issue-response-token? 1 0)
+        common
+        {:capability-observations 1
+         :plan-decisions 1
+         :authentication-attempts 0
+         :backend-selection-calls 1
+         :validation-decisions 1
+         :contains-anchor-calls 0
+         :graph-head-reads 1
+         :order-hint-reads 1
+         :exact-locator-reads 1}]
+    (case path
+      :captured-current
+      {:capability-observations 1
+       :plan-decisions 1
+       :authentication-attempts 0
+       :backend-selection-calls 0
+       :validation-decisions 0
+       :source-scope-reads 0
+       :contains-anchor-calls 0
+       :graph-head-reads 0
+       :order-hint-reads 0
+       :exact-locator-reads 0}
+      (:selected-current :authoritative)
+      (assoc common :source-scope-reads (+ 2 response-scope))
+      :at-least
+      (assoc common
+             :authentication-attempts 1
+             :source-scope-reads (+ 3 response-scope)
+             :contains-anchor-calls 1)
+      :exact
+      (assoc common
+             :authentication-attempts 1
+             :source-scope-reads (+ 3 response-scope)
+             :graph-head-reads 2
+             :order-hint-reads 2
+             :exact-locator-reads 2))))
+
+(deftest generated-javascript-consistency-work-is-dimensionally-exact
+  (doseq [path
+          [:captured-current :selected-current :authoritative
+           :at-least :exact]
+          issue-response-token? [false true]]
+    (is (= (expected-consistency-work path issue-response-token?)
+           (production/consistency-selection-work
+            path issue-response-token?)))))
+
+(defn- consistency-plan-adapter
+  [mode capability-supported?]
+  (backend/make-adapter
+   {:id :generated-consistency-plan-test
+    :capabilities
+    {:consistency (if capability-supported? #{mode} #{})
+     :snapshots #{:current}
+     :source #{:stable-scope :graph-head
+               :anchor-membership :order-hint :exact-locator}
+     :cursor #{}
+     :transactions #{}
+     :cache-proofs #{}
+     :runtime #{:cljs}}
+    :operations
+    (into
+     {}
+     (map
+      (fn [operation]
+        [operation (fn [& _] nil)]))
+     backend/required-snapshot-operations)}))
+
+(defn- observed-generated-plan
+  [source mode managed-authority?]
+  (try
+    [:planned
+     (consistency/selection-plan
+      source
+      {:mode mode}
+      {:coherence-authority
+       (if managed-authority? :managed :unknown)
+       :engine-selection selection})]
+    (catch cljs.core.ExceptionInfo error
+      [:rejected (:type (ex-data error))])))
+
+(defn- expected-production-plan
+  [input]
+  (let [decision (expected-consistency-plan input)]
+    (if (contains?
+         #{:select-current
+           :select-authoritative
+           :authenticate-and-select-at-least
+           :authenticate-and-select-exact}
+         decision)
+      [:planned decision]
+      [:rejected
+       (case decision
+         :unsupported-capability :eacl/unsupported-capability
+         :exact-snapshot-unavailable
+         :eacl.consistency/exact-snapshot-unavailable
+         :eacl.consistency/unsupported-head-barrier)])))
+
+(deftest generated-javascript-plan-refines-production-fact-extraction
+  (doseq [mode
+          [:local-snapshot :minimize-latency
+           :fully-consistent :synchronized-head
+           :at-least-as-fresh :at-exact-snapshot]
+          capability-supported? [false true]
+          managed-authority? [false true]]
+    (let [input
+          {:mode mode
+           :capability-supported? capability-supported?
+           :managed-authority? managed-authority?}]
+      (is (=
+           (expected-production-plan input)
+           (observed-generated-plan
+            (consistency-plan-adapter mode capability-supported?)
+            mode
+            managed-authority?))))))
 
 (defn- generated-merge-two
   [direction left right]

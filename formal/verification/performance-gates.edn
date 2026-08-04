@@ -9,6 +9,12 @@
  :lore-resource-boundary
  {:source
   "https://github.com/theronic/lore/commit/dabb5634b0d44e196e2b6ec63003917b3d445bec"
+  :analyzer-status :outdated-untrusted-diagnostic
+  :assurance-contribution :none
+  :adopted-techniques
+  [:explicit-resource-dimensions
+   :peak-vs-cumulative-separation
+   :no-cross-dimensional-proof-substitution]
   :required-dimensions
   {:represented-admission-weight :logical-gauge
    :represented-candidates :logical-gauge
@@ -57,7 +63,7 @@
    :maximum-nested-traversal-depth 3
    :unique-unsupported-operators 142
    :unsupported-operator-occurrences 331
-   :assurance :source-structural-candidates-only
+   :assurance :untrusted-source-structural-diagnostic-only
    :full-case-study
    {:status :rejected
     :error :invalid-eacl-resource-claim
@@ -67,11 +73,11 @@
    :production-source-resource-refinement :unmatched
    :evidence-update-qualification
    :subsequent-commit-changes-reports-only-not-analyzed-production-or-formal-source}
-  :status :claim-boundary-enforced}
+  :status :diagnostic-only-no-release-gate-depends-on-analyzer}
 
  :formal-pipeline
- {:scope :all-21-dafny-modules
-  :proof-efforts 9234
+ {:scope :all-22-dafny-modules
+  :proof-efforts 9248
   :last-observed-local-wall-seconds 1129.21
   :last-observed-wall-proof-efforts 9207
   :current-run-wall-clock :not-captured
@@ -81,7 +87,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3645506567
+  :total-observed-resource-count 3645765210
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -95,6 +101,92 @@
   :qualification
   :solver-cost-is-not-engine-runtime-memory-or-logical-work
   :timeout-is-failure true}
+
+ :consistency-selection-boundary
+ {:scope
+  :successful-captured-current-public-backend-selection
+  :formal-model "formal/dafny/ConsistencyDecision.dfy"
+  :production-source "modules/eacl/src/eacl/consistency.cljc"
+  :runners
+  {:clj-java
+   "formal/smoke/clj/eacl/formal/consistency_boundary_benchmark.clj"
+   :cljs-javascript
+   "formal/smoke/cljs/eacl/formal/consistency_boundary_benchmark.cljs"}
+  :formal-logical-work
+  {:capability-observations 1
+   :plan-decisions 1
+   :authentication-attempts 0
+   :backend-selection-calls 0
+   :validation-decisions 0
+   :source-scope-reads 0
+   :contains-anchor-calls 0
+   :graph-head-reads 0
+   :order-hint-reads 0
+   :exact-locator-reads 0}
+  :source-correspondence
+  {:captured-adapter-is-identical-to-selected-adapter true
+   :same-source-scope-by-reflexivity true
+   :post-selection-generated-decision-required false
+   :direct-selected-current-path
+   {:backend-selection-calls 1
+    :validation-decisions 1
+    :source-scope-reads-at-most 3
+    :graph-head-reads 1
+    :order-hint-reads 1
+    :exact-locator-reads 1}
+   :all-other-successful-paths
+   {:plan-decisions 1
+    :validation-decisions 1
+    :backend-selection-calls-at-most 1
+    :authentication-attempts-at-most 1
+    :source-scope-reads-at-most 4
+    :contains-anchor-calls-at-most 1
+    :graph-head-reads-at-most 2
+    :order-hint-reads-at-most 2
+    :exact-locator-reads-at-most 2}
+   :executable-evidence
+   eacl.consistency-test/consistency-selection-logical-work-matches-formal-path-bounds}
+  :required
+  {:clj-java
+   {:maximum-median-p95-ratio 12.0
+    :maximum-median-p95-absolute-overhead-ns 10000.0}
+   :cljs-javascript
+   {:maximum-median-p95-ratio 8.0
+    :maximum-median-p95-absolute-overhead-ns 10000.0}}
+  :observed
+  {:date "2026-08-04"
+   :fixture
+   {:repetitions 2000
+    :warmup 10
+    :samples 40
+    :independent-trials 5
+   :paired-order :alternating}
+   :clj-java
+   {:legacy-p50-ns-representative 168.7295
+    :verified-p50-ns-representative 883.5625
+    :median-p50-ratio 5.560958558558558
+    :median-p95-ratio 5.237233490345524
+    :median-p50-absolute-overhead-ns 632.833
+    :median-p95-absolute-overhead-ns 690.3544999999999
+    :status :passed}
+   :cljs-javascript
+   {:legacy-p50-ns-representative 812.624999999997
+    :verified-p50-ns-representative 2542.8540000000057
+    :median-p50-ratio 3.1936149205836206
+    :median-p95-ratio 3.0725027876330673
+    :median-p50-absolute-overhead-ns 1759.6454999999196
+    :median-p95-absolute-overhead-ns 1816.604000000041
+    :status :passed}}
+  :resource-qualification
+  {:logical-counters
+   :dafny-bounded-and-source-instrumentation-matched
+   :wall-time :host-specific-regression-measurement
+   :jvm-live-heap-bytes :not-established
+   :javascript-heap-bytes :not-established
+   :cpu-time :not-established
+   :backend-io :none-in-fixture
+   :accounting-method :direct-explicit-dimensions}
+  :status :passed}
 
  :indexed-plan-certification
  {:scope :schema-proof-root-plan-compilation-not-query-latency
@@ -253,7 +345,7 @@
     1.64425 1.52775 1.662625 1.525375 1.507833 1.477417
     1.443208 1.42925 1.475 1.382 1.460375 1.392042
     1.417875 1.353125 1.383583 1.352542]}
-  :lore-dimensional-recheck
+  :direct-dimensional-recheck
   {:date "2026-08-03"
    :legacy-p50-ms 0.965792
    :legacy-p95-ms 1.28275
@@ -348,7 +440,7 @@
    :raw-per-request-samples-are-returned-by-run-gate-but-not-host-resource-measurements}
   :qualification
   :same-snapshot-page-results-and-adapter-work-match-with-zero-final-answer-or-subproblem-cache
-  :lore-resource-conclusion
+  :direct-resource-conclusion
   :opaque-state-compiled-indexes-and-iterative-driving-keep-generated-overhead-page-work-bounded
   :status :recursive-generated-authority-performance-gate-passed}
 
@@ -457,7 +549,7 @@
    :required {:maximum-median-p95-ratio 1.05}
    :qualification
    :paired-wall-time-regression-gates-not-resource-theorems}
-  :lore-dimensions
+  :resource-dimensions
   {:backend-operations 0
    :input-values 20000
    :logical-output-values :equal-to-demand
