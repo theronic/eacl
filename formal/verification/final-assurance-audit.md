@@ -240,10 +240,10 @@ that the complete v8.0 engine is formally verified.
   `:not-established`, so the evaluator and release manifest refuse performance
   cutover instead of substituting logical cache weight or the noise-dominated
   GC micro-measurement for a heap bound.
-- Lore revision `dabb5634` reanalyzed immutable synthetic EACL revision
-  `4794b7e5f0b12ccd2e4818513b2a9637ae8b6e05` (tree
-  `3494b94c0ea8189615c2e6c4cf681f7935348ff1`, snapshot SHA-256
-  `5b189c47aedcf58ac2626e343b68c364744ef482e6d157246cb8f00f22e24a4b`).
+- Lore revision `dabb5634` reanalyzed immutable EACL revision
+  `08ec9c74496ca27173cb4fb185f39fd505ad613a` (tree
+  `fe7d2d7bbeba74ac95c354d64e01272c5ac9f2ae`, snapshot SHA-256
+  `284f462ac6d2b95aac3f63aaafb410582f638103212d0c3c4d0ead855fc67991`).
   It found all 22 named source targets, but zero fit Lore's strict Core; all
   remain source-structural candidates (maximum nested traversal depth 3, 142
   unique unsupported operators and 331 per-function operator occurrences).

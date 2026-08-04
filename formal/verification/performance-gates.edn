@@ -34,17 +34,17 @@
    :whole-engine-resource-safety :not-established}
   :current-revision-reanalysis
   {:scope :production-and-test-source-before-report-finalization
-   :immutable-synthetic-revision
-   "4794b7e5f0b12ccd2e4818513b2a9637ae8b6e05"
-   :tree "3494b94c0ea8189615c2e6c4cf681f7935348ff1"
+   :immutable-analyzed-revision
+   "08ec9c74496ca27173cb4fb185f39fd505ad613a"
+   :tree "fe7d2d7bbeba74ac95c354d64e01272c5ac9f2ae"
    :snapshot-sha256
-   "5b189c47aedcf58ac2626e343b68c364744ef482e6d157246cb8f00f22e24a4b"
+   "284f462ac6d2b95aac3f63aaafb410582f638103212d0c3c4d0ead855fc67991"
    :input-counts
    {:claim-documentation 1
     :dafny 21
     :tla 19
     :formal-toolchain 1
-    :verification 28
+    :verification 30
     :clojure-source 52
     :benchmark 1}
    :target-functions 22

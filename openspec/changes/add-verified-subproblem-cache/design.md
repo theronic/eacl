@@ -371,7 +371,7 @@ counters may not be substituted. Production resource refinement belongs to
 the generated indexed state machine under its certified ordered-adapter
 contract.
 
-The referenced Lore revision was also run against an immutable synthetic Git
+The referenced Lore revision was also run against an immutable Git
 snapshot of the current worktree. All 22 selected cache/traversal functions
 remained source-structural candidates because Lore's strict Core does not yet
 cover their concurrency, laziness, persistent collections, backend calls, or
