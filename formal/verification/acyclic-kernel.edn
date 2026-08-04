@@ -4,7 +4,7 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 30
+   :verified-obligations 44
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
@@ -12,7 +12,12 @@
     :direct-can-sound-and-complete
     :forward-projection-exact
     :reverse-projection-exact
-    :bounded-count-law]}
+    :bounded-count-law
+    :strictly-ascending-leapfrog-intersection-is-set-intersection
+    :leapfrog-outer-iterations-at-most-input-cardinality-sum
+    :leapfrog-reseek-calls-at-most-outer-iterations
+    :leapfrog-probe-head-examinations-at-most-seventeen-times-outer-iterations
+    :inclusive-reseek-preserves-intersection-candidates]}
   {:source "formal/dafny/OrderedMerge.dfy"
    :verified-obligations 48
    :claims
@@ -61,12 +66,36 @@
   :generated-oracle
   {:java {:fixtures 300 :status :passed}
    :javascript {:fixtures 150 :status :passed}}
-  :mutation :ordered-merge-wrong-comparator
+ :mutation :ordered-merge-wrong-comparator
   :performance-report
   "formal/verification/performance-gates.edn"
+  :formal-source-refinement :pending-independent-review}
+ :leapfrog-intersection-source-specialization
+ {:hot-path :optimized-clj-cljs-arrow-intersection
+  :generated-oracle
+  {:java {:fixtures 4100 :status :passed}
+   :javascript {:fixtures 4100 :status :passed}}
+  :forced-production-reseek-fixtures 3
+  :mutations
+  [:leapfrog-equal-head-skipped
+   :leapfrog-reseek-target-excluded
+   :leapfrog-probe-limit-off-by-one]
+  :formal-resource-bounds
+  {:outer-iterations "|left| + |right|"
+   :reseek-calls "outer-iterations"
+   :probe-head-examinations "17 * outer-iterations"
+   :linear-probe-limit 16}
+  :source-counter-agreement
+  {:reseek-calls :exact-on-all-java-and-javascript-fixtures
+   :probe-head-examinations
+   :formal-control-flow-measure-not-instrumented-in-production-source}
+  :resource-qualification
+  :logical-control-flow-only-not-backend-seek-cost-lazy-realization-allocation-heap-or-latency
   :formal-source-refinement :pending-independent-review}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
   :optimized-ordered-merge-source-refinement-is-not-formally-discharged
+  :optimized-leapfrog-source-refinement-is-not-formally-discharged
+  :inclusive-reseek-semantics-remain-an-adapter-obligation
   :recursive-engine-obligations-remain
   :full-pagination-and-cursor-obligations-remain]}

@@ -54,4 +54,60 @@
    [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
     :dafny-integer-values-do-not-model-generic-host-key-domains
     :host-integer-comparison-and-sequence-semantics-remain-trusted
+    :independent-source-refinement-review-not-recorded]}
+  {:id :acyclic-leapfrog-sorted-eid-intersection
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbols
+    [eacl.engine.v8/advance-sorted-eids
+     eacl.engine.v8/sorted-eids-intersect?]
+    :caller eacl.engine.v8/can-uncached*
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.StrictAscendingEids
+     AcyclicEngine.DropEidsBefore
+     AcyclicEngine.AdvanceSortedEids
+     AcyclicEngine.AdvanceExaminedHeads
+     AcyclicEngine.AdvanceReseekCalls]
+    :lemmas
+    [AcyclicEngine.DropEidsBeforeProperties
+     AcyclicEngine.AdvanceSortedEidsProperties
+     AcyclicEngine.LeapfrogSortedEidsIntersectWithWork
+     AcyclicEngine.LeapfrogSortedEidsIntersect]}
+   :abstract-domain
+   {:values :safe-natural-eids
+    :inputs :finite-strictly-ascending-streams
+    :reseek-contract :inclusive-first-value-greater-than-or-equal-to-target
+    :result :set-intersection-nonempty
+    :linear-probe-limit 16
+    :formal-resource-bounds
+    {:outer-iterations "|left| + |right|"
+     :reseek-calls "outer-iterations"
+     :probe-head-examinations "17 * outer-iterations"}}
+   :evidence
+   {:java-generated-oracle-fixtures 4100
+    :javascript-generated-oracle-fixtures 4100
+    :forced-production-reseek-fixtures 3
+    :mutations
+    [:leapfrog-equal-head-skipped
+     :leapfrog-reseek-target-excluded
+     :leapfrog-probe-limit-off-by-one]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]
+    :formal-resource-qualification
+    :dimensionally-separated-logical-control-flow
+    :source-counter-agreement
+    {:reseek-calls :exact-on-all-java-and-javascript-fixtures
+     :probe-head-examinations
+     :formal-control-flow-measure-not-instrumented-in-production-source}}
+   :limitations
+   [:generated-oracle-campaign-is-not-a-proof-of-clojure-source
+    :inclusive-reseek-contract-remains-an-adapter-obligation
+    :formal-head-examinations-do-not-include-outer-loop-head-reads
+    :backend-seek-complexity-and-allocation-remain-trusted
+    :no-formal-bound-on-lazy-realization-allocation-heap-or-wall-time
+    :host-long-and-javascript-safe-integer-semantics-remain-trusted
     :independent-source-refinement-review-not-recorded]}]}

@@ -70,7 +70,7 @@
    :select-exact
    #{:same-source :exact-locator-match :unavailable-or-immutable}
    :object-id->internal
-   #{:visible-object-total :injective :snapshot-bound}
+   #{:visible-object-total :injective :nonnegative :snapshot-bound}
    :internal-id->object
    #{:visible-object-round-trip :snapshot-bound}
    :relation-defs
@@ -79,10 +79,10 @@
    #{:finite :complete :type-correct :snapshot-bound}
    :subject->resources
    #{:finite :strict-order :unique :complete
-     :inclusive-exclusive-bounds :snapshot-bound}
+     :inclusive-exclusive-bounds :nonnegative :snapshot-bound}
    :resource->subjects
    #{:finite :strict-order :unique :complete
-     :inclusive-exclusive-bounds :snapshot-bound}
+     :inclusive-exclusive-bounds :nonnegative :snapshot-bound}
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
@@ -386,6 +386,11 @@
                  (js/Number.isSafeInteger value)))
    (<= minimum-exact-integer value maximum-exact-integer)))
 
+(defn- exact-natural?
+  [value]
+  (and (exact-integer? value)
+       (not (neg? value))))
+
 (defn- strictly-ordered?
   [direction values]
   (or (< (count values) 2)
@@ -414,6 +419,9 @@
       (when-not (every? exact-integer? values)
         (contract-violation!
          backend-id operation-key :exact-integer values))
+      (when-not (every? exact-natural? values)
+        (contract-violation!
+         backend-id operation-key :nonnegative values))
       (when-not (= (count values) (count (distinct values)))
         (contract-violation!
          backend-id operation-key :unique values))
@@ -448,6 +456,10 @@
                    (not (exact-integer? value)))
           (contract-violation!
            backend-id operation-key :exact-integer value))
+        (when (and (some? value)
+                   (not (exact-natural? value)))
+          (contract-violation!
+           backend-id operation-key :nonnegative value))
         value)
 
       :order-hint
@@ -455,6 +467,9 @@
         (when-not (exact-integer? value)
           (contract-violation!
            backend-id operation-key :exact-integer value))
+        (when-not (exact-natural? value)
+          (contract-violation!
+           backend-id operation-key :nonnegative value))
         value)
 
       (:snapshot-id :source-scope :graph-head)

@@ -423,6 +423,28 @@ with `OptionalLast`; maximum-EID and nil-key regressions run in CLJ and CLJS.
 The Dafny integer domain is an oracle for EID ordering and the optional-state
 shape, not a proof of every generic host comparator or value domain.
 
+The acyclic arrow fast path contains a second host specialization:
+`sorted-eids-intersect?` leapfrogs between two ascending EID streams, walking
+at most sixteen already-open values before issuing an inclusive backend
+reseek. Dafny now proves that dropping values strictly below the opposing head
+preserves exactly the possible intersection, that the resulting decision is
+equivalent to nonempty set intersection, and that outer iterations are at
+most the sum of the input cardinalities. The exact probe/reseek control model
+also bounds reseek calls by outer iterations and probe-head examinations by
+seventeen times outer iterations. Generated Java and JavaScript oracles agree
+with the actual private CLJ/CLJS function over 4,100 cases per runtime,
+including exact reseek counts and fixtures at and beyond the probe boundary.
+Mutants cover skipping an equal head, treating the reseek target as
+exclusive, and walking one extra head before reseeking.
+
+That result is intentionally narrower than a production resource theorem.
+The logical outer-iteration, reseek-call, and probe-head measures are distinct
+from backend seek work, lazy-sequence realization, allocation, heap, and wall
+time. Correctness also depends on the adapter returning the first value
+greater than or equal to the target. The source digest, cross-runtime
+campaign, and mutations are recorded, but independent source refinement and
+adapter-level inclusive-reseek review remain open release gates.
+
 ### 11. Bound proof-pipeline resources without confusing them with engine resources
 
 Lore's no-cross-dimensional-substitution rule applies to the verifier itself.
@@ -443,6 +465,16 @@ catches proof-engineering regressions while the parameterized Dafny resource
 theorems and production benchmark gates continue to police their own distinct
 dimensions.
 
+EACL-FORMAL-028 exposed the same substitution error in the generated-artifact
+gate: it labelled size passed by comparing stale foundation numbers without
+measuring the rebuilt full kernel. The current Java source, Java class,
+JavaScript runtime, and browser artifacts already exceeded every old
+foundation maximum. Formal CI now rebuilds and byte-counts those four artifact
+forms independently against a reviewed full-kernel baseline, writes the exact
+observation, and fails above 125 percent growth. Raw source bytes, class bytes,
+JavaScript bytes, solver effort, allocation, live heap, and latency remain
+different measures.
+
 ### 12. Make public decision-source closure machine-enforced
 
 A theorem list and hand-written decision inventory cannot show that a new
@@ -452,7 +484,7 @@ sources, closes the cross-namespace dependency graph from 60 named roots, and
 commits exact source digests, definition locations, reachable sets, and
 external call sets. Unattributed usages inside exact `defrecord` spans are
 assigned to the containing public-client record. The current union contains
-1,287 definitions in 51 source files.
+1,288 definitions in 51 source files.
 
 This ledger deliberately reports
 `closure-enumerated-verification-incomplete`. Static reachability does not

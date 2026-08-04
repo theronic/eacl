@@ -18,6 +18,7 @@
  [:operation-obligation-coverage
   :relation-catalog
   :identity-round-trip
+  :nonnegative-internal-eids
   :schema-enumeration
   :forward-reverse-scans
   :direct-match-equivalence
@@ -106,7 +107,8 @@
    :strict-order
    :uniqueness
    :inclusive-exclusive-bounds
-   :exact-integer-representation]}
+   :exact-integer-representation
+   :nonnegative-internal-eids]}
  :claim
  {:status :adapter-certification-suite-passed
   :establishes

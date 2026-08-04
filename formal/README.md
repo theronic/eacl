@@ -51,9 +51,15 @@ assertion-batch time and deterministic Z3 resource ceilings. A successful
 per-module CSV inputs from which it was derived; these measure proof search,
 not EACL runtime resources.
 
+`bin/formal artifact-size` runs after the Java, JavaScript, and browser builds.
+It measures each generated representation from the current build against
+`verification/generated-artifact-size.edn` and fails above its reviewed
+full-kernel growth bound. A source or class byte count is not a proxy for
+allocation, retained heap, solver effort, or latency.
+
 `bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
 ledger for 60 named shared and backend roots. The ledger is deliberately
-marked verification-incomplete: enumerating 1,287 reachable definitions in 51
+marked verification-incomplete: enumerating 1,288 reachable definitions in 51
 source files (including source-span attribution for inline `defrecord`
 methods) prevents silent omissions but does not establish source refinement or
 adapter semantics. `backend-dispatch.edn` separately checks that every CLJ and

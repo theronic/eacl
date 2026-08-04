@@ -152,14 +152,14 @@
   :backends-smoke-passed [:datomic :datahike :datascript]
   :latest-validation
   {:date "2026-08-03"
-   :public-clj {:namespaces 57 :tests 464 :assertions 16921}
+   :public-clj {:namespaces 57 :tests 468 :assertions 17901}
    :core-clj {:tests 110 :assertions 4065}
    :datascript-clj {:tests 39 :assertions 297}
-   :datascript-cljs {:tests 135 :assertions 4227}
+   :datascript-cljs {:tests 136 :assertions 4235}
    :datahike-clj {:tests 29 :assertions 368}
    :datomic-clj {:tests 245 :assertions 11370}
-   :generated-java-bridge {:tests 37 :assertions 7591}
-   :generated-javascript-bridge {:tests 25 :assertions 847}
+   :generated-java-bridge {:tests 38 :assertions 7595}
+   :generated-javascript-bridge {:tests 26 :assertions 851}
    :heavy-pagination {:tests 9 :assertions 3403}
    :heavy-subproblem-cache {:tests 5 :assertions 12}
    :failures 0

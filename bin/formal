@@ -41,6 +41,7 @@ usage() {
     "  build-java            compile the translated Java smoke boundary" \
     "  build-js              execute the translated JavaScript smoke boundary" \
     "  browser-bundle        bundle generated JavaScript for browsers" \
+    "  artifact-size         check rebuilt generated artifacts against reviewed bounds" \
     "  source-closure        check the public engine source dependency ledger" \
     "  counterexample-replay replay every minimized bug through nREPL" \
     "  mutation-control      run registered mutation controls via nREPL" \
@@ -224,6 +225,9 @@ case "$command" in
     cp "$repo_root/formal/smoke/js/browser_smoke.html" \
       "$output_root/browser/index.html"
     ;;
+  artifact-size)
+    exec "$repo_root/bin/check-generated-artifact-size"
+    ;;
   source-closure)
     exec "$repo_root/bin/public-source-closure.mjs" check
     ;;
@@ -387,6 +391,7 @@ case "$command" in
     "$repo_root/bin/formal" build-java
     "$repo_root/bin/formal" build-js
     "$repo_root/bin/formal" browser-bundle
+    "$repo_root/bin/formal" artifact-size
     "$repo_root/bin/formal" manifest
     "$repo_root/bin/formal" tla-typecheck
     "$repo_root/bin/formal" apalache-check

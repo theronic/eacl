@@ -34,46 +34,24 @@
    :whole-engine-resource-safety :not-established}
   :current-revision-reanalysis
   {:scope :production-and-test-source-before-report-finalization
-   :immutable-analyzed-revision
-   "08ec9c74496ca27173cb4fb185f39fd505ad613a"
-   :tree "fe7d2d7bbeba74ac95c354d64e01272c5ac9f2ae"
-   :snapshot-sha256
-   "284f462ac6d2b95aac3f63aaafb410582f638103212d0c3c4d0ead855fc67991"
-   :input-counts
-   {:claim-documentation 1
-    :dafny 21
-    :tla 19
-    :formal-toolchain 1
-    :verification 30
-    :clojure-source 52
-    :benchmark 1}
-   :target-functions 22
-   :strict-core-supported 0
-   :source-structural-candidates 22
-   :maximum-nested-traversal-depth 3
-   :unique-unsupported-operators 142
-   :unsupported-operator-occurrences 331
-   :assurance :source-structural-candidates-only
-   :full-case-study
-   {:status :rejected
-    :error :invalid-eacl-resource-claim
-    :claim :production/unconditional-per-key-single-flight
-    :reason
-    :the-pinned-old-refutation-witness-does-not-match-the-new-revision}
-   :production-source-resource-refinement :unmatched}
+   :status :pending-current-immutable-reanalysis
+   :reason
+   :production-source-and-formal-artifacts-changed-after-the-prior-lore-witness
+   :superseded-immutable-analyzed-revision
+   "08ec9c74496ca27173cb4fb185f39fd505ad613a"}
   :status :claim-boundary-enforced}
 
  :formal-pipeline
  {:scope :all-21-dafny-modules
-  :proof-efforts 9193
-  :last-observed-local-wall-seconds 1114.31
+  :proof-efforts 9207
+  :last-observed-local-wall-seconds 1129.21
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 1800
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3643877525
+  :total-observed-resource-count 3644291391
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -126,16 +104,15 @@
   :status :split-certifier-regression-gate-passed}
 
  :generated-artifacts
- {:java-source {:baseline-bytes 439019
-                :foundation-max-bytes 1048576}
-  :java-classes-with-runtime {:baseline-bytes 493986
-                              :foundation-max-bytes 1048576}
-  :javascript-with-runtime {:baseline-bytes 107520
-                            :foundation-max-bytes 262144}
-  :browser-iife {:baseline-bytes 165055
-                 :foundation-max-bytes 393216}
+ {:measurement-command "bin/formal artifact-size"
+  :measurement-order :after-all-generated-artifacts-are-rebuilt
+  :machine-readable-config
+  "formal/verification/generated-artifact-size.edn"
+  :machine-readable-observation
+  "target/formal/generated-artifact-size.edn"
+  :measurement :uncompressed-byte-length
   :cutover-rule
-  {:status :requires-full-kernel-rebaseline
+  {:status :reviewed-full-kernel-baseline
    :maximum-growth-over-reviewed-full-kernel 1.25}}
 
  :legacy-runtime

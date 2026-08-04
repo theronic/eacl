@@ -1,6 +1,6 @@
 {:id :EACL-FORMAL-012
  :status :fixed
- :discovered-by :manual
+ :discovered-by :manual-review
  :seed-or-trace "indexed-scan/two-traversals/same-local-request-id"
  :minimized-fixture "fixture.edn"
  :impact :false-grant

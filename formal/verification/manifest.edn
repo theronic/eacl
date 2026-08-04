@@ -27,7 +27,7 @@
    :claim :conditional-interface-contract}
   :direct-and-acyclic-engine
   {:status :passed
-   :verified-obligations 30
+   :verified-obligations 44
    :source "formal/dafny/AcyclicEngine.dfy"
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
@@ -125,7 +125,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-026
+ {:latest :EACL-FORMAL-029
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -151,11 +151,14 @@
           :EACL-FORMAL-023
           :EACL-FORMAL-024
           :EACL-FORMAL-025
-          :EACL-FORMAL-026]}
+          :EACL-FORMAL-026
+          :EACL-FORMAL-027
+          :EACL-FORMAL-028
+          :EACL-FORMAL-029]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 26}
+  :entries 29}
  :residual-assumptions
  [:verification-toolchain
   :generated-code-compilers
@@ -182,13 +185,14 @@
    :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
    :blocking-findings
    [:retained-live-heap-not-established
-    :acyclic-optimized-merge-source-refinement-and-review-pending]}
+    :acyclic-optimized-merge-source-refinement-and-review-pending
+    :acyclic-optimized-leapfrog-source-refinement-and-review-pending]}
  :mutation-control
  {:status :passed
-  :report "formal/verification/mutation-control.edn"
+   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 43
-  :registered 43}
+  :killed 49
+  :registered 49}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -204,6 +208,7 @@
   :unmet-required-obligations
   [:complete-public-engine
    :acyclic-optimized-ordered-merge-source-refinement
+   :acyclic-optimized-leapfrog-source-refinement
    :production-ordered-adapter-certification
    :verified-shadow-complete-public-error-provenance-and-graph-comparison
    :managed-derived-subproblem-proof

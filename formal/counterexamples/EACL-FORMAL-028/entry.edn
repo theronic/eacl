@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-028
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "lore/resource-dimensions/generated-artifact-size/current-build"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree before the full-kernel artifact measurement gate"]
+ :affected-backends [:shared]
+ :root-cause
+ "The release report compared a stale foundation baseline only to a stale foundation maximum and labelled the generated-artifact-size dimension passed without measuring artifacts rebuilt from the current full generated kernel."
+ :fix
+ "A deterministic post-build CI check now measures Java source bytes, Java class bytes, JavaScript-with-runtime bytes, and browser-bundle bytes independently against reviewed full-kernel baselines and fails above 125 percent growth."
+ :closing-evidence
+ ["bin/check-generated-artifact-size"
+  "bin/formal artifact-size"
+  ".github/workflows/formal.yml post-build artifact-size gate"
+  "eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"]}

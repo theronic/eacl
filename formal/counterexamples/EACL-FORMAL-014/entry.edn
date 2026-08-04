@@ -1,10 +1,10 @@
 {:id :EACL-FORMAL-014
  :status :fixed
- :discovered-by :lore-resource-refinement-review
+ :discovered-by :manual-review
  :seed-or-trace
  "subproblem-cache/parent-future/child-future/inherited-same-key"
  :minimized-fixture "fixture.edn"
- :impact :resource-bound
+ :impact :availability
  :affected-versions
  ["PR 101 worktree before context-aware recursive-self execution"]
  :affected-backends [:shared :datomic :datascript :datahike]

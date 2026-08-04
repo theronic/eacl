@@ -56,11 +56,36 @@
     :EACL-FORMAL-025
     eacl.formal.state-trace-differential-test/recursive-shadow-queue-limit-is-query-local
     :EACL-FORMAL-026
-    eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape})
+    eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape
+    :EACL-FORMAL-027
+    eacl.backend.v8-test/runtime-guards-reject-negative-internal-eids-test
+    :EACL-FORMAL-028
+    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    :EACL-FORMAL-029
+    eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test})
 
 (defn- read-edn
   [path]
   (edn/read-string (slurp path)))
+
+(defn- schema-match?
+  [schema value]
+  (cond
+    (= :keyword schema) (keyword? value)
+    (= :integer schema) (integer? value)
+    (= :string schema) (string? value)
+    (= :relative-path schema)
+    (and (string? value)
+         (not (.isAbsolute (io/file value)))
+         (not-any? #(= ".." (str %))
+                   (.toPath (io/file value))))
+    (set? schema) (contains? schema value)
+    (and (vector? schema) (= :or (first schema)))
+    (some #(schema-match? % value) (rest schema))
+    (and (vector? schema) (= :vector (first schema)))
+    (and (vector? value)
+         (every? #(schema-match? (second schema) %) value))
+    :else false))
 
 (defn- entry-files
   []
@@ -97,6 +122,13 @@
              (is (= (keyword directory) (:id entry)))
              (is (= :fixed (:status entry)))
              (is (seq (:closing-evidence entry)))
+             (doseq [[field field-schema] (:required schema)]
+               (is (schema-match? field-schema (get entry field))
+                   (str (.getPath file) " invalid " field)))
+             (doseq [[field field-schema] (:optional schema)
+                     :when (contains? entry field)]
+               (is (schema-match? field-schema (get entry field))
+                   (str (.getPath file) " invalid optional " field)))
              (doseq [artifact ["fixture.edn" "expected.edn" "README.md"]]
                (is (.isFile
                     (io/file (.getParentFile file) artifact))
@@ -109,8 +141,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-026 (:latest revision)))
-    (is (= 26 (count entries)))))
+    (is (= :EACL-FORMAL-029 (:latest revision)))
+    (is (= 29 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

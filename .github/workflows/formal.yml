@@ -58,6 +58,7 @@ jobs:
           bin/formal build-java
           bin/formal build-js
           bin/formal browser-bundle
+          bin/formal artifact-size
 
       - name: Start fresh generated-boundary nREPL
         run: |

@@ -1,10 +1,10 @@
 {:id :EACL-FORMAL-019
  :status :fixed
- :discovered-by :production-source-refinement-review
+ :discovered-by :manual-review
  :seed-or-trace
  "ordered-merge/descending/maximum-eid-as-first-value"
  :minimized-fixture "fixture.edn"
- :impact :authorization-result
+ :impact :omission
  :affected-versions
  ["PR 101 worktree before explicit ordered-merge last-value presence"]
  :affected-backends [:shared :datomic :datascript :datahike]

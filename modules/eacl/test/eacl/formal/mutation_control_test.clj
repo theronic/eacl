@@ -172,6 +172,70 @@
          (= :take-right mutant)
          (not= correct mutant))))
 
+(defn- leapfrog-equal-head-skipped-killed?
+  []
+  (let [left [17]
+        right [17]
+        correct (boolean (some (set left) right))
+        mutant
+        (boolean
+         (some (set (subvec left 1))
+               (subvec right 1)))]
+    (and (true? correct)
+         (false? mutant))))
+
+(defn- leapfrog-reseek-target-excluded-killed?
+  []
+  (let [left (vec (range 40))
+        right [20]
+        target (first right)
+        correct-resume
+        (drop-while #(< % target) left)
+        mutant-resume
+        (drop-while #(<= % target) left)
+        correct (boolean (some (set correct-resume) right))
+        mutant (boolean (some (set mutant-resume) right))]
+    (and (= target (first correct-resume))
+         (not= target (first mutant-resume))
+         (true? correct)
+         (false? mutant))))
+
+(defn- leapfrog-probe-limit-off-by-one-killed?
+  []
+  (let [values (vec (range 18))
+        target 17
+        reseeks
+        (fn [limit-comparison]
+          (loop [stream (seq values)
+                 probes 0
+                 reseek-count 0]
+            (cond
+              (nil? stream) reseek-count
+              (>= (first stream) target) reseek-count
+              (limit-comparison probes 16) (inc reseek-count)
+              :else (recur (next stream) (inc probes) reseek-count))))
+        correct (reseeks >=)
+        mutant (reseeks >)]
+    (and (= 1 correct)
+         (zero? mutant)
+         (not= correct mutant))))
+
+(defn- adapter-negative-eid-admitted-killed?
+  []
+  (let [value -1
+        exact-integer?
+        #(and (integer? %)
+              (<= -9007199254740991
+                  %
+                  9007199254740991))
+        correct
+        (and (exact-integer? value)
+             (not (neg? value)))
+        mutant
+        (exact-integer? value)]
+    (and (false? correct)
+         (true? mutant))))
+
 (defn- ordered-merge-sentinel-collides-with-domain-killed?
   []
   (let [maximum-eid Long/MAX_VALUE
@@ -414,6 +478,40 @@
              (select-keys right [:scope :measure])))]
     (not (comparable? materialized production))))
 
+(defn- generated-artifact-gate-uses-stale-baseline-killed?
+  []
+  (let [old-foundation
+        {:java-source [439019 1048576]
+         :java-classes [493986 1048576]
+         :javascript [107520 262144]
+         :browser [165055 393216]}
+        rebuilt-full-kernel
+        {:java-source 1749970
+         :java-classes 1597574
+         :javascript 766357
+         :browser 845730}
+        stale-gate-passed?
+        (every?
+         (fn [[_ [baseline maximum]]]
+           (<= baseline maximum))
+         old-foundation)
+        current-exceeds-old-maxima?
+        (every?
+         (fn [[kind actual]]
+           (> actual (second (get old-foundation kind))))
+         rebuilt-full-kernel)]
+    (and (true? stale-gate-passed?)
+         (true? current-exceeds-old-maxima?))))
+
+(defn- counterexample-ledger-values-unvalidated-killed?
+  []
+  (let [allowed #{:manual-review :dafny :apalache :differential :property}
+        invalid :production-source-refinement-review
+        presence-only? (some? invalid)
+        schema-valid? (contains? allowed invalid)]
+    (and (true? presence-only?)
+         (false? schema-valid?))))
+
 (defn- generated-stale-cursor-leaks-render-details-killed?
   []
   (let [expected
@@ -461,6 +559,14 @@
    lookup-self-scope-omits-lifecycle-killed?
    :ordered-merge-wrong-comparator
    ordered-merge-wrong-comparator-killed?
+   :leapfrog-equal-head-skipped
+   leapfrog-equal-head-skipped-killed?
+   :leapfrog-reseek-target-excluded
+   leapfrog-reseek-target-excluded-killed?
+   :leapfrog-probe-limit-off-by-one
+   leapfrog-probe-limit-off-by-one-killed?
+   :adapter-negative-eid-admitted
+   adapter-negative-eid-admitted-killed?
    :ordered-merge-sentinel-collides-with-domain
    ordered-merge-sentinel-collides-with-domain-killed?
    :generic-ordered-merge-nil-sentinel-collides-with-domain
@@ -497,6 +603,10 @@
    materialized-queue-limit-counts-cumulative-enqueues-killed?
    :materialized-resource-counter-promoted-to-production
    materialized-resource-counter-promoted-to-production-killed?
+   :generated-artifact-gate-uses-stale-baseline
+   generated-artifact-gate-uses-stale-baseline-killed?
+   :counterexample-ledger-values-unvalidated
+   counterexample-ledger-values-unvalidated-killed?
    :generated-stale-cursor-leaks-render-details
    generated-stale-cursor-leaks-render-details-killed?
    :shadow-typed-error-omits-page-size

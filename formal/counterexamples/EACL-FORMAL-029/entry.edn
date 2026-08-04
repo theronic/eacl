@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-029
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "counterexample-corpus/ledger-schema/value-validation"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree before counterexample value-schema enforcement"]
+ :affected-backends [:shared]
+ :root-cause
+ "The corpus completeness test compared required field names but never interpreted the committed schemas for their values, allowing invalid discovery and impact keywords to pass."
+ :fix
+ "Corpus replay now validates every required and present optional value against the committed scalar, enumeration, union, vector, and relative-path schemas; existing values were normalized to the declared taxonomy."
+ :closing-evidence
+ ["eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test"
+  "formal/counterexamples/ledger-schema.edn"]}

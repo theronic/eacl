@@ -177,16 +177,16 @@
     :timing-recheck :passed-within-formal-job-bound}
    :qualification
    :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
-  :generated-java
+ :generated-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 19
-   :assertions 396
+   :tests 20
+   :assertions 400
    :qualification :namespace-includes-non-indexed-production-decisions
    :status :passed}
-  :generated-javascript
+ :generated-javascript
   {:runner "formal/smoke/cljs/run"
-   :suite-tests 25
-   :suite-assertions 847
+   :suite-tests 26
+   :suite-assertions 851
    :datascript-public-recursive-cache-mode-differential true
    :status :passed}
   :production-recursive-contract

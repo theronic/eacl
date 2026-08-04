@@ -267,6 +267,9 @@
                             (js/Number.isSafeInteger internal)))
               "Internal object identity is not an exact integer."
               {:object object :internal internal})
+      (demand (not (neg? internal))
+              "Internal object identity must be nonnegative."
+              {:object object :internal internal})
       (demand (= (:id object)
                  (backend/invoke
                   adapter :internal-id->object internal))

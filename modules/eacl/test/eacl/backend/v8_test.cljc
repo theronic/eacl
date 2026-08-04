@@ -239,6 +239,38 @@
                   (violation operation implementation args)))
               (str "guard " operation)))))))
 
+(deftest runtime-guards-reject-negative-internal-eids-test
+  (letfn [(violation [operation implementation args]
+            (let [adapter
+                  (backend/make-adapter
+                   {:id :negative-eid-adapter
+                    :capabilities {}
+                    :runtime-guards? true
+                    :operations
+                    (assoc (operation-map)
+                           operation implementation)})]
+              (error-data
+               #(apply backend/invoke adapter operation args))))]
+    (doseq [[operation implementation args]
+            [[:object-id->internal
+              (fn [& _] -1)
+              ["external"]]
+             [:order-hint
+              (fn [& _] -1)
+              []]
+             [:subject->resources
+              (fn [& _] [-2 -1])
+              [:user 1 2 :document {:direction :asc}]]
+             [:resource->subjects
+              (fn [& _] [-2 -1])
+              [:document 1 2 :user {:direction :asc}]]]]
+      (let [failure (violation operation implementation args)]
+        (is (= :eacl/backend-contract-violation
+               (:type failure))
+            (str operation " " failure))
+        (is (= :nonnegative (:obligation failure))
+            (str operation " " failure))))))
+
 (deftest legacy-six-function-spi-remains-compatible-test
   (let [calls (atom [])
         implementation

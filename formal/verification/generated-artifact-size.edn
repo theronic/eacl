@@ -1,0 +1,26 @@
+{:schema-version 1
+ :measurement :uncompressed-byte-length
+ :maximum-growth-over-reviewed-full-kernel 1.25
+ :artifacts
+ {:java-source
+  {:path "target/formal/java/EaclKernel-java"
+   :kind :tree-suffix
+   :suffix ".java"
+   :baseline-bytes 1749970
+   :maximum-bytes 2187463}
+  :java-classes-with-runtime
+  {:path "target/formal/java/classes"
+   :kind :tree-suffix
+   :suffix ".class"
+   :baseline-bytes 1597574
+   :maximum-bytes 1996968}
+  :javascript-with-runtime
+  {:path "target/formal/js/EaclKernel.js"
+   :kind :file
+   :baseline-bytes 766357
+   :maximum-bytes 957947}
+  :browser-iife
+  {:path "target/formal/browser/EaclKernel.browser.js"
+   :kind :file
+   :baseline-bytes 845730
+   :maximum-bytes 1057163}}}

@@ -90,7 +90,12 @@
                 release-performance-evaluation
                 final-heavy-run
                 shadow-rollout]}
-        (edn/read-string (slurp performance-gates-path))]
+        (edn/read-string (slurp performance-gates-path))
+        generated-artifact-config
+        (edn/read-string
+         (slurp
+          (repo/file
+           (:machine-readable-config generated-artifacts))))]
     (is (= :host-specific-measurement
            (:wall-clock-assurance formal-pipeline)))
     (is (< 0
@@ -102,12 +107,26 @@
     (is (< (get-in formal-pipeline
                    [:maximum-observed-proof-effort :resource-count])
            (:proof-effort-resource-limit formal-pipeline)))
-    (doseq [[_ {:keys [baseline-bytes] :as artifact}]
-            (dissoc generated-artifacts :cutover-rule)]
+    (is (= "bin/formal artifact-size"
+           (:measurement-command generated-artifacts)))
+    (is (= :after-all-generated-artifacts-are-rebuilt
+           (:measurement-order generated-artifacts)))
+    (is (= :reviewed-full-kernel-baseline
+           (get-in generated-artifacts [:cutover-rule :status])))
+    (is (.isFile
+         (repo/file (:machine-readable-config generated-artifacts))))
+    (is (= :uncompressed-byte-length
+           (:measurement generated-artifact-config)))
+    (is (= (get-in generated-artifacts
+                   [:cutover-rule
+                    :maximum-growth-over-reviewed-full-kernel])
+           (:maximum-growth-over-reviewed-full-kernel
+            generated-artifact-config)))
+    (doseq [[_ {:keys [baseline-bytes maximum-bytes]}]
+            (:artifacts generated-artifact-config)]
       (is (pos-int? baseline-bytes))
-      (is (< baseline-bytes
-             (or (:foundation-max-bytes artifact)
-                 Long/MAX_VALUE))))
+      (is (pos-int? maximum-bytes))
+      (is (<= baseline-bytes maximum-bytes)))
     (is (< (get-in legacy-runtime
                    [:multipath-page :max-page-median-baseline-ms])
            (get-in legacy-runtime
@@ -226,9 +245,9 @@
       (is (< (get-in formal-pipeline
                      [:maximum-observed-proof-effort :resource-count])
              (:proof-effort-resource-limit formal-pipeline)))
-      (doseq [[_ {:keys [baseline-bytes foundation-max-bytes]}]
-              (dissoc generated-artifacts :cutover-rule)]
-        (is (<= baseline-bytes foundation-max-bytes)))
+      (doseq [[_ {:keys [baseline-bytes maximum-bytes]}]
+              (:artifacts generated-artifact-config)]
+        (is (<= baseline-bytes maximum-bytes)))
       (is (= :passed
              (get-in release-performance-evaluation
                      [:dimensions :verification-time :status])))

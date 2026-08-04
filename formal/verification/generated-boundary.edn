@@ -93,16 +93,16 @@
    :tests 1 :assertions 7 :status :passed}
   :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 25 :suite-assertions 847 :status :passed}
+   :suite-tests 26 :suite-assertions 851 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 9 :assertions 53}
    :cljs :passed-in-full-suite}
   :production-routing
-  {:clj-java {:tests 19 :assertions 396}
+  {:clj-java {:tests 20 :assertions 400}
    :cljs-javascript
-   {:suite-tests 25
-    :suite-assertions 847
+   {:suite-tests 26
+    :suite-assertions 851
     :datascript-public-recursive-cache-mode-differential true}}
   :materialized-reference
   {:comparison-contract
@@ -111,15 +111,15 @@
     :resource-counters :whole-graph-model-only}
    :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 19
-    :namespace-assertions 396
+    :namespace-tests 20
+    :namespace-assertions 400
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
    :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 17
-    :suite-tests 25
-    :suite-assertions 847
+    :namespace-tests 18
+    :suite-tests 26
+    :suite-assertions 851
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
   :public-state-trace
@@ -149,6 +149,7 @@
  :remaining
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-source-refinement
+  :acyclic-optimized-leapfrog-source-refinement
   :verified-shadow-complete-public-error-provenance-and-graph-comparison
   :cross-backend-generated-authority
   :independent-review]}

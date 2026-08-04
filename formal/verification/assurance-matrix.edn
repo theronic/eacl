@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated-verification-incomplete
   :source-files 51
   :public-roots 60
-  :reachable-definitions 1287
+  :reachable-definitions 1288
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -36,6 +36,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-direct-and-arrow-source-refinement
+    :acyclic-optimized-leapfrog-source-refinement
     :complete-public-typed-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
@@ -68,6 +69,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
+    :acyclic-optimized-leapfrog-source-refinement
     :complete-public-typed-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
@@ -91,6 +93,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
+    :acyclic-optimized-leapfrog-source-refinement
     :complete-public-typed-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates
     :independent-review]
@@ -163,6 +166,7 @@
    :internal-verified-authoritative-recursive-scc-dependent-roots
    :remaining
    [:acyclic-optimized-ordered-merge-source-refinement
+    :acyclic-optimized-leapfrog-source-refinement
     :production-adapter-certification
     :verified-shadow-complete-public-error-provenance-and-graph-comparison
     :cross-backend-authoritative-gates

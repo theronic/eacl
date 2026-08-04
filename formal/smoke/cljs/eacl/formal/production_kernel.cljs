@@ -649,6 +649,22 @@
      :left-consumed (.toNumber (.-dtor_leftConsumed chunk))
      :right-consumed (.toNumber (.-dtor_rightConsumed chunk))}))
 
+(defn acyclic-leapfrog-intersection
+  "Executes the generated bounded leapfrog oracle for source-specialization
+  tests. This is test-support code, not part of EACL's production kernel SPI."
+  [{:keys [left right]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        result
+        (js-invoke
+         (.-__default acyclic)
+         "LeapfrogSortedEidsIntersectWithWork"
+         (dafny-sequence (mapv big-number left))
+         (dafny-sequence (mapv big-number right)))]
+    {:intersects? (aget result 0)
+     :iterations (.toNumber (aget result 1))
+     :reseek-calls (.toNumber (aget result 2))
+     :examined-heads (.toNumber (aget result 3))}))
+
 (defn- optional-eid
   [indexed value]
   (if (some? value)

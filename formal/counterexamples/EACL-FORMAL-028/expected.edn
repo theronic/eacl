@@ -1,0 +1,9 @@
+{:measurement-command "bin/formal artifact-size"
+ :measurement-order :after-all-generated-artifacts-are-rebuilt
+ :dimensions
+ [:java-source-bytes
+  :java-class-bytes
+  :javascript-with-runtime-bytes
+  :browser-bundle-bytes]
+ :maximum-growth-over-reviewed-full-kernel 1.25
+ :failure-mode :nonzero-exit}

@@ -232,6 +232,17 @@ mandatory.
 - **AND** the mapped source surface includes the private pairwise and balanced
   fold helpers actually selected by the public wrapper
 
+#### Scenario: Acyclic arrow intersection leapfrogs through a sparse stream
+- **WHEN** two strictly ascending EID streams have a gap larger than the
+  in-memory probe limit
+- **THEN** the specialization reseeks inclusively at the opposing head and
+  returns true exactly when the streams share an EID
+- **AND** its logical outer-iteration, reseek-call, and probe-head counts are
+  bounded separately from backend seek work, host allocation, latency, and
+  heap
+- **AND** the specialization remains unverified until source refinement,
+  adapter inclusive-reseek semantics, and independent review are recorded
+
 #### Scenario: Generic ordered-merge key equals the absence representation
 - **WHEN** a host key function legitimately returns `nil` for the first item
 - **THEN** the specialization distinguishes that key from “no previous key”
@@ -302,3 +313,11 @@ refinement contract for that measure.
   terminal
 - **THEN** fetched values include the sentinel while consumed values include
   only values actually advanced by the generated engine
+
+#### Scenario: Generated kernel changes size
+- **WHEN** formal CI rebuilds the generated Java sources, Java classes,
+  JavaScript runtime, and browser bundle
+- **THEN** each artifact form is byte-counted independently against its
+  reviewed full-kernel baseline and the gate fails above its configured growth
+  bound
+- **AND** a stale foundation baseline cannot satisfy the current-build gate

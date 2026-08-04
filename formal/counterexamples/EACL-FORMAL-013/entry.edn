@@ -1,6 +1,6 @@
 {:id :EACL-FORMAL-013
  :status :fixed
- :discovered-by :production-source-review
+ :discovered-by :manual-review
  :seed-or-trace "subproblem-cache/resolve-own-key/lookup-own-flight"
  :minimized-fixture "fixture.edn"
  :impact :availability

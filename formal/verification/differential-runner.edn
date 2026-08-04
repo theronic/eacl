@@ -67,8 +67,8 @@
    :materialized-reference
    {:authorization-values :complete-results-only
     :operational-limit-refinement :not-claimed}
-   :suite-tests 25
-   :suite-assertions 847
+   :suite-tests 26
+   :suite-assertions 851
    :status :passed}
   {:name :portable-runner-clj-cljs
    :namespace eacl.formal.differential-runner-test

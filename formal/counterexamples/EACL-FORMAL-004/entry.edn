@@ -3,7 +3,7 @@
  :discovered-by :manual-review
  :seed-or-trace "proof-mode-none/add-between-pages"
  :minimized-fixture "fixture.edn"
- :impact :unproved-cross-graph-resume
+ :impact :stale-reuse
  :affected-versions ["current worktree at discovery"]
  :affected-backends [:shared :datomic :datascript :datahike]
  :root-cause

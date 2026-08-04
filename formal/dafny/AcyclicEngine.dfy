@@ -1209,4 +1209,235 @@ module AcyclicEngine {
          then count == countLimit && truncated
          else count == |full| && !truncated);
   }
+
+  predicate StrictAscendingEids(values: seq<nat>)
+  {
+    forall i, j | 0 <= i < j < |values| ::
+      values[i] < values[j]
+  }
+
+  const LinearProbeLimit: nat := 16
+
+  function DropEidsBefore(
+    values: seq<nat>,
+    target: nat
+  ): seq<nat>
+    decreases |values|
+  {
+    if |values| == 0 || target <= values[0]
+    then values
+    else DropEidsBefore(values[1..], target)
+  }
+
+  lemma StrictAscendingTail(values: seq<nat>)
+    requires StrictAscendingEids(values)
+    requires 0 < |values|
+    ensures StrictAscendingEids(values[1..])
+  {
+  }
+
+  lemma DropEidsBeforeProperties(
+    values: seq<nat>,
+    target: nat
+  )
+    requires StrictAscendingEids(values)
+    ensures StrictAscendingEids(DropEidsBefore(values, target))
+    ensures forall value ::
+              value in DropEidsBefore(values, target) <==>
+                       value in values && target <= value
+    ensures |values| != 0 && values[0] < target ==>
+              |DropEidsBefore(values, target)| < |values|
+    decreases |values|
+  {
+    if |values| != 0 && values[0] < target {
+      StrictAscendingTail(values);
+      DropEidsBeforeProperties(values[1..], target);
+      forall value
+        ensures value in DropEidsBefore(values, target) <==>
+                value in values && target <= value
+      {
+        if value == values[0] {
+          assert value < target;
+        }
+      }
+    }
+  }
+
+  function AdvanceSortedEids(
+    values: seq<nat>,
+    target: nat,
+    probes: nat
+  ): seq<nat>
+    requires probes <= LinearProbeLimit
+    decreases |values|
+  {
+    if |values| == 0 || target <= values[0]
+    then values
+    else if probes == LinearProbeLimit
+      then DropEidsBefore(values, target)
+      else AdvanceSortedEids(values[1..], target, probes + 1)
+  }
+
+  function AdvanceExaminedHeads(
+    values: seq<nat>,
+    target: nat,
+    probes: nat
+  ): nat
+    requires probes <= LinearProbeLimit
+    decreases |values|
+  {
+    if |values| == 0
+    then 0
+    else if target <= values[0] || probes == LinearProbeLimit
+      then 1
+      else 1 + AdvanceExaminedHeads(values[1..], target, probes + 1)
+  }
+
+  function AdvanceReseekCalls(
+    values: seq<nat>,
+    target: nat,
+    probes: nat
+  ): nat
+    requires probes <= LinearProbeLimit
+    decreases |values|
+  {
+    if |values| == 0 || target <= values[0]
+    then 0
+    else if probes == LinearProbeLimit
+      then 1
+      else AdvanceReseekCalls(values[1..], target, probes + 1)
+  }
+
+  lemma AdvanceSortedEidsProperties(
+    values: seq<nat>,
+    target: nat,
+    probes: nat
+  )
+    requires StrictAscendingEids(values)
+    requires probes <= LinearProbeLimit
+    ensures AdvanceSortedEids(values, target, probes) ==
+            DropEidsBefore(values, target)
+    ensures StrictAscendingEids(
+              AdvanceSortedEids(values, target, probes)
+            )
+    ensures forall value ::
+              value in AdvanceSortedEids(values, target, probes) <==>
+                       value in values && target <= value
+    ensures |values| != 0 && values[0] < target ==>
+              |AdvanceSortedEids(values, target, probes)| < |values|
+    ensures probes +
+            AdvanceExaminedHeads(values, target, probes) <=
+            LinearProbeLimit + 1
+    ensures AdvanceReseekCalls(values, target, probes) <= 1
+    decreases |values|
+  {
+    DropEidsBeforeProperties(values, target);
+    if |values| != 0 &&
+       values[0] < target &&
+       probes < LinearProbeLimit {
+      StrictAscendingTail(values);
+      AdvanceSortedEidsProperties(
+        values[1..],
+        target,
+        probes + 1
+      );
+    }
+  }
+
+  method LeapfrogSortedEidsIntersectWithWork(
+    left: seq<nat>,
+    right: seq<nat>
+  ) returns (
+      intersects: bool,
+      iterations: nat,
+      reseekCalls: nat,
+      examinedHeads: nat
+    )
+    requires StrictAscendingEids(left)
+    requires StrictAscendingEids(right)
+    ensures intersects <==>
+            exists value :: value in left && value in right
+    ensures iterations <= |left| + |right|
+    ensures iterations == 0 <==> |left| == 0 || |right| == 0
+    ensures reseekCalls <= iterations
+    ensures examinedHeads <=
+            (LinearProbeLimit + 1) * iterations
+    decreases |left| + |right|
+  {
+    if |left| == 0 || |right| == 0 {
+      return false, 0, 0, 0;
+    }
+
+    if left[0] == right[0] {
+      assert left[0] in left;
+      assert right[0] in right;
+      assert exists value :: value in left && value in right;
+      return true, 1, 0, 0;
+    }
+
+    if left[0] < right[0] {
+      var next := AdvanceSortedEids(left, right[0], 0);
+      AdvanceSortedEidsProperties(left, right[0], 0);
+      assert |next| < |left|;
+      var remainingIterations: nat;
+      var remainingReseekCalls: nat;
+      var remainingExaminedHeads: nat;
+      intersects,
+      remainingIterations,
+      remainingReseekCalls,
+      remainingExaminedHeads :=
+        LeapfrogSortedEidsIntersectWithWork(next, right);
+      iterations := 1 + remainingIterations;
+      reseekCalls :=
+        AdvanceReseekCalls(left, right[0], 0) +
+        remainingReseekCalls;
+      examinedHeads :=
+        AdvanceExaminedHeads(left, right[0], 0) +
+        remainingExaminedHeads;
+      assert iterations <= |left| + |right|;
+      assert reseekCalls <= iterations;
+      assert examinedHeads <=
+             (LinearProbeLimit + 1) * iterations;
+      return;
+    }
+
+    var next := AdvanceSortedEids(right, left[0], 0);
+    AdvanceSortedEidsProperties(right, left[0], 0);
+    assert |next| < |right|;
+    var remainingIterations: nat;
+    var remainingReseekCalls: nat;
+    var remainingExaminedHeads: nat;
+    intersects,
+    remainingIterations,
+    remainingReseekCalls,
+    remainingExaminedHeads :=
+      LeapfrogSortedEidsIntersectWithWork(left, next);
+    iterations := 1 + remainingIterations;
+    reseekCalls :=
+      AdvanceReseekCalls(right, left[0], 0) +
+      remainingReseekCalls;
+    examinedHeads :=
+      AdvanceExaminedHeads(right, left[0], 0) +
+      remainingExaminedHeads;
+    assert iterations <= |left| + |right|;
+    assert reseekCalls <= iterations;
+    assert examinedHeads <=
+           (LinearProbeLimit + 1) * iterations;
+  }
+
+  method LeapfrogSortedEidsIntersect(
+    left: seq<nat>,
+    right: seq<nat>
+  ) returns (intersects: bool)
+    requires StrictAscendingEids(left)
+    requires StrictAscendingEids(right)
+    ensures intersects <==>
+            exists value :: value in left && value in right
+  {
+    var iterations: nat;
+    var reseekCalls: nat;
+    var examinedHeads: nat;
+    intersects, iterations, reseekCalls, examinedHeads :=
+      LeapfrogSortedEidsIntersectWithWork(left, right);
+  }
 }

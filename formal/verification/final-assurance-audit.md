@@ -144,6 +144,26 @@ documents.
   legacy `:bound`/`:actual` maps and generated `:render-error` data. Both paths
   now expose one minimal typed stale-cursor map, and JVM/JavaScript regressions
   compare the entire map.
+- EACL-FORMAL-027 found an input-domain mismatch between the source adapter
+  contract and every generated/Dafny EID boundary. Optional adapter guards
+  accepted signed exact-integer object IDs, order hints, and ordered scan
+  values, while the formal engines require safe naturals. The three shipped
+  stores allocate nonnegative persistent EIDs, but a third-party adapter could
+  invalidate source/generated refinement. Nonnegativity is now an explicit
+  adapter obligation, runtime guards fail closed, and portable certification
+  rejects negative visible-object identities.
+- EACL-FORMAL-028 found that the generated-artifact-size dimension was marked
+  passed from stale foundation numbers without measuring the current rebuilt
+  full kernel. The current Java sources, Java classes, JavaScript runtime, and
+  browser bundle already exceeded all four old foundation maxima. Formal CI
+  now rebuilds and independently byte-counts all four artifact forms against
+  reviewed full-kernel baselines, writes a machine-readable observation, and
+  fails above 125 percent growth.
+- EACL-FORMAL-029 found that the counterexample corpus checked only required
+  field names, not values against its committed schema. Nine values in six
+  entries had drifted into undeclared taxonomies. Replay now interprets and
+  enforces every scalar, enumeration, union, vector, and relative-path field;
+  existing entries were normalized without weakening the schema.
 - Production shadow comparison covers recursive traversal values, ordering,
   page flags, counts, Boolean decisions, dimensionally matching cache-free
   resource counters, logical retained-state units, and typed traversal-limit
@@ -167,6 +187,21 @@ documents.
   consumption against the identical legacy selection. These are wall-time
   benchmarks over a pure in-memory merge; they do not establish heap or
   backend-operation theorems.
+- The acyclic arrow intersection fast path now has a narrower formal
+  specialization: for finite strictly ascending EID streams, Dafny proves
+  leapfrog intersection equivalent to nonempty set intersection. Its exact
+  probe/reseek control model bounds outer iterations by the sum of the input
+  cardinalities, reseek calls by outer iterations, and probe-head examinations
+  by seventeen times outer iterations. Generated Java and JavaScript agree
+  with the actual private CLJ/CLJS function on 4,100 cases per runtime,
+  including exact reseek counts and a fixture that forces the 16-element
+  probe/reseek branch. Equal-head, exclusive-reseek, and probe-limit
+  off-by-one mutants are killed.
+  These are dimensionally separate logical-control-flow bounds, not bounds on
+  backend seek cost, lazy realization, allocation, heap, or latency.
+  Correctness still assumes each adapter implements an inclusive
+  first-EID-at-or-after-target seek. Independent source refinement and adapter
+  review remain open.
 
 ## Public wording audit
 
@@ -183,7 +218,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,193 proof efforts across 21
+- Clean checksum-locked Dafny cache: 9,207 proof efforts across 21
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -196,15 +231,15 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 26 minimized entries replayed by 28 tests and 545
+- Counterexample corpus: 29 minimized entries replayed by 31 tests and 1,495
   assertions, zero failures/errors.
-- Mutation controls: 35 Clojure detectors and 8 Apalache counterexample
-  controls; all 43 registered mutants killed.
-- Public non-benchmark CLJ suite: 464 tests, 16,921 assertions, zero failures/errors.
-- DataScript CLJS suite: 135 tests, 4,227 assertions, zero failures/errors.
-- Generated Java suite: 37 tests, 7,591 assertions, zero failures/errors.
-- Generated JavaScript suite: 25 tests, 847 assertions, zero failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,287 unique
+- Mutation controls: 41 Clojure detectors and 8 Apalache counterexample
+  controls; all 49 registered mutants killed.
+- Public non-benchmark CLJ suite: 468 tests, 17,901 assertions, zero failures/errors.
+- DataScript CLJS suite: 136 tests, 4,235 assertions, zero failures/errors.
+- Generated Java suite: 38 tests, 7,595 assertions, zero failures/errors.
+- Generated JavaScript suite: 26 tests, 851 assertions, zero failures/errors.
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,288 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent
@@ -236,22 +271,21 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. Those dimensions pass. Retained live heap remains
-  `:not-established`, so the evaluator and release manifest refuse performance
-  cutover instead of substituting logical cache weight or the noise-dominated
-  GC micro-measurement for a heap bound.
-- Lore revision `dabb5634` reanalyzed immutable EACL revision
-  `08ec9c74496ca27173cb4fb185f39fd505ad613a` (tree
-  `fe7d2d7bbeba74ac95c354d64e01272c5ac9f2ae`, snapshot SHA-256
-  `284f462ac6d2b95aac3f63aaafb410582f638103212d0c3c4d0ead855fc67991`).
-  It found all 22 named source targets, but zero fit Lore's strict Core; all
-  remain source-structural candidates (maximum nested traversal depth 3, 142
-  unique unsupported operators and 331 per-function operator occurrences).
-  Lore also correctly rejected its old
-  PR #101 production-refutation witness as revision-invalid rather than
-  applying it to the changed cache. Consequently it proves no current
+  benchmark-noise rules. The post-build artifact gate measured 1,749,970 Java
+  source bytes, 1,597,574 Java class bytes, 766,357
+  JavaScript-with-runtime bytes, and an 845,730-byte browser bundle, each
+  against its own reviewed full-kernel baseline and 125-percent ceiling. Those
+  dimensions pass. Retained live heap remains `:not-established`, so the
+  evaluator and release manifest refuse performance cutover instead of
+  substituting logical cache weight or the noise-dominated GC
+  micro-measurement for a heap bound.
+- Lore revision `dabb5634` must be replayed against the immutable commit
+  containing this source tranche before its source-resource evidence is
+  finalized. The earlier `08ec9c7` analysis is explicitly superseded because
+  the production adapter and formal artifacts changed afterward; it is not
+  reused as a current witness. Regardless of replay outcome, Lore proves no
   production heap, elapsed-time, backend-operation, or whole-engine resource
-  claim.
+  claim without checked source refinement and platform contracts.
 - A full verifier replay found that the transparent recursive
   `DriveReverseSpec` made the iterative reverse-driver invariant exceed its
   60-second assertion-batch budget. Raising the timeout would have hidden a
@@ -259,7 +293,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact 21-module replay
-  passed 9,193 proof efforts in 1,114.31 local wall seconds; its maximum effort
+  passed 9,207 proof efforts in 1,129.21 local wall seconds; its maximum effort
   used 34,908,028 of the 50,000,000-unit limit. Explicit unfolding reduced the
   indexed-driver maximum from 161,654,668 to 10,270,077 resource units
   (15.74x). These are solver-cost gates, deliberately separate from production

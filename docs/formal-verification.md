@@ -42,15 +42,23 @@ bin/formal verify
 bin/formal build-java
 bin/formal build-js
 bin/formal browser-bundle
+bin/formal artifact-size
 bin/formal tla-typecheck
 bin/formal apalache-check
 bin/formal apalache-invariant
 ```
 
+`artifact-size` must run after all generated forms are rebuilt. It measures
+uncompressed Java source bytes, Java class bytes, JavaScript-with-runtime
+bytes, and browser-bundle bytes separately against the reviewed full-kernel
+ledger in `formal/verification/generated-artifact-size.edn`; it does not
+substitute one representation, solver effort, allocation, heap, or latency
+for another.
+
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
 clj-kondo version in the toolchain lock. The ledger closes 60 named shared and
-backend roots over 1,287 definitions in 51 source files, including unattributed
+backend roots over 1,288 definitions in 51 source files, including unattributed
 usages assigned to their exact containing `defrecord` spans. It is static
 completeness evidence only: it does not prove Clojure source or adapter
 semantics. `backend-dispatch.edn` additionally closes every CLJ/CLJS
@@ -113,8 +121,8 @@ nREPL:
 The machine-readable result is
 `formal/verification/adapter-certification.edn`. Optional runtime guards check
 locally representable shape, order, uniqueness, bounds, booleans, adapters,
-and exact integers. Global completeness, ancestry, and proof truthfulness
-remain certification obligations.
+and nonnegative exact-integer internal EIDs. Global completeness, ancestry,
+and proof truthfulness remain certification obligations.
 
 ## Counterexamples and mutation controls
 

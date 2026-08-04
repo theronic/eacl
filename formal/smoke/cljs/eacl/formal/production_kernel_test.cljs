@@ -40,6 +40,33 @@
          (subvec right right-consumed)
          (into merged values))))))
 
+(defn- power-set
+  [values]
+  (reduce
+   (fn [subsets value]
+     (into subsets (map #(conj % value)) subsets))
+   [[]]
+   values))
+
+(defn- source-leapfrog-intersection
+  [left right]
+  (let [reseeks (atom 0)
+        exact-reseek
+        (fn [values]
+          (fn [target]
+            (swap! reseeks inc)
+            (drop-while #(< % target) values)))]
+    {:intersects?
+     (engine/sorted-eids-intersect?
+      left (exact-reseek left)
+      right (exact-reseek right))
+     :reseeks @reseeks}))
+
+(defn- generated-leapfrog-intersection
+  [left right]
+  (production/acyclic-leapfrog-intersection
+   {:left left :right right}))
+
 (def authorization-input
   {:objects [{:type "user" :id "u1"}
              {:type "team" :id "t1"}
@@ -738,6 +765,48 @@
             streams))]
       (is (= expected actual)
           (str "balanced seed=" seed " direction=" direction)))))
+
+(deftest optimized-javascript-leapfrog-intersection-refines-bounded-proof
+  (let [subsets (power-set [0 1 2 17 1000 9007199254740991])
+        cases
+        (concat
+         (for [left subsets
+               right subsets]
+           [left right])
+         [[(vec (range 18)) [17]]
+          [(vec (range 513)) [512]]
+          [(vec (range 512)) [700]]
+          [(vec (range 0 512 2)) (vec (range 1 512 2))]])
+        mismatches
+        (into
+         []
+         (keep
+          (fn [[left right :as input]]
+            (let [expected (boolean (some (set left) right))
+                  source (source-leapfrog-intersection left right)
+                  generated (generated-leapfrog-intersection left right)]
+              (when-not
+               (and (= expected (:intersects? source))
+                    (= expected (:intersects? generated))
+                    (= (:reseeks source)
+                       (:reseek-calls generated))
+                    (<= (:iterations generated)
+                        (+ (count left) (count right)))
+                    (<= (:reseek-calls generated)
+                        (:iterations generated))
+                    (<= (:examined-heads generated)
+                        (* 17 (:iterations generated))))
+                {:input input
+                 :expected expected
+                 :source source
+                 :generated generated}))))
+         cases)
+        skewed-source
+        (source-leapfrog-intersection (vec (range 513)) [512])]
+    (is (= 4100 (count cases)))
+    (is (empty? mismatches) (pr-str (first mismatches)))
+    (is (true? (:intersects? skewed-source)))
+    (is (pos? (:reseeks skewed-source)))))
 
 (deftest generated-javascript-indexed-plan-certification-boundary
   (let [decide

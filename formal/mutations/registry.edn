@@ -91,6 +91,30 @@
    :killed-by
    {:proof :ascending-merge-step-refines-definition
     :test :optimized-host-ordered-merge-refines-generated-chunks}}
+  {:id :leapfrog-equal-head-skipped
+   :mechanism :advance-past-a-shared-head-instead-of-returning-intersection
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :leapfrog-sorted-eids-intersection-is-set-intersection
+    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
+  {:id :leapfrog-reseek-target-excluded
+   :mechanism :resume-a-leapfrog-reseek-strictly-after-the-target
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :drop-eids-before-retains-an-equal-target
+    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
+  {:id :leapfrog-probe-limit-off-by-one
+   :mechanism :walk-seventeen-below-target-heads-before-reseeking
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :advance-head-examinations-at-most-linear-probe-limit-plus-one
+    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
+  {:id :adapter-negative-eid-admitted
+   :mechanism :treat-any-signed-exact-integer-as-a-formal-engine-eid
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :adapter-and-generated-eid-domains-are-safe-natural
+    :test :runtime-guards-reject-negative-internal-eids}}
   {:id :ordered-merge-sentinel-collides-with-domain
    :mechanism :represent-no-previous-value-with-the-maximum-valid-eid
    :control {:kind :clojure}
@@ -199,6 +223,18 @@
    :killed-by
    {:invariant :resource-evidence-requires-identical-scope-and-unit
     :test :recursive-shadow-queue-limit-is-query-local}}
+  {:id :generated-artifact-gate-uses-stale-baseline
+   :mechanism :mark-size-passed-without-measuring-the-current-rebuilt-full-kernel
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :generated-artifact-size-gate-measures-current-rebuilt-files
+    :test :quantitative-performance-gates-are-well-formed-test}}
+  {:id :counterexample-ledger-values-unvalidated
+   :mechanism :check-required-field-presence-without-validating-the-declared-value-schema
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :counterexample-ledger-values-conform-to-committed-schema
+    :test :counterexample-corpus-is-complete-and-closed-test}}
   {:id :generated-stale-cursor-leaks-render-details
    :mechanism :retain-generated-render-error-while-legacy-retains-bound-and-actual-cursor-maps
    :control {:kind :clojure}

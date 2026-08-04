@@ -1,10 +1,10 @@
 {:id :EACL-FORMAL-020
  :status :fixed
- :discovered-by :production-source-refinement-review
+ :discovered-by :manual-review
  :seed-or-trace
  "ordered-merge/generic/nil-sort-key-as-first-value"
  :minimized-fixture "fixture.edn"
- :impact :generic-ordered-result
+ :impact :omission
  :affected-versions
  ["PR 101 worktree before explicit generic ordered-merge last-key presence"]
  :affected-backends [:shared]
