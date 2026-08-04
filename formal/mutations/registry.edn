@@ -271,12 +271,12 @@
    :killed-by
    {:invariant :formal-cljs-compile-preserves-persistent-nrepl-executors
     :test :formal-cljs-smoke-preserves-persistent-nrepl-executors-test}}
-  {:id :generated-indexed-java-boundary-restores-reflection
-   :mechanism :remove-concrete-generated-java-type-hints-from-indexed-drive-resume-and-result-calls
+  {:id :generated-java-boundary-restores-reflection
+   :mechanism :remove-concrete-generated-java-type-hints-from-ffi-conversion-and-result-calls
    :control {:kind :clojure}
    :killed-by
-   {:invariant :indexed-generated-java-hot-boundary-has-no-reflective-invocation
-    :test :generated-java-indexed-hot-boundary-is-reflection-free-test}}
+   {:invariant :generated-java-boundary-has-no-reflective-invocation
+    :test :generated-java-boundary-is-reflection-free-test}}
   {:id :routing-node-identity-drops-resource-type
    :mechanism :resolve-arrow-permission-targets-by-permission-name-alone
    :control {:kind :clojure}

@@ -228,15 +228,17 @@ generated-code compiler out of the trusted computing base.
   order. The launcher now uses `cljs.build.api/build`, runs the Node suite, and
   verifies through the same nREPL that a new `future` completes. The CLJS smoke
   suite and all 35 counterexamples now pass sequentially in one nREPL.
-- EACL-FORMAL-035 found that the CLJ-to-generated-Java indexed boundary used
-  reflective variant, destructor, and numeric method calls on every generated
-  drive/resume round trip. JFR attribution and compilation with reflection
-  warnings localized the defect to handwritten FFI code, not Dafny's opaque
+- EACL-FORMAL-035 first found reflective variant, destructor, and numeric
+  method calls on every generated indexed drive/resume round trip. A complete
+  compile-time audit then found the same defect class elsewhere in the
+  handwritten CLJ-to-generated-Java conversion boundary. JFR attribution
+  localized the hot-path cost to handwritten FFI code, not Dafny's opaque
   traversal state. Concrete generated-class type hints reduced the minimized
   recursive p95 allocation premium from 3,677,688 to 343,576 bytes and the
   cursor premium from 4,283,960 to 706,496 bytes. A compile-time audit now
-  requires zero reflection warnings across the complete indexed hot-boundary
-  span. These are host measurements and source checks, not formal heap bounds.
+  requires zero reflection warnings across the complete generated-Java
+  boundary. These are host measurements and source checks, not formal heap
+  bounds.
 - Snapshot-consistency planning and post-selection validation now route
   through `ConsistencyDecision.dfy` in verified modes. Its 24 plan states and
   48 well-formed validation states are exhausted in generated Java and
@@ -287,9 +289,9 @@ generated-code compiler out of the trusted computing base.
   coverage, and review rather than recursive cache-hit cost.
 - The representative public authority-mode gate passes on DataScript across
   direct, acyclic, recursive, cursor-continuation, and hot-cache calls. Median
-  verified/legacy p95 latency ratios over five paired trials are 1.06x, 1.22x,
-  1.64x, 1.55x, and 1.05x respectively; caller-thread allocation ratios are
-  1.02x, 1.03x, 1.44x, 1.42x, and 1.02x. Recursive and cursor operations each
+  verified/legacy p95 latency ratios over five paired trials are 1.18x, 0.92x,
+  1.57x, 1.42x, and 1.10x respectively; caller-thread allocation ratios are
+  1.02x, 1.01x, 1.46x, 1.43x, and 1.02x. Recursive and cursor operations each
   use one fewer backend operation at p95. Exact public values match on every
   call. This gate does not establish retained heap, whole-process allocation,
   worst-case latency, or all-backend verified-authority cutover.

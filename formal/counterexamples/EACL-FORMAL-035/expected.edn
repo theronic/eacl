@@ -1,4 +1,4 @@
-{:indexed-generated-java-reflection-warnings []
+{:generated-java-boundary-reflection-warnings []
  :public-results :exactly-equal
  :backend-operations :separately-bounded
  :after

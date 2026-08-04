@@ -85,14 +85,7 @@
              :complete-portable-error-comparison}
            (set strict-boundary)))))
 
-(defn- source-line-number
-  [source marker]
-  (when-let [offset (str/index-of source marker)]
-    (inc
-     (count
-      (re-seq #"\n" (subs source 0 offset))))))
-
-(deftest generated-java-indexed-hot-boundary-is-reflection-free-test
+(deftest generated-java-boundary-is-reflection-free-test
   (when
    (try
      (Class/forName "IndexedTraversal.ForwardStep")
@@ -104,10 +97,6 @@
            (repo/file
             "formal" "smoke" "clj" "eacl" "formal"
             "production_kernel.clj"))
-          start-line
-          (source-line-number source "(defn- indexed-limit-kind")
-          end-line
-          (source-line-number source "(defrecord GeneratedJavaKernel")
           audit-namespace
           (symbol
            (str
@@ -129,18 +118,17 @@
            (str audit-namespace)))
         (finally
           (remove-ns audit-namespace)))
-      (let [indexed-warning-lines
-            (->> (re-seq
-                  #"production_kernel\.clj:(\d+):"
-                  (str warnings))
-                 (map (comp parse-long second))
-                 (filter #(<= start-line % (dec end-line)))
-                 vec)]
-        (is (empty? indexed-warning-lines)
+      (let [reflection-warning-lines
+            (mapv
+             (comp parse-long second)
+             (re-seq
+              #"production_kernel\.clj:(\d+):"
+              (str warnings)))]
+        (is (empty? reflection-warning-lines)
             (str
-             "Generated indexed Java hot boundary restored reflective calls "
+             "Generated Java boundary contains reflective calls "
              "at source lines "
-             indexed-warning-lines))))))
+             reflection-warning-lines))))))
 
 (deftest versioned-characterization-fixture-replays-test
   (let [{:keys [fixture-format
@@ -405,7 +393,7 @@
         (is (zero?
              (get-in authority-mode-matrix
                      [:reflection-removal
-                      :indexed-hot-boundary-reflection-warnings])))))
+                      :generated-java-boundary-reflection-warnings])))))
 
     (testing "shared-subgraph gates are recomputed rather than trusted"
       (let [required (:required layered-subproblem-cache)

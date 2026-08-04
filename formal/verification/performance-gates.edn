@@ -774,41 +774,41 @@
    :exact-public-result-equality-every-call true}
   :observed
   {:direct
-   {:median-p95-latency-ratio 1.0622408776040997
-    :median-p95-absolute-overhead-ns 2417
-    :median-p95-allocation-ratio 1.0203134796238245
+   {:median-p95-latency-ratio 1.1804430577223088
+    :median-p95-absolute-overhead-ns 14458
+    :median-p95-allocation-ratio 1.0201995012468827
     :median-p95-allocation-overhead-bytes 1296
     :median-p95-backend-operation-ratio 1.0
     :median-p95-backend-operation-overhead 0
     :status :passed}
    :acyclic
-   {:median-p95-latency-ratio 1.2203914077612552
-    :median-p95-absolute-overhead-ns 154834
-    :median-p95-allocation-ratio 1.0280316092760982
-    :median-p95-allocation-overhead-bytes 39928
+   {:median-p95-latency-ratio 0.9198618935126295
+    :median-p95-absolute-overhead-ns -55125
+    :median-p95-allocation-ratio 1.0050929591384083
+    :median-p95-allocation-overhead-bytes 7256
     :median-p95-backend-operation-ratio 1.0
     :median-p95-backend-operation-overhead 0
     :status :passed}
    :recursive
-   {:median-p95-latency-ratio 1.6389052463594653
-    :median-p95-absolute-overhead-ns 838875
-    :median-p95-allocation-ratio 1.4439305189013232
-    :median-p95-allocation-overhead-bytes 1158648
+   {:median-p95-latency-ratio 1.5743394884960995
+    :median-p95-absolute-overhead-ns 727042
+    :median-p95-allocation-ratio 1.4558408655582007
+    :median-p95-allocation-overhead-bytes 1191816
     :median-p95-backend-operation-ratio 0.9923076923076923
     :median-p95-backend-operation-overhead -1
     :status :passed}
    :cursor
-   {:median-p95-latency-ratio 1.5546538227346123
-    :median-p95-absolute-overhead-ns 962833
-    :median-p95-allocation-ratio 1.4247445217481827
-    :median-p95-allocation-overhead-bytes 1566712
+   {:median-p95-latency-ratio 1.4210357188313791
+    :median-p95-absolute-overhead-ns 818293
+    :median-p95-allocation-ratio 1.4337488763010537
+    :median-p95-allocation-overhead-bytes 1601904
     :median-p95-backend-operation-ratio 0.9923664122137404
     :median-p95-backend-operation-overhead -1
     :status :passed}
    :cache-hot
-   {:median-p95-latency-ratio 1.0523339825343971
-    :median-p95-absolute-overhead-ns 1666
-    :median-p95-allocation-ratio 1.0216461785141635
+   {:median-p95-latency-ratio 1.1018286757560587
+    :median-p95-absolute-overhead-ns 3458
+    :median-p95-allocation-ratio 1.021516801700093
     :median-p95-allocation-overhead-bytes 1296
     :median-p95-backend-operation-ratio 0.0
     :median-p95-backend-operation-overhead 0
@@ -821,7 +821,7 @@
    {:before 3677688 :after 343576}
    :minimized-cursor-p95-allocation-overhead-bytes
    {:before 4283960 :after 706496}
-   :indexed-hot-boundary-reflection-warnings 0}
+   :generated-java-boundary-reflection-warnings 0}
   :qualification
   :host-specific-regression-gate-not-retained-heap-or-worst-case-bound
   :status :passed}

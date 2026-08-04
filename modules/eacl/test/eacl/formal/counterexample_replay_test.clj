@@ -74,7 +74,7 @@
     :EACL-FORMAL-034
     eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
     :EACL-FORMAL-035
-    eacl.characterization-fixture-test/generated-java-indexed-hot-boundary-is-reflection-free-test})
+    eacl.characterization-fixture-test/generated-java-boundary-is-reflection-free-test})
 
 (defn- read-edn
   [path]

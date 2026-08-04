@@ -615,7 +615,7 @@
          (true? (:shutdown-agents? mutant))
          (= :future-rejected (:postcondition mutant)))))
 
-(defn- generated-indexed-java-boundary-restores-reflection-killed?
+(defn- generated-java-boundary-restores-reflection-killed?
   []
   (let [source
         (slurp
@@ -623,7 +623,23 @@
           "formal" "smoke" "clj" "eacl" "formal"
           "production_kernel.clj"))
         required-static-targets
-        ["^IndexedLimitKind kind"
+        ["^ObjectRef object"
+         "^LimitKind kind"
+         "^WorkCounters counters"
+         "^SequenceOutcome outcome"
+         "^BooleanOutcome outcome"
+         "^CountOutcome outcome"
+         "^PageError error"
+         "^Tuple2 result"
+         "^NormalizedPageRequest normalized"
+         "^Page page"
+         "^Direction"
+         "^ConsistencyError error"
+         "^MergeChunk chunk"
+         "^Tuple4 result"
+         "^ScanError error"
+         "^PlanCertificationError error"
+         "^IndexedLimitKind kind"
          "^RenderError error"
          "^OptionalEid bound"
          "^Projection projection"
@@ -877,8 +893,8 @@
    graph-identity-includes-client-local-exact-locator-killed?
    :formal-cljs-smoke-terminates-agent-executors
    formal-cljs-smoke-terminates-agent-executors-killed?
-   :generated-indexed-java-boundary-restores-reflection
-   generated-indexed-java-boundary-restores-reflection-killed?
+   :generated-java-boundary-restores-reflection
+   generated-java-boundary-restores-reflection-killed?
    :routing-node-identity-drops-resource-type
    routing-node-identity-drops-resource-type-killed?
    :routing-only-recursive-component-members

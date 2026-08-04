@@ -4,12 +4,13 @@
   (:import
    (CacheKernel CacheCandidate ProofState Telemetry)
    (ConsistencyDecision
+    ConsistencyError
     SelectionKind
     SnapshotConsistencyMode
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
-   (dafny DafnySequence DafnySet TypeDescriptor)
-   (java.math BigInteger)
+   (dafny DafnySequence DafnySet Tuple2 Tuple4 TypeDescriptor)
+   (IndexedCertification PlanCertificationError)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
     CursorBound
@@ -30,23 +31,35 @@
     ReverseResume
     ReverseState
     ReverseStep
+    ScanError
     ScanCommand
     ScanResponse)
-   (OrderedMerge MergeDirection OptionalHead)
+   (OrderedMerge MergeChunk MergeDirection OptionalHead)
    (PageWindow
     ConsistencyMode
     ExactSelection
+    NormalizedPageRequest
+    Page
+    PageError
     Presence
     RawPageRequest)
    (Pagination Direction)
-   (RecursiveEngine PermissionDependencyEdge TraversalLimits)
+   (RecursiveEngine
+    BooleanOutcome
+    CountOutcome
+    LimitKind
+    PermissionDependencyEdge
+    SequenceOutcome
+    TraversalLimits
+    WorkCounters)
    (SubproblemCache CandidateState)
    (Semantics
     ObjectRef
     PermissionNode
     RelationNode
     Relationship
-    RuleDefinition)))
+    RuleDefinition)
+   (java.math BigInteger)))
 
 (defn- dafny-string
   [value]
@@ -81,9 +94,9 @@
    (dafny-string id)))
 
 (defn- dafny-object->object
-  [object]
-  {:type (.verbatimString (.dtor_typeName object))
-   :id (.verbatimString (.dtor_objectId object))})
+  [^ObjectRef object]
+  {:type (dafny-unicode (.dtor_typeName object))
+   :id (dafny-unicode (.dtor_objectId object))})
 
 (defn- permission-node
   [{:keys [resource-type permission]}]
@@ -190,23 +203,23 @@
    (dafny-nat max-queued-work)))
 
 (defn- limit-kind
-  [kind]
+  [^LimitKind kind]
   (cond
     (.is_DerivedGrants kind) :derived-grants
     (.is_AdvancedDatoms kind) :advanced-datoms
     :else :queued-work))
 
 (defn- work-counters
-  [counters]
+  [^WorkCounters counters]
   {:derived-grants
-   (.longValue (.dtor_derivedGrants counters))
+   (dafny-long (.dtor_derivedGrants counters))
    :advanced-datoms
-   (.longValue (.dtor_advancedDatoms counters))
+   (dafny-long (.dtor_advancedDatoms counters))
    :queued-work
-   (.longValue (.dtor_queuedWork counters))})
+   (dafny-long (.dtor_queuedWork counters))})
 
 (defn- sequence-outcome
-  [operation outcome]
+  [operation ^SequenceOutcome outcome]
   (if (.is_SequenceComplete outcome)
     {:status :complete
      :operation operation
@@ -218,7 +231,7 @@
      :counters (work-counters (.dtor_counters outcome))}))
 
 (defn- boolean-outcome
-  [operation outcome]
+  [operation ^BooleanOutcome outcome]
   (if (.is_BooleanComplete outcome)
     {:status :complete
      :operation operation
@@ -230,11 +243,11 @@
      :counters (work-counters (.dtor_counters outcome))}))
 
 (defn- count-outcome
-  [operation outcome]
+  [operation ^CountOutcome outcome]
   (if (.is_CountComplete outcome)
     {:status :complete
      :operation operation
-     :count (.longValue (.dtor_count outcome))
+     :count (dafny-long (.dtor_count outcome))
      :truncated? (.dtor_truncated outcome)
      :counters (work-counters (.dtor_counters outcome))}
     {:status :limit-exceeded
@@ -351,7 +364,7 @@
      (dafny-nat value))))
 
 (defn- page-error
-  [error]
+  [^PageError error]
   (cond
     (.is_LegacyPagination error) :legacy-pagination
     (.is_BothDirections error) :both-directions
@@ -373,26 +386,26 @@
          (page-presence (:before request))
          (:has-legacy-limit? request)
          (:has-legacy-cursor? request))
-        result
+        ^Tuple2 result
         (PageWindow.__default/PaginateRelationshipItems
          TypeDescriptor/BIG_INTEGER
          (dafny-sequence (range length))
          raw
          (dafny-nat default-size)
          (dafny-nat maximum-size))
-        normalized (.dtor__0 result)
-        page (.dtor__1 result)]
+        ^NormalizedPageRequest normalized (.dtor__0 result)
+        ^Page page (.dtor__1 result)]
     (if (.is_InvalidPageRequest normalized)
       {:status :invalid
        :reason (page-error (.dtor_error normalized))}
       {:status :valid
        :direction
-       (if (.is_Ascending (.dtor_direction normalized))
+       (if (.is_Ascending ^Direction (.dtor_direction normalized))
          :asc
          :desc)
-       :size (.longValue (.dtor_size normalized))
-       :start (.longValue (.dtor_start page))
-       :end (.longValue (.dtor_end page))
+       :size (dafny-long (.dtor_size normalized))
+       :start (dafny-long (.dtor_start page))
+       :end (dafny-long (.dtor_end page))
        :has-next? (.dtor_hasNext page)
        :has-previous? (.dtor_hasPrevious page)})))
 
@@ -480,7 +493,7 @@
     (SnapshotConsistencyMode/create_AtExactSnapshot)))
 
 (defn- consistency-error
-  [error]
+  [^ConsistencyError error]
   (cond
     (.is_UnsupportedCapability error) :unsupported-capability
     (.is_UnsupportedHeadBarrier error) :unsupported-head-barrier
@@ -610,7 +623,9 @@
          (dafny-string expected-key)
          (dafny-string expected-source)
          (dafny-nat selected-graph)
-         (DafnySet. (mapv dafny-nat ancestors))
+         (DafnySet.
+          ^java.util.Collection
+          (mapv dafny-nat ancestors))
          (proof-state selected-proof)
          (cache-candidate entry))]
     (if (.is_CacheHit decision)
@@ -735,27 +750,27 @@
         (case direction
           :asc (MergeDirection/create_Ascending)
           :desc (MergeDirection/create_Descending))
-        chunk
+        ^MergeChunk chunk
         (OrderedMerge.__default/DecideMergeChunk
          direction'
          (dafny-sequence left)
          (dafny-sequence right))]
-    {:values (mapv #(.longValueExact %) (.dtor_values chunk))
-     :left-consumed (.longValueExact (.dtor_leftConsumed chunk))
-     :right-consumed (.longValueExact (.dtor_rightConsumed chunk))}))
+    {:values (mapv dafny-long (.dtor_values chunk))
+     :left-consumed (dafny-long (.dtor_leftConsumed chunk))
+     :right-consumed (dafny-long (.dtor_rightConsumed chunk))}))
 
 (defn acyclic-leapfrog-intersection
   "Executes the generated bounded leapfrog oracle for source-specialization
   tests. This is test-support code, not part of EACL's production kernel SPI."
   [{:keys [left right]}]
-  (let [result
+  (let [^Tuple4 result
         (AcyclicEngine.__default/LeapfrogSortedEidsIntersectWithWork
          (dafny-sequence left)
          (dafny-sequence right))]
     {:intersects? (.dtor__0 result)
-     :iterations (.longValueExact (.dtor__1 result))
-     :reseek-calls (.longValueExact (.dtor__2 result))
-     :examined-heads (.longValueExact (.dtor__3 result))}))
+     :iterations (dafny-long (.dtor__1 result))
+     :reseek-calls (dafny-long (.dtor__2 result))
+     :examined-heads (dafny-long (.dtor__3 result))}))
 
 (defn- optional-eid
   [value]
@@ -784,7 +799,7 @@
      (optional-eid bound-eid))))
 
 (defn- indexed-scan-rejection-reason
-  [error]
+  [^ScanError error]
   (cond
     (.is_InvalidCommand error) :invalid-command
     (.is_MismatchedRequestScope error) :mismatched-request-scope
@@ -816,9 +831,9 @@
          command' response')]
     (if (.is_ScanAccepted decision)
       {:status :accepted
-       :values (mapv #(.longValue %) (.dtor_values decision))
+       :values (mapv dafny-long (.dtor_values decision))
        :terminal? (.dtor_terminal decision)
-       :fetched-values (.longValue (.dtor_fetchedValues decision))}
+       :fetched-values (dafny-long (.dtor_fetchedValues decision))}
       {:status :rejected
        :reason
        (indexed-scan-rejection-reason (.dtor_error decision))})))
@@ -862,7 +877,7 @@
    (relation-node relation)))
 
 (defn- indexed-plan-rejection-reason
-  [error]
+  [^PlanCertificationError error]
   (cond
     (.is_InvalidRelationCatalog error) :invalid-relation-catalog
     (.is_InvalidIndexedRule error) :invalid-indexed-rule
