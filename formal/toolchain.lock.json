@@ -7,6 +7,14 @@
     }
   },
   "tools": {
+    "cljKondo": {
+      "version": "2025.02.20",
+      "license": {
+        "spdx": "EPL-1.0",
+        "url": "https://github.com/clj-kondo/clj-kondo/blob/v2025.02.20/LICENSE"
+      },
+      "assurance": "static-source-closure-only-not-a-proof-kernel"
+    },
     "dafny": {
       "version": "4.11.0",
       "license": {

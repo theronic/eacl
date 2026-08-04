@@ -75,6 +75,7 @@
     (map repo-file
          ["bin/formal"
           "bin/generate-verification-manifest"
+          "bin/public-source-closure.mjs"
           "bin/summarize-dafny-verification.mjs"
           "bin/validate-verification-manifest"
           "formal/smoke/clj/eacl/formal/ordered_merge_benchmark.clj"

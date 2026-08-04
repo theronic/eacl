@@ -36,3 +36,26 @@ No production decision may be omitted from the assurance matrix when it can
 alter allow/deny, membership, the stable per-query pagination sequence, page
 flags, typed errors, selected snapshot, or cache provenance. “Ordering” here
 does not imply a global, lexical, domain, or cross-backend order.
+
+## Machine-enforced source closure
+
+`public-source-closure.json` is generated from both CLJ and CLJS analysis of
+51 shared and backend EACL source files. It currently closes the
+cross-namespace call graph from 60 engine, relationship-pagination, relay,
+cursor, cache, subproblem-cache, consistency, causal-token, and named
+Datomic/Datahike/DataScript roots over 1,287 definitions. Unattributed
+clj-kondo usages inside exact `defrecord` spans are assigned to their
+containing protocol implementation, so those public client methods are
+included. CI checks the exact
+analyzer version, source digests, definition locations, reachable sets, and
+external call sets. Any source change therefore forces review of the decision
+closure instead of silently adding a branch.
+
+This is a completeness ledger, not a source-refinement proof. Its explicit
+remaining scopes are adapter-operation semantic refinement and theorem
+classification for every reachable definition. `backend-dispatch.edn`
+separately proves the static closure fact that all 56 CLJ and 56 CLJS
+`backend/invoke` sites use literal keys and that their 21-key set equals
+`required-snapshot-operations`; this does not prove what an adapter
+implementation does. The release claim remains withheld until those semantic
+classifications are complete.

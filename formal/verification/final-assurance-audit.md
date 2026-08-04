@@ -200,10 +200,19 @@ that the complete v8.0 engine is formally verified.
   assertions, zero failures/errors.
 - Mutation controls: 35 Clojure detectors and 8 Apalache counterexample
   controls; all 43 registered mutants killed.
-- Public non-benchmark CLJ suite: 463 tests, 16,911 assertions, zero failures/errors.
+- Public non-benchmark CLJ suite: 464 tests, 16,921 assertions, zero failures/errors.
 - DataScript CLJS suite: 135 tests, 4,227 assertions, zero failures/errors.
 - Generated Java suite: 37 tests, 7,591 assertions, zero failures/errors.
 - Generated JavaScript suite: 25 tests, 847 assertions, zero failures/errors.
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,287 unique
+  reachable definitions across 51 source files, with exact per-root internal
+  and external call sets. Unattributed usages inside exact `defrecord` spans
+  are assigned to the containing protocol implementation. This prevents silent
+  decision-branch omission but is explicitly not a source-refinement proof.
+  The separate dispatch ledger proves that all 56 CLJ and 56 CLJS
+  `backend/invoke` sites are literal and their 21-key set equals the required
+  snapshot-operation contract. Adapter semantics and per-definition theorem
+  classification remain open.
 - OpenSpec strict validation: passed.
 - Heavy benchmark: 9 tests, 3,403 assertions, zero failures/errors; the
   current-cache measurements are recorded in

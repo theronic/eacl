@@ -41,6 +41,7 @@ usage() {
     "  build-java            compile the translated Java smoke boundary" \
     "  build-js              execute the translated JavaScript smoke boundary" \
     "  browser-bundle        bundle generated JavaScript for browsers" \
+    "  source-closure        check the public engine source dependency ledger" \
     "  counterexample-replay replay every minimized bug through nREPL" \
     "  mutation-control      run registered mutation controls via nREPL" \
     "  manifest              validate the release assurance gate" \
@@ -223,6 +224,9 @@ case "$command" in
     cp "$repo_root/formal/smoke/js/browser_smoke.html" \
       "$output_root/browser/index.html"
     ;;
+  source-closure)
+    exec "$repo_root/bin/public-source-closure.mjs" check
+    ;;
   mutation-control)
     if [ -z "${EACL_NREPL_PORT:-}" ]; then
       printf '%s\n' \
@@ -377,6 +381,7 @@ case "$command" in
     rm -f "$controls_file"
     ;;
   all)
+    "$repo_root/bin/formal" source-closure
     "$repo_root/bin/formal" format
     "$repo_root/bin/formal" verify
     "$repo_root/bin/formal" build-java

@@ -36,6 +36,7 @@ backend work.
 Run proof and model targets independently:
 
 ```sh
+bin/formal source-closure
 bin/formal format
 bin/formal verify
 bin/formal build-java
@@ -45,6 +46,16 @@ bin/formal tla-typecheck
 bin/formal apalache-check
 bin/formal apalache-invariant
 ```
+
+`source-closure` checks the committed
+`formal/verification/public-source-closure.json` ledger with the exact
+clj-kondo version in the toolchain lock. The ledger closes 60 named shared and
+backend roots over 1,287 definitions in 51 source files, including unattributed
+usages assigned to their exact containing `defrecord` spans. It is static
+completeness evidence only: it does not prove Clojure source or adapter
+semantics. `backend-dispatch.edn` additionally closes every CLJ/CLJS
+`backend/invoke` site to the exact 21 required literal operation keys; the
+meaning of each adapter implementation remains a named obligation.
 
 Generated Java classes must be tested in a fresh JVM after every regeneration:
 

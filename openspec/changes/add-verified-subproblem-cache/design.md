@@ -443,6 +443,31 @@ catches proof-engineering regressions while the parameterized Dafny resource
 theorems and production benchmark gates continue to police their own distinct
 dimensions.
 
+### 12. Make public decision-source closure machine-enforced
+
+A theorem list and hand-written decision inventory cannot show that a new
+private helper or branch was not omitted. The locked `source-closure` check
+therefore analyzes both CLJ and CLJS views of the shared and backend EACL
+sources, closes the cross-namespace dependency graph from 60 named roots, and
+commits exact source digests, definition locations, reachable sets, and
+external call sets. Unattributed usages inside exact `defrecord` spans are
+assigned to the containing public-client record. The current union contains
+1,287 definitions in 51 source files.
+
+This ledger deliberately reports
+`closure-enumerated-verification-incomplete`. Static reachability does not
+prove a function or resolve higher-order or keyword-based backend behavior.
+The ledger turns those omissions into explicit remaining scopes and makes
+future source drift fail CI while the generated-authority and source-refinement
+work proceeds.
+
+The companion backend-dispatch ledger reads every CLJ and CLJS source form,
+rejects a nonliteral `backend/invoke` operation, and checks that the observed
+21-key set across all 56 sites equals `required-snapshot-operations`. This
+closes operation-key omission and typo risk. It does not prove that a Datomic,
+Datahike, or DataScript operation satisfies its named snapshot-oracle
+obligations; that remains adapter semantic refinement or explicit trust.
+
 ## Risks / Trade-offs
 
 - **Projection caching duplicates database page-cache data** → Admit only

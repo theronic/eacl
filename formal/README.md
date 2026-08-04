@@ -51,6 +51,14 @@ assertion-batch time and deterministic Z3 resource ceilings. A successful
 per-module CSV inputs from which it was derived; these measure proof search,
 not EACL runtime resources.
 
+`bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
+ledger for 60 named shared and backend roots. The ledger is deliberately
+marked verification-incomplete: enumerating 1,287 reachable definitions in 51
+source files (including source-span attribution for inline `defrecord`
+methods) prevents silent omissions but does not establish source refinement or
+adapter semantics. `backend-dispatch.edn` separately checks that every CLJ and
+CLJS dispatch site uses one of exactly the 21 required literal operation keys.
+
 ## Assurance status
 
 The initial status is **not verified**. A theorem becomes releasable only when:

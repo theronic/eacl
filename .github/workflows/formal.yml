@@ -30,6 +30,7 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+          clj-kondo: '2025.02.20'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -51,6 +52,7 @@ jobs:
 
       - name: Verify and deterministically build Dafny targets
         run: |
+          bin/formal source-closure
           bin/formal format
           bin/formal verify
           bin/formal build-java

@@ -1,6 +1,24 @@
 {:schema-version 1
  :semantics-version 1
  :status :not-verified
+ :source-closure
+ {:report "formal/verification/public-source-closure.json"
+  :status :named-public-roots-enumerated-verification-incomplete
+  :source-files 51
+  :public-roots 60
+  :reachable-definitions 1287
+  :inline-defrecord-method-attribution :source-span-closed
+  :backend-dispatch
+  {:report "formal/verification/backend-dispatch.edn"
+   :clj-invoke-sites 56
+   :cljs-invoke-sites 56
+   :literal-operation-keys 21
+   :status :static-operation-key-closure-established
+   :assurance :not-adapter-semantic-proof}
+  :assurance :static-call-closure-not-source-refinement
+  :remaining
+  [:adapter-operation-source-refinement-or-explicit-trust-classification
+   :per-definition-theorem-or-trusted-boundary-classification]}
  :operations
  [{:operation :can?
    :entry-points ['eacl.core/can?]
