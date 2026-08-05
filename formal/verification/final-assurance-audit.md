@@ -530,11 +530,20 @@ generated-code compiler out of the trusted computing base.
   and one measured batch for the deep generated-authority call graph. A shared
   Actions runner measured 1,004.339 µs against the unchanged 1,000 µs ceiling,
   while cold and completed-cache paths passed and a fresh local forced-
-  authority run measured 440.42 µs. The gate now warms 15,000 calls and uses
-  the median of three 5,000-call batch medians. The latency ceiling is
-  unchanged; the complete local forced-authority heavy suite measured 430.208
-  µs warm, 435.44 µs cold, and 14.79 µs for a completed-cache hit, and sustained
-  slow service across the batches still fails.
+  authority run measured 440.42 µs. That one batch could not distinguish
+  sustained service time from a runner/JIT transition. The gate now warms
+  15,000 calls and uses the median of three 5,000-call batch medians.
+- The corrected harness then exposed EACL-FORMAL-051: the next shared runner
+  held all three batch medians between 1,004.884 and 1,006.3265 µs. Public
+  `can?` classified the permission root, then generated-authoritative `can*`
+  repeated the same schema-generation lookup. Public generated dispatch now
+  reuses that fact, directly enters generated traversal for defined roots, and
+  preserves the established `false` result for undefined roots. Dafny proves
+  result preservation and a single authoritative root lookup; a JVM public
+  client observes that exact bound. A same-process paired profile improved
+  from 508.292 to 483.625 µs (0.951465x). The subsequent complete local heavy
+  suite measured a 431.8545 µs warm aggregate, 434.79 µs cold, and 14.42 µs
+  for a completed-cache hit. The 1,000 µs ceiling remains unchanged.
 
 ## Public wording audit
 
@@ -553,7 +562,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,767 proof efforts across 25
+- Clean checksum-locked Dafny cache: 9,771 proof efforts across 25
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -566,11 +575,11 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 50 minimized entries replayed by 52 tests and 11,158
+- Counterexample corpus: 51 minimized entries replayed by 53 tests and 11,233
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 511 tests, 28,048 assertions,
+- Forced-authority non-benchmark CLJ suite: 512 tests, 28,132 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward
@@ -665,10 +674,10 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 25-module
-  replay passed 9,767 proof efforts and consumed 3,726,545,682 deterministic
+  replay passed 9,771 proof efforts and consumed 3,726,512,681 deterministic
   Z3 resource units; its maximum effort used 33,547,591 of the
   50,000,000-unit limit. The generated resource-directory birth time through
-  aggregate-report modification time was 953 seconds. Explicit
+  aggregate-report modification time was 1,163 seconds. Explicit
   unfolding reduced the
   indexed-driver maximum from 161,654,668 to 10,270,077 resource units
   (15.74x). These are solver-cost gates, deliberately separate from production

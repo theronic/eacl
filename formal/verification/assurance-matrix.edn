@@ -31,6 +31,8 @@
               :acyclic-outer-path-and-callback-counts-are-linear
               :acyclic-arrow-source-control-refines-full-far-side-evaluation
               :acyclic-arrow-full-candidate-checks-are-linear
+              :public-can-root-classification-hoist-preserves-result
+              :public-generated-can-performs-one-root-classification
               :limit-fails-closed
               :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"

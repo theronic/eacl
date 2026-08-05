@@ -1,0 +1,8 @@
+{:public-generated-can
+ {:permission-root-lookups-per-call 1
+  :defined-root-action :generated-traversal
+  :undefined-root-result false
+  :result-equivalent-to-pre-hoist true
+  :maximum-warm-microseconds 1000
+  :threshold-relaxed false
+  :status :passed}}

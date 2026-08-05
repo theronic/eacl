@@ -140,7 +140,7 @@
     :cljs-verified-authority
     {:tests 158 :assertions 4549 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 511 :assertions 28048 :failures 0 :errors 0}}
+    {:tests 512 :assertions 28132 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -210,15 +210,15 @@
 
  :formal-pipeline
  {:scope :all-25-dafny-modules
-  :proof-efforts 9767
-  :last-observed-local-wall-seconds 953
+  :proof-efforts 9771
+  :last-observed-local-wall-seconds 1163
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3726545682
+  :total-observed-resource-count 3726512681
   :maximum-observed-proof-effort
   {:source "IndexedForwardCompleteness.dfy"
    :display-name
@@ -467,12 +467,32 @@
     :samples-per-batch 5000
     :aggregation :median-of-batch-medians
     :threshold-relaxed false
+    :github-corrected-harness-before-root-hoist
+    {:batch-medians-microseconds [1006.083 1006.3265 1004.884]
+     :median-microseconds 1006.083
+     :status :failed
+     :closing-counterexample :EACL-FORMAL-051}
     :last-local-forced-authority
-    {:batch-medians-microseconds [429.083 431.208 430.208]
-     :median-microseconds 430.208
-     :cold-median-microseconds 435.44
-     :completed-cache-hit-median-microseconds 14.79
+    {:batch-medians-microseconds [433.542 431.8545 431.6665]
+     :median-microseconds 431.8545
+     :cold-median-microseconds 434.79
+     :completed-cache-hit-median-microseconds 14.42
      :status :passed}}
+   :generated-root-classification
+   {:counterexample :EACL-FORMAL-051
+    :maximum-lookups-per-public-generated-can 1
+    :before-lookups-per-call 2
+    :after-lookups-per-call 1
+    :last-local-paired
+    {:before-microseconds 508.292
+     :after-microseconds 483.625
+     :after-to-before-ratio 0.951465}
+    :result-preservation
+    AcyclicEngine.PublicCanRootClassificationHoistPreservesResult
+    :resource-bound
+    AcyclicEngine.PublicCanRootClassificationHoistReducesWork
+    :threshold-relaxed false
+    :status :passed}
    :cold-baseline-microseconds 268
    :cold-max-microseconds 1500
    :completed-cache-baseline-microseconds 1616
@@ -693,7 +713,7 @@
    :generated-javascript
    {:tests 58 :assertions 10992 :status :passed}
    :state-trace-differential
-   {:tests 8 :assertions 194 :status :passed}
+   {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy
    {:tests 17 :assertions 4057 :failures 0 :errors 0}
    :qualification

@@ -292,7 +292,7 @@
     [:source-scope :snapshot-id :graph-anchor :order-hint]
     :client-local-exact-locator-excluded true}
    :current-cache-generated-selection true
-   :tests 8 :assertions 194 :status :passed}
+   :tests 9 :assertions 196 :status :passed}
   :cljs-public-state-trace
   {:namespace eacl.formal.production-kernel-test
    :backend :datascript
@@ -306,7 +306,7 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 511 :assertions 28048 :failures 0 :errors 0}
+    :tests 512 :assertions 28132 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057 :failures 0 :errors 0}
@@ -318,6 +318,18 @@
     :report "formal/verification/retained-live-heap.edn"
     :maximum-generated-to-legacy-ratio 1.036843888729995}
    :status :passed}}
+ :public-can-root-classification
+ {:counterexample :EACL-FORMAL-051
+  :formal
+  {:result-preservation
+   AcyclicEngine.PublicCanRootClassificationHoistPreservesResult
+   :generated-authoritative-root-lookups
+   AcyclicEngine.PublicCanRootClassificationHoistReducesWork}
+  :production
+  eacl.engine.v8/can?
+  :jvm-public-client-root-lookups-per-call 1
+  :clj-cljs-result-suites :passed
+  :status :passed}
  :remaining
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review

@@ -9,9 +9,9 @@
  ["PR 101 commit 2feeec867f2bd28685f41e028522871605b484c8"]
  :affected-backends [:datomic]
  :root-cause
- "The warm can? release gate gave the deep generated-authority call graph only 2,000 warmup calls and used one 5,000-call sample median. That is insufficient to reliably separate steady-state service time from HotSpot tiered compilation and shared-runner transitions, so a transient 1,004.339 microsecond result failed the unchanged 1,000 microsecond ceiling even though cold and completed-cache paths passed and fresh local forced authority was materially faster."
+ "The warm can? release gate gave the deep generated-authority call graph only 2,000 warmup calls and used one 5,000-call sample median. One batch cannot reliably distinguish sustained steady-state service time from HotSpot tiered compilation or a shared-runner transition, so the 1,004.339 microsecond result did not establish which condition violated the unchanged 1,000 microsecond ceiling."
  :fix
- "Warm the exact permission-check path for 15,000 calls and gate the median of three independent 5,000-call batch medians. Keep the 1,000 microsecond warm ceiling unchanged so sustained latency across the batches still fails."
+ "Warm the exact permission-check path for 15,000 calls and gate the median of three independent 5,000-call batch medians. Keep the 1,000 microsecond warm ceiling unchanged. The corrected harness subsequently established the sustained EACL-FORMAL-051 engine regression instead of dismissing it as one transient sample."
  :closing-evidence
  ["eacl.bench.pagination-test/permission-check-benchmark"
   "eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"

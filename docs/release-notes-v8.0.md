@@ -281,12 +281,21 @@ with the final v8 formats.
   domains, reject invalid fixtures, and isolate the JVM gate from compiler
   history. No ceiling was relaxed, and the one-million-identity recovery gate
   remains in force.
-- **The warm permission gate measured transitional generated code
-  (EACL-FORMAL-050).** Its 2,000-call warmup did not reliably move the complete
-  generated-authority call graph beyond HotSpot tiered compilation, and one
-  sample batch could decide the release gate. The gate now warms 15,000 calls
-  and uses the median of three 5,000-call batch medians. The 1,000 µs ceiling
-  is unchanged; sustained latency regressions still fail.
+- **The warm permission gate could not distinguish a transitional batch from
+  sustained latency (EACL-FORMAL-050).** Its 2,000-call warmup and single
+  measured batch made one observation decide the release gate. The gate now
+  warms 15,000 calls and uses the median of three 5,000-call batch medians.
+  The corrected harness subsequently reproduced a stable regression and
+  opened EACL-FORMAL-051 instead of dismissing it as compilation noise.
+- **Generated `can?` classified the permission root twice
+  (EACL-FORMAL-051).** The public entry point checked that the permission root
+  existed, then generated-authoritative `can*` immediately repeated the same
+  schema-generation lookup. Public generated authority now reuses the first
+  classification, dispatches a defined root directly, and returns the
+  established `false` result for an undefined root. Dafny proves Boolean
+  result preservation and one root classification for authoritative calls; a
+  public-client regression observes the same bound. The 1,000 µs ceiling was
+  not relaxed.
 
 ## Formal verification
 
@@ -301,7 +310,7 @@ with the final v8 formats.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 9,767 proof efforts across 25 source-project
+The locked Dafny run completes 9,771 proof efforts across 25 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes

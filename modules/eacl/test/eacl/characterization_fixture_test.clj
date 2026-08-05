@@ -420,7 +420,29 @@
                      [:last-local-forced-authority
                       :median-microseconds])
              (get-in legacy-runtime
-                     [:permission-check :warm-max-microseconds]))))
+                     [:permission-check :warm-max-microseconds])))
+      (is (= :failed
+             (get-in harness
+                     [:github-corrected-harness-before-root-hoist
+                      :status])))
+      (is (= :EACL-FORMAL-051
+             (get-in harness
+                     [:github-corrected-harness-before-root-hoist
+                      :closing-counterexample]))))
+    (let [classification
+          (get-in legacy-runtime
+                  [:permission-check :generated-root-classification])]
+      (is (= :EACL-FORMAL-051 (:counterexample classification)))
+      (is (= 1
+             (:maximum-lookups-per-public-generated-can
+              classification)))
+      (is (= 2 (:before-lookups-per-call classification)))
+      (is (= 1 (:after-lookups-per-call classification)))
+      (is (< (get-in classification
+                     [:last-local-paired :after-to-before-ratio])
+             1.0))
+      (is (false? (:threshold-relaxed classification)))
+      (is (= :passed (:status classification))))
     (is (<= (get-in memory-and-token
                     [:cursor-token-utf8-bytes
                      :multipath-500-results-page-50])

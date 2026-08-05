@@ -180,7 +180,7 @@
   {:date "2026-08-05"
    :verified-authority-clj
    {:backends [:datomic :datahike :datascript]
-    :tests 511 :assertions 28048}
+    :tests 512 :assertions 28132}
    :verified-authority-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057}

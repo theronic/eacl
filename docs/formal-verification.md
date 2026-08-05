@@ -188,8 +188,14 @@ shadowed against the generated indexed state machine. Cached and uncached
 public-client state traces cover Datomic, Datahike, and DataScript, including
 unrelated transactions and revocation.
 
-The acyclic `can?` hot path also has source-shaped submodels for ordered EID
-merge, leapfrog intersection, and arrow empty/singleton/wide selection. Dafny
+The public `can?` dispatch and acyclic hot path also have source-shaped
+submodels. The public model proves that reusing the already-computed
+permission-root classification preserves the Boolean result under the
+established undefined-root-denies contract and reduces a
+generated-authoritative call to one root lookup. A public JVM fixture observes
+that exact lookup count; the shared CLJC result path remains covered on CLJ and
+CLJS. The acyclic models cover ordered EID merge, leapfrog intersection, and
+arrow empty/singleton/wide selection. Dafny
 proves their Boolean/set behavior and named logical bounds; generated
 Java/JavaScript compare the exact source-control results and traces with
 CLJ/CLJS. EACL-FORMAL-042 records the resulting production fix: an empty arrow

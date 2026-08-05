@@ -268,6 +268,56 @@
     :path-callback-evaluation-and-outer-union-fold-remain-outside-this-materialization-model
     :no-formal-bound-on-backend-schema-read-allocation-retained-heap-or-wall-time
     :independent-source-refinement-review-not-recorded]}
+  {:id :public-can-root-classification
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbol eacl.engine.v8/can?
+    :scope
+    :public-endpoint-validation-permission-root-classification-and-generated-authority-dispatch
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.PublicCanBeforeRootHoist
+     AcyclicEngine.PublicCanAfterRootHoist
+     AcyclicEngine.PublicCanRootChecksBeforeHoist
+     AcyclicEngine.PublicCanRootChecksAfterHoist]
+    :lemmas
+    [AcyclicEngine.PublicCanRootClassificationHoistPreservesResult
+     AcyclicEngine.PublicCanRootClassificationHoistReducesWork]}
+   :abstract-domain
+   {:inputs
+    [:visible-endpoints
+     :generated-authoritative
+     :generated-shadow
+     :permission-root-defined
+     :generated-result
+     :legacy-result]
+    :undefined-root-contract :legacy-result-is-false
+    :result :authorization-boolean}
+   :evidence
+   {:jvm-public-client-fixtures 1
+    :generated-authoritative-root-lookups-per-call 1
+    :portable-result-regressions
+    :complete-verified-authority-clj-cljs-suites
+    :counterexample-regressions [:EACL-FORMAL-051]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :formal-resource-bounds
+   {:scope :one-dispatch-invocation
+    :generated-authoritative-root-lookups 1
+    :legacy-root-lookups 1
+    :outer-shadow-dispatch-root-lookups 2
+    :new-root-lookups "<= previous root lookups"
+    :whole-shadow-request
+    :composes-the-outer-shadow-and-nested-generated-authoritative-invocations}
+   :limitations
+   [:undefined-root-denies-is-the-host-semantic-precondition-discharged-by-empty-permission-path-evaluation-and-public-regressions
+    :jvm-observes-the-exact-private-root-lookup-count-cljs-shares-the-same-cljc-branch-but-is-result-tested-only
+    :clojure-clojurescript-language-semantics-remain-a-digest-locked-trusted-refinement
+    :schema-cache-lookup-runtime-cost-remains-measured-not-proved
+    :independent-source-refinement-review-not-recorded]}
   {:id :acyclic-outer-path-fold
    :production
    {:source "modules/eacl/src/eacl/engine/v8.cljc"

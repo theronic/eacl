@@ -5360,20 +5360,39 @@
         subject-eid   (object-eid db (:id subject))
         resource-type (:type resource)
         resource-eid  (object-eid db (:id resource))
+        authoritative? (generated-authoritative?)
+        shadow-mode? (generated-shadow?)
         defined-root?
         (and subject-eid
              resource-eid
+             (or authoritative? shadow-mode?)
              (permission-root-defined?
               db resource-type permission))
         shadow?
-        (and defined-root? (generated-shadow?))
+        (and defined-root? shadow-mode?)
         recursive?
         (and shadow?
              (traversal-permission? db resource-type permission))
         [result legacy-stats legacy-error]
         (evaluate-with-shadow-stats
-         #(if (or (nil? subject-eid) (nil? resource-eid))
+         #(cond
+            (or (nil? subject-eid) (nil? resource-eid))
             false
+
+            ;; The public entry point has already established whether this is
+            ;; a declared permission root for generated authority. Dispatch
+            ;; directly instead of making can* repeat the same schema lookup
+            ;; on every permission check. Undefined roots remain a definitive
+            ;; false without compiling an invalid generated plan.
+            authoritative?
+            (if defined-root?
+              (recursive-can?
+               db subject-type subject-eid
+               (permission-query-node resource-type permission)
+               resource-type resource-eid)
+              false)
+
+            :else
             (can*
              db subject-type subject-eid permission
              resource-type resource-eid #{})))]

@@ -691,6 +691,41 @@
     (is (zero? (indexed-call-count legacy-calls))
         "legacy authority must retain the optimized host-only acyclic path")))
 
+(deftest generated-can-reuses-the-public-root-classification
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:cache shared-cache/no-cache
+          :engine-selection engine-selection})
+        user (eacl/spice-object :user "root-probe-user")
+        document (eacl/spice-object :document "root-probe-document")
+        root-var (ns-resolve 'eacl.engine.v8 'permission-root-defined?)
+        original @root-var
+        calls (atom 0)]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation viewer: user
+        permission view = viewer
+      }")
+    (ds/transact!
+     conn
+     [{:eacl/id (:id user)}
+      {:eacl/id (:id document)}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship user :viewer document)])
+    (with-redefs-fn
+      {root-var
+       (fn [& args]
+         (swap! calls inc)
+         (apply original args))}
+      #(is (true? (eacl/can? client user :view document))))
+    (is (= 1 @calls)
+        "generated can? must not repeat the public permission-root lookup")))
+
 (deftest generated-current-cursor-restarts-when-permission-root-is-removed
   (let [conn (datascript/create-conn)
         calls (atom {})

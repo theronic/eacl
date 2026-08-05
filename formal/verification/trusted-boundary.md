@@ -133,6 +133,13 @@ The same module models the empty/singleton/wide arrow selection in
 Generated Java and JavaScript compare eight Boolean/work traces with actual
 CLJ/CLJS execution. The first comparison found and removed the empty-arrow
 wide-path work recorded as EACL-FORMAL-042.
+It also models the public `can?` root-classification hoist. Under the
+established contract that an undefined permission root denies, the old and new
+dispatches return the same Boolean, while generated-authoritative and legacy
+calls perform one root classification rather than two. A JVM public-client
+fixture observes the exact private lookup count; CLJS executes the identical
+CLJC branch and is covered for results, but its private call count is not
+instrumented.
 The source digests and public call closure make any host-source edit invalidate
 the reviewed evidence.
 

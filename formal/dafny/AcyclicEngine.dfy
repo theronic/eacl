@@ -2179,4 +2179,100 @@ module AcyclicEngine {
     reseekTrace :=
       LeapfrogSortedEidsIntersectWithWork(left, right);
   }
+
+  ghost function PublicCanBeforeRootHoist(
+    hasVisibleEndpoints: bool,
+    generatedAuthoritative: bool,
+    rootDefined: bool,
+    generatedResult: bool,
+    legacyResult: bool
+  ): bool
+  {
+    if !hasVisibleEndpoints then
+      false
+    else if generatedAuthoritative && rootDefined then
+      generatedResult
+    else
+      legacyResult
+  }
+
+  ghost function PublicCanAfterRootHoist(
+    hasVisibleEndpoints: bool,
+    generatedAuthoritative: bool,
+    rootDefined: bool,
+    generatedResult: bool,
+    legacyResult: bool
+  ): bool
+  {
+    if !hasVisibleEndpoints then
+      false
+    else if generatedAuthoritative then
+      if rootDefined then generatedResult else false
+    else
+      legacyResult
+  }
+
+  lemma PublicCanRootClassificationHoistPreservesResult(
+    hasVisibleEndpoints: bool,
+    generatedAuthoritative: bool,
+    rootDefined: bool,
+    generatedResult: bool,
+    legacyResult: bool
+  )
+    requires !rootDefined ==> !legacyResult
+    ensures
+      PublicCanBeforeRootHoist(
+        hasVisibleEndpoints,
+        generatedAuthoritative,
+        rootDefined,
+        generatedResult,
+        legacyResult
+      ) ==
+      PublicCanAfterRootHoist(
+        hasVisibleEndpoints,
+        generatedAuthoritative,
+        rootDefined,
+        generatedResult,
+        legacyResult
+      )
+  {
+  }
+
+  ghost function PublicCanRootChecksBeforeHoist(
+    hasVisibleEndpoints: bool
+  ): nat
+  {
+    if hasVisibleEndpoints then 2 else 0
+  }
+
+  ghost function PublicCanRootChecksAfterHoist(
+    hasVisibleEndpoints: bool,
+    generatedShadow: bool
+  ): nat
+  {
+    if !hasVisibleEndpoints then 0
+    else if generatedShadow then 2
+    else 1
+  }
+
+  lemma PublicCanRootClassificationHoistReducesWork(
+    hasVisibleEndpoints: bool,
+    generatedAuthoritative: bool,
+    generatedShadow: bool
+  )
+    requires !(generatedAuthoritative && generatedShadow)
+    ensures
+      PublicCanRootChecksAfterHoist(
+        hasVisibleEndpoints,
+        generatedShadow
+      ) <=
+      PublicCanRootChecksBeforeHoist(hasVisibleEndpoints)
+    ensures
+      hasVisibleEndpoints && generatedAuthoritative ==>
+        PublicCanRootChecksAfterHoist(
+          hasVisibleEndpoints,
+          generatedShadow
+        ) == 1
+  {
+  }
 }

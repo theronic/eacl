@@ -14,8 +14,8 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 511
-  :assertions 28048
+  :tests 512
+  :assertions 28132
   :failures 0
   :errors 0
   :injected-clients

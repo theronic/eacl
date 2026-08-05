@@ -27,7 +27,7 @@
    :claim :conditional-interface-contract}
   :direct-and-acyclic-engine
   {:status :passed
-   :verified-obligations 78
+   :verified-obligations 82
    :source "formal/dafny/AcyclicEngine.dfy"
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
@@ -128,7 +128,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9767
+   :verified-obligations 9771
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :all-defined-permission-roots-and-public-operations-generated-authority-routed
@@ -174,7 +174,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-050
+ {:latest :EACL-FORMAL-051
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -224,11 +224,12 @@
           :EACL-FORMAL-047
           :EACL-FORMAL-048
           :EACL-FORMAL-049
-          :EACL-FORMAL-050]}
+          :EACL-FORMAL-050
+          :EACL-FORMAL-051]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 50}
+  :entries 51}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

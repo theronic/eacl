@@ -4,7 +4,7 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 78
+   :verified-obligations 82
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
@@ -34,7 +34,9 @@
     :arrow-direct-positive-is-sound-under-subset-contract
     :arrow-exhaustive-negative-is-complete-under-equality-contract
     :arrow-fallback-refines-complete-far-side-evaluation
-    :arrow-full-candidate-checks-are-bounded-by-intermediate-count]}
+    :arrow-full-candidate-checks-are-bounded-by-intermediate-count
+    :public-can-root-classification-hoist-preserves-result
+    :public-generated-can-performs-one-root-classification]}
   {:source "formal/dafny/OrderedMerge.dfy"
    :verified-obligations 82
    :claims
@@ -220,6 +222,21 @@
    :acyclic-arrow-callback-skipped]
   :formal-source-refinement
   :source-shaped-outer-fold-and-callback-kind-trace-proved-callback-arguments-and-semantics-language-correspondence-and-independent-review-remain-trusted}
+ :public-can-root-classification-source-specialization
+ {:hot-path :public-can-endpoint-and-root-dispatch
+  :counterexample :EACL-FORMAL-051
+  :formal-result-theorem
+  :public-can-root-classification-hoist-preserves-result
+  :formal-resource-theorem
+  :public-generated-can-performs-one-root-classification
+  :generated-authoritative-root-lookups-per-call 1
+  :jvm-public-client-fixtures 1
+  :local-paired-latency
+  {:before-microseconds 508.292
+   :after-microseconds 483.625
+   :after-to-before-ratio 0.951465}
+  :formal-source-refinement
+  :source-shaped-dispatch-result-and-root-lookup-count-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
  :limitations
  [:generated-kernel-is-not-yet-production-authoritative
   :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
