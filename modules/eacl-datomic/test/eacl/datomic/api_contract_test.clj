@@ -10,7 +10,8 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.verified-kernel :as verified]))
 
 (def ^:private acyclic-schema
   "definition user {}
@@ -27,6 +28,22 @@
 
 (defn- ex-data-of [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
+
+(deftest generated-authority-is-the-default-with-explicit-legacy-rollback-test
+  #_{:clj-kondo/ignore [:unresolved-symbol]}
+  (with-mem-conn [conn schema/v7-schema]
+    (let [default-selection
+          (get-in (core/make-client conn {}) [:opts :engine-selection])
+          legacy-selection
+          (get-in
+           (core/make-client
+            conn
+            {:engine-selection {:mode :legacy-authoritative}})
+           [:opts :engine-selection])]
+      (is (= :verified-authoritative (:mode default-selection)))
+      (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
+      (is (= :legacy-authoritative (:mode legacy-selection)))
+      (is (nil? (:kernel legacy-selection))))))
 
 (defn- seed-acyclic!
   "n accounts, all owned by user u."

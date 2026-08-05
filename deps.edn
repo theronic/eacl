@@ -2,7 +2,9 @@
          "modules/eacl-datomic/src"
          "modules/eacl-datascript/src"
          "modules/eacl-datahike/src"
-         "resources"]
+         "resources"
+         "target/formal/java/classes"
+         "target/formal/browser"]
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
 
            ; Specter for coercing objects in deep structures
@@ -18,8 +20,7 @@
         ;; Parsing
         instaparse/instaparse {:mvn/version "1.5.0"}}
  :aliases {:formal-smoke
-           {:extra-paths ["formal/smoke/clj"
-                          "target/formal/java/classes"]
+           {:extra-paths ["formal/smoke/clj"]
             :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}}
            :formal-cljs-smoke
            {:extra-paths ["formal/smoke/cljs"]

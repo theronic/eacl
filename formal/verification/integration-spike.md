@@ -62,10 +62,12 @@ REPL is not evidence for generated-class reproducibility.
 
 Generated Java/JavaScript remains reproducible build output under `target/`;
 it is not checked-in source and must never be hand edited. Release packaging
-will publish compiled Java classes/runtime and the browser/Node JavaScript
-artifacts so consumers do not install Dafny. CI regenerates these artifacts
-from locked tools, compares their digests, and fails on nondeterminism before
-publishing them.
+publishes the compiled Java classes/runtime and the browser/Node-compatible
+JavaScript IIFE inside `cloudafrica/eacl`, together with CLJ/CLJS providers and
+`deps.cljs` loader metadata, so consumers do not install Dafny. The JAR build
+fails if any required generated-authority entry is absent. CI regenerates
+these artifacts from locked tools, compares their digests, and fails on
+nondeterminism before publishing them.
 
 This keeps Dafny source as the semantic and algorithmic authority while
 making the deterministic target-runtime representation patch an explicit

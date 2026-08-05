@@ -13,6 +13,30 @@
     <script src="./EaclKernel.browser.js"></script>
     <script>
       (() => {
+        const requiredProductionModules = [
+          "EaclKernel",
+          "Semantics",
+          "AcyclicEngine",
+          "CacheKernel",
+          "ConsistencyDecision",
+          "CurrentCache",
+          "IndexedCertification",
+          "IndexedRefinement",
+          "IndexedTraversal",
+          "OrderedMerge",
+          "PageWindow",
+          "Pagination",
+          "RecursiveEngine",
+          "RoutingCertificate",
+          "SubproblemCache",
+          "TemporalSafety",
+          "WireFormat",
+          "_dafny",
+          "BigNumber",
+        ];
+        const missingProductionModules = requiredProductionModules.filter(
+          (moduleName) => globalThis.EaclFormal[moduleName] === undefined,
+        );
         const { EaclKernel, _dafny, BigNumber } = globalThis.EaclFormal;
         const invoke = (tag, values, limit) =>
           EaclKernel.__default.RoundTrip(
@@ -27,6 +51,7 @@
           (n) => n.toNumber(),
         );
         const passed =
+          missingProductionModules.length === 0 &&
           accepted.is_Accepted &&
           rejected.is_Rejected &&
           JSON.stringify(values) === JSON.stringify([0, 7, 42]);
@@ -38,6 +63,7 @@
             accepted: accepted.toString(),
             rejected: rejected.toString(),
             values,
+            missingProductionModules,
           },
           null,
           2,

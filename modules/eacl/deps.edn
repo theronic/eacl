@@ -1,4 +1,6 @@
-{:paths ["src"]
+{:paths ["src"
+         "../../target/formal/java/classes"
+         "../../target/formal/browser"]
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
         instaparse/instaparse {:mvn/version "1.5.0"}}
  :aliases {:build {:extra-paths ["."]

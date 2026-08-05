@@ -7,7 +7,7 @@
   regression evidence rather than a retained-heap or peak-memory theorem."
   (:refer-clojure :exclude [run!])
   (:require
-   [eacl.formal.production-kernel :as production]
+   [eacl.formal.production-kernel-js :as production]
    [eacl.verified-kernel :as verified]))
 
 (def ^:private selection

@@ -406,13 +406,26 @@ jobs:
         with:
           cli: latest
 
-      - name: Cache Clojure dependencies
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache formal tools and language dependencies
         uses: actions/cache@v4
         with:
           path: |
+            target/formal-tools
             ~/.m2/repository
             ~/.gitlibs
-          key: parity-${{ runner.os }}-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
+            ~/.npm
+          key: parity-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'formal/smoke/js/package-lock.json', 'deps.edn', 'modules/*/deps.edn') }}
+
+      - name: Build released generated runtimes
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+          bin/formal browser-bundle
 
       - name: Start parity nREPL
         run: |

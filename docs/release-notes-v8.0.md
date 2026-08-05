@@ -345,9 +345,10 @@ trusted or empirically certified boundaries.
 
 The release manifest is therefore `:conditionally-verified`, not unqualified
 `:verified`. It deliberately withholds verified release status until an
-independent security/formal-methods review is recorded. Making generated
-authority the supported default and later removing the legacy compatibility
-path are separate rollout tasks.
+independent security/formal-methods review is recorded. Generated authority is
+now the packaged default for Datomic, Datahike, and DataScript; explicit
+`:legacy-authoritative` selection remains the compatibility-window rollback.
+Removing that legacy path remains a later rollout task.
 
 ## Performance evidence
 

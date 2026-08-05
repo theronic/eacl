@@ -1,5 +1,5 @@
 (ns eacl.formal.production-kernel
-  "Generated-Java implementation of EACL's strict production decision SPI."
+  "Released generated-Java implementation of EACL's strict decision SPI."
   (:require [eacl.verified-kernel :as verified])
   (:import
    (CacheKernel CacheCandidate ProofState Telemetry)
@@ -1669,3 +1669,7 @@
 
 (def generated-java-kernel
   (->GeneratedJavaKernel))
+
+(def default-selection
+  {:mode :verified-authoritative
+   :kernel generated-java-kernel})

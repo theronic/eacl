@@ -11,7 +11,7 @@
    [eacl.engine.v8 :as engine]
    [eacl.engine.relationships :as relationship-engine]
    [eacl.formal.differential-runner :as differential]
-   [eacl.formal.production-kernel :as production]
+   [eacl.formal.production-kernel-js :as production]
    [eacl.lazy-merge-sort :as lazy-sort]
    [eacl.relay :as relay]
    [eacl.subproblem-cache :as subproblem]

@@ -7,13 +7,58 @@ on:
   workflow_dispatch:
 
 jobs:
+  generated-runtime:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked formal tools and JavaScript dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.npm
+          key: generated-runtime-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'formal/smoke/js/package-lock.json') }}
+
+      - name: Build released generated runtimes
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+          bin/formal browser-bundle
+
+      - name: Upload released generated runtimes
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-generated-runtimes
+          path: |
+            target/formal/java/classes
+            target/formal/browser/EaclKernel.browser.js
+
   test:
     # Same-repo branches already build via the push event; run the
     # pull_request event only for PRs from forks to avoid double runs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: generated-runtime
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download released generated runtimes
+        uses: actions/download-artifact@v4
+        with:
+          name: released-generated-runtimes
+          path: target/formal
 
       - name: Set up Temurin JDK 21
         uses: actions/setup-java@v4
@@ -25,6 +70,11 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Cache Clojure dependencies
         uses: actions/cache@v4
@@ -80,6 +130,7 @@ jobs:
           node target/datascript-cljs-test.js
 
   isolated-modules:
+    needs: generated-runtime
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +138,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download released generated runtimes
+        uses: actions/download-artifact@v4
+        with:
+          name: released-generated-runtimes
+          path: target/formal
 
       - name: Set up Temurin JDK 21
         uses: actions/setup-java@v4

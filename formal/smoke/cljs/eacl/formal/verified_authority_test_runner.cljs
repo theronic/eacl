@@ -19,7 +19,7 @@
    [eacl.formal.cache-strategy-adversarial-test]
    [eacl.formal.differential-runner-test]
    [eacl.formal.generators-test]
-   [eacl.formal.production-kernel :as production]
+   [eacl.formal.production-kernel-js :as production]
    [eacl.mutation-test]
    [eacl.relationships.endpoint-pair-test]
    [eacl.relay-test]

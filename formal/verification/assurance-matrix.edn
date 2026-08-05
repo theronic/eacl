@@ -4,9 +4,9 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 51
-  :public-roots 60
-  :reachable-definitions 1348
+  :source-files 53
+  :public-roots 62
+  :reachable-definitions 1505
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"

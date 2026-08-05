@@ -12,8 +12,8 @@
  [:legacy-authoritative :verified-shadow :verified-authoritative]
  :generated-providers
  {:clj-java eacl.formal.production-kernel/GeneratedJavaKernel
-  :cljs-javascript
-  eacl.formal.production-kernel/GeneratedJavaScriptKernel}
+   :cljs-javascript
+  eacl.formal.production-kernel-js/GeneratedJavaScriptKernel}
  :strict-input-coverage
  [:unknown-tags
   :unknown-fields

@@ -7,7 +7,9 @@ customer's policy intent. The current release manifest reports
 `:conditionally-verified`: production routing, cross-adapter campaigns,
 performance, and shadow gates pass, while independent security/formal-methods
 review remains an explicit unmet release obligation. Verified authority is
-still opt-in; it is not the default client mode.
+the default client mode on Datomic, Datahike, and DataScript. The explicit
+`:legacy-authoritative` selection remains the documented rollback during the
+compatibility window.
 
 The measured performance consequences and recommended cache-free reference,
 consistency, cache, cursor, and backend architecture are recorded in the
@@ -64,11 +66,12 @@ for another.
 
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
-clj-kondo version in the toolchain lock. The ledger closes 60 named shared and
-backend roots over 1,348 definitions in 51 source files, including unattributed
-usages assigned to their exact containing `defrecord` spans. It is static
-completeness evidence only: it does not prove Clojure source or adapter
-semantics. `backend-dispatch.edn` additionally closes every CLJ/CLJS
+clj-kondo version in the toolchain lock. The ledger closes 62 named shared,
+generated-provider, and backend roots over 1,505 definitions in 53 source
+files, including unattributed usages assigned to their exact containing
+`defrecord` spans. It is static completeness evidence only: it does not prove
+Clojure source or adapter semantics. `backend-dispatch.edn` additionally
+closes every CLJ/CLJS
 `backend/invoke` site to the exact 21 required literal operation keys; the
 meaning of each adapter implementation remains a named obligation.
 
@@ -246,20 +249,21 @@ immutable result does not cover current source. It proves no production time,
 allocation, heap, or backend-work bound.
 
 Materializing an entire database remains unacceptable on large EACL graphs.
-The opt-in verified-authoritative route therefore uses the generated indexed
+The default verified-authoritative route therefore uses the generated indexed
 state machine over certified ordered adapter scans rather than a whole-graph
 runtime evaluator. Public permission checks, lookup, count, pagination, and
 cache/cursor decisions now route through the mapped generated boundaries in
 that mode, and forced-authority shadow/load suites pass on all three backends
-and the supported CLJS target. The legacy route remains the default pending
-independent review and the documented compatibility decision, so the manifest
-reports `:conditionally-verified`, not an unqualified whole-deployment claim.
+and the supported CLJS target. The legacy route remains explicitly selectable
+for rollback during the compatibility window. Independent review remains a
+separate release-assurance obligation, so the manifest reports
+`:conditionally-verified`, not an unqualified whole-deployment claim.
 
 The planned rollout order is:
 
 1. legacy traversal authority with read-only generated decision shadowing;
 2. opt-in complete generated authority after zero unexplained divergences and all gates;
-3. generated authority by default with the legacy rollback path retained;
+3. **current:** generated authority by default with the legacy rollback path retained;
 4. removal of the legacy decision path only after the compatibility window.
 
 Shadow evaluation may not mutate cache entries, cursor/continuation state, or

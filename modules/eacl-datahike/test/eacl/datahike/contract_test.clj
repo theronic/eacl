@@ -10,12 +10,13 @@
    permission tuples need replikativ/datahike#921 to derive in the latter mode,
    and code comparing `:a` directly against a keyword stops matching. Both
    failures deny permissions, so both representations remain mandatory."
-  (:require [clojure.test :refer [deftest testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.cache :as cache]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
-            [eacl.datahike.core :as datahike]))
+            [eacl.datahike.core :as datahike]
+            [eacl.verified-kernel :as verified]))
 
 (defn- seed-objects!
   "The contract's objects, addressed by `:eacl/id`. Negative `:db/id`s are
@@ -26,6 +27,21 @@
                                   {:db/id (- (inc idx))
                                    :eacl/id id})
                                 contract/smoke-objects))))
+
+(deftest generated-authority-is-the-default-with-explicit-legacy-rollback-test
+  (let [conn (datahike/create-conn)
+        default-selection
+        (get-in (datahike/make-client conn {}) [:opts :engine-selection])
+        legacy-selection
+        (get-in
+         (datahike/make-client
+          conn
+          {:engine-selection {:mode :legacy-authoritative}})
+         [:opts :engine-selection])]
+    (is (= :verified-authoritative (:mode default-selection)))
+    (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
+    (is (= :legacy-authoritative (:mode legacy-selection)))
+    (is (nil? (:kernel legacy-selection)))))
 
 (defn- run-contract!
   [config]

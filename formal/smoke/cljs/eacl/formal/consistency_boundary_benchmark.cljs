@@ -4,7 +4,7 @@
   (:require
    [eacl.backend.v8 :as backend]
    [eacl.consistency :as consistency]
-   [eacl.formal.production-kernel :as production]
+   [eacl.formal.production-kernel-js :as production]
    [eacl.spicedb.consistency :as public-consistency]))
 
 (defn- percentile

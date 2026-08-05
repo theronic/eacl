@@ -1,14 +1,11 @@
-(ns eacl.formal.production-kernel
-  "Generated-JavaScript implementation of EACL's production decision SPI."
+(ns eacl.formal.production-kernel-js
+  "Released generated-JavaScript implementation of EACL's decision SPI."
   (:require
+   [eacl.formal.generated-runtime]
    [eacl.verified-kernel :as verified]))
 
 (def generated
-  (js/require
-   (.resolve
-    (js/require "path")
-    (.cwd js/process)
-    "formal/smoke/js/generated_loader.cjs")))
+  (.-EaclFormal js/globalThis))
 
 (defn- dafny-string
   [value]
@@ -1736,3 +1733,7 @@
 
 (def generated-javascript-kernel
   (->GeneratedJavaScriptKernel))
+
+(def default-selection
+  {:mode :verified-authoritative
+   :kernel generated-javascript-kernel})

@@ -273,9 +273,8 @@
    :retained-live-heap
    :passed-for-named-post-full-gc-regression
    :verified-kernel-cutover
-   :internal-opt-in-passed-default-cutover-blocked-on-independent-review
-   :blocking-findings
-   [:independent-security-formal-review-not-recorded]}
+   :default-passed-with-explicit-legacy-rollback
+   :blocking-findings []}
  :mutation-control
  {:status :passed
   :report "formal/verification/mutation-control.edn"

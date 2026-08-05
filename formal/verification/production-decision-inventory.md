@@ -134,13 +134,13 @@ does not imply a global, lexical, domain, or cross-backend order.
 ## Machine-enforced source closure
 
 `public-source-closure.json` is generated from both CLJ and CLJS analysis of
-51 shared and backend EACL source files. It currently closes the
-cross-namespace call graph from 60 engine, relationship-pagination, relay,
-cursor, cache, subproblem-cache, consistency, causal-token, and named
-Datomic/Datahike/DataScript roots over 1,347 definitions. Unattributed
-clj-kondo usages inside exact `defrecord` spans are assigned to their
-containing protocol implementation, so those public client methods are
-included. CI checks the exact
+53 shared and backend EACL source files. It currently closes the
+cross-namespace call graph from 62 engine, relationship-pagination, relay,
+cursor, cache, subproblem-cache, consistency, causal-token, generated-provider,
+and named Datomic/Datahike/DataScript roots over 1,505 definitions.
+Unattributed clj-kondo usages inside exact `defrecord` spans are assigned to
+their containing protocol implementation, so those public client and generated
+kernel methods are included. CI checks the exact
 analyzer version, source digests, definition locations, reachable sets, and
 external call sets. Any source change therefore forces review of the decision
 closure instead of silently adding a branch.

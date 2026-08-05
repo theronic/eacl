@@ -778,7 +778,7 @@
   (let [source
         (slurp
          (repo/file
-          "formal" "smoke" "clj" "eacl" "formal"
+          "modules" "eacl" "src" "eacl" "formal"
           "production_kernel.clj"))
         required-static-targets
         ["^ObjectRef object"

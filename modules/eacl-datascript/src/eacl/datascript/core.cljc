@@ -15,6 +15,10 @@
             [eacl.datascript.mutation :as journal]
             [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
+            #?(:clj
+               [eacl.formal.production-kernel :as production-kernel]
+               :cljs
+               [eacl.formal.production-kernel-js :as production-kernel])
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
@@ -965,7 +969,9 @@
                           :cursor-ttl-seconds cursor-ttl-seconds
                           :format-options format-options
                           :engine-selection
-                          (verified/normalize-selection engine-selection)
+                          (verified/normalize-selection
+                           (or engine-selection
+                               production-kernel/default-selection))
                           :coherence-authority coherence-authority
                           :proof-mode proof-mode
                           :consistency-sync-timeout-ms

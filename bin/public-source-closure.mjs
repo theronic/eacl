@@ -44,6 +44,8 @@ const roots = [
   "eacl.consistency/cursor-conflict!",
   "eacl.causal-token/issue",
   "eacl.causal-token/token-data",
+  "eacl.formal.production-kernel/GeneratedJavaKernel",
+  "eacl.formal.production-kernel-js/GeneratedJavaScriptKernel",
   "eacl.datomic.core/Spiceomic",
   "eacl.datomic.core/spiceomic-read-relationships",
   "eacl.datomic.core/spiceomic-write-relationships!",

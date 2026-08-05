@@ -20,6 +20,7 @@
             [eacl.datomic.mutation :as journal]
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]
+            [eacl.formal.production-kernel :as production-kernel]
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
@@ -2785,7 +2786,9 @@
                             :zed-token-keyring zed-keyring
                             :format-options format-options
                             :engine-selection
-                            (verified/normalize-selection engine-selection)
+                            (verified/normalize-selection
+                             (or engine-selection
+                                 production-kernel/default-selection))
                             :coherence-authority coherence-authority
                             :proof-mode proof-mode
                             :token-ttl-seconds

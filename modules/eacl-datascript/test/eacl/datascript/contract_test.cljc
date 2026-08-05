@@ -6,7 +6,8 @@
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]
-            [eacl.secure-format :as secure]))
+            [eacl.secure-format :as secure]
+            [eacl.verified-kernel :as verified]))
 
 (defn- seed-objects!
   [conn]
@@ -15,6 +16,21 @@
                                {:db/id (- (inc idx))
                                 :eacl/id id})
                              contract/smoke-objects)))
+
+(deftest generated-authority-is-the-default-with-explicit-legacy-rollback-test
+  (let [conn (datascript/create-conn)
+        default-selection
+        (get-in (datascript/make-client conn {}) [:opts :engine-selection])
+        legacy-selection
+        (get-in
+         (datascript/make-client
+          conn
+          {:engine-selection {:mode :legacy-authoritative}})
+         [:opts :engine-selection])]
+    (is (= :verified-authoritative (:mode default-selection)))
+    (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
+    (is (= :legacy-authoritative (:mode legacy-selection)))
+    (is (nil? (:kernel legacy-selection)))))
 
 (defn- reusable-denotation-hits
   [stats]

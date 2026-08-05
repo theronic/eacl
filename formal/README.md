@@ -58,16 +58,19 @@ full-kernel growth bound. A source or class byte count is not a proxy for
 allocation, retained heap, solver effort, or latency.
 
 `bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
-ledger for 60 named shared and backend roots. The ledger is deliberately
-marked verification-incomplete: enumerating 1,288 reachable definitions in 51
-source files (including source-span attribution for inline `defrecord`
-methods) prevents silent omissions but does not establish source refinement or
-adapter semantics. `backend-dispatch.edn` separately checks that every CLJ and
-CLJS dispatch site uses one of exactly the 21 required literal operation keys.
+ledger for 62 named shared, generated-provider, and backend roots. The ledger
+is deliberately marked verification-incomplete: enumerating 1,505 reachable
+definitions in 53 source files (including source-span attribution for inline
+`defrecord` methods) prevents silent omissions but does not establish source
+refinement or adapter semantics. `backend-dispatch.edn` separately checks that
+every CLJ and CLJS dispatch site uses one of exactly the 21 required literal
+operation keys.
 
 ## Assurance status
 
-The initial status is **not verified**. A theorem becomes releasable only when:
+The release status is **conditionally verified**, with unqualified verified
+status withheld until independent review. A theorem becomes releasable only
+when:
 
 1. its Dafny obligation passes without an admitted lemma;
 2. its boundary and differential checks pass;

@@ -66,14 +66,14 @@
    indexed-render-error]}
  :runtimes
  {:clj-java
-  {:source "formal/smoke/clj/eacl/formal/production_kernel.clj"
+  {:source "modules/eacl/src/eacl/formal/production_kernel.clj"
    :provider eacl.formal.production-kernel/GeneratedJavaKernel
    :tests
    ["eacl.formal.production-kernel-test"
     "eacl.verified-kernel-test"]}
   :cljs-javascript
-  {:source "formal/smoke/cljs/eacl/formal/production_kernel.cljs"
-   :provider eacl.formal.production-kernel/GeneratedJavaScriptKernel
+  {:source "modules/eacl/src/eacl/formal/production_kernel_js.cljs"
+   :provider eacl.formal.production-kernel-js/GeneratedJavaScriptKernel
    :tests
    ["eacl.formal.production-kernel-test"
     "eacl.verified-kernel-test"]}}

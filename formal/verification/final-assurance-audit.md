@@ -53,9 +53,9 @@ generated-code compiler out of the trusted computing base.
   runtime collections, and host platforms—has been mechanically proved is
   withheld. Those components remain the explicit trusted computing base.
 - The indexed generated-to-adapter callback boundary is implemented for CLJ
-  and CLJS. In internal `verified-authoritative` mode it owns opaque traversal
-  state for every defined permission root. It
-  is not yet the supported/default release engine.
+  and CLJS. In default `verified-authoritative` mode it owns opaque traversal
+  state for every defined permission root. Explicit
+  `:legacy-authoritative` selection remains the compatibility-window rollback.
 - Cache-disabled public calls now preserve the engine selection in Datomic,
   Datahike, and DataScript. Earlier state-trace evidence did not detect that
   bypassed calls were falling back to legacy traversal; the corrected trace
@@ -577,8 +577,9 @@ generated operation under its listed assumptions. Generated authority now
 routes every defined permission root and public authorization operation, so
 the manifest may state `:conditionally-verified`; it may not state the
 unqualified release status `:verified` while the independent-review gate is
-open. The generated providers remain internal opt-in release-candidate
-machinery rather than the supported default.
+open. The generated providers are packaged release machinery and the default
+authority; the legacy provider remains only as the explicit compatibility
+rollback.
 
 Historical reports use “verified” to mean empirically reproduced or
 test-confirmed. They are dated engineering records and are not release-level
@@ -604,22 +605,25 @@ that the complete v8.0 engine is formally verified.
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 521 tests, 28,212 assertions,
+- Default-authority non-benchmark CLJ suite: 505 tests, 19,706 assertions,
+  zero failures/errors across Datomic, Datahike, and DataScript.
+- Forced-authority non-benchmark CLJ suite: 524 tests, 28,224 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward
   pagination, count retention, and shared-subgraph cache gates pass.
-- Forced-authority DataScript CLJS suite: 162 tests, 4,509 assertions, zero
-  failures/errors.
+- Default and forced-authority DataScript CLJS suites: 163 tests, 4,513
+  assertions each, zero failures/errors.
 - Generated Java production-kernel namespace: 36 tests, 10,395 assertions,
   zero failures/errors.
 - Generated JavaScript smoke suite: 58 tests, 10,968 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,348 unique
-  reachable definitions across 51 source files, with exact per-root internal
-  and external call sets. Unattributed usages inside exact `defrecord` spans
-  are assigned to the containing protocol implementation. This prevents silent
-  decision-branch omission but is explicitly not a source-refinement proof.
+- Locked CLJ/CLJS source closure: 62 named shared/generated/backend roots,
+  1,505 unique reachable definitions across 53 source files, with exact
+  per-root internal and external call sets. Unattributed usages inside exact
+  `defrecord` spans are assigned to the containing protocol implementation.
+  This prevents silent decision-branch omission but is explicitly not a
+  source-refinement proof.
   The separate dispatch ledger proves that all 56 CLJ and 56 CLJS
   `backend/invoke` sites are literal and their 21-key set equals the required
   snapshot-operation contract. Adapter semantics and per-definition theorem
