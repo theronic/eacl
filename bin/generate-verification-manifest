@@ -72,14 +72,23 @@
                  #(str/ends-with? (.getName %) ".clj"))
     (files-under "formal/smoke/cljs"
                  #(str/ends-with? (.getName %) ".cljs"))
+    (files-under
+     "formal/runtime"
+     #(or (str/ends-with? (.getName %) ".java")
+          (str/ends-with? (.getName %) ".js")))
     (map repo-file
-         ["bin/formal"
+         [".github/workflows/formal.yml"
+          "bin/formal"
           "bin/generate-verification-manifest"
+          "bin/patch-generated-collections.mjs"
           "bin/public-source-closure.mjs"
           "bin/summarize-dafny-verification.mjs"
           "bin/validate-verification-manifest"
           "formal/smoke/clj/eacl/formal/ordered_merge_benchmark.clj"
           "formal/smoke/cljs/run"
+          "formal/smoke/cljs/run-cursor-rebase-benchmark"
+          "formal/smoke/cljs/run-indexed-traversal-benchmark"
+          "formal/smoke/cljs/run-verified-authority"
           "formal/smoke/java/run"
           "formal/smoke/js/build_browser_bundle.mjs"
           "formal/smoke/js/generated_loader.cjs"

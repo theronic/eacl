@@ -167,7 +167,7 @@
           (is (= 130 (count (set (map :id all-subjects))))
               "reverse scans resume correctly across 64-EID chunks"))))))
 
-(deftest recursive-cursor-restarts-after-relevant-write-test
+(deftest recursive-cursor-rebases-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-historical-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -182,29 +182,34 @@
             cursor (page-end-cursor page1)
             page2 (eacl/lookup-resources cached-client
                                          (assoc query :after cursor))
-            uncomputed-cursor (page-end-cursor page2)]
+            uncomputed-cursor (page-end-cursor page2)
+            page3 (eacl/lookup-resources replay-client
+                                         (assoc query :after uncomputed-cursor))]
         @(d/transact conn [{:eacl/id "new-live-account"}])
         (eacl/create-relationship!
          cached-client
          (->Relationship (spice-object :account (account-id 14))
                          :parent
                          (spice-object :account "new-live-account")))
-        (doseq [recovered
-                [(eacl/lookup-resources cached-client
-                                        (assoc query :after cursor))
-                 (eacl/lookup-resources cached-client
-                                        (assoc query :after uncomputed-cursor))
-                 (eacl/lookup-resources replay-client
-                                        (assoc query :after cursor))]]
-          (is (= (:data page1) (:data recovered))
-              "graph-specific recursive state restarts on the selected current graph")
-          (is (= :restarted
+        (doseq [[expected recovered]
+                [[(:data page2)
+                  (eacl/lookup-resources cached-client
+                                         (assoc query :after cursor))]
+                 [(:data page3)
+                  (eacl/lookup-resources cached-client
+                                         (assoc query :after uncomputed-cursor))]
+                 [(:data page2)
+                  (eacl/lookup-resources replay-client
+                                         (assoc query :after cursor))]]]
+          (is (= expected (:data recovered))
+              "recover-current resumes after the authenticated result identity")
+          (is (= :rebased
                  (get-in recovered [:page-info :cursor-recovery]))))
         (is (= "new-live-account"
                (-> (collect-forward cached-client query) :data peek :id))
             "a new enumeration observes the relationship write")))))
 
-(deftest recursive-cursor-restarts-after-unrelated-basis-churn-test
+(deftest recursive-cursor-rebases-after-unrelated-basis-churn-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -222,9 +227,11 @@
         (let [stats (atom {})
               page2 (binding [idx/*recursive-traversal-stats* stats]
                       (eacl/lookup-resources client (assoc query :after cursor)))]
-          (is (= (:data page1) (:data page2))
-              "recursive continuation state never crosses immutable DB values")
-          (is (= :restarted
+          (is (= (mapv #(spice-object :account (account-id %))
+                       (range 5 10))
+                 (:data page2))
+              "rebasing recomputes current state and continues after the boundary")
+          (is (= :rebased
                  (get-in page2 [:page-info :cursor-recovery])))
           (is (nil? (:continuation-hits @stats)))
           (let [restart-stats (atom {})

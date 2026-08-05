@@ -1,5 +1,5 @@
 {:schema-version 1
- :status :indexed-recursive-generated-authority-routed-pending-release-gates
+ :status :all-defined-permission-roots-generated-authority-routed-and-suites-passed
  :portable-boundary eacl.verified-kernel
  :conversion-boundary
  {:report "formal/verification/conversion-boundary.edn"
@@ -29,6 +29,7 @@
   :consistency-selection-plan
   :consistency-post-selection-validation
   :lookup-cursor-continuation
+  :lookup-cursor-current-identity-rebase
   :relationship-cursor-continuation
   :cache-validation
   :current-cache-selection
@@ -156,15 +157,19 @@
             "formal/dafny/IndexedForwardCompleteness.dfy"
             "formal/dafny/IndexedReverseCompleteness.dfy"
             "formal/dafny/IndexedRendering.dfy"
-            "formal/dafny/IndexedCertification.dfy"]
+            "formal/dafny/IndexedCertification.dfy"
+            "formal/dafny/RootDenotation.dfy"
+            "formal/dafny/IndexedRootDenotation.dfy"]
   :verified-obligations
-  {:transition-state-machine 641
-   :semantic-soundness-refinement 1783
-   :forward-least-fixed-point-completeness 1299
-   :reverse-least-fixed-point-completeness 4975
+  {:transition-state-machine 669
+   :semantic-soundness-refinement 1811
+   :forward-least-fixed-point-completeness 1335
+   :reverse-least-fixed-point-completeness 5104
    :traversal-order-rendering-and-ordered-nonimplication-witness 29
    :source-plan-and-seed-certification 48
-   :total 8775}
+   :semantic-root-denotation-equivalence 33
+   :indexed-root-denotation-compiler-bridge 137
+   :total 9166}
   :generated-state-shape true
   :generated-forward-transitions true
   :generated-reverse-transitions true
@@ -172,45 +177,65 @@
   :generated-continuation-authenticates-public-boundary true
   :generated-continuation-retains-lookahead-without-replay true
   :generated-scan-response-validation true
+  :generated-scan-ordering-validation
+  {:abstract-contract :pairwise-strict-order
+   :executable-contract :adjacent-strict-order
+   :equivalence-lemma
+   IndexedTraversal.StrictlyIncreasingIffAdjacent
+   :target-logical-work :linear-in-response-values}
   :generated-scan-request-scope-ownership true
   :production-scan-response-routing true
   :production-plan-certification-routing
   :verified-modes-schema-plan-compilation
   :production-state-transition-routing
-  :verified-authoritative-mode-recursive-scc-dependent-roots
+  :verified-authoritative-mode-all-defined-permission-roots
   :opaque-generated-state-between-adapter-round-trips true
   :per-query-schema-rule-index-rebuild false
   :compiled-plan-soundness-refinement true
   :compiled-plan-source-refinement true
+  :equal-indexed-root-bodies-have-equal-semantic-denotations true
   :least-fixed-point-soundness true
   :least-fixed-point-completeness true
   :rendering-state-generated true
   :deterministic-prefix-equivalence true
-  :authoritative :internal-opt-in-only}
+  :target-runtime-collection-refinement
+  {:java
+   {:set-map :clojure-persistent-collections
+    :boundary-property-tests :passed
+    :fixed-heap-indexed-traversal :passed}
+   :javascript
+   {:set-map :immutable-5.1.9-hamt
+    :sequence :persistent-virtual-length-views
+    :boundary-property-tests :passed
+    :indexed-traversal-scaling :passed}
+   :patcher :unique-exact-generated-markers-or-fail
+   :qualification
+   :trusted-reviewed-runtime-boundary-with-differential-and-resource-gates-not-formally-verified-data-structures}
+  :authoritative :internal-opt-in}
  :evidence
  {:generated-java-wire
   {:namespace eacl.formal.wire-format-bridge-test
    :tests 1 :assertions 7 :status :passed}
  :generated-javascript-wire
   {:namespace eacl.formal.js-round-trip-test
-   :suite-tests 55 :suite-assertions 10945 :status :passed}
+   :suite-tests 57 :suite-assertions 10990 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
    :clj {:tests 13 :assertions 149}
    :cljs {:tests 13 :assertions 149 :status :passed}}
   :production-routing
   {:clj-java
-   {:namespace eacl.formal.production-kernel-test
-    :tests 35
-    :assertions 10393
+  {:namespace eacl.formal.production-kernel-test
+   :tests 36
+   :assertions 10411
     :leapfrog-reseek-side-and-target-trace :exact
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407}
  :cljs-javascript
-   {:namespace-tests 33
-    :suite-tests 55
-    :suite-assertions 10945
+   {:namespace-tests 34
+    :suite-tests 58
+    :suite-assertions 10992
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407
@@ -224,15 +249,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 35
-    :namespace-assertions 10393
+    :namespace-tests 36
+    :namespace-assertions 10411
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 33
-    :suite-tests 55
-    :suite-assertions 10945
+    :namespace-tests 34
+    :suite-tests 58
+    :suite-assertions 10992
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
@@ -252,7 +277,8 @@
    :acyclic-ordering-counterexample-retained true
    :recursive-shadow-result-comparison true
    :dimensionally-matched-resource-counter-comparison true
-   :logical-retained-state-comparison true
+   :logical-retained-state-comparison
+   :separate-representation-specific-regression-gate
    :typed-limit-error-comparison true
    :limit-comparison-scope :generated-indexed-vs-production
    :generated-page-normalization true
@@ -266,7 +292,7 @@
     [:source-scope :snapshot-id :graph-anchor :order-hint]
     :client-local-exact-locator-excluded true}
    :current-cache-generated-selection true
-   :tests 6 :assertions 174 :status :passed}
+   :tests 8 :assertions 194 :status :passed}
   :cljs-public-state-trace
   {:namespace eacl.formal.production-kernel-test
    :backend :datascript
@@ -275,9 +301,26 @@
    :complete-portable-typed-error-data-comparison true
    :cache-provenance-comparison true
    :selected-graph-comparison true
+   :status :passed}
+  :verified-authority
+  {:report "formal/verification/verified-authority-suites.edn"
+   :jvm-nonbenchmark
+   {:backends [:datomic :datahike :datascript]
+    :tests 503 :assertions 27438 :failures 0 :errors 0}
+   :jvm-heavy
+   {:backends [:datomic :datahike :datascript]
+    :tests 17 :assertions 4057 :failures 0 :errors 0}
+   :cljs-datascript
+   {:tests 156 :assertions 4539 :failures 0 :errors 0}
+   :required-generated-operations-observed-per-jvm-backend true
+   :retained-live-heap
+   {:status :passed
+    :report "formal/verification/retained-live-heap.edn"
+    :maximum-generated-to-legacy-ratio 1.036843888729995}
    :status :passed}}
  :remaining
  [:production-adapter-trace-refinement
+  :canonical-clj-cljs-root-denotation-key-source-refinement
   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
   :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
   :independent-review]}

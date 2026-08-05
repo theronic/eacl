@@ -191,19 +191,21 @@ case "$command" in
     need_tools
     rm -rf "$output_root/java"
     mkdir -p "$output_root/java"
-    exec "$dafny" translate java \
+    "$dafny" translate java \
       --include-runtime \
       --output "$output_root/java/EaclKernel" \
       "$repo_root/formal/dafny/EaclKernel.dfy"
+    exec node "$repo_root/bin/patch-generated-collections.mjs" java
     ;;
   compile-js)
     need_tools
     rm -rf "$output_root/js"
     mkdir -p "$output_root/js"
-    exec "$dafny" translate js \
+    "$dafny" translate js \
       --include-runtime \
       --output "$output_root/js/EaclKernel" \
       "$repo_root/formal/dafny/EaclKernel.dfy"
+    exec node "$repo_root/bin/patch-generated-collections.mjs" js
     ;;
   build-java)
     need_tools

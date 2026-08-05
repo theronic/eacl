@@ -537,6 +537,23 @@
       :snapshot-unavailable
       :else :history-divergence)))
 
+(defn- cursor-bound-rebase-decision
+  [{:keys [values bound-eid]}]
+  (let [decision
+        (js-invoke
+         (.-__default (.-PageWindow generated))
+         "RebaseCursorBound"
+         (into-array values)
+         bound-eid)]
+    (if (.-is_CursorBoundRebased decision)
+      {:status :rebased
+       :ordinal (.toNumber (.-dtor_ordinal decision))
+       :inspected-count
+       (.toNumber (.-dtor_inspectedCount decision))}
+      {:status :restarted
+       :inspected-count
+       (.toNumber (.-dtor_inspectedCount decision))})))
+
 (defn- snapshot-consistency-mode
   [consistency mode]
   (case mode
@@ -1696,6 +1713,7 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
+      :cursor-bound-rebase (cursor-bound-rebase-decision input)
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)

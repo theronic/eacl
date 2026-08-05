@@ -228,8 +228,9 @@ module IndexedTraversal {
   // currentQueueDepth is not cumulativeEnqueues. Retained logical state is
   // measured structurally by ForwardRetainedLogicalUnits and
   // ReverseRetainedLogicalUnits below; neither measure claims JVM/JavaScript
-  // heap bytes. Lore's production counterexample demonstrates why collapsing
-  // any of these dimensions is unsound.
+  // heap bytes or assigns constant target cost to an abstract set, map, or
+  // sequence operation. Target collection implementations require a separate
+  // refinement argument and host-runtime regression gates.
   datatype ResourceCounters = ResourceCounters(
     backendCommands: nat,
     adapterFetchedValues: nat,
@@ -387,7 +388,8 @@ module IndexedTraversal {
 
   predicate ValidRenderState(render: RenderState) {
     ValidRenderMode(render.mode) &&
-    render.ordinal == |render.emitted| &&
+    (render.mode.RenderAllCount? ||
+     render.ordinal == |render.emitted|) &&
     (forall eid <- render.emitted :: 0 <= eid) &&
     UniqueEids(render.emitted) &&
     (set eid <- render.delivered) <=
@@ -415,11 +417,47 @@ module IndexedTraversal {
       |render.delivered| <= limit &&
       (render.truncated ==> render.complete)
     case RenderAllCount =>
+      render.emitted == [] &&
+      render.delivered == [] &&
       !render.truncated
     case RenderBoolean(_) =>
       |render.delivered| <= 1 &&
       (|render.delivered| == 1 ==> render.complete) &&
       !render.truncated
+  }
+
+  lemma CompletedBackwardRenderConsumesAuthenticatedPrefix(
+    render: RenderState
+  )
+    requires ValidRenderState(render)
+    requires render.mode.RenderBackwardPage?
+    requires render.complete
+    requires render.boundMatched
+    ensures render.ordinal == render.mode.before.ordinal + 1
+    ensures |render.emitted| == render.mode.before.ordinal + 1
+  {
+  }
+
+  function BackwardReplayBoundCounterexampleOrdinal(
+    pageSize: nat,
+    multiplier: nat
+  ): nat
+    requires 0 < pageSize
+  {
+    multiplier * pageSize
+  }
+
+  lemma NoUniformBackwardReplayPageBound(
+    pageSize: nat,
+    multiplier: nat
+  )
+    requires 0 < pageSize
+    ensures
+      BackwardReplayBoundCounterexampleOrdinal(
+        pageSize,
+        multiplier
+      ) + 1 > multiplier * pageSize
+  {
   }
 
   function ProjectionBound(projection: Projection): OptionalEid {
@@ -459,6 +497,47 @@ module IndexedTraversal {
   predicate StrictlyIncreasing(values: seq<int>) {
     forall left, right | 0 <= left < right < |values| ::
       values[left] < values[right]
+  }
+
+  predicate AdjacentStrictlyIncreasing(values: seq<int>) {
+    forall index | 0 < index < |values| ::
+      values[index - 1] < values[index]
+  }
+
+  lemma AdjacentIncreasingBetween(
+    values: seq<int>,
+    left: int,
+    right: int
+  )
+    requires AdjacentStrictlyIncreasing(values)
+    requires 0 <= left < right < |values|
+    ensures values[left] < values[right]
+    decreases right - left
+  {
+    if left + 1 < right {
+      AdjacentIncreasingBetween(values, left, right - 1);
+      assert values[left] < values[right - 1];
+      assert values[right - 1] < values[right];
+    }
+  }
+
+  lemma StrictlyIncreasingIffAdjacent(values: seq<int>)
+    ensures StrictlyIncreasing(values) <==>
+            AdjacentStrictlyIncreasing(values)
+  {
+    if StrictlyIncreasing(values) {
+      forall index | 0 < index < |values|
+        ensures values[index - 1] < values[index]
+      {
+      }
+    }
+    if AdjacentStrictlyIncreasing(values) {
+      forall left, right | 0 <= left < right < |values|
+        ensures values[left] < values[right]
+      {
+        AdjacentIncreasingBetween(values, left, right);
+      }
+    }
   }
 
   predicate ValuesAboveBound(
@@ -677,7 +756,9 @@ module IndexedTraversal {
           InvalidEid(FirstInvalidEid(response.values))
         );
     }
-    if !StrictlyIncreasing(response.values) {
+    StrictlyIncreasingIffAdjacent(response.values);
+    if !AdjacentStrictlyIncreasing(response.values) {
+      assert !StrictlyIncreasing(response.values);
       return ScanRejected(
           OutOfOrder(FirstOutOfOrder(response.values))
         );
@@ -1021,8 +1102,10 @@ module IndexedTraversal {
        forall rule <- state.consumers[node] ::
          ValidIndexedRule(rule)) &&
     ValidRenderState(state.render) &&
-    state.emitted == (set eid <- state.render.emitted) &&
-    |state.emitted| == |state.render.emitted| &&
+    state.render.ordinal == |state.emitted| &&
+    (state.render.mode.RenderAllCount? ||
+     (state.emitted == (set eid <- state.render.emitted) &&
+      |state.emitted| == |state.render.emitted|)) &&
     (state.pending.AwaitingForwardScan? ==>
        state.pending.command.chunkSize == state.chunkSize &&
        state.pending.command.requestScope ==
@@ -1062,8 +1145,10 @@ module IndexedTraversal {
        forall consumer <- state.consumers[key] ::
          0 <= consumer.resourceEid) &&
     ValidRenderState(state.render) &&
-    state.emitted == (set eid <- state.render.emitted) &&
-    |state.emitted| == |state.render.emitted| &&
+    state.render.ordinal == |state.emitted| &&
+    (state.render.mode.RenderAllCount? ||
+     (state.emitted == (set eid <- state.render.emitted) &&
+      |state.emitted| == |state.render.emitted|)) &&
     (state.pending.AwaitingReverseScan? ==>
        state.pending.command.chunkSize == state.chunkSize &&
        state.pending.command.requestScope ==
@@ -1848,10 +1933,14 @@ module IndexedTraversal {
               AdvanceRenderSpec(render, eid).state.ordinal ==
               render.ordinal + 1 &&
               AdvanceRenderSpec(render, eid).state.emitted ==
-              render.emitted + [eid]
+              (if render.mode.RenderAllCount?
+               then render.emitted
+               else render.emitted + [eid])
   {
     var traversed :=
-      AppendFreshEidValue(render.emitted, eid);
+      if render.mode.RenderAllCount?
+      then render.emitted
+      else AppendFreshEidValue(render.emitted, eid);
     var deliveredWithEid :=
       AppendFreshEidValue(render.delivered, eid);
     match render.mode
@@ -1986,12 +2075,12 @@ module IndexedTraversal {
           render.mode,
           render.ordinal + 1,
           traversed,
-          deliveredWithEid,
+          render.delivered,
           true,
           false,
           false
         ),
-        true
+        false
       )
     case RenderBoolean(targetEid) =>
       var matched := eid == targetEid;
@@ -2024,14 +2113,24 @@ module IndexedTraversal {
     ensures outcome.RenderProgress? ==>
               ValidRenderState(outcome.state) &&
               outcome.state.ordinal == render.ordinal + 1 &&
-              outcome.state.emitted == render.emitted + [eid]
+              outcome.state.emitted ==
+              (if render.mode.RenderAllCount?
+               then render.emitted
+               else render.emitted + [eid])
   {
-    var traversed := render.emitted + [eid];
+    var traversed :=
+      if render.mode.RenderAllCount?
+      then render.emitted
+      else render.emitted + [eid];
     var deliveredWithEid := render.delivered + [eid];
     AppendFreshEid(render.emitted, eid);
     AppendFreshEid(render.delivered, eid);
-    assert (set value <- traversed) ==
-           (set value <- render.emitted) + {eid};
+    if render.mode.RenderAllCount? {
+      assert traversed == render.emitted;
+    } else {
+      assert (set value <- traversed) ==
+             (set value <- render.emitted) + {eid};
+    }
     assert (set value <- deliveredWithEid) ==
            (set value <- render.delivered) + {eid};
     match render.mode
@@ -2176,12 +2275,12 @@ module IndexedTraversal {
             render.mode,
             render.ordinal + 1,
             traversed,
-            deliveredWithEid,
+            render.delivered,
             true,
             false,
             false
           ),
-          true
+          false
         );
     }
     case RenderBoolean(targetEid) => {
@@ -2311,7 +2410,7 @@ module IndexedTraversal {
     case RenderCount(_) =>
       CountReady(|render.delivered|, render.truncated)
     case RenderAllCount =>
-      CountReady(|render.delivered|, false)
+      CountReady(render.ordinal, false)
     case RenderBoolean(_) =>
       BooleanReady(|render.delivered| == 1)
   }
@@ -2328,7 +2427,10 @@ module IndexedTraversal {
               |result.items| <= render.mode.size
     ensures result.CountReady? ==>
               (render.mode.RenderCount? || render.mode.RenderAllCount?) &&
-              result.count == |render.delivered|
+              (render.mode.RenderCount? ==>
+                 result.count == |render.delivered|) &&
+              (render.mode.RenderAllCount? ==>
+                 result.count == render.ordinal)
     ensures result.BooleanReady? ==>
               render.mode.RenderBoolean? &&
               (result.allowed <==> |render.delivered| == 1)
@@ -2370,7 +2472,7 @@ module IndexedTraversal {
       return CountReady(|render.delivered|, render.truncated);
     }
     case RenderAllCount => {
-      return CountReady(|render.delivered|, false);
+      return CountReady(render.ordinal, false);
     }
     case RenderBoolean(_) => {
       return BooleanReady(|render.delivered| == 1);
@@ -5333,6 +5435,7 @@ module IndexedTraversal {
     |state.seen| +
     |state.emitted| +
     |state.render.emitted| +
+    |state.render.delivered| +
     (if state.pending.AwaitingForwardScan? then 1 else 0)
   }
 
@@ -5347,7 +5450,39 @@ module IndexedTraversal {
     |state.seenConsumers| +
     |state.emitted| +
     |state.render.emitted| +
+    |state.render.delivered| +
     (if state.pending.AwaitingReverseScan? then 1 else 0)
+  }
+
+  lemma ForwardAllCountRetainsOneResultCollection(
+    state: ForwardState
+  )
+    requires ForwardStateInvariant(state)
+    requires state.render.mode.RenderAllCount?
+    ensures
+      ForwardRetainedLogicalUnits(state) >=
+      |state.emitted|
+  {
+  }
+
+  lemma ReverseAllCountRetainsOneResultCollection(
+    state: ReverseState
+  )
+    requires ReverseStateInvariant(state)
+    requires state.render.mode.RenderAllCount?
+    ensures
+      ReverseRetainedLogicalUnits(state) >=
+      |state.emitted|
+  {
+  }
+
+  lemma AllCountRenderStorageIsConstant(
+    render: RenderState
+  )
+    requires ValidRenderState(render)
+    requires render.mode.RenderAllCount?
+    ensures |render.emitted| + |render.delivered| == 0
+  {
   }
 
   function InitializeForwardSpec(

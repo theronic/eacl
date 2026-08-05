@@ -94,12 +94,15 @@
       #{:verification-toolchain
         :generated-code-compilers
         :clj-cljs-runtimes
+        :host-source-specializations
         :ffi-boundaries
         :adapter-contract
         :cryptography
         :canonicalization
         :hash-collision-resistance
         :entropy-and-key-management
+        :clocks
+        :authenticated-snapshot-selection-facts
         :configured-limits}
       undocumented-assumptions
       (vec

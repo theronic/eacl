@@ -1,5 +1,5 @@
 {:schema-version 1
- :date "2026-08-04"
+ :date "2026-08-05"
  :status :passed
  :mode :verified-authoritative
  :execution :persistent-nrepl
@@ -7,21 +7,22 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 489
-  :assertions 18716
+  :tests 503
+  :assertions 27438
   :failures 0
   :errors 0
   :injected-clients
-  {:datomic 328
+  {:datomic 330
    :datahike 56
    :datascript 52}
   :required-generated-operations
-  [:recursive-routing-certificate]
-  :generated-routing-certificates
-  {:datomic 206
-   :datahike 32
-   :datascript 30}
-  :generated-page-continuations {:datomic 147}}
+  [:recursive-routing-certificate
+   :cursor-bound-rebase
+   :indexed-traversal-compile
+   :indexed-traversal-initialize
+   :indexed-traversal-drive
+   :indexed-traversal-read]
+  :all-required-generated-operations-observed-per-backend true}
  :clj-heavy
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority heavy"
@@ -31,25 +32,29 @@
    eacl.bench.managed-proof-cost-test
    eacl.bench.pagination-test
    eacl.bench.subproblem-cache-test]
-  :tests 16
-  :assertions 4047
+  :tests 17
+  :assertions 4057
   :failures 0
   :errors 0
-  :injected-clients
-  {:datomic 114
-   :datahike 4
-   :datascript 10}
-  :generated-routing-certificates
-  {:datomic 90
-   :datahike 3
-   :datascript 7}
-  :generated-page-continuations {:datomic 2378}}
+  :required-generated-operations []
+  :all-backends-generated-calls-observed true
+  :performance-gates
+  {:throughput :passed
+   :page-bounded-pagination-work :passed
+   :shared-subgraph-cache-latency :passed
+   :retained-live-heap
+   {:status :passed
+    :report "formal/verification/retained-live-heap.edn"
+    :maximum-generated-to-legacy-ratio 1.036843888729995
+    :maximum-allowed-ratio 1.5
+    :qualification
+    :host-specific-post-full-gc-regression-not-peak-heap-rss-or-portable-sla}}}
  :cljs-datascript
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/cljs/run-verified-authority"
   :backend :datascript
-  :tests 151
-  :assertions 4491
+  :tests 156
+  :assertions 4539
   :failures 0
   :errors 0
   :injected-clients 49
@@ -58,5 +63,7 @@
  :qualification
  [:full-public-contract-and-regression-suites-under-generated-authority
   :generated-calls-and-client-injection-required
+  :heavy-latency-and-logical-work-gates-passed
+  :retained-live-heap-cutover-gate-passed
   :not-a-proof-of-adapter-implementation
   :not-independent-review]}

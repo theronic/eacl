@@ -30,12 +30,21 @@ The JavaScript target:
 
 - emits a script with lexical module variables rather than ESM/CommonJS
   exports;
-- requires `bignumber.js` even for this small boundary;
+- requires `bignumber.js` even for this small boundary and EACL's persistent
+  target-runtime refinement requires Immutable 5.1.9;
 - uses CommonJS `require` in the generated runtime and therefore is not a raw
   browser script;
 - works on Node through `generated_loader.cjs`;
-- works in browsers after bundling with the pinned esbuild and exposing only
-  the generated module objects at the bundle boundary.
+- works in browsers after minified bundling with the pinned esbuild and
+  exposing only the generated module objects at the bundle boundary.
+
+Dafny 4.11's stock collection runtimes are not an accepted cost refinement for
+the indexed engine. `bin/patch-generated-collections.mjs` fails unless its
+exact generated-runtime markers occur once, then installs reviewed persistent
+Java set/map and JavaScript set/map/sequence implementations. Their sources,
+dependency lock, boundary tests, and scaling gates are release inputs. This
+does not make the replacement implementations formally verified; it makes the
+target-runtime trust explicit and regression-tested.
 
 Raw, unbundled browser loading is unsupported. The supported JavaScript shapes
 for this verification work are Node/CommonJS loading and an esbuild-produced
@@ -58,8 +67,10 @@ artifacts so consumers do not install Dafny. CI regenerates these artifacts
 from locked tools, compares their digests, and fails on nondeterminism before
 publishing them.
 
-This keeps Dafny source as the single implementation authority while allowing
-ordinary Maven/npm consumers to use release artifacts without a verifier.
+This keeps Dafny source as the semantic and algorithmic authority while
+making the deterministic target-runtime representation patch an explicit
+trusted boundary. Ordinary Maven/npm consumers can use release artifacts
+without installing a verifier.
 
 ## Initial artifact sizes
 

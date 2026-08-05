@@ -32,6 +32,19 @@
     (is (<= (:weight (cache/stats store)) 10))
     (is (<= (:entries (cache/stats store)) 2))))
 
+(deftest continuation-store-allows-one-capacity-sized-entry-by-default-test
+  (let [default-store (cache/local-continuation-store {:max-weight 1000})
+        constrained-store
+        (cache/local-continuation-store
+         {:max-weight 1000
+          :max-entry-weight 200})]
+    (is (= 1000 (:max-entry-weight (cache/stats default-store))))
+    (is (cache/store! default-store :frontier :opaque-state 900 nil))
+    (is (= 200 (:max-entry-weight (cache/stats constrained-store))))
+    (is (false?
+         (cache/store! constrained-store :frontier :opaque-state 201 nil)))
+    (is (zero? (:entries (cache/stats constrained-store))))))
+
 (deftest local-store-expiry-and-clear-test
   (let [now (atom 100)
         store (cache/local-store {:max-weight 10

@@ -69,6 +69,62 @@ Clojure runtime or backend. A release-level source-refinement claim remains
 withheld until the relevant production algorithm is generated from Dafny or
 has an independently checked refinement proof.
 
+### Target-cost refinement discipline
+
+Functional refinement and resource refinement are separate obligations.
+`set + {value}` has the mathematical meaning of immutable set insertion in
+Dafny; it does not follow that the emitted Java or JavaScript runtime performs
+that operation in constant or logarithmic time. The generated runtime, its
+collection representation, and every handwritten Clojure orchestration loop
+must therefore be audited as executable implementation, not silently assigned
+the cost of the corresponding abstract operation.
+
+The indexed traversal supplied a concrete counterexample during this change.
+Its Dafny logical counter recorded one unique-grant insertion per accepted
+grant, while the generated Java runtime implemented `DafnySet.union` by
+copying a `HashSet`; the generated JavaScript runtime represented a set as an
+array with linear membership and copying union. In addition, the executable
+scan validator evaluated a pairwise quantified ordering predicate, producing
+a nested JavaScript loop. A 15,000-result generated-authoritative bare-last
+pagination workload consequently exhibited a multi-second target-runtime
+cliff under a fixed JVM heap even though the abstract logical counter remained
+linear. This did not refute the functional set or ordering semantics. It
+refuted the inference from the logical model to target latency, allocation,
+or asymptotic cost.
+
+The fix remains source- and boundary-visible. Dafny retains pairwise strict
+ordering as the abstract contract, proves it equivalent to adjacent strict
+ordering, and executes only the linear adjacent check. The generated Java
+runtime is deterministically patched to Clojure persistent hash sets/maps. The
+generated JavaScript runtime is deterministically patched to Immutable 5.1.9
+HAMTs and persistent sequence views whose logical length does not allocate
+sparse Array backing stores. The patch sources, patcher, dependency lock, and
+property tests are hashed into the verification manifest. They remain part of
+the trusted target-runtime boundary rather than becoming Dafny theorems.
+
+The closing measurements are target-specific evidence: the 15,000-result
+fixed-heap JVM reverse page fell from about 5.7 seconds to a 2.78-millisecond
+maximum page median;
+the JavaScript generated traversal from 1,024 through 16,384 results held
+approximately 31–32 microseconds per result, with a largest/smallest
+normalized ratio of 0.993. Full generated-authority CLJ and CLJS suites pass.
+These measurements establish the named regression gates, not universal peak
+heap or worst-case latency bounds.
+
+For every production-authoritative Dafny collection operation, release
+evidence must now provide one of:
+
+1. a verified executable data structure with a proved cost recurrence;
+2. a reviewed target-runtime implementation plus a checked representation
+   invariant and adversarial scaling gates; or
+3. an explicit `not-established` resource claim that prevents performance
+   cutover.
+
+The scaling gates use deterministic growing fixtures and keep logical work,
+backend operations, caller-thread allocation, retained/live heap observations,
+and elapsed time in separate dimensions. A fixed-heap completion run is a
+fixture-specific operational ceiling, not a theorem about peak heap.
+
 Primary references:
 
 - https://dafny.org/latest/
@@ -129,4 +185,6 @@ Its useful contribution is an accounting discipline—keep logical weight,
 represented state, coordinator state, running host work, backend operations,
 heap, and elapsed time separate—not a trusted analysis result. The EACL
 repository implements that discipline directly with Dafny counters, exact
-source-call instrumentation, and host-specific performance gates.
+source-call instrumentation, and host-specific performance gates. No current
+EACL source, theorem, manifest status, or release gate is qualified by a Lore
+result.

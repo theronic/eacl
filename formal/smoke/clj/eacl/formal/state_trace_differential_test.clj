@@ -146,6 +146,20 @@
   [calls]
   (reduce + 0 (vals @calls)))
 
+(def ^:private indexed-traversal-operations
+  #{:indexed-traversal-compile
+    :indexed-traversal-initialize
+    :indexed-traversal-drive
+    :indexed-traversal-resume
+    :indexed-traversal-continue
+    :indexed-traversal-read})
+
+(defn- indexed-call-count
+  [calls]
+  (reduce
+   + 0
+   (vals (select-keys @calls indexed-traversal-operations))))
+
 (def formal-limits
   {:max-derived-grants 1000
    :max-advanced-datoms 1000
@@ -507,7 +521,7 @@
               :db/doc "unrelated"}]))
          calls)))))
 
-(deftest generated-mode-does-not-reorder-acyclic-multipath-pages
+(deftest generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
   (let [conn (datascript/create-conn)
         calls (atom {})
         client
@@ -548,37 +562,185 @@
       documents))
     (let [query
           {:subject user
-           :permission :view
-           :resource/type :document
-           :first 20}
+          :permission :view
+          :resource/type :document
+          :first 20}
           first-page (eacl/lookup-resources client query)
+          after-first-page (indexed-call-count calls)
           second-page
           (eacl/lookup-resources
            client
            (assoc query
                   :after
-                  (get-in first-page [:page-info :end-cursor])))]
+                  (get-in first-page [:page-info :end-cursor])))
+          after-second-page (indexed-call-count calls)
+          count-result
+          (eacl/count-resources
+           client
+           (dissoc query :first))
+          after-count (indexed-call-count calls)
+          can-result
+          (eacl/can?
+           client user :view (peek documents))
+          after-can (indexed-call-count calls)]
       (is (= (subvec expected-ids 0 20)
              (ids first-page)))
       (is (= (subvec expected-ids 20 40)
              (ids second-page)))
       (is (= {:count 40 :limit -1
               :cached? false :cache-basis nil}
-             (eacl/count-resources
-              client
-              (dissoc query :first))))
-      (is (true?
-           (eacl/can?
-            client user :view (peek documents))))
-      (is (zero?
-           (get @calls :indexed-traversal-compile 0))
-          "acyclic paths do not use the fixed-point discovery-order worklist"))))
+             count-result))
+      (is (true? can-result))
+      (is (< 0
+             after-first-page
+             after-second-page
+             after-count
+             after-can)
+          "every acyclic public operation must execute generated indexed authority")
+      (is (pos? (get @calls :indexed-traversal-compile 0)))
+      (is (pos? (get @calls :indexed-traversal-initialize 0)))
+      (is (pos? (get @calls :indexed-traversal-drive 0)))
+      (is (pos? (get @calls :indexed-traversal-read 0))))))
 
 (defn- shadow-selection
-  [reports]
-  {:mode :verified-shadow
-   :kernel production/generated-java-kernel
-   :report-divergence #(swap! reports conj %)})
+  ([reports]
+   (shadow-selection reports nil))
+  ([reports calls]
+   {:mode :verified-shadow
+    :kernel
+    (if calls
+      (->CountingGeneratedKernel production/generated-java-kernel calls)
+      production/generated-java-kernel)
+    :report-divergence #(swap! reports conj %)}))
+
+(deftest acyclic-shadow-compares-generated-authority-and-legacy-stays-host-only
+  (let [conn (datascript/create-conn)
+        reports (atom [])
+        shadow-calls (atom {})
+        legacy-calls (atom {})
+        common
+        {:cache shared-cache/no-cache
+         :security-key
+         "01234567890123456789012345678901"}
+        shadow-client
+        (datascript/make-client
+         conn
+         (assoc common
+                :engine-selection
+                (shadow-selection reports shadow-calls)))
+        legacy-client
+        (datascript/make-client
+         conn
+         (assoc
+          common
+          :engine-selection
+          {:mode :legacy-authoritative
+           :kernel
+           (->CountingGeneratedKernel
+            production/generated-java-kernel legacy-calls)}))
+        user (eacl/spice-object :user "shadow-user")
+        document-1 (eacl/spice-object :document "shadow-document-1")
+        document-2 (eacl/spice-object :document "shadow-document-2")
+        forward-query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 10}
+        reverse-query
+        {:resource document-2
+         :permission :view
+         :subject/type :user
+         :first 10}]
+    (eacl/write-schema!
+     shadow-client
+     "definition user {}
+      definition document {
+        relation owner: user
+        relation viewer: user
+        permission view = owner + viewer
+      }")
+    (ds/transact!
+     conn
+     [{:eacl/id (:id user)}
+      {:eacl/id (:id document-1)}
+      {:eacl/id (:id document-2)}])
+    (eacl/create-relationships!
+     shadow-client
+     [(eacl/->Relationship user :owner document-1)
+      (eacl/->Relationship user :viewer document-2)])
+    (doseq [client [shadow-client legacy-client]]
+      (is (= ["shadow-document-1" "shadow-document-2"]
+             (ids (eacl/lookup-resources client forward-query))))
+      (is (= ["shadow-user"]
+             (ids (eacl/lookup-subjects client reverse-query))))
+      (is (= 2
+             (:count
+              (eacl/count-resources
+               client
+               (dissoc forward-query :first)))))
+      (is (= 1
+             (:count
+              (eacl/count-subjects
+               client
+               (dissoc reverse-query :first)))))
+      (is (true? (eacl/can? client user :view document-2))))
+    (is (empty? @reports)
+        (str "generated acyclic shadow divergence: " (pr-str @reports)))
+    (is (pos? (indexed-call-count shadow-calls))
+        "shadow alternate must execute generated indexed authority")
+    (is (zero? (indexed-call-count legacy-calls))
+        "legacy authority must retain the optimized host-only acyclic path")))
+
+(deftest generated-current-cursor-restarts-when-permission-root-is-removed
+  (let [conn (datascript/create-conn)
+        calls (atom {})
+        client
+        (datascript/make-client
+         conn
+         {:cache shared-cache/no-cache
+          :security-key
+          "01234567890123456789012345678901"
+          :engine-selection (counting-engine-selection calls)})
+        user (eacl/spice-object :user "removed-root-user")
+        document-1 (eacl/spice-object :document "removed-root-document-1")
+        document-2 (eacl/spice-object :document "removed-root-document-2")
+        query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 1}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation owner: user
+        permission view = owner
+      }")
+    (ds/transact!
+     conn
+     [{:eacl/id (:id user)}
+      {:eacl/id (:id document-1)}
+      {:eacl/id (:id document-2)}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship user :owner document-1)
+      (eacl/->Relationship user :owner document-2)])
+    (let [first-page (eacl/lookup-resources client query)
+          cursor (get-in first-page [:page-info :end-cursor])]
+      (is (= [(:id document-1)] (ids first-page)))
+      (eacl/write-schema!
+       client
+       "definition user {}
+        definition document {
+          relation owner: user
+        }")
+      (let [recovered
+            (eacl/lookup-resources
+             client
+             (assoc query :after cursor))]
+        (is (empty? (:data recovered)))
+        (is (= :restarted
+               (get-in recovered [:page-info :cursor-recovery])))))))
 
 (defn- selected-graph-identity
   [adapter]

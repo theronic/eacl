@@ -575,25 +575,25 @@
 
 (defn- internalize-rebased-edge
   [adapter edge]
-  (if (= :recursive-traversal (:kind edge))
-    {:edge nil
-     :recovery :restarted}
-    (let [missing? (atom false)
-          transformed
-          (transform-edge-ids
-           (fn [object-id]
-             (let [internal-id
-                   (backend/invoke
-                    adapter :object-id->internal object-id)]
-               (when (nil? internal-id)
-                 (reset! missing? true))
-               internal-id))
-           edge)]
-      (if @missing?
-        {:edge nil
-         :recovery :restarted}
-        {:edge transformed
-         :recovery :rebased}))))
+  (let [missing? (atom false)
+        transformed
+        (transform-edge-ids
+         (fn [object-id]
+           (let [internal-id
+                 (backend/invoke
+                  adapter :object-id->internal object-id)]
+             (when (nil? internal-id)
+               (reset! missing? true))
+             internal-id))
+         edge)]
+    (if @missing?
+      {:edge nil
+       :recovery :restarted}
+      {:edge
+       (cond-> transformed
+         (= :recursive-traversal (:kind transformed))
+         (assoc :rebase? true))
+       :recovery :rebased})))
 
 (defn prepare-page-query
   "Authenticates each page token once, selects the consistency-mode snapshot,
@@ -680,9 +680,9 @@
                 (update-in [:page-info :start-cursor] encode-edge)
                 (update-in [:page-info :end-cursor] encode-edge))
       (:cursor-recovery opts)
-      (assoc-in
+      (update-in
        [:page-info :cursor-recovery]
-       (:cursor-recovery opts)))))
+       #(or % (:cursor-recovery opts))))))
 
 (def ^:private identity-key-version 1)
 

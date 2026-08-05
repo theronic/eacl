@@ -1,0 +1,22 @@
+{:current-answer-before [10 20 30]
+ :cursor
+ {:authenticated? true
+  :scope-matches? true
+  :mode :recover-current
+  :bound-result-eid 20
+  :bound-ordinal 1}
+ :write
+ {:kind :relevant-relationship
+  :effect :append-recursively-authorized-result}
+ :current-answer-after [10 20 30 40]
+ :before-fix
+ {:cursor-recovery :restarted
+  :returned [10 20]}
+ :after-fix
+ {:cursor-recovery :rebased
+  :rebound-ordinal 1
+  :returned [30 40]}
+ :missing-bound-case
+ {:current-answer [10 30 40]
+  :cursor-recovery :restarted
+  :returned [10 30]}}

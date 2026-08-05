@@ -24,7 +24,7 @@
     :EACL-FORMAL-009
     eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters
     :EACL-FORMAL-010
-    eacl.formal.state-trace-differential-test/generated-mode-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
     :EACL-FORMAL-011
     eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results
     :EACL-FORMAL-012
@@ -88,7 +88,15 @@
     :EACL-FORMAL-041
     eacl.formal.production-kernel-test/optimized-jvm-leapfrog-intersection-refines-bounded-proof
     :EACL-FORMAL-042
-    eacl.formal.production-kernel-test/generated-java-acyclic-arrow-path-refines-source-control})
+    eacl.formal.production-kernel-test/generated-java-acyclic-arrow-path-refines-source-control
+    :EACL-FORMAL-043
+    eacl.formal.state-trace-differential-test/acyclic-shadow-compares-generated-authority-and-legacy-stays-host-only
+    :EACL-FORMAL-044
+    eacl.datomic.recursive-cache-test/recursive-cursor-rebases-after-relevant-write-test
+    :EACL-FORMAL-045
+    eacl.formal.java-round-trip-test/generated-java-persistent-collection-boundary
+    :EACL-FORMAL-046
+    eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies})
 
 (defn- read-edn
   [path]
@@ -167,8 +175,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-042 (:latest revision)))
-    (is (= 42 (count entries)))))
+    (is (= :EACL-FORMAL-046 (:latest revision)))
+    (is (= 46 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

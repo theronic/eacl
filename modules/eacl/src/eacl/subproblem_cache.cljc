@@ -40,6 +40,8 @@
   storage mutation and value computation remain host-runtime responsibilities."
   nil)
 
+(def ^:dynamic ^:private *decision-memo* nil)
+
 (def ^:dynamic ^:private *resolving-keys* #{})
 (def ^:dynamic ^:private *computation-owner* nil)
 
@@ -174,11 +176,41 @@
                (= :legacy-authoritative
                   (:mode *engine-selection*))))
     (legacy-decision)
-    (verified/decide
-     *engine-selection*
-     :subproblem-cache-decision
-     input
-     legacy-decision)))
+    (if (and *decision-memo*
+             (map? *engine-selection*)
+             (= :verified-authoritative
+                (:mode *engine-selection*)))
+      (if-let [cached (find @*decision-memo* input)]
+        (val cached)
+        (let [decision
+              (verified/decide
+               *engine-selection*
+               :subproblem-cache-decision
+               input
+               legacy-decision)]
+          (vswap! *decision-memo* assoc input decision)
+          decision))
+      (verified/decide
+       *engine-selection*
+       :subproblem-cache-decision
+       input
+       legacy-decision))))
+
+(defn with-decision-memo
+  "Runs one top-level authorization computation with request-local memoization
+  of verified pure subproblem transition decisions.
+
+  The generated decision is still invoked and boundary-checked once for every
+  distinct complete input. Repeated identical lookup states inside a deep
+  shared subgraph reuse that checked result instead of paying the CLJ/CLJS FFI
+  conversion cost at every edge. The memo is request-scoped, never stores
+  authorization values, and is deliberately disabled in shadow mode so every
+  sampled legacy/generated comparison remains observable."
+  [compute]
+  (if *decision-memo*
+    (compute)
+    (binding [*decision-memo* (volatile! {})]
+      (compute))))
 
 (defn- lookup-action
   [recursive-self? candidate]

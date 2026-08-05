@@ -40,6 +40,7 @@
    (OrderedMerge MergeChunk MergeDirection OptionalHead)
    (PageWindow
     ConsistencyMode
+    CursorBoundRebase
     ExactSelection
     NormalizedPageRequest
     Page
@@ -97,6 +98,20 @@
   (DafnySequence/fromList
    TypeDescriptor/BIG_INTEGER
    (mapv dafny-nat values)))
+
+(defn- dafny-long-array
+  [values]
+  (let [^clojure.lang.IPersistentVector values values
+        element-count (long (count values))
+        ^longs elements (long-array element-count)]
+    (loop [index (long 0)]
+      (when (< index element-count)
+        (aset-long
+         elements
+         index
+         (long (.nth values (int index))))
+        (recur (unchecked-inc index))))
+    elements))
 
 (defn- dafny-sequences
   [streams]
@@ -592,6 +607,21 @@
       (.is_SnapshotUnavailable (.dtor_reason decision))
       :snapshot-unavailable
       :else :history-divergence)))
+
+(defn- cursor-bound-rebase-decision
+  [{:keys [values bound-eid]}]
+  (let [^CursorBoundRebase decision
+        (PageWindow.__default/RebaseCursorBound
+         (dafny-long-array values)
+         (long bound-eid))]
+    (if (.is_CursorBoundRebased decision)
+      {:status :rebased
+       :ordinal (dafny-long (.dtor_ordinal decision))
+       :inspected-count
+       (dafny-long (.dtor_inspectedCount decision))}
+      {:status :restarted
+       :inspected-count
+       (dafny-long (.dtor_inspectedCount decision))})))
 
 (defn- snapshot-consistency-mode
   [mode]
@@ -1612,6 +1642,7 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
+      :cursor-bound-rebase (cursor-bound-rebase-decision input)
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)

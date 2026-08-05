@@ -9,12 +9,21 @@ proof of the whole deployed system.
 The following are trusted to implement their documented behavior:
 
 - Dafny, Boogie, and the bundled Z3 solver;
-- Dafny's Java and JavaScript compilers and runtime libraries;
+- Dafny's Java and JavaScript compilers and the generated runtime surface;
+- EACL's deterministic generated-runtime patcher, its Clojure persistent
+  set/map Java replacements, its JavaScript persistent sequence wrapper, and
+  Immutable 5.1.9's HAMT implementation;
 - Java and JavaScript compilers, bundlers, and runtimes used by consumers;
 - Clojure, ClojureScript, their host interop, and generated boundary code.
 
 Versions and artifact hashes are pinned in `formal/toolchain.lock.json`.
 Reproducibility reduces supply-chain drift; it does not prove these tools.
+The patcher requires unique exact markers in Dafny 4.11 output and fails the
+build if the generated runtime shape drifts. All patch sources, the patcher,
+the npm lock, and generated-target boundary tests are hashed into the
+verification manifest. The JavaScript HAMT dependency is MIT licensed; the
+Java replacements adapt Dafny's MIT-licensed runtime API and use EACL's
+existing Clojure runtime dependency.
 
 ## Runtime boundary assumptions
 
@@ -188,6 +197,17 @@ logical counters. Source instrumentation checks the corresponding Clojure
 calls for named paths. JVM/JavaScript wall time and allocation are measured by
 host-specific regression gates; retained live heap, CPU time, scheduler peaks,
 and worst-case latency remain unproved unless separately named.
+
+The generated indexed traversal now has a narrower target-cost refinement
+gate. `IndexedTraversal.StrictlyIncreasingIffAdjacent` proves that the linear
+executable adjacent-order scan implements the pairwise mathematical contract.
+Java persistent set/map replacements and JavaScript HAMT/sequence wrappers
+have explicit persistence, structural-equality, collision, slice, concat, and
+indexing boundary tests. Adversarial scaling and fixed-heap completion gates
+cover the named traversal fixture. These facts do not verify Clojure's
+persistent collection implementation, Immutable's implementation, V8,
+HotSpot, garbage collection, live-heap peaks, or arbitrary future uses of the
+runtime types.
 
 ## Excluded claims
 

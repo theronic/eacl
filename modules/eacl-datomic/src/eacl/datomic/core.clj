@@ -583,6 +583,13 @@
       (and edge (= :asc (:direction page-req))) (assoc :after edge)
       (and edge (= :desc (:direction page-req))) (assoc :before edge))))
 
+(defn- empty-anchor-cursor-recovery
+  [captured decoded]
+  (if (and (= :rebased (:cursor-recovery captured))
+           (= :recursive-traversal (get-in decoded [:edge :kind])))
+    :restarted
+    (:cursor-recovery captured)))
+
 (defn- encode-page-cursor
   ([opts op query-shape basis-t edge]
    (encode-page-cursor opts op query-shape basis-t nil edge))
@@ -666,9 +673,9 @@
                   #(encode-page-info
                     opts op query-shape basis-t cache-scope %)))
        (:cursor-recovery opts)
-       (assoc-in
+       (update-in
         [:page-info :cursor-recovery]
-        (:cursor-recovery opts))))))
+        #(or % (:cursor-recovery opts)))))))
 
 (defn- coerce-relationship-page
   [db opts op query-shape basis-t page]
@@ -835,7 +842,6 @@
         consistency-context
         cacheable?
         (and (:current-cache-store opts)
-             (:cache-remember-answers? opts)
              completed-cache?)]
     (if-not cacheable?
       (do
@@ -848,7 +854,7 @@
                  (portable-result kind (compute)))
                :cached? false
                :cache-tier nil
-               :cache-basis basis-t))
+             :cache-basis basis-t))
       (let [relation-ids
             #(or relationship-dependencies
                  (some-> permission-dependencies
@@ -878,7 +884,9 @@
                      dependency
                      [dependency]))))
               :managed-subproblem-scope
-              (backend/invoke adapter :source-scope)}
+              (backend/invoke adapter :source-scope)
+              :remember-answer?
+              (:cache-remember-answers? opts)}
              {:operation op
               :query query-identity
               :engine-version engine/engine-version
@@ -1508,8 +1516,11 @@
                      (get-in decoded [:edge :kind]))
                 (assoc
                  (snapshot-result-context
-                  opts selected-adapter prepare nil)
-                 :cursor-recovery :restarted)
+                  opts
+                  selected-adapter
+                  prepare
+                  (update decoded :edge assoc :rebase? true))
+                 :cursor-recovery :rebased)
                 (assoc selected-context
                        :cursor-recovery :rebased))
 
@@ -1859,11 +1870,12 @@
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-subject))
       ;; Unknown subjects match nothing and never enter the cache.
-      (cond-> (assoc empty-page :cached? false :cache-basis nil)
-        (:cursor-recovery captured)
+      (let [recovery (empty-anchor-cursor-recovery captured decoded)]
+        (cond-> (assoc empty-page :cached? false :cache-basis nil)
+          recovery
         (assoc-in
          [:page-info :cursor-recovery]
-         (:cursor-recovery captured)))
+           recovery)))
       (let [compute
             #(with-result-schema
                result-context
@@ -1981,11 +1993,12 @@
                :cursor-recovery (:cursor-recovery captured))]
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-resource))
-      (cond-> (assoc empty-page :cached? false :cache-basis nil)
-        (:cursor-recovery captured)
-        (assoc-in
-         [:page-info :cursor-recovery]
-         (:cursor-recovery captured)))
+      (let [recovery (empty-anchor-cursor-recovery captured decoded)]
+        (cond-> (assoc empty-page :cached? false :cache-basis nil)
+          recovery
+          (assoc-in
+           [:page-info :cursor-recovery]
+           recovery)))
       (let [compute
             #(with-result-schema
                result-context
@@ -2384,8 +2397,10 @@
           (when enabled?
             ;; Opaque engine states contain closures and are intentionally
             ;; isolated from caller-supplied providers. Reuse the configured
-            ;; capacity policy in a separate bounded local store.
-            (cache/local-store store-config))]
+            ;; bounded capacity in a separate local store, while allowing one
+            ;; growing continuation to occupy that capacity unless the caller
+            ;; explicitly chose a smaller per-entry ceiling.
+            (cache/local-continuation-store store-config))]
       (when (and store (not (satisfies? cache/CacheStore store)))
         (throw (ex-info "EACL Config Error: :cache :store must implement CacheStore."
                         {:type :eacl/invalid-config
@@ -2736,7 +2751,7 @@
                              (:ttl-ms cache-config))
                             :current-cache-store
                             (when (and
-                                   (:remember-answers? cache-config)
+                                   (:store cache-config)
                                    adapter-deterministic?)
                               (shared-cache/current-cache
                               {:max-entries

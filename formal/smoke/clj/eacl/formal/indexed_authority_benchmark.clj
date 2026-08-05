@@ -55,14 +55,17 @@
    :emitted-results (:emitted-results stats 0)
    :rule-applications (:rule-applications stats 0)
    :consumer-grant-joins (:consumer-grant-joins stats 0)
-   :render-advances (:render-advances stats 0)
-   :retained-logical-units (:legacy-retained-logical-units stats 0)})
+   :render-advances (:render-advances stats 0)})
 
 (defn- generated-dimensional-work
   [stats]
-  (assoc (:generated-dimensional-counters stats)
-         :retained-logical-units
-         (:generated-retained-logical-units stats 0)))
+  (:generated-dimensional-counters stats))
+
+(defn- retained-logical-units-ratio
+  [legacy generated]
+  (if (zero? legacy)
+    (if (zero? generated) 1.0 ##Inf)
+    (/ (double generated) legacy)))
 
 (defn- transact-objects!
   [conn objects]
@@ -161,14 +164,18 @@
            (swap! generated-times conj (:elapsed-ms generated-result)))))
      (let [legacy-work (legacy-dimensional-work @legacy-stats)
            generated-work (generated-dimensional-work @generated-stats)
+           legacy-retained
+           (:legacy-retained-logical-units @legacy-stats 0)
+           generated-retained
+           (:generated-retained-logical-units @generated-stats 0)
            legacy-p50 (percentile @legacy-times 0.50)
            legacy-p95 (percentile @legacy-times 0.95)
            generated-p50 (percentile @generated-times 0.50)
            generated-p95 (percentile @generated-times 0.95)]
        (when-not (= legacy-work generated-work)
-         (throw
-          (ex-info
-           "Generated recursive benchmark changed a Lore resource dimension."
+        (throw
+         (ex-info
+           "Generated recursive benchmark changed comparable traversal work."
            {:legacy legacy-work
             :generated generated-work})))
        {:fixture
@@ -192,6 +199,12 @@
         :dimensional-work
         {:legacy legacy-work
          :generated generated-work}
+        :retained-logical-units
+        {:legacy legacy-retained
+         :generated generated-retained
+         :generated-to-legacy-ratio
+         (retained-logical-units-ratio
+          legacy-retained generated-retained)}
         :legacy-stats @legacy-stats
         :generated-stats @generated-stats}))))
 
@@ -200,17 +213,22 @@
 
   The gate uses the median of trial-level p95 ratios rather than the maximum
   sample from one process. Every trial still has to preserve the complete page
-  and every Lore resource dimension exactly. Raw per-request samples remain in
-  each trial result.
+  and every dimensionally comparable traversal-work counter exactly. Retained
+  logical state is gated separately because the legacy and generated engines
+  intentionally use different state representations. Raw per-request samples
+  remain in each trial result.
 
   Options are the same as `run!`, plus:
   - `:trials` defaults to 5.
-  - `:maximum-median-p95-ratio` defaults to 2.0."
+  - `:maximum-median-p95-ratio` defaults to 2.0.
+  - `:maximum-retained-logical-units-ratio` defaults to 1.5."
   ([]
    (run-gate! {}))
-  ([{:keys [trials maximum-median-p95-ratio]
+  ([{:keys [trials maximum-median-p95-ratio
+            maximum-retained-logical-units-ratio]
      :or {trials 5
-          maximum-median-p95-ratio 2.0}
+          maximum-median-p95-ratio 2.0
+          maximum-retained-logical-units-ratio 1.5}
      :as options}]
    (when-not (and (integer? trials) (pos? trials))
      (throw
@@ -223,30 +241,59 @@
       (ex-info
        "Indexed authority gate requires a positive p95 ratio."
        {:maximum-median-p95-ratio maximum-median-p95-ratio})))
+   (when-not (and (number? maximum-retained-logical-units-ratio)
+                  (pos? maximum-retained-logical-units-ratio))
+     (throw
+      (ex-info
+       "Indexed authority gate requires a positive retained-state ratio."
+       {:maximum-retained-logical-units-ratio
+        maximum-retained-logical-units-ratio})))
    (let [run-options
-         (dissoc options :trials :maximum-median-p95-ratio)
+         (dissoc
+          options
+          :trials
+          :maximum-median-p95-ratio
+          :maximum-retained-logical-units-ratio)
          results (mapv (fn [_] (run! run-options)) (range trials))
          p50-ratios (mapv :p50-latency-ratio results)
          p95-ratios (mapv :p95-latency-ratio results)
+         retained-ratios
+         (mapv
+          #(get-in
+            % [:retained-logical-units :generated-to-legacy-ratio])
+          results)
          overheads (mapv :p50-absolute-overhead-ms results)
          median-p95-ratio (percentile p95-ratios 0.50)
-         passed? (<= median-p95-ratio maximum-median-p95-ratio)]
+         maximum-retained-ratio (apply max retained-ratios)
+         passed?
+         (and
+          (<= median-p95-ratio maximum-median-p95-ratio)
+          (<= maximum-retained-ratio
+              maximum-retained-logical-units-ratio))]
      {:fixture
       (assoc (:fixture (first results))
              :independent-trials trials
              :aggregation :median-of-trial-p95-ratios)
       :required
       {:maximum-median-p95-ratio maximum-median-p95-ratio
-       :exact-page-and-dimensional-work-equality-every-trial true}
+       :maximum-retained-logical-units-ratio
+       maximum-retained-logical-units-ratio
+       :exact-page-and-comparable-work-equality-every-trial true}
       :summary
       {:median-p50-ratio (percentile p50-ratios 0.50)
        :median-p95-ratio median-p95-ratio
+       :maximum-retained-logical-units-ratio
+       maximum-retained-ratio
        :median-p50-absolute-overhead-ms
        (percentile overheads 0.50)
        :passing-trials
        (count
-        (filter
-         #(<= % maximum-median-p95-ratio)
-         p95-ratios))
+        (filter true?
+                (map
+                 #(and
+                   (<= %1 maximum-median-p95-ratio)
+                   (<= %2 maximum-retained-logical-units-ratio))
+                 p95-ratios
+                 retained-ratios)))
        :status (if passed? :passed :failed)}
       :trials results})))

@@ -189,7 +189,7 @@
              lookup-page)
             [:page-info :cursor-recovery])))))
 
-(deftest recursive-continuation-restarts-after-graph-change-test
+(deftest recursive-continuation-rebases-by-result-after-graph-change-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         recursive-page
@@ -213,8 +213,10 @@
          (assoc lookup-query
                 :after
                 (get-in first-page [:page-info :end-cursor])))]
-    (is (= :restarted (:recovery prepared)))
-    (is (not (contains? (:query prepared) :after)))))
+    (is (= :rebased (:recovery prepared)))
+    (is (= (-> (get-in recursive-page [:page-info :end-cursor])
+               (assoc :rebase? true))
+           (get-in prepared [:query :after])))))
 
 (deftest exact-snapshot-continuation-never-rebases-test
   (let [exact (adapter 1 nil true)

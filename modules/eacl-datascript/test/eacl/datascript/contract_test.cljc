@@ -16,6 +16,16 @@
                                 :eacl/id id})
                              contract/smoke-objects)))
 
+(defn- reusable-denotation-hits
+  [stats]
+  (+ (get-in stats [:subproblems :denotation-hits] 0)
+     (get-in stats [:subproblems :recursive-component-hits] 0)))
+
+(defn- managed-reusable-subproblem-hits
+  [stats]
+  (+ (get-in stats [:subproblems :managed-projection-hits] 0)
+     (get-in stats [:subproblems :managed-denotation-hits] 0)))
+
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
         client (datascript/make-client conn {})]
@@ -137,10 +147,9 @@
       (is (true? allowed?))
       (is (empty? @work)
           "a completed fixed point answers the distinct point query")
-      (is (< (get-in before
-                     [:subproblems :recursive-component-hits])
-             (get-in after
-                     [:subproblems :recursive-component-hits]))))))
+      (is (< (reusable-denotation-hits before)
+             (reusable-denotation-hits after))
+          "the point check must reuse the complete recursive denotation"))))
 
 (deftest cold-recursive-point-check-publishes-complete-fixed-point-test
   (let [conn (datascript/create-conn)
@@ -240,10 +249,8 @@
             after (datascript/cache-stats client)]
         (is (true? allowed?))
         (is (pos?
-             (- (get-in after
-                        [:subproblems :managed-projection-hits])
-                (get-in before
-                        [:subproblems :managed-projection-hits])))
+             (- (managed-reusable-subproblem-hits after)
+                (managed-reusable-subproblem-hits before)))
             "a distinct top-level query reuses relation-stamped portions")
         (is (< (get @work :executed-backend-operations 0) 2)
             "shared portions avoid the two direct relationship probes")))
@@ -316,10 +323,10 @@
             (reset! proof-count 0)
             (let [page
                   (with-redefs
-                    [secure/canonical-records-digest
-                     (fn [& args]
-                       (swap! proof-count inc)
-                       (apply canonical-records-digest args))]
+                   [secure/canonical-records-digest
+                    (fn [& args]
+                      (swap! proof-count inc)
+                      (apply canonical-records-digest args))]
                     (eacl/read-relationships client filters))]
               [page @proof-count]))
           [page-1 page-1-proof-count]
@@ -460,14 +467,25 @@
                                       (assoc query
                                              :after
                                              (get-in page-2
-                                                     [:page-info :end-cursor])))]
+                                                     [:page-info :end-cursor])))
+        verified-authoritative?
+        (= :verified-authoritative
+           (get-in client [:opts :engine-selection :mode]))]
     (testing "v8 cursors retain direction-scoped shared-engine state"
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
       (is (= 10 (:v envelope)))
-      (is (= :lookup-eid (get-in envelope [:edge :kind])))
-      (is (= :asc (get-in envelope [:edge :frontier-direction]))))
+      (if verified-authoritative?
+        (do
+          (is (= :recursive-traversal
+                 (get-in envelope [:edge :kind])))
+          (is (= :forward
+                 (get-in envelope [:edge :direction]))))
+        (do
+          (is (= :lookup-eid (get-in envelope [:edge :kind])))
+          (is (= :asc
+                 (get-in envelope [:edge :frontier-direction]))))))
 
     (testing "a forward cursor cannot be reused for reverse traversal"
       (is (= :query-mismatch

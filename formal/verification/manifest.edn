@@ -1,6 +1,6 @@
 {:schema-version 1
- :assurance-status :not-verified
- :reason :proof-obligations-incomplete
+ :assurance-status :conditionally-verified
+ :reason :release-assurance-gates-open
  :toolchain-lock "formal/toolchain.lock.json"
  :cryptographic-assumption-map
  "formal/verification/cryptographic-assumptions.md"
@@ -63,7 +63,7 @@
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 27
+   :verified-obligations 36
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
@@ -111,21 +111,31 @@
    :conditional-exact-and-managed-atomic-projection-refinement}
   :indexed-recursive-public-engine
   {:status :passed
-   :verified-obligations 8775
+   :verified-obligations 9166
    :sources
    ["formal/dafny/IndexedTraversal.dfy"
     "formal/dafny/IndexedRefinement.dfy"
     "formal/dafny/IndexedForwardCompleteness.dfy"
     "formal/dafny/IndexedReverseCompleteness.dfy"
     "formal/dafny/IndexedRendering.dfy"
-    "formal/dafny/IndexedCertification.dfy"]
+    "formal/dafny/IndexedCertification.dfy"
+    "formal/dafny/RootDenotation.dfy"
+    "formal/dafny/IndexedRootDenotation.dfy"]
    :report "formal/verification/indexed-traversal.edn"
    :integration-status
-   :recursive-scc-dependent-roots-internal-authority-and-shadow-passed
+   :all-defined-permission-roots-internal-authority-and-shadow-passed
    :claim
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
-  {:status :incomplete}}
+  {:status :passed
+   :verified-obligations 9767
+   :report "formal/verification/final-assurance-audit.md"
+   :integration-status
+   :all-defined-permission-roots-and-public-operations-generated-authority-routed
+   :claim
+   :conditional-composition-of-generated-authority-decisions-under-documented-tcb
+   :qualification
+   :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries}}
  :adapter-certification
  {:report "formal/verification/adapter-certification.edn"
   :datomic :certification-suite-passed
@@ -135,10 +145,13 @@
  {:clj-java
   {:boundary-smoke :passed
    :semantic-fixtures :passed
+   :persistent-collection-boundary :passed
    :cross-runtime-vectors :passed}
   :cljs-javascript
   {:node-smoke :passed
    :browser-esbuild-smoke :passed
+   :persistent-collection-and-sequence-boundary :passed
+   :indexed-traversal-linear-scaling-gate :passed
    :cross-runtime-vectors :passed}}
  :cross-runtime-parity
  {:status :passed
@@ -149,14 +162,19 @@
   :clj-backends [:datomic :datahike :datascript]
   :cljs-backends [:datascript]
   :nonbenchmark :passed
-  :heavy :passed}
+  :heavy :passed
+  :retained-live-heap
+  {:status :passed
+   :report "formal/verification/retained-live-heap.edn"
+   :maximum-generated-to-legacy-ratio 1.036843888729995
+   :maximum-allowed-ratio 1.5}}
  :unified-differential-runner
  {:status :passed
   :report "formal/verification/differential-runner.edn"
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-042
+ {:latest :EACL-FORMAL-046
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -198,11 +216,15 @@
           :EACL-FORMAL-039
           :EACL-FORMAL-040
           :EACL-FORMAL-041
-          :EACL-FORMAL-042]}
+          :EACL-FORMAL-042
+          :EACL-FORMAL-043
+          :EACL-FORMAL-044
+          :EACL-FORMAL-045
+          :EACL-FORMAL-046]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 42}
+  :entries 46}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -224,46 +246,45 @@
   :authenticated-snapshot-selection-facts
   :configured-limits]
  :performance-gates
- {:status :release-cutover-refused
+ {:status :passed
    :gate-enforcement :passed
    :report "formal/verification/performance-gates.edn"
    :managed-legacy-heavy-suite :passed
-   :current-generation-heavy-suite :passed
+   :current-generation-cache-heavy-suite :passed
+   :forced-verified-authority-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed
    :completed-answer-hot-nonregression :passed
    :cache-disabled-nonregression :passed
    :cross-backend-workload-baseline :passed
    :legacy-vs-verified-authority-mode-matrix :passed
-   :retained-live-heap :not-established
-   :verified-kernel-cutover :pending-complete-public-routing-and-shadow-gates
+   :indexed-target-collection-refinement :passed-for-named-fixture
+   :verified-authority-backward-pagination
+   :passed-bounded-continuation-walk
+   :verified-authority-shared-subgraph-cache-latency
+   :passed-with-zero-backend-operations
+   :retained-live-heap
+   :passed-for-named-post-full-gc-regression
+   :verified-kernel-cutover
+   :internal-opt-in-passed-default-cutover-blocked-on-independent-review
    :blocking-findings
-   [:retained-live-heap-not-established
-    :acyclic-optimized-merge-clojure-language-refinement-and-independent-review-pending
-    :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review-pending
-    :recursive-scc-routing-source-refinement-and-review-pending]}
+   [:independent-security-formal-review-not-recorded]}
  :mutation-control
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 90
-  :registered 90}
+  :killed 96
+  :registered 96}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
   :seeds 200
   :unexplained-counterexamples 0}
  :generated-boundary
- {:status :recursive-indexed-and-materialized-reference-partial-routing-passed
+ {:status :all-defined-permission-roots-generated-authority-routing-passed
   :report "formal/verification/generated-boundary.edn"
-  :complete-public-routing false}
+  :complete-public-routing true}
  :release-gate
  {:verified-status-allowed? false
   :decision :refused
   :unmet-required-obligations
-  [:complete-public-engine
-   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
-   :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
-   :recursive-scc-routing-source-refinement
-   :retained-live-heap-performance-gate
-   :performance-cutover
-   :independent-security-formal-review]}}
+  [:independent-security-formal-review]}}

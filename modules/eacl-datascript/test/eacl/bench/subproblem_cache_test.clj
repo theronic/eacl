@@ -57,6 +57,24 @@
    :resource (eacl/spice-object :server "server-0")
    :cache? cache?})
 
+(defn- denotation-key-separation-schema
+  []
+  "definition user {}
+   definition group {
+     relation member: user
+     relation alternate: user
+     permission access = member
+     permission other = alternate
+   }
+   definition server {
+     relation team: group
+     relation backup: group
+     permission same_a = team->access
+     permission same_b = team->access
+     permission different_relation = backup->access
+     permission different_target = team->other
+   }")
+
 (def benchmark-client-options
   {:coherence-authority :managed
    :security-key "01234567890123456789012345678901"})
@@ -131,6 +149,60 @@
       {:left (result @left-samples @left-work)
        :right (result @right-samples @right-work)})))
 
+(deftest semantic-root-denotation-key-shares-only-equal-rule-bodies
+  (testing "erasing the root name cannot collide across relation or target nodes"
+    (let [conn (datascript/create-conn)
+          writer
+          (datascript/make-client
+           conn
+           (assoc benchmark-client-options :cache cache/no-cache))
+          client (datascript/make-client conn benchmark-client-options)
+          alice (eacl/spice-object :user "shared-user")
+          bob (eacl/spice-object :user "other-user")
+          primary (eacl/spice-object :group "primary")
+          backup (eacl/spice-object :group "backup")
+          server (eacl/spice-object :server "server-0")
+          query #(eacl/can? client (can-query % true))]
+      (eacl/write-schema! writer (denotation-key-separation-schema))
+      (ds/transact!
+       conn
+       (mapv (fn [object] {:eacl/id (:id object)})
+             [alice bob primary backup server]))
+      (eacl/create-relationships!
+       writer
+       [(eacl/->Relationship alice :member primary)
+        (eacl/->Relationship bob :alternate primary)
+        (eacl/->Relationship bob :member backup)
+        (eacl/->Relationship primary :team server)
+        (eacl/->Relationship backup :backup server)])
+
+      (is (true? (query :same_a)))
+      (let [before (datascript/cache-stats client)
+            before-hits
+            (get-in before [:subproblems :denotation-hits] 0)]
+        (is (true? (query :same_b)))
+        (let [after-equal (datascript/cache-stats client)
+              equal-hits
+              (get-in after-equal [:subproblems :denotation-hits] 0)]
+          (is (> equal-hits before-hits)
+              "an identical normalized root body must reuse its denotation")
+          (is (false? (query :different_relation)))
+          (let [after-relation (datascript/cache-stats client)]
+            (is (= equal-hits
+                   (get-in after-relation
+                           [:subproblems :denotation-hits]
+                           0))
+                "a different relation binding must not reuse the denotation")
+            (is (false? (query :different_target)))
+            (let [after-target (datascript/cache-stats client)]
+              (is (= equal-hits
+                     (get-in after-target
+                             [:subproblems :denotation-hits]
+                             0))
+                  (str
+                   "a different downstream permission node must not reuse "
+                   "the denotation")))))))))
+
 (defn- paired-samples
   [left right iterations warmup]
   (let [left-samples (atom [])
@@ -153,7 +225,7 @@
      :right @right-samples}))
 
 (deftest ^:benchmark distinct-query-shared-subgraph-cache-benchmark
-  (testing "shared projections beat completed-answer-only with zero final hits"
+  (testing "shared semantic denotations beat completed-answer-only with zero final hits"
     (let [conn (datascript/create-conn)
           completed-permissions
           (mapv #(keyword (str "completed_" %)) (range 80))
@@ -231,30 +303,35 @@
            :layered-cache-delta
            {:exact-hits (- (:exact-hits layered-after)
                            (:exact-hits layered-before))
-            :projection-hits
-            (- (get-in layered-after [:subproblems :projection-hits])
-               (get-in layered-before [:subproblems :projection-hits]))
-            :managed-projection-hits
-            (- (get-in layered-after
-                       [:subproblems :managed-projection-hits])
-               (get-in layered-before
-                       [:subproblems :managed-projection-hits]))
+            ;; An unrelated write installs a new exact generation, so its
+            ;; subproblem metrics start at zero. Report the active
+            ;; generation's absolute semantic-denotation hits rather than
+            ;; subtracting counters from the now-detached warm generation.
+            :denotation-hits
+            (get-in layered-after [:subproblems :denotation-hits])
+            :managed-denotation-hits
+            (get-in layered-after
+                    [:subproblems :managed-denotation-hits])
+            :acyclic-denotation-hits
+            (get-in layered-after
+                    [:subproblems :acyclic-denotation-hits])
             :new-generation-proof-reads
             (get-in layered-after
                     [:subproblems :managed-proof-reads])
             :avoided-backend-operations
-            (- (get-in layered-after
-                       [:subproblems :avoided-backend-operations])
-               (get-in layered-before
-                       [:subproblems :avoided-backend-operations]))}}]
+            (get-in layered-after
+                    [:subproblems :avoided-backend-operations])}}]
       (println "EACL shared-subgraph cache benchmark" (pr-str report))
       (is (zero? (get-in report [:completed-cache-delta :exact-hits])))
       (is (zero? (get-in report [:layered-cache-delta :exact-hits])))
       (is (pos? (get-in report
-                        [:layered-cache-delta :projection-hits])))
+                        [:layered-cache-delta :denotation-hits])))
       (is (pos? (get-in report
                         [:layered-cache-delta
-                         :managed-projection-hits])))
+                         :managed-denotation-hits])))
+      (is (pos? (get-in report
+                        [:layered-cache-delta
+                         :acyclic-denotation-hits])))
       (is (<= (get-in report
                       [:layered-cache-delta
                        :new-generation-proof-reads])

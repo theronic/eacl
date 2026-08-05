@@ -1,0 +1,34 @@
+{:schema
+ {:relations
+  [{:resource-type :document
+    :relation :owner
+    :subject-type :user}
+   {:resource-type :document
+    :relation :viewer
+    :subject-type :user}]
+  :permissions
+  [{:resource-type :document
+    :permission :view
+    :paths [[:relation :owner] [:relation :viewer]]}]}
+ :relationships
+ [{:subject [:user 10]
+   :relation :owner
+   :resource [:document 11]}
+  {:subject [:user 10]
+   :relation :viewer
+   :resource [:document 12]}]
+ :request
+ {:operation :lookup-resources
+  :subject [:user 10]
+  :permission :view
+  :resource-type :document}
+ :before
+ {:legacy-authoritative :host-acyclic
+  :verified-shadow-primary :host-acyclic
+  :verified-shadow-alternate :not-run
+  :verified-authoritative :host-acyclic}
+ :after
+ {:legacy-authoritative :host-acyclic
+  :verified-shadow-primary :host-acyclic
+  :verified-shadow-alternate :generated-indexed
+  :verified-authoritative :generated-indexed}}

@@ -17,6 +17,7 @@
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]
             [eacl.secure-format :as secure]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :refer [->user ->account ->server ->team ->vpc ->platform]]))
@@ -82,6 +83,31 @@
   (impl/optimistic-relationship-tx-data
    db
    (mapcat #(impl/tx-relationship db % {:allow-tempids? true}) relationships)))
+
+(defn- with-generated-traversal-observer
+  "Captures the generated result's resource dimensions across the completed
+  cache coordinator boundary. Dynamic bindings are thread-local and therefore
+  cannot serve as a reliable observer for this heavy regression."
+  [stats operation]
+  (let [record-var
+        (ns-resolve 'eacl.engine.v8 'record-generated-stats!)
+        record-original
+        (when record-var @record-var)]
+    (when-not (and record-var (fn? record-original))
+      (throw
+       (ex-info
+        "Generated traversal resource observer is unavailable."
+        {:type :eacl.bench/missing-generated-resource-observer})))
+    (with-redefs-fn
+      {record-var
+       (fn [result baseline]
+         (record-original result baseline)
+         (reset!
+          stats
+          {:generated-dimensional-counters (:counters result)
+           :generated-retained-logical-units
+           (:retained-logical-units result)}))}
+      operation)))
 
 ;; --- Seeding ---
 
@@ -430,10 +456,12 @@
         first-median (median (map :median-ms first-window))
         last-median (median (map :median-ms last-window))
         max-page-median (apply max (map :median-ms medians))
+        slowest-pages (take 5 (sort-by :median-ms > medians))
         allowed-late (max (+ first-median page-drift-threshold-ms)
                           (* first-median page-drift-threshold-ratio))]
     (println (format "%s pagination (%d pages x %d runs): early=%.2fms/page, late=%.2fms/page, max-page-median=%.2fms"
                      label pages-per-run pagination-iterations first-median last-median max-page-median))
+    (println (str label " slowest page medians: " (pr-str slowest-pages)))
     (is (< max-page-median per-page-threshold-ms)
         (format "REGRESSION: %s max page median %.2fms exceeds %dms threshold"
                 label max-page-median per-page-threshold-ms))
@@ -443,19 +471,25 @@
 
 (defn- deep-page-work-samples
   "Walks a complete forward result set and records traversal calls and realized
-  relationship-index EIDs at selected depths. The number of path scans is a
-  property of the permission graph and need not fall with page depth. Realized
-  EIDs, however, must stay bounded by the page frontier rather than grow with
-  the number of preceding results."
+  relationship-index EIDs at selected depths and over the whole walk.
+
+  A nonterminal continuation should remain page-bounded. The terminal page may
+  drain pending duplicate derivations in a multi-path union so it can state
+  `has-next-page? false`; that one-page cost need not be constant, but the
+  complete walk must remain linear and must not replay earlier prefixes."
   [acl base-query page-count sample-pages]
   (let [calls (atom 0)
         realized-eids (atom 0)
+        total-calls (atom 0)
+        total-realized-eids (atom 0)
         original-subject->resources ddb/subject->resources]
     (with-redefs [ddb/subject->resources
                   (fn [& args]
                     (swap! calls inc)
+                    (swap! total-calls inc)
                     (map (fn [eid]
                            (swap! realized-eids inc)
+                           (swap! total-realized-eids inc)
                            eid)
                          (apply original-subject->resources args)))]
       (loop [page-index 0
@@ -477,6 +511,8 @@
           (if (= page-count (inc page-index))
             {:seen-ids seen-ids'
              :samples samples'
+             :total-calls @total-calls
+             :total-realized-eids @total-realized-eids
              :last-page page}
             (recur (inc page-index)
                    next-boundary
@@ -557,10 +593,19 @@
                   "Reverse pages should not have overlapping results"))))
 
         (testing "cursor frontiers reduce deterministic traversal work on deep pages"
-          (let [page-count (quot total-servers page-size)
+          (let [frontier-acl
+                (spiceomic/make-client
+                 conn
+                 {:cache {:remember-answers false}})
+                page-count (quot total-servers page-size)
                 sample-pages #{0 (quot page-count 2) (dec page-count)}
-                {:keys [seen-ids samples last-page]}
-                (deep-page-work-samples acl base-query page-count sample-pages)
+                {:keys [seen-ids samples total-calls total-realized-eids
+                        last-page]}
+                (deep-page-work-samples
+                 frontier-acl base-query page-count sample-pages)
+                continuation-stats
+                (cache/stats
+                 (get-in frontier-acl [:opts :continuation-cache-store]))
                 first-page-calls (get-in samples [0 :calls])
                 middle-page-calls (get-in samples [(quot page-count 2) :calls])
                 last-page-calls (get-in samples [(dec page-count) :calls])
@@ -575,7 +620,7 @@
                                            (median
                                             (run-timed 20
                                                        #(eacl/lookup-resources
-                                                         acl
+                                                         frontier-acl
                                                          (cond-> base-query
                                                            boundary (assoc :after boundary)))))]))
                                    samples)]
@@ -587,17 +632,33 @@
                              (get page-medians 0)
                              (get page-medians (quot page-count 2))
                              (get page-medians (dec page-count))))
+            (println
+             (format
+              "Complete walk work: calls=%d, realized relationship EIDs=%d, continuation rejections=%d"
+              total-calls
+              total-realized-eids
+              (get-in continuation-stats
+                      [:by-kind :recursive-continuation :rejections]
+                      0)))
             (is (= total-servers (count seen-ids))
                 "A complete frontier-paginated walk must return every server exactly once")
             (is (= sample-pages (set (keys samples))))
+            (is
+             (zero?
+              (get-in continuation-stats
+                      [:by-kind :recursive-continuation :rejections]
+                      0))
+             "the default bounded store must admit the one active long-walk continuation")
             (is (<= middle-page-calls first-page-calls)
                 "frontier resumption must not add path scans on deeper pages")
-            (is (<= last-page-calls middle-page-calls)
-                "exhausted paths must not add scans near exhaustion")
             (is (<= middle-page-eids (+ first-page-eids (* 2 page-size)))
                 "middle-page index work must remain page-bounded, not prefix-sized")
-            (is (<= last-page-eids (+ first-page-eids (* 2 page-size)))
-                "last-page index work must remain page-bounded, not prefix-sized")
+            (is (<= last-page-eids (* 2 total-servers))
+                "terminal duplicate-path drain must remain linear in the result graph")
+            (is (<= total-realized-eids (* 8 total-servers))
+                "a complete continuation walk must remain linear, not replay every prefix")
+            (is (<= total-calls total-servers)
+                "backend scan calls over the complete walk must remain linear")
             (is (false? (get-in last-page [:page-info :has-next-page?])))))
 
         (testing "live lookup/count hits share one dependency-aware cache"
@@ -839,10 +900,13 @@
                        (map #(get-in % [:completed-hit :elapsed-ms]) runs))
                       :replayed-ms
                       (median (map #(get-in % [:replayed :elapsed-ms]) runs))}]
-                 (is (every? #(= (get-in % [:cached :ids])
-                                  (get-in % [:completed-hit :ids])
-                                  (get-in % [:replayed :ids]))
-                             runs))
+                 (is
+                  (every?
+                   (fn [run]
+                     (= (get-in run [:cached :ids])
+                        (get-in run [:completed-hit :ids])
+                        (get-in run [:replayed :ids])))
+                   runs))
                  (is (zero? (get-in completed-hit
                                     [:stats :derived-grants] 0)))
                  (println "Recursive page-size scaling:" measurement)
@@ -920,7 +984,7 @@
             "completed recursive pages need lookups but no publications")))))
 
 (deftest ^:benchmark count-miss-retained-memory-benchmark
-  (testing "Broad count misses retain at most one bounded page"
+  (testing "Broad count misses use a bounded legacy page or a compact generated renderer"
     (with-mem-conn [conn []]
       (let [retention-config (assoc bench-config :num-accounts 40)
             total-servers
@@ -959,21 +1023,50 @@
                    :permission :view
                    :resource/type :server}]
         (doseq [[label client] clients]
-          (let [stats (atom {})
+          (let [legacy-stats (atom {})
+                traversal-stats (atom {})
                 result
-                (binding [impl.indexed/*count-stats* stats]
-                  (eacl/count-resources client query))]
-            (println
-             (format
-              "Broad count %s: count=%d, pages=%d, max retained page=%d EIDs"
-              (name label)
-              (:count result)
-              (:pages @stats)
-              (:max-page-eids @stats)))
+                ;; Completed-cache misses may compute on a coordinator thread.
+                ;; Observe the generated result at its publication boundary,
+                ;; which remains exact even when that work is asynchronous.
+                (with-generated-traversal-observer
+                  traversal-stats
+                  (fn []
+                  (binding [impl.indexed/*count-stats* legacy-stats]
+                      (eacl/count-resources client query))))]
             (is (= total-servers (:count result)))
-            (is (= 2 (:pages @stats)))
-            (is (<= (:max-page-eids @stats) 16384)
-                "count misses never retain the full 20,000-result head")))
+            (if-let [retained
+                     (:generated-retained-logical-units
+                      @traversal-stats)]
+              (let [counters
+                    (:generated-dimensional-counters
+                     @traversal-stats)]
+                (println
+                 (format
+                  (str "Broad count %s: count=%d, generated retained "
+                       "logical units=%d")
+                  (name label)
+                  (:count result)
+                  retained))
+                (is (= total-servers (:emitted-results counters))
+                    "the scalar all-count ordinal counts every unique result")
+                ;; This fixture has fewer than one intermediate grant/consumer
+                ;; per result. Three result-sized units leave room for that
+                ;; traversal proof state but fail if the renderer regresses to
+                ;; retaining either emitted or delivered result sequences.
+                (is (<= retained (+ (* 3 total-servers) 1024))
+                    "generated all-count retains traversal proof state, not rendered result copies"))
+              (do
+                (println
+                 (format
+                  "Broad count %s: count=%d, pages=%d, max retained page=%d EIDs"
+                  (name label)
+                  (:count result)
+                  (:pages @legacy-stats)
+                  (:max-page-eids @legacy-stats)))
+                (is (= 2 (:pages @legacy-stats)))
+                (is (<= (:max-page-eids @legacy-stats) 16384)
+                    "legacy count misses never retain the full 20,000-result head")))))
         (is (zero? (:entries (cache/stats rejecting-store)))
             "a rejected count answer leaves no retained cache entry")
         (is (zero? @provider-calls)

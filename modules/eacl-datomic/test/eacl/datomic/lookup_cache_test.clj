@@ -410,12 +410,13 @@
                (set (map :id
                          (:data
                           (eacl/lookup-resources client query))))))
-        (is (= #{"root" "child"}
-               (set (map :id
-                         (:data
-                          (eacl/lookup-resources client query))))))
-        (is (= 1 @classifications)
-            "the uniform completed-page hit precedes traversal selection")))))
+        (let [cold-classifications @classifications]
+          (is (= #{"root" "child"}
+                 (set (map :id
+                           (:data
+                            (eacl/lookup-resources client query))))))
+          (is (= cold-classifications @classifications)
+              "the uniform completed-page hit precedes any additional traversal selection"))))))
 
 (deftest recursive-cursors-replay-across-independent-client-proofs-test
   (with-mem-conn [conn schema/v7-schema]

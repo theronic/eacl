@@ -430,6 +430,115 @@
             input
             (constantly nil)))))))
 
+(deftest cursor-bound-rebase-boundary-enforces-identity-and-cost
+  (let [input {:values [11 17 23 29]
+               :bound-eid 23}
+        result {:status :rebased
+                :ordinal 2
+                :inspected-count 3}
+        decide
+        (fn [candidate-input candidate-result]
+          (verified/decide
+           {:mode :verified-authoritative
+            :kernel
+            (->FunctionKernel
+             (fn [_ _] candidate-result))}
+           :cursor-bound-rebase
+           candidate-input
+           (constantly nil)))]
+    (is (= result (decide input result)))
+    (doseq [invalid-input
+            [(assoc input :unknown true)
+             (assoc input :values [11 -1 23])
+             (assoc
+              input
+              :values
+              (vec
+               (range
+                (inc
+                 #?(:clj 4096
+                    :cljs 16384)))))
+             (assoc input :bound-eid -1)]]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (decide invalid-input result))))
+    (doseq [invalid-result
+            [(assoc result :ordinal 1)
+             (assoc result :inspected-count 4)
+             {:status :restarted :inspected-count 4}
+             (assoc result :unknown true)]]
+      (is (thrown?
+           #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo)
+           (decide input invalid-result))))
+    (is (= {:status :restarted :inspected-count 4}
+           (decide
+            (assoc input :bound-eid 31)
+            {:status :restarted :inspected-count 4})))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide
+          (assoc input :bound-eid 31)
+          {:status :rebased
+           :ordinal 2
+           :inspected-count 3})))))
+
+(deftest cursor-bound-rebase-chunk-orchestration-matches-first-identity
+  (let [calls (atom [])
+        kernel
+        (->FunctionKernel
+         (fn [operation {:keys [values bound-eid]}]
+           (is (= :cursor-bound-rebase operation))
+           (swap! calls conj (count values))
+           (loop [ordinal 0]
+             (if (= ordinal (count values))
+               {:status :restarted
+                :inspected-count ordinal}
+               (if (= bound-eid (nth values ordinal))
+                 {:status :rebased
+                  :ordinal ordinal
+                  :inspected-count (inc ordinal)}
+                 (recur (inc ordinal)))))))
+        selection {:mode :verified-authoritative
+                   :kernel kernel}
+        chunk-size #?(:clj 4096
+                      :cljs 16384)
+        value-count (+ (* 2 chunk-size) 808)
+        values (vec (range value-count))]
+    (is (= {:status :restarted
+            :inspected-count 0}
+           (verified/decide-cursor-bound-rebase
+            selection [] 17)))
+    (is (empty? @calls))
+    (is (= {:status :rebased
+            :ordinal chunk-size
+            :inspected-count (inc chunk-size)}
+           (verified/decide-cursor-bound-rebase
+            selection values chunk-size)))
+    (is (= [chunk-size chunk-size] @calls))
+    (reset! calls [])
+    (is (= {:status :rebased
+            :ordinal (dec value-count)
+            :inspected-count value-count}
+           (verified/decide-cursor-bound-rebase
+            selection values (dec value-count))))
+    (is (= [chunk-size chunk-size 808] @calls))
+    (reset! calls [])
+    (is (= {:status :restarted
+            :inspected-count value-count}
+           (verified/decide-cursor-bound-rebase
+            selection values (inc value-count))))
+    (is (= [chunk-size chunk-size 808] @calls))
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (verified/decide-cursor-bound-rebase
+          selection
+          (assoc values chunk-size -1)
+          (dec value-count))))))
+
 (deftest full-authorization-boundary-is-strict
   (let [result {:status :complete
                 :operation :can?

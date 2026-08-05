@@ -338,6 +338,34 @@
                           :provider-errors-by-operation {}})
                    config'))))
 
+(defn local-continuation-store
+  "Creates the bounded client-private store for opaque traversal continuations.
+
+  A continuation is the one entry kind whose useful value naturally grows
+  with the already-proved traversal prefix. The general answer-store default
+  rejects any entry above one quarter of its capacity so one large completed
+  answer cannot crowd out the cache. Applying that policy to continuations
+  makes a long page walk lose its frontier at a deterministic size and fall
+  back to prefix replay even though the private store still has room.
+
+  Unless the caller explicitly supplies `:max-entry-weight`, allow one
+  continuation to use the store's full bounded capacity. The engine replaces
+  the predecessor only after publishing the successor, and the access-ordered
+  store evicts older pages/continuations as needed, so this changes admission
+  without making retained memory unbounded. Explicit low limits remain
+  available for fallback tests and deliberately memory-constrained clients."
+  ([]
+   (local-continuation-store {}))
+  ([config]
+   (local-store
+    (if (contains? config :max-entry-weight)
+      config
+      (assoc
+       config
+       :max-entry-weight
+       (or (:max-weight config)
+           (:max-weight default-store-config)))))))
+
 (defn entry
   ([cache-key kind value]
    (entry :default cache-key kind value))

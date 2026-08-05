@@ -1,12 +1,12 @@
 {:schema-version 1
  :semantics-version 1
- :status :not-verified
+ :status :conditionally-verified-release-gates-open
  :source-closure
  {:report "formal/verification/public-source-closure.json"
-  :status :named-public-roots-enumerated-verification-incomplete
+  :status :named-public-roots-enumerated
   :source-files 51
   :public-roots 60
-  :reachable-definitions 1330
+  :reachable-definitions 1347
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -42,7 +42,7 @@
                          :schema-completeness :direct-scan-equivalence]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :internal-verified-authoritative-all-defined-permission-roots
    :remaining
    [:acyclic-direct-alias-and-arrow-callback-arguments-and-semantic-refinement
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -78,7 +78,7 @@
                          :permission-node-completeness]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :internal-verified-authoritative-all-defined-permission-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -102,7 +102,7 @@
                          :schema-completeness :ordered-complete-scans]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :internal-verified-authoritative-all-defined-permission-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -148,11 +148,15 @@
   {:operation :lookup-cursor-continuation
    :entry-points ['eacl.relay]
    :theorems [:cursor-scope-before-influence :page-walk-complete
-              :single-permitted-graph]
+              :single-permitted-graph
+              :current-recovery-rebases-by-stable-result-identity
+              :current-recovery-restarts-only-when-result-identity-is-absent
+              :current-recovery-identity-search-is-linear]
    :dafny ["formal/dafny/PageWindow.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :exact-selection
-                         :source-fingerprint]
+                         :source-fingerprint
+                         :unique-complete-current-denotation]
    :runtime-targets [:clj-java :cljs-javascript]
    :ci [:generated-production-kernel
         :cross-runtime-vectors
@@ -233,6 +237,8 @@
     :page-continuation-carries-lookahead-without-prefix-replay
     :source-plan-certification-implies-exact-compiled-rules
     :seed-certification-implies-exact-forward-seed-bucket
+    :equal-semantic-root-rule-bodies-have-equal-fixed-point-grants
+    :equal-indexed-root-rule-bodies-refine-equal-semantic-root-bodies
     :instantaneous-queue-depth-bound
     :unique-grant-bound
     :dimensionally-separated-resource-counters]
@@ -241,7 +247,9 @@
            "formal/dafny/IndexedForwardCompleteness.dfy"
            "formal/dafny/IndexedReverseCompleteness.dfy"
            "formal/dafny/IndexedRendering.dfy"
-           "formal/dafny/IndexedCertification.dfy"]
+           "formal/dafny/IndexedCertification.dfy"
+           "formal/dafny/RootDenotation.dfy"
+           "formal/dafny/IndexedRootDenotation.dfy"]
    :adapter-obligations
    [:immutable-snapshot
     :ordered-complete-exclusive-chunks
@@ -249,11 +257,10 @@
     :compiled-plan-refinement]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-recursive-scc-dependent-roots
+   :internal-verified-authoritative-all-defined-permission-roots
    :remaining
-   [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
-    :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
-    :production-adapter-certification
+   [:production-adapter-source-refinement
+    :canonical-clj-cljs-root-denotation-key-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
         :generated-indexed-scan-rejection
@@ -270,6 +277,7 @@
               :late-publication-unreachable
               :exact-and-arbitrary-db-bypass
               :projection-chunk-concatenation
+              :equal-root-rule-bodies-have-equal-semantic-denotations
               :acyclic-subproblem-call-stack-independence
               :partial-recursive-publication-rejection
               :subproblem-weight-bound
@@ -282,6 +290,8 @@
               :registered-unrepresented-flight-is-computing]
    :dafny ["formal/dafny/CacheKernel.dfy"
            "formal/dafny/CurrentCache.dfy"
+           "formal/dafny/RootDenotation.dfy"
+           "formal/dafny/IndexedRootDenotation.dfy"
            "formal/dafny/SubproblemCache.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot

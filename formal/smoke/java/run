@@ -6,6 +6,7 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 generated="$repo_root/target/formal/java"
 classes="$generated/classes"
 dafny_runtime="$repo_root/target/formal-tools/dafny-4.11.0/dafny/DafnyRuntime.jar"
+clojure_classpath=$(clojure -Spath)
 
 [ -f "$dafny_runtime" ] || {
   printf '%s\n' "missing Dafny runtime; run bin/formal bootstrap" >&2
@@ -22,7 +23,8 @@ find "$generated" -type f -name '*.java' -print |
   exit 1
 }
 
-javac -cp "$dafny_runtime" -d "$classes" @"$generated/java-sources.txt"
+javac -cp "$dafny_runtime:$clojure_classpath" \
+  -d "$classes" @"$generated/java-sources.txt"
 
 printf '%s\n' \
   "Generated Java compiled. Run the smoke test through nREPL with:" \

@@ -35,6 +35,7 @@
   :cache-and-cursors
   [exact-selection
    continuation-decision
+   cursor-bound-rebase-decision
    proof-state
    cache-candidate
    cache-decision

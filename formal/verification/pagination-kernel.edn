@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 27
+  :verified-obligations 36
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -16,6 +16,9 @@
    :complete-forward-walk
    :current-proof-continuation
    :authenticated-current-recovery
+   :current-recovery-rebases-by-stable-result-identity
+   :current-recovery-restarts-only-when-result-identity-is-absent
+   :current-recovery-identity-search-is-linear
    :recovery-does-not-require-retained-history
    :authenticated-exact-fallback
    :history-divergence-rejection
@@ -64,8 +67,26 @@
    :status :passed}
   :coverage
   [:lookup-cursor-current-proof
+   :lookup-cursor-current-identity-rebase
    :relationship-cursor-current-proof
    :relationship-page-window
    :relationship-keyset-page-window
    :strict-generated-result-validation]}
+ :current-recovery-boundary
+ {:operation :cursor-bound-rebase
+  :input
+  {:values :unique-current-complete-denotation-eids
+   :bound-eid :authenticated-query-scoped-result-eid}
+  :result
+  [:rebased-current-ordinal :restarted]
+  :logical-work
+  {:success "ordinal + 1 inspected identities"
+   :absence "N inspected identities"
+   :upper-bound "N"
+   :heap-and-latency :host-regression-gates-not-dafny-claims}
+  :production-authority
+  {:clj-java :generated
+   :cljs-javascript :generated
+   :legacy :equivalent-shadowed-fallback}
+  :counterexample :EACL-FORMAL-044}
  :remaining []}

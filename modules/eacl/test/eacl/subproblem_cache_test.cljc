@@ -542,6 +542,39 @@
     (is (= [:lookup :admission :publication]
            (mapv (comp :decision second) @calls)))))
 
+(deftest verified-identical-transitions-are-memoized-per-request-test
+  (let [store (subproblem/store)
+        calls (atom [])
+        kernel (->ObservingKernel calls expected-cache-action)
+        selection {:mode :verified-authoritative
+                   :kernel kernel}]
+    (doseq [key [:first :second]]
+      (subproblem/resolve!
+       store :projection key {} (constantly key)))
+    (binding [subproblem/*engine-selection* selection]
+      (subproblem/with-decision-memo
+       (fn []
+         (is (= :first
+                (:value
+                 (subproblem/resolve!
+                  store :projection :first {} (constantly :wrong)))))
+         (is (= :second
+                (:value
+                 (subproblem/resolve!
+                  store :projection :second {} (constantly :wrong))))))))
+    (is (= 1 (count @calls))
+        "one checked pure lookup transition serves identical states in one request")
+    (is (= {:decision :lookup
+            :recursive-self? false
+            :candidate :complete}
+           (second (first @calls))))
+    (binding [subproblem/*engine-selection* selection]
+      (subproblem/with-decision-memo
+       #(subproblem/lookup!
+         store :projection :first {})))
+    (is (= 2 (count @calls))
+        "a later request establishes its own generated decision evidence")))
+
 #?(:clj
    (deftest concurrent-identical-misses-single-flight-test
      (let [store (subproblem/store)

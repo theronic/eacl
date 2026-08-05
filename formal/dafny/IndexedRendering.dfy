@@ -107,15 +107,21 @@ module IndexedRendering {
     assert CheckedAdvanceRenderSpec(render, values[0]) ==
            advanced;
     ValidEmissionTail(render, values);
-    assert advanced.state.emitted ==
-           render.emitted + [values[0]];
-    assert forall eid <- values[1..] ::
-        eid !in advanced.state.emitted by {
-      forall eid <- values[1..]
-        ensures eid !in advanced.state.emitted
-      {
-        assert eid !in render.emitted;
-        assert eid != values[0];
+    if render.mode.RenderAllCount? {
+      assert advanced.state.emitted == render.emitted;
+      assert forall eid <- values[1..] ::
+          eid !in advanced.state.emitted;
+    } else {
+      assert advanced.state.emitted ==
+             render.emitted + [values[0]];
+      assert forall eid <- values[1..] ::
+          eid !in advanced.state.emitted by {
+        forall eid <- values[1..]
+          ensures eid !in advanced.state.emitted
+        {
+          assert eid !in render.emitted;
+          assert eid != values[0];
+        }
       }
     }
   }

@@ -1,12 +1,16 @@
 # Final assurance-claim audit
 
-Date: 2026-08-04
+Date: 2026-08-05
 
 ## Decision
 
-EACL v8.0 is **not formally verified as a complete public authorization
-engine**. The release manifest must remain `:not-verified`, and the validator
-must return nonzero.
+EACL v8.0's generated-authoritative decision engine is **conditionally
+formally verified for every defined permission root and public authorization
+operation**, under the named snapshot-oracle, adapter, FFI, runtime, and
+cryptographic assumptions. The release as a whole is not yet entitled to the
+unqualified `:verified` label: the manifest records
+`:assurance-status :conditionally-verified`, and its validator must return
+nonzero until independent security/formal-methods review is recorded.
 
 The implemented proof and runtime evidence supports narrower claims:
 
@@ -20,10 +24,12 @@ The implemented proof and runtime evidence supports narrower claims:
 4. decoded relationship-page, cursor-continuation, authenticated
    cache-validation, and snapshot-selection plan/postcondition decisions are
    routed through generated decision kernels in the internal verified modes;
-   and
-5. strict generated Java and JavaScript boundaries evaluate complete
-   materialized `can?`, lookup, and count requests, and the Java reference
-   agrees with cached and uncached public state traces on all three backends.
+5. generated indexed traversal owns opaque state and rendering for `can?`,
+   forward/reverse lookup, and forward/reverse count for every defined
+   permission root in `verified-authoritative` mode; and
+6. equal canonical indexed root rule bodies have equal least-fixed-point
+   denotations, with a separate runtime regression covering the handwritten
+   Clojure/DataScript key boundary and its relation/target non-collision cases.
 
 These claims remain conditional on the trusted toolchain, generated-code
 compilers, runtimes, FFI conversion, adapter contracts, canonicalization,
@@ -42,34 +48,43 @@ generated-code compiler out of the trusted computing base.
 
 ## Claims that are deliberately withheld
 
+- The unqualified claim that the entire deployed system—including backend
+  implementations, handwritten CLJ/CLJS orchestration, cryptography, generated
+  runtime collections, and host platforms—has been mechanically proved is
+  withheld. Those components remain the explicit trusted computing base.
 - The indexed generated-to-adapter callback boundary is implemented for CLJ
   and CLJS. In internal `verified-authoritative` mode it owns opaque traversal
-  state for permission roots that transitively depend on a recursive SCC. It
+  state for every defined permission root. It
   is not yet the supported/default release engine.
 - Cache-disabled public calls now preserve the engine selection in Datomic,
   Datahike, and DataScript. Earlier state-trace evidence did not detect that
   bypassed calls were falling back to legacy traversal; the corrected trace
   asserts generated calls occur on every backend.
-- Generated worklist discovery order is not globally EID ordered for acyclic
-  multipath permissions. The minimized `owner + viewer` interleaving witness
-  is retained as a regression, and unsafe generated all-root routing was
-  removed. Dafny now proves ordered single-step and bounded-chunk
-  reconstruction, and generated Java/JavaScript act as executable oracles for
-  the optimized CLJ/CLJS merge. Per-EID and generated-sequence hot-path
-  prototypes failed latency gates. The source specialization has no
-  engine-selection overhead, but formal source refinement and independent
-  review remain release gates.
-- Complete recursive page, count, Boolean, dimensional resource-counter,
-  retained-logical-state, traversal-limit, and portable typed-error outcomes
-  are compared in `verified-shadow` mode on all JVM adapters. Separate
+- Plain generated worklist discovery order is not globally EID ordered for
+  acyclic multipath permissions. The minimized `owner + viewer` interleaving
+  witness is retained as a regression; verified authority now applies the
+  proved ordered reconstruction and routes every defined permission root
+  through the generated indexed machine. A proposed recursive-only hybrid was
+  rejected because the optimized host acyclic engine is not completely
+  refined by the current Dafny `AcyclicForward`/`AcyclicReverse` projection
+  theorems. Generated Java/JavaScript remain executable oracles for the
+  optimized CLJ/CLJS merge in legacy/shadow-primary paths. Formal source
+  refinement and independent review of that optimization remain limitations of
+  the legacy/shadow-primary evidence, but generated authority no longer
+  delegates public acyclic decisions to that path.
+- Complete recursive page, count, Boolean, dimensionally comparable
+  resource-counter, traversal-limit, and portable typed-error outcomes are
+  compared in `verified-shadow` mode on all JVM adapters. Representation-
+  specific retained logical state is measured and gated separately; treating
+  unequal state representations as exact shadow outputs produced false
+  divergences and has been removed. Separate
   complete-public traces compare cache provenance and selected graph identity
   between legacy and generated authority on Datomic, Datahike, DataScript/JVM,
   and DataScript/JavaScript. Non-portable exception data is observable as
-  comparison-unavailable rather than passing. The complete non-benchmark and
-  heavy CLJ suites now pass under forced generated authority on Datomic,
-  Datahike, and DataScript, and the complete DataScript CLJS suite passes under
-  forced generated authority. Independent production rollout volumes, source
-  refinement, and release cutover gates remain incomplete.
+  comparison-unavailable rather than passing. The complete non-benchmark CLJ
+  suite, heavy CLJ suite, and complete DataScript CLJS suite pass under forced
+  generated authority. The retained-live-heap cutover regression passes;
+  independent review remains incomplete.
 - The current-generation cache, exact/arbitrary-DB bypass, scalar stamp law,
   least-fixed-point managed frame, and selected-snapshot rendering are proved
   and integrated for all three adapters. This is a conditional cache
@@ -374,17 +389,19 @@ generated-code compiler out of the trusted computing base.
   at 1.49x legacy p50 and 1.82x legacy p95. A 2026-08-03 dimensional recheck
   measured 1.17x p50 and 1.38x p95, with identical page results and all twelve
   logical resource measures equal, inside the existing 2.0x p95 gate. Full
-  cutover remains blocked by the digest-locked Clojure-to-Dafny language
-  correspondence for source specializations, shadow coverage, and independent
-  review rather than recursive cache-hit cost.
+  authority-mode correctness and latency suites now pass; default release
+  cutover remains blocked by independent review rather than recursive
+  cache-hit cost.
 - The representative public authority-mode gate passes on DataScript across
   direct, acyclic, recursive, cursor-continuation, and hot-cache calls. Median
-  verified/legacy p95 latency ratios over five paired trials are 1.18x, 0.92x,
-  1.57x, 1.42x, and 1.10x respectively; caller-thread allocation ratios are
-  1.02x, 1.01x, 1.46x, 1.43x, and 1.02x. Recursive and cursor operations each
+  verified/legacy p95 latency ratios over five paired trials are 1.49x, 1.26x,
+  1.64x, 1.58x, and 1.05x respectively; caller-thread allocation ratios are
+  1.55x, 1.19x, 1.31x, 1.32x, and 1.02x. Recursive and cursor operations each
   use one fewer backend operation at p95. Exact public values match on every
-  call. This gate does not establish retained heap, whole-process allocation,
-  worst-case latency, or all-backend verified-authority cutover.
+  call. This particular gate does not establish retained heap, whole-process
+  allocation, or worst-case latency. The separate retained-live-heap gate and
+  later all-backend forced-authority suites provide retained-state and
+  integration coverage, respectively.
 - The optimized ordered merge passes the source-specialization non-regression
   gate for both a 20-value page prefix and complete 20,000-value consumption.
   Its exact `has-last?`, exhausted-tail, empty-filter, and pairwise-fold
@@ -441,14 +458,55 @@ generated-code compiler out of the trusted computing base.
   `[path-kind,path-index]` traces on 407 fixtures each. Complete callback
   arguments, nested callback semantics, Clojure lazy-sequence semantics, and
   independent review remain open.
+- EACL-FORMAL-045 found that the Dafny logical work counters were correct but
+  the target-cost refinement was false. Dafny 4.11 copied Java `HashSet`
+  values for immutable union, used array sets/maps in JavaScript, and eagerly
+  represented JavaScript sequence suffixes. The executable scan validator
+  also evaluated pairwise strict ordering as a quadratic quantified loop.
+  Pairwise ordering remains the abstract contract; Dafny now proves it
+  equivalent to the adjacent-pair predicate used by executable validation.
+  Generated Java sets/maps are deterministically replaced with Clojure
+  persistent collections. Generated JavaScript sets/maps use Immutable 5.1.9
+  HAMTs and sequences use persistent concat/slice views with virtual Array
+  length. The patch sources, patcher, npm lock, and target property tests are
+  manifest inputs. A fresh 512 MiB fixed-heap, 15,000-result JVM run reduced
+  the reverse-page maximum median from about 5.7 seconds to 2.78
+  milliseconds. The fail-closed JavaScript scaling gate measured a 0.95
+  largest/smallest normalized per-result ratio from 1,024 through 16,384
+  results. These are named target-runtime gates, not verified live-heap, GC,
+  CPU, or worst-case latency bounds.
+- The forced-authority heavy replay initially refuted a broader performance
+  refinement that the named target-runtime scaling gate did not claim.
+  `RenderBackwardPage` must consume the authenticated prefix through
+  `before.ordinal`; Dafny now proves both that completed backward rendering
+  has consumed exactly `before.ordinal + 1` emitted results and that no
+  uniform multiple of page size bounds replay work. Production now retains
+  bounded opaque continuation state with full-entry admission for the private
+  continuation store. On the fresh 15,000-result run, forward and backward
+  page medians stayed below 0.62 ms, continuation admission rejected no
+  entries, and the complete walk used 1,866 backend calls and 54,961 realized
+  EIDs. Terminal pages may still drain duplicate derivations to establish
+  exhaustion; the complete walk is the amortized-linear performance claim.
+- The same replay found that eliminating backend work alone is not sufficient
+  for a useful cache. The original root key retained the permission name and
+  prevented cross-query denotation reuse. EACL-FORMAL-046 replaces it with a
+  canonical root-rule-body identity. `RootDenotation.dfy` and
+  `IndexedRootDenotation.dfy` prove equal semantic/indexed bodies have equal
+  least-fixed-point grants under the compiler assumptions, while the runtime
+  regression rejects changed-relation and changed-target collisions. Across
+  80 distinct DataScript roots sharing a depth-48 arrow chain, the corrected
+  layered cache measured 0.181417 ms p50 versus 0.673958 ms for the
+  completed-answer-only baseline (0.269181x), with zero backend operations.
 
 ## Public wording audit
 
 The current formal-verification guide defines “verified” only for a mapped
-generated operation under its listed assumptions, identifies recursive
-generated routing as internal and partial, and requires the manifest to remain
-`not-verified`. The generated providers are formal smoke/integration artifacts,
-not a shipped supported public engine.
+generated operation under its listed assumptions. Generated authority now
+routes every defined permission root and public authorization operation, so
+the manifest may state `:conditionally-verified`; it may not state the
+unqualified release status `:verified` while the independent-review gate is
+open. The generated providers remain internal opt-in release-candidate
+machinery rather than the supported default.
 
 Historical reports use “verified” to mean empirically reproduced or
 test-confirmed. They are dated engineering records and are not release-level
@@ -457,7 +515,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,367 proof efforts across 23
+- Clean checksum-locked Dafny cache: 9,767 proof efforts across 25
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -470,21 +528,22 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 42 minimized entries replayed by 44 tests and 10,418
+- Counterexample corpus: 46 minimized entries replayed by 48 tests and 10,631
   assertions, zero failures/errors.
-- Mutation controls: 82 Clojure detectors and 8 Apalache counterexample
-  controls; all 90 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 492 tests, 18,851 assertions,
+- Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
+  controls; all 96 registered mutants killed.
+- Forced-authority non-benchmark CLJ suite: 503 tests, 27,438 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
-- Forced-authority heavy CLJ suite: 16 tests, 4,047 assertions, zero
+- Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
+  and zero errors across Datomic, Datahike, and DataScript. Backward
+  pagination, count retention, and shared-subgraph cache gates pass.
+- Forced-authority DataScript CLJS suite: 156 tests, 4,539 assertions, zero
   failures/errors.
-- Ordinary and forced-authority DataScript CLJS suites: 152 tests, 4,499
-  assertions each, zero failures/errors.
-- Generated Java production-kernel namespace: 35 tests, 10,393 assertions,
+- Generated Java production-kernel namespace: 36 tests, 10,411 assertions,
   zero failures/errors.
-- Generated JavaScript smoke suite: 55 tests, 10,945 assertions, zero
+- Generated JavaScript smoke suite: 58 tests, 10,992 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,330 unique
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,347 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent
@@ -494,7 +553,8 @@ that the complete v8.0 engine is formally verified.
   snapshot-operation contract. Adapter semantics and per-definition theorem
   classification remain open.
 - OpenSpec strict validation: passed.
-- Heavy benchmark: 9 tests, 3,403 assertions, zero failures/errors; the
+- Heavy pagination benchmark: 9 tests, 3,405 assertions, zero failures/errors;
+  the
   current-cache measurements are recorded in
   `formal/verification/performance-gates.edn`.
 - Layered subproblem-cache resource benchmark: 5 tests, 12 assertions, zero
@@ -502,7 +562,7 @@ that the complete v8.0 engine is formally verified.
   cardinality, cached-page cardinality, and miss-finalization dimensions.
 - Cross-backend managed-proof resource benchmark: 1 test, 13 assertions, zero
   failures/errors. Growing an unrelated relation by 1,024 edges changed the
-  reader-proof p50 by 0.600x on Datomic, 1.006x on Datahike, and 1.043x on
+  reader-proof p50 by 0.426x on Datomic, 0.748x on Datahike, and 1.026x on
   DataScript. One logical create/delete produced 16/17, 13/13, and 14/14
   committed datom events respectively. These are deliberately separate
   resource dimensions; datom events are not byte or price measurements, and
@@ -516,15 +576,21 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 2,025,531 Java
-  source bytes, 1,792,438 Java class bytes, 895,015
-  JavaScript-with-runtime bytes, and a 979,106-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 2,072,798 Java
+  source bytes, 1,830,689 Java class bytes, 921,975
+  JavaScript-with-runtime bytes, and a 576,520-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
-  respectively, with a 125-percent ceiling. Those dimensions pass. Retained
-  live heap remains `:not-established`, so the
-  evaluator and release manifest refuse performance cutover instead of
-  substituting logical cache weight or the noise-dominated GC
-  micro-measurement for a heap bound.
+  respectively, with a 125-percent ceiling. Those dimensions pass. The
+  retained-live-heap gate also passes on an alternating five-trial,
+  same-process DataScript recursive walk over 4,000 results and 160 pages:
+  generated authority retained at most 5,336,312 bytes versus at least
+  5,146,600 bytes for legacy, a maximum 1.036843888729995 ratio against the
+  1.5 ceiling. Every trial produced the same complete ordered-result SHA-256.
+  The runner keeps the seed and client reachable through both snapshots,
+  requires the full-GC collection count to advance, warms both modes, and
+  requires at least a one-MiB positive signal. This is a host-specific
+  post-full-GC retained-live-heap regression, not a peak-heap, process-RSS,
+  portable-runtime, or asymptotic bound.
 - The outdated and untrusted Lore revision
   `dabb5634b0d44e196e2b6ec63003917b3d445bec`
   reanalyzed immutable EACL revision
@@ -560,11 +626,11 @@ that the complete v8.0 engine is formally verified.
   proof-resource regression. Forward and reverse drive specifications are now
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
-  per-module CSV plus an aggregate JSON report. The exact current 23-module
-  replay passed 9,367 proof efforts and consumed 3,654,378,786 deterministic
-  Z3 resource units; its maximum effort used 34,908,028 of the
-  50,000,000-unit limit. End-to-end wall time was not captured for that replay;
-  the preceding 9,207-effort run took 1,129.21 local wall seconds. Explicit
+  per-module CSV plus an aggregate JSON report. The exact current 25-module
+  replay passed 9,767 proof efforts and consumed 3,726,545,682 deterministic
+  Z3 resource units; its maximum effort used 33,547,591 of the
+  50,000,000-unit limit. The generated resource-directory birth time through
+  aggregate-report modification time was 953 seconds. Explicit
   unfolding reduced the
   indexed-driver maximum from 161,654,668 to 10,270,077 resource units
   (15.74x). These are solver-cost gates, deliberately separate from production
@@ -574,12 +640,16 @@ that the complete v8.0 engine is formally verified.
 
 The generated manifest is correct only if it:
 
-- records `:assurance-status :not-verified`;
-- records `:complete-public-engine` as incomplete;
-- records the current-cache performance gate as passed while keeping the full
-  verified-authoritative cutover pending;
+- records `:assurance-status :conditionally-verified`;
+- records `:complete-public-engine` as passed only under the documented trusted
+  boundary and adapter assumptions;
+- records the complete non-benchmark, heavy, and CLJS authority suites as
+  passed;
+- records the current-cache, shared-subgraph, and retained-live-heap
+  performance gates as passed while keeping the unqualified release cutover
+  pending;
 - refuses `:verified-status-allowed?`;
-- names complete-public-engine and rollout/performance work among the unmet
-  release conditions;
+- names independent security/formal review as the sole unmet release
+  condition;
 - contains digests for all named source and report inputs and any generated
   artifacts that are present.

@@ -382,9 +382,10 @@
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
            managed-descriptor-key-fn managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
-           engine-selection]
+           engine-selection remember-answer?]
     :or {same-snapshot? =
-         cacheable? true}}
+         cacheable? true
+         remember-answer? true}}
    semantic-key kind valid-value? compute]
   (when-not (fn? compute)
     (throw (ex-info "Current cache computation must be a function."
@@ -441,8 +442,9 @@
              :cache-tier nil
              :cache-basis nil})
           (let [entry
-                (valid-current-entry
-                 (:entries generation) entry-key valid-value?)
+                (when remember-answer?
+                  (valid-current-entry
+                   (:entries generation) entry-key valid-value?))
                 exact-action
                 (current-cache-action
                  engine-selection :exact-entry (some? entry))]
@@ -469,7 +471,7 @@
                   (when managed-generation
                     [semantic-key kind dependency-stamp])
                   managed-entry
-                  (when managed-entry-key
+                  (when (and remember-answer? managed-entry-key)
                     (valid-current-entry
                      (:entries managed-generation)
                      managed-entry-key
@@ -498,10 +500,12 @@
                                 managed-subproblem-scope
                                 subproblem/*engine-selection*
                                 engine-selection]
-                        (compute))
+                        (subproblem/with-decision-memo compute))
                       entry {:value value
                              :cache-basis cache-basis}
-                      admit? (admit-entry? store entry-key)]
+                      admit?
+                      (and remember-answer?
+                           (admit-entry? store entry-key))]
                   (when admit?
                     (put-entry!
                      store (:entries generation) entry-key entry)
@@ -511,7 +515,10 @@
                        (:entries managed-generation)
                        managed-entry-key
                        entry)))
-                  (swap! (:metrics store) update :misses inc)
+                  (swap! (:metrics store)
+                         update
+                         (if remember-answer? :misses :bypasses)
+                         inc)
                   {:value value
                    :cached? false
                    :cache-tier nil

@@ -33,6 +33,14 @@
 (def calls (atom {}))
 (def injected-clients (atom 0))
 
+(def required-generated-authority-operations
+  #{:recursive-routing-certificate
+    :cursor-bound-rebase
+    :indexed-traversal-compile
+    :indexed-traversal-initialize
+    :indexed-traversal-drive
+    :indexed-traversal-read})
+
 (defn- count-call!
   [operation]
   (swap! calls update operation (fnil inc 0)))
@@ -83,9 +91,14 @@
 
 (defmethod t/report [::t/default :end-run-tests]
   [summary]
-  (let [authority-failures
+  (let [missing-required-operations
+        (filterv
+         #(zero? (get @calls % 0))
+         required-generated-authority-operations)
+        authority-failures
         (+ (if (pos? @injected-clients) 0 1)
-           (if (pos? (reduce + 0 (vals @calls))) 0 1))
+           (if (pos? (reduce + 0 (vals @calls))) 0 1)
+           (count missing-required-operations))
         failures
         (+ (:fail summary 0)
            (:error summary 0)
@@ -97,6 +110,8 @@
           " errors=" (:error summary 0)
           " injected-clients=" @injected-clients
           " generated-calls=" (pr-str @calls)
+          " missing-required-generated-operations="
+          (pr-str missing-required-operations)
           " authority-gate-failures=" authority-failures))
     (js/process.exit failures)))
 

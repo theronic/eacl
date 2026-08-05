@@ -101,6 +101,7 @@
    (Relation :server :account :account)
    (Relation :server :shared_admin :user)
    (Relation :server :shared_member :user)
+   (Relation :server :backup_creator :user)
    (Relation :server :vpc :vpc)
 
    ; definition server { permission admin = account->admin + vpc->admin + shared_admin }

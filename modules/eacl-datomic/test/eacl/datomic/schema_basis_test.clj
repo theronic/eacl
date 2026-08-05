@@ -130,7 +130,7 @@
             (eacl/lookup-resources acl (assoc query :after cursor))]
         (is (empty? (:data recovered))
             "ordinary continuation re-evaluates permission definitions on the current schema")
-        (is (= :rebased
+        (is (= :restarted
                (get-in recovered [:page-info :cursor-recovery]))))
       (is (empty? (:data (eacl/lookup-resources acl query)))
           "a new enumeration uses the new schema generation"))))

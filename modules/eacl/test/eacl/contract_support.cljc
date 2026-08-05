@@ -518,12 +518,12 @@
               (eacl/lookup-resources
                client
                (assoc query :after stale-cursor))]
-          (is (= :restarted
+          (is (= :rebased
                  (get-in stale-result
                          [:page-info :cursor-recovery])))
-          (is (= [(folder 0) (folder 1)]
+          (is (= [(folder recursive-connected-folder-count)]
                  (:data stale-result))
-              "graph-specific recursive state restarts safely on current"))
+              "recover-current resumes after the same result in the current fixed point"))
 
         (let [after-write (eacl/lookup-resources client all-query)]
           (is (false? (:cached? after-write)))

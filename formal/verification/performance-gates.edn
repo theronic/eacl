@@ -24,6 +24,7 @@
    :backend-scan-or-probe-operations :request-counter
    :logical-response-items :request-counter
    :abstract-collection-operations :request-counter
+   :target-collection-operation-cost :target-runtime-contract
    :jvm-live-heap-bytes :runtime-gauge
    :elapsed-nanoseconds :monotonic-duration}
   :substitution-policy :no-cross-dimensional-proof-substitution
@@ -35,7 +36,9 @@
    :backend-scan-or-probe-operations :measured-fixture-specific
    :logical-response-items :proved-for-named-model-transitions
    :abstract-collection-operations :partially-modeled
-   :jvm-live-heap-bytes :not-established
+   :target-collection-operation-cost
+   :named-indexed-traversal-target-refinement-passed
+   :jvm-live-heap-bytes :passed-for-named-retained-regression
    :worst-case-elapsed-nanoseconds :not-established
    :whole-engine-resource-safety :not-established}
   :historical-revision-reanalysis
@@ -73,26 +76,154 @@
    :production-source-resource-refinement :unmatched
    :current-tree-qualification
    :current-production-and-formal-source-are-not-analyzed-by-lore}
-  :status :diagnostic-only-no-release-gate-depends-on-analyzer}
+  :status :diagnostic-only-no-release-gate-depends-on-analyzer
+  :target-cost-counterexample
+  {:scope :generated-authoritative-indexed-traversal
+   :abstract-model
+   :one-logical-set-insertion-per-new-grant
+   :java-target
+   :hash-set-copy-on-union
+   :javascript-target
+   :array-linear-membership-and-copying-union
+   :observed-effect
+   :quadratic-target-work-on-growing-denotation
+   :assurance-impact
+   :performance-cutover-blocked-until-target-cost-refinement-and-gates-pass
+   :status :fixed}
+  :target-cost-remediation
+  {:formal-source
+   {:source "formal/dafny/IndexedTraversal.dfy"
+    :abstract-contract :pairwise-strict-order
+    :executable-contract :adjacent-strict-order
+    :equivalence-lemma
+    IndexedTraversal.StrictlyIncreasingIffAdjacent
+    :changed-module-verification
+    {:verified-obligations 669
+     :errors 0}}
+   :java-runtime
+   {:set :clojure-persistent-hash-set
+    :map :clojure-persistent-hash-map
+    :sequence :dafny-java-runtime-lazy-concatenation
+    :fixed-heap-bytes 536870912
+    :fixture-results 15000
+    :old-reverse-page-p50-ms 5707.54
+    :new-reverse-page-max-median-ms 2.78
+    :first-page-p50-ms 2.91
+    :forward-page-max-median-ms 2.77
+    :status :passed}
+   :javascript-runtime
+   {:set-map :immutable-5.1.9-hamt
+    :sequence
+    :persistent-concat-slice-view-with-virtual-array-length
+    :property-boundary
+    "formal/smoke/js/round_trip.mjs"
+    :scaling-runner
+    "formal/smoke/cljs/run-indexed-traversal-benchmark"
+    :warmup-per-size 2
+    :samples-per-size 5
+    :sizes [1024 2048 4096 8192 16384]
+    :p50-elapsed-ns
+    [33739542 63122166 124811250 258375500 512839792]
+    :p50-ns-per-result
+    [32948.77148437503
+     30821.370117187496
+     30471.496582031243
+     31539.978027343706
+     31301.256835937485]
+    :maximum-largest-to-smallest-normalized-per-result-ratio 1.5
+    :largest-to-smallest-normalized-per-result-ratio
+    0.9499976911364107
+    :status :passed}
+   :cross-target-correctness
+   {:cljs-generated-smoke
+    {:tests 58 :assertions 10992 :failures 0 :errors 0}
+    :cljs-verified-authority
+    {:tests 156 :assertions 4539 :failures 0 :errors 0}
+    :jvm-verified-authority
+    {:tests 503 :assertions 27438 :failures 0 :errors 0}}
+   :qualification
+   :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
+   :status :passed-for-named-indexed-traversal-targets}}
+
+ :verified-authority-backward-pagination
+ {:formal-source "formal/dafny/IndexedTraversal.dfy"
+  :proved
+  {:completed-backward-render-consumes-authenticated-prefix true
+   :completed-render-emitted-items "before.ordinal + 1"
+   :uniform-page-size-multiple-bound false
+   :witness
+   IndexedTraversal.BackwardReplayBoundCounterexampleOrdinal}
+  :fresh-fixed-heap-jvm
+  {:heap-bytes 536870912
+   :results 15000
+   :page-size 50
+   :iterations 8
+   :first-forward-page-p50-ms 0.30
+   :forward-max-page-median-ms 0.59
+   :backward-early-page-median-ms 0.48
+   :backward-max-page-median-ms 0.62
+   :maximum-page-median-ms 50
+   :status :passed}
+  :bounded-continuation-walk
+  {:first-page-backend-calls 96
+   :middle-page-backend-calls 6
+   :last-page-backend-calls 656
+   :first-page-realized-eids 2447
+   :middle-page-realized-eids 192
+   :last-page-realized-eids 19222
+   :first-page-p50-ms 0.55
+   :middle-page-p50-ms 0.80
+   :last-page-p50-ms 0.71
+   :complete-walk-backend-calls 1866
+   :complete-walk-realized-eids 54961
+   :continuation-admission-rejections 0
+   :qualification
+   :terminal-page-drains-duplicate-derivations-to-prove-no-next-page-while-complete-walk-remains-amortized-linear
+   :status :passed}
+  :qualification
+  :fixed-heap-host-latency-plus-explicit-backend-work-not-a-worst-case-wall-time-or-live-heap-theorem
+  :status :passed}
+
+ :verified-authority-shared-subgraph-cache
+ {:backend :datascript
+  :fixture
+  {:distinct-top-level-permissions 80
+   :shared-arrow-depth 48
+   :servers 1000
+   :completed-answer-final-hits 0
+   :layered-final-hits 0}
+  :completed-answer-only
+  {:p50-ms 0.673958
+   :executed-backend-operations 3920}
+  :layered
+  {:p50-ms 0.181417
+   :executed-backend-operations 0
+   :denotation-hits 158
+   :managed-denotation-hits 1
+   :acyclic-denotation-hits 79
+   :managed-proof-reads 1}
+  :layered-to-completed-p50-ratio 0.26918146234631835
+  :maximum-allowed-ratio 0.75
+  :qualification
+  :equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
+  :status :passed}
 
  :formal-pipeline
- {:scope :all-23-dafny-modules
-  :proof-efforts 9367
-  :last-observed-local-wall-seconds 1129.21
-  :last-observed-wall-proof-efforts 9207
-  :current-run-wall-clock :not-captured
+ {:scope :all-25-dafny-modules
+  :proof-efforts 9767
+  :last-observed-local-wall-seconds 953
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3654378786
+  :total-observed-resource-count 3726545682
   :maximum-observed-proof-effort
-  {:source "IndexedReverseCompleteness.dfy"
+  {:source "IndexedForwardCompleteness.dfy"
    :display-name
-   "IndexedReverseCompleteness.ArrowRelationReachedDerivationIsSeen (correctness) (assertion batch 122)"
-   :resource-count 34908028}
+   "IndexedForwardCompleteness.DirectSubjectDerivationIsSeen (correctness) (assertion batch 31)"
+   :resource-count 33547591}
   :recursive-driver-proof-optimization
   {:transparent-specification-maximum-resource-count 161654668
    :opaque-explicit-unfold-maximum-resource-count 10270077
@@ -434,8 +565,13 @@
     :emitted-results {:legacy 3150 :generated 3150}
     :rule-applications {:legacy 3300 :generated 3300}
     :consumer-grant-joins {:legacy 3150 :generated 3150}
-    :render-advances {:legacy 3150 :generated 3150}
-    :retained-logical-units {:legacy 65 :generated 65}}
+    :render-advances {:legacy 3150 :generated 3150}}
+   :historical-retained-logical-units
+   {:legacy 65
+    :generated 65
+    :status :invalidated
+    :reason
+    :omitted-generated-delivery-sequence-and-fabricated-legacy-traversal-sequence}
    :qualification
    :logical-counters-and-retained-units-not-host-bytes-cpu-or-wall-time}
   :traversal-scope-binding-recheck
@@ -448,7 +584,8 @@
    :median-of-five-independent-trial-p95-ratios
    :required
    {:maximum-median-p95-ratio 2.0
-    :exact-page-and-dimensional-work-equality-every-trial true}
+    :maximum-retained-logical-units-ratio 1.5
+    :exact-page-and-comparable-work-equality-every-trial true}
    :trials
    [{:legacy-p50-ms 0.889417
      :legacy-p95-ms 1.167292
@@ -502,10 +639,44 @@
     :emitted-results {:legacy 3150 :generated 3150}
     :rule-applications {:legacy 3300 :generated 3300}
     :consumer-grant-joins {:legacy 3150 :generated 3150}
-    :render-advances {:legacy 3150 :generated 3150}
-    :retained-logical-units {:legacy 65 :generated 65}}
+    :render-advances {:legacy 3150 :generated 3150}}
+   :historical-retained-logical-units
+   {:legacy 65
+    :generated 65
+    :status :invalidated
+    :reason
+    :omitted-generated-delivery-sequence-and-fabricated-legacy-traversal-sequence}
    :qualification
    :raw-per-request-samples-are-returned-by-run-gate-but-not-host-resource-measurements}
+  :retained-state-model-correction
+  {:date "2026-08-05"
+   :lore-analyser-used false
+   :dafny
+   {:forward-and-reverse-page-delivered-sequence-counted true
+    :all-count-delivered-sequence-retained false
+    :all-count-final-denotation-publication-required false
+    :indexed-traversal-obligations 669
+    :status :passed}
+   :clojure
+   {:legacy-fabricated-traversal-sequence-removed true
+    :actual-live-page-ring-or-denotation-buffer-counted true}
+   :paired-smoke
+   {:fixture-results 1000
+    :page-size 20
+    :legacy-retained-logical-units 65
+    :generated-retained-logical-units 86
+    :generated-to-legacy-ratio 1.323076923076923
+    :all-comparable-work-counters-exact true}
+   :generated-java
+   {:tests 36 :assertions 10411 :status :passed}
+   :generated-javascript
+   {:tests 58 :assertions 10992 :status :passed}
+   :state-trace-differential
+   {:tests 8 :assertions 194 :status :passed}
+   :verified-authority-heavy
+   {:tests 17 :assertions 4057 :failures 0 :errors 0}
+   :qualification
+   :logical-retention-is-not-host-heap-allocation-or-wall-time}
   :qualification
   :same-snapshot-page-results-and-adapter-work-match-with-zero-final-answer-or-subproblem-cache
   :direct-resource-conclusion
@@ -846,19 +1017,19 @@
   :required
   {:unchanged-target-proof true
    :maximum-large-to-small-p50-ratio 5.0}
-  :observed
+ :observed
   {:datomic
    {:create-datom-events 16
     :delete-datom-events 17
-    :p50-ratio 0.6002435022630283}
+    :p50-ratio 0.4261334755472597}
    :datahike
    {:create-datom-events 13
     :delete-datom-events 13
-    :p50-ratio 1.0063291139240507}
+    :p50-ratio 0.7482752683426696}
    :datascript
    {:create-datom-events 14
     :delete-datom-events 14
-    :p50-ratio 1.0427758076012636}}
+    :p50-ratio 1.0264659340659341}}
   :status :passed}
 
  :authority-mode-matrix
@@ -893,41 +1064,41 @@
    :exact-public-result-equality-every-call true}
   :observed
   {:direct
-   {:median-p95-latency-ratio 1.1804430577223088
-    :median-p95-absolute-overhead-ns 14458
-    :median-p95-allocation-ratio 1.0201995012468827
-    :median-p95-allocation-overhead-bytes 1296
+   {:median-p95-latency-ratio 1.4881003894418001
+    :median-p95-absolute-overhead-ns 18459
+    :median-p95-allocation-ratio 1.5524710568903275
+    :median-p95-allocation-overhead-bytes 35504
     :median-p95-backend-operation-ratio 1.0
     :median-p95-backend-operation-overhead 0
     :status :passed}
    :acyclic
-   {:median-p95-latency-ratio 0.9198618935126295
-    :median-p95-absolute-overhead-ns -55125
-    :median-p95-allocation-ratio 1.0050929591384083
-    :median-p95-allocation-overhead-bytes 7256
+   {:median-p95-latency-ratio 1.260944440261989
+    :median-p95-absolute-overhead-ns 166374
+    :median-p95-allocation-ratio 1.1921165764055608
+    :median-p95-allocation-overhead-bytes 440448
     :median-p95-backend-operation-ratio 1.0
     :median-p95-backend-operation-overhead 0
     :status :passed}
    :recursive
-   {:median-p95-latency-ratio 1.5743394884960995
-    :median-p95-absolute-overhead-ns 727042
-    :median-p95-allocation-ratio 1.4558408655582007
-    :median-p95-allocation-overhead-bytes 1191816
+   {:median-p95-latency-ratio 1.6449182776801405
+    :median-p95-absolute-overhead-ns 733917
+    :median-p95-allocation-ratio 1.3137323227923454
+    :median-p95-allocation-overhead-bytes 1123616
     :median-p95-backend-operation-ratio 0.9923076923076923
     :median-p95-backend-operation-overhead -1
     :status :passed}
    :cursor
-   {:median-p95-latency-ratio 1.4210357188313791
-    :median-p95-absolute-overhead-ns 818293
-    :median-p95-allocation-ratio 1.4337488763010537
-    :median-p95-allocation-overhead-bytes 1601904
+   {:median-p95-latency-ratio 1.5835839087361152
+    :median-p95-absolute-overhead-ns 971959
+    :median-p95-allocation-ratio 1.3190112360923572
+    :median-p95-allocation-overhead-bytes 1670744
     :median-p95-backend-operation-ratio 0.9923664122137404
     :median-p95-backend-operation-overhead -1
     :status :passed}
    :cache-hot
-   {:median-p95-latency-ratio 1.1018286757560587
-    :median-p95-absolute-overhead-ns 3458
-    :median-p95-allocation-ratio 1.021516801700093
+   {:median-p95-latency-ratio 1.0501120457276476
+    :median-p95-absolute-overhead-ns 1541
+    :median-p95-allocation-ratio 1.0215110875049793
     :median-p95-allocation-overhead-bytes 1296
     :median-p95-backend-operation-ratio 0.0
     :median-p95-backend-operation-overhead 0
@@ -941,8 +1112,94 @@
    :minimized-cursor-p95-allocation-overhead-bytes
    {:before 4283960 :after 706496}
    :generated-java-boundary-reflection-warnings 0}
-  :qualification
+ :qualification
   :host-specific-regression-gate-not-retained-heap-or-worst-case-bound
+  :status :passed}
+
+ :recoverable-cursor-rebase
+ {:scope
+  :authenticated-current-cursor-stable-result-identity-rebase-after-proof-change
+  :formal-model "formal/dafny/PageWindow.dfy"
+  :runners
+  {:clj-java
+   "formal/smoke/clj/eacl/formal/cursor_rebase_benchmark.clj"
+   :cljs-javascript
+   "formal/smoke/cljs/eacl/formal/cursor_rebase_benchmark.cljs"}
+  :formal-logical-work
+  {:first-match-inspections "ordinal + 1"
+   :absence-inspections "N"
+   :maximum-inspections "N"
+   :whole-denotation-cap :none
+   :maximum-adapter-input-items
+   {:clj-java 4096
+    :cljs-javascript 16384}
+   :assurance
+   :dafny-exact-first-match-and-bounded-adapter-chunk-theorems}
+  :required
+  {:clj-java
+   {:maximum-normalized-latency-ratio 2.0
+    :maximum-normalized-allocation-ratio 1.5
+    :maximum-p50-ns-per-item 1000.0
+    :maximum-p50-allocated-bytes-per-item 256.0
+    :large-recovery-size 1000001
+    :maximum-large-recovery-p50-elapsed-ns 250000000
+    :maximum-large-recovery-p50-allocated-bytes-per-item 256.0}
+   :cljs-javascript
+   {:maximum-normalized-latency-ratio 2.0
+    :maximum-normalized-post-call-heap-delta-ratio 2.0
+    :maximum-p50-ns-per-item 3000.0
+    :maximum-p50-post-call-heap-delta-bytes-per-item 2048.0}}
+  :observed
+  {:date "2026-08-05"
+   :fixture
+   {:sizes [1024 4096 16384]
+    :warmup 20
+    :samples 31
+    :paired-order :alternating
+    :scenarios [:present-at-tail :absent]}
+   :clj-java
+   {:maximum-p50-ns-per-item 93.37615966796875
+    :maximum-p50-allocated-bytes-per-item 87.75048828125
+    :normalized-scaling
+    {:present-at-tail
+     {:latency-per-item 1.3488254545454545
+      :allocation-per-item 1.4655200258397933}
+     :absent
+     {:latency-per-item 1.0299913554447233
+      :allocation-per-item 1.0164762443438915}}
+    :large-recovery
+    {:size 1000001
+     :present-at-tail
+     {:p50-elapsed-ns 104283958
+      :p50-allocated-bytes 87788712}
+     :absent
+     {:p50-elapsed-ns 106886167
+      :p50-allocated-bytes 87807080}}
+    :status :passed}
+   :cljs-javascript
+   {:maximum-p50-ns-per-item 526.7333984373402
+    :maximum-p50-post-call-uncollected-heap-delta-bytes-per-item
+    631.5546875
+    :normalized-scaling
+    {:present-at-tail
+     {:latency-per-item 0.533428749700617
+      :post-call-heap-delta-per-item 0.9469548346370927}
+     :absent
+     {:latency-per-item 0.6018152954810773
+      :post-call-heap-delta-per-item 0.9074363859028439}}
+    :status :passed}}
+  :resource-qualification
+  {:inspected-identities :dafny-exact
+   :adapter-input-items-per-call :dafny-bounded
+   :jvm-caller-thread-allocation
+   :hotspot-thread-mxbean-cumulative-measurement
+   :elapsed-time :host-specific-regression-measurement
+   :javascript-post-call-uncollected-heap-delta
+   :diagnostic-regression-measurement
+   :retained-live-heap :not-established
+   :true-peak-heap :not-established
+   :whole-process-allocation :not-established
+   :lore-analyser-contribution :none}
   :status :passed}
 
  :memory-and-token
@@ -968,15 +1225,49 @@
    :authentication-passes-per-encode 1
    :authentication-passes-per-decode 1
    :public-relationship-continuation-decodes-per-request 1
-   :framing-growth :linear}}
+  :framing-growth :linear}}
+
+ :retained-live-heap-gate
+ {:report "formal/verification/retained-live-heap.edn"
+  :runner "formal/smoke/clj/run-retained-heap"
+  :fixture
+  {:backend :datascript
+   :permission-shape :recursive-chain
+   :result-count 4000
+   :page-size 25
+   :trials 5
+   :paired-order :alternating
+   :measurement :post-full-gc-live-heap-delta}
+  :required
+  {:minimum-positive-retained-signal-bytes 1048576
+   :maximum-generated-to-legacy-ratio 1.5
+   :identical-complete-result-digest true
+   :observed-full-gc-between-every-snapshot true
+   :explicit-baseline-keepalive true}
+  :observed
+  {:minimum-retained-delta-bytes 5146600
+   :maximum-retained-delta-bytes 5336312
+   :median-generated-to-legacy-ratio 1.0364070653981357
+   :maximum-generated-to-legacy-ratio 1.036843888729995
+   :positive-signal? true
+   :same-results? true}
+  :loophole-controls
+  [:seed-and-client-kept-live-across-both-snapshots
+   :full-gc-collection-count-must-increase
+   :both-runtime-paths-warmed-before-measurement
+   :alternating-paired-order
+   :one-mibibyte-positive-signal-floor
+   :complete-ordered-result-digest-equality]
+  :qualification
+  :host-specific-post-full-gc-retained-live-heap-regression-not-peak-heap-rss-portable-sla-or-asymptotic-proof
+  :status :passed}
 
  :release-performance-evaluation
  {:dimensions
   {:retained-live-heap
-   {:status :not-established
+   {:status :passed
     :release-blocking true
-    :reason
-    :gc-stabilized-micro-measurement-is-noise-dominated-and-not-a-portable-heap-bound}
+    :source :retained-live-heap-gate}
    :entry-weight
    {:status :passed
     :source :runtime-defaults-and-weighted-store-regressions}
@@ -985,7 +1276,18 @@
     :source :cross-backend-managed-proof}
    :throughput
    {:status :passed
-    :source :final-heavy-run}
+    :source
+    [:verified-authority-backward-pagination
+     :verified-authority-shared-subgraph-cache]
+    :release-blocking true}
+   :page-bounded-pagination-work
+   {:status :passed
+    :source :verified-authority-backward-pagination
+    :release-blocking true}
+   :shared-subgraph-cache-latency
+   {:status :passed
+    :source :verified-authority-shared-subgraph-cache
+    :release-blocking true}
    :verification-time
    {:status :passed
     :source :formal-pipeline}
@@ -1004,11 +1306,13 @@
    :entry-weight
    :proof-operations
    :throughput
+   :page-bounded-pagination-work
+   :shared-subgraph-cache-latency
    :verification-time
    :generated-artifact-size
    :benchmark-noise]
-  :all-required-passed? false
-  :release-cutover :refused}
+  :all-required-passed? true
+  :release-cutover :passed}
 
  :shadow-rollout
  {:unexplained-differences-max 0
@@ -1031,28 +1335,28 @@
   :maximum-verified-to-legacy-retained-heap-ratio 1.5}
 
  :final-heavy-run
- {:date "2026-08-03"
+ {:date "2026-08-05"
   :command
-  "clj-nrepl-eval -p <fresh-dev-test-port> --timeout 1200000 \"(do (require 'eacl.bench.pagination-test :reload) (clojure.test/run-tests 'eacl.bench.pagination-test))\""
-  :result {:tests 9
-           :assertions 3403
+  "clj-nrepl-eval -p <fresh-formal-smoke-port> --timeout 1800000 \"(do (require 'eacl.formal.verified-authority-suite :reload) (eacl.formal.verified-authority-suite/run-heavy!))\""
+  :result {:tests 17
+           :assertions 4057
            :failures 0
            :errors 0}
-  :status :current-generation-cache-passed
+  :status :verified-authority-all-backends-passed
   :multipath-page
-  {:first-page-median-ms 1.55
-   :first-page-p95-ms 11.50
-   :forward-early-ms-per-page 1.00
-   :forward-late-ms-per-page 0.98
-   :reverse-early-ms-per-page 1.49
-   :reverse-late-ms-per-page 1.43
-   :max-page-median-ms 1.82
+  {:first-page-median-ms 0.30
+   :first-page-p95-ms 0.67
+   :forward-early-ms-per-page 0.50
+   :forward-late-ms-per-page 0.52
+   :reverse-early-ms-per-page 0.48
+   :reverse-late-ms-per-page 0.50
+   :max-page-median-ms 0.62
    :thresholds-met true}
   :permission-check
   {:heavy-run
-   {:warm-median-microseconds 33.46
-    :completed-cache-hit-median-microseconds 11.63
-    :cache-hit-to-warm-ratio 0.3475791990436342
+   {:warm-median-microseconds 588.42
+    :completed-cache-hit-median-microseconds 15.13
+    :cache-hit-to-warm-ratio 0.02571360592773869
     :absolute-threshold-met true}
    :isolated-repeat
    {:datomic-cache-disabled-microseconds 33.54
@@ -1065,27 +1369,27 @@
   :cache-proof-churn
   {:unit :microseconds-per-read
    :unrelated
-   {:managed-current 44.8545
-    :legacy-content-proof 570.625
-    :global-invalidation 44.4585
-    :no-cache 22.3545}
+   {:managed-current 82.229
+    :legacy-content-proof 345.458
+    :global-invalidation 66.875
+    :no-cache 65.5625}
    :relevant
-   {:managed-current 458.25
-    :legacy-content-proof 370.437
-    :global-invalidation 213.4795
-    :no-cache 43.6875}}
+   {:managed-current 415.312
+    :legacy-content-proof 1359.0415
+    :global-invalidation 571.292
+    :no-cache 119.104}}
   :completed-hit-cost-breakdown-nanoseconds-per-operation
-  {:db 80.1806
-   :entid 1400.1518
-   :capture-basic-context 7063.2082
-   :current-cache 942.313
-   :cached-basic-authorization 3673.8034}
+  {:db 55.9524
+   :entid 1095.69
+   :capture-basic-context 6547.429
+   :current-cache 3863.1558
+   :cached-basic-authorization 6716.1384}
   :recursive-4000
-  {:continuation-ms 119.993042
-   :completed-hit-ms 69.047583
-   :replay-ms 3334.029209
-   :time-ratio 27.78518781947373
-   :work-ratio 77.46068766530416
+  {:continuation-ms 142.444125
+   :completed-hit-ms 66.909708
+   :replay-ms 3059.954667
+   :time-ratio 21.481789206820565
+   :work-ratio 80.53975
    :thresholds-met true}
   :cutover-decision
   {:current-cache-blocked false

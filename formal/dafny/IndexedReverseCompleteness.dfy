@@ -4541,6 +4541,14 @@ module IndexedReverseCompleteness {
         projection,
         intermediateBinding.eid
       );
+    MoreReverseStreamProjectsToContinuation(
+      objectBindings,
+      relationBindings,
+      relationships,
+      state,
+      stream,
+      intermediateBinding.eid
+    );
     assert ReverseContinuationSatisfied(
         objectBindings,
         relationBindings,

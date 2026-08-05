@@ -81,6 +81,14 @@
 (def backends
   [:datomic :datahike :datascript])
 
+(def required-generated-authority-operations
+  #{:recursive-routing-certificate
+    :cursor-bound-rebase
+    :indexed-traversal-compile
+    :indexed-traversal-initialize
+    :indexed-traversal-drive
+    :indexed-traversal-read})
+
 (defn- count-call!
   [calls backend operation]
   (swap! calls update-in [backend :generated-calls operation] (fnil inc 0)))
@@ -212,7 +220,7 @@
   []
   (run-suite!
    nonbenchmark-namespaces
-   #{:recursive-routing-certificate}))
+   required-generated-authority-operations))
 
 (defn run-heavy!
   []

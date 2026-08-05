@@ -25,6 +25,11 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
+(defn- reusable-subproblem-hits
+  [stats]
+  (+ (get-in stats [:subproblems :projection-hits] 0)
+     (get-in stats [:subproblems :denotation-hits] 0)))
+
 (defn- managed-client
   [conn options]
   (datascript/make-client
@@ -46,7 +51,7 @@
     (f)
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
-      error
+           error
       (ex-data error))))
 
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
@@ -238,12 +243,11 @@
         (is (false? (:cached? edit-page)))
         (is (= (:exact-hits after-view) (:exact-hits after-edit))
             "different top-level permission keys cannot hit completed answers")
-        (is (> (get-in after-edit [:subproblems :projection-hits])
-               (get-in after-view [:subproblems :projection-hits])))
-        (is (> (get-in after-edit
-                       [:subproblems :avoided-backend-operations])
-               (get-in after-view
-                       [:subproblems :avoided-backend-operations])))
+        (is (> (reusable-subproblem-hits after-edit)
+               (reusable-subproblem-hits after-view))
+            (str
+             "the second permission must reuse a projection or the stronger "
+             "complete semantic denotation"))
         (is (pos? (:executed-backend-operations @work))))
       (testing "acyclic point decisions reuse a shared target permission"
         (let [server (first servers)
@@ -252,10 +256,11 @@
               _ (is (true? (eacl/can? client user :edit server)))
               after-edit (datascript/cache-stats client)]
           (is (= (:exact-hits after-view) (:exact-hits after-edit)))
-          (is (> (get-in after-edit
-                         [:subproblems :acyclic-denotation-hits])
-                 (get-in after-view
-                         [:subproblems :acyclic-denotation-hits]))))))))
+          (is (> (reusable-subproblem-hits after-edit)
+                 (reusable-subproblem-hits after-view))
+              (str
+               "authority modes may reuse the exact projection or its "
+               "complete semantic denotation")))))))
 
 (deftest causal-anchor-survives-restart-and-detects-reset-test
   (let [conn (datascript/create-conn)

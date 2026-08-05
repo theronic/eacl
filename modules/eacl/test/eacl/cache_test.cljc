@@ -312,6 +312,38 @@
       (is (zero? (get-in (cache/current-cache-stats store)
                          [:subproblems :projection-hits]))))))
 
+(deftest completed-answer-bypass-still-shares-current-subproblems-test
+  (let [store (cache/current-cache)
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1
+                 :remember-answer? false}
+        top-level-calls (atom 0)
+        projection-calls (atom 0)
+        resolve
+        #(cache/resolve-current!
+          store context :same-top-level-key :decision integer?
+          (fn []
+            (swap! top-level-calls inc)
+            (:value
+             (subproblem/resolve-bound!
+              :projection :shared-projection {}
+              (fn []
+                (swap! projection-calls inc)
+                42)))))]
+    (is (= 42 (:value (resolve))))
+    (is (= 42 (:value (resolve))))
+    (is (= 2 @top-level-calls)
+        "remember-answer? false never reuses the completed answer")
+    (is (= 1 @projection-calls)
+        "the current-generation subproblem remains reusable")
+    (let [stats (cache/current-cache-stats store)]
+      (is (zero? (:exact-entries stats)))
+      (is (= 2 (:bypasses stats)))
+      (is (= 1 (get-in stats [:subproblems :projection-hits]))))))
+
 #?(:clj
    (deftest delayed-subproblem-publication-cannot-resurrect-expired-generation-test
      (let [store (cache/current-cache)

@@ -114,6 +114,22 @@ jobs:
                  :output-to \"target/formal/cljs-smoke.js\"}))"
           node target/formal/cljs-smoke.js
 
+      - name: Gate generated JavaScript indexed traversal scaling
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.indexed-traversal-benchmark
+                 :target :nodejs
+                 :optimizations :none
+                 :output-dir
+                 \"target/formal/cljs-indexed-traversal-out\"
+                 :output-to
+                 \"target/formal/cljs-indexed-traversal.js\"}))"
+          node target/formal/cljs-indexed-traversal.js
+
       - name: Run complete verified-authority suites
         run: |
           sh bin/ci-nrepl-eval 7788 \
@@ -168,6 +184,35 @@ jobs:
                  :output-to
                  \"target/formal/consistency-boundary-cljs.js\"}))"
           node target/formal/consistency-boundary-cljs.js
+
+      - name: Gate recoverable cursor rebase work and host resources
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require
+                'eacl.formal.cursor-rebase-benchmark
+                :reload)
+               (let [result
+                     (eacl.formal.cursor-rebase-benchmark/run-gate!)]
+                 (when (= :failed (:status result))
+                   (throw
+                    (ex-info
+                     \"generated JVM cursor rebase resource gate regressed\"
+                     result)))
+                 (:summary result)))"
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.cursor-rebase-benchmark
+                 :target :nodejs
+                 :optimizations :none
+                 :output-dir
+                 \"target/formal/cljs-cursor-rebase-benchmark-out\"
+                 :output-to
+                 \"target/formal/cljs-cursor-rebase-benchmark.js\"}))"
+          node --expose-gc target/formal/cljs-cursor-rebase-benchmark.js
 
       - name: Gate routing-certificate logical work and JVM allocation
         run: |

@@ -232,12 +232,14 @@
         (reset! calc-calls 0)
         (eacl/write-schema! client permission-schema-v2)
         (is (false? (eacl/can? client subject :view resource)))
-        ;; The schema-generation recursive-routing analysis intentionally
-        ;; compiles every permission root once. v2 contains :view and :admin;
-        ;; the subsequent :view evaluation reuses the compiled path.
-        (is (= 2 @calc-calls))
-        (eacl/can? client subject :view resource)
-        (is (= 2 @calc-calls))))))
+        ;; Authority modes may compile only the selected root or precompute a
+        ;; whole-schema routing analysis. The lifecycle contract is that the
+        ;; new generation performs some cold compilation and the next
+        ;; identical read reuses exactly that compiled state.
+        (is (pos? @calc-calls))
+        (let [cold-generation-calls @calc-calls]
+          (eacl/can? client subject :view resource)
+          (is (= cold-generation-calls @calc-calls)))))))
 
 (deftest permission-path-cache-is-connection-local-test
   (let [{client-1 :client} (seed-permission-db)

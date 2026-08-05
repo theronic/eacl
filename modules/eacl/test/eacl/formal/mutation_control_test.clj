@@ -1071,6 +1071,89 @@
     (and (= :exact-snapshot-unavailable correct)
          (= :unsupported-head-barrier mutant))))
 
+(defn- cursor-rebase-wrong-ordinal-killed?
+  []
+  (let [values [11 17 23 29]
+        bound-eid 23
+        correct-ordinal 2
+        mutant-ordinal 1]
+    (and (= bound-eid (nth values correct-ordinal))
+         (not= bound-eid (nth values mutant-ordinal)))))
+
+(defn- cursor-rebase-false-restart-killed?
+  []
+  (let [values [11 17 23 29]
+        bound-eid 23
+        correct (if (some #{bound-eid} values) :rebased :restarted)
+        mutant :restarted]
+    (and (= :rebased correct)
+         (not= correct mutant))))
+
+(defn- cursor-rebase-skips-middle-chunk-killed?
+  []
+  (let [chunk-size 4096
+        values (vec (range (+ (* 2 chunk-size) 1)))
+        bound-eid chunk-size
+        correct (first (keep-indexed
+                        #(when (= bound-eid %2) %1)
+                        values))
+        mutant-values
+        (into
+         (subvec values 0 chunk-size)
+         (subvec values (* 2 chunk-size)))
+        mutant (first (keep-indexed
+                       #(when (= bound-eid %2) %1)
+                       mutant-values))]
+    (and (= chunk-size correct)
+         (nil? mutant))))
+
+(defn- cursor-rebase-drops-global-offset-killed?
+  []
+  (let [chunk-size 4096
+        values (vec (range (inc chunk-size)))
+        bound-eid chunk-size
+        local-ordinal 0
+        correct-ordinal (+ chunk-size local-ordinal)
+        mutant-ordinal local-ordinal]
+    (and (= bound-eid (nth values correct-ordinal))
+         (not= bound-eid (nth values mutant-ordinal)))))
+
+(defn- indexed-scan-validator-restores-pairwise-runtime-killed?
+  []
+  (let [source
+        (slurp
+         (repo/file "formal" "dafny" "IndexedTraversal.dfy"))]
+    (and
+     (.contains source "lemma StrictlyIncreasingIffAdjacent")
+     (.contains
+      source
+      "if !AdjacentStrictlyIncreasing(response.values) {")
+     (not
+      (.contains
+       source
+       "if !StrictlyIncreasing(response.values) {")))))
+
+(defn- generated-target-collections-restore-quadratic-killed?
+  []
+  (let [java-set
+        (slurp
+         (repo/file
+          "formal" "runtime" "java" "dafny" "DafnySet.java"))
+        javascript-set
+        (slurp
+         (repo/file "formal" "runtime" "js" "dafny-set.js"))
+        javascript-sequence
+        (slurp
+         (repo/file "formal" "runtime" "js" "dafny-seq.js"))]
+    (and
+     (.contains java-set "PersistentHashSet")
+     (.contains javascript-set "Immutable.Map")
+     (.contains javascript-sequence "super();")
+     (.contains
+      javascript-sequence
+      "return target._logicalLength")
+     (not (.contains javascript-sequence "super(length);")))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1226,7 +1309,19 @@
    :consistency-exact-anchor-ignored
    consistency-exact-anchor-ignored-killed?
    :consistency-unsupported-exact-becomes-generic
-   consistency-unsupported-exact-becomes-generic-killed?})
+   consistency-unsupported-exact-becomes-generic-killed?
+   :cursor-rebase-wrong-ordinal
+   cursor-rebase-wrong-ordinal-killed?
+   :cursor-rebase-false-restart
+   cursor-rebase-false-restart-killed?
+   :cursor-rebase-skips-middle-chunk
+   cursor-rebase-skips-middle-chunk-killed?
+   :cursor-rebase-drops-global-offset
+   cursor-rebase-drops-global-offset-killed?
+   :indexed-scan-validator-restores-pairwise-runtime
+   indexed-scan-validator-restores-pairwise-runtime-killed?
+   :generated-target-collections-restore-quadratic
+   generated-target-collections-restore-quadratic-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

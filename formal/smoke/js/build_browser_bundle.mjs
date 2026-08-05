@@ -31,6 +31,7 @@ globalThis.EaclFormal = {
   },
   bundle: true,
   format: "iife",
+  minify: true,
   platform: "browser",
   target: ["es2020"],
   outfile: path.join(outputDirectory, "EaclKernel.browser.js"),
