@@ -23,6 +23,11 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
       - name: Cache locked formal tools and JavaScript dependencies
         uses: actions/cache@v4
         with:
