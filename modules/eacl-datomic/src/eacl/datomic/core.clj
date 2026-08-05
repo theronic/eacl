@@ -2084,7 +2084,7 @@
     (with-client-schema-read conn schema-lock schema-state
       (spiceomic-can? conn (request-cache-opts opts cache?)
                       subject permission resource
-                      (or consistency consistency/local-snapshot))))
+                      consistency)))
 
   (read-schema [_]
     (with-client-schema-read conn schema-lock schema-state

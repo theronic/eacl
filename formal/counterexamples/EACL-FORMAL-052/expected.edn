@@ -1,0 +1,8 @@
+{:public-result
+ {:exception-type :eacl/unsupported-consistency
+  :consistency false}
+ :formal-normalization :ConsistencyRejected
+ :omitted-consistency-default :local-snapshot
+ :nil-consistency-default :local-snapshot
+ :positional-and-map-arities-consistent true
+ :backends [:datomic :datahike :datascript]}

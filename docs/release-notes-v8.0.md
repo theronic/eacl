@@ -296,6 +296,15 @@ with the final v8 formats.
   result preservation and one root classification for authoritative calls; a
   public-client regression observes the same bound. The 1,000 µs ceiling was
   not relaxed.
+- **Map-form `can?` weakened malformed false consistency to local snapshot
+  (EACL-FORMAL-052).** The Datomic, Datahike, and DataScript records used
+  `(or consistency :local-snapshot)` before shared descriptor validation.
+  Omitted and nil values were intended to default, but explicit `false` was
+  also falsey and therefore silently became a valid local-snapshot request.
+  All three map arities now forward the raw value: omission/nil still default
+  in the descriptor, while false produces `:eacl/unsupported-consistency`.
+  Dafny retains those public-input classes and cross-backend regressions close
+  the source refinement.
 
 ## Formal verification
 
@@ -310,7 +319,7 @@ with the final v8 formats.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 9,771 proof efforts across 25 source-project
+The locked Dafny run completes 9,775 proof efforts across 25 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes

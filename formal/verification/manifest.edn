@@ -79,13 +79,13 @@
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
   {:status :passed
-   :verified-obligations 14
+   :verified-obligations 18
    :source "formal/dafny/ConsistencyDecision.dfy"
    :report "formal/verification/consistency-decision.edn"
    :integration-status
    :generated-java-and-javascript-production-boundaries-routed
    :claim
-   :conditional-finite-selection-decision-and-logical-call-bound}
+   :conditional-public-normalization-finite-selection-decision-and-logical-call-bound}
   :cache-decision-kernel
   {:status :passed
    :verified-obligations 17
@@ -128,7 +128,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9771
+   :verified-obligations 9775
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :all-defined-permission-roots-and-public-operations-generated-authority-routed
@@ -174,7 +174,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-051
+ {:latest :EACL-FORMAL-052
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -225,11 +225,12 @@
           :EACL-FORMAL-048
           :EACL-FORMAL-049
           :EACL-FORMAL-050
-          :EACL-FORMAL-051]}
+          :EACL-FORMAL-051
+          :EACL-FORMAL-052]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 51}
+  :entries 52}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

@@ -142,6 +142,17 @@ no verified-release claim existed.
   resource type to equal the rule head resource type. The corrected semantics
   verifies the managed least-fixed-point frame.
 
+### EACL-FORMAL-052 — map `can?` false-consistency weakening
+
+- **Affected:** Datomic, Datahike, and DataScript public map-form `can?`.
+- **Impact:** an explicit malformed `false` consistency value silently ran as
+  `:local-snapshot`, while the positional arity and shared descriptor rejected
+  the same value.
+- **Correction:** public map arities forward the raw value to the descriptor.
+  Only omission and nil default; false yields
+  `:eacl/unsupported-consistency`. Dafny models the public input distinction,
+  and one regression per backend checks the production boundary.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

@@ -138,9 +138,9 @@
    {:cljs-generated-smoke
     {:tests 58 :assertions 10992 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 158 :assertions 4549 :failures 0 :errors 0}
+    {:tests 159 :assertions 4551 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 512 :assertions 28132 :failures 0 :errors 0}}
+    {:tests 516 :assertions 28177 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -210,15 +210,15 @@
 
  :formal-pipeline
  {:scope :all-25-dafny-modules
-  :proof-efforts 9771
-  :last-observed-local-wall-seconds 1163
+  :proof-efforts 9775
+  :last-observed-local-wall-seconds 1169
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3726512681
+  :total-observed-resource-count 3726567959
   :maximum-observed-proof-effort
   {:source "IndexedForwardCompleteness.dfy"
    :display-name

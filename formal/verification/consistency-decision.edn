@@ -3,6 +3,7 @@
  :scope
  {:included
   [:capability-and-writer-authority-plan-selection
+   :public-map-consistency-defaulting-and-rejection
    :selection-presence-vs-malformed-adapter-distinction
    :same-source-scope-rejection
    :at-least-anchor-postcondition
@@ -19,13 +20,17 @@
    :worst-case-wall-time]}
  :formal
  {:source "formal/dafny/ConsistencyDecision.dfy"
-  :verified-obligations 14
+  :verified-obligations 18
   :definitions
-  [ConsistencyDecision.SelectionPlanDecision
+  [ConsistencyDecision.NormalizePublicConsistency
+   ConsistencyDecision.SelectionPlanDecision
    ConsistencyDecision.SelectedSnapshotDecision
    ConsistencyDecision.SuccessfulSelectionWork]
   :lemmas
-  [ConsistencyDecision.SuccessfulSelectionLogicalWorkIsConstantBounded
+  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToLocal
+   ConsistencyDecision.FalseConsistencyCannotSilentlyDefault
+   ConsistencyDecision.ExplicitConsistencyModeIsPreserved
+   ConsistencyDecision.SuccessfulSelectionLogicalWorkIsConstantBounded
    ConsistencyDecision.CapturedCurrentNeedsNoPostSelectionDecision
    ConsistencyDecision.SelectedCurrentHasOneSelectionAndValidation
    ConsistencyDecision.CausalSelectionPlanRequiresManagedAuthority
@@ -36,7 +41,14 @@
    ConsistencyDecision.CurrentSelectionDoesNotRequireHistoricalAnchor]}
  :refinement-map
  {:formal-input-to-production-observation
-  {:mode
+  {:public-map-consistency
+   {:sources
+    [eacl.datomic.core/Spiceomic.can?
+     eacl.datahike.core/DatahikeAuthorization.can?
+     eacl.datascript.core/DataScriptAuthorization.can?]
+    :contract
+    :pass-the-unmodified-map-value-to-the-shared-descriptor}
+   :mode
    {:source
     eacl.spicedb.consistency/descriptor
     :field :mode}
@@ -156,7 +168,16 @@
    :scenarios 24
    :selection-shapes
    [:absent :malformed :identical :same-scope-anchor-pass
-    :same-scope-anchor-fail :different-scope]}}
+    :same-scope-anchor-fail :different-scope]}
+  :public-map-input-refinement-evidence
+  {:counterexample :EACL-FORMAL-052
+   :defaultable-inputs [:omitted :nil]
+   :malformed-false :eacl/unsupported-consistency
+   :backends [:datomic :datahike :datascript]
+   :regressions
+   [eacl.datomic.consistency-v3-test/map-can-rejects-malformed-consistency-test
+    eacl.datahike.consistency-v3-test/map-can-rejects-malformed-consistency-test
+    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test]}}
  :model-fidelity-regression
  {:finding
   :an-early-two-boolean-draft-conflated-absent-exact-selection-with-a-present-malformed-value
@@ -165,9 +186,24 @@
    :present-malformed-selection :invalid-backend-adapter}
   :fix
   :model-selection-presence-and-adapter-validity-as-separate-observations
-  :controls
+ :controls
   [:consistency-malformed-exact-treated-absent
    :malformed-present-exact-selection-is-invalid-adapter]}
+ :public-input-fidelity-regression
+ {:counterexample :EACL-FORMAL-052
+  :finding
+  :the-public-map-can-arity-coerced-explicit-false-to-local-snapshot-before-the-formal-descriptor-boundary
+  :production-contract
+  {:omitted :local-snapshot
+   :nil :local-snapshot
+   :false :eacl/unsupported-consistency
+   :explicit-valid-mode :preserved}
+  :fix
+  :forward-the-raw-public-map-value-and-let-the-shared-descriptor-own-defaulting-and-rejection
+  :formal-controls
+  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToLocal
+   ConsistencyDecision.FalseConsistencyCannotSilentlyDefault
+   ConsistencyDecision.ExplicitConsistencyModeIsPreserved]}
  :resource-model-fidelity-regression
  {:finding
   :the-first-successful-work-datatype-omitted-direct-select-current-while-modeling-the-optimized-captured-current-path

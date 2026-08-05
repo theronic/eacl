@@ -42,6 +42,21 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(deftest map-can-rejects-malformed-consistency-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [authorization (client conn)
+          _ (seed! conn authorization)
+          error
+          (error-data
+           #(eacl/can?
+             authorization
+             {:subject user
+              :permission :view
+              :resource document
+              :consistency false}))]
+      (is (= :eacl/unsupported-consistency (:type error)))
+      (is (false? (:consistency error))))))
+
 (deftest local-authoritative-and-targeted-sync-arities-test
   (with-mem-conn [conn schema/v7-schema]
     (let [authorization (client conn)

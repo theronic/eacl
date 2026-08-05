@@ -1,0 +1,11 @@
+{:operation :can?
+ :arity :map
+ :request
+ {:subject {:type :user :id "user"}
+  :permission :view
+  :resource {:type :document :id "document"}
+  :consistency false}
+ :before
+ {:forwarded-consistency :local-snapshot
+  :result-kind :authorization-boolean}
+ :model-input :ConsistencyFalse}

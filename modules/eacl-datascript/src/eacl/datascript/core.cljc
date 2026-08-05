@@ -642,7 +642,7 @@
                      (assoc opts :completed-cache-request?
                             (request-cache-enabled? cache?))
                      subject permission resource
-                     (or consistency consistency/local-snapshot)))
+                     consistency))
 
   (read-schema [_]
     (schema/read-schema (ds/db conn)))

@@ -544,6 +544,16 @@ generated-code compiler out of the trusted computing base.
   from 508.292 to 483.625 µs (0.951465x). The subsequent complete local heavy
   suite measured a 431.8545 µs warm aggregate, 434.79 µs cold, and 14.42 µs
   for a completed-cache hit. The 1,000 µs ceiling remains unchanged.
+- EACL-FORMAL-052 was found by tracing the public `can?` consistency value
+  into the verified selection boundary. All three backend map arities used
+  `(or consistency :local-snapshot)`, so explicit malformed `false` bypassed
+  descriptor rejection and ran as local snapshot; positional `can?` rejected
+  it. The map arities now forward the raw value. The shared descriptor remains
+  the single owner of omission/nil defaulting and malformed-value rejection.
+  Dafny distinguishes omitted, nil, valid, false, and other malformed public
+  inputs and proves that false rejects and valid modes are preserved.
+  Datomic, Datahike, and DataScript public regressions failed before and pass
+  after the source fix.
 
 ## Public wording audit
 
@@ -562,7 +572,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,771 proof efforts across 25
+- Clean checksum-locked Dafny cache: 9,775 proof efforts across 25
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -575,16 +585,16 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 51 minimized entries replayed by 53 tests and 11,233
+- Counterexample corpus: 52 minimized entries replayed by 54 tests and 11,272
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 512 tests, 28,132 assertions,
+- Forced-authority non-benchmark CLJ suite: 516 tests, 28,177 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward
   pagination, count retention, and shared-subgraph cache gates pass.
-- Forced-authority DataScript CLJS suite: 158 tests, 4,549 assertions, zero
+- Forced-authority DataScript CLJS suite: 159 tests, 4,551 assertions, zero
   failures/errors.
 - Generated Java production-kernel namespace: 36 tests, 10,411 assertions,
   zero failures/errors.
@@ -623,9 +633,9 @@ that the complete v8.0 engine is formally verified.
   whole-process allocation, CPU time, or asymptotic bounds.
 - The fail-closed performance evaluator independently checks entry weight,
   proof operations, throughput, verifier time, generated artifact bytes, and
-  benchmark-noise rules. The post-build artifact gate measured 2,072,798 Java
-  source bytes, 1,830,689 Java class bytes, 921,975
-  JavaScript-with-runtime bytes, and a 576,520-byte browser bundle against
+  benchmark-noise rules. The post-build artifact gate measured 2,085,076 Java
+  source bytes, 1,844,121 Java class bytes, 927,028
+  JavaScript-with-runtime bytes, and a 579,139-byte browser bundle against
   reviewed baselines of 1,749,970, 1,597,574, 766,357, and 845,730 bytes,
   respectively, with a 125-percent ceiling. Those dimensions pass. The
   retained-live-heap gate also passes on an alternating five-trial,
@@ -674,10 +684,10 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 25-module
-  replay passed 9,771 proof efforts and consumed 3,726,512,681 deterministic
+  replay passed 9,775 proof efforts and consumed 3,726,567,959 deterministic
   Z3 resource units; its maximum effort used 33,547,591 of the
   50,000,000-unit limit. The generated resource-directory birth time through
-  aggregate-report modification time was 1,163 seconds. Explicit
+  aggregate-report modification time was 1,169 seconds. Explicit
   unfolding reduced the
   indexed-driver maximum from 161,654,668 to 10,270,077 resource units
   (15.74x). These are solver-cost gates, deliberately separate from production

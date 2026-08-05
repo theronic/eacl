@@ -106,7 +106,9 @@
     :EACL-FORMAL-050
     eacl.formal.state-trace-differential-test/generated-can-reuses-the-public-root-classification
     :EACL-FORMAL-051
-    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test})
+    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    :EACL-FORMAL-052
+    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test})
 
 (defn- read-edn
   [path]
@@ -185,8 +187,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-051 (:latest revision)))
-    (is (= 51 (count entries)))))
+    (is (= :EACL-FORMAL-052 (:latest revision)))
+    (is (= 52 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

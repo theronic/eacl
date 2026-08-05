@@ -7,6 +7,53 @@ module ConsistencyDecision {
     | AtLeastAsFresh
     | AtExactSnapshot
 
+  datatype PublicConsistencyInput =
+    | ConsistencyOmitted
+    | ConsistencyNil
+    | ConsistencyMode(mode: SnapshotConsistencyMode)
+    | ConsistencyFalse
+    | ConsistencyMalformed
+
+  datatype PublicConsistencyOutcome =
+    | ConsistencyAccepted(mode: SnapshotConsistencyMode)
+    | ConsistencyRejected
+
+  function NormalizePublicConsistency(
+    input: PublicConsistencyInput
+  ): PublicConsistencyOutcome {
+    match input
+    case ConsistencyOmitted => ConsistencyAccepted(LocalSnapshot)
+    case ConsistencyNil => ConsistencyAccepted(LocalSnapshot)
+    case ConsistencyMode(mode) => ConsistencyAccepted(mode)
+    case ConsistencyFalse => ConsistencyRejected
+    case ConsistencyMalformed => ConsistencyRejected
+  }
+
+  lemma OnlyOmittedOrNilConsistencyDefaultsToLocal(
+    input: PublicConsistencyInput
+  )
+    ensures NormalizePublicConsistency(input) ==
+            ConsistencyAccepted(LocalSnapshot) ==>
+              input.ConsistencyOmitted? ||
+              input.ConsistencyNil? ||
+              (input.ConsistencyMode? && input.mode.LocalSnapshot?)
+  {
+  }
+
+  lemma FalseConsistencyCannotSilentlyDefault()
+    ensures NormalizePublicConsistency(ConsistencyFalse) ==
+            ConsistencyRejected
+  {
+  }
+
+  lemma ExplicitConsistencyModeIsPreserved(
+    mode: SnapshotConsistencyMode
+  )
+    ensures NormalizePublicConsistency(ConsistencyMode(mode)) ==
+            ConsistencyAccepted(mode)
+  {
+  }
+
   datatype SelectionAction =
     | SelectCurrent
     | SelectAuthoritative

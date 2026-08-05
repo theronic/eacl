@@ -47,6 +47,21 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(deftest map-can-rejects-malformed-consistency-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        _ (seed! conn authorization)
+        error
+        (error-data
+         #(eacl/can?
+           authorization
+           {:subject user
+            :permission :view
+            :resource document
+            :consistency false}))]
+    (is (= :eacl/unsupported-consistency (:type error)))
+    (is (false? (:consistency error)))))
+
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
   (let [conn (datahike/create-conn)
         authorization (client conn)]

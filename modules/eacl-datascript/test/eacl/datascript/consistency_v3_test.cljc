@@ -54,6 +54,21 @@
            error
       (ex-data error))))
 
+(deftest map-can-rejects-malformed-consistency-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})
+        _ (seed! conn client)
+        error
+        (error-data
+         #(eacl/can?
+           client
+           {:subject user
+            :permission :view
+            :resource document
+            :consistency false}))]
+    (is (= :eacl/unsupported-consistency (:type error)))
+    (is (false? (:consistency error)))))
+
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})]

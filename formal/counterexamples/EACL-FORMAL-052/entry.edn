@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-052
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "public-can-map-arity/consistency-false/source-to-model-audit"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit 484e41d913952d41ef329ae2e32c8018e7e0902c"]
+ :affected-backends [:datomic :datahike :datascript]
+ :root-cause
+ "Every backend's public map-form can? used (or consistency :local-snapshot) before descriptor validation. Because false is falsey in Clojure, the malformed explicit value false was silently rewritten to local snapshot even though positional can? and the shared descriptor rejected it."
+ :fix
+ "Pass the raw map consistency value to the shared descriptor. The descriptor continues to default omitted or nil values to local snapshot and rejects false as :eacl/unsupported-consistency. Cross-backend regressions cover the public map arity, and Dafny models the public input classes and proves that only omitted/nil/local values normalize to local snapshot while false is rejected."
+ :closing-evidence
+ ["ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToLocal"
+  "ConsistencyDecision.FalseConsistencyCannotSilentlyDefault"
+  "ConsistencyDecision.ExplicitConsistencyModeIsPreserved"
+  "eacl.datomic.consistency-v3-test/map-can-rejects-malformed-consistency-test"
+  "eacl.datahike.consistency-v3-test/map-can-rejects-malformed-consistency-test"
+  "eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test"]}
