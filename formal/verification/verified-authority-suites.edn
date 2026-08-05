@@ -3,12 +3,18 @@
  :status :passed
  :mode :verified-authoritative
  :execution :persistent-nrepl
+ :ci-process-isolation
+ {:generated-boundary-jvm :fresh-heap-bounded
+  :runtime-performance-jvm :fresh-heap-bounded
+  :generated-resource-gate-jvm :fresh-heap-bounded
+  :maximum-heap-bytes 1073741824
+  :completed-jvms :terminated}
  :clj-nonbenchmark
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 507
-  :assertions 27556
+  :tests 508
+  :assertions 27562
   :failures 0
   :errors 0
   :injected-clients

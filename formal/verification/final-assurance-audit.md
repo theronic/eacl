@@ -545,7 +545,7 @@ that the complete v8.0 engine is formally verified.
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 507 tests, 27,556 assertions,
+- Forced-authority non-benchmark CLJ suite: 508 tests, 27,562 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward

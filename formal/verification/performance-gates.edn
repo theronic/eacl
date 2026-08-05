@@ -140,7 +140,7 @@
     :cljs-verified-authority
     {:tests 158 :assertions 4549 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 507 :assertions 27556 :failures 0 :errors 0}}
+    {:tests 508 :assertions 27562 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}

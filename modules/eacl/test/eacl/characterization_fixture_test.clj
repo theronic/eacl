@@ -48,6 +48,35 @@
     (is (str/includes? workflow "cljs.build.api"))
     (is (not (str/includes? workflow "(cljs/-main")))))
 
+(deftest formal-ci-isolates-and-stops-performance-nrepls-test
+  (let [workflow
+        (slurp (repo/file ".github" "workflows" "formal.yml"))
+        index
+        (fn [needle]
+          (.indexOf workflow needle))
+        ordered-stages
+        ["Start heap-bounded generated-boundary nREPL"
+         "Gate generated JavaScript indexed traversal scaling"
+         "Restart heap-bounded nREPL for runtime performance suites"
+         "eacl.formal.verified-authority-suite/run-heavy!"
+         "eacl.formal.verified-authority-suite/run-nonbenchmark!"
+         "Restart heap-bounded nREPL for generated resource gates"
+         "Gate generated consistency-boundary overhead"
+         "Stop CI nREPL"]]
+    (is (= 3
+           (count
+            (re-seq
+             #"JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m'"
+             workflow))))
+    (is (str/includes? workflow
+                       "echo \"$!\" > target/formal/ci-nrepl.pid"))
+    (is (str/includes? workflow "if: always()"))
+    (is (str/includes?
+         workflow
+         "kill -KILL \"$nrepl_pid\" 2>/dev/null || true"))
+    (is (every? (comp not neg? index) ordered-stages))
+    (is (apply < (map index ordered-stages)))))
+
 (defn- source-definitions
   [path]
   (into
