@@ -140,7 +140,7 @@
     :cljs-verified-authority
     {:tests 158 :assertions 4549 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 510 :assertions 27817 :failures 0 :errors 0}}
+    {:tests 511 :assertions 28048 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -460,6 +460,19 @@
   {:warm-baseline-microseconds 268
    :warm-max-microseconds 1000
    :minimum-warm-operations-per-second 1000
+   :steady-state-harness
+   {:counterexample :EACL-FORMAL-050
+    :warmup-calls 15000
+    :measurement-batches 3
+    :samples-per-batch 5000
+    :aggregation :median-of-batch-medians
+    :threshold-relaxed false
+    :last-local-forced-authority
+    {:batch-medians-microseconds [429.083 431.208 430.208]
+     :median-microseconds 430.208
+     :cold-median-microseconds 435.44
+     :completed-cache-hit-median-microseconds 14.79
+     :status :passed}}
    :cold-baseline-microseconds 268
    :cold-max-microseconds 1500
    :completed-cache-baseline-microseconds 1616

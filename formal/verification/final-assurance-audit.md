@@ -526,6 +526,15 @@ generated-code compiler out of the trusted computing base.
   fourfold range wholly inside the multi-chunk domain, reject invalid scaling
   domains, and run the JVM gate in a fresh bounded process. The one-million
   identity JVM recovery and every existing resource ceiling remain unchanged.
+- EACL-FORMAL-050 found that the warm `can?` gate used only 2,000 warmup calls
+  and one measured batch for the deep generated-authority call graph. A shared
+  Actions runner measured 1,004.339 µs against the unchanged 1,000 µs ceiling,
+  while cold and completed-cache paths passed and a fresh local forced-
+  authority run measured 440.42 µs. The gate now warms 15,000 calls and uses
+  the median of three 5,000-call batch medians. The latency ceiling is
+  unchanged; the complete local forced-authority heavy suite measured 430.208
+  µs warm, 435.44 µs cold, and 14.79 µs for a completed-cache hit, and sustained
+  slow service across the batches still fails.
 
 ## Public wording audit
 
@@ -557,11 +566,11 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 49 minimized entries replayed by 51 tests and 10,935
+- Counterexample corpus: 50 minimized entries replayed by 52 tests and 11,158
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 510 tests, 27,817 assertions,
+- Forced-authority non-benchmark CLJ suite: 511 tests, 28,048 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward

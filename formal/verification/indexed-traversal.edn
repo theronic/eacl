@@ -265,7 +265,7 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :clj-backends [:datomic :datahike :datascript]
    :cljs-backends [:datascript]
-   :nonbenchmark {:tests 510 :assertions 27817 :failures 0 :errors 0}
+   :nonbenchmark {:tests 511 :assertions 28048 :failures 0 :errors 0}
    :heavy {:tests 17 :assertions 4057 :failures 0 :errors 0}
    :cljs {:tests 158 :assertions 4549 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true

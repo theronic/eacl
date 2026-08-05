@@ -281,6 +281,12 @@ with the final v8 formats.
   domains, reject invalid fixtures, and isolate the JVM gate from compiler
   history. No ceiling was relaxed, and the one-million-identity recovery gate
   remains in force.
+- **The warm permission gate measured transitional generated code
+  (EACL-FORMAL-050).** Its 2,000-call warmup did not reliably move the complete
+  generated-authority call graph beyond HotSpot tiered compilation, and one
+  sample batch could decide the release gate. The gate now warms 15,000 calls
+  and uses the median of three 5,000-call batch medians. The 1,000 µs ceiling
+  is unchanged; sustained latency regressions still fail.
 
 ## Formal verification
 

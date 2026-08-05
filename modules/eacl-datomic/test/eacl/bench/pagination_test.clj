@@ -1087,6 +1087,9 @@
 (def ^:private can-warm-threshold-us 1000)
 (def ^:private can-cold-threshold-us 1500)
 (def ^:private can-completed-cache-threshold-us 1000)
+(def ^:private can-warmup-calls 15000)
+(def ^:private can-warm-measurement-batches 3)
+(def ^:private can-warm-samples-per-batch 5000)
 
 (deftest ^:benchmark permission-check-benchmark
   (testing "can? throughput, warm and cold permission paths"
@@ -1114,10 +1117,24 @@
                       :remember-answers true}})
             live-check #(eacl/can? live-acl subject :view server)]
 
-        (run-timed 2000 check)                              ; warm JIT + caches
+        ;; HotSpot's highest tier is not guaranteed to compile this generated
+        ;; call graph after only 2,000 entries. Measure steady-state service
+        ;; time after a C2-sized warmup, then aggregate independent batch
+        ;; medians so one compilation/GC transition cannot decide the gate.
+        (run-timed can-warmup-calls check)
 
-        (let [warm-us (* 1000.0 (median (run-timed 5000 check)))]
-          (println (format "can? warm: median=%.2fus" warm-us))
+        (let [batch-medians-ms
+              (mapv
+               (fn [_]
+                 (median
+                  (run-timed can-warm-samples-per-batch check)))
+               (range can-warm-measurement-batches))
+              warm-us (* 1000.0 (median batch-medians-ms))]
+          (println
+           (format
+            "can? warm: median=%.2fus, batch-medians-us=%s"
+            warm-us
+            (pr-str (mapv #(* 1000.0 %) batch-medians-ms))))
           (is (< warm-us can-warm-threshold-us)
               (format "REGRESSION: warm can? median %.2fus exceeds %dus" warm-us can-warm-threshold-us)))
 

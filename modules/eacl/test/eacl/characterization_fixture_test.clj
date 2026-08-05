@@ -404,6 +404,23 @@
                    [:multipath-page :max-page-median-baseline-ms])
            (get-in legacy-runtime
                    [:multipath-page :max-page-median-max-ms])))
+    (let [harness
+          (get-in legacy-runtime
+                  [:permission-check :steady-state-harness])]
+      (is (= :EACL-FORMAL-050 (:counterexample harness)))
+      (is (= 15000 (:warmup-calls harness)))
+      (is (= 3 (:measurement-batches harness)))
+      (is (= 5000 (:samples-per-batch harness)))
+      (is (= :median-of-batch-medians (:aggregation harness)))
+      (is (false? (:threshold-relaxed harness)))
+      (is (= :passed
+             (get-in harness
+                     [:last-local-forced-authority :status])))
+      (is (< (get-in harness
+                     [:last-local-forced-authority
+                      :median-microseconds])
+             (get-in legacy-runtime
+                     [:permission-check :warm-max-microseconds]))))
     (is (<= (get-in memory-and-token
                     [:cursor-token-utf8-bytes
                      :multipath-500-results-page-50])

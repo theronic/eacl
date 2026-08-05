@@ -102,6 +102,8 @@
     :EACL-FORMAL-048
     eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
     :EACL-FORMAL-049
+    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    :EACL-FORMAL-050
     eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test})
 
 (defn- read-edn
@@ -181,8 +183,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-049 (:latest revision)))
-    (is (= 49 (count entries)))))
+    (is (= :EACL-FORMAL-050 (:latest revision)))
+    (is (= 50 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available
