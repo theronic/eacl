@@ -33,7 +33,7 @@ Situated AuthZ offers some advantages for typical use-cases:
 3. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
 4. Queries default to the current DB visible to the local Peer and also support
    `minimize-latency`, `at-least-as-fresh`, and historical `at-exact-snapshot` semantics.
-5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but you will find the eager Datalog engine too slow and unable to handle all the grounding cases. The first version of EACL was implemented with Datalog rules, but it was simply too slow and materialized all intermediate results. Correct bidirectional cursor-pagination is also non-trivial, because parallel paths through the permission graph can yield duplicate resources. EACL does this for you with good performance.
+5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but the eager Datalog engine materializes intermediate results and cannot efficiently handle every grounding case. Correct bidirectional cursor pagination is also non-trivial because parallel paths through the permission graph can yield duplicate resources. EACL handles both traversal and pagination.
 
 ## Performance
 
@@ -43,28 +43,16 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- EACL uses one bounded, client-private current-generation cache for `can?`,
-  lookup pages, and counts. Exact hits are accepted only for the same immutable
-  selected DB and calculate no dependency/content proof.
-- Under explicit `:coherence-authority :managed`, complete answers can survive
-  unrelated forward transactions using the schema generation plus the maximum
-  transaction stamp over the permission's complete compiled relation
-  dependencies. The default `:unknown` authority remains exact-current-only.
-- Schema changes discard the complete managed generation. Low-level calls
-  against arbitrary `db`, `d/as-of`, `d/with`, or filtered values, exact
-  consistency, and historical cursor replay deliberately bypass completed
-  answers.
-- Permission paths, dependency closures, and recursive routing are compiled
-  lazily and memoized by schema generation. Recursive routing for all
-  permission nodes shares one iterative SCC and reverse-reachability analysis,
-  making the graph-analysis portion `O(V+E)` cold work for `V` permission
-  nodes and `E` permission edges after path materialization. Later permission
-  roots reuse that generation.
-- The final
-  [single-database current-snapshot cache design](docs/reports/2026-08-02-eacl-v8-single-db-current-cache-design.md)
-  supersedes the earlier proof-per-hit candidates and is summarized in the
-  [consistency/cache operations guide](docs/v8-consistency-cache-operations.md).
-- Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates that were already proved irrelevant.
+- EACL uses a bounded, client-private, multi-tier cache. Repeated operations
+  can reuse complete answers, while different operations can share compiled
+  schema plans and unchanged relationship projections where their graph paths
+  overlap. The default mode reuses data only on the identical immutable
+  database value. Applications in which every authorization-relevant write
+  goes through EACL can opt into managed reuse across unrelated transactions.
+  The cache never changes authorization semantics and can be disabled globally
+  or per request. See [Caching](#caching) and the
+  [cache architecture guide](docs/cache.md).
+- Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates already known to be irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 EACL page tokens bind database/source identity, graph head and exact locator,
@@ -103,15 +91,15 @@ caller already handles for expiry.
 > [!WARNING]
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> The changes on this branch are the [v8.0 candidate](docs/release-notes-v8.0.md). v8 adds database-visible relation stamps, private current-generation caching, exact-snapshot-pinned v10 cursors, explicit local/synchronized consistency semantics, and upgrades the DataScript and Datahike list/count APIs to the Relay contract. Client construction performs the idempotent additive migration; v7 relationship storage remains unchanged. See the [v8 backend and upgrade guide](docs/v8-backend-modules-and-upgrade.md) and [consistency/cache operations guide](docs/v8-consistency-cache-operations.md). Releases are not tagged yet, so pin the Git SHA.
-> Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
+> The current version is the EACL 8.0 release candidate.
+> Releases are not tagged yet, so pin the Git SHA.
 
 ## Modules
 
 The repository is a workspace with four independently consumable modules:
 
 - `modules/eacl`: public protocol and records, schema model/parser, consistency descriptors, shared authorization engine, and six-function backend SPI.
-- `modules/eacl-datomic`: the complete v8 Datomic adapter, including consistency, encrypted cursors, object deletion, migrations, and authorization caching.
+- `modules/eacl-datomic`: the Datomic adapter, including consistency, encrypted cursors, object deletion, and authorization caching.
 - `modules/eacl-datascript`: the CLJ/CLJS DataScript adapter and its backend contract tests.
 - `modules/eacl-datahike`: the CLJ Datahike adapter, including both keyword and numeric attribute-reference representations.
 
@@ -148,7 +136,7 @@ The root `deps.edn` is a development workspace, not the consumer artifact bounda
 
 EACL does not select a logging implementation. Applications remain responsible for their own logging backend and configuration.
 
-For module selection, capability differences, cache mutation rules, recursive controls, and DataScript/Datahike migration details, see the [v8 backend and upgrade guide](docs/v8-backend-modules-and-upgrade.md). Backend authors should also read the [v8 adapter boundary](docs/v8-backend-adapter-boundary.md).
+For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md).
 
 ## ReBAC: Relationship-based Access Control
 
@@ -339,6 +327,13 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 ; Install the latest EACL Datomic Schema:
 @(d/transact conn schema/v7-schema)
 
+; Make an EACL client that satisfies the `IAuthorization` protocol:
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:object-id->ident (fn [obj-id] [:eacl/id obj-id])
+    :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))}))
+
 ; Write your permission schema using SpiceDB schema DSL:
 (eacl/write-schema! acl
   "definition user {}
@@ -366,12 +361,6 @@ Add the Datomic adapter dependency to your `deps.edn` file:
    {:eacl/id "product-1"}
    {:eacl/id "product-2"}])
 
-;  Make an EACL client that satisfies the `IAuthorization` protocol:
-(def acl (eacl.datomic.core/make-client conn
-           ; optional config:
-           {:object-id->ident (fn [obj-id] [:eacl/id obj-id]) ; optional. to convert external IDs to your unique internal Datomic idents, e.g. :eacl/id can be :your/id, which may be a unique UUID or string.
-            :entity->object-id (fn [ent] (:eacl/id ent))})) ; optional. to internal entities to your external IDs.
- 
 ; Define some convenience methods over spice-object:
 ; `eacl.core/spice-object` is just a record helper that accepts `type`, `id` and optionally `subject_relation`, to return a SpiceObject of {:keys [type id]}. `subject-relation` is not currently supported in EACL.
 
@@ -457,14 +446,6 @@ Run the shared CLJS contract suite with:
 ```clojure
 clojure -M:datascript-cljs-test
 ```
-
-## Migration Notes
-
-- Replace the monolithic/root Git dependency with `:deps/root "modules/eacl-datomic"`; no source namespace changes are required.
-- Existing Datomic `require` forms remain valid: `eacl.datomic.core`, `eacl.datomic.impl`, and `eacl.datomic.schema`.
-- `Relation` and `Permission` now live in the backend-neutral schema model, with Datomic compatibility re-exports still available.
-- The repository root is a development workspace now. Consumers should depend on the module they actually need.
-- DataScript keeps its existing `:limit`/`:cursor` list API while sharing the v8 protocol and schema/parser core; Datomic retains the v8 Relay-style pagination API documented above.
 
 ## EACL Schema
 
@@ -628,13 +609,15 @@ SpiceDB uses strings for all external subject & resource IDs, whereas EACL uses 
 
 *Note*: internal Datomic eids should not be exposed to consumers, because those eids are not guaranteed to be stable after a DB rebuild.
 
-`eacl.datomic.core/make-client` accepts a Datomic conn and a config map of `{:keys [entity->object-id object-id->ident]}`, which are functions to convert between internal to/from external IDs.
+`eacl.datomic.core/make-client` accepts a Datomic connection and
+`:entid->object-id`/`:object-id->ident` functions for converting between
+internal entity IDs and external object IDs.
 
 It is common to attach a unique UUID to permissioned entities for exposing them externally, or you can convert external->internal at your call sites. Here is how you can configure EACL to convert to/from a unique attribute named `:your/id`:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:entity->object-id (fn [ent] (:your/id ent))
+           {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
             :object-id->ident (fn [obj-id] [:your/id obj-id])}))
 ```
 
@@ -643,17 +626,44 @@ Note that this attribute should have property `:db/unique :db.unique/identity`.
 The default options are to use the built-in EACL string attr `:eacl/id`, but you can use the internal Datomic eids with the following "identity" functions:
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:entity->object-id (fn [ent] (:db/id ent))
+           {:entid->object-id (fn [_db eid] eid)
             :object-id->ident (fn [obj-id] obj-id)}))
 ```
 
-`make-client` validates its options: unknown keys throw `{:type :eacl/invalid-config}` (a silently dropped ID-coercion key would mean silently wrong external IDs). `:entity->object-id` (`(fn [entity] id)`) is a deprecated alias for `:entid->object-id`; supplying both throws. Page tokens expire after 5 minutes by default; tune with `:page-token-ttl-seconds`.
+`make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
+Page tokens expire after 5 minutes by default; tune with
+`:page-token-ttl-seconds`.
 
-### Lookup cache configuration
+### Caching
 
-Completed answers use a bounded cache owned by one EACL client and connection.
-The cache-free evaluator remains the semantic reference. Disable retention
-without changing authorization semantics:
+Each EACL client owns a bounded, private, multi-tier cache:
+
+- complete answers accelerate repeated identical authorization operations;
+- shared relationship projections and membership probes let different queries
+  reuse overlapping graph work;
+- completed graph denotations are reused by compatible operations on the same
+  immutable snapshot; and
+- compiled schema paths and recursive plans are shared across queries using
+  the same schema generation.
+
+The default `:coherence-authority :unknown` reuses entries only for the exact
+immutable database value on which they were computed. It is safe when
+applications also write authorization data outside EACL. Set
+`:coherence-authority :managed` only when every authorization-relevant write
+uses the EACL mutation APIs; this lets unchanged cache portions survive
+unrelated transactions. A schema change invalidates the managed generation.
+
+Most applications need no cache configuration. To set a completed-answer
+capacity:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:cache {:max-entries 4096}}))
+```
+
+Disable caching for a client without changing authorization semantics:
 
 ```clojure
 (require '[eacl.cache :as eacl-cache])
@@ -661,93 +671,7 @@ without changing authorization semantics:
 (def acl (eacl.datomic.core/make-client conn {:cache eacl-cache/no-cache}))
 ```
 
-Capacity can be tuned, though most consumers do not need to:
-
-```clojure
-(def acl
-  (eacl.datomic.core/make-client
-   conn
-   {:cache {:max-entries 4096
-            :subproblem-cache
-            {:projection-max-weight (* 8 1024 1024)
-             :denotation-max-weight (* 8 1024 1024)
-             :max-inflight 256}}}))
-```
-
-The exact tier accepts a hit only for the same immutable selected DB
-generation. Under `:coherence-authority :managed`, a second tier keys answers
-by schema generation and relevant relation transaction stamps, so unrelated
-writes retain valid entries. Relevant writes miss; a schema update discards
-the complete managed generation. The default `:unknown` authority uses only
-the exact tier and is safe with out-of-band writers.
-
-The native completed-answer cache cannot be shared between clients. Legacy
-portable stores remain compatibility/test surfaces but are not trusted as
-authorization-answer providers.
-
-Cache granularity is deliberately split:
-
-- completed-answer entries are keyed by the complete semantic operation and
-  query, including the principal; they do not reuse graph results across
-  different principals or different permission questions;
-- bounded relationship projection chunks and direct probes omit the principal
-  and top-level permission from their keys, so queries that converge on the
-  same relation/index portion reuse it;
-- under managed writer authority, unchanged relation stamps permit those
-  atomic projections to survive unrelated forward graph revisions;
-- completed acyclic and recursive denotations are reusable across compatible
-  operations on the identical immutable snapshot, but derived denotations are
-  not yet lifted across revisions;
-- page-navigation and recursive-continuation state is likewise scoped to one
-  authenticated query and snapshot proof;
-- schema-derived permission paths, dependency closures, recursive routing,
-  and immutable recursive traversal plans are shared by every query in the
-  same client/schema generation.
-
-These layers provide two network effects: schema/plan compilation is shared
-through the schema generation, and relationship projections are shared where
-otherwise different authorization queries traverse the same graph portion.
-Recursive visited-set fragments and partial worklists remain uncacheable;
-only completed least-fixed-point denotations may be published.
-
-The complete architecture, bounds, metrics, benchmark method, and exact formal
-claim boundary are documented in the
-[v8 layered subproblem cache guide](docs/v8-subproblem-cache.md).
-
-Recursive Relay pages also size backend scan batches to the requested window:
-16 datoms for pages up to 32 results, 32 for pages up to 256, and 64 beyond
-that. Small UI pages therefore avoid most of the former 64-datom over-read,
-while large pages and counts retain larger batches to amortize index seeks.
-`:fetched-stream-datoms` and `:stream-fills` in the optional recursive
-traversal stats expose the actual batch work for deterministic regression
-tests; `:advanced-stream-datoms` remains the number consumed by the engine.
-
-Reach for `no-cache` when the same permission check is essentially never asked
-twice — a batch job sweeping distinct resources, say — or when direct
-evaluation is cheaper than authenticated completed-answer validation. Repeated
-checks do not by themselves guarantee a latency win: the avoided authorization
-work must exceed the proof/envelope hit cost. See the
-[cache proof cost review](docs/reports/2026-08-02-eacl-v8-cache-proof-cost.md)
-for measured break-even examples.
-
-Lookups and counts report where their answer came from:
-
-```clojure
-(let [{:keys [data cached? cache-basis]} (eacl/lookup-resources acl query)]
-  (when cached?
-    ;; how old is this answer?
-    (- (System/currentTimeMillis)
-       (.getTime (eacl.datomic.core/basis-instant acl cache-basis)))))
-```
-
-`:cached?` says whether this response came from the cache. `:cache-basis` is the Datomic `t` the
-answer was computed at, and `basis-instant` resolves it to a wall-clock time.
-An exact-tier hit has the selected basis. A managed-tier hit may have an older
-computation basis, but the compiled relevant relation stamps and schema
-generation are unchanged, so its semantic answer equals recomputation on the
-selected DB. `can?` returns a plain boolean and carries neither.
-
-To bypass the configured cache for a **single call**, pass `:cache? false` on the request:
+Or bypass lookup and publication for one request:
 
 ```clojure
 (eacl/can? acl {:subject alice :permission :view :resource doc :cache? false})
@@ -758,43 +682,16 @@ To bypass the configured cache for a **single call**, pass `:cache? false` on th
                             :cache? false})
 ```
 
-`:cache` configures a client's private cache. `:cache?` controls one request.
-It is accepted on the map arity of `can?` and in the query map for
+`:cache?` is accepted by the map arity of `can?` and by
 `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, and
-`read-relationships`; it skips both lookup and publication for that call.
-Exact/historical cursor continuation bypasses completed answers regardless.
+`read-relationships`. Lookups and counts expose `:cached?` and `:cache-basis`;
+`can?` returns only a Boolean. Cache data is never written to the application's
+database.
 
-There is no process-local listener/coordinator correctness path. Managed
-writers publish database-visible relation stamps atomically. Unknown-writer
-deployments use exact-current generation invalidation.
-
-Unrelated Datomic transactions, relationship no-ops, and changes to relations outside a cached
-permission's dependency set retain managed entries. Any new immutable DB
-generation replaces exact-current entries.
-
-Result values contain internal IDs and are externalized against the request's
-selected immutable snapshot. A query input naming an unknown external ID
-returns the ordinary false/empty boundary result and is not cached. Custom
-identity codecs are exact-current-only unless they provide the additional
-deterministic dependency contract.
-
-A *result* object that has no external ID in the database it was evaluated against is a different
-matter, and `lookup-resources`/`lookup-subjects` raise `{:type :eacl/unresolvable-object}` listing
-every offending eid rather than silently omitting rows from an authorization enumeration. This is a
-data-integrity fault, not a cache fault — it is raised identically with
-`{:cache eacl-cache/no-cache}`. The usual
-cause is an entity retracted without first calling `delete-relationships!`, leaving a relationship
-half that still grants; `eacl.datomic.integrity/dangling-relationship-report` finds them.
-`read-relationships` deliberately still returns such a half with a nil id, because reading it is how
-you repair it.
-
-Reset, restore, branch force, manual history manipulation, or unstamped repair
-is outside the forward-stamp contract. Quiesce the client and call
-`eacl.datomic.core/expire-cache!` (or the corresponding Datahike/DataScript
-function). The lifecycle swap prevents old in-flight work from repopulating
-the new cache.
-
-No cache data or derived tuples are written to the consumer's Datomic database.
+After a reset, restore, branch replacement, manual history change, or unstamped
+repair, quiesce the client and call the backend's `expire-cache!`. For cache
+tiers, validity rules, eviction, concurrency, metrics, tuning, and performance
+guidance, read the [cache architecture guide](docs/cache.md).
 
 ### Consistency and Zed tokens
 
@@ -893,8 +790,7 @@ New Zed tokens are signed only with `:zed-token-kid`; all keys explicitly retain
 after the intended outstanding-token lifetime. A single `:zed-token-key` is shorthand for a
 one-key ring. If no dedicated Zed key is configured, EACL derives domain-separated signing keys
 from the page-token keyring. The default page key is random per client instance, so the derived
-default is fail-closed but not portable across clients, restarts, or backend instances. The unreleased unsigned
-`eacl_z1_` format is rejected.
+default is fail-closed but not portable across clients, restarts, or backend instances.
 
 ### Unknown object IDs
 
@@ -903,12 +799,21 @@ EACL follows SpiceDB semantics for object IDs that don't resolve to an entity:
 - **Reads** (`can?`, `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, `read-relationships`) treat unknown IDs as matching nothing: `can?` returns `false`, lookups and reads return empty pages.
 - **Writes** (`write-relationships!` and friends) throw `ex-info {:type :eacl/unknown-object, :object {:type … :id …}}` — a relationship to a nonexistent entity is unsatisfiable, and failing loudly beats minting ghost entities or raw Datomic errors.
 
+If a lookup result has no external ID in the selected database,
+`lookup-resources` and `lookup-subjects` raise
+`{:type :eacl/unresolvable-object}` and identify every offending internal ID
+instead of silently omitting authorized objects. This usually indicates a
+dangling relationship left by retracting an entity before its relationships.
+`read-relationships` still returns the damaged relationship half with a nil
+ID so it can be repaired.
+
 ### Deleting a permissioned entity
 
 > [!IMPORTANT]
 > `:db.fn/retractEntity` does **not** remove an entity's EACL relationships. Delete those relationships first; `eacl/delete-object!` is a convenience helper for doing so.
 
-A v7 relationship is two datoms living on two different entities, each naming its peer *inside a tuple value*:
+A Datomic or Datahike relationship is two datoms living on two different
+entities, each naming its peer *inside a tuple value*:
 
 ```
 [<subject-eid>  :eacl.v7.relationship/subject-type+relation+resource-type+resource  [subject-type relation-eid resource-type <resource-eid>]]
@@ -958,10 +863,7 @@ journal and cache dependencies are advanced atomically.
 DataScript uses the same two endpoint values as indexed ordinary vectors, so
 its embedded peer eid is not a ref and has the same deletion contract. Its
 read-only detector is
-`eacl.datascript.integrity/dangling-relationship-report`. DataScript databases
-created from the unreleased relationship-entity v8 branch must be recreated or
-have their relationships reloaded through EACL; there is no dual-read or
-automatic migration.
+`eacl.datascript.integrity/dangling-relationship-report`.
 
 ## Schema Syntax
 
@@ -984,8 +886,9 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
 
 ### Internal Definition Records
 
-`eacl.datomic.impl/Relation` and `Permission` are implementation records used by migrations and
-tests. Transacting them directly is not a supported schema API: it bypasses validation, the
+`eacl.datomic.impl/Relation` and `Permission` are implementation records used
+internally and by tests. Transacting them directly is not a supported schema
+API: it bypasses validation, the
 schema-generation stamp, and client cache replacement. Use `eacl/write-schema!` for every schema
 change. If an operational tool bypasses that boundary, recreate every affected client.
 
@@ -1055,7 +958,7 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
   - `permission admin = owner + shared_admin` is valid,
   - but `permission admin = owner - banned_member` is not (note the `-` Negation operator).
-  - You can work around this limitation by doing a negation in your application logic, e.g. `(and (not (eacl/can? acl ...) (eacl/can? acl ...)))`, but it's not free. Once EACL has a cache, this becomes more viable to implement in EACL.
+  - You can work around this limitation by doing a negation in your application logic, e.g. `(and (not (eacl/can? acl ...) (eacl/can? acl ...)))`, but it is not free. Caching may reduce the cost when the component checks are reused.
 - Arrow syntax is limited to one level of nesting, e.g.
   - `permission arrow = relation->via-permission` is supported,
   - but `permission arrow = relation->subrelation->permission` is not. To implement this would require anonymous shadow relations. May require schema changes.
@@ -1114,32 +1017,10 @@ Note difference between `-M` & `-X` switches.
 clojure -M:test -v my.namespace/test-name
 ```
 
-## Upgrading
-
-### v6 → v7
-
-v7 changed how Relationships are stored in Datomic (one entity per relationship → two tuple datoms on your subject & resource entities). The public API is unchanged, but stored relationship data must be migrated once. To protect you, `eacl.datomic.core/make-client` checks the storage version recorded in Datomic and **refuses to start against unmigrated v6 data** with `{:type :eacl/storage-version}` — v7 code reading a v6 database would otherwise silently answer every permission check with `false`/empty.
-
-Migrate with the batteries-included, idempotent [`eacl.migrations.v6-to-v7`](modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj) namespace:
-
-```clojure
-(require '[eacl.migrations.v6-to-v7 :as migrations])
-(migrations/migrate! conn {:schema "definition user {} ..."})  ; re-asserts your schema via write-schema!
-```
-
-or opt into automatic migration at client construction:
-
-```clojure
-(eacl.datomic.core/make-client conn {:auto-migrate-v6 {:schema "definition user {} ..."}})
-```
-
-The migration is additive and rollback-friendly (v6 data is kept until you explicitly retract it) and end-to-end tested in [modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj](modules/eacl-datomic/test/eacl/migrations/v6_to_v7_test.clj). For the full sequence — write-pause window, verification, soak, cleanup, rollback — follow the [v6 → v7 migration guide](docs/migration-v6-to-v7.md).
-
 ## Funding
 
 Some of this open-source work was generously funded by my former employer, [CloudAfrica](https://cloudafrica.net/).
 
 # Licence
 
-- EACL is licensed under the Eclipse Public License v2.0 since 2026-03-05.
-- EACL was initially licensed under BSL and later Affero GPL (on 2025-05-27), but is now licensed under EPL 2.0.
+- EACL is licensed under the Eclipse Public License v2.0.
