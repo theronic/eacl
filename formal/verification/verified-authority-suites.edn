@@ -14,14 +14,14 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 516
-  :assertions 28177
+  :tests 521
+  :assertions 28212
   :failures 0
   :errors 0
   :injected-clients
   {:datomic 331
    :datahike 57
-   :datascript 60}
+   :datascript 62}
   :required-generated-operations
   [:recursive-routing-certificate
    :cursor-bound-rebase
@@ -60,11 +60,11 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/cljs/run-verified-authority"
   :backend :datascript
-  :tests 159
-  :assertions 4551
+  :tests 162
+  :assertions 4509
   :failures 0
   :errors 0
-  :injected-clients 53
+  :injected-clients 54
   :generated-calls-observed true
   :persistent-nrepl-executor-postcondition :passed}
  :qualification

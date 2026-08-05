@@ -12,10 +12,8 @@
            [java.util Base64]))
 
 (def capabilities
-  {:consistency #{:local-snapshot
+  {:consistency #{:minimize-latency
                   :fully-consistent
-                  :synchronized-head
-                  :minimize-latency
                   :at-least-as-fresh
                   :at-exact-snapshot}
    :snapshots #{:current :historical}
@@ -204,7 +202,6 @@
          (nil? conn)
          (update :consistency disj
                  :fully-consistent
-                 :synchronized-head
                  :at-exact-snapshot))
        :state {:db db
                :opts opts}

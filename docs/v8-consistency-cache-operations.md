@@ -11,23 +11,21 @@ private optimization owned by one EACL client and one connection.
 
 | Mode | Datomic | Datahike | DataScript | Completed-answer cache |
 | --- | --- | --- | --- | --- |
-| omitted / `:local-snapshot` | current DB visible to this Peer | current connection DB | current connection DB | enabled |
-| `:minimize-latency` | same as local snapshot | same as local snapshot | same as local snapshot | enabled |
-| `:synchronized-head` | bounded zero-argument `d/sync`, then selected DB | backend head barrier when supported | serialized local connection head | enabled on the selected current DB |
-| `:fully-consistent` | compatibility name for `:synchronized-head` | compatibility authoritative barrier | compatibility authoritative barrier | enabled on the selected current DB |
+| omitted / `:minimize-latency` | current DB visible to this Peer | current connection DB | current connection DB | enabled |
+| `:fully-consistent` | bounded zero-argument `d/sync`, then selected DB | backend head barrier when supported | serialized live connection head | enabled on the selected current DB |
 | `:at-least-as-fresh` | targeted `d/sync conn t`, then anchor validation | waits/selects a descendant containing the token anchor | selects a known descendant containing the token anchor | enabled only if the selected DB is current |
 | `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | bounded exact-snapshot registry | bypassed |
 
-The default is `:local-snapshot`. EACL does not call `d/sync` and does not call
+The default is `:minimize-latency`. EACL does not call `d/sync` and does not call
 `d/as-of` on the normal path. A consumer that requires the Peer to observe
 transactor head may synchronize before calling EACL, or explicitly request
-`:synchronized-head`.
+`:fully-consistent`.
 
 `fully-consistent` cannot promise that a disconnected Peer knows about a
 transaction that it has no way to observe. Its precise v8 meaning is an
 authoritative synchronization barrier supported by the configured backend.
-`:synchronized-head` is the preferred name because it states that contract
-without implying a distributed linearizability theorem EACL cannot provide.
+It does not claim a distributed linearizability theorem beyond that backend
+barrier.
 
 Low-level engine functions that accept an arbitrary `db` remain available for
 prospective, filtered, or historical evaluation. Those functions bypass the

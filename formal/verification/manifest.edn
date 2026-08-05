@@ -79,7 +79,7 @@
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
   {:status :passed
-   :verified-obligations 18
+   :verified-obligations 19
    :source "formal/dafny/ConsistencyDecision.dfy"
    :report "formal/verification/consistency-decision.edn"
    :integration-status
@@ -128,7 +128,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9775
+   :verified-obligations 9776
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :all-defined-permission-roots-and-public-operations-generated-authority-routed
@@ -174,7 +174,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-052
+ {:latest :EACL-FORMAL-054
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -226,11 +226,13 @@
           :EACL-FORMAL-049
           :EACL-FORMAL-050
           :EACL-FORMAL-051
-          :EACL-FORMAL-052]}
+          :EACL-FORMAL-052
+          :EACL-FORMAL-053
+          :EACL-FORMAL-054]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 52}
+  :entries 54}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

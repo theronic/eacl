@@ -121,7 +121,7 @@
 
 (deftest consistency-descriptors-retain-the-token-test
   (let [token (consistency/zed-token signing-opts "db" 10)]
-    (is (= {:mode :local-snapshot}
+    (is (= {:mode :minimize-latency}
            (descriptor/descriptor nil)))
     (is (= {:mode :minimize-latency}
            (descriptor/descriptor descriptor/minimize-latency)))

@@ -136,11 +136,11 @@
     :status :passed}
    :cross-target-correctness
    {:cljs-generated-smoke
-    {:tests 58 :assertions 10992 :failures 0 :errors 0}
+    {:tests 58 :assertions 10968 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 159 :assertions 4551 :failures 0 :errors 0}
+    {:tests 162 :assertions 4509 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 516 :assertions 28177 :failures 0 :errors 0}}
+    {:tests 521 :assertions 28212 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -210,7 +210,7 @@
 
  :formal-pipeline
  {:scope :all-25-dafny-modules
-  :proof-efforts 9775
+  :proof-efforts 9776
   :last-observed-local-wall-seconds 1169
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -218,7 +218,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3726567959
+  :total-observed-resource-count 3726574445
   :maximum-observed-proof-effort
   {:source "IndexedForwardCompleteness.dfy"
    :display-name
@@ -256,7 +256,7 @@
    :maximum-normalized-allocation-ratio 1.5
    :maximum-normalized-latency-ratio 5.0}
   :observed
-  {:date "2026-08-04"
+  {:date "2026-08-05"
    :host
    {:os :macos
     :arch :aarch64
@@ -369,20 +369,20 @@
     :independent-trials 5
    :paired-order :alternating}
    :clj-java
-   {:legacy-p50-ns-representative 168.7295
-    :verified-p50-ns-representative 883.5625
-    :median-p50-ratio 5.560958558558558
-    :median-p95-ratio 5.237233490345524
-    :median-p50-absolute-overhead-ns 632.833
-    :median-p95-absolute-overhead-ns 690.3544999999999
+   {:legacy-p50-ns-representative 124.4165
+    :verified-p50-ns-representative 606.6045
+    :median-p50-ratio 4.900298071912455
+    :median-p95-ratio 4.991323323323324
+    :median-p50-absolute-overhead-ns 482.18800000000005
+    :median-p95-absolute-overhead-ns 512.3960000000001
     :status :passed}
    :cljs-javascript
-   {:legacy-p50-ns-representative 812.624999999997
-    :verified-p50-ns-representative 2542.8540000000057
-    :median-p50-ratio 3.1936149205836206
-    :median-p95-ratio 3.0725027876330673
-    :median-p50-absolute-overhead-ns 1759.6454999999196
-    :median-p95-absolute-overhead-ns 1816.604000000041
+   {:legacy-p50-ns-representative 738.6874999999691
+    :verified-p50-ns-representative 2432.958499999927
+    :median-p50-ratio 3.2992286174450025
+    :median-p95-ratio 3.1935030148304167
+    :median-p50-absolute-overhead-ns 1695.2499999999873
+    :median-p95-absolute-overhead-ns 1704.8129999999446
     :status :passed}}
   :resource-qualification
   {:logical-counters
@@ -709,9 +709,9 @@
     :generated-to-legacy-ratio 1.323076923076923
     :all-comparable-work-counters-exact true}
    :generated-java
-   {:tests 36 :assertions 10411 :status :passed}
+   {:tests 36 :assertions 10395 :status :passed}
    :generated-javascript
-   {:tests 58 :assertions 10992 :status :passed}
+   {:tests 58 :assertions 10968 :status :passed}
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy

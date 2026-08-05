@@ -325,7 +325,7 @@
     ;  (is (= [] (eacl/read-relationships *client {:resource/type :server}))))
 
     (testing "Given an empty permission system, ensure no one can reboot my-server"
-      ; We specify consistency/fully-consistent because permissions are cached and can? defaults to minimize-latency.
+      ; We specify fully-consistent because minimize-latency does not synchronize.
       (is (false? (eacl/can? *client my-user :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client joe's-user :reboot my-server fully-consistent)))
       (is (false? (eacl/can? *client new-joiner :reboot my-server fully-consistent)))

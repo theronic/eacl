@@ -11,10 +11,8 @@
             [eacl.secure-format :as secure]))
 
 (def capabilities
-  {:consistency #{:local-snapshot
+  {:consistency #{:minimize-latency
                   :fully-consistent
-                  :synchronized-head
-                  :minimize-latency
                   :at-least-as-fresh
                   :at-exact-snapshot}
    :snapshots #{:current :authoritative :causal}
@@ -243,6 +241,9 @@
       (cond-> capabilities
         (not= :managed coherence-authority)
         (update :consistency disj :at-least-as-fresh :at-exact-snapshot)
+
+        (nil? conn)
+        (update :consistency disj :fully-consistent)
 
         (nil? exact-registry)
         (update :consistency disj :at-exact-snapshot))

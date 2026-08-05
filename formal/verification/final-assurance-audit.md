@@ -344,7 +344,7 @@ generated-code compiler out of the trusted computing base.
   constructs its graph from that same edge vector; three new mutants cover
   omitted permission edges, invented relation edges, and edge permutations.
 - Snapshot-consistency planning and post-selection validation now route
-  through `ConsistencyDecision.dfy` in verified modes. Its 24 plan states and
+  through `ConsistencyDecision.dfy` in verified modes. Its 16 plan states and
   48 well-formed validation states are exhausted in generated Java and
   JavaScript. A first model draft conflated an absent exact selection with a
   present malformed adapter; production distinguishes the former as
@@ -546,14 +546,29 @@ generated-code compiler out of the trusted computing base.
   for a completed-cache hit. The 1,000 µs ceiling remains unchanged.
 - EACL-FORMAL-052 was found by tracing the public `can?` consistency value
   into the verified selection boundary. All three backend map arities used
-  `(or consistency :local-snapshot)`, so explicit malformed `false` bypassed
-  descriptor rejection and ran as local snapshot; positional `can?` rejected
-  it. The map arities now forward the raw value. The shared descriptor remains
-  the single owner of omission/nil defaulting and malformed-value rejection.
+  `(or consistency :local-snapshot)`, using the then-current pre-release
+  default name, so explicit malformed `false` bypassed descriptor rejection;
+  positional `can?` rejected it. The map arities now forward the raw value.
+  The shared descriptor remains the single owner of omission/nil defaulting
+  to `:minimize-latency` and malformed-value rejection.
   Dafny distinguishes omitted, nil, valid, false, and other malformed public
   inputs and proves that false rejects and valid modes are preserved.
   Datomic, Datahike, and DataScript public regressions failed before and pass
   after the source fix.
+- EACL-FORMAL-053 was found by comparing the formal malformed-consistency class
+  and strict-boundary documentation with the shared descriptor predicate.
+  Production accepted a token descriptor containing both required fields plus
+  any unknown fields. The descriptor now requires exact field cardinality and
+  membership before token authentication or selection. A shared CLJ/CLJS
+  regression failed before and passes after the source fix, and Dafny
+  explicitly proves malformed public consistency input is rejected.
+- EACL-FORMAL-054 was found while checking whether the simplified public modes
+  retained truthful backend guarantees. A DataScript snapshot adapter without
+  a live connection advertised `:fully-consistent`, although its
+  authoritative selector could only return the captured immutable DB.
+  Connectionless adapters now remove that capability; managed clients with a
+  connection retain it. The backend regression failed before and passes after
+  the fix.
 
 ## Public wording audit
 
@@ -572,7 +587,7 @@ that the complete v8.0 engine is formally verified.
 
 ## Gate evidence
 
-- Clean checksum-locked Dafny cache: 9,775 proof efforts across 25
+- Clean checksum-locked Dafny cache: 9,776 proof efforts across 25
   source-project invocations, zero errors or timeouts, and no admitted lemmas,
   `assume`, `axiom`, `{:verify false}`, or extern declarations. The forward
   and reverse drive specification functions are opaque but defined, and are
@@ -585,22 +600,22 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 52 minimized entries replayed by 54 tests and 11,272
+- Counterexample corpus: 54 minimized entries replayed by 56 tests and 11,351
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 516 tests, 28,177 assertions,
+- Forced-authority non-benchmark CLJ suite: 521 tests, 28,212 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward
   pagination, count retention, and shared-subgraph cache gates pass.
-- Forced-authority DataScript CLJS suite: 159 tests, 4,551 assertions, zero
+- Forced-authority DataScript CLJS suite: 162 tests, 4,509 assertions, zero
   failures/errors.
-- Generated Java production-kernel namespace: 36 tests, 10,411 assertions,
+- Generated Java production-kernel namespace: 36 tests, 10,395 assertions,
   zero failures/errors.
-- Generated JavaScript smoke suite: 58 tests, 10,992 assertions, zero
+- Generated JavaScript smoke suite: 58 tests, 10,968 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,350 unique
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,348 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent
@@ -684,7 +699,7 @@ that the complete v8.0 engine is formally verified.
   opaque outside explicit one-step unfolding lemmas. The locked pipeline also
   applies a deterministic Z3 resource limit to every proof effort and emits
   per-module CSV plus an aggregate JSON report. The exact current 25-module
-  replay passed 9,775 proof efforts and consumed 3,726,567,959 deterministic
+  replay passed 9,776 proof efforts and consumed 3,726,574,445 deterministic
   Z3 resource units; its maximum effort used 33,547,591 of the
   50,000,000-unit limit. The generated resource-directory birth time through
   aggregate-report modification time was 1,169 seconds. Explicit

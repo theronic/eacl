@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-053
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "public-consistency-descriptor/unknown-field/source-to-model-audit"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit d1216758267d7620435c0c59cb8929bd180ab568"]
+ :affected-backends [:datomic :datahike :datascript]
+ :root-cause
+ "The shared public consistency descriptor validated the two required token fields but did not reject additional fields. The formal public-input model classified malformed descriptors as rejected, and the documented strict boundary promised unknown-field rejection, so production accepted an input outside the modeled language."
+ :fix
+ "Require token consistency descriptors to contain exactly two fields, :consistency/mode and :zed/token, using cardinality and membership checks that avoid allocating a key set. Retain a cross-runtime shared regression and an explicit Dafny lemma that malformed consistency input is rejected."
+ :closing-evidence
+ ["ConsistencyDecision.MalformedConsistencyCannotBeAccepted"
+  "eacl.consistency-test/public-consistency-descriptors-reject-unknown-fields-test"]}

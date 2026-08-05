@@ -808,14 +808,11 @@ explicit at-least/exact workflows. Reads accept these descriptors:
 (require '[eacl.datomic.core :as eacl-datomic])
 
 ;; Default: current immutable DB visible to this Peer/connection.
-(eacl/can? acl subject :view resource consistency/local-snapshot)
-
-;; Compatibility alias for the same low-latency selection.
 (eacl/can? acl subject :view resource consistency/minimize-latency)
 
 ;; Explicit authoritative synchronization barrier. On Datomic this performs
 ;; bounded zero-argument (d/sync conn).
-(eacl/can? acl subject :view resource consistency/synchronized-head)
+(eacl/can? acl subject :view resource consistency/fully-consistent)
 
 ;; Select a snapshot containing the token's mutation anchor. Datomic may use
 ;; targeted (d/sync conn T) as a bounded waiting hint.
@@ -831,8 +828,8 @@ explicit at-least/exact workflows. Reads accept these descriptors:
 (def now-token (eacl-datomic/current-zed-token acl))
 ```
 
-Datomic `synchronized-head` and the compatibility `fully-consistent` name
-perform a bounded zero-argument `d/sync` barrier. The default does not.
+Datomic `fully-consistent` performs a bounded zero-argument `d/sync` barrier.
+The default does not.
 At-least waits and exact/cursor reconstruction are bounded by
 `:consistency-sync-timeout-ms` (30,000 ms by default). Failure returns a typed
 error; it never falls back to an older or incomparable graph. DataScript and

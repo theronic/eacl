@@ -243,10 +243,10 @@ after it returns.
 
 **Fix:** Use precise names:
 
-- `:local-snapshot`;
+- `:minimize-latency`;
 - `:at-least-as-fresh`;
 - `:at-exact-snapshot`;
-- `:synchronized-head` or backend-specific `:writer-head`.
+- `:fully-consistent` or backend-specific `:writer-head`.
 
 ### L11 — a selected snapshot can be torn by orchestration
 
@@ -735,7 +735,7 @@ write.
 ### Default
 
 ```clojure
-{:consistency-default :local-snapshot
+{:consistency-default :minimize-latency
  :answer-cache :none
  :cursor-snapshot :exact}
 ```

@@ -165,7 +165,7 @@ reconstruction.
 
 **Evidence.**
 
-- The generated Java and JavaScript boundaries exhaust all 24 plan states and
+- The generated Java and JavaScript boundaries exhaust all 16 plan states and
   all 48 well-formed post-selection observation states.
 - Shared CLJ/CLJS consistency tests cover expired and wrong-scope tokens,
   missing ancestry, divergent exact graphs, exact-snapshot absence, present

@@ -69,6 +69,17 @@
     (is (= :eacl/unsupported-consistency (:type error)))
     (is (false? (:consistency error)))))
 
+(deftest immutable-adapter-does-not-claim-authoritative-head-test
+  (let [conn (datascript/create-conn)
+        authorization (managed-client conn {})
+        adapter
+        (datascript-backend/snapshot-adapter
+         (ds/db conn)
+         (dissoc (:opts authorization) :conn))]
+    (is (not
+         (backend/supports?
+          adapter :consistency :fully-consistent)))))
+
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})]

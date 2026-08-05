@@ -11,9 +11,9 @@
  :root-cause
  "Every backend's public map-form can? used (or consistency :local-snapshot) before descriptor validation. Because false is falsey in Clojure, the malformed explicit value false was silently rewritten to local snapshot even though positional can? and the shared descriptor rejected it."
  :fix
- "Pass the raw map consistency value to the shared descriptor. The descriptor continues to default omitted or nil values to local snapshot and rejects false as :eacl/unsupported-consistency. Cross-backend regressions cover the public map arity, and Dafny models the public input classes and proves that only omitted/nil/local values normalize to local snapshot while false is rejected."
+ "Pass the raw map consistency value to the shared descriptor. The descriptor defaults omitted or nil values to :minimize-latency and rejects false as :eacl/unsupported-consistency. Cross-backend regressions cover the public map arity, and Dafny models the public input classes and proves that only omitted, nil, or explicit minimize-latency values normalize to minimize-latency while false is rejected."
  :closing-evidence
- ["ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToLocal"
+ ["ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToMinimizeLatency"
   "ConsistencyDecision.FalseConsistencyCannotSilentlyDefault"
   "ConsistencyDecision.ExplicitConsistencyModeIsPreserved"
   "eacl.datomic.consistency-v3-test/map-can-rejects-malformed-consistency-test"

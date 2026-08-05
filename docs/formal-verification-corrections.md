@@ -146,12 +146,36 @@ no verified-release claim existed.
 
 - **Affected:** Datomic, Datahike, and DataScript public map-form `can?`.
 - **Impact:** an explicit malformed `false` consistency value silently ran as
-  `:local-snapshot`, while the positional arity and shared descriptor rejected
-  the same value.
+  the then-current default mode, while the positional arity and shared
+  descriptor rejected the same value.
 - **Correction:** public map arities forward the raw value to the descriptor.
   Only omission and nil default; false yields
   `:eacl/unsupported-consistency`. Dafny models the public input distinction,
   and one regression per backend checks the production boundary.
+
+### EACL-FORMAL-053 — unknown consistency descriptor fields
+
+- **Affected:** Datomic, Datahike, and DataScript token consistency requests on
+  both Clojure and ClojureScript.
+- **Impact:** a descriptor with a valid at-least-as-fresh or exact mode and
+  token plus unknown fields was accepted even though the formal public-input
+  model classified malformed descriptors as rejected and the boundary
+  documentation promised unknown-field rejection.
+- **Correction:** token descriptors must contain exactly
+  `:consistency/mode` and `:zed/token`. The implementation checks map
+  cardinality and membership without allocating a key set, rejects unknown
+  fields with `:eacl/unsupported-consistency`, and is closed by
+  `ConsistencyDecision.MalformedConsistencyCannotBeAccepted` plus the shared
+  CLJ/CLJS descriptor regression.
+
+### EACL-FORMAL-054 — immutable DataScript authoritative-head capability
+
+- **Affected:** DataScript snapshot adapters created without a live
+  connection.
+- **Impact:** `:fully-consistent` could silently select the captured immutable
+  DB rather than a connection head.
+- **Correction:** connectionless adapters no longer advertise
+  `:fully-consistent`; managed clients with a live connection retain it.
 
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with

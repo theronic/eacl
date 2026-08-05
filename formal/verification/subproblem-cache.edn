@@ -180,12 +180,12 @@
   {:date "2026-08-05"
    :verified-authority-clj
    {:backends [:datomic :datahike :datascript]
-    :tests 516 :assertions 28177}
+    :tests 521 :assertions 28212}
    :verified-authority-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057}
    :verified-authority-datascript-cljs
-   {:tests 159 :assertions 4551}
+   {:tests 162 :assertions 4509}
    :heavy-pagination {:tests 9 :assertions 3405}
    :heavy-subproblem-cache {:tests 6 :assertions 20}
    :failures 0

@@ -21,6 +21,36 @@
            error
       (ex-data error))))
 
+(deftest public-consistency-descriptors-reject-unknown-fields-test
+  (doseq [descriptor
+          [(assoc
+            (public-consistency/at-least-as-fresh "token")
+            :unexpected true)
+           (assoc
+            (public-consistency/at-exact-snapshot "token")
+            :unexpected true)]]
+    (is (= :eacl/unsupported-consistency
+           (:type
+            (error-data
+             #(public-consistency/descriptor descriptor)))))
+    (is (= descriptor
+           (:consistency
+            (error-data
+             #(public-consistency/descriptor descriptor)))))))
+
+(deftest public-consistency-has-four-canonical-modes-test
+  (is (= {:mode :minimize-latency}
+         (public-consistency/descriptor nil)))
+  (doseq [removed-mode [:local-snapshot :synchronized-head]]
+    (is (= :eacl/unsupported-consistency
+           (:type
+            (error-data
+             #(public-consistency/descriptor removed-mode)))))
+    (is (= removed-mode
+           (:consistency
+            (error-data
+             #(public-consistency/descriptor removed-mode)))))))
+
 (defn- adapter
   [{:keys [backend-id source-id branch head order locator anchors modes
            selected-current selected-authoritative selected-at-least
@@ -111,7 +141,7 @@
     (cond
       (not (:capability-supported? input))
       (case (:mode input)
-        (:local-snapshot :minimize-latency) :unsupported-capability
+        :minimize-latency :unsupported-capability
         :at-exact-snapshot :exact-snapshot-unavailable
         :unsupported-head-barrier)
       (and
@@ -120,8 +150,8 @@
       :unsupported-head-barrier
       :else
       (case (:mode input)
-        (:local-snapshot :minimize-latency) :select-current
-        (:fully-consistent :synchronized-head) :select-authoritative
+        :minimize-latency :select-current
+        :fully-consistent :select-authoritative
         :at-least-as-fresh :authenticate-and-select-at-least
         :at-exact-snapshot :authenticate-and-select-exact))
 
@@ -254,7 +284,7 @@
          source
          (:adapter
           (consistency/captured-current-selection
-           source public-consistency/local-snapshot options))))
+           source public-consistency/minimize-latency options))))
     (is (identical?
          current
          (:adapter
@@ -308,8 +338,7 @@
 
 (deftest production-plan-observations-refine-the-complete-formal-matrix
   (doseq [mode
-          [:local-snapshot :minimize-latency
-           :fully-consistent :synchronized-head
+          [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
           capability-supported? [false true]
           managed-authority? [false true]]
@@ -367,7 +396,7 @@
                   :anchors #{"anchor"}})
         request-token (token "anchor" 20 20)
         consistency-value
-        {:current public-consistency/local-snapshot
+        {:current public-consistency/minimize-latency
          :authoritative public-consistency/fully-consistent
          :at-least
          (public-consistency/at-least-as-fresh request-token)
@@ -505,14 +534,14 @@
               issue-response-token?)
           (run!
            #(consistency/captured-current-selection
-             source public-consistency/local-snapshot run-options)
+             source public-consistency/minimize-latency run-options)
            {:expected-kernel-operations [:consistency-plan]}))
         (testing
          (str "selected current path, response token "
               issue-response-token?)
           (run!
            #(consistency/select
-             source public-consistency/local-snapshot run-options)
+             source public-consistency/minimize-latency run-options)
            {:select-current 1
             :expected-kernel-operations
             [:consistency-plan :consistency-validation]
@@ -660,8 +689,6 @@
 (deftest capability-matrix-and-legacy-restriction-test
   (doseq [[mode descriptor]
           [[:fully-consistent public-consistency/fully-consistent]
-           [:synchronized-head public-consistency/synchronized-head]
-           [:local-snapshot public-consistency/local-snapshot]
            [:minimize-latency public-consistency/minimize-latency]
            [:at-least-as-fresh
             (public-consistency/at-least-as-fresh
@@ -687,8 +714,6 @@
         (let [other-descriptor
               (case other-mode
                 :fully-consistent public-consistency/fully-consistent
-                :synchronized-head public-consistency/synchronized-head
-                :local-snapshot public-consistency/local-snapshot
                 :minimize-latency public-consistency/minimize-latency
                 :at-least-as-fresh
                 (public-consistency/at-least-as-fresh

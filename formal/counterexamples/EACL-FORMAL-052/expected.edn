@@ -2,7 +2,7 @@
  {:exception-type :eacl/unsupported-consistency
   :consistency false}
  :formal-normalization :ConsistencyRejected
- :omitted-consistency-default :local-snapshot
- :nil-consistency-default :local-snapshot
+ :omitted-consistency-default :minimize-latency
+ :nil-consistency-default :minimize-latency
  :positional-and-map-arities-consistent true
  :backends [:datomic :datahike :datascript]}

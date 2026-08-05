@@ -28,7 +28,7 @@
         (backend/make-adapter
          {:id :consistency-benchmark
           :capabilities
-          {:consistency #{:local-snapshot}
+          {:consistency #{:minimize-latency}
            :snapshots #{:current}
            :source #{:stable-scope :graph-head
                      :anchor-membership :order-hint :exact-locator}
@@ -67,7 +67,7 @@
               (:adapter
                (consistency/captured-current-selection
                 adapter
-                public-consistency/local-snapshot
+                public-consistency/minimize-latency
                 options))]
           (recur (inc iteration) (+ checksum (hash selected))))))))
 

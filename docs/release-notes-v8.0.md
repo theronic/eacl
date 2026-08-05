@@ -57,11 +57,12 @@ number equality.
 
 ## Consistency
 
-- The default authorization mode is `:local-snapshot`.
+- The default authorization mode is `:minimize-latency`.
+- The redundant pre-release names `:local-snapshot` and
+  `:synchronized-head` are no longer accepted.
 - Datomic ordinary reads call `d/db` once and do not call `d/sync` or
   `d/as-of`.
-- `:synchronized-head` explicitly requests a backend synchronization barrier.
-  `:fully-consistent` remains a compatibility name for that behavior.
+- `:fully-consistent` explicitly requests a backend synchronization barrier.
 - `:at-least-as-fresh` performs targeted freshness selection and validates the
   authenticated graph anchor.
 - `:at-exact-snapshot` performs exact selection and bypasses completed-answer
@@ -296,15 +297,29 @@ with the final v8 formats.
   result preservation and one root classification for authoritative calls; a
   public-client regression observes the same bound. The 1,000 µs ceiling was
   not relaxed.
-- **Map-form `can?` weakened malformed false consistency to local snapshot
+- **Map-form `can?` weakened malformed false consistency to the default mode
   (EACL-FORMAL-052).** The Datomic, Datahike, and DataScript records used
   `(or consistency :local-snapshot)` before shared descriptor validation.
   Omitted and nil values were intended to default, but explicit `false` was
-  also falsey and therefore silently became a valid local-snapshot request.
+  also falsey and therefore silently became a valid default request.
   All three map arities now forward the raw value: omission/nil still default
   in the descriptor, while false produces `:eacl/unsupported-consistency`.
   Dafny retains those public-input classes and cross-backend regressions close
   the source refinement.
+- **Token consistency descriptors admitted unknown fields
+  (EACL-FORMAL-053).** The shared descriptor checked the required mode and
+  token values but accepted additional fields, contradicting the formal
+  malformed-input class and the documented strict boundary. Token descriptors
+  now require exactly `:consistency/mode` and `:zed/token`; additional fields
+  produce `:eacl/unsupported-consistency` before authentication or snapshot
+  selection. The check uses cardinality and key membership rather than
+  allocating a key set, and a shared CLJ/CLJS regression covers both token
+  modes.
+- **Immutable DataScript adapters claimed an authoritative head
+  (EACL-FORMAL-054).** A snapshot adapter without a live connection advertised
+  `:fully-consistent`, although its authoritative selector could only return
+  the captured immutable DB. Such adapters now remove that capability;
+  managed clients with a connection retain it.
 
 ## Formal verification
 
@@ -319,7 +334,7 @@ with the final v8 formats.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 9,775 proof efforts across 25 source-project
+The locked Dafny run completes 9,776 proof efforts across 25 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes
@@ -366,8 +381,8 @@ dependency or content proofs.
 
 - Recreate every v8 pre-release client after upgrade.
 - Discard old page cursors and pre-release tokens.
-- Treat omitted consistency as local snapshot.
-- Request `:synchronized-head` when a backend barrier is required.
+- Treat omitted consistency as `:minimize-latency`.
+- Request `:fully-consistent` when a backend barrier is required.
 - Use `:coherence-authority :managed` only after auditing every relationship
   writer for atomic stamp publication.
 - Call `expire-cache!` around excluded history/reset operations.

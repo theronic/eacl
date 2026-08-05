@@ -3,9 +3,11 @@
 EACL's formal work proves a backend-neutral authorization kernel under named
 adapter, runtime, and cryptographic assumptions. It does not verify Clojure,
 ClojureScript, storage engines, compilers, cryptographic primitives, or a
-customer's policy intent. The current release manifest is deliberately
-`not-verified` until production routing, cross-adapter campaigns, performance,
-and shadow-rollout gates are complete.
+customer's policy intent. The current release manifest reports
+`:conditionally-verified`: production routing, cross-adapter campaigns,
+performance, and shadow gates pass, while independent security/formal-methods
+review remains an explicit unmet release obligation. Verified authority is
+still opt-in; it is not the default client mode.
 
 The measured performance consequences and recommended cache-free reference,
 consistency, cache, cursor, and backend architecture are recorded in the
@@ -63,7 +65,7 @@ for another.
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
 clj-kondo version in the toolchain lock. The ledger closes 60 named shared and
-backend roots over 1,288 definitions in 51 source files, including unattributed
+backend roots over 1,348 definitions in 51 source files, including unattributed
 usages assigned to their exact containing `defrecord` spans. It is static
 completeness evidence only: it does not prove Clojure source or adapter
 semantics. `backend-dispatch.edn` additionally closes every CLJ/CLJS
@@ -243,15 +245,15 @@ structural-risk inventory, but its outdated analyser is untrusted and the
 immutable result does not cover current source. It proves no production time,
 allocation, heap, or backend-work bound.
 
-This is still not a full-engine cutover. Materializing an entire database is
-not an acceptable hot-path implementation for large EACL graphs. Public
-traversal, lookup, count, and permission checks therefore continue to use the
-indexed Clojure/CLJS engine as their result source. Complete assurance requires
-a proved generated engine that calls certified ordered adapter scans (or an
-equivalent non-circular refinement boundary), followed by full shadow and load
-gates. The generated providers are reproducible build outputs under
-`formal/smoke/`; they are not yet shipped as a supported client option. The
-manifest therefore continues to report `not-verified`.
+Materializing an entire database remains unacceptable on large EACL graphs.
+The opt-in verified-authoritative route therefore uses the generated indexed
+state machine over certified ordered adapter scans rather than a whole-graph
+runtime evaluator. Public permission checks, lookup, count, pagination, and
+cache/cursor decisions now route through the mapped generated boundaries in
+that mode, and forced-authority shadow/load suites pass on all three backends
+and the supported CLJS target. The legacy route remains the default pending
+independent review and the documented compatibility decision, so the manifest
+reports `:conditionally-verified`, not an unqualified whole-deployment claim.
 
 The planned rollout order is:
 

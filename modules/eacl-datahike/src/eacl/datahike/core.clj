@@ -86,7 +86,7 @@
          :issue-token? false
          :timeout-ms (:consistency-sync-timeout-ms opts)}
         selection
-        (if (#{:local-snapshot :minimize-latency} (:mode descriptor))
+        (if (= :minimize-latency (:mode descriptor))
           (consistency-v3/captured-current-selection
            source-adapter consistency-value selection-options)
           (consistency-v3/select
@@ -632,7 +632,7 @@
   IAuthorization
   (can? [_ subject permission resource]
     (datahike-can? (d/db conn) (assoc opts :completed-cache-request? true)
-                   subject permission resource consistency/local-snapshot))
+                   subject permission resource consistency/minimize-latency))
   (can? [_ subject permission resource consistency]
     (datahike-can? (d/db conn) (assoc opts :completed-cache-request? true)
                    subject permission resource consistency))

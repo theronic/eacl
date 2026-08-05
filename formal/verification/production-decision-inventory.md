@@ -41,7 +41,7 @@ Consistency selection now has a separate generated decision boundary.
 `ConsistencyDecision.dfy` distinguishes capability failure, missing managed
 writer authority, absent exact history, a present malformed adapter,
 cross-source selection, and failed causal/exact anchor postconditions. The
-24 plan states and 48 well-formed validation states are exhaustively compared
+16 plan states and 48 well-formed validation states are exhaustively compared
 through generated Java and JavaScript. Datomic, Datahike, and DataScript pass
 their configured engine selection into this boundary. The zero-coordination
 captured-current path makes one plan decision and returns the identical

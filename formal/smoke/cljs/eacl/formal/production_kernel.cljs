@@ -557,11 +557,6 @@
 (defn- snapshot-consistency-mode
   [consistency mode]
   (case mode
-    :local-snapshot
-    (js-invoke
-     (.-SnapshotConsistencyMode consistency)
-     "create_LocalSnapshot")
-
     :minimize-latency
     (js-invoke
      (.-SnapshotConsistencyMode consistency)
@@ -571,11 +566,6 @@
     (js-invoke
      (.-SnapshotConsistencyMode consistency)
      "create_FullyConsistent")
-
-    :synchronized-head
-    (js-invoke
-     (.-SnapshotConsistencyMode consistency)
-     "create_SynchronizedHead")
 
     :at-least-as-fresh
     (js-invoke

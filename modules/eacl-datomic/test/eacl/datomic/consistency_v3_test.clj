@@ -57,7 +57,7 @@
       (is (= :eacl/unsupported-consistency (:type error)))
       (is (false? (:consistency error))))))
 
-(deftest local-authoritative-and-targeted-sync-arities-test
+(deftest minimize-authoritative-and-targeted-sync-arities-test
   (with-mem-conn [conn schema/v7-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
@@ -76,20 +76,13 @@
                        (original-sync connection basis)))]
         (is (true? (eacl/can? authorization user :view document)))
         (is (empty? @calls)
-            "the default local snapshot must not synchronize")
+            "minimize-latency must not synchronize")
         (is (true?
              (eacl/can?
               authorization user :view document
               consistency/fully-consistent)))
         (is (= [:authoritative] @calls)
-            "the compatibility spelling remains an explicit barrier")
-        (reset! calls [])
-        (is (true?
-             (eacl/can?
-              authorization user :view document
-              consistency/synchronized-head)))
-        (is (= [:authoritative] @calls)
-            "the precisely named head barrier uses zero-argument sync")
+            "fully-consistent uses the authoritative head barrier")
         (reset! calls [])
         (is (true?
              (eacl/can?

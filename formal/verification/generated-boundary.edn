@@ -115,19 +115,27 @@
   :operations [:consistency-plan :consistency-validation]
   :public-map-normalization
   {:input-classes [:omitted :nil :valid-mode :false :other-malformed]
-   :omitted-and-nil-default-to :local-snapshot
+   :omitted-and-nil-default-to :minimize-latency
    :false-and-other-malformed :rejected
-   :counterexample :EACL-FORMAL-052
+   :counterexamples [:EACL-FORMAL-052 :EACL-FORMAL-053]
+   :canonical-modes
+   [:minimize-latency :fully-consistent
+    :at-least-as-fresh :at-exact-snapshot]
+   :removed-pre-release-modes
+   [:local-snapshot :synchronized-head]
+   :token-descriptor-fields #{:consistency/mode :zed/token}
+   :unknown-token-descriptor-fields :rejected
    :production-regressions [:datomic :datahike :datascript]}
-  :plan-cases 24
+  :backend-capability-regression :EACL-FORMAL-054
+  :plan-cases 16
   :well-formed-post-selection-cases 48
   :generated-logical-work-paths 5
   :generated-logical-work-response-token-states 2
   :generated-java-exhaustive true
   :generated-javascript-exhaustive true
   :production-plan-observation-matrix
-  {:clj 24
-   :cljs 24
+  {:clj 16
+   :cljs 16
    :legacy-and-generated-error-routing-equal true}
   :production-validation-observation-scenarios
   {:clj 24
@@ -227,13 +235,13 @@
    :suite-tests 57 :suite-assertions 10990 :status :passed}
   :portable-clj-cljs-boundary
   {:namespace eacl.verified-kernel-test
-   :clj {:tests 13 :assertions 149}
-   :cljs {:tests 13 :assertions 149 :status :passed}}
+   :clj {:tests 15 :assertions 170}
+   :cljs {:tests 15 :assertions 170 :status :passed}}
   :production-routing
   {:clj-java
   {:namespace eacl.formal.production-kernel-test
    :tests 36
-   :assertions 10411
+   :assertions 10395
     :leapfrog-reseek-side-and-target-trace :exact
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
@@ -241,7 +249,7 @@
  :cljs-javascript
    {:namespace-tests 34
     :suite-tests 58
-    :suite-assertions 10992
+    :suite-assertions 10968
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407
@@ -256,14 +264,14 @@
   :clj-java
    {:namespace eacl.formal.production-kernel-test
     :namespace-tests 36
-    :namespace-assertions 10411
+    :namespace-assertions 10395
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
     :namespace-tests 34
     :suite-tests 58
-    :suite-assertions 10992
+    :suite-assertions 10968
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
@@ -312,12 +320,12 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 516 :assertions 28177 :failures 0 :errors 0}
+    :tests 521 :assertions 28212 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057 :failures 0 :errors 0}
    :cljs-datascript
-   {:tests 159 :assertions 4551 :failures 0 :errors 0}
+   {:tests 162 :assertions 4509 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed

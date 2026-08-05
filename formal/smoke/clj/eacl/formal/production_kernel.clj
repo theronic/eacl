@@ -626,17 +626,11 @@
 (defn- snapshot-consistency-mode
   [mode]
   (case mode
-    :local-snapshot
-    (SnapshotConsistencyMode/create_LocalSnapshot)
-
     :minimize-latency
     (SnapshotConsistencyMode/create_MinimizeLatency)
 
     :fully-consistent
     (SnapshotConsistencyMode/create_FullyConsistent)
-
-    :synchronized-head
-    (SnapshotConsistencyMode/create_SynchronizedHead)
 
     :at-least-as-fresh
     (SnapshotConsistencyMode/create_AtLeastAsFresh)

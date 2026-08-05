@@ -103,14 +103,14 @@ EACL should expose these semantics:
 
 | Mode | Semantics | Datomic | Datahike | DataScript |
 | --- | --- | --- | --- | --- |
-| `:local-snapshot` | newest complete value currently visible to this connection; no coordination | one `d/db` | one branch-head `d/db`/deref | one `ds/db` |
+| `:minimize-latency` | newest complete value currently visible to this connection; no coordination | one `d/db` | one branch-head `d/db`/deref | one `ds/db` |
 | `:at-least-as-fresh` | selected value contains the caller's causal floor | targeted `d/sync conn t` only when behind | not exposed initially; requires an adapter-certified ancestry/acquisition contract | only meaningful within one supplied connection and incarnation |
 | `:at-exact-snapshot` | evaluate exactly the token revision | `d/as-of` at authenticated database id and `t` | retained commit id, or temporal history | bounded retained immutable DB |
-| `:synchronized-head` | explicit cross-process/head barrier | zero-argument `d/sync` | only when the adapter can establish an authoritative branch head | same as local for a single in-process connection |
+| `:fully-consistent` | explicit cross-process/head barrier | zero-argument `d/sync` | only when the adapter can establish an authoritative branch head | same as minimize-latency for a single in-process connection |
 
-`:local-snapshot` should be the default read mode. It is locally coherent, not
+`:minimize-latency` should be the default read mode. It is locally coherent, not
 globally freshest. Calling it `:fully-consistent` would be misleading.
-`:synchronized-head` should remain explicit and relatively rare.
+`:fully-consistent` should remain explicit and relatively rare.
 
 Datomic's `t` is safe as an order and, together with stable source identity and
 externally rotated source incarnation, as an exact ordinary-history revision
@@ -421,7 +421,7 @@ Use Datomic's strengths directly:
 - signed `[stable-source source-incarnation t]` is sufficient for a Datomic
   causal floor;
 - targeted `d/sync conn t` is used only when the local peer is behind;
-- zero-argument `d/sync` is explicit synchronized-head behavior;
+- zero-argument `d/sync` is explicit fully-consistent behavior;
 - `d/as-of` implements exact cursor walks;
 - relation and schema versions use transaction identities updated atomically;
 - no cache-correctness listener is required.
@@ -502,7 +502,7 @@ an identical internal implementation.
 Keep the public surface small:
 
 ```clojure
-{:consistency-default :local-snapshot
+{:consistency-default :minimize-latency
  :answer-cache :none} ; safest initial v8 default
 ```
 
@@ -542,7 +542,7 @@ lifting. Managed writers receive dependency epochs.
 
 1. Freeze the cache-free snapshot semantics and make all cache-disabled public
    operations differential against the generated reference.
-2. Make `:local-snapshot` the default; make synchronized head explicit.
+2. Make `:minimize-latency` the default; make fully consistent explicit.
 3. Make exact-snapshot cursors the default and retain deterministic replay.
 4. Land the once-per-schema linear SCC analysis.
 5. Prove the exact-cache theorem and implement exact caching only on certified

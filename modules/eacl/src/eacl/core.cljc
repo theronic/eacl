@@ -16,6 +16,10 @@
   ;    (can? client (->user "andre") :view (->server 456))
   ;    => true | false
   ;
+  ; Omitted or nil consistency defaults to :minimize-latency. The positional
+  ; consistency arity and the map arity accept every mode advertised by the
+  ; configured backend.
+  ;
   ; Records used liberally to avoid typos in subject/object types.
   ; Accepts any map-like with {:keys [type id]}.
 

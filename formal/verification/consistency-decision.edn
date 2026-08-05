@@ -20,15 +20,16 @@
    :worst-case-wall-time]}
  :formal
  {:source "formal/dafny/ConsistencyDecision.dfy"
-  :verified-obligations 18
+  :verified-obligations 19
   :definitions
   [ConsistencyDecision.NormalizePublicConsistency
    ConsistencyDecision.SelectionPlanDecision
    ConsistencyDecision.SelectedSnapshotDecision
    ConsistencyDecision.SuccessfulSelectionWork]
   :lemmas
-  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToLocal
+  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToMinimizeLatency
    ConsistencyDecision.FalseConsistencyCannotSilentlyDefault
+   ConsistencyDecision.MalformedConsistencyCannotBeAccepted
    ConsistencyDecision.ExplicitConsistencyModeIsPreserved
    ConsistencyDecision.SuccessfulSelectionLogicalWorkIsConstantBounded
    ConsistencyDecision.CapturedCurrentNeedsNoPostSelectionDecision
@@ -104,10 +105,10 @@
  :generated-boundary
  {:operations [:consistency-plan :consistency-validation]
   :plan-state-space
-  {:modes 6
+  {:modes 4
    :capability-observations 2
    :authority-observations 2
-   :cases 24}
+   :cases 16}
   :well-formed-validation-state-space
   {:selection-kinds 4
    :presence-and-adapter-observations
@@ -170,14 +171,24 @@
    [:absent :malformed :identical :same-scope-anchor-pass
     :same-scope-anchor-fail :different-scope]}
   :public-map-input-refinement-evidence
-  {:counterexample :EACL-FORMAL-052
+  {:counterexamples [:EACL-FORMAL-052 :EACL-FORMAL-053]
    :defaultable-inputs [:omitted :nil]
+   :default-mode :minimize-latency
+   :canonical-modes
+   [:minimize-latency :fully-consistent
+    :at-least-as-fresh :at-exact-snapshot]
+   :removed-pre-release-modes
+   [:local-snapshot :synchronized-head]
    :malformed-false :eacl/unsupported-consistency
+   :token-descriptor-fields #{:consistency/mode :zed/token}
+   :unknown-token-descriptor-fields :eacl/unsupported-consistency
    :backends [:datomic :datahike :datascript]
    :regressions
    [eacl.datomic.consistency-v3-test/map-can-rejects-malformed-consistency-test
     eacl.datahike.consistency-v3-test/map-can-rejects-malformed-consistency-test
-    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test]}}
+    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test
+    eacl.consistency-test/public-consistency-has-four-canonical-modes-test
+    eacl.consistency-test/public-consistency-descriptors-reject-unknown-fields-test]}}
  :model-fidelity-regression
  {:finding
   :an-early-two-boolean-draft-conflated-absent-exact-selection-with-a-present-malformed-value
@@ -192,18 +203,40 @@
  :public-input-fidelity-regression
  {:counterexample :EACL-FORMAL-052
   :finding
-  :the-public-map-can-arity-coerced-explicit-false-to-local-snapshot-before-the-formal-descriptor-boundary
+  :the-public-map-can-arity-coerced-explicit-false-to-the-then-current-default-before-the-formal-descriptor-boundary
   :production-contract
-  {:omitted :local-snapshot
-   :nil :local-snapshot
+  {:omitted :minimize-latency
+   :nil :minimize-latency
    :false :eacl/unsupported-consistency
    :explicit-valid-mode :preserved}
   :fix
   :forward-the-raw-public-map-value-and-let-the-shared-descriptor-own-defaulting-and-rejection
   :formal-controls
-  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToLocal
+  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToMinimizeLatency
    ConsistencyDecision.FalseConsistencyCannotSilentlyDefault
    ConsistencyDecision.ExplicitConsistencyModeIsPreserved]}
+ :public-token-field-fidelity-regression
+ {:counterexample :EACL-FORMAL-053
+  :finding
+  :production-accepted-token-consistency-descriptors-with-fields-outside-the-modeled-language
+  :production-contract
+  {:required-fields #{:consistency/mode :zed/token}
+   :unknown-fields :eacl/unsupported-consistency}
+  :fix
+  :require-exact-field-cardinality-and-membership-before-token-selection
+  :formal-control
+  ConsistencyDecision.MalformedConsistencyCannotBeAccepted}
+ :backend-capability-fidelity-regression
+ {:counterexample :EACL-FORMAL-054
+  :finding
+  :connectionless-datascript-adapter-advertised-authoritative-head-selection
+  :production-contract
+  {:minimize-latency :available-on-immutable-snapshot
+   :fully-consistent :requires-live-connection}
+  :fix
+  :remove-fully-consistent-from-connectionless-adapter-capabilities
+  :control
+  eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test}
  :resource-model-fidelity-regression
  {:finding
   :the-first-successful-work-datatype-omitted-direct-select-current-while-modeling-the-optimized-captured-current-path

@@ -98,10 +98,8 @@
      :stable-on-irrelevant-change :snapshot-bound}})
 
 (def known-consistency-modes
-  #{:local-snapshot
+  #{:minimize-latency
     :fully-consistent
-    :synchronized-head
-    :minimize-latency
     :at-least-as-fresh
     :at-exact-snapshot})
 

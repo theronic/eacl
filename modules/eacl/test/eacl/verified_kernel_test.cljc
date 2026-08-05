@@ -198,7 +198,7 @@
   (cond
     (not capability-supported?)
     (case mode
-      (:local-snapshot :minimize-latency) :unsupported-capability
+      :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
 
@@ -208,8 +208,8 @@
 
     :else
     (case mode
-      (:local-snapshot :minimize-latency) :select-current
-      (:fully-consistent :synchronized-head) :select-authoritative
+      :minimize-latency :select-current
+      :fully-consistent :select-authoritative
       :at-least-as-fresh :authenticate-and-select-at-least
       :at-exact-snapshot :authenticate-and-select-exact)))
 
@@ -232,8 +232,7 @@
 (deftest consistency-boundaries-are-total-and-strict
   (testing "all plan observations have one exact admissible decision"
     (doseq [mode
-            [:local-snapshot :minimize-latency
-             :fully-consistent :synchronized-head
+            [:minimize-latency :fully-consistent
              :at-least-as-fresh :at-exact-snapshot]
             capability-supported? [false true]
             managed-authority? [false true]]
@@ -283,7 +282,7 @@
       (is (= :invalid-selected-adapter
              (expected-consistency-validation malformed)))))
   (testing "unknown fields, impossible observations, and lying kernels fail"
-    (let [plan {:mode :local-snapshot
+    (let [plan {:mode :minimize-latency
                 :capability-supported? true
                 :managed-authority? false}
           validation {:kind :exact

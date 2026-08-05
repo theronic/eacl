@@ -1466,7 +1466,7 @@
          :engine-selection (:engine-selection opts)
          :issue-token? false
          :timeout-ms (:consistency-sync-timeout-ms opts)}]
-    (if (#{:local-snapshot :minimize-latency} (:mode descriptor))
+    (if (= :minimize-latency (:mode descriptor))
       (consistency-v3/captured-current-selection
        source-adapter consistency-value selection-options)
       (consistency-v3/select
@@ -2071,7 +2071,8 @@
   IAuthorization
   (can? [_ subject permission resource]
     (with-client-schema-read conn schema-lock schema-state
-      (spiceomic-can? conn opts subject permission resource consistency/local-snapshot)))
+      (spiceomic-can? conn opts subject permission resource
+                      consistency/minimize-latency)))
 
   (can? [_ subject permission resource consistency]
     (with-client-schema-read conn schema-lock schema-state

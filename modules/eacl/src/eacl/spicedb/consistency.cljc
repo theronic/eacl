@@ -1,10 +1,8 @@
 (ns eacl.spicedb.consistency
   "Consistency descriptors accepted by EACL clients.")
 
-(def local-snapshot :local-snapshot)
 (def minimize-latency :minimize-latency)
 (def fully-consistent :fully-consistent)
-(def synchronized-head :synchronized-head)
 
 (defn at-least-as-fresh
   [token]
@@ -21,22 +19,22 @@
    :zed/token token})
 
 (defn descriptor
-  "Normalizes a caller value to {:mode keyword :token string-or-nil}."
+  "Normalizes a caller value to {:mode keyword :token string-or-nil}.
+
+  Token descriptors contain exactly :consistency/mode and :zed/token;
+  unknown fields are rejected before authentication or snapshot selection."
   [value]
   (cond
-    (or (nil? value) (= local-snapshot value))
-    {:mode :local-snapshot}
+    (or (nil? value) (= minimize-latency value))
+    {:mode :minimize-latency}
 
     (= fully-consistent value)
     {:mode :fully-consistent}
 
-    (= synchronized-head value)
-    {:mode :synchronized-head}
-
-    (= minimize-latency value)
-    {:mode :minimize-latency}
-
     (and (map? value)
+         (= 2 (count value))
+         (contains? value :consistency/mode)
+         (contains? value :zed/token)
          (#{:at-least-as-fresh :at-exact-snapshot}
           (:consistency/mode value))
          (string? (:zed/token value))

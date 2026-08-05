@@ -108,7 +108,11 @@
     :EACL-FORMAL-051
     eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
     :EACL-FORMAL-052
-    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test})
+    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test
+    :EACL-FORMAL-053
+    eacl.consistency-test/public-consistency-descriptors-reject-unknown-fields-test
+    :EACL-FORMAL-054
+    eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test})
 
 (defn- read-edn
   [path]
@@ -187,8 +191,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-052 (:latest revision)))
-    (is (= 52 (count entries)))))
+    (is (= :EACL-FORMAL-054 (:latest revision)))
+    (is (= 54 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

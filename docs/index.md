@@ -137,7 +137,8 @@ Embedded AuthZ offers some advantages for typical use-cases:
 
 1. Situated permissions avoids network I/O to an external AuthZ system, which should be faster at small-to-medium scale.
 2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing, in real-time.
-3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
+3. Reads support minimize-latency, fully-consistent, at-least-as-fresh, and
+   exact-snapshot consistency without an external authorization service.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -563,7 +564,11 @@ Now you can transact relationships:
 
 ## Limitations, Deficiencies & Gotchas:
 
-- No consistency semantics because all EACL queries are fully-consistent. Use SpiceDB if you need consistency semantics enabled by ZedTokens ala Zookies. SpiceDB is heavily optimised to maintain a consistent cache.
+- EACL v8 defaults reads to `:minimize-latency` and supports explicit
+  fully-consistent, at-least-as-fresh, and exact-snapshot modes with
+  authenticated Zed tokens. See the
+  [consistency and cache operations guide](v8-consistency-cache-operations.md)
+  for backend capability requirements and failure modes.
 - EACL makes no strong performance claims. It should be good for <1M Datomic entities. Goal is 10M entities.
 - Arrow syntax is limited to one level of nesting, e.g.
   - Supported: `permission arrow = relation->via-permission` is valid

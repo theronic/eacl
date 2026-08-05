@@ -38,7 +38,7 @@
   (cond
     (not capability-supported?)
     (case mode
-      (:local-snapshot :minimize-latency) :unsupported-capability
+      :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
     (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
@@ -46,8 +46,8 @@
     :unsupported-head-barrier
     :else
     (case mode
-      (:local-snapshot :minimize-latency) :select-current
-      (:fully-consistent :synchronized-head) :select-authoritative
+      :minimize-latency :select-current
+      :fully-consistent :select-authoritative
       :at-least-as-fresh :authenticate-and-select-at-least
       :at-exact-snapshot :authenticate-and-select-exact)))
 
@@ -68,8 +68,7 @@
 
 (deftest generated-javascript-consistency-decisions-are-exhaustive
   (doseq [mode
-          [:local-snapshot :minimize-latency
-           :fully-consistent :synchronized-head
+          [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
           capability-supported? [false true]
           managed-authority? [false true]]
@@ -202,8 +201,7 @@
 
 (deftest generated-javascript-plan-refines-production-fact-extraction
   (doseq [mode
-          [:local-snapshot :minimize-latency
-           :fully-consistent :synchronized-head
+          [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
           capability-supported? [false true]
           managed-authority? [false true]]

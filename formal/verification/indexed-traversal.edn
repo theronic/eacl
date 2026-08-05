@@ -206,7 +206,7 @@
      :maximum-resource-count 694159}}
    :aggregate
    {:indexed-obligations 9166
-    :whole-formal-tree-obligations 9775
+    :whole-formal-tree-obligations 9776
     :deterministic-proof-effort-resource-limit 50000000
     :whole-tree-maximum-resource-count 33547591
     :machine-readable-report "target/formal/dafny-verification.json"
@@ -216,13 +216,13 @@
  :generated-java
   {:namespace eacl.formal.production-kernel-test
    :tests 36
-   :assertions 10411
+   :assertions 10395
    :qualification :namespace-includes-non-indexed-production-decisions
    :status :passed}
  :generated-javascript
   {:runner "formal/smoke/cljs/run"
    :suite-tests 58
-   :suite-assertions 10992
+   :suite-assertions 10968
    :datascript-public-recursive-cache-mode-differential true
    :status :passed}
   :production-recursive-contract
@@ -265,9 +265,9 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :clj-backends [:datomic :datahike :datascript]
    :cljs-backends [:datascript]
-   :nonbenchmark {:tests 516 :assertions 28177 :failures 0 :errors 0}
+   :nonbenchmark {:tests 521 :assertions 28212 :failures 0 :errors 0}
    :heavy {:tests 17 :assertions 4057 :failures 0 :errors 0}
-   :cljs {:tests 159 :assertions 4551 :failures 0 :errors 0}
+   :cljs {:tests 162 :assertions 4509 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed

@@ -1,9 +1,7 @@
 module ConsistencyDecision {
   datatype SnapshotConsistencyMode =
-    | LocalSnapshot
     | MinimizeLatency
     | FullyConsistent
-    | SynchronizedHead
     | AtLeastAsFresh
     | AtExactSnapshot
 
@@ -22,26 +20,32 @@ module ConsistencyDecision {
     input: PublicConsistencyInput
   ): PublicConsistencyOutcome {
     match input
-    case ConsistencyOmitted => ConsistencyAccepted(LocalSnapshot)
-    case ConsistencyNil => ConsistencyAccepted(LocalSnapshot)
+    case ConsistencyOmitted => ConsistencyAccepted(MinimizeLatency)
+    case ConsistencyNil => ConsistencyAccepted(MinimizeLatency)
     case ConsistencyMode(mode) => ConsistencyAccepted(mode)
     case ConsistencyFalse => ConsistencyRejected
     case ConsistencyMalformed => ConsistencyRejected
   }
 
-  lemma OnlyOmittedOrNilConsistencyDefaultsToLocal(
+  lemma OnlyOmittedOrNilConsistencyDefaultsToMinimizeLatency(
     input: PublicConsistencyInput
   )
     ensures NormalizePublicConsistency(input) ==
-            ConsistencyAccepted(LocalSnapshot) ==>
+            ConsistencyAccepted(MinimizeLatency) ==>
               input.ConsistencyOmitted? ||
               input.ConsistencyNil? ||
-              (input.ConsistencyMode? && input.mode.LocalSnapshot?)
+              (input.ConsistencyMode? && input.mode.MinimizeLatency?)
   {
   }
 
   lemma FalseConsistencyCannotSilentlyDefault()
     ensures NormalizePublicConsistency(ConsistencyFalse) ==
+            ConsistencyRejected
+  {
+  }
+
+  lemma MalformedConsistencyCannotBeAccepted()
+    ensures NormalizePublicConsistency(ConsistencyMalformed) ==
             ConsistencyRejected
   {
   }
@@ -190,10 +194,8 @@ module ConsistencyDecision {
 
   function PlannedAction(mode: SnapshotConsistencyMode): SelectionAction {
     match mode
-    case LocalSnapshot => SelectCurrent
     case MinimizeLatency => SelectCurrent
     case FullyConsistent => SelectAuthoritative
-    case SynchronizedHead => SelectAuthoritative
     case AtLeastAsFresh => AuthenticateAndSelectAtLeast
     case AtExactSnapshot => AuthenticateAndSelectExact
   }
@@ -202,10 +204,8 @@ module ConsistencyDecision {
     mode: SnapshotConsistencyMode
   ): ConsistencyError {
     match mode
-    case LocalSnapshot => UnsupportedCapability
     case MinimizeLatency => UnsupportedCapability
     case FullyConsistent => UnsupportedHeadBarrier
-    case SynchronizedHead => UnsupportedHeadBarrier
     case AtLeastAsFresh => UnsupportedHeadBarrier
     case AtExactSnapshot => ExactSnapshotUnavailable
   }

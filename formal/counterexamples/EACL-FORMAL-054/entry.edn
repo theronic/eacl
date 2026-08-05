@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-054
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "datascript/snapshot-adapter/no-connection/fully-consistent-capability"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit d1216758267d7620435c0c59cb8929bd180ab568"]
+ :affected-backends [:datascript]
+ :root-cause
+ "DataScript's snapshot adapter advertised :fully-consistent unconditionally. Without :conn, select-authoritative fell back to the adapter's captured immutable DB and could not observe or select the current connection head."
+ :fix
+ "Remove :fully-consistent from an immutable DataScript adapter when :conn is absent. Preserve minimize-latency and the independently available capabilities, and cover the capability boundary with a backend regression."
+ :closing-evidence
+ ["eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test"
+  "ConsistencyDecision.SelectionPlanDecision"]}
