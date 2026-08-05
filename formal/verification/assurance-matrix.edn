@@ -33,6 +33,9 @@
               :acyclic-arrow-full-candidate-checks-are-linear
               :public-can-root-classification-hoist-preserves-result
               :public-generated-can-performs-one-root-classification
+              :reverse-transition-semantic-soundness
+              :reverse-least-fixed-point-completeness
+              :completed-boolean-render-read-determinism
               :limit-fails-closed
               :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
@@ -45,6 +48,11 @@
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
    :internal-verified-authoritative-all-defined-permission-roots
+   :point-check-routing
+   {:direction :reverse
+    :anchor :concrete-resource
+    :counterexample :EACL-FORMAL-055
+    :target-local-logical-work-gate :passed}
    :remaining
    [:acyclic-direct-alias-and-arrow-callback-arguments-and-semantic-refinement
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review

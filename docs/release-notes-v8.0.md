@@ -320,6 +320,15 @@ with the final v8 formats.
   `:fully-consistent`, although its authoritative selector could only return
   the captured immutable DB. Such adapters now remove that capability;
   managed clients with a connection retain it.
+- **Generated point checks traversed from the broad endpoint
+  (EACL-FORMAL-055).** `can?` always started the generated forward driver at
+  the subject, making a point query scale with unrelated resources reachable
+  from that subject. It now starts the proved reverse driver at the named
+  resource. The regression gate holds backend and logical work constant from
+  16 to 1,040 reachable resources and keeps wall-time as a separate host gate.
+  An exact direct-tuple probe preserves the documented raw-EID ghost behavior
+  if a consumer bypasses EACL deletion and leaves only the subject-owned tuple;
+  only that malformed state invokes a verified forward recovery.
 
 ## Formal verification
 
@@ -362,15 +371,15 @@ redesign:
 | Datahike repeated `can?` | 12.2 µs | 17.6 µs | 1.4× |
 
 Datomic's private current-cache lookup itself measured about 1.5 µs. The
-current forced-authority heavy suite passes 17 tests and 4,057 assertions. On
+current forced-authority heavy suite passes 17 tests and 4,062 assertions. On
 the latest fixed-heap run:
 
-- 15,000-resource first page median: 0.25 ms;
-- forward max-page median: 0.67 ms;
-- reverse max-page median: 0.54 ms;
-- 4,000-node recursive walk: 140.22 ms with cached continuation versus
-  3,078.63 ms replaying prefixes;
-- distinct-query shared-subgraph p50: 0.181959 ms versus 0.684250 ms for
+- 15,000-resource first page median: 0.24 ms;
+- forward max-page median: 0.55 ms;
+- reverse max-page median: 0.45 ms;
+- 4,000-node recursive walk: 134.09 ms with cached continuation versus
+  3,141.52 ms replaying prefixes;
+- distinct-query shared-subgraph p50: 0.182125 ms versus 0.789916 ms for
   completed-answer-only caching, with zero backend operations on the reused
   path.
 

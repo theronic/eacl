@@ -569,6 +569,24 @@ generated-code compiler out of the trusted computing base.
   Connectionless adapters now remove that capability; managed clients with a
   connection retain it. The backend regression failed before and passes after
   the fix.
+- EACL-FORMAL-055 was exposed after generated authority became the release
+  default. Generated `can?` always traversed forward from the subject, so a
+  request naming one resource could enumerate the subject's broad resource
+  fanout. On one warmed local JVM the generated path measured about 453 µs
+  versus 83 µs for the target-local legacy specialization; the failed Actions
+  run produced three stable generated medians from 1.187 to 1.193 ms. Point
+  checks now use the already-proved reverse indexed state machine from the
+  concrete resource and its Boolean renderer for the requested subject. The
+  local median fell to about 150 µs. A separate deterministic gate observes
+  one backend command and one fetched/consumed value at both 16 and 1,040
+  subject-reachable resources, so the repaired scaling property does not
+  depend on host speed. Datomic-compatible storage deliberately preserves one
+  malformed-data compatibility case: if a raw entity retraction leaves only
+  the subject-owned half of a direct relationship tuple, an exact tuple probe
+  gates a verified forward recovery. Normal positive and negative point
+  checks remain resource-anchored. Shadow telemetry compares the public
+  Boolean result but no longer compares counters from the legacy forward and
+  generated reverse algorithms as though their work traces were identical.
 
 ## Public wording audit
 
@@ -601,15 +619,15 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 54 minimized entries replayed by 56 tests and 11,351
+- Counterexample corpus: 55 minimized entries replayed by 57 tests and 11,425
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
 - Default-authority non-benchmark CLJ suite: 505 tests, 19,706 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
-- Forced-authority non-benchmark CLJ suite: 524 tests, 28,224 assertions,
+- Forced-authority non-benchmark CLJ suite: 525 tests, 28,304 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
-- Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
+- Forced-authority heavy CLJ suite: 17 tests, 4,062 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward
   pagination, count retention, and shared-subgraph cache gates pass.
 - Default and forced-authority DataScript CLJS suites: 163 tests, 4,513

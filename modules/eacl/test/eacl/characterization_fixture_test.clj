@@ -219,7 +219,7 @@
                 routing-certificate-boundary
                 consistency-selection-boundary
                 generated-artifacts
-                legacy-runtime
+                public-runtime
                 generated-indexed-authority
                 ordered-merge-source-specialization
                 layered-subproblem-cache
@@ -400,12 +400,12 @@
       (is (pos-int? baseline-bytes))
       (is (pos-int? maximum-bytes))
       (is (<= baseline-bytes maximum-bytes)))
-    (is (< (get-in legacy-runtime
+    (is (< (get-in public-runtime
                    [:multipath-page :max-page-median-baseline-ms])
-           (get-in legacy-runtime
+           (get-in public-runtime
                    [:multipath-page :max-page-median-max-ms])))
     (let [harness
-          (get-in legacy-runtime
+          (get-in public-runtime
                   [:permission-check :steady-state-harness])]
       (is (= :EACL-FORMAL-050 (:counterexample harness)))
       (is (= 15000 (:warmup-calls harness)))
@@ -415,11 +415,11 @@
       (is (false? (:threshold-relaxed harness)))
       (is (= :passed
              (get-in harness
-                     [:last-local-forced-authority :status])))
+                     [:last-local-release-default-reverse :status])))
       (is (< (get-in harness
-                     [:last-local-forced-authority
+                     [:last-local-release-default-reverse
                       :median-microseconds])
-             (get-in legacy-runtime
+             (get-in public-runtime
                      [:permission-check :warm-max-microseconds])))
       (is (= :failed
              (get-in harness
@@ -428,9 +428,9 @@
       (is (= :EACL-FORMAL-051
              (get-in harness
                      [:github-corrected-harness-before-root-hoist
-                      :closing-counterexample]))))
+                     :closing-counterexample]))))
     (let [classification
-          (get-in legacy-runtime
+          (get-in public-runtime
                   [:permission-check :generated-root-classification])]
       (is (= :EACL-FORMAL-051 (:counterexample classification)))
       (is (= 1
@@ -443,6 +443,19 @@
              1.0))
       (is (false? (:threshold-relaxed classification)))
       (is (= :passed (:status classification))))
+    (let [permission-check (:permission-check public-runtime)
+          scaling (:target-local-scaling permission-check)]
+      (is (= :verified-authoritative (:engine-mode permission-check)))
+      (is (= :reverse (:point-query-direction permission-check)))
+      (is (= :EACL-FORMAL-055 (:counterexample scaling)))
+      (is (= [16 1040] (:reachable-resource-counts scaling)))
+      (is (= (select-keys
+              (:small-work scaling)
+              (:logical-and-backend-work-keys scaling))
+             (select-keys
+              (:large-work scaling)
+              (:logical-and-backend-work-keys scaling))))
+      (is (= :passed (:status scaling))))
     (is (<= (get-in memory-and-token
                     [:cursor-token-utf8-bytes
                      :multipath-500-results-page-50])
@@ -531,11 +544,11 @@
                     [:multipath-page :max-page-median-ms])
             pages-per-second (/ 1000.0 page-median)
             minimum-throughput
-            (get-in legacy-runtime
+            (get-in public-runtime
                     [:multipath-page
                      :minimum-threshold-throughput-pages-per-second])]
         (is (<= page-median
-                (get-in legacy-runtime
+                (get-in public-runtime
                         [:multipath-page
                          :max-page-median-max-ms])))
         (is (>= pages-per-second minimum-throughput))

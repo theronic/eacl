@@ -168,6 +168,17 @@ The verification and differential harness SHALL contain registered incorrect var
 - **WHEN** CI evaluates a registered incomplete-dependency, numeric-ancestry, scope-omission, fail-open, or publication-race mutant
 - **THEN** at least one required correctness gate fails
 
+### Requirement: Dimensionally sound resource regression gates
+The verification harness SHALL keep logical work, backend operations, allocation, retained state, verifier effort, and wall time as separate resource dimensions. It SHALL prefer deterministic work/scaling assertions for algorithmic complexity and use host latency only as an explicitly qualified runtime gate.
+
+#### Scenario: Point authorization over a broad subject
+- **WHEN** `can?` checks one concrete resource while the subject can reach increasing numbers of unrelated resources
+- **THEN** the generated authoritative engine anchors the search at the concrete resource and its backend/logical work does not grow merely with that unrelated subject fanout
+
+#### Scenario: Host latency variability
+- **WHEN** the same benchmark runs on hosts with different service rates
+- **THEN** deterministic scaling/work gates still detect algorithmic regressions independently of the separately recorded absolute latency ceiling
+
 ### Requirement: Differential and shadow migration gate
 The verified kernel SHALL NOT become authoritative until it agrees with the formal semantics and every unexplained difference from the legacy engine has been resolved. Unsound legacy behavior SHALL be corrected rather than encoded into the formal semantics solely for compatibility.
 

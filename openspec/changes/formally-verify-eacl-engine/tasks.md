@@ -185,3 +185,4 @@
 - [x] 14.4 Run heavy performance/heap benchmarks and confirm every recorded cutover threshold or document a blocking regression.
 - [x] 14.5 Generate the final verification manifest and manually audit that every public “verified” claim is supported by a theorem plus satisfied adapter assumptions.
 - [x] 14.6 Run `openspec validate formally-verify-eacl-engine --strict` and resolve every validation error before implementation is declared complete.
+- [x] 14.7 Replace subject-forward generated point checks with the verified resource-reverse driver, retain the minimized performance counterexample, and pass target-local logical-work plus release-latency gates.

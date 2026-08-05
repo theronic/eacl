@@ -20,7 +20,7 @@
   :indexed-root-denotation-compiler-bridge 137
   :total 9166}
  :generated-targets [:java :javascript]
- :production-authoritative :internal-opt-in
+ :production-authoritative :release-default
  :production-routing
  {:scan-response-validation
   {:status :verified-authoritative-mode-routed
@@ -43,12 +43,29 @@
   :rendering
   {:status :verified-authoritative-mode-routed
    :permission-roots [:all-defined]
+   :point-authorization-direction :reverse
    :operations
    [:can?
     :lookup-resources
     :lookup-subjects
     :count-resources
     :count-subjects]}
+  :point-authorization
+  {:counterexample :EACL-FORMAL-055
+   :anchor :concrete-resource
+   :direction :reverse
+   :positive-result :boolean-renderer-stops-at-requested-subject
+   :negative-result :returned-only-after-reverse-exhaustion
+   :semantic-basis
+   [:reverse-transition-semantic-soundness
+    :reverse-least-fixed-point-completeness
+    :completed-render-read-determinism]
+   :target-local-scaling
+   {:reachable-resource-counts [16 1040]
+    :backend-commands [1 1]
+    :adapter-fetched-values [1 1]
+    :engine-consumed-values [1 1]
+    :status :passed}}
   :page-continuation
   {:status :verified-authoritative-mode-routed
    :directions [:forward :reverse]
@@ -238,6 +255,8 @@
    :indexed-rule-variants
    [:relation :self-permission :arrow-relation :arrow-permission]
    :cache-bypass-generated-routing true
+   :point-can-generated-reverse-routing true
+   :point-can-target-local-scaling-counterexample :EACL-FORMAL-055
    :acyclic-ordering-counterexample-retained true
    :recursive-shadow-result-comparison true
    :dimensionally-matched-resource-counter-comparison true
@@ -265,9 +284,9 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :clj-backends [:datomic :datahike :datascript]
    :cljs-backends [:datascript]
-   :nonbenchmark {:tests 521 :assertions 28212 :failures 0 :errors 0}
-   :heavy {:tests 17 :assertions 4057 :failures 0 :errors 0}
-   :cljs {:tests 162 :assertions 4509 :failures 0 :errors 0}
+   :nonbenchmark {:tests 525 :assertions 28304 :failures 0 :errors 0}
+   :heavy {:tests 17 :assertions 4062 :failures 0 :errors 0}
+   :cljs {:tests 163 :assertions 4513 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed

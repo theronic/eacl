@@ -5277,7 +5277,7 @@
           paths))))))
 
 (defn- recursive-can?
-  "Evaluates one recursive point query with the monotone forward worklist.
+  "Evaluates one recursive point query with a monotone indexed worklist.
 
   A cache-enabled request exhausts and publishes the complete fixed point so
   distinct point, page, and count consumers can reuse it. The cache-free
@@ -5291,15 +5291,60 @@
       (resolve-forward-denotation
        db subject-type subject-eid root-node resource-type)))
     (if (generated-authoritative?)
-      (:allowed?
-       (generated-forward-result
-        db
-        (recursive-plan db root-node)
-        subject-type
-        subject-eid
-        root-node
-        resource-type
-        {:kind :boolean :target-eid resource-eid}))
+      (let [plan (recursive-plan db root-node)
+            reverse-result
+            ;; A point authorization query is anchored by one concrete
+            ;; resource. Drive the verified reverse machine from that resource
+            ;; toward the requested subject instead of enumerating every
+            ;; resource reachable from the subject. Both indexed directions
+            ;; refine the same least fixed point; the Boolean renderer stops
+            ;; on the requested subject and exhausts the reverse search before
+            ;; returning false.
+            (generated-reverse-result
+             db
+             plan
+             subject-type
+             root-node
+             resource-eid
+             subject-type
+             {:kind :boolean :target-eid subject-eid})]
+        (if (:allowed? reverse-result)
+          true
+          ;; Datomic-compatible relationship storage is deliberately
+          ;; denormalized. A consumer that bypasses EACL and retracts a target
+          ;; entity can leave only the subject-owned tuple behind. That state
+          ;; violates the adapter's forward/reverse equivalence obligation,
+          ;; but v7 exposed the surviving direct grant to raw-eid callers.
+          ;; Probe only the exact direct tuple before paying for a verified
+          ;; forward recovery; ordinary negative checks remain independent of
+          ;; unrelated subject fan-out.
+          (let [relation-eids
+                (into
+                 []
+                 (comp
+                  (filter
+                   #(and (= :relation (:type %))
+                         (= subject-type (:subject-type %))))
+                  (map :relation-eid))
+                 (frontier-permission-paths
+                  db (first root-node) (second root-node)))]
+            (boolean
+             (when
+              (some
+               #(seq
+                 (direct-match-datoms-in-relationship-index
+                  db subject-type subject-eid %
+                  resource-type resource-eid))
+               relation-eids)
+               (:allowed?
+                (generated-forward-result
+                 db
+                 plan
+                 subject-type
+                 subject-eid
+                 root-node
+                 resource-type
+                 {:kind :boolean :target-eid resource-eid})))))))
       (loop [state
              (initial-forward-state
               db subject-type subject-eid root-node)]
@@ -5370,9 +5415,6 @@
               db resource-type permission))
         shadow?
         (and defined-root? shadow-mode?)
-        recursive?
-        (and shadow?
-             (traversal-permission? db resource-type permission))
         [result legacy-stats legacy-error]
         (evaluate-with-shadow-stats
          #(cond
@@ -5399,16 +5441,16 @@
     (cond
       legacy-error
       (compare-generated-shadow-error!
-       :indexed-forward-boolean
+       :indexed-reverse-boolean
        legacy-error
        #(can? db subject permission resource))
 
       shadow?
       (compare-generated-shadow!
-       :indexed-forward-boolean
+       :indexed-reverse-boolean
        result
        legacy-stats
-       recursive?
+       false
        #(can? db subject permission resource))
 
       :else

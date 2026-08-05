@@ -112,7 +112,9 @@
     :EACL-FORMAL-053
     eacl.consistency-test/public-consistency-descriptors-reject-unknown-fields-test
     :EACL-FORMAL-054
-    eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test})
+    eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test
+    :EACL-FORMAL-055
+    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages})
 
 (defn- read-edn
   [path]
@@ -191,8 +193,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-054 (:latest revision)))
-    (is (= 54 (count entries)))))
+    (is (= :EACL-FORMAL-055 (:latest revision)))
+    (is (= 55 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

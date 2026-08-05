@@ -138,9 +138,9 @@
    {:cljs-generated-smoke
     {:tests 58 :assertions 10968 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 162 :assertions 4509 :failures 0 :errors 0}
+    {:tests 163 :assertions 4513 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 521 :assertions 28212 :failures 0 :errors 0}}
+    {:tests 525 :assertions 28304 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -448,7 +448,7 @@
   {:status :reviewed-full-kernel-baseline
    :maximum-growth-over-reviewed-full-kernel 1.25}}
 
- :legacy-runtime
+ :public-runtime
  {:multipath-page
   {:items 50
    :first-page-baseline-ms 1.43
@@ -457,7 +457,9 @@
    :max-page-median-max-ms 50
    :minimum-threshold-throughput-pages-per-second 20}
   :permission-check
-  {:warm-baseline-microseconds 268
+  {:engine-mode :verified-authoritative
+   :point-query-direction :reverse
+   :warm-baseline-microseconds 268
    :warm-max-microseconds 1000
    :minimum-warm-operations-per-second 1000
    :steady-state-harness
@@ -472,11 +474,16 @@
      :median-microseconds 1006.083
      :status :failed
      :closing-counterexample :EACL-FORMAL-051}
-    :last-local-forced-authority
-    {:batch-medians-microseconds [433.542 431.8545 431.6665]
-     :median-microseconds 431.8545
-     :cold-median-microseconds 434.79
-     :completed-cache-hit-median-microseconds 14.42
+    :github-release-default-forward-direction
+    {:batch-medians-microseconds [1186.979 1190.165 1192.735]
+     :median-microseconds 1190.165
+     :status :failed
+     :closing-counterexample :EACL-FORMAL-055}
+    :last-local-release-default-reverse
+    {:batch-medians-microseconds [150.3545 149.917 150.625]
+     :median-microseconds 150.3545
+     :cold-median-microseconds 156.98
+     :completed-cache-hit-median-microseconds 14.08
      :status :passed}}
    :generated-root-classification
    {:counterexample :EACL-FORMAL-051
@@ -492,6 +499,31 @@
     :resource-bound
     AcyclicEngine.PublicCanRootClassificationHoistReducesWork
     :threshold-relaxed false
+    :status :passed}
+   :target-local-scaling
+   {:counterexample :EACL-FORMAL-055
+    :reachable-resource-counts [16 1040]
+    :logical-and-backend-work-keys
+    [:backend-commands
+     :adapter-fetched-values
+     :engine-consumed-values
+     :unique-grants
+     :rule-applications
+     :render-advances]
+    :small-work
+    {:backend-commands 1
+     :adapter-fetched-values 1
+     :engine-consumed-values 1
+     :unique-grants 1
+     :rule-applications 1
+     :render-advances 1}
+    :large-work
+    {:backend-commands 1
+     :adapter-fetched-values 1
+     :engine-consumed-values 1
+     :unique-grants 1
+     :rule-applications 1
+     :render-advances 1}
     :status :passed}
    :cold-baseline-microseconds 268
    :cold-max-microseconds 1500
@@ -715,7 +747,7 @@
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy
-   {:tests 17 :assertions 4057 :failures 0 :errors 0}
+   {:tests 17 :assertions 4062 :failures 0 :errors 0}
    :qualification
    :logical-retention-is-not-host-heap-allocation-or-wall-time}
   :qualification
@@ -1393,24 +1425,25 @@
   :command
   "clj-nrepl-eval -p <fresh-formal-smoke-port> --timeout 1800000 \"(do (require 'eacl.formal.verified-authority-suite :reload) (eacl.formal.verified-authority-suite/run-heavy!))\""
   :result {:tests 17
-           :assertions 4057
+           :assertions 4062
            :failures 0
            :errors 0}
   :status :verified-authority-all-backends-passed
   :multipath-page
-  {:first-page-median-ms 0.30
-   :first-page-p95-ms 0.67
-   :forward-early-ms-per-page 0.50
-   :forward-late-ms-per-page 0.52
-   :reverse-early-ms-per-page 0.48
-   :reverse-late-ms-per-page 0.50
-   :max-page-median-ms 0.62
+  {:first-page-median-ms 0.24
+   :first-page-p95-ms 0.50
+   :forward-early-ms-per-page 0.43
+   :forward-late-ms-per-page 0.43
+   :reverse-early-ms-per-page 0.39
+   :reverse-late-ms-per-page 0.39
+   :max-page-median-ms 0.55
    :thresholds-met true}
   :permission-check
   {:heavy-run
-   {:warm-median-microseconds 588.42
-    :completed-cache-hit-median-microseconds 15.13
-    :cache-hit-to-warm-ratio 0.02571360592773869
+   {:warm-median-microseconds 168.5835
+    :cold-median-microseconds 170.92
+    :completed-cache-hit-median-microseconds 14.58
+    :cache-hit-to-warm-ratio 0.08648414168764975
     :absolute-threshold-met true}
    :isolated-repeat
    {:datomic-cache-disabled-microseconds 33.54
@@ -1423,26 +1456,26 @@
   :cache-proof-churn
   {:unit :microseconds-per-read
    :unrelated
-   {:managed-current 82.229
-    :legacy-content-proof 345.458
-    :global-invalidation 66.875
-    :no-cache 65.5625}
+   {:mutation-proof 62.0415
+    :content-proof 260.6875
+    :global-invalidation 43.0835
+    :no-cache 60.4795}
    :relevant
-   {:managed-current 415.312
-    :legacy-content-proof 1359.0415
-    :global-invalidation 571.292
-    :no-cache 119.104}}
+   {:mutation-proof 264.4585
+    :content-proof 249.813
+    :global-invalidation 300.5625
+    :no-cache 119.4375}}
   :completed-hit-cost-breakdown-nanoseconds-per-operation
-  {:db 55.9524
-   :entid 1095.69
-   :capture-basic-context 6547.429
-   :current-cache 3863.1558
-   :cached-basic-authorization 6716.1384}
+  {:db 65.5036
+   :entid 1016.588
+   :capture-basic-context 6747.4854
+   :current-cache 3755.0542
+   :cached-basic-authorization 6756.4004}
   :recursive-4000
-  {:continuation-ms 142.444125
-   :completed-hit-ms 66.909708
-   :replay-ms 3059.954667
-   :time-ratio 21.481789206820565
+  {:continuation-ms 134.093834
+   :completed-hit-ms 59.3165
+   :replay-ms 3141.518166
+   :time-ratio 23.427760041524355
    :work-ratio 80.53975
    :thresholds-met true}
   :cutover-decision

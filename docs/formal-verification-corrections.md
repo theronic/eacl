@@ -177,6 +177,23 @@ no verified-release claim existed.
 - **Correction:** connectionless adapters no longer advertise
   `:fully-consistent`; managed clients with a live connection retain it.
 
+### EACL-FORMAL-055 — generated point checks traversed from the broad endpoint
+
+- **Affected:** generated-authoritative `can?` on Datomic, Datahike, and
+  DataScript.
+- **Impact:** point-check work could grow with every resource reachable from a
+  broad subject, even though the request named one concrete resource. The
+  release-default multipath check was 5.44× the target-local legacy
+  specialization in a same-JVM comparison.
+- **Correction:** `can?` now initializes the proved reverse indexed traversal
+  at the concrete resource and uses the Boolean renderer to find the requested
+  subject. A deterministic gate holds backend/logical work constant across 16
+  and 1,040 subject-reachable resources; wall-time remains a separate qualified
+  gate. A reverse miss performs an exact direct-tuple probe before a verified
+  forward recovery so the accepted raw-EID ghost behavior remains compatible
+  when a consumer bypasses the EACL deletion API. Shadow mode compares the
+  Boolean result, not the non-equivalent directional work counters.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

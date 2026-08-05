@@ -1032,7 +1032,7 @@
                 (with-generated-traversal-observer
                   traversal-stats
                   (fn []
-                  (binding [impl.indexed/*count-stats* legacy-stats]
+                    (binding [impl.indexed/*count-stats* legacy-stats]
                       (eacl/count-resources client query))))]
             (is (= total-servers (:count result)))
             (if-let [retained
@@ -1090,6 +1090,8 @@
 (def ^:private can-warmup-calls 15000)
 (def ^:private can-warm-measurement-batches 3)
 (def ^:private can-warm-samples-per-batch 5000)
+(def ^:private can-target-local-small-resources 16)
+(def ^:private can-target-local-large-resources 1024)
 
 (deftest ^:benchmark permission-check-benchmark
   (testing "can? throughput, warm and cold permission paths"
@@ -1197,7 +1199,83 @@
                                target-var iterations live-check)]))
                       targets)]
             (println "can? completed-cache breakdown:" breakdown)
-            (is (every? (comp pos? :calls val) breakdown))))))))
+            (is (every? (comp pos? :calls val) breakdown)))))))
+
+  (testing "generated point checks stay target-local as reachable resources grow"
+    (with-mem-conn [conn schema/v7-schema]
+      (let [acl
+            (spiceomic/make-client
+             conn
+             {:coherence-authority :managed
+              :proof-mode :mutation
+              :cache cache/no-cache})
+            subject (eacl/spice-object :user "scale-user")
+            documents
+            (fn [start amount]
+              (mapv
+               #(eacl/spice-object :document (str "scale-document-" %))
+               (range start (+ start amount))))
+            add-documents!
+            (fn [resources]
+              @(d/transact
+                conn
+                (mapv (fn [resource] {:eacl/id (:id resource)})
+                      resources))
+              (eacl/create-relationships!
+               acl
+               (mapv
+                #(Relationship subject :viewer %)
+                resources)))
+            observe
+            (fn [resource]
+              (let [stats (atom nil)]
+                (is
+                 (true?
+                  (with-generated-traversal-observer
+                    stats
+                    #(eacl/can? acl subject :view resource))))
+                (:generated-dimensional-counters @stats)))
+            small
+            (documents 0 can-target-local-small-resources)
+            large
+            (documents
+             can-target-local-small-resources
+             can-target-local-large-resources)]
+        (is (= :verified-authoritative
+               (get-in acl [:opts :engine-selection :mode]))
+            "the release-default permission benchmark must exercise generated authority")
+        (eacl/write-schema!
+         acl
+         "definition user {}
+          definition document {
+            relation viewer: user
+            permission view = viewer
+          }")
+        @(d/transact conn [{:eacl/id "scale-user"}])
+        (add-documents! small)
+        (let [small-work (observe (peek small))]
+          (add-documents! large)
+          (let [large-work (observe (peek large))
+                target-local-keys
+                [:backend-commands
+                 :adapter-fetched-values
+                 :engine-consumed-values
+                 :unique-grants
+                 :rule-applications
+                 :render-advances]]
+            (println
+             "can? target-local scaling:"
+             {:small-resources can-target-local-small-resources
+              :large-resources
+              (+ can-target-local-small-resources
+                 can-target-local-large-resources)
+              :small-work (select-keys small-work target-local-keys)
+              :large-work (select-keys large-work target-local-keys)})
+            (is (= (select-keys small-work target-local-keys)
+                   (select-keys large-work target-local-keys))
+                "point-check logical/backend work must not grow with unrelated resources reachable from the subject")
+            (is (= 1 (:backend-commands large-work))
+                "a direct point check performs one target-anchored backend scan")))))))
 
 (def ^:private cache-proof-benchmark-schema
   "definition user {}

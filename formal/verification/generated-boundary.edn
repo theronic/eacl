@@ -40,6 +40,7 @@
   :indexed-plan-compilation
   :indexed-forward-and-reverse-state-transition
   :indexed-forward-and-reverse-page-continuation
+  :resource-anchored-reverse-boolean-point-check
   :indexed-page-rendering
   :indexed-boolean-rendering
   :indexed-count-rendering]
@@ -320,12 +321,12 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 521 :assertions 28212 :failures 0 :errors 0}
+    :tests 525 :assertions 28304 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
-    :tests 17 :assertions 4057 :failures 0 :errors 0}
+    :tests 17 :assertions 4062 :failures 0 :errors 0}
    :cljs-datascript
-   {:tests 162 :assertions 4509 :failures 0 :errors 0}
+   {:tests 163 :assertions 4513 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed

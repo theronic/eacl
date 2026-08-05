@@ -122,6 +122,11 @@
     (verified/-compile-indexed-plan delegate input))
   (-initialize-indexed [_ direction input]
     (swap! calls update :indexed-traversal-initialize (fnil inc 0))
+    (swap!
+     calls
+     update
+     [:indexed-traversal-initialize direction]
+     (fnil inc 0))
     (verified/-initialize-indexed delegate direction input))
   (-drive-indexed [_ direction state limits fuel]
     (swap! calls update :indexed-traversal-drive (fnil inc 0))
@@ -579,10 +584,18 @@
            client
            (dissoc query :first))
           after-count (indexed-call-count calls)
+          forward-initializations-before-can
+          (get @calls [:indexed-traversal-initialize :forward] 0)
+          reverse-initializations-before-can
+          (get @calls [:indexed-traversal-initialize :reverse] 0)
           can-result
           (eacl/can?
            client user :view (peek documents))
-          after-can (indexed-call-count calls)]
+          after-can (indexed-call-count calls)
+          forward-initializations-after-can
+          (get @calls [:indexed-traversal-initialize :forward] 0)
+          reverse-initializations-after-can
+          (get @calls [:indexed-traversal-initialize :reverse] 0)]
       (is (= (subvec expected-ids 0 20)
              (ids first-page)))
       (is (= (subvec expected-ids 20 40)
@@ -591,6 +604,12 @@
               :cached? false :cache-basis nil}
              count-result))
       (is (true? can-result))
+      (is (= forward-initializations-before-can
+             forward-initializations-after-can)
+          "point authorization must not enumerate resources from the subject")
+      (is (< reverse-initializations-before-can
+             reverse-initializations-after-can)
+          "point authorization must use generated reverse traversal from its concrete resource")
       (is (< 0
              after-first-page
              after-second-page

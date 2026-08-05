@@ -208,6 +208,20 @@ now returns false before direct-grant/intersection setup. These submodels do not
 prove path materialization, nested callback meaning, storage-engine seek cost,
 Clojure language semantics, allocation, retained heap, or wall time.
 
+Generated `can?` uses the reverse indexed state machine because a point request
+is anchored by one concrete resource. A positive check stops when that machine
+emits the requested subject; a negative check is returned only after the
+reverse search is exhausted. Reverse transition soundness and least-fixed-point
+completeness are proved independently. EACL-FORMAL-055 retains the prior
+subject-forward scaling regression, while the runtime gate checks identical
+backend and logical work with 16 and 1,040 unrelated resources reachable from
+the subject. If malformed denormalized storage contains only the subject-owned
+half of a direct tuple, an exact direct-match probe gates a generated forward
+recovery; the complete JVM suite retains the documented raw-EID ghost
+behavior. Shadow mode compares the public Boolean result across directions and
+does not treat different forward/reverse work counters as a semantic
+divergence.
+
 Permission-path materialization now has its own source-shaped boundary rather
 than being assumed by the arrow theorem. Dafny models expansion of typed
 relation definitions into direct, alias, arrow-relation, and arrow-permission
