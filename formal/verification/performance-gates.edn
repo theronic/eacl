@@ -140,7 +140,7 @@
     :cljs-verified-authority
     {:tests 158 :assertions 4549 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 509 :assertions 27605 :failures 0 :errors 0}}
+    {:tests 510 :assertions 27817 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -1125,7 +1125,8 @@
   :status :passed}
 
  :recoverable-cursor-rebase
- {:scope
+ {:counterexample :EACL-FORMAL-049
+  :scope
   :authenticated-current-cursor-stable-result-identity-rebase-after-proof-change
   :formal-model "formal/dafny/PageWindow.dfy"
   :runners
@@ -1149,6 +1150,8 @@
     :maximum-normalized-allocation-ratio 1.5
     :maximum-p50-ns-per-item 1000.0
     :maximum-p50-allocated-bytes-per-item 256.0
+    :minimum-scaling-size 8192
+    :minimum-scaling-span 4
     :large-recovery-size 1000001
     :maximum-large-recovery-p50-elapsed-ns 250000000
     :maximum-large-recovery-p50-allocated-bytes-per-item 256.0}
@@ -1156,45 +1159,55 @@
    {:maximum-normalized-latency-ratio 2.0
     :maximum-normalized-post-call-heap-delta-ratio 2.0
     :maximum-p50-ns-per-item 3000.0
-    :maximum-p50-post-call-heap-delta-bytes-per-item 2048.0}}
+    :maximum-p50-post-call-heap-delta-bytes-per-item 2048.0
+    :minimum-scaling-size 32768
+    :minimum-scaling-span 4}}
   :observed
   {:date "2026-08-05"
-   :fixture
-   {:sizes [1024 4096 16384]
-    :warmup 20
-    :samples 31
-    :paired-order :alternating
-    :scenarios [:present-at-tail :absent]}
    :clj-java
-   {:maximum-p50-ns-per-item 93.37615966796875
-    :maximum-p50-allocated-bytes-per-item 87.75048828125
+   {:fixture
+    {:sizes [8192 16384 32768]
+     :warmup 20
+     :samples 31
+     :paired-order :alternating
+     :scaling-domain :multi-chunk-current-denotation
+     :scenarios [:present-at-tail :absent]}
+    :maximum-p50-ns-per-item 113.154052734375
+    :maximum-p50-allocated-bytes-per-item 87.779541015625
     :normalized-scaling
     {:present-at-tail
-     {:latency-per-item 1.3488254545454545
-      :allocation-per-item 1.4655200258397933}
+     {:latency-per-item 0.8756801818421115
+      :allocation-per-item 1.1683519222126895}
      :absent
-     {:latency-per-item 1.0299913554447233
-      :allocation-per-item 1.0164762443438915}}
+     {:latency-per-item 1.1117911784451384
+      :allocation-per-item 1.000993908482466}}
     :large-recovery
     {:size 1000001
      :present-at-tail
-     {:p50-elapsed-ns 104283958
-      :p50-allocated-bytes 87788712}
+     {:p50-elapsed-ns 106767667
+      :p50-allocated-bytes 87784808}
      :absent
-     {:p50-elapsed-ns 106886167
-      :p50-allocated-bytes 87807080}}
+     {:p50-elapsed-ns 110661459
+      :p50-allocated-bytes 87803160}}
     :status :passed}
    :cljs-javascript
-   {:maximum-p50-ns-per-item 526.7333984373402
+   {:fixture
+    {:sizes [32768 65536 131072]
+     :warmup 20
+     :samples 31
+     :paired-order :alternating
+     :scaling-domain :multi-chunk-current-denotation
+     :scenarios [:present-at-tail :absent]}
+    :maximum-p50-ns-per-item 228.987396240235
     :maximum-p50-post-call-uncollected-heap-delta-bytes-per-item
-    631.5546875
+    439.407958984375
     :normalized-scaling
     {:present-at-tail
-     {:latency-per-item 0.533428749700617
-      :post-call-heap-delta-per-item 0.9469548346370927}
+     {:latency-per-item 0.6525465184778002
+      :post-call-heap-delta-per-item 0.1347755185949667}
      :absent
-     {:latency-per-item 0.6018152954810773
-      :post-call-heap-delta-per-item 0.9074363859028439}}
+     {:latency-per-item 0.5830116483611196
+      :post-call-heap-delta-per-item 0.8477288470324682}}
     :status :passed}}
   :resource-qualification
   {:inspected-identities :dafny-exact

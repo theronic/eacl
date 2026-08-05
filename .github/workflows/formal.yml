@@ -236,6 +236,9 @@ jobs:
                 :reload)
                (let [result
                      (eacl.formal.consistency-boundary-benchmark/run-gate!)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
                  (when (= :failed (get-in result [:summary :status]))
                    (throw
                     (ex-info
@@ -256,6 +259,30 @@ jobs:
                  \"target/formal/consistency-boundary-cljs.js\"}))"
           node target/formal/consistency-boundary-cljs.js
 
+      - name: Restart heap-bounded nREPL for cursor resource gate
+        run: |
+          old_pid="$(cat target/formal/ci-nrepl.pid)"
+          kill "$old_pid" 2>/dev/null || true
+          for attempt in {1..30}; do
+            if ! kill -0 "$old_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL "$old_pid" 2>/dev/null || true
+          JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
+            clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            >> target/formal/ci-nrepl.log 2>&1 &
+          echo "$!" > target/formal/ci-nrepl.pid
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/ci-nrepl.log
+          exit 1
+
       - name: Gate recoverable cursor rebase work and host resources
         run: |
           sh bin/ci-nrepl-eval 7788 \
@@ -265,6 +292,9 @@ jobs:
                 :reload)
                (let [result
                      (eacl.formal.cursor-rebase-benchmark/run-gate!)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
                  (when (= :failed (:status result))
                    (throw
                     (ex-info

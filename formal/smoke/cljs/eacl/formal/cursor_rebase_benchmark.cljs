@@ -14,6 +14,15 @@
   {:mode :verified-authoritative
    :kernel production/generated-javascript-kernel})
 
+(def ^:private cursor-rebase-chunk-items
+  (verified/cursor-rebase-chunk-limit))
+
+(def ^:private minimum-scaling-size
+  (* 2 cursor-rebase-chunk-items))
+
+(def ^:private minimum-scaling-span
+  4)
+
 (defn- percentile
   [samples proportion]
   (let [ordered (vec (sort samples))
@@ -128,7 +137,7 @@
   ([]
    (run! {}))
   ([{:keys [sizes warmup samples]
-     :or {sizes [1024 4096 16384]
+     :or {sizes [32768 65536 131072]
           warmup 20
           samples 31}}]
    (let [by-scenario
@@ -146,6 +155,7 @@
        :warmup warmup
        :samples samples
        :paired-order :alternating
+       :scaling-domain :multi-chunk-current-denotation
        :runtime :cljs-generated-javascript
        :node-expose-gc? (fn? (.-gc js/global))}
       :measurements by-scenario
@@ -172,6 +182,15 @@
        :retained-live-heap :not-established
        :true-peak-heap :not-established
        :whole-process-allocation :not-established}})))
+
+(defn- scaling-domain-valid?
+  [sizes]
+  (and
+   (<= 2 (count sizes))
+   (apply < sizes)
+   (every? #(<= minimum-scaling-size %) sizes)
+   (<= (* minimum-scaling-span (first sizes))
+       (last sizes))))
 
 (defn- maximum-per-item
   [by-scenario path]
@@ -206,6 +225,8 @@
           :maximum-p50-ns-per-item
           :maximum-p50-post-call-heap-delta-bytes-per-item)
          result (run! measure-options)
+         sizes (get-in result [:fixture :sizes])
+         scaling-domain-passed? (scaling-domain-valid? sizes)
          by-scenario (:measurements result)
          maximum-latency
          (maximum-per-item
@@ -217,6 +238,7 @@
          scaling (vals (:normalized-scaling result))
          passed?
          (and
+          scaling-domain-passed?
           (every?
            #(<= (:p50-latency-per-item-ratio %)
                 maximum-normalized-latency-ratio)
@@ -238,7 +260,9 @@
        maximum-normalized-heap-delta-ratio
        :maximum-p50-ns-per-item maximum-p50-ns-per-item
        :maximum-p50-post-call-heap-delta-bytes-per-item
-       maximum-p50-post-call-heap-delta-bytes-per-item}
+       maximum-p50-post-call-heap-delta-bytes-per-item
+       :minimum-scaling-size minimum-scaling-size
+       :minimum-scaling-span minimum-scaling-span}
       :summary
       {:maximum-observed-p50-ns-per-item maximum-latency
        :maximum-observed-p50-post-call-heap-delta-bytes-per-item
@@ -246,6 +270,10 @@
        :logical-adapter-items-per-call
        {:cljs-javascript 16384
         :proof :PageWindow.CursorRebaseAdapterChunkIsBounded}
+       :scaling-domain
+       {:minimum-size minimum-scaling-size
+        :minimum-span minimum-scaling-span
+        :status (if scaling-domain-passed? :passed :failed)}
        :status (if passed? :passed :failed)}
       :resource-qualification
       (assoc

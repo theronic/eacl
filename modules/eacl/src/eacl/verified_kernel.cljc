@@ -37,6 +37,15 @@
      :cljs 16384))
 (def ^:private maximum-boundary-string-length 65536)
 
+(defn cursor-rebase-chunk-limit
+  "Returns the host-specific maximum identities sent through one generated
+  cursor-rebase adapter call.
+
+  Resource gates consume this value directly so their scaling domain cannot
+  drift from the production chunk orchestration."
+  []
+  cursor-rebase-chunk-items)
+
 (defprotocol DecisionKernel
   (-decide [kernel operation input]
     "Returns one strictly validated pure decision for `operation`."))

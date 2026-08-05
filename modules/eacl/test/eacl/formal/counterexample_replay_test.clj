@@ -100,7 +100,9 @@
     :EACL-FORMAL-047
     eacl.datascript.contract-test/current-lookup-cursor-restarts-when-result-identity-disappears-test
     :EACL-FORMAL-048
-    eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test})
+    eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
+    :EACL-FORMAL-049
+    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test})
 
 (defn- read-edn
   [path]
@@ -179,8 +181,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-048 (:latest revision)))
-    (is (= 48 (count entries)))))
+    (is (= :EACL-FORMAL-049 (:latest revision)))
+    (is (= 49 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

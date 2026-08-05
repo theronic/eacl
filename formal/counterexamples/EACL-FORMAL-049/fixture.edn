@@ -1,0 +1,35 @@
+{:workflow ".github/workflows/formal.yml"
+ :run 31006056253
+ :job 92306089986
+ :gate :recoverable-cursor-rebase
+ :before
+ {:resource-jvm
+  {:maximum-heap-bytes 1073741824
+   :earlier-work
+   [:routing-jvm-gate
+    :consistency-jvm-gate
+    :consistency-cljs-build]}
+  :sizes [1024 4096 16384]
+  :clj-java-adapter-chunk-items 4096
+  :present-at-tail-operation-shapes
+  [:single-chunk-success
+   :single-chunk-success
+   :three-restarted-chunks-then-success]
+  :failed-result-printed false
+  :status :failed}
+ :local-minimized-reproduction
+ {:same-jvm-after-consistency-cljs-build
+  {:present-at-tail-normalized-allocation-ratio
+   2.493372435069594
+   :maximum-p50-allocated-bytes-per-item
+   143.74658203125
+   :large-recovery-p50-elapsed-ns
+   {:present-at-tail 114675833
+    :absent 114033459}
+   :large-recovery-status :passed}
+  :fresh-jvm
+  {:present-at-tail-normalized-allocation-ratio
+   1.226742852100247
+   :large-recovery-status :passed}
+  :interpretation
+  :scaling-ratio-crossed-an-expected-chunk-operation-shape-transition}}

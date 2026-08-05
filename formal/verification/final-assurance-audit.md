@@ -517,6 +517,15 @@ generated-code compiler out of the trusted computing base.
   resource JVM, uses 40 warmups and 11 samples, prints the complete failed
   observation, and preserves all prior logical, allocation, and latency
   ceilings.
+- EACL-FORMAL-049 found that the cursor-rebase scaling fixture compared
+  single-chunk successful decisions with multi-chunk tail decisions. The
+  latter necessarily materialize intermediate generated `:restarted` results,
+  so a constant-factor chunk-boundary transition could be mislabeled as
+  super-linear work; running after a ClojureScript compiler build made that
+  false positive deterministic. JVM and JavaScript fixtures now measure a
+  fourfold range wholly inside the multi-chunk domain, reject invalid scaling
+  domains, and run the JVM gate in a fresh bounded process. The one-million
+  identity JVM recovery and every existing resource ceiling remain unchanged.
 
 ## Public wording audit
 
@@ -548,11 +557,11 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 48 minimized entries replayed by 50 tests and 10,730
+- Counterexample corpus: 49 minimized entries replayed by 51 tests and 10,935
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 509 tests, 27,605 assertions,
+- Forced-authority non-benchmark CLJ suite: 510 tests, 27,817 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward

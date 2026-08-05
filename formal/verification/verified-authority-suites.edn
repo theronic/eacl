@@ -7,14 +7,15 @@
  {:generated-boundary-jvm :fresh-heap-bounded
   :runtime-performance-jvm :fresh-heap-bounded
   :generated-resource-gate-jvm :fresh-heap-bounded
+  :cursor-resource-gate-jvm :fresh-heap-bounded
   :maximum-heap-bytes 1073741824
   :completed-jvms :terminated}
  :clj-nonbenchmark
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 509
-  :assertions 27605
+  :tests 510
+  :assertions 27817
   :failures 0
   :errors 0
   :injected-clients

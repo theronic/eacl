@@ -306,7 +306,7 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 509 :assertions 27605 :failures 0 :errors 0}
+    :tests 510 :assertions 27817 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057 :failures 0 :errors 0}

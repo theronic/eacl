@@ -63,8 +63,10 @@
          "Restart heap-bounded nREPL for generated resource gates"
          "Gate routing-certificate logical work and JVM allocation"
          "Gate generated consistency-boundary overhead"
+         "Restart heap-bounded nREPL for cursor resource gate"
+         "Gate recoverable cursor rebase work and host resources"
          "Stop CI nREPL"]]
-    (is (= 3
+    (is (= 4
            (count
             (re-seq
              #"JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m'"
@@ -321,6 +323,18 @@
                (:maximum-adapter-input-items formal-work)))
         (is (= :dafny-exact-first-match-and-bounded-adapter-chunk-theorems
                (:assurance formal-work)))
+        (doseq [runtime [:clj-java :cljs-javascript]]
+          (let [runtime-required (get-in required [runtime])
+                runtime-fixture (get-in observed [runtime :fixture])
+                sizes (:sizes runtime-fixture)]
+            (is (= :multi-chunk-current-denotation
+                   (:scaling-domain runtime-fixture)))
+            (is (every?
+                 #(<= (:minimum-scaling-size runtime-required) %)
+                 sizes))
+            (is (<= (* (:minimum-scaling-span runtime-required)
+                       (first sizes))
+                    (last sizes)))))
         (is (<= (get-in observed
                         [:clj-java :maximum-p50-ns-per-item])
                 (get-in required
@@ -346,6 +360,9 @@
                (get-in recoverable-cursor-rebase
                        [:resource-qualification
                         :lore-analyser-contribution])))
+        (is (str/includes?
+             formal-workflow
+             "Restart heap-bounded nREPL for cursor resource gate"))
         (is (str/includes?
              formal-workflow
              "cursor-rebase-benchmark/run-gate!"))

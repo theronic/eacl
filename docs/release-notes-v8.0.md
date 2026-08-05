@@ -272,6 +272,15 @@ with the final v8 formats.
   first in a fresh 1 GiB JVM after 40 warmups, with 11 samples per size and the
   full observation printed on failure. The exact `P + 2V + E` logical check
   and every allocation/latency ceiling are unchanged.
+- **The cursor resource gate compared different operation shapes
+  (EACL-FORMAL-049).** Its smallest successful cases fit in one generated
+  adapter chunk, while its largest case included intermediate
+  `:restarted`-chunk results. The normalized endpoint ratio could therefore
+  report a constant-factor chunk transition as super-linear growth. JVM and
+  JavaScript gates now span fourfold sizes wholly inside their multi-chunk
+  domains, reject invalid fixtures, and isolate the JVM gate from compiler
+  history. No ceiling was relaxed, and the one-million-identity recovery gate
+  remains in force.
 
 ## Formal verification
 

@@ -25,6 +25,15 @@
   {:mode :verified-authoritative
    :kernel production/generated-java-kernel})
 
+(def ^:private cursor-rebase-chunk-items
+  (verified/cursor-rebase-chunk-limit))
+
+(def ^:private minimum-scaling-size
+  (* 2 cursor-rebase-chunk-items))
+
+(def ^:private minimum-scaling-span
+  4)
+
 (defn- percentile
   [samples proportion]
   (let [ordered (vec (sort samples))
@@ -137,11 +146,17 @@
     (/ large-per-item small-per-item)))
 
 (defn run!
-  "Measures successful-tail and absent identity scans at three answer sizes."
+  "Measures successful-tail and absent identity scans at three answer sizes.
+
+  The default scaling domain begins above one adapter chunk. A successful
+  single-chunk decision and a multi-chunk tail decision execute different
+  generated-result variants: the latter necessarily includes one or more
+  intermediate `:restarted` chunk results. Comparing those domains would
+  mistake that expected constant-factor transition for asymptotic growth."
   ([]
    (run! {}))
   ([{:keys [sizes warmup samples]
-     :or {sizes [1024 4096 16384]
+     :or {sizes [8192 16384 32768]
           warmup 20
           samples 31}}]
    (let [by-scenario
@@ -159,6 +174,7 @@
        :warmup warmup
        :samples samples
        :paired-order :alternating
+       :scaling-domain :multi-chunk-current-denotation
        :runtime :clj-generated-java}
       :measurements by-scenario
       :normalized-scaling
@@ -175,7 +191,16 @@
             (normalized-ratio
              measurements
              [:generated :p50-allocated-bytes])}]))
-       by-scenario)})))
+         by-scenario)})))
+
+(defn- scaling-domain-valid?
+  [sizes]
+  (and
+   (<= 2 (count sizes))
+   (apply < sizes)
+   (every? #(<= minimum-scaling-size %) sizes)
+   (<= (* minimum-scaling-span (first sizes))
+       (last sizes))))
 
 (defn- maximum-per-item
   [by-scenario path]
@@ -226,6 +251,8 @@
           :maximum-large-recovery-p50-elapsed-ns
           :maximum-large-recovery-p50-allocated-bytes-per-item)
          result (run! measure-options)
+         sizes (get-in result [:fixture :sizes])
+         scaling-domain-passed? (scaling-domain-valid? sizes)
          large-recovery
          (mapv
           #(measure-case
@@ -257,6 +284,7 @@
           large-recovery)
          passed?
          (and
+          scaling-domain-passed?
           (every?
            #(<= (:p50-latency-per-item-ratio %)
                 maximum-normalized-latency-ratio)
@@ -280,6 +308,8 @@
        :maximum-p50-ns-per-item maximum-p50-ns-per-item
        :maximum-p50-allocated-bytes-per-item
        maximum-p50-allocated-bytes-per-item
+       :minimum-scaling-size minimum-scaling-size
+       :minimum-scaling-span minimum-scaling-span
        :maximum-large-recovery-p50-elapsed-ns
        maximum-large-recovery-p50-elapsed-ns
        :maximum-large-recovery-p50-allocated-bytes-per-item
@@ -291,6 +321,10 @@
        :logical-adapter-items-per-call
        {:clj-java 4096
         :proof :PageWindow.CursorRebaseAdapterChunkIsBounded}
+       :scaling-domain
+       {:minimum-size minimum-scaling-size
+        :minimum-span minimum-scaling-span
+        :status (if scaling-domain-passed? :passed :failed)}
        :large-recovery
        {:size large-recovery-size
         :measurements large-recovery
