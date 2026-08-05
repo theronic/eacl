@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 51
   :public-roots 60
-  :reachable-definitions 1347
+  :reachable-definitions 1350
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -260,7 +260,6 @@
    :internal-verified-authoritative-all-defined-permission-roots
    :remaining
    [:production-adapter-source-refinement
-    :canonical-clj-cljs-root-denotation-key-source-refinement
     :independent-review]
    :ci [:generated-production-kernel
         :generated-indexed-scan-rejection

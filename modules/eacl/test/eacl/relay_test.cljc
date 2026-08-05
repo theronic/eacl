@@ -177,7 +177,8 @@
          (assoc lookup-query :after token))]
     (is (identical? current (:adapter prepared)))
     (is (= :rebased (:recovery prepared)))
-    (is (= (:end-cursor (:page-info lookup-page))
+    (is (= (assoc (:end-cursor (:page-info lookup-page))
+                  :rebase? true)
            (get-in prepared [:query :after])))
     (is (= :rebased
            (get-in

@@ -189,10 +189,14 @@ direction remain caller-controlled so the same boundary supports forward and
 backward navigation.
 
 - Continuation on the same current immutable snapshot is direct.
-- For non-exact modes, a changed graph is re-evaluated against the selected
-  current snapshot and reports `:cursor-recovery :rebased`.
-- Graph-specific recursive state restarts from the current first page and
-  reports `:cursor-recovery :restarted`.
+- For non-exact modes, a changed proof is re-evaluated against the selected
+  current snapshot. If the authenticated stable result identity still belongs
+  to the current denotation, EACL resumes exclusively from its current
+  position and reports `:cursor-recovery :rebased`.
+- If that result identity no longer belongs to the current denotation, EACL
+  drops the bound, restarts in the requested page direction, and reports
+  `:cursor-recovery :restarted`. Proof-specific recursive continuations and
+  ordinary per-path frontiers are never reused across that proof change.
 - `at-exact-snapshot` retains exact continuation and returns a typed
   snapshot-expired failure if that explicit snapshot is unavailable.
 - Relationship cursors bind their selected graph anchor rather than hashing
@@ -249,6 +253,19 @@ with the final v8 formats.
   production engine already scopes the query by resource type; the formal
   semantics now states the same domain restriction, allowing the frame theorem
   to be derived rather than assumed.
+- **Root names prevented shared-subgraph cache reuse (EACL-FORMAL-046).**
+  Denotation keys retained the queried permission name, so distinct roots with
+  equal certified indexed bodies could not share the same fixed-point result.
+  Keys now use the exact portable root-rule bodies accepted by generated plan
+  certification. Dafny proves the equal-body denotation law; JVM/CLJS
+  regressions reject relation and target-node collisions.
+- **Ordinary lookup cursors falsely reported rebasing
+  (EACL-FORMAL-047).** The streaming path reused old per-path frontiers and
+  reported `:rebased` without establishing that the cursor's result identity
+  survived the current permission change. Generic and Datomic adapters now
+  request stable-identity rebasing for `:lookup-eid`; the engine discards old
+  frontiers, point-checks current membership, and restarts when the identity is
+  absent.
 
 ## Formal verification
 
@@ -263,16 +280,25 @@ with the final v8 formats.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The full Dafny run verifies 242 obligations across 12 source files with zero
-errors. This is a formal proof of the named models and refinement lemmas, not a
-claim that every public Clojure/CLJS production path and adapter implementation
-is end-to-end formally verified. The release manifest therefore remains
-`:not-verified` until complete generated-kernel routing, shadow rollout,
-independent review, and the remaining release gates are complete.
+The locked Dafny run completes 9,767 proof efforts across 25 source-project
+invocations with zero errors, admissions, warnings, or timeouts. The count
+includes dependency obligations repeated by multiple top-level invocations; it
+is pipeline work, not a count of unique theorems. Generated authority routes
+every defined permission root and public authorization operation, and forced
+JVM/CLJS suites exercise that routing. Host runtimes, collection semantics,
+cryptography, FFI conversion, and backend adapter contracts remain explicitly
+trusted or empirically certified boundaries.
+
+The release manifest is therefore `:conditionally-verified`, not unqualified
+`:verified`. It deliberately withholds verified release status until an
+independent security/formal-methods review is recorded. Making generated
+authority the supported default and later removing the legacy compatibility
+path are separate rollout tasks.
 
 ## Performance evidence
 
-Machine-local nREPL measurements after the redesign:
+Earlier machine-local point measurements after the current-generation cache
+redesign:
 
 | Backend/path | Cached | Cache-disabled | Approximate speedup |
 | --- | ---: | ---: | ---: |
@@ -280,15 +306,18 @@ Machine-local nREPL measurements after the redesign:
 | DataScript repeated `can?` | 7.2 µs | 26.8 µs | 3.7× |
 | Datahike repeated `can?` | 12.2 µs | 17.6 µs | 1.4× |
 
-Datomic's private current-cache lookup itself measured about 1.5 µs. The full
-heavy suite passed 9 tests and 3,403 assertions. On the same run:
+Datomic's private current-cache lookup itself measured about 1.5 µs. The
+current forced-authority heavy suite passes 17 tests and 4,057 assertions. On
+the latest fixed-heap run:
 
-- 15,000-resource first page median: 1.60 ms;
-- forward max-page median: 2.00 ms;
-- reverse max-page median: 1.79 ms;
-- resource count: 27.23 ms cold and 0.010 ms hot;
-- 4,000-node recursive walk: 68.73 ms with continuation versus 1,698.02 ms
-  replaying prefixes.
+- 15,000-resource first page median: 0.25 ms;
+- forward max-page median: 0.67 ms;
+- reverse max-page median: 0.54 ms;
+- 4,000-node recursive walk: 140.22 ms with cached continuation versus
+  3,078.63 ms replaying prefixes;
+- distinct-query shared-subgraph p50: 0.181959 ms versus 0.684250 ms for
+  completed-answer-only caching, with zero backend operations on the reused
+  path.
 
 These are comparative development measurements, not portable latency promises.
 The decisive result is architectural: hot exact hits no longer calculate

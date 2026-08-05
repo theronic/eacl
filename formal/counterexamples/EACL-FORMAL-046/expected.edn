@@ -7,9 +7,10 @@
  {:equal-normalized-body-reuses-denotation true
   :changed-relation-does-not-reuse-denotation true
   :changed-target-node-does-not-reuse-denotation true
+  :jvm-and-javascript-exact true
   :all-decisions-correct true}
  :performance
- {:distinct-query-p50-ratio 0.269181
+ {:distinct-query-p50-ratio 0.265925
   :maximum-allowed-ratio 0.65
   :executed-backend-operations 0
   :gate :passed}}

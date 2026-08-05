@@ -138,9 +138,9 @@
    {:cljs-generated-smoke
     {:tests 58 :assertions 10992 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 156 :assertions 4539 :failures 0 :errors 0}
+    {:tests 158 :assertions 4549 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 503 :assertions 27438 :failures 0 :errors 0}}
+    {:tests 507 :assertions 27556 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}

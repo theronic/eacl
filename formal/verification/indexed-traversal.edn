@@ -229,8 +229,8 @@
   {:namespaces
    [eacl.backend.v8-test
     eacl.datascript.contract-test]
-   :tests 23
-   :assertions 2812
+   :tests 30
+   :assertions 2871
    :status :passed}
   :public-state-trace
   {:namespace eacl.formal.state-trace-differential-test
@@ -265,9 +265,9 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :clj-backends [:datomic :datahike :datascript]
    :cljs-backends [:datascript]
-   :nonbenchmark {:tests 503 :assertions 27438 :failures 0 :errors 0}
+   :nonbenchmark {:tests 507 :assertions 27556 :failures 0 :errors 0}
    :heavy {:tests 17 :assertions 4057 :failures 0 :errors 0}
-   :cljs {:tests 156 :assertions 4539 :failures 0 :errors 0}
+   :cljs {:tests 158 :assertions 4549 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed
@@ -278,6 +278,5 @@
    :executable-whole-suite-evidence-not-adapter-source-proof}}
  :remaining
  [:production-adapter-source-refinement
-  :canonical-clj-cljs-root-denotation-key-source-refinement
   :acyclic-host-specialization-language-refinement
   :independent-review]}

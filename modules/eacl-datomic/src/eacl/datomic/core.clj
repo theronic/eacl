@@ -1512,8 +1512,8 @@
               selected-context
 
               :rebase-current
-              (if (= :recursive-traversal
-                     (get-in decoded [:edge :kind]))
+              (if (#{:lookup-eid :recursive-traversal}
+                   (get-in decoded [:edge :kind]))
                 (assoc
                  (snapshot-result-context
                   opts

@@ -2283,6 +2283,27 @@
       :intermediate-type (verification-identity intermediate-type)
       :target-node (verification-permission-node target-node)})))
 
+(defn- indexed-root-denotation-identity
+  "Canonical root body consumed by the denotation cache.
+
+  `verification-rules` is the exact portable rule vector consumed by generated
+  plan certification. Removing only `:head` from rules for this root therefore
+  erases the queried permission name while retaining every indexed body field
+  covered by `IndexedRootDenotation.dfy`. A set is intentional: authorization
+  is a union, so duplicate equal root rules do not change the denotation, and
+  structural set equality avoids a host-specific printed sort order."
+  [root-node verification-rules]
+  (let [root-head (verification-permission-node root-node)]
+    [:permission-root-denotation
+     2
+     (verification-identity (first root-node))
+     (into
+      #{}
+      (comp
+       (filter #(= root-head (:head %)))
+       (map #(dissoc % :head)))
+      verification-rules)]))
+
 (defn- verification-identity-catalog
   "Builds the inverse type catalog used only for generated scan commands.
 
@@ -2491,6 +2512,8 @@
        component-plan
        {:rules rules
         :verification-indexed-rules verification-rules
+        :root-denotation-identity
+        (indexed-root-denotation-identity root-node verification-rules)
         :verification-compiled-plan compiled-verification-plan
         :verification-identity-catalog
         (verification-identity-catalog root-node rules)
@@ -3771,22 +3794,16 @@
   (+ 256 (* 24 (count value))))
 
 (defn- permission-denotation-identity
-  "Canonical identity of one permission root's normalized incoming rules.
+  "Certified indexed identity of one permission root's incoming rule bodies.
 
   The root permission name is intentionally absent. Two roots on the same
-  resource type have equal denotations when their normalized root rules name
-  the same relation bindings and the same target permission nodes. Their
-  downstream definitions are then literally shared schema nodes, not merely
-  lookalike text. Keeping target permission identities and relation EIDs in
-  every path prevents unrelated or alpha-similar subgraphs from colliding."
-  [db [resource-type permission]]
-  [:permission-root-denotation
-   1
-   resource-type
-   (->> (get-permission-paths db resource-type permission)
-        (map path-frontier-identity)
-        (sort-by pr-str)
-        vec)])
+  resource type share only when the exact portable indexed bodies supplied to
+  generated plan certification are structurally equal. Relation EIDs, subject
+  and intermediate types, target relation EIDs, and target permission nodes
+  therefore remain in the identity. The identity is compiled once per root
+  and schema generation rather than rebuilt on the request path."
+  [db root-node]
+  (:root-denotation-identity (recursive-plan db root-node)))
 
 (defn- recursive-denotation-key
   [db direction root-node anchor-type anchor-eid result-type]
@@ -3996,7 +4013,6 @@
         restart?
         (and
          (not defined-root?)
-         (= :recursive-traversal (:kind bound))
          (true? (:rebase? bound)))]
     [(if restart?
        (dissoc query :after :before)
@@ -5393,6 +5409,64 @@
    :traverse-fn traverse-permission-path-reverse
    :v1-cursor-key :subject})
 
+(defn- lookup-bound-authorized?
+  "Whether a recover-current lookup boundary is still in the current result
+  denotation. The cursor has already been authenticated and scoped by the
+  adapter. This point check lets the streaming lookup refine the same stable
+  result-identity rule as the generated complete-denotation rebase without
+  materializing the whole result set."
+  [db direction query result-eid]
+  (let [permission (:permission query)]
+    (case (:anchor-key direction)
+      :subject
+      (let [subject (:subject query)
+            subject-eid (object-eid db (:id subject))]
+        (and
+         subject-eid
+         (can*
+          db
+          (:type subject)
+          subject-eid
+          permission
+          (:resource/type query)
+          result-eid
+          #{})))
+
+      :resource
+      (let [resource (:resource query)
+            resource-eid (object-eid db (:id resource))]
+        (and
+         resource-eid
+         (can*
+          db
+          (:subject/type query)
+          result-eid
+          permission
+          (:type resource)
+          resource-eid
+          #{}))))))
+
+(defn- rebase-lookup-query
+  "Rebinds a recover-current lookup cursor by stable result identity.
+
+  A surviving identity keeps its EID boundary but discards path frontiers
+  minted under the old dependency proof. A missing identity restarts at the
+  current first page. The returned boolean records only the latter case."
+  [db direction query]
+  (let [bound-field (cond
+                      (contains? query :after) :after
+                      (contains? query :before) :before)
+        bound (get query bound-field)]
+    (if-not (true? (:rebase? bound))
+      [query false]
+      (if (lookup-bound-authorized?
+           db direction query (:result-eid bound))
+        [(assoc query
+                bound-field
+                (select-keys bound [:kind :result-eid]))
+         false]
+        [(dissoc query :after :before) true]))))
+
 (defn- lazy-merged-lookup
   ([db direction query page-req]
    (lazy-merged-lookup db direction query page-req nil))
@@ -5491,7 +5565,8 @@
   ([db direction query]
    (lookup db direction query nil))
   ([db direction query continuation-cache]
-   (let [{:keys [result-type-fn]} direction
+   (let [[query restarted?] (rebase-lookup-query db direction query)
+         {:keys [result-type-fn]} direction
          page-req (normalize-page-request query)
          {:keys [size bound]} page-req
          _ (validate-lookup-eid-bound! bound)
@@ -5515,13 +5590,15 @@
                                    page-results
                                    (:direction page-req)
                                    path-frontiers)
-         page (page-response {:items items
-                              :has-next? (case (:direction page-req)
-                                           :asc has-sentinel?
-                                           :desc (boolean bound))
-                              :has-previous? (case (:direction page-req)
-                                               :asc (boolean bound)
-                                               :desc has-sentinel?)})]
+         page (mark-recursive-restart
+               (page-response {:items items
+                               :has-next? (case (:direction page-req)
+                                            :asc has-sentinel?
+                                            :desc (boolean bound))
+                               :has-previous? (case (:direction page-req)
+                                                :asc (boolean bound)
+                                                :desc has-sentinel?)})
+               restarted?)]
      (when (and resumable? has-sentinel?)
        (store-lookup-heads! continuation-cache
                             (get-in page [:page-info :end-cursor])

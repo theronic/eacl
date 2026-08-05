@@ -591,7 +591,7 @@
        :recovery :restarted}
       {:edge
        (cond-> transformed
-         (= :recursive-traversal (:kind transformed))
+         (#{:lookup-eid :recursive-traversal} (:kind transformed))
          (assoc :rebase? true))
        :recovery :rebased})))
 

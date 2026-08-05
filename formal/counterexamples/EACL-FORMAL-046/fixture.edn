@@ -27,7 +27,7 @@
   :different-relation-denotation-reused? false
   :different-target-denotation-reused? false}
  :shared-subgraph-benchmark
- {:completed-answer-only-p50-ms 0.673958
-  :layered-subproblem-p50-ms 0.181417
-  :latency-ratio 0.269181
+ {:completed-answer-only-p50-ms 0.68425
+  :layered-subproblem-p50-ms 0.181959
+  :latency-ratio 0.265925
   :layered-executed-backend-operations 0}}

@@ -306,12 +306,12 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 503 :assertions 27438 :failures 0 :errors 0}
+    :tests 507 :assertions 27556 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057 :failures 0 :errors 0}
    :cljs-datascript
-   {:tests 156 :assertions 4539 :failures 0 :errors 0}
+   {:tests 158 :assertions 4549 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed
@@ -320,7 +320,6 @@
    :status :passed}}
  :remaining
  [:production-adapter-trace-refinement
-  :canonical-clj-cljs-root-denotation-key-source-refinement
   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
   :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
   :independent-review]}

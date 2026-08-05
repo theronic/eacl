@@ -1,0 +1,18 @@
+{:authenticated-query-scope-preserved true
+ :recover-current
+ {:bound-present
+  {:action :resume-after-current-result-eid
+   :old-path-frontiers-retained false
+   :cursor-recovery :rebased}
+  :bound-absent
+  {:action :restart-current-page-direction
+   :old-path-frontiers-retained false
+   :cursor-recovery :restarted}}
+ :exact-snapshot-logic-unchanged true
+ :cross-runtime
+ {:jvm :passed
+  :javascript :passed}
+ :cross-backend
+ {:datomic :passed
+  :datahike :passed
+  :datascript :passed}}

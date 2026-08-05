@@ -66,8 +66,10 @@
   :equal-exact-indexed-root-rule-bodies-have-equal-least-fixed-point-grants
   :runtime-key-boundary
   eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies
+  :cross-target-runtime-key-boundary
+  eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test
   :qualification
-  :canonical-clj-cljs-key-translation-is-runtime-regression-evidence-not-a-clojure-language-proof}
+  :exact-generated-certification-rule-maps-are-the-runtime-key-with-cross-target-regression-while-host-collection-equality-remains-trusted}
  :temporal-models
  [{:source "formal/tla/EaclSubproblemCache.tla"
    :configuration "formal/tla/EaclSubproblemCache.cfg"
@@ -178,12 +180,12 @@
   {:date "2026-08-05"
    :verified-authority-clj
    {:backends [:datomic :datahike :datascript]
-    :tests 503 :assertions 27438}
+    :tests 507 :assertions 27556}
    :verified-authority-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4057}
    :verified-authority-datascript-cljs
-   {:tests 156 :assertions 4539}
+   {:tests 158 :assertions 4549}
    :heavy-pagination {:tests 9 :assertions 3405}
    :heavy-subproblem-cache {:tests 6 :assertions 20}
    :failures 0
@@ -200,10 +202,10 @@
   :p50-improvement-range [0.4399612747075434 0.5018338461538462]
   :latest-run
   {:date "2026-08-05"
-   :completed-answer-only-p50-ms 0.673958
-   :layered-subproblem-p50-ms 0.181417
-   :p50-latency-ratio 0.26918146234631835
-   :p50-improvement-ratio 0.7308185376536817
+   :completed-answer-only-p50-ms 0.68425
+   :layered-subproblem-p50-ms 0.181959
+   :p50-latency-ratio 0.2659247351114359
+   :p50-improvement-ratio 0.7340752648885641
    :completed-answer-only-backend-operations 3920
    :layered-subproblem-backend-operations 0
    :completed-answer-hits 0

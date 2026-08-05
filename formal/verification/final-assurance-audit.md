@@ -490,13 +490,26 @@ generated-code compiler out of the trusted computing base.
 - The same replay found that eliminating backend work alone is not sufficient
   for a useful cache. The original root key retained the permission name and
   prevented cross-query denotation reuse. EACL-FORMAL-046 replaces it with a
-  canonical root-rule-body identity. `RootDenotation.dfy` and
+  root-rule-body identity compiled from the exact portable rule maps accepted
+  by generated plan certification. `RootDenotation.dfy` and
   `IndexedRootDenotation.dfy` prove equal semantic/indexed bodies have equal
   least-fixed-point grants under the compiler assumptions, while the runtime
-  regression rejects changed-relation and changed-target collisions. Across
-  80 distinct DataScript roots sharing a depth-48 arrow chain, the corrected
-  layered cache measured 0.181417 ms p50 versus 0.673958 ms for the
-  completed-answer-only baseline (0.269181x), with zero backend operations.
+  JVM/CLJS regression proves exact sharing and rejects changed-relation and
+  changed-target collisions. Clojure persistent-collection equality remains
+  a trusted runtime boundary rather than a Dafny theorem. Across 80 distinct
+  DataScript roots sharing a depth-48 arrow chain, the corrected layered cache
+  measured 0.181959 ms p50 versus 0.684250 ms for the completed-answer-only
+  baseline (0.265925x), with zero backend operations.
+- Forced-authority replay also exposed a legacy/generated cursor-recovery
+  disagreement after schema replacement: generated authority correctly
+  restarted when the authenticated prior result identity no longer belonged
+  to the current denotation, while the streaming legacy path reported a
+  rebase and reused stale per-path frontiers. Both generic and Datomic
+  adapters now mark `:lookup-eid` recovery, discard old frontiers, point-check
+  the boundary against the current permission, and restart only when it is
+  absent. The current PageWindow proof already specifies this
+  rebase-or-restart law; JVM, DataScript CLJS, and Datomic regressions now pin
+  the implementation.
 
 ## Public wording audit
 
@@ -528,22 +541,22 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 46 minimized entries replayed by 48 tests and 10,631
+- Counterexample corpus: 47 minimized entries replayed by 49 tests and 10,687
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 503 tests, 27,438 assertions,
+- Forced-authority non-benchmark CLJ suite: 507 tests, 27,556 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward
   pagination, count retention, and shared-subgraph cache gates pass.
-- Forced-authority DataScript CLJS suite: 156 tests, 4,539 assertions, zero
+- Forced-authority DataScript CLJS suite: 158 tests, 4,549 assertions, zero
   failures/errors.
 - Generated Java production-kernel namespace: 36 tests, 10,411 assertions,
   zero failures/errors.
 - Generated JavaScript smoke suite: 58 tests, 10,992 assertions, zero
   failures/errors.
-- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,347 unique
+- Locked CLJ/CLJS source closure: 60 named shared/backend roots, 1,350 unique
   reachable definitions across 51 source files, with exact per-root internal
   and external call sets. Unattributed usages inside exact `defrecord` spans
   are assigned to the containing protocol implementation. This prevents silent

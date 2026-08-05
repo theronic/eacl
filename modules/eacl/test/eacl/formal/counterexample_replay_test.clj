@@ -96,7 +96,9 @@
     :EACL-FORMAL-045
     eacl.formal.java-round-trip-test/generated-java-persistent-collection-boundary
     :EACL-FORMAL-046
-    eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies})
+    eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies
+    :EACL-FORMAL-047
+    eacl.datascript.contract-test/current-lookup-cursor-restarts-when-result-identity-disappears-test})
 
 (defn- read-edn
   [path]
@@ -175,8 +177,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-046 (:latest revision)))
-    (is (= 46 (count entries)))))
+    (is (= :EACL-FORMAL-047 (:latest revision)))
+    (is (= 47 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

@@ -26,6 +26,134 @@
   (+ (get-in stats [:subproblems :managed-projection-hits] 0)
      (get-in stats [:subproblems :managed-denotation-hits] 0)))
 
+(def ^:private denotation-key-separation-schema
+  "definition user {}
+   definition group {
+     relation member: user
+     relation alternate: user
+     permission access = member
+     permission other = alternate
+   }
+   definition server {
+     relation team: group
+     relation backup: group
+     permission same_a = team->access
+     permission same_b = team->access
+     permission different_relation = backup->access
+     permission different_target = team->other
+   }")
+
+(deftest current-lookup-cursor-restarts-when-result-identity-disappears-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:cache cache/no-cache
+          :security-key "01234567890123456789012345678901"})
+        user (eacl/spice-object :user "cursor-user")
+        document-1 (eacl/spice-object :document "cursor-document-1")
+        document-2 (eacl/spice-object :document "cursor-document-2")
+        query
+        {:subject user
+         :permission :view
+         :resource/type :document
+         :first 1}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation owner: user
+        permission view = owner
+      }")
+    (ds/transact!
+     conn
+     [{:eacl/id (:id user)}
+      {:eacl/id (:id document-1)}
+      {:eacl/id (:id document-2)}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship user :owner document-1)
+      (eacl/->Relationship user :owner document-2)])
+    (let [first-page (eacl/lookup-resources client query)
+          cursor (get-in first-page [:page-info :end-cursor])]
+      (is (= [document-1] (:data first-page)))
+      (eacl/write-schema!
+       client
+       "definition user {}
+        definition document {
+          relation owner: user
+        }")
+      (let [recovered
+            (eacl/lookup-resources client (assoc query :after cursor))]
+        (is (empty? (:data recovered)))
+        (is (= :restarted
+               (get-in recovered [:page-info :cursor-recovery])))))))
+
+(deftest semantic-root-denotation-key-is-cross-target-exact-test
+  (testing "equal root bodies share and distinct indexed bodies stay separate"
+    (let [conn (datascript/create-conn)
+          writer
+          (datascript/make-client
+           conn
+           {:cache cache/no-cache
+            :security-key "01234567890123456789012345678901"})
+          client
+          (datascript/make-client
+           conn
+           {:coherence-authority :managed
+            :security-key "01234567890123456789012345678901"})
+          alice (eacl/spice-object :user "shared-user")
+          bob (eacl/spice-object :user "other-user")
+          primary (eacl/spice-object :group "primary")
+          backup (eacl/spice-object :group "backup")
+          server (eacl/spice-object :server "server-0")
+          decision
+          (fn [permission]
+            (eacl/can?
+             client
+             {:subject alice
+              :permission permission
+              :resource server
+              :cache? true}))]
+      (eacl/write-schema! writer denotation-key-separation-schema)
+      (ds/transact!
+       conn
+       (mapv (fn [object] {:eacl/id (:id object)})
+             [alice bob primary backup server]))
+      (eacl/create-relationships!
+       writer
+       [(eacl/->Relationship alice :member primary)
+        (eacl/->Relationship bob :alternate primary)
+        (eacl/->Relationship bob :member backup)
+        (eacl/->Relationship primary :team server)
+        (eacl/->Relationship backup :backup server)])
+
+      (is (true? (decision :same_a)))
+      (let [before-hits
+            (get-in
+             (datascript/cache-stats client)
+             [:subproblems :denotation-hits]
+             0)]
+        (is (true? (decision :same_b)))
+        (let [equal-hits
+              (get-in
+               (datascript/cache-stats client)
+               [:subproblems :denotation-hits]
+               0)]
+          (is (> equal-hits before-hits))
+          (is (false? (decision :different_relation)))
+          (is (= equal-hits
+                 (get-in
+                  (datascript/cache-stats client)
+                  [:subproblems :denotation-hits]
+                  0)))
+          (is (false? (decision :different_target)))
+          (is (= equal-hits
+                 (get-in
+                  (datascript/cache-stats client)
+                  [:subproblems :denotation-hits]
+                  0))))))))
+
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
         client (datascript/make-client conn {})]
