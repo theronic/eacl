@@ -208,6 +208,25 @@ jobs:
           cat target/formal/ci-nrepl.log
           exit 1
 
+      - name: Gate routing-certificate logical work and JVM allocation
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require
+                'eacl.formal.routing-certificate-benchmark
+                :reload)
+               (let [result
+                     (eacl.formal.routing-certificate-benchmark/run-gate!)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (= :failed (:status result))
+                   (throw
+                    (ex-info
+                     \"generated routing certificate resource gate regressed\"
+                     result)))
+                 result))"
+
       - name: Gate generated consistency-boundary overhead
         run: |
           sh bin/ci-nrepl-eval 7788 \
@@ -265,22 +284,6 @@ jobs:
                  :output-to
                  \"target/formal/cljs-cursor-rebase-benchmark.js\"}))"
           node --expose-gc target/formal/cljs-cursor-rebase-benchmark.js
-
-      - name: Gate routing-certificate logical work and JVM allocation
-        run: |
-          sh bin/ci-nrepl-eval 7788 \
-            "(do
-               (require
-                'eacl.formal.routing-certificate-benchmark
-                :reload)
-               (let [result
-                     (eacl.formal.routing-certificate-benchmark/run-gate!)]
-                 (when (= :failed (:status result))
-                   (throw
-                    (ex-info
-                     \"generated routing certificate resource gate regressed\"
-                     result)))
-                 result))"
 
       - name: Assert verified status remains withheld while gates are unmet
         run: |

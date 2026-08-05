@@ -61,6 +61,7 @@
          "eacl.formal.verified-authority-suite/run-heavy!"
          "eacl.formal.verified-authority-suite/run-nonbenchmark!"
          "Restart heap-bounded nREPL for generated resource gates"
+         "Gate routing-certificate logical work and JVM allocation"
          "Gate generated consistency-boundary overhead"
          "Stop CI nREPL"]]
     (is (= 3

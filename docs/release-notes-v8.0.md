@@ -266,6 +266,12 @@ with the final v8 formats.
   request stable-identity rebasing for `:lookup-eid`; the engine discards old
   frontiers, point-checks current membership, and restarts when the identity is
   absent.
+- **The routing resource gate measured JVM history (EACL-FORMAL-048).** Its
+  first measured size could still be in HotSpot tiered compilation, and the
+  gate ran after two ClojureScript compiler builds. Routing is now measured
+  first in a fresh 1 GiB JVM after 40 warmups, with 11 samples per size and the
+  full observation printed on failure. The exact `P + 2V + E` logical check
+  and every allocation/latency ceiling are unchanged.
 
 ## Formal verification
 

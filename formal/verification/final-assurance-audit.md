@@ -510,6 +510,13 @@ generated-code compiler out of the trusted computing base.
   absent. The current PageWindow proof already specifies this
   rebase-or-restart law; JVM, DataScript CLJS, and Datomic regressions now pin
   the implementation.
+- EACL-FORMAL-048 found that the routing-certificate resource gate measured
+  JVM history rather than a stable generated boundary. Five warmups left the
+  first size vulnerable to HotSpot tiered compilation, and the gate ran after
+  two ClojureScript compiler builds. It now runs first in a fresh 1 GiB
+  resource JVM, uses 40 warmups and 11 samples, prints the complete failed
+  observation, and preserves all prior logical, allocation, and latency
+  ceilings.
 
 ## Public wording audit
 
@@ -541,11 +548,11 @@ that the complete v8.0 engine is formally verified.
   projection length 8 passed. All fifteen
   initiation/consecution/implication obligations passed, and all eight
   temporal mutants produced the required counterexample.
-- Counterexample corpus: 47 minimized entries replayed by 49 tests and 10,687
+- Counterexample corpus: 48 minimized entries replayed by 50 tests and 10,730
   assertions, zero failures/errors.
 - Mutation controls: 88 Clojure detectors and 8 Apalache counterexample
   controls; all 96 registered mutants killed.
-- Forced-authority non-benchmark CLJ suite: 508 tests, 27,562 assertions,
+- Forced-authority non-benchmark CLJ suite: 509 tests, 27,605 assertions,
   zero failures/errors across Datomic, Datahike, and DataScript.
 - Forced-authority heavy CLJ suite: 17 tests, 4,057 assertions, zero failures
   and zero errors across Datomic, Datahike, and DataScript. Backward

@@ -153,8 +153,13 @@
       maximum-normalized-latency-ratio]
      :or
      {node-counts [1024 4096 16384]
-      warmup 5
-      samples 7
+      ;; The generated boundary crosses enough independently JIT-compiled
+      ;; methods that five calls can still leave the first measured size in
+      ;; tiered compilation on a fresh hosted JVM. Keep the warmup above the
+      ;; observed compilation threshold so this gate measures steady-state
+      ;; scaling rather than JVM startup order.
+      warmup 40
+      samples 11
       maximum-p50-allocated-bytes-per-node 8192.0
       maximum-normalized-allocation-ratio 1.5
       maximum-normalized-latency-ratio 5.0}}]

@@ -1,7 +1,7 @@
 {:schema-version 1
- :corpus-revision :EACL-FORMAL-047
- :entries 47
+ :corpus-revision :EACL-FORMAL-048
+ :entries 48
  :status :passed
  :tests 49
- :assertions 10687
+ :assertions 10730
  :command "EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay"}

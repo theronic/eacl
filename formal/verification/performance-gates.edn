@@ -140,7 +140,7 @@
     :cljs-verified-authority
     {:tests 158 :assertions 4549 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 508 :assertions 27562 :failures 0 :errors 0}}
+    {:tests 509 :assertions 27605 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -262,32 +262,32 @@
     :arch :aarch64
     :jdk "22.0.1"
     :clojure "1.11.4"}
-   :warmup-per-size 5
-   :samples-per-size 7
+   :warmup-per-size 40
+   :samples-per-size 11
    :sizes
    [{:nodes 1024
      :paths 1024
      :edges 1024
-     :p50-elapsed-ns 2975625
-     :p50-ns-per-node 2905.8837890625
-     :p50-allocated-bytes 6219696
-     :p50-allocated-bytes-per-node 6073.921875}
+     :p50-elapsed-ns 3109167
+     :p50-ns-per-node 3036.2958984375
+     :p50-allocated-bytes 5474496
+     :p50-allocated-bytes-per-node 5346.1875}
     {:nodes 4096
      :paths 4096
      :edges 4096
-     :p50-elapsed-ns 16255042
-     :p50-ns-per-node 3968.51611328125
-     :p50-allocated-bytes 24988464
-     :p50-allocated-bytes-per-node 6100.69921875}
+     :p50-elapsed-ns 10106250
+     :p50-ns-per-node 2467.34619140625
+     :p50-allocated-bytes 22006848
+     :p50-allocated-bytes-per-node 5372.765625}
     {:nodes 16384
      :paths 16384
      :edges 16384
-     :p50-elapsed-ns 26576375
-     :p50-ns-per-node 1622.0932006835938
-     :p50-allocated-bytes 100055456
-     :p50-allocated-bytes-per-node 6106.900390625}]
-   :normalized-allocation-ratio 1.0054295258160528
-   :normalized-latency-ratio 2.4465401319781197
+     :p50-elapsed-ns 22083042
+     :p50-ns-per-node 1347.8419189453125
+     :p50-allocated-bytes 87079136
+     :p50-allocated-bytes-per-node 5314.888671875}]
+   :normalized-allocation-ratio 1.0108895889826008
+   :normalized-latency-ratio 2.2527092055523874
    :logical-status :passed
    :allocation-status :passed
    :latency-status :passed}
@@ -299,6 +299,14 @@
    :cpu-time :not-established
    :worst-case-latency :not-established
    :lore-analyser-contribution :none}
+  :harness-regression
+  {:counterexample :EACL-FORMAL-048
+   :ci-run 31003207937
+   :cause
+   :insufficient-jit-warmup-and-prior-cljs-compiler-state
+   :fix
+   :measure-first-in-fresh-bounded-jvm-with-40-warmups-and-11-samples
+   :thresholds-relaxed false}
   :status :passed}
 
  :consistency-selection-boundary
