@@ -96,6 +96,28 @@ Same-resource permission aliases need no data guard: they are positive unions, a
 
 The Explorer schema editor exposes Non-recursive and Recursive preset tabs. Selecting a tab changes only the unsaved draft; users still explicitly press Write Schema, preserving the existing mutation boundary.
 
+### 8. Size cached projections to the bounded consumer window
+
+The ordinary list path retains small relationship projection prefixes because
+it needs only one page plus lookahead. Exact count already consumes results in
+bounded count windows, but a fixed 32-item projection prefix makes a cold
+cached count reopen the same indexed adjacency many times. This is especially
+costly in ClojureScript, where every DataScript seek crosses more runtime
+machinery than on the JVM.
+
+For the duration of one acyclic count page, shared core raises the projection
+prefix to at least the count window plus its has-next sentinel and realizes
+that bounded window before restoring the ordinary prefix. The cache key
+includes the selected prefix size, so count projections cannot be confused
+with list-page projections. `SchemaPlanCost.dfy` proves that the chosen count
+prefix covers the window and sentinel and never weakens an explicitly larger
+configured bound.
+
+Disabling the cache for counts was rejected because it would discard reusable
+subproblems and make enabled-cache behavior unexpectedly slower than uncached
+behavior. Raising the global projection prefix was rejected because it would
+inflate retained list-page state even when callers request only a small page.
+
 ## Risks / Trade-offs
 
 - **Incorrect route classification could bypass required fixed-point work.** Mitigation: bind the certificate to normalized schema identity, prove recursive reachability classification, fail closed on mismatch, and run differential recursive/acyclic mutation controls.

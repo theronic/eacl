@@ -22,12 +22,17 @@
    :the-background-total-scan-overwrote-the-visible-page-cache-status-without-overwriting-the-visible-page-time}
   {:id :explorer-stale-cursors
    :finding
-   :seed-and-schema-mutations-retained-group-and-nested-cursor-stacks-from-the-previous-immutable-snapshot}]
+   :seed-and-schema-mutations-retained-group-and-nested-cursor-stacks-from-the-previous-immutable-snapshot}
+  {:id :cold-count-projection-fragmentation
+   :finding
+   :enabled-subproblem-caching-split-each-bounded-count-window-into-32-item-projection-prefixes-causing-hundreds-of-extra-datascript-index-seeks
+   :remediation
+   :size-count-projections-to-the-bounded-window-plus-sentinel-without-changing-small-list-page-projections}]
 
  :formal-verification
  {:command "bin/formal verify"
   :modules 25
-  :proof-efforts 9797
+  :proof-efforts 9802
   :errors 0
   :new-relationship-page-theorems
   [PageWindow.MatchingRelationshipPageScopeReusesExactPage
@@ -35,17 +40,20 @@
   :inactive-recursion-authority
   [RoutingCertificate.DecideGuardedRoute
    RoutingCertificate.EmptyRecursiveGuardsSelectAcyclic
-   AcyclicEngine.EmptyRecursiveGuardPreservesAcyclicDenotation]}
+   AcyclicEngine.EmptyRecursiveGuardPreservesAcyclicDenotation]
+  :count-projection-authority
+  [SchemaPlanCost.CountProjectionChunkCoversWindowAndSentinel
+   SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound]}
 
  :runtime-suites
  {:datascript-clj
-  {:tests 179 :assertions 4575 :failures 0 :errors 0}
+  {:tests 235 :assertions 8159 :failures 0 :errors 0}
   :datascript-cljs
-  {:tests 165 :assertions 4481 :failures 0 :errors 0}
+  {:tests 166 :assertions 4487 :failures 0 :errors 0}
   :datahike-clj
-  {:tests 34 :assertions 419 :failures 0 :errors 0}
+  {:tests 34 :assertions 422 :failures 0 :errors 0}
   :heavy-explorer
-  {:tests 3 :assertions 65 :failures 0 :errors 0}}
+  {:tests 4 :assertions 71 :failures 0 :errors 0}}
 
  :matched-v7-cache-bypassed-clj
  {:host-class :same-host-same-process-shape-harness
@@ -81,21 +89,28 @@
    :recursive-work 0}
   :owner-count-2000
   {:count 2000
-   :backend-scans 188
+   :backend-scans 14
    :merge-advances 2000
    :recursive-work 0}
   :super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 5294
+   :backend-scans 697
    :merge-advances 50003
    :recursive-work 0}
   :empty-recursive-super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 5294
+   :backend-scans 697
    :merge-advances 50003
-   :recursive-work 0}}
+   :recursive-work 0}
+  :cold-user-count-12000-of-40000
+  {:count 12000
+   :count-pages 1
+   :backend-scans 59
+   :merge-advances 12000
+   :recursive-work 0
+   :elapsed-ms 28.286459}}
 
  :explorer-browser
  {:url "http://localhost:18091/index.html"
@@ -122,6 +137,22 @@
    :nested-return-page-cache-hit-ms 1.0
    :snapshot-retention-error false
    :cursor-reset-to-page 1
+   :errors []}
+  :recursive-schema-40000-clean-build
+  {:schema-write-and-ui-settle-ms 1331
+   :cold-super-user-view-count 40000
+   :cold-super-user-view-count-ms 1029.0
+   :cold-super-user-switch-settle-ms 1212
+   :cold-super-user-admin-count-ms 309.9
+   :warm-super-user-view-count-ms 0.4
+   :cold-user-2-count 2000
+   :cold-user-2-count-ms 31.1
+   :nested-page-1-miss-ms 51.4
+   :nested-page-2-miss-ms 64.1
+   :nested-return-page-cache-hit-ms 0.9
+   :post-seed-snapshot-retention-error false
+   :post-seed-cursor-reset-to-page 1
+   :hung false
    :errors []}}
 
  :compatibility

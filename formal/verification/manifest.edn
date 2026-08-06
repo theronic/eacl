@@ -74,7 +74,7 @@
    :claim :conditional-operation-count-bound}
   :recursive-engine-cost-model
   {:status :passed
-   :verified-obligations 29
+   :verified-obligations 34
    :source "formal/dafny/SchemaPlanCost.dfy"
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
@@ -128,7 +128,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9797
+   :verified-obligations 9802
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :all-defined-permission-roots-and-public-operations-generated-authority-routed

@@ -28,6 +28,10 @@
   backend seek and does not retain the tail."
   32)
 
+(defn- count-projection-chunk-size
+  [page-size]
+  (max *projection-chunk-size* (inc page-size)))
+
 (def ^:dynamic *backend-work-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
@@ -4183,13 +4187,20 @@
            :size page-size
            :bound bound}
           {:keys [results path-frontiers observed-heads]}
-          (lazy-merged-acyclic-lookup
-           db
-           direction
-           (dissoc query :count-limit)
-           page-request
-           continuation)
-          realized (vec (take (inc page-size) results))
+          (binding [*projection-chunk-size*
+                    (count-projection-chunk-size page-size)]
+            (let [lookup
+                  (lazy-merged-acyclic-lookup
+                   db
+                   direction
+                   (dissoc query :count-limit)
+                   page-request
+                   continuation)]
+              (assoc
+               lookup
+               :results
+               (vec (take (inc page-size) (:results lookup))))))
+          realized results
           has-sentinel? (> (count realized) page-size)
           page-eids (if has-sentinel? (pop realized) realized)
           page-count (count page-eids)

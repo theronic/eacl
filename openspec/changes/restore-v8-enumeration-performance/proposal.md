@@ -8,6 +8,7 @@ EACL v8 preserves authorization results but regresses cold enumeration latency b
 - Treat recursive schema arrows as inactive when every cycle-enabling relationship prefix is empty in the selected snapshot, so recursive syntax without recursive data remains page-bounded.
 - Retain authenticated, client-private generated continuation state for DataScript and Datahike so each first visit to an adjacent page resumes prior work instead of replaying every preceding page.
 - Provide an exact count path for acyclic permissions that deduplicates overlapping grants without driving the recursive fixed-point machine or silently weakening count semantics.
+- Batch cached relationship projections to the bounded exact-count window so enabling the cache does not turn a cold browser count into hundreds of tiny DataScript seeks.
 - Preserve the public Relay pagination and count APIs, cursor authentication, snapshot consistency, authorization semantics, and fail-closed behavior.
 - Extend the formal models and generated authority for routing, pagination continuation, acyclic counting, work bounds, and cross-runtime equivalence; generated Clojure/JavaScript artifacts remain derived outputs rather than hand-maintained implementations.
 - Add deterministic performance and work-budget gates comparing v8 with representative v7 baselines at 10,000 and 50,000 resources across Datomic, DataScript, and Datahike, including the EACL Explorer multipath schema.

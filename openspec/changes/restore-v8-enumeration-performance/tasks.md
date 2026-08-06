@@ -75,3 +75,4 @@
 - [x] 9.5 Add tested Non-recursive and Recursive schema preset tabs to EACL Explorer
 - [x] 9.6 Make repeated nested server pagination for `super-user -> account-0001` hit the enabled client-private cache, with stable relationship-query cache-key coverage
 - [x] 9.7 Keep nested page and background-total cache provenance separate, and clear pre-mutation cursor stacks after seed or schema writes
+- [x] 9.8 Amortize cached projection seeks across each exact-count window and pass a bounded cold 40,000-server recursive-schema subject-switch acceptance test without an Explorer hang

@@ -28,6 +28,11 @@ The verified acyclic implementation SHALL expose deterministic logical-work coun
 - **WHEN** exact count evaluates a 10,000-server Explorer permission with overlapping grant paths
 - **THEN** indexed scan, merge, and duplicate-suppression work remains within the checked-in acyclic envelope and all recursive work counters remain zero
 
+#### Scenario: Cold cached count uses bounded projection batches
+
+- **WHEN** a representative subject's exact count consumes 12,000 of 40,000 seeded servers under the recursive schema with empty cycle guards
+- **THEN** each count window and its sentinel are covered by a bounded cached projection batch, backend seeks remain within the checked-in cold-count envelope, and recursive work remains zero
+
 #### Scenario: First visit to a deep resumed page
 
 - **WHEN** a matching continuation exists for a page after several prior pages

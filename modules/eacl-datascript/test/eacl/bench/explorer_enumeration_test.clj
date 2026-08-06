@@ -127,6 +127,17 @@
        #(eacl/count-resources
          client (assoc query :cache? false)))))))
 
+(defn run-40k-cold-user!
+  []
+  (let [shape
+        (assoc
+         fixture/default-shape
+         :accounts 20
+         :user-1-account-count 6)
+        {:keys [client]} (seed! shape fixture/recursive-schema)
+        query (fixture/count-query fixture/user-1 :view)]
+    (observe #(eacl/count-resources client query))))
+
 (deftest ^:benchmark explorer-10000-correctness-work-and-latency-gate
   (let [{:keys [page-reports owner-count super-count latency-ms]}
         (run-10k!)
@@ -196,4 +207,18 @@
              (pr-str
               {:elapsed-ms (:elapsed-ms report)
                :warmed-median-ms (:warmed-median-ms report)
+               :work (:acyclic report)}))))
+
+(deftest ^:benchmark ^:acceptance
+  explorer-40000-cold-user-count-amortizes-projection-seeks
+  (let [report (run-40k-cold-user!)
+        envelope
+        (get-in manifest [:work-envelopes :cold-user-count-40000])]
+    (is (= 12000 (get-in report [:value :count])))
+    (is (empty? (:recursive report)))
+    (is (= 1 (get-in report [:acyclic :routed-acyclic])))
+    (assert-work-envelope! report envelope)
+    (println "EACL Explorer 40k cold user report"
+             (pr-str
+              {:elapsed-ms (:elapsed-ms report)
                :work (:acyclic report)}))))

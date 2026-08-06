@@ -60,4 +60,9 @@
   {:maximum-counted-results 50000
    :maximum-merge-advances 50003
    :maximum-backend-scans 50000
+   :recursive-counters 0}
+  :cold-user-count-40000
+  {:maximum-counted-results 12000
+   :maximum-merge-advances 12001
+   :maximum-backend-scans 128
    :recursive-counters 0}}}

@@ -253,6 +253,28 @@
               (engine/enumeration-route adapter :server :view))]
         (is (= :recursive route))))))
 
+(deftest cold-exact-count-amortizes-projection-seeks-test
+  (let [shape
+        (assoc
+         fixture/default-shape
+         :accounts 1
+         :servers-per-account 256
+         :user-1-account-count 1)
+        {:keys [client]}
+        (seed-client! shape fixture/recursive-schema {})
+        acyclic-stats (atom {})
+        recursive-stats (atom {})
+        result
+        (binding [engine/*acyclic-work-stats* acyclic-stats
+                  engine/*recursive-traversal-stats* recursive-stats]
+          (eacl/count-resources
+           client
+           (fixture/count-query fixture/user-1 :view)))]
+    (is (= 256 (:count result)))
+    (is (<= (:backend-scans @acyclic-stats) 16)
+        "one count window must not be split into tiny cached projections")
+    (is (empty? @recursive-stats))))
+
 (deftest continuation-eviction-and-query-key-separation-replay-test
   (let [{:keys [client]}
         (seed-client! small-shape {:cache {:max-entries 1

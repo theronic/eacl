@@ -145,6 +145,48 @@ module SchemaPlanCost {
   {
   }
 
+  // A cached exact count must not turn one bounded count window into many
+  // tiny backend seeks. Production raises the projection prefix only for the
+  // duration of a count page, and realizes the page plus its has-next sentinel
+  // before restoring the ordinary small-page cache bound.
+  function CountProjectionChunkSize(
+    countPageSize: nat,
+    defaultChunkSize: nat
+  ): nat
+    requires 0 < countPageSize
+    requires 0 < defaultChunkSize
+  {
+    if defaultChunkSize < countPageSize + 1
+    then countPageSize + 1
+    else defaultChunkSize
+  }
+
+  lemma CountProjectionChunkCoversWindowAndSentinel(
+    countPageSize: nat,
+    defaultChunkSize: nat
+  )
+    requires 0 < countPageSize
+    requires 0 < defaultChunkSize
+    ensures CountProjectionChunkSize(
+              countPageSize,
+              defaultChunkSize
+            ) >= countPageSize + 1
+  {
+  }
+
+  lemma CountProjectionChunkNeverShrinksConfiguredBound(
+    countPageSize: nat,
+    defaultChunkSize: nat
+  )
+    requires 0 < countPageSize
+    requires 0 < defaultChunkSize
+    ensures CountProjectionChunkSize(
+              countPageSize,
+              defaultChunkSize
+            ) >= defaultChunkSize
+  {
+  }
+
   // Rule indexing is schema work. A compiled generated plan retains the exact
   // ForwardConsumers and RulesByNode maps proved in IndexedTraversal; request
   // initialization selects only its already-certified seed bucket.

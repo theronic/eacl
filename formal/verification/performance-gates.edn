@@ -210,7 +210,7 @@
 
  :formal-pipeline
  {:scope :all-25-dafny-modules
-  :proof-efforts 9797
+  :proof-efforts 9802
   :last-observed-local-wall-seconds 1169
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
