@@ -138,6 +138,29 @@
             (subproblem/lookup!
              store :projection :third {}))))))
 
+(deftest indexed-lru-eviction-probes-only-the-oldest-eligible-entry-test
+  (let [capacity 256
+        store (subproblem/store {:projection-max-weight capacity})]
+    (doseq [key (range capacity)]
+      (subproblem/resolve!
+       store :projection key {} (constantly key)))
+    (let [before (subproblem/stats store)]
+      (subproblem/resolve!
+       store :projection capacity {} (constantly capacity))
+      (let [after (subproblem/stats store)]
+        (is (= 1 (- (:evictions after) (:evictions before))))
+        (is (= 1 (- (:eviction-probes after)
+                    (:eviction-probes before)))
+            "a full tier indexes the oldest eligible entry instead of scanning every entry")
+        (is (= capacity
+               (get-in after [:tiers :projection :entries])))
+        (is (nil? (subproblem/lookup!
+                   store :projection 0 {})))
+        (is (= capacity
+               (:value
+                (subproblem/lookup!
+                 store :projection capacity {}))))))))
+
 (deftest complete-private-entry-is-structurally-validated-once-test
   (let [store (subproblem/store)
         validations (atom 0)

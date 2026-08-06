@@ -277,6 +277,7 @@
        (into {}
              (map (fn [tier]
                     [tier {:entries {}
+                           :lru (sorted-map)
                            :weight 0
                            :inflight 0
                            :clock 0}]))
@@ -285,6 +286,7 @@
              :misses 0
              :puts 0
              :evictions 0
+             :eviction-probes 0
              :oversized-rejections 0
              :inflight-rejections 0
              :invalid-results 0
@@ -367,6 +369,7 @@
              (into {}
                    (map (fn [tier]
                           [tier {:entries {}
+                                 :lru (sorted-map)
                                  :weight 0
                                  :inflight 0
                                  :clock 0}]))
@@ -412,6 +415,7 @@
                    (vreset! removed? true)
                    (-> state
                        (update-in [tier :entries] dissoc key)
+                       (update-in [tier :lru] dissoc (:access entry))
                        (update-in [tier :weight] - (:weight entry))
                        (cond->
                          (not (:complete? entry))
@@ -422,35 +426,38 @@
 (defn- trim-tier
   [tier-state maximum-weight protected-key]
   (loop [current tier-state
-         evictions 0]
+         evictions 0
+         probes 0]
     (if (<= (:weight current) maximum-weight)
-      [current evictions]
-      (if-let [[victim entry]
-               (reduce
-                (fn [selected [key entry :as candidate]]
-                  (if (or (= protected-key key)
-                          (not (:complete? entry))
-                          (and selected
-                               (<= (:access (val selected))
-                                   (:access entry))))
-                    selected
-                    candidate))
-                nil
-                (:entries current))]
+      [current evictions probes]
+      (if-let [[victim-access victim entry victim-probes]
+               (loop [remaining (seq (:lru current))
+                      victim-probes 0]
+                 (when-let [[access key] (first remaining)]
+                   (let [entry (get (:entries current) key)
+                         victim-probes (inc victim-probes)]
+                     (if (and entry
+                              (not= protected-key key)
+                              (:complete? entry))
+                       [access key entry victim-probes]
+                       (recur (next remaining) victim-probes)))))]
         (recur
          (-> current
              (update :entries dissoc victim)
+             (update :lru dissoc victim-access)
              (update :weight - (:weight entry))
              (cond->
                (not (:complete? entry))
                (update :inflight dec)))
-         (inc evictions))
-        [current evictions]))))
+         (inc evictions)
+         (+ probes victim-probes))
+        [current evictions probes]))))
 
 (defn- finalize-entry!
   [store tier key ticket weight]
   (let [maximum-weight (get (:budgets store) tier)
         evictions (volatile! 0)
+        eviction-probes (volatile! 0)
         rejected-oversized? (volatile! false)
         retained? (volatile! false)]
     (swap! (:state store)
@@ -470,6 +477,7 @@
                      (vreset! rejected-oversized? true)
                      (-> state
                          (update-in [tier :entries] dissoc key)
+                         (update-in [tier :lru] dissoc (:access entry))
                          (update-in [tier :weight] - (:weight entry))
                          (cond->
                            (not (:complete? entry))
@@ -488,15 +496,19 @@
                              (assoc-in [:entries key :complete?] true)
                              (update :weight + delta)
                              (update :inflight dec))
-                         [trimmed n]
+                         [trimmed n probes]
                          (trim-tier updated-tier maximum-weight key)]
                      (vreset! retained? true)
                      (vreset! evictions n)
+                     (vreset! eviction-probes probes)
                      (assoc state tier trimmed)))))))
     (when @rejected-oversized?
       (swap! (:metrics store) update :oversized-rejections inc))
     (when (pos? @evictions)
       (swap! (:metrics store) update :evictions + @evictions))
+    (when (pos? @eviction-probes)
+      (swap! (:metrics store)
+             update :eviction-probes + @eviction-probes))
     @retained?))
 
 (defn- touch-entry!
@@ -508,6 +520,8 @@
                (let [tick (inc (get-in state [tier :clock]))]
                  (-> state
                      (assoc-in [tier :clock] tick)
+                     (update-in [tier :lru] dissoc (:access entry))
+                     (assoc-in [tier :lru tick] key)
                      (assoc-in [tier :entries key :access] tick)))
                state))))
   nil)
@@ -539,10 +553,11 @@
               (-> (get state tier)
                   (assoc-in [:entries key]
                             (assoc candidate :access tick))
+                  (assoc-in [:lru tick] key)
                   (update :weight inc)
                   (update :inflight inc)
                   (assoc :clock tick))
-              [trimmed evictions]
+              [trimmed evictions eviction-probes]
               (trim-tier updated-tier maximum-weight key)
               updated (assoc state tier trimmed)]
           (if (> (:weight trimmed) maximum-weight)
@@ -554,6 +569,9 @@
                 (when (pos? evictions)
                   (swap! (:metrics store)
                          update :evictions + evictions))
+                (when (pos? eviction-probes)
+                  (swap! (:metrics store)
+                         update :eviction-probes + eviction-probes))
                 {:installed? true
                  :entry candidate})
               (recur))))))))
