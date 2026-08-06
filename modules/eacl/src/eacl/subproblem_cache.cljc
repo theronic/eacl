@@ -277,7 +277,8 @@
        (into {}
              (map (fn [tier]
                     [tier {:entries {}
-                           :lru (sorted-map)
+                           :lru []
+                           :lru-head 0
                            :weight 0
                            :inflight 0
                            :clock 0}]))
@@ -349,8 +350,10 @@
            (:managed-proof-max-atoms store)
            :tiers
            (into {}
-                 (map (fn [[tier {:keys [entries weight inflight]}]]
+                 (map (fn [[tier {:keys [entries weight inflight
+                                         lru lru-head]}]]
                         [tier {:entries (count entries)
+                               :lru-records (- (count lru) lru-head)
                                :weight weight
                                :inflight inflight
                                :max-weight (get (:budgets store) tier)}]))
@@ -369,7 +372,8 @@
              (into {}
                    (map (fn [tier]
                           [tier {:entries {}
-                                 :lru (sorted-map)
+                                 :lru []
+                                 :lru-head 0
                                  :weight 0
                                  :inflight 0
                                  :clock 0}]))
@@ -415,7 +419,6 @@
                    (vreset! removed? true)
                    (-> state
                        (update-in [tier :entries] dissoc key)
-                       (update-in [tier :lru] dissoc (:access entry))
                        (update-in [tier :weight] - (:weight entry))
                        (cond->
                          (not (:complete? entry))
@@ -423,35 +426,62 @@
                  state))))
     @removed?))
 
+(defn- current-lru-record?
+  [entries [access key]]
+  (= access (:access (get entries key))))
+
+(defn- compact-lru
+  [tier-state]
+  (let [entries (:entries tier-state)
+        active
+        (into []
+              (filter #(current-lru-record? entries %))
+              (subvec (:lru tier-state)
+                      (:lru-head tier-state)))]
+    (assoc tier-state :lru active :lru-head 0)))
+
+(defn- maybe-compact-lru
+  [tier-state]
+  (let [record-count (count (:lru tier-state))
+        entry-count (count (:entries tier-state))
+        maximum-records (max 1024 (* 2 (max 1 entry-count)))]
+    (if (> record-count maximum-records)
+      (compact-lru tier-state)
+      tier-state)))
+
 (defn- trim-tier
   [tier-state maximum-weight protected-key]
   (loop [current tier-state
          evictions 0
          probes 0]
     (if (<= (:weight current) maximum-weight)
-      [current evictions probes]
-      (if-let [[victim-access victim entry victim-probes]
-               (loop [remaining (seq (:lru current))
+      [(maybe-compact-lru current) evictions probes]
+      (if-let [[victim-index victim entry victim-probes]
+               (loop [index (:lru-head current)
                       victim-probes 0]
-                 (when-let [[access key] (first remaining)]
-                   (let [entry (get (:entries current) key)
+                 (when (< index (count (:lru current)))
+                   (let [[access key] (nth (:lru current) index)
+                         entry (get (:entries current) key)
                          victim-probes (inc victim-probes)]
-                     (if (and entry
+                     (if (and (= access (:access entry))
                               (not= protected-key key)
                               (:complete? entry))
-                       [access key entry victim-probes]
-                       (recur (next remaining) victim-probes)))))]
+                       [index key entry victim-probes]
+                       (recur (inc index) victim-probes)))))]
         (recur
          (-> current
              (update :entries dissoc victim)
-             (update :lru dissoc victim-access)
+             (assoc :lru-head (inc victim-index))
              (update :weight - (:weight entry))
              (cond->
                (not (:complete? entry))
                (update :inflight dec)))
          (inc evictions)
          (+ probes victim-probes))
-        [current evictions probes]))))
+        [(maybe-compact-lru
+          (assoc current :lru-head (count (:lru current))))
+         evictions
+         probes]))))
 
 (defn- finalize-entry!
   [store tier key ticket weight]
@@ -477,7 +507,6 @@
                      (vreset! rejected-oversized? true)
                      (-> state
                          (update-in [tier :entries] dissoc key)
-                         (update-in [tier :lru] dissoc (:access entry))
                          (update-in [tier :weight] - (:weight entry))
                          (cond->
                            (not (:complete? entry))
@@ -520,9 +549,9 @@
                (let [tick (inc (get-in state [tier :clock]))]
                  (-> state
                      (assoc-in [tier :clock] tick)
-                     (update-in [tier :lru] dissoc (:access entry))
-                     (assoc-in [tier :lru tick] key)
-                     (assoc-in [tier :entries key :access] tick)))
+                     (assoc-in [tier :entries key :access] tick)
+                     (update-in [tier :lru] conj [tick key])
+                     (update tier maybe-compact-lru)))
                state))))
   nil)
 
@@ -553,7 +582,6 @@
               (-> (get state tier)
                   (assoc-in [:entries key]
                             (assoc candidate :access tick))
-                  (assoc-in [:lru tick] key)
                   (update :weight inc)
                   (update :inflight inc)
                   (assoc :clock tick))

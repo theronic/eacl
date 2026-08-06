@@ -161,6 +161,18 @@
                 (subproblem/lookup!
                  store :projection capacity {}))))))))
 
+(deftest lru-access-log-compacts-after-repeated-hits-test
+  (let [store (subproblem/store {:projection-max-weight 1})]
+    (subproblem/resolve!
+     store :projection :hot {} (constantly :hot))
+    (dotimes [_ 1200]
+      (subproblem/lookup! store :projection :hot {}))
+    (let [stats (subproblem/stats store)]
+      (is (= 1 (get-in stats [:tiers :projection :entries])))
+      (is (<= (get-in stats [:tiers :projection :lru-records])
+              1024)
+          "amortized constant-time touches retain a bounded access log"))))
+
 (deftest complete-private-entry-is-structurally-validated-once-test
   (let [store (subproblem/store)
         validations (atom 0)
