@@ -9,7 +9,11 @@
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
-(def ^:private count-page-size
+(def ^:dynamic *count-window-size*
+  "Maximum exact-count results certified in one bounded work window.
+
+  Counting keeps one merged traversal across windows. This override exists for
+  deterministic work tests; it is not a public client option."
   #?(:clj 16384
      ;; ClojureScript pays substantially more for retaining a deep lazy merge
      ;; spine. Smaller certified chunks keep browser exact-count traversal
@@ -4174,90 +4178,86 @@
 
 (defn- count-acyclic-pages
   [db direction query limit]
-  (loop [total 0
-         bound nil
-         continuation nil]
-    (let [remaining (when limit (- limit total))
-          page-size
-          (if remaining
-            (max 1 (min count-page-size (inc remaining)))
-            count-page-size)
-          page-request
-          {:direction :asc
-           :size page-size
-           :bound bound}
-          {:keys [results path-frontiers observed-heads]}
-          (binding [*projection-chunk-size*
-                    (count-projection-chunk-size page-size)]
-            (let [lookup
-                  (lazy-merged-acyclic-lookup
-                   db
-                   direction
-                   (dissoc query :count-limit)
-                   page-request
-                   continuation)]
-              (assoc
-               lookup
-               :results
-               (vec (take (inc page-size) (:results lookup))))))
-          realized results
-          has-sentinel? (> (count realized) page-size)
-          page-eids (if has-sentinel? (pop realized) realized)
-          page-count (count page-eids)
-          total' (+ total page-count)
-          last-eid (peek page-eids)]
-      (add-acyclic-work! :count-pages 1)
-      (add-acyclic-work! :merge-advances (count realized))
-      (add-acyclic-work! :counted-results page-count)
-      (when-not
-       (= :accepted
-          (verified/decide
-           subproblem/*decision-kernel*
-           :acyclic-work
-           {:requested-window page-size
-            :merge-advances (count realized)
-            :emitted-results page-count
-            :recursive-work 0}))
-        (routing-cache-error!
-         "Generated acyclic count work authority rejected the page."
-         {:page-size page-size
-          :realized-count (count realized)
-          :page-count page-count}))
-      (when *count-stats*
-        (swap!
-         *count-stats*
-         (fn [stats]
-           (-> stats
-               (update :pages (fnil inc 0))
-               (update :max-page-eids (fnil max 0) page-count)))))
-      (cond
-        (and limit (> total' limit))
-        (select-keys
-         (verified/decide
-          subproblem/*decision-kernel*
-          :acyclic-count
-          {:unique-count total'
-           :more? has-sentinel?
-           :limit limit})
-         [:count :truncated?])
+  ;; Exact count is one logical merge traversal. Rebuilding that traversal at
+  ;; every internal count window made fan-out scans proportional to
+  ;; `window-count * intermediate-count`; a 100k Explorer count reopened the
+  ;; same account/team/VPC streams thousands of times. Keep one lazy tail and
+  ;; consume it in bounded certified windows instead. Recur replaces the prior
+  ;; tail, so already-counted pages are not retained.
+  (binding [*projection-chunk-size*
+            (count-projection-chunk-size *count-window-size*)]
+    (loop [total 0
+           results
+           (:results
+            (lazy-merged-acyclic-lookup
+             db
+             direction
+             (dissoc query :count-limit)
+             {:direction :asc
+              :size *count-window-size*
+              :bound nil}
+             nil))]
+      (let [remaining (when limit (- limit total))
+            page-size
+            (if remaining
+              (max 1 (min *count-window-size* (inc remaining)))
+              *count-window-size*)
+            realized (vec (take (inc page-size) results))
+            has-sentinel? (> (count realized) page-size)
+            page-eids (if has-sentinel? (pop realized) realized)
+            page-count (count page-eids)
+            total' (+ total page-count)]
+        (add-acyclic-work! :count-pages 1)
+        (add-acyclic-work! :merge-advances (count realized))
+        (add-acyclic-work! :counted-results page-count)
+        (when-not
+         (= :accepted
+            (verified/decide
+             subproblem/*decision-kernel*
+             :acyclic-work
+             {:requested-window page-size
+              :merge-advances (count realized)
+              :emitted-results page-count
+              :recursive-work 0}))
+          (routing-cache-error!
+           "Generated acyclic count work authority rejected the page."
+           {:page-size page-size
+            :realized-count (count realized)
+            :page-count page-count}))
+        (when *count-stats*
+          (swap!
+           *count-stats*
+           (fn [stats]
+             (-> stats
+                 (update :pages (fnil inc 0))
+                 (update :max-page-eids (fnil max 0) page-count)))))
+        (cond
+          (and limit (> total' limit))
+          (select-keys
+           (verified/decide
+            subproblem/*decision-kernel*
+            :acyclic-count
+            {:unique-count total'
+             :more? has-sentinel?
+             :limit limit})
+           [:count :truncated?])
 
-        has-sentinel?
-        (recur
-         total'
-         (lookup-edge last-eid)
-         {:version lookup-continuation-version
-          :frontiers path-frontiers
-          :heads (surviving-heads observed-heads last-eid)})
+          has-sentinel?
+          (recur
+           total'
+           ;; The sentinel is the first value of the next certified window.
+           ;; Advance only by the values counted in this window.
+           (drop page-size results))
 
-        :else
-        (select-keys
-         (verified/decide
-          subproblem/*decision-kernel*
-          :acyclic-count
-          {:unique-count total'
-           :more? false
-           :limit limit})
-         [:count :truncated?])))))
+          :else
+          (select-keys
+           (verified/decide
+            subproblem/*decision-kernel*
+            :acyclic-count
+            {:unique-count total'
+             :more? false
+             :limit limit})
+           [:count :truncated?]))))))
 
 (defn lookup-resources
   "Runs generated forward pagination.

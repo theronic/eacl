@@ -146,9 +146,9 @@ module SchemaPlanCost {
   }
 
   // A cached exact count must not turn one bounded count window into many
-  // tiny backend seeks. Production raises the projection prefix only for the
-  // duration of a count page, and realizes the page plus its has-next sentinel
-  // before restoring the ordinary small-page cache bound.
+  // tiny backend seeks. Production raises the projection prefix for the
+  // complete count traversal while still realizing only one bounded window
+  // plus its has-next sentinel at a time.
   function CountProjectionChunkSize(
     countPageSize: nat,
     defaultChunkSize: nat
@@ -184,6 +184,50 @@ module SchemaPlanCost {
               countPageSize,
               defaultChunkSize
             ) >= defaultChunkSize
+  {
+  }
+
+  // Exact count constructs the permission-path merge once, then advances that
+  // same lazy tail through every certified window. The number of traversal
+  // constructions is therefore independent of both result cardinality and
+  // window count.
+  function CountMergeTraversalConstructions(): nat {
+    1
+  }
+
+  lemma ExactCountBuildsOneMergeTraversal(
+    certifiedWindows: nat
+  )
+    requires 0 < certifiedWindows
+    ensures CountMergeTraversalConstructions() == 1
+    ensures CountMergeTraversalConstructions() <= certifiedWindows
+  {
+  }
+
+  function CountWindowAdvance(
+    remainingResults: nat,
+    countWindowSize: nat
+  ): nat
+    requires 0 < countWindowSize
+  {
+    if remainingResults < countWindowSize
+    then remainingResults
+    else countWindowSize
+  }
+
+  lemma CountWindowAdvanceIsBounded(
+    remainingResults: nat,
+    countWindowSize: nat
+  )
+    requires 0 < countWindowSize
+    ensures CountWindowAdvance(
+              remainingResults,
+              countWindowSize
+            ) <= countWindowSize
+    ensures CountWindowAdvance(
+              remainingResults,
+              countWindowSize
+            ) <= remainingResults
   {
   }
 

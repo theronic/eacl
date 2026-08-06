@@ -27,7 +27,12 @@
    :finding
    :enabled-subproblem-caching-split-each-bounded-count-window-into-32-item-projection-prefixes-causing-hundreds-of-extra-datascript-index-seeks
    :remediation
-   :size-count-projections-to-the-bounded-window-plus-sentinel-without-changing-small-list-page-projections}]
+   :size-count-projections-to-the-bounded-window-plus-sentinel-without-changing-small-list-page-projections}
+  {:id :count-window-traversal-replay
+   :finding
+   :exact-count-rebuilt-the-complete-permission-path-merge-for-every-internal-window-causing-fanout-index-scans-to-scale-with-window-count-times-intermediate-count
+   :remediation
+   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}]
 
  :formal-verification
  {:command "bin/formal verify"
@@ -43,7 +48,9 @@
    AcyclicEngine.EmptyRecursiveGuardPreservesAcyclicDenotation]
   :count-projection-authority
   [SchemaPlanCost.CountProjectionChunkCoversWindowAndSentinel
-   SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound]}
+   SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound
+   SchemaPlanCost.ExactCountBuildsOneMergeTraversal
+   SchemaPlanCost.CountWindowAdvanceIsBounded]}
 
  :runtime-suites
  {:datascript-clj

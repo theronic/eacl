@@ -253,7 +253,7 @@
               (engine/enumeration-route adapter :server :view))]
         (is (= :recursive route))))))
 
-(deftest cold-exact-count-amortizes-projection-seeks-test
+(deftest cold-exact-count-reuses-one-merge-across-certified-windows-test
   (let [shape
         (assoc
          fixture/default-shape
@@ -265,14 +265,18 @@
         acyclic-stats (atom {})
         recursive-stats (atom {})
         result
-        (binding [engine/*acyclic-work-stats* acyclic-stats
+        (binding [engine/*count-window-size* 64
+                  engine/*acyclic-work-stats* acyclic-stats
                   engine/*recursive-traversal-stats* recursive-stats]
           (eacl/count-resources
            client
            (fixture/count-query fixture/user-1 :view)))]
     (is (= 256 (:count result)))
-    (is (<= (:backend-scans @acyclic-stats) 16)
-        "one count window must not be split into tiny cached projections")
+    (is (= 4 (:count-pages @acyclic-stats)))
+    (is (= 5 (:permission-paths @acyclic-stats))
+        "internal count windows must reuse one compiled merged traversal")
+    (is (<= (:backend-scans @acyclic-stats) 24)
+        "one count traversal must not split into tiny cached projections")
     (is (empty? @recursive-stats))))
 
 (deftest continuation-eviction-and-query-key-separation-replay-test

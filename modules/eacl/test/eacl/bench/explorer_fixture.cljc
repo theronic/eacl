@@ -145,6 +145,9 @@
 (def acceptance-shape
   (assoc default-shape :accounts 25))
 
+(def acceptance-100k-shape
+  (assoc default-shape :accounts 50))
+
 (defn expected-counts
   [{:keys [accounts servers-per-account user-1-account-count]}]
   {:super-user (* accounts servers-per-account)

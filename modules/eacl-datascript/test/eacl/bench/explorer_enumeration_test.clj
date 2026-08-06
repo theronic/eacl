@@ -127,6 +127,18 @@
        #(eacl/count-resources
          client (assoc query :cache? false)))))))
 
+(defn run-100k!
+  []
+  (let [{:keys [client]} (seed! fixture/acceptance-100k-shape)
+        query (fixture/count-query fixture/super-user :view)
+        report (observe #(eacl/count-resources client query))]
+    (assoc
+     report
+     :warmed-median-ms
+     (warmed-median
+      #(eacl/count-resources
+        client (assoc query :cache? false))))))
+
 (defn run-40k-cold-user!
   []
   (let [shape
@@ -221,4 +233,24 @@
     (println "EACL Explorer 40k cold user report"
              (pr-str
               {:elapsed-ms (:elapsed-ms report)
+               :work (:acyclic report)}))))
+
+(deftest ^:benchmark ^:acceptance
+  explorer-100000-super-user-count-builds-one-merged-traversal
+  (let [report (run-100k!)
+        envelope (get-in manifest [:work-envelopes :count-100000])]
+    (is (= 100000 (get-in report [:value :count])))
+    (is (empty? (:recursive report)))
+    (is (= 1 (get-in report [:acyclic :routed-acyclic])))
+    (is (= 5 (get-in report [:acyclic :permission-paths]))
+        "count windows must not rebuild the five server permission paths")
+    (assert-work-envelope! report envelope)
+    (is (<= (:warmed-median-ms report)
+            (get-in manifest
+                    [:scenarios :super-user-exact-count-100000
+                     :maximum-v8-median-ms])))
+    (println "EACL Explorer 100k report"
+             (pr-str
+              {:elapsed-ms (:elapsed-ms report)
+               :warmed-median-ms (:warmed-median-ms report)
                :work (:acyclic report)}))))

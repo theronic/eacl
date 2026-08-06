@@ -44,7 +44,15 @@
    [88.15725 87.594916 84.8255 87.093209 86.588208 86.539125
     86.823625]
    :v7-median-ms 86.823625
-   :maximum-v8-median-ms 173.64725}}
+   :maximum-v8-median-ms 173.64725}
+  :super-user-exact-count-100000
+  {:servers 100000
+   :authorized 100000
+   :v7-samples-ms
+   [276.649166 271.575208 215.85025 190.764916 187.675125
+    188.795333 188.60225]
+   :v7-median-ms 190.764916
+   :maximum-v8-median-ms 381.529832}}
  :work-envelopes
  {:page
   {:maximum-emitted-results 20
@@ -60,6 +68,11 @@
   {:maximum-counted-results 50000
    :maximum-merge-advances 50003
    :maximum-backend-scans 50000
+   :recursive-counters 0}
+  :count-100000
+  {:maximum-counted-results 100000
+   :maximum-merge-advances 100006
+   :maximum-backend-scans 512
    :recursive-counters 0}
   :cold-user-count-40000
   {:maximum-counted-results 12000
