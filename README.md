@@ -11,7 +11,7 @@ EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchfu
 
 ## Goals
 
-- Best-in-class ReBAC authorization for Clojure/Datomic applications that is fast for 10M permissioned Datomic entities.
+- Best-in-class ReBAC authorization for Clojure applications backed by Datomic Pro, Datahike or Datascript with a performance goal of 10M permissioned entities.
 - Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
 - Retain compatibility with SpiceDB gRPC API to enable 1-for-1 Relationship syncing by tailing Datomic transactor queue.
 
@@ -297,7 +297,7 @@ window; it does not reverse the result order. Bare `:last` without `:before` is
 not supported for recursive lookup because it requires traversing the full
 closure.
 
-## Datomic Quickstart
+## Datomic Pro Quickstart
 
 The following example is contained in [eacl-example](https://github.com/theronic/eacl-example).
 
@@ -395,6 +395,58 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 ;                 :end-cursor "eacl4_..."
 ;                 :has-next-page? false
 ;                 :has-previous-page? false}}
+```
+
+## Datahike Quickstart
+
+For Clojure/JVM applications backed by Datahike, add the Datahike adapter
+dependency to your `deps.edn` file:
+
+```clojure
+{:deps {theronic/eacl-datahike
+        {:git/url "git@github.com:theronic/eacl.git"
+         :git/sha "REPLACE_WITH_SHA"
+         :deps/root "modules/eacl-datahike"}}}
+```
+
+```clojure
+(ns my-eacl-datahike-project
+  (:require [datahike.api :as d]
+            [eacl.core :as eacl]
+            [eacl.datahike.core :as eacl.datahike]))
+
+; Create an in-memory Datahike database and install EACL's Datahike schema:
+(def conn (eacl.datahike/create-conn))
+
+; Make an EACL client that satisfies the `IAuthorization` protocol:
+(def acl (eacl.datahike/make-client conn {}))
+
+; Write your permission schema using SpiceDB schema DSL:
+(eacl/write-schema! acl
+  "definition user {}
+
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }")
+
+; Transact application entities with unique `:eacl/id` values:
+(d/transact conn
+  [{:eacl/id "user-1"}
+   {:eacl/id "account-1"}])
+
+; Create a Relationship between existing entities:
+(eacl/create-relationship! acl
+  (eacl/spice-object :user "user-1")
+  :owner
+  (eacl/spice-object :account "account-1"))
+
+; Run a Permission Check with `can?`:
+(eacl/can? acl
+  (eacl/spice-object :user "user-1")
+  :admin
+  (eacl/spice-object :account "account-1"))
+; => true
 ```
 
 ## DataScript Quickstart
