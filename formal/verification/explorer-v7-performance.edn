@@ -1,0 +1,63 @@
+{:schema-version 1
+ :workload :eacl-explorer-deterministic-multipath
+ :schema "modules/eacl/test/eacl/bench/explorer_fixture.cljc"
+ :host-class {:os :macos
+              :arch :arm64
+              :os-version "26.5.1"
+              :jdk "24.0.1"
+              :runtime :datascript-clj
+              :measurement :warmed-median}
+ :baseline-source
+ {:kind :same-host-same-process-shape-harness
+  :eacl-commit "457b137bad63ae248728885d611421f3227aa75c"
+  :reported-on "2026-08-06"
+  :warmups 3
+  :samples 7
+  :qualification :matched-host-v7-reference}
+ :latency-gate
+ {:maximum-v8-to-v7-ratio 2.0
+  :variance-policy
+  {:warmups 3
+   :samples 7
+   :statistic :median
+   :logical-work-remains-authoritative true}}
+ :scenarios
+ {:user-1-forward-page
+  {:servers 10000
+   :authorized 8000
+   :page-size 20
+   :v7-samples-ms
+   [1.788125 1.372375 1.439 1.42725 1.595667 1.131375 1.072958]
+   :v7-median-ms 1.42725
+   :maximum-v8-median-ms 2.8545}
+  :owner-0001-exact-count
+  {:servers 10000
+   :authorized 2000
+   :v7-samples-ms
+   [2.476375 2.563125 2.91075 2.315208 2.224916 2.646125 2.15525]
+   :v7-median-ms 2.476375
+   :maximum-v8-median-ms 4.95275}
+  :super-user-exact-count-50000
+  {:servers 50000
+   :authorized 50000
+   :v7-samples-ms
+   [88.15725 87.594916 84.8255 87.093209 86.588208 86.539125
+    86.823625]
+   :v7-median-ms 86.823625
+   :maximum-v8-median-ms 173.64725}}
+ :work-envelopes
+ {:page
+  {:maximum-emitted-results 20
+   :maximum-merge-advances 21
+   :maximum-backend-scans 512
+   :recursive-counters 0}
+  :count-10000
+  {:maximum-counted-results 10000
+   :maximum-merge-advances 10001
+   :maximum-backend-scans 10000
+   :recursive-counters 0}
+  :count-50000
+  {:maximum-counted-results 50000
+   :maximum-merge-advances 50003
+   :maximum-backend-scans 50000
+   :recursive-counters 0}}}

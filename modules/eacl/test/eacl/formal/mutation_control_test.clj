@@ -1154,6 +1154,94 @@
       "return target._logicalLength")
      (not (.contains javascript-sequence "super(length);")))))
 
+(defn- enumeration-route-forces-recursive-killed?
+  []
+  (let [certificate {:root-defined? true
+                     :recursive? false
+                     :recursive-data-active? false}
+        correct
+        (if (and (:recursive? certificate)
+                 (:recursive-data-active? certificate))
+          :recursive
+          :acyclic)
+        mutant :recursive]
+    (and (= :acyclic correct)
+         (= :recursive mutant)
+         (not= correct mutant))))
+
+(defn- inactive-recursive-data-forces-fixed-point-killed?
+  []
+  (let [recursive? true
+        recursive-data-active? false
+        correct
+        (if (and recursive? recursive-data-active?)
+          :recursive
+          :acyclic)
+        mutant
+        (if recursive? :recursive :acyclic)]
+    (and (= :acyclic correct)
+         (= :recursive mutant)
+         (not= correct mutant))))
+
+(defn- active-recursive-data-forces-acyclic-killed?
+  []
+  (let [recursive? true
+        recursive-data-active? true
+        correct
+        (if (and recursive? recursive-data-active?)
+          :recursive
+          :acyclic)
+        mutant :acyclic]
+    (and (= :recursive correct)
+         (= :acyclic mutant)
+         (not= correct mutant))))
+
+(defn- acyclic-merge-emits-overlap-twice-killed?
+  []
+  (let [left [10 20]
+        right [10 30]
+        correct (vec (distinct (sort (concat left right))))
+        mutant (vec (sort (concat left right)))]
+    (and (= [10 20 30] correct)
+         (= [10 10 20 30] mutant)
+         (not= correct mutant))))
+
+(defn- acyclic-continuation-context-disconnected-killed?
+  []
+  (let [saved-frontier {:bound 20 :heads {1 30}}
+        correct (if saved-frontier :resume :replay)
+        mutant (if nil :resume :replay)]
+    (and (= :resume correct)
+         (= :replay mutant)
+         (not= correct mutant))))
+
+(defn- acyclic-work-allows-recursive-budget-killed?
+  []
+  (let [work {:requested-window 20
+              :merge-advances 20
+              :emitted-results 20
+              :recursive-work 1}
+        bounded?
+        (and (<= (:merge-advances work)
+                 (inc (:requested-window work)))
+             (<= (:emitted-results work)
+                 (:requested-window work)))
+        correct (and bounded? (zero? (:recursive-work work)))
+        mutant bounded?]
+    (and (false? correct)
+         (true? mutant))))
+
+(defn- acyclic-rebase-enters-recursive-machine-killed?
+  []
+  (let [authorized [10 20 30]
+        bound 20
+        suffix (drop-while #(< % bound) authorized)
+        correct (= bound (first suffix))
+        mutant :recursive-limit-exceeded]
+    (and (true? correct)
+         (= :recursive-limit-exceeded mutant)
+         (not= correct mutant))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1321,7 +1409,21 @@
    :indexed-scan-validator-restores-pairwise-runtime
    indexed-scan-validator-restores-pairwise-runtime-killed?
    :generated-target-collections-restore-quadratic
-   generated-target-collections-restore-quadratic-killed?})
+   generated-target-collections-restore-quadratic-killed?
+   :enumeration-route-forces-recursive
+   enumeration-route-forces-recursive-killed?
+   :inactive-recursive-data-forces-fixed-point
+   inactive-recursive-data-forces-fixed-point-killed?
+   :active-recursive-data-forces-acyclic
+   active-recursive-data-forces-acyclic-killed?
+   :acyclic-merge-emits-overlap-twice
+   acyclic-merge-emits-overlap-twice-killed?
+   :acyclic-continuation-context-disconnected
+   acyclic-continuation-context-disconnected-killed?
+   :acyclic-work-allows-recursive-budget
+   acyclic-work-allows-recursive-budget-killed?
+   :acyclic-rebase-enters-recursive-machine
+   acyclic-rebase-enters-recursive-machine-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

@@ -1,0 +1,135 @@
+{:schema-version 1
+ :recorded-at "2026-08-06"
+ :change :restore-v8-enumeration-performance
+
+ :root-causes
+ [{:id :recursive-route-overreach
+   :finding
+   :every-enumeration-root-entered-the-recursive-fixed-point-engine-even-when-the-verified-certificate-was-acyclic}
+  {:id :inactive-cycle-guard-work
+   :finding
+   :the-acyclic-route-still-evaluated-in-scc-arrow-paths-whose-exact-guard-relations-were-empty}
+  {:id :datascript-graph-head-query
+   :finding
+   :each-snapshot-adapter-read-the-managed-graph-head-order-through-a-general-datalog-query-including-on-private-page-cache-hits
+   :remediation
+   :read-the-single-head-order-datom-through-the-eavt-index}
+  {:id :relationship-page-replay
+   :finding
+   :datascript-and-datahike-relationship-pages-did-not-use-the-existing-client-private-exact-page-cache}
+  {:id :explorer-cache-provenance
+   :finding
+   :the-background-total-scan-overwrote-the-visible-page-cache-status-without-overwriting-the-visible-page-time}
+  {:id :explorer-stale-cursors
+   :finding
+   :seed-and-schema-mutations-retained-group-and-nested-cursor-stacks-from-the-previous-immutable-snapshot}]
+
+ :formal-verification
+ {:command "bin/formal verify"
+  :modules 25
+  :proof-efforts 9797
+  :errors 0
+  :new-relationship-page-theorems
+  [PageWindow.MatchingRelationshipPageScopeReusesExactPage
+   PageWindow.RelationshipPageScopeMismatchCannotHit]
+  :inactive-recursion-authority
+  [RoutingCertificate.DecideGuardedRoute
+   RoutingCertificate.EmptyRecursiveGuardsSelectAcyclic
+   AcyclicEngine.EmptyRecursiveGuardPreservesAcyclicDenotation]}
+
+ :runtime-suites
+ {:datascript-clj
+  {:tests 179 :assertions 4575 :failures 0 :errors 0}
+  :datascript-cljs
+  {:tests 165 :assertions 4481 :failures 0 :errors 0}
+  :datahike-clj
+  {:tests 34 :assertions 419 :failures 0 :errors 0}
+  :heavy-explorer
+  {:tests 3 :assertions 65 :failures 0 :errors 0}}
+
+ :matched-v7-cache-bypassed-clj
+ {:host-class :same-host-same-process-shape-harness
+  :variance-policy {:warmups 3 :samples 7 :statistic :median}
+  :user-1-forward-page-10000
+  {:v7-median-ms 1.42725
+   :v8-median-ms 0.791542
+   :v8-to-v7-ratio 0.5546
+   :maximum-ratio 2.0}
+  :owner-0001-exact-count-2000-of-10000
+  {:v7-median-ms 2.476375
+   :v8-median-ms 2.604417
+   :v8-to-v7-ratio 1.0517
+   :maximum-ratio 2.0}
+  :super-user-exact-count-50000
+  {:v7-median-ms 86.823625
+   :v8-median-ms 117.805542
+   :v8-to-v7-ratio 1.3568
+   :maximum-ratio 2.0}
+  :super-user-exact-count-50000-empty-recursive-schema
+  {:v7-nonrecursive-median-ms 86.823625
+   :v8-median-ms 111.730166
+   :v8-to-v7-ratio 1.2869
+   :maximum-ratio 2.0}}
+
+ :deterministic-work
+ {:pagination-10000
+  {:successive-pages 10
+   :items 200
+   :duplicates 0
+   :continuation-hits-after-first 9
+   :merge-advances-per-page 21
+   :recursive-work 0}
+  :owner-count-2000
+  {:count 2000
+   :backend-scans 188
+   :merge-advances 2000
+   :recursive-work 0}
+  :super-count-50000
+  {:count 50000
+   :count-pages 4
+   :backend-scans 5294
+   :merge-advances 50003
+   :recursive-work 0}
+  :empty-recursive-super-count-50000
+  {:count 50000
+   :count-pages 4
+   :backend-scans 5294
+   :merge-advances 50003
+   :recursive-work 0}}
+
+ :explorer-browser
+ {:url "http://localhost:18091/index.html"
+  :runtime :datascript-cljs
+  :recursive-schema-10000
+  {:write-and-ui-settle-ms 2482
+   :view-count 10000
+   :admin-count 10000
+   :view-cache-hit-ms 0.4
+   :nested-page-1-cache-hit-ms 1.2
+   :hung false
+   :errors []}
+  :owner-0001-cache-disabled-10000
+  {:count 2000
+   :samples-ms [11.7 15.1 11.5 14.2 11.8 12.8 11.7]
+   :median-ms 11.8}
+  :relationship-cache-hit-10000
+  {:steady-samples-ms [2.6 1.0 1.9 1.0 2.0 1.0 2.4 0.9]
+   :status :hit}
+  :recursive-schema-50000
+  {:view-count 50000
+   :cache-disabled-warmed-samples-ms [495.3 459.4 457.6]
+   :median-ms 459.4
+   :nested-return-page-cache-hit-ms 1.0
+   :snapshot-retention-error false
+   :cursor-reset-to-page 1
+   :errors []}}
+
+ :compatibility
+ {:public-authorization-api :unchanged
+  :cursor-frame :eacl-c4-v10-unchanged
+  :new-response-telemetry [:cached? :cache-basis]
+  :telemetry-compatibility :additive
+  :approximate-counts false
+  :recursive-limit-increase false}
+
+ :status :passed}

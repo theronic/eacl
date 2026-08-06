@@ -11,6 +11,7 @@
    [eacl.datascript.adapter-certification-test]
    [eacl.datascript.consistency-v3-test]
    [eacl.datascript.contract-test]
+   [eacl.datascript.enumeration-routing-test]
    [eacl.datascript.core :as datascript]
    [eacl.datascript.impl-test]
    [eacl.datascript.mutation-test]
@@ -35,6 +36,11 @@
 
 (def required-generated-authority-operations
   #{:recursive-routing-certificate
+    :enumeration-route
+    :acyclic-page
+    :acyclic-continuation
+    :acyclic-count
+    :acyclic-work
     :cursor-bound-rebase
     :indexed-traversal-compile
     :indexed-traversal-initialize
@@ -134,6 +140,7 @@
      'eacl.datascript.adapter-certification-test
      'eacl.datascript.consistency-v3-test
      'eacl.datascript.contract-test
+     'eacl.datascript.enumeration-routing-test
      'eacl.datascript.impl-test
      'eacl.datascript.mutation-test
      'eacl.datascript.storage-test)))

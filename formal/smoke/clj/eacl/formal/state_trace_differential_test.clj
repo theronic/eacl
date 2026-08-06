@@ -625,12 +625,22 @@
       (is (< reverse-initializations-before-can
              reverse-initializations-after-can)
           "point authorization must use generated reverse traversal from its concrete resource")
-      (is (< 0
-             after-first-page
-             after-second-page
-             after-count
-             after-can)
-          "every acyclic public operation must execute generated indexed authority")
+      (is (zero? after-first-page)
+          "certified acyclic pages must not enter the recursive indexed machine")
+      (is (zero? after-second-page)
+          "continuing an acyclic page must stay outside recursive traversal")
+      (is (zero? after-count)
+          "certified acyclic counts must stay outside recursive traversal")
+      (is (< after-count after-can)
+          "point authorization still uses generated reverse indexed traversal")
+      (is (pos? (get @calls :enumeration-route 0))
+          "every enumeration must execute generated route authority")
+      (is (<= 2 (get @calls :acyclic-page 0))
+          "both pages must execute generated acyclic page authority")
+      (is (pos? (get @calls :acyclic-count 0))
+          "count must execute generated exact-count authority")
+      (is (pos? (get @calls :acyclic-work 0))
+          "acyclic list/count work must execute its generated budget authority")
       (is (pos? (get @calls :indexed-traversal-compile 0)))
       (is (pos? (get @calls :indexed-traversal-initialize 0)))
       (is (pos? (get @calls :indexed-traversal-drive 0)))
@@ -725,7 +735,10 @@
 (defn- assert-recursive-generated!
   [client limited-clients]
   (eacl/create-relationships!
-   client [relationship-1 relationship-2])
+   client
+   [relationship-1
+    relationship-2
+    recursive-parent-relationship])
   (let [query
         {:subject user
          :permission :view
@@ -904,7 +917,9 @@
       {:eacl/id "document-2"}])
     (eacl/create-relationships!
      client
-     [relationship-1 relationship-2])
+     [relationship-1
+      relationship-2
+      recursive-parent-relationship])
     (let [adapter
           (datascript-backend/snapshot-adapter
            (ds/db conn)

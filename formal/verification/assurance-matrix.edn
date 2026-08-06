@@ -175,7 +175,9 @@
                   'eacl.relay/externalize-relationship-page]
    :theorems [:relationship-keyset-page-decision-exact
               :page-walk-complete
-              :single-permitted-graph]
+              :single-permitted-graph
+              :matching-relationship-page-scope-reuses-exact-page
+              :relationship-page-scope-mismatch-cannot-hit]
    :dafny ["formal/dafny/PageWindow.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :ordered-complete-scans

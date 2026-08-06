@@ -512,6 +512,65 @@ module PageWindow {
       )
     | RelationshipPageRejected(reason: ContinuationRejectReason)
 
+  datatype RetainedRelationshipPageDecision<T> =
+    | RelationshipPageCacheMiss
+    | RelationshipPageCacheHit(page: Page<T>)
+
+  function DecideRetainedRelationshipPage<T>(
+    cacheEnabled: bool,
+    sameClient: bool,
+    sameGeneration: bool,
+    sameOperation: bool,
+    sameQuery: bool,
+    retained: Page<T>
+  ): RetainedRelationshipPageDecision<T> {
+    if cacheEnabled &&
+       sameClient &&
+       sameGeneration &&
+       sameOperation &&
+       sameQuery
+    then RelationshipPageCacheHit(retained)
+    else RelationshipPageCacheMiss
+  }
+
+  lemma MatchingRelationshipPageScopeReusesExactPage<T>(
+    retained: Page<T>
+  )
+    ensures DecideRetainedRelationshipPage(
+              true,
+              true,
+              true,
+              true,
+              true,
+              retained
+            ) == RelationshipPageCacheHit(retained)
+  {
+  }
+
+  lemma RelationshipPageScopeMismatchCannotHit<T>(
+    cacheEnabled: bool,
+    sameClient: bool,
+    sameGeneration: bool,
+    sameOperation: bool,
+    sameQuery: bool,
+    retained: Page<T>
+  )
+    requires !cacheEnabled ||
+             !sameClient ||
+             !sameGeneration ||
+             !sameOperation ||
+             !sameQuery
+    ensures DecideRetainedRelationshipPage(
+              cacheEnabled,
+              sameClient,
+              sameGeneration,
+              sameOperation,
+              sameQuery,
+              retained
+            ).RelationshipPageCacheMiss?
+  {
+  }
+
   function ApplyCursorBoundRebase(
     raw: RawPageRequest,
     rebase: CursorBoundRebase

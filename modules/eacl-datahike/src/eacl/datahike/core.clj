@@ -5,6 +5,7 @@
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency-v3]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl :refer [IAuthorization
                                         spice-object
                                         ->Relationship
@@ -264,6 +265,23 @@
     (assoc value :cached? cached? :cache-basis cache-basis)
     value))
 
+(defn- continuation-query-identity
+  [query]
+  (apply
+   dissoc
+   query
+   [:first :last :after :before
+    :consistency :cache?]))
+
+(defn- continuation-context
+  [adapter opts operation query]
+  (when-not (false? (:continuation-cache-request? opts))
+    (continuation/private-context
+     (:continuation-cache-store opts)
+     adapter
+     operation
+     (continuation-query-identity query))))
+
 (defn datahike-read-relationships
   [db
    {:as opts
@@ -292,14 +310,25 @@
               resource-id (assoc :resource/id resource-eid)))]
     (if (or (and subject-id (nil? subject-eid))
             (and resource-id (nil? resource-eid)))
-      relay/empty-page
-      (relay/externalize-relationship-page
-       adapter
-       cursor-opts
-       :read-relationships
-       filters
-       (impl/read-relationships
-        page-db internal-query (:decision-kernel cursor-opts))))))
+      (assoc relay/empty-page :cached? false :cache-basis nil)
+      (or
+       (relay/lookup-visited-page
+        adapter cursor-opts :read-relationships filters)
+       (relay/remember-visited-page!
+        adapter
+        cursor-opts
+        :read-relationships
+        filters
+        (assoc
+         (relay/externalize-relationship-page
+          adapter
+          cursor-opts
+          :read-relationships
+          filters
+          (impl/read-relationships
+           page-db internal-query (:decision-kernel cursor-opts)))
+         :cached? false
+         :cache-basis nil))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -475,7 +504,12 @@
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
                     (map? (:page-info %)))
-              #(engine/lookup-resources adapter internal-query))
+              #(engine/lookup-resources
+                adapter
+                internal-query
+                {:continuation-cache
+                 (continuation-context
+                  adapter cursor-opts :lookup-resources query)}))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -553,7 +587,12 @@
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
                     (map? (:page-info %)))
-              #(engine/lookup-subjects adapter internal-query))
+              #(engine/lookup-subjects
+                adapter
+                internal-query
+                {:continuation-cache
+                 (continuation-context
+                  adapter cursor-opts :lookup-subjects query)}))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -638,9 +677,12 @@
              (write-response (:eacl.mutation/db-after result) opts))))
 
   (read-relationships [_ filters]
-    (request-cache-enabled? (:cache? filters))
-    (datahike-read-relationships (d/db conn) opts
-                                 (dissoc filters :cache?)))
+    (datahike-read-relationships
+     (d/db conn)
+     (assoc opts
+            :completed-cache-request?
+            (request-cache-enabled? (:cache? filters)))
+     (dissoc filters :cache?)))
   (write-relationships! [_ updates]
     (datahike-write-relationships! conn opts updates))
   (write-relationship! [_ operation subject relation resource]
@@ -677,11 +719,14 @@
                                                           (->Relationship subject relation resource))]))
 
   (lookup-resources [_ query]
-    (datahike-lookup-resources
-     (d/db conn)
-     (assoc opts :completed-cache-request?
-            (request-cache-enabled? (:cache? query)))
-     (dissoc query :cache?)))
+    (let [cache-enabled?
+          (request-cache-enabled? (:cache? query))]
+      (datahike-lookup-resources
+       (d/db conn)
+       (assoc opts
+              :completed-cache-request? cache-enabled?
+              :continuation-cache-request? cache-enabled?)
+       (dissoc query :cache?))))
   (count-resources [_ query]
     (datahike-count-resources
      (d/db conn)
@@ -689,11 +734,14 @@
             (request-cache-enabled? (:cache? query)))
      (dissoc query :cache?)))
   (lookup-subjects [_ query]
-    (datahike-lookup-subjects
-     (d/db conn)
-     (assoc opts :completed-cache-request?
-            (request-cache-enabled? (:cache? query)))
-     (dissoc query :cache?)))
+    (let [cache-enabled?
+          (request-cache-enabled? (:cache? query))]
+      (datahike-lookup-subjects
+       (d/db conn)
+       (assoc opts
+              :completed-cache-request? cache-enabled?
+              :continuation-cache-request? cache-enabled?)
+       (dissoc query :cache?))))
   (count-subjects [_ query]
     (datahike-count-subjects
      (d/db conn)
@@ -718,6 +766,9 @@
    (get-in client [:opts :cursor-codec-cache]))
   (relay/clear-page-navigation-cache!
    (get-in client [:opts :page-navigation-cache]))
+  (some->
+   (get-in client [:opts :continuation-cache-store])
+   continuation/clear!)
   nil)
 
 (defn cache-stats
@@ -726,9 +777,17 @@
   (when-not (instance? DatahikeAuthorization client)
     (throw (ex-info "cache-stats requires a Datahike EACL client."
                     {:type :eacl/invalid-client})))
-  (if-let [store (get-in client [:opts :current-cache-store])]
-    (cache/current-cache-stats store)
-    {:disabled? true}))
+  (let [completed
+        (if-let [store (get-in client [:opts :current-cache-store])]
+          (cache/current-cache-stats store)
+          {:disabled? true})
+        continuation-store
+        (get-in client [:opts :continuation-cache-store])]
+    (cond->
+     completed
+      continuation-store
+      (assoc :continuations
+             (continuation/stats continuation-store)))))
 
 (def ^:private known-client-opt-keys
   #{:entid->object-id
@@ -896,6 +955,14 @@
                      (integer? (:max-entries cache)))
               (:max-entries cache)
               2048)}))
+        continuation-cache-store
+        (when current-cache-store
+          (continuation/make-store
+           {:max-entries
+            (if (and (map? cache)
+                     (integer? (:max-entries cache)))
+              (:max-entries cache)
+              2048)}))
         entid->object-id (or entid->object-id
                              (fn [db eid] (:eacl/id (d/entity db eid))))
         opts             {:object-id->lookup-ref object-id->lookup-ref
@@ -940,6 +1007,8 @@
                           :cursor-codec-cache cursor-codec-cache
                           :page-navigation-cache
                           page-navigation-cache
+                          :continuation-cache-store
+                          continuation-cache-store
                           :managed-cache-enabled?
                           (and cache-eligible?
                                (not custom-codec?)

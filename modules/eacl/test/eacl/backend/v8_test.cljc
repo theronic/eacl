@@ -297,7 +297,7 @@
          [{:permission-id 1
            :resource-type :node
            :permission-name :read
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :read}]
          [:node :view]
@@ -318,21 +318,21 @@
          [{:permission-id 5
            :resource-type :node
            :permission-name :cycle-a
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :cycle-b}]
          [:node :cycle-b]
          [{:permission-id 6
            :resource-type :node
            :permission-name :cycle-b
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :cycle-a}]
          [:node :cycle-view]
          [{:permission-id 7
            :resource-type :node
            :permission-name :cycle-view
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :cycle-a}]}
         operations
@@ -352,13 +352,23 @@
                  []))
           :relation-defs
           (fn [resource-type relation-name]
-            (if (= [:node :editor]
-                   [resource-type relation-name])
+            (case [resource-type relation-name]
+              [:node :editor]
               [{:relation-id 4
                 :resource-type :node
                 :relation-name :editor
                 :subject-type :user}]
+
+              [:node :parent]
+              [{:relation-id 8
+                :resource-type :node
+                :relation-name :parent
+                :subject-type :node}]
+
               []))
+          :relation-populated?
+          (fn [_subject-type relation-id _resource-type]
+            (= 8 relation-id))
           :all-permission-nodes
           (fn [] (set (keys permission-defs)))})
         adapter

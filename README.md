@@ -698,12 +698,14 @@ Each EACL client owns a bounded, private, multi-tier cache:
 - compiled schema paths and recursive plans are shared across queries using
   the same schema generation.
 
-The default `:coherence-authority :unknown` reuses entries only for the exact
-immutable database value on which they were computed. It is safe when
-applications also write authorization data outside EACL. Set
-`:coherence-authority :managed` only when every authorization-relevant write
-uses the EACL mutation APIs; this lets unchanged cache portions survive
-unrelated transactions. A schema change invalidates the managed generation.
+DataScript defaults to `:coherence-authority :managed`, assuming every EACL
+schema and relationship mutation uses the client APIs. Datomic and Datahike
+retain the conservative `:coherence-authority :unknown` default. Unknown
+authority reuses entries only for the exact immutable database value on which
+they were computed and is the required DataScript opt-out when authorization
+data can be written outside EACL. Managed authority lets unchanged cache
+portions survive unrelated transactions; a schema change invalidates the
+managed generation.
 
 Most applications need no cache configuration. To set a completed-answer
 capacity:
@@ -1018,11 +1020,13 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
 - *Managed-current caching requires complete writer authority:* managed EACL
-  writes atomically update the affected relation transaction stamps. Set
-  `:coherence-authority :managed` only when every schema, relationship, caveat,
-  and future authorization-dependency writer follows that protocol. Mixed or
-  hand-written writers must use the default `:unknown` authority, which safely
-  retains only answers from the identical immutable DB generation.
+  writes atomically update the affected relation transaction stamps.
+  DataScript assumes this contract by default; mixed or hand-written
+  DataScript authorization writers must select `:coherence-authority :unknown`.
+  Datomic and Datahike select managed authority explicitly only when every
+  schema, relationship, caveat, and future authorization-dependency writer
+  follows that protocol. Unknown authority safely retains only answers from
+  the identical immutable DB generation.
 - *Deleting entities:* Datomic and Datahike entity retraction does not remove
   peer relationship tuples. Consumers should delete relationships first;
   `delete-object!` is a convenience helper, and the backend integrity

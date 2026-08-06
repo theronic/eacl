@@ -337,6 +337,15 @@
          (impl/direct-match?
           db subject-type subject-id relation-id resource-type resource-id))
 
+       :relation-populated?
+       (fn [subject-type relation-id resource-type]
+         (boolean
+          (first
+           (ddb/avet-endpoint-prefix
+            db
+            relationship-storage/forward-attribute
+            [subject-type relation-id resource-type]))))
+
        :all-permission-nodes
        (fn []
          (->> (ds/datoms

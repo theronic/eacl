@@ -92,9 +92,10 @@ externalized through a different snapshot.
 
 ## Managed coherence
 
-The default `:coherence-authority :unknown` enables exact reuse only. This is
-the correct setting if any authorization-relevant relationship or schema write
-can bypass EACL.
+DataScript defaults to `:coherence-authority :managed`; Datomic and Datahike
+default to `:coherence-authority :unknown`. Unknown authority enables exact
+reuse only and is the required DataScript opt-out if any
+authorization-relevant relationship or schema write can bypass EACL.
 
 `:coherence-authority :managed` is an explicit writer contract:
 

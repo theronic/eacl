@@ -6,6 +6,7 @@
             [eacl.cache :as shared-cache]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency-v3]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl :refer [IAuthorization
                                         spice-object
                                         ->Relationship
@@ -944,67 +945,68 @@
           cache-key #(conj prefix %)
           opaque-token (:opaque-cache-token opts)
           namespace (:cache-namespace opts)]
-      {:required? false
-       :opaque-values? true
-       :get
-       (fn [edge]
-         (some->
-          (cache/safe-entry-value
+      (continuation/validate-context!
+       {:required? false
+        :opaque-values? true
+        :get
+        (fn [edge]
+          (some->
+           (cache/safe-entry-value
+            store
+            (cache-key edge)
+            :recursive-continuation
+            #(and (map? %)
+                  (identical? opaque-token (:opaque-token %))
+                  (map? (:continuation %))))
+           :continuation))
+        :evict!
+        (fn [edge]
+          (cache/safe-evict! store (cache-key edge)))
+        :put!
+        (fn [edge continuation-value weight]
+          (cache/safe-store-entry!
            store
+           namespace
            (cache-key edge)
            :recursive-continuation
-           #(and (map? %)
-                 (identical? opaque-token (:opaque-token %))
-                 (map? (:continuation %))))
-          :continuation))
-       :evict!
-       (fn [edge]
-         (cache/safe-evict! store (cache-key edge)))
-       :put!
-       (fn [edge continuation weight]
-         (cache/safe-store-entry!
-          store
-          namespace
-          (cache-key edge)
-          :recursive-continuation
-          {:opaque-token opaque-token
-           :continuation continuation}
-          weight
-          (:lookup-cache-ttl-ms opts)))
-       :get-page
-       (fn [page-key]
-         (cache/safe-entry-value
-          store
-          (cache-key [:page page-key])
-          :recursive-page
-          internal-page?))
-       :put-page!
-       (fn [page-key page weight]
-         (cache/safe-store-entry!
-          store
-          namespace
-          (cache-key [:page page-key])
-          :recursive-page
-          page
-          weight
-          (:lookup-cache-ttl-ms opts)))
-       :get-heads
-       (fn [edge]
-         (cache/safe-entry-value
-          store
-          (cache-key [:heads edge])
-          :lookup-heads
-          map?))
-       :put-heads!
-       (fn [edge heads weight]
-         (cache/safe-store-entry!
-          store
-          namespace
-          (cache-key [:heads edge])
-          :lookup-heads
-          heads
-          weight
-          (:lookup-cache-ttl-ms opts)))})))
+           {:opaque-token opaque-token
+            :continuation continuation-value}
+           weight
+           (:lookup-cache-ttl-ms opts)))
+        :get-page
+        (fn [page-key]
+          (cache/safe-entry-value
+           store
+           (cache-key [:page page-key])
+           :recursive-page
+           internal-page?))
+        :put-page!
+        (fn [page-key page weight]
+          (cache/safe-store-entry!
+           store
+           namespace
+           (cache-key [:page page-key])
+           :recursive-page
+           page
+           weight
+           (:lookup-cache-ttl-ms opts)))
+        :get-heads
+        (fn [edge]
+          (cache/safe-entry-value
+           store
+           (cache-key [:heads edge])
+           :lookup-heads
+           map?))
+        :put-heads!
+        (fn [edge heads weight]
+          (cache/safe-store-entry!
+           store
+           namespace
+           (cache-key [:heads edge])
+           :lookup-heads
+           heads
+           weight
+           (:lookup-cache-ttl-ms opts)))}))))
 
 (def ^:private empty-page
   "Unknown objects match nothing (SpiceDB-consistent, audit D9): lookups and

@@ -434,7 +434,7 @@
         (testing "end cursor should be the last resource"
           (is page1-end-cursor)
           (let [last-resource-ent
-                (d/entity db (get-in page1-end-cursor [:result :eid]))
+                (d/entity db (:result-eid page1-end-cursor))
                 last-resource-internal (spice-object :server (:eacl/id last-resource-ent))]
             (is (= (spice-object :server "account2-server1") last-resource-internal))))))
 

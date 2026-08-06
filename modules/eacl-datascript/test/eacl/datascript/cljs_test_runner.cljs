@@ -18,6 +18,7 @@
             [eacl.datascript.adapter-certification-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
+            [eacl.datascript.enumeration-routing-test]
             [eacl.datascript.impl-test]
             [eacl.datascript.mutation-test]
             [eacl.datascript.storage-test]))
@@ -51,6 +52,7 @@
                'eacl.datascript.adapter-certification-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
+               'eacl.datascript.enumeration-routing-test
                'eacl.datascript.impl-test
                'eacl.datascript.mutation-test
                'eacl.datascript.storage-test))

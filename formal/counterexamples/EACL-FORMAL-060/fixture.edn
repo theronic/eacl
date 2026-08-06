@@ -1,0 +1,11 @@
+{:operation :count-resources
+ :schema-class :acyclic
+ :permission-root [:server :view]
+ :subject {:type :user :id "super-user"}
+ :authorized-resources 50000
+ :generated-routing-certificate :acyclic
+ :before
+ {:selected-route :recursive
+  :maximum-advanced-datoms 100000
+  :observed-error :eacl.recursive-traversal/limit-exceeded}
+ :risk :valid-acyclic-enumeration-consumed-recursive-budget}

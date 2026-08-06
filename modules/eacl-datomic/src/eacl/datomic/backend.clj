@@ -374,6 +374,11 @@
           (ddb/direct-match?
            db subject-type subject-id relation-id resource-type resource-id))
 
+        :relation-populated?
+        (fn [subject-type relation-id resource-type]
+          (ddb/relation-populated?
+           db subject-type relation-id resource-type))
+
         :all-permission-nodes
         (fn []
           (ddb/all-permission-nodes db))

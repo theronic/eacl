@@ -97,6 +97,12 @@
   {:path-checks "P"
    :node-checks "2V"
    :edge-checks "E"}
+  :data-dependent-route-selection
+  {:recursive-schema-reachability :generated-certificate
+   :recursive-data-activity :snapshot-bound-exact-relation-prefix-probe
+   :inactive-cycle-guards :acyclic
+   :active-cycle-guards :recursive
+   :verified-obligations 52}
   :stamped-schema-generation-authority
   :generated-accepted-traversal-vector
   :proofless-raw-snapshot-authority

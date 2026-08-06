@@ -1,6 +1,6 @@
 {:schema-version 1
  :certification-version "eacl.adapter-certification/v2"
- :date "2026-08-02"
+ :date "2026-08-06"
  :formal-contract "formal/dafny/SnapshotOracle.dfy"
  :runtime-contract "eacl.backend.v8/adapter-obligations"
  :fixture
@@ -21,6 +21,7 @@
   :nonnegative-internal-eids
   :schema-enumeration
   :permission-path-materialization
+  :snapshot-bound-relation-prefix-population
   :forward-reverse-scans
   :direct-match-equivalence
   :immutable-snapshot]
@@ -57,7 +58,7 @@
    {:namespace eacl.datascript.adapter-certification-test
     :clj {:tests 1 :assertions 1 :failures 0 :errors 0}
     :cljs-in-full-suite
-    {:tests 46 :assertions 269 :failures 0 :errors 0}}
+    {:tests 163 :assertions 4465 :failures 0 :errors 0}}
    :history
    {:namespace eacl.datascript.consistency-v3-test
     :clj {:tests 7 :assertions 23 :failures 0 :errors 0}
@@ -108,6 +109,7 @@
    :strict-order
    :uniqueness
    :inclusive-exclusive-bounds
+   :relation-prefix-population-boolean
    :exact-integer-representation
    :nonnegative-internal-eids]}
  :claim
