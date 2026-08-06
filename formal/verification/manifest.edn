@@ -174,7 +174,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-058
+ {:latest :EACL-FORMAL-059
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -232,11 +232,12 @@
           :EACL-FORMAL-055
           :EACL-FORMAL-056
           :EACL-FORMAL-057
-          :EACL-FORMAL-058]}
+          :EACL-FORMAL-058
+          :EACL-FORMAL-059]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 58}
+  :entries 59}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

@@ -120,7 +120,9 @@
     :EACL-FORMAL-057
     eacl.formal.page-window-bridge-test/generated-page-normalization-and-window-properties
     :EACL-FORMAL-058
-    eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test})
+    eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test
+    :EACL-FORMAL-059
+    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test})
 
 (defn- read-edn
   [path]
@@ -181,6 +183,31 @@
            "the ordinary replay classpath must not eagerly load test-only "
            test-only-ns)))))
 
+(deftest clean-generated-javascript-contract-expectations-test
+  (let [page-source
+        (slurp
+         (repo/file
+          "formal" "smoke" "cljs" "eacl" "formal"
+          "js_round_trip_test.cljs"))
+        production-source
+        (slurp
+         (repo/file
+          "formal" "smoke" "cljs" "eacl" "formal"
+          "production_kernel_test.cljs"))
+        vectors
+        (read-edn
+         (repo/file "formal" "cross-runtime" "vectors.edn"))]
+    (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
+                      page-source))
+        "the generated RawPageRequest smoke must use only current v8 fields")
+    (is (= {:first-page [10 30]
+            :continuation-page [20]}
+           (:production-recursive-pages vectors)))
+    (is (re-find
+         #":production-recursive-pages \(cross-runtime-vectors\)"
+         production-source)
+        "CLJS recursive pages must consume the shared JVM/JS vector")))
+
 (deftest counterexample-corpus-is-complete-and-closed-test
   (let [schema (read-edn
                 (repo/file
@@ -216,8 +243,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-058 (:latest revision)))
-    (is (= 58 (count entries)))))
+    (is (= :EACL-FORMAL-059 (:latest revision)))
+    (is (= 59 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

@@ -355,9 +355,7 @@
          (page-presence request :first)
          (page-presence request :last)
          (page-presence request :after)
-         (page-presence request :before)
-         (contains? request :limit)
-         (contains? request :cursor))
+         (page-presence request :before))
         result
         (js-invoke
          (.-__default page-window)
@@ -403,8 +401,7 @@
            {:first 1 :after nil}
            {:last 1 :before nil}
            {:first 0}
-           {:first 10001}
-           {:limit 1}]]
+           {:first 10001}]]
     (is (= :invalid (:status (generated-page [0 1 2] request)))))
   (doseq [n (range 11)
           size (range 1 5)

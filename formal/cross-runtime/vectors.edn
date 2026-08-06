@@ -62,6 +62,10 @@
   {:input {:authenticated? false}
    :expected {:status :miss :reason :unauthenticated}}]
 
+ :production-recursive-pages
+ {:first-page [10 30]
+  :continuation-page [20]}
+
  :round-trips
  [{:tag "eacl.round-trip/v1" :values [0 7 42] :limit 3
    :expected {:status :accepted :values [0 7 42]}}

@@ -1,5 +1,6 @@
 (ns eacl.formal.production-kernel-test
   (:require
+   [cljs.reader :as reader]
    [cljs.test :refer-macros [deftest is testing]]
    [datascript.core :as ds]
    [eacl.backend.v8 :as backend]
@@ -19,6 +20,12 @@
 
 (def selection
   {:kernel production/generated-javascript-kernel})
+
+(defn- cross-runtime-vectors
+  []
+  (-> (js/require "fs")
+      (.readFileSync "formal/cross-runtime/vectors.edn" "utf8")
+      reader/read-string))
 
 (defn- expected-cursor-rebase
   [values bound-eid]
@@ -789,12 +796,14 @@
           adapter
           {:resource {:type :folder :id 20}
            :permission :read
-           :subject/type :user})]
-    (is (= [10 20]
+           :subject/type :user})
+        {:keys [first-page continuation-page]}
+        (:production-recursive-pages (cross-runtime-vectors))]
+    (is (= first-page
            (mapv :id (:data generated-first))))
     (is (true? (get-in generated-first
                        [:page-info :has-next-page?])))
-    (is (= [30]
+    (is (= continuation-page
            (mapv :id (:data generated-second))))
     (is (= [{:type :user :id 1}]
            (mapv

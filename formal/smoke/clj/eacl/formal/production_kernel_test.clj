@@ -1,5 +1,6 @@
 (ns eacl.formal.production-kernel-test
   (:require
+   [clojure.edn :as edn]
    [clojure.test :refer [deftest is testing]]
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
@@ -15,6 +16,11 @@
 
 (def selection
   {:kernel production/generated-java-kernel})
+
+(defn- cross-runtime-vectors
+  []
+  (edn/read-string
+   (slurp "formal/cross-runtime/vectors.edn")))
 
 (defn- expected-cursor-rebase
   [values bound-eid]
@@ -729,12 +735,14 @@
           adapter
           {:resource {:type :folder :id 20}
            :permission :read
-           :subject/type :user})]
-    (is (= [10 30]
+           :subject/type :user})
+        {:keys [first-page continuation-page]}
+        (:production-recursive-pages (cross-runtime-vectors))]
+    (is (= first-page
            (mapv :id (:data generated-first))))
     (is (true? (get-in generated-first
                        [:page-info :has-next-page?])))
-    (is (= [20]
+    (is (= continuation-page
            (mapv :id (:data generated-second))))
     (is (= [{:type :user :id 1}]
            (mapv

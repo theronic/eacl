@@ -1,0 +1,12 @@
+{:operation :clean-generated-javascript-boundary
+ :generated-datatype
+ {:name PageWindow.RawPageRequest
+  :fields [:first :last :after :before]}
+ :before
+ {:direct-constructor-arguments
+  [:first :last :after :before :legacy-limit-present? :legacy-cursor-present?]
+  :cljs-recursive-pages [[10 20] [30]]
+  :jvm-recursive-pages [[10 30] [20]]}
+ :observed
+ {:direct-limit-request-status :valid
+  :fresh-generated-cljs-recursive-pages [[10 30] [20]]}}
