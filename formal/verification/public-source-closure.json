@@ -1,0 +1,1801 @@
+{
+  "schemaVersion": 1,
+  "status": "closure-enumerated-verification-incomplete",
+  "assurance": "static-source-call-closure-not-source-refinement-or-runtime-proof",
+  "analyzer": {
+    "name": "clj-kondo",
+    "version": "2025.02.20",
+    "languagePasses": [
+      "clj",
+      "cljs"
+    ]
+  },
+  "sources": [
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/backend.clj",
+      "sha256": "aa38796096714c6d63d6357d2f9f4c9d9d2d55214f07935d0dae84ef12d4b047"
+    },
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/core.clj",
+      "sha256": "1be75f2f92fb8a1bd6039fe049dca3b46b371be8aa5570f8e2ac32632992e56e"
+    },
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/db.clj",
+      "sha256": "d6c68effd2a6c6b367cd9c6ecf876ce38e65052aded59e68dc7a13a675962e73"
+    },
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/impl.clj",
+      "sha256": "6c65e016ec53e2ab8a3c4253e00843f7a5f01711e163e7c549cee7ee06d2acd9"
+    },
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/integrity.clj",
+      "sha256": "42d59d482dff1deb4395b56b3255fa7062604779e66f25cfd2b5ea275ac2783f"
+    },
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/mutation.clj",
+      "sha256": "26eecef4fcf92bea48ecc1978870dbc768de2bdd953eea76fb9a1c835402deb4"
+    },
+    {
+      "path": "modules/eacl-datahike/src/eacl/datahike/schema.clj",
+      "sha256": "555ceccea94475f935dc90e082f4f099b7cdc3b34722a23aeaf6243b4bb13069"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/backend.cljc",
+      "sha256": "109e80abcc498e6fa518daff62cdf56b34f8a2e308b3cc4cbd116515f7f649eb"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/core.cljc",
+      "sha256": "4895585283606b589d6a1f1010723578d346a2e636f6a3a8d4329729a2585c7e"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/db.cljc",
+      "sha256": "0ab36d9de76a12e58fbbdf0bf65a83615cfffd0877c1473d12f78d194b9aa2d0"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/impl.cljc",
+      "sha256": "49d4737177731a51836f54f6a02cffa356858fc3613eebe43802cb3a711f6317"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/integrity.cljc",
+      "sha256": "a5918b9739419c717755ed4fb226d5e6e16e63afe0f3b5ffb9f61a12c8267e6b"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/mutation.cljc",
+      "sha256": "b8982808c3f86d7c59bf40a4519aedd2b7a7df706cb7933a2b00a71ec9cb21e8"
+    },
+    {
+      "path": "modules/eacl-datascript/src/eacl/datascript/schema.cljc",
+      "sha256": "c7f5a1c581886e798ad51990ec95a25468b744bd2758e61fa1c8aad7366e3c3a"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/backend.clj",
+      "sha256": "382b7f1394d3794c3809e92db85f9ca96e0be454bfd3ccceaf967680a264d0a4"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/cache.clj",
+      "sha256": "dea494663451a7f232be164ca90ca1d457b31068799616d8d8859113f06c7051"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/cache_store_contract.clj",
+      "sha256": "5db689ca236a6c6a27ce2b6d63babc9a73b481b7896c48748c431af37ad5c6b0"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/codec.clj",
+      "sha256": "9def484afe8a9c0d64db5587d32d5e1ef3792be9c717464dd7d5cdc6545b88d1"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/consistency.clj",
+      "sha256": "81dcc729fd85c0b2825ed820f8e8187f91c084ecaa58f821324fc4ed9f1f9583"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/core.clj",
+      "sha256": "d36f5ca65b3650f70aa9b68de2fce4bc177e2178825197f1ad71a6af73e87c6a"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/db.clj",
+      "sha256": "e00afe2ad1294cff07c2cfc6c4ebfa2f733198bce2eded6f1a6d81d3668be89c"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/impl.clj",
+      "sha256": "81d9634eda0086e20007402c5970a07a4e5fd39e420f0469b3fa7f6290e1e66b"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/impl/base.clj",
+      "sha256": "a4fb7dbbe27fad7da240935924340b7c6ed44b7d0c3473e99d9966e67af64086"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj",
+      "sha256": "4dcf9e306f1d66518ff77eb80db5d223136aa20f098f49e4c34caa6b9888c693"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/integrity.clj",
+      "sha256": "6096dd662814363093be52178f49b5fe3c3fdd3fd6a2d948a9f8c886d386606a"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/mutation.clj",
+      "sha256": "82a309db39f59483a3ce0838f0da17de59f7ba13548834b52ac6261cedfaaaa2"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/mutation_schema.clj",
+      "sha256": "e6b1586df6ac3d2ddfc885b0ea76f1628d4767e68350ee28b00124c4dac00817"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/schema.clj",
+      "sha256": "09c08087c54d786983a14fbb8a0b0104bba82ffe28083ad7c1fea7a0b09a44fe"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/datomic/watermark.clj",
+      "sha256": "142b358eef9f94e2f5d98c47af4f50d6998dc18a4a836be2317d5b3e6cb5657b"
+    },
+    {
+      "path": "modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj",
+      "sha256": "896c7280a2694e1d1da0520ff479ed86731350ad5531755d09e4a32d6d51bd13"
+    },
+    {
+      "path": "modules/eacl/src/eacl/backend/v8.cljc",
+      "sha256": "12e15314da403db0129e5d4b5692d92fd6f3c98d5a5095a00e4e95931c783f2f"
+    },
+    {
+      "path": "modules/eacl/src/eacl/cache.cljc",
+      "sha256": "daeea45ca34ca5c0b583c0e7ac13c5565c81c029f07aa8c23de543299d4c799e"
+    },
+    {
+      "path": "modules/eacl/src/eacl/causal_token.cljc",
+      "sha256": "6788ddddc4f7bd818f3eef7bd425870228f248ec22cc6c2e27a87660429d5c60"
+    },
+    {
+      "path": "modules/eacl/src/eacl/consistency.cljc",
+      "sha256": "8d13926574ce3d23bed9e1b77d4004718bc3f4e51894af936a236745fd29e1fc"
+    },
+    {
+      "path": "modules/eacl/src/eacl/core.cljc",
+      "sha256": "013d3d23334f932dd9a13d23f939ac9e3c9d1e7eecefbcfacb2dbe02a5907a06"
+    },
+    {
+      "path": "modules/eacl/src/eacl/cursor.cljc",
+      "sha256": "5dcd61710c3f971f22fda1978b09637691ef131bb80331c0adfb07aee38633c9"
+    },
+    {
+      "path": "modules/eacl/src/eacl/engine/relationships.cljc",
+      "sha256": "c96c08aea819d9c61ccb5d0b049d9174dd274250aebe5f518806af1f80b1fd4f"
+    },
+    {
+      "path": "modules/eacl/src/eacl/engine/v8.cljc",
+      "sha256": "bd94d5cdf737825c2affef932e839acd11084108842ebba2b5aef959f9bc82b4"
+    },
+    {
+      "path": "modules/eacl/src/eacl/formal/production_kernel.clj",
+      "sha256": "b6b29d8a5ce9875c91d8c340d2ccb1bf04bb88cf59ccbb20b96738a915ce1360"
+    },
+    {
+      "path": "modules/eacl/src/eacl/formal/production_kernel_js.cljs",
+      "sha256": "a3415e54e5da6058d4b32de0d842bc2911f6ef779f32a622bb5e5f717c0aa216"
+    },
+    {
+      "path": "modules/eacl/src/eacl/mutation.cljc",
+      "sha256": "7b02bea0d9564fc2259cfb4c2ff1ae082c6b8bc790897fc04d3db0be2911e47f"
+    },
+    {
+      "path": "modules/eacl/src/eacl/relationships/endpoint_pair.cljc",
+      "sha256": "c131f009ec5710df2c12d4f1ad58ea9003df9951564b511287835161bdc657e1"
+    },
+    {
+      "path": "modules/eacl/src/eacl/relationships/filters.cljc",
+      "sha256": "422abc4b5cf4788750b7c01ae0ad9189faf918b9a767787ab93651464168535e"
+    },
+    {
+      "path": "modules/eacl/src/eacl/relationships/storage.cljc",
+      "sha256": "fc6968fc14d4923cc00a446568b499be8fe3fc3d44a2384d352b53990269c568"
+    },
+    {
+      "path": "modules/eacl/src/eacl/relay.cljc",
+      "sha256": "50f77627dcadfd3086060c32eb1cfe104a174ca4b934470249de19a518b8bfd0"
+    },
+    {
+      "path": "modules/eacl/src/eacl/schema/model.cljc",
+      "sha256": "53ff1f4d0d8d2b33ebcab841e70081b67f730f737c6d34f046da7e35282e10c4"
+    },
+    {
+      "path": "modules/eacl/src/eacl/secure_format.cljc",
+      "sha256": "e766dbf9db666f7834b8149979c8dae3089f1e649cd8532797320e19b3c9dad8"
+    },
+    {
+      "path": "modules/eacl/src/eacl/spicedb/consistency.cljc",
+      "sha256": "fbadf4f9285d23773bddfeb741da11de2a883282fd41332b6af98fe18f3327aa"
+    },
+    {
+      "path": "modules/eacl/src/eacl/spicedb/parser.cljc",
+      "sha256": "a03577b0a87819c173668da7b6caf5e86f1e8a2104eef916b74e9294f62c568c"
+    },
+    {
+      "path": "modules/eacl/src/eacl/subproblem_cache.cljc",
+      "sha256": "a694d1999a7644043d52f699202a0b339c5318f925af8a9d758e57d31cd39a2f"
+    },
+    {
+      "path": "modules/eacl/src/eacl/verified_kernel.cljc",
+      "sha256": "ba83e15d5f04287bd90b358efb925133f4d3bd1454ca103c57783a190c63393c"
+    }
+  ],
+  "scope": {
+    "roots": [
+      "eacl.engine.v8/can?",
+      "eacl.engine.v8/lookup-resources",
+      "eacl.engine.v8/lookup-subjects",
+      "eacl.engine.v8/count-resources",
+      "eacl.engine.v8/count-subjects",
+      "eacl.engine.relationships/execute-page",
+      "eacl.engine.relationships/execute-plan",
+      "eacl.relay/lookup-visited-page",
+      "eacl.relay/remember-visited-page!",
+      "eacl.relay/select-continuation-adapter",
+      "eacl.relay/prepare-page-query",
+      "eacl.relay/internalize-page-query",
+      "eacl.relay/externalize-page",
+      "eacl.relay/externalize-relationship-page",
+      "eacl.cursor/cursor->token",
+      "eacl.cursor/token->cursor",
+      "eacl.cache/resolve-current!",
+      "eacl.cache/resolve!",
+      "eacl.subproblem-cache/resolve!",
+      "eacl.subproblem-cache/resolve-bound!",
+      "eacl.subproblem-cache/resolve-layered-bound!",
+      "eacl.subproblem-cache/lookup-layered-bound!",
+      "eacl.subproblem-cache/lookup!",
+      "eacl.subproblem-cache/lookup-bound!",
+      "eacl.consistency/select",
+      "eacl.consistency/cursor-conflict!",
+      "eacl.causal-token/issue",
+      "eacl.causal-token/token-data",
+      "eacl.formal.production-kernel/GeneratedJavaKernel",
+      "eacl.formal.production-kernel-js/GeneratedJavaScriptKernel",
+      "eacl.datomic.core/Spiceomic",
+      "eacl.datomic.core/spiceomic-read-relationships",
+      "eacl.datomic.core/spiceomic-write-relationships!",
+      "eacl.datomic.core/spiceomic-delete-object!",
+      "eacl.datomic.core/spiceomic-can?",
+      "eacl.datomic.core/spiceomic-lookup-resources",
+      "eacl.datomic.core/spiceomic-count-resources",
+      "eacl.datomic.core/spiceomic-lookup-subjects",
+      "eacl.datomic.core/spiceomic-count-subjects",
+      "eacl.datomic.core/make-client",
+      "eacl.datomic.core/current-zed-token",
+      "eacl.datomic.core/zed-token-at-least-seconds-ago",
+      "eacl.datahike.core/DatahikeAuthorization",
+      "eacl.datahike.core/datahike-read-relationships",
+      "eacl.datahike.core/datahike-write-relationships!",
+      "eacl.datahike.core/datahike-delete-object!",
+      "eacl.datahike.core/datahike-can?",
+      "eacl.datahike.core/datahike-lookup-resources",
+      "eacl.datahike.core/datahike-count-resources",
+      "eacl.datahike.core/datahike-lookup-subjects",
+      "eacl.datahike.core/datahike-count-subjects",
+      "eacl.datahike.core/make-client",
+      "eacl.datascript.core/DataScriptAuthorization",
+      "eacl.datascript.core/datascript-read-relationships",
+      "eacl.datascript.core/datascript-write-relationships!",
+      "eacl.datascript.core/datascript-delete-object!",
+      "eacl.datascript.core/datascript-can?",
+      "eacl.datascript.core/datascript-lookup-resources",
+      "eacl.datascript.core/datascript-count-resources",
+      "eacl.datascript.core/datascript-lookup-subjects",
+      "eacl.datascript.core/datascript-count-subjects",
+      "eacl.datascript.core/make-client"
+    ],
+    "rootCount": 62,
+    "unionInternalDefinitionCount": 1371,
+    "unionInternalDefinitionIdsSha256": "1841c8e6265030326eadb21a4837d965a599eadd66e36c25174d98436d7b8cb5",
+    "unionDefinitionLocationsSha256": "b448cb0c7285289051f01a99833cfa26fa114396159da0a3e2bef1301b48a88b",
+    "definitionsBySource": {
+      "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
+        "count": 16,
+        "idsSha256": "f58e9be20f0d1b1ee8c42b8e15ee8986d5e21e79f6dbe6addd2f7887cd3e7589"
+      },
+      "modules/eacl-datahike/src/eacl/datahike/core.clj": {
+        "count": 29,
+        "idsSha256": "83984294750e7afbee7c5df0fad2678e1668275effb6f19ee694b8b70e478add"
+      },
+      "modules/eacl-datahike/src/eacl/datahike/db.clj": {
+        "count": 11,
+        "idsSha256": "275b3bac3bc99f4a6310919b08cdf38679a1be6307c2fe4462c6291b29b038e3"
+      },
+      "modules/eacl-datahike/src/eacl/datahike/impl.clj": {
+        "count": 28,
+        "idsSha256": "13d110dbb4777c5405c104e99397a66db262758755b235a7d2fcc55f21dae17e"
+      },
+      "modules/eacl-datahike/src/eacl/datahike/mutation.clj": {
+        "count": 12,
+        "idsSha256": "78fcbe535ec4c5e0708356d5e34c0b8eb3fc0e9e0572c9866926b42886bdbdea"
+      },
+      "modules/eacl-datahike/src/eacl/datahike/schema.clj": {
+        "count": 12,
+        "idsSha256": "d09b6636429ad718429ae556e7b5922583921dd2791e04877988a37d8add8bc7"
+      },
+      "modules/eacl-datascript/src/eacl/datascript/backend.cljc": {
+        "count": 11,
+        "idsSha256": "d0145fd94eb936bde3de1d7cd460ccbe3a21a3e1244d555798d3a6b2d3927498"
+      },
+      "modules/eacl-datascript/src/eacl/datascript/core.cljc": {
+        "count": 30,
+        "idsSha256": "52fb4c34c26ffeca0b8a2cf1027137564f005823469007a59fa5f58e47a49c0e"
+      },
+      "modules/eacl-datascript/src/eacl/datascript/db.cljc": {
+        "count": 8,
+        "idsSha256": "53c7507585fb177ed2dd7b4f0a92745d74dfbf315ade4f0911c253d763f3f0a4"
+      },
+      "modules/eacl-datascript/src/eacl/datascript/impl.cljc": {
+        "count": 30,
+        "idsSha256": "dd4b3444de474b97307528c1586a1491ea90c898215fa5bf79c843a725ad88e2"
+      },
+      "modules/eacl-datascript/src/eacl/datascript/mutation.cljc": {
+        "count": 7,
+        "idsSha256": "8ac89e225dc946665bce32f3abe2b78d7fc20f3b77b25c14f96dc7b0c94e006c"
+      },
+      "modules/eacl-datascript/src/eacl/datascript/schema.cljc": {
+        "count": 7,
+        "idsSha256": "e0b0b2eec3d32aa212839ce722a70c8dee78ac2fd32b70ae6f5782b738b1012f"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/backend.clj": {
+        "count": 10,
+        "idsSha256": "8c69f7f4b97d6645629aa877d43b04dce7c46b844da4cff247da00d6b8f7f7e3"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/cache.clj": {
+        "count": 41,
+        "idsSha256": "96ce4563d225430e35e798015a909f8b4d5821d6806fb57192d65231660b1bf1"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/codec.clj": {
+        "count": 18,
+        "idsSha256": "5c1fe438861a29ced4358cf8574dc80e27d1075a9e250d1fd01fffa2d825105a"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/consistency.clj": {
+        "count": 12,
+        "idsSha256": "41564ae9195b19dd851d20e77ec6d32379244f26211d5a815622b45fb2df2592"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/core.clj": {
+        "count": 122,
+        "idsSha256": "cb328ad4b5e71ee2c01824e618fdaa812cab52bfd6a3c57cc270abda194030f9"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/db.clj": {
+        "count": 9,
+        "idsSha256": "42b27bd399d2f9b4a6146d33a02954586928ab005f199e0ddd5e82f29f6509f2"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/impl.clj": {
+        "count": 63,
+        "idsSha256": "8a62e1dcbedc613b0c05acb1228c38c45e69db28744e596bd14f62c344e373b9"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/impl/base.clj": {
+        "count": 2,
+        "idsSha256": "ebcf0382a8bec81743a9242dd62244080be3971fe70ffb8a471485bb9eb10610"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj": {
+        "count": 15,
+        "idsSha256": "428939e4271b89ec5c7bec0628804a1e6e9a45bc17d8716b7df2ca6fc61b1f7f"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/mutation_schema.clj": {
+        "count": 1,
+        "idsSha256": "84d28fdd5197eb0bea057419c5a48c8e536e4ad84a88e8ee881e95967b2285e1"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/mutation.clj": {
+        "count": 8,
+        "idsSha256": "934d56495e6ab836059d1369463cefc4320c1e772c7af986d5739d5cecd97766"
+      },
+      "modules/eacl-datomic/src/eacl/datomic/schema.clj": {
+        "count": 15,
+        "idsSha256": "6003392975933239cb9ac213e878da52aa71fe4638d1ed2ebb7118a69c77d4aa"
+      },
+      "modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj": {
+        "count": 18,
+        "idsSha256": "6354f20b566cbf72654812e5404ad861a32ed262bf7c3ebf678b2e9f199a323b"
+      },
+      "modules/eacl/src/eacl/backend/v8.cljc": {
+        "count": 30,
+        "idsSha256": "80280b16d6f3325a33ec4f1c7e6de87579815d34e606bd48cb31ce19109e6910"
+      },
+      "modules/eacl/src/eacl/cache.cljc": {
+        "count": 54,
+        "idsSha256": "4442af724ac94eaaf527420334eca13f45d8fa98562ad11855938739c6d39abf"
+      },
+      "modules/eacl/src/eacl/causal_token.cljc": {
+        "count": 10,
+        "idsSha256": "a63f5ce1d761c04b464341c4543b37c7f6486653f9989d047b4dcf4480c78522"
+      },
+      "modules/eacl/src/eacl/consistency.cljc": {
+        "count": 15,
+        "idsSha256": "cd5e7111e4824589e8dc38a80e9224f93df0abeae054f6afb7b08a582a907f62"
+      },
+      "modules/eacl/src/eacl/core.cljc": {
+        "count": 6,
+        "idsSha256": "29b55e1f7a77d8a5ae064782544ed3dd57d0ddcf22855f3520f47a7f158e01c6"
+      },
+      "modules/eacl/src/eacl/cursor.cljc": {
+        "count": 22,
+        "idsSha256": "72dbd78f6247b386df5106c6134339c0a5dee8ac68700fbfd0eaf7dd2ee15d34"
+      },
+      "modules/eacl/src/eacl/engine/relationships.cljc": {
+        "count": 20,
+        "idsSha256": "01e8ae30a26c905caa8a67c7abb5f9d161454d1a2ebe981bda3905026054b8f5"
+      },
+      "modules/eacl/src/eacl/engine/v8.cljc": {
+        "count": 176,
+        "idsSha256": "e4911d9c79b4ccdd89287c54584bc4971c0e4c844495dfdfc286a6c3b584546a"
+      },
+      "modules/eacl/src/eacl/formal/production_kernel_js.cljs": {
+        "count": 78,
+        "idsSha256": "1846e091d902a1aaacde3d701cfc8fb005bd362f93f5d206a195fff304bc9360"
+      },
+      "modules/eacl/src/eacl/formal/production_kernel.clj": {
+        "count": 79,
+        "idsSha256": "22cf3a46f76818273545a9dd1e4b0febc460bd1e1ecb9a6720e862801d03bc46"
+      },
+      "modules/eacl/src/eacl/mutation.cljc": {
+        "count": 27,
+        "idsSha256": "4a9ca08b83eab15df2b002fd2ee9cb204911f19c6ab8e92df9449771005d4264"
+      },
+      "modules/eacl/src/eacl/relationships/endpoint_pair.cljc": {
+        "count": 7,
+        "idsSha256": "a5f4e38806b2c37c85bb0d36e24fc1f096f4d577c982bbf012a87416281b8a36"
+      },
+      "modules/eacl/src/eacl/relationships/filters.cljc": {
+        "count": 2,
+        "idsSha256": "5cf2b8c8e74c28ddd5b557bfc4e977a5aab6bf13e3dc2d2b438249028bd93519"
+      },
+      "modules/eacl/src/eacl/relationships/storage.cljc": {
+        "count": 3,
+        "idsSha256": "fb4e5788ec3bdcef44e445bbeaf59b2a34727116072b77ddfd4f0f6747e11894"
+      },
+      "modules/eacl/src/eacl/relay.cljc": {
+        "count": 45,
+        "idsSha256": "4354918dc323ac272e21cf9cab7d6d9cf3d863a4312eebc383af56c29a831936"
+      },
+      "modules/eacl/src/eacl/schema/model.cljc": {
+        "count": 7,
+        "idsSha256": "b522d556d11715c8bc9a7cc9f054a452e02c231d11204280e909036497e286c5"
+      },
+      "modules/eacl/src/eacl/secure_format.cljc": {
+        "count": 40,
+        "idsSha256": "a78ef348fa0d40869b496964cb5c34ae6b4a3efee9b7ea7a20c58a0e0155af3a"
+      },
+      "modules/eacl/src/eacl/spicedb/consistency.cljc": {
+        "count": 3,
+        "idsSha256": "a1bf4d535309de5633d240d45b4c908c61a6a5efc7753e5ac69bfc1d59be56b5"
+      },
+      "modules/eacl/src/eacl/spicedb/parser.cljc": {
+        "count": 25,
+        "idsSha256": "15bfb94ea39fa324efc8e9008a477b124c2d3d14343c414a5ee550a56d2ca254"
+      },
+      "modules/eacl/src/eacl/subproblem_cache.cljc": {
+        "count": 58,
+        "idsSha256": "f42ea73b397ef1b8f8eab2f5e617b46176dccb984707a72802874649889bc3e2"
+      },
+      "modules/eacl/src/eacl/verified_kernel.cljc": {
+        "count": 129,
+        "idsSha256": "fa5801d86f07c06bfc57fb0e9366956ed25bea7eb88be85dc846d3d1b7a1578b"
+      }
+    },
+    "exclusions": {
+      "adapterSemantics": "backend-dispatch.edn closes literal operation keys, but adapter operation semantics remain named trusted obligations rather than source-refined theorems",
+      "assurance": "presence in this closure does not imply theorem coverage"
+    }
+  },
+  "attribution": {
+    "inlineDefrecordMethods": "unattributed usages inside exact clj-kondo defrecord source spans are assigned to the containing record root",
+    "inlineDefrecordCount": 69
+  },
+  "roots": {
+    "eacl.engine.v8/can?": {
+      "internalDefinitionCount": 307,
+      "internalDefinitionIdsSha256": "7f8b88a333d4f7744ca736e8f5fbfdbbad9c0c4985e26cfc048c4001873e3f75",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.engine.v8/lookup-resources": {
+      "internalDefinitionCount": 347,
+      "internalDefinitionIdsSha256": "01a36e545582e0d32acd3a02d63b4d28257732db45b364f0536c886f8a2a1d2f",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.engine.v8/lookup-subjects": {
+      "internalDefinitionCount": 347,
+      "internalDefinitionIdsSha256": "937ec1e107da3301ac8a7ac95acabefd5cee5ad2156dd4b1422a31dcba21ad01",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.engine.v8/count-resources": {
+      "internalDefinitionCount": 310,
+      "internalDefinitionIdsSha256": "56807e2af89393a51ae052e023ab2084ceb554a7743802f5859ded4f2e11c989",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.engine.v8/count-subjects": {
+      "internalDefinitionCount": 310,
+      "internalDefinitionIdsSha256": "623292f0d2a959d52bfd0ad5af721f9e1ab938b64b060f06e33b6da8ded1ff8a",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.engine.relationships/execute-page": {
+      "internalDefinitionCount": 114,
+      "internalDefinitionIdsSha256": "03b9a7fa49532050da92e038253b881992de5beb3b57996fb6b46ae5b03f268a",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.engine.relationships/execute-plan": {
+      "internalDefinitionCount": 4,
+      "internalDefinitionIdsSha256": "8ff469c8cc56ae7fad59db90143dd8cf6ac5b0e4e87a82219608c0ad0cb384dd",
+      "externalCallCount": 0,
+      "externalCalls": []
+    },
+    "eacl.relay/lookup-visited-page": {
+      "internalDefinitionCount": 24,
+      "internalDefinitionIdsSha256": "24cb890105ac57c473cc94fb1e4b44079a4394cbc71c03c9e03f83ee15fdf703",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.relay/remember-visited-page!": {
+      "internalDefinitionCount": 59,
+      "internalDefinitionIdsSha256": "35e57f13b41d6a1475e1740b12ed7fdf4d3d7dfa8f3095b6894eb8946a0392db",
+      "externalCallCount": 7,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode"
+      ]
+    },
+    "eacl.relay/select-continuation-adapter": {
+      "internalDefinitionCount": 195,
+      "internalDefinitionIdsSha256": "0f000852b3c1cffa0bf01905f0b830f47428f0782e2084de30a9f0dd675566e8",
+      "externalCallCount": 12,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.relay/prepare-page-query": {
+      "internalDefinitionCount": 199,
+      "internalDefinitionIdsSha256": "a960d8e8b503232e8c890cfc519d0c0314f28d3c09b8fba18d83c1eb23d3cd64",
+      "externalCallCount": 12,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.relay/internalize-page-query": {
+      "internalDefinitionCount": 198,
+      "internalDefinitionIdsSha256": "1c5f531de1770a3c1b16762bcbb6c9701d36cdf7d82f822178e91cfef4f166c1",
+      "externalCallCount": 12,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.relay/externalize-page": {
+      "internalDefinitionCount": 213,
+      "internalDefinitionIdsSha256": "38d1bf2a1d35ecd81907c272446c02013e2fa0268c4ca6e66168a82907958229",
+      "externalCallCount": 9,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.relay/externalize-relationship-page": {
+      "internalDefinitionCount": 212,
+      "internalDefinitionIdsSha256": "43143033acfb10a803c088d948df9dfc85e0152847592eb3f0e11d8031746bab",
+      "externalCallCount": 9,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.cursor/cursor->token": {
+      "internalDefinitionCount": 45,
+      "internalDefinitionIdsSha256": "9f0b43651e174dcd88bdc304455c4db140915f1020576387dd8aed1c1fe91a08",
+      "externalCallCount": 8,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.cursor/token->cursor": {
+      "internalDefinitionCount": 47,
+      "internalDefinitionIdsSha256": "58e1e880684b8f2e305a938a4734737be7f2e89ba759449edfbd7476bb5dc4c9",
+      "externalCallCount": 10,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.cache/resolve-current!": {
+      "internalDefinitionCount": 161,
+      "internalDefinitionIdsSha256": "eb5cfe2e4a31d1717288064176c9ed8d6432866c8e36018ef1a34bad0a3ca606",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.cache/resolve!": {
+      "internalDefinitionCount": 187,
+      "internalDefinitionIdsSha256": "5d8f685187fd17e06024ff8d4954362ea207923aab9ee4047e867a7cd6f178ab",
+      "externalCallCount": 10,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.subproblem-cache/resolve!": {
+      "internalDefinitionCount": 129,
+      "internalDefinitionIdsSha256": "6768f13f211875f380e4767f515029d60017fdadbe4f6ad0be44b4ea06a1a944",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.subproblem-cache/resolve-bound!": {
+      "internalDefinitionCount": 131,
+      "internalDefinitionIdsSha256": "c3f3dad8ff9696019f620e456ac6063bee10be89cc73811335b6200344d93300",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.subproblem-cache/resolve-layered-bound!": {
+      "internalDefinitionCount": 141,
+      "internalDefinitionIdsSha256": "949ea2cb5e5aa1a8216c1e77efc0a9c3f5c76394fbd44e753b2b9a450245f39d",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.subproblem-cache/lookup-layered-bound!": {
+      "internalDefinitionCount": 142,
+      "internalDefinitionIdsSha256": "f7e1276f5511fee32ea56d33908a0ba40d8b738b508c7c381f1979ee139112ed",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.subproblem-cache/lookup!": {
+      "internalDefinitionCount": 120,
+      "internalDefinitionIdsSha256": "85a1a12166758e8f67ace098f9f6dd79c1d3f02c5b84a7bd437eab9379de338e",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.subproblem-cache/lookup-bound!": {
+      "internalDefinitionCount": 122,
+      "internalDefinitionIdsSha256": "d28451b53c52d4c3b82ad7895ceeb183d9ae979f714152b7348ab6f7e3f8c203",
+      "externalCallCount": 1,
+      "externalCalls": [
+        "unresolved/js/Number.isSafeInteger"
+      ]
+    },
+    "eacl.consistency/select": {
+      "internalDefinitionCount": 188,
+      "internalDefinitionIdsSha256": "d1d406b96eb27e5e7ed543b2970201e4d0d615543e4947753c2d891411fa3ee2",
+      "externalCallCount": 11,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.consistency/cursor-conflict!": {
+      "internalDefinitionCount": 3,
+      "internalDefinitionIdsSha256": "20dbd413b9386e411c2c42ad4b852eb15ef31a71cc4824322b360568f2493a2c",
+      "externalCallCount": 0,
+      "externalCalls": []
+    },
+    "eacl.causal-token/issue": {
+      "internalDefinitionCount": 39,
+      "internalDefinitionIdsSha256": "91b1f17f7e99671db7835b3a339a9d5dfab21828eff6c7b17a2fbf1d317a1e61",
+      "externalCallCount": 8,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.causal-token/token-data": {
+      "internalDefinitionCount": 43,
+      "internalDefinitionIdsSha256": "fe0452ea989cc8419344b9a0e3b7272bdd7f77f099013282777172ffc253c299",
+      "externalCallCount": 9,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.formal.production-kernel/GeneratedJavaKernel": {
+      "internalDefinitionCount": 78,
+      "internalDefinitionIdsSha256": "27c4d9a61c790cc83b9442206b4c71aaa736d0adf18c5f5961f1fd6086521cc6",
+      "externalCallCount": 0,
+      "externalCalls": []
+    },
+    "eacl.formal.production-kernel-js/GeneratedJavaScriptKernel": {
+      "internalDefinitionCount": 77,
+      "internalDefinitionIdsSha256": "26befc09ed9d6cf408ed7cc9f0725889e5ee74f3b2e47753c20742c6152e6ef4",
+      "externalCallCount": 0,
+      "externalCalls": []
+    },
+    "eacl.datomic.core/Spiceomic": {
+      "internalDefinitionCount": 826,
+      "internalDefinitionIdsSha256": "d03ddf966751269e6b089e3bba7a3bfecadc5906bf46940cb7b1fed4b117c201",
+      "externalCallCount": 46,
+      "externalCalls": [
+        "clj-kondo/unknown-namespace/.lock",
+        "clj-kondo/unknown-namespace/.readLock",
+        "clj-kondo/unknown-namespace/.unlock",
+        "clj-kondo/unknown-namespace/.writeLock",
+        "clj-kondo/unknown-namespace/do",
+        "clj-kondo/unknown-namespace/finally",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/limits#",
+        "clj-kondo/unknown-namespace/lock#",
+        "clj-kondo/unknown-namespace/try",
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.set/difference",
+        "clojure.set/intersection",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "clojure.walk/postwalk",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/function",
+        "datomic.api/index-range",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/squuid",
+        "datomic.api/sync",
+        "datomic.api/tempid",
+        "datomic.api/transact",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/failure?",
+        "instaparse.core/get-failure",
+        "instaparse.core/parser",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-read-relationships": {
+      "internalDefinitionCount": 387,
+      "internalDefinitionIdsSha256": "1d2ee45edf641b76e41f0b3d3637afc03989c515136a3e0f96941dad8b832874",
+      "externalCallCount": 23,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/sync",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-write-relationships!": {
+      "internalDefinitionCount": 113,
+      "internalDefinitionIdsSha256": "8e6479ac99b96482a9a5efc3438ca2faf3984f1ca165aef1e52139862886f0cc",
+      "externalCallCount": 18,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/q",
+        "datomic.api/transact",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-delete-object!": {
+      "internalDefinitionCount": 107,
+      "internalDefinitionIdsSha256": "cdca90ad9a75624b2e56ec2914d2cb984dfb6dca7db977117d661b1b417bfddf",
+      "externalCallCount": 16,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/q",
+        "datomic.api/transact",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-can?": {
+      "internalDefinitionCount": 479,
+      "internalDefinitionIdsSha256": "8315579157407da7346b6c621a57266d54187cb5bf79aad18935ed9de5f2d19f",
+      "externalCallCount": 23,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/sync",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-lookup-resources": {
+      "internalDefinitionCount": 637,
+      "internalDefinitionIdsSha256": "1c66e093b4d3fd4de2cfffd7dbd9a1f17af40c4e0ae647c7bc56601bb85c157a",
+      "externalCallCount": 23,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/sync",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-count-resources": {
+      "internalDefinitionCount": 482,
+      "internalDefinitionIdsSha256": "3e041529fa5bb09bb61e8a9c1bb2fe89a8ea18987dc32d5dde7ce57c38050f31",
+      "externalCallCount": 23,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/sync",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-lookup-subjects": {
+      "internalDefinitionCount": 637,
+      "internalDefinitionIdsSha256": "af604618f9a8917fdcb9634a53ffba6f632c973bc4ebc9bc224d798eccda32c2",
+      "externalCallCount": 23,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/sync",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/spiceomic-count-subjects": {
+      "internalDefinitionCount": 482,
+      "internalDefinitionIdsSha256": "d0e0130815534eae2564a1299a9ebd82661574e6754430f5ede45d40706e9b42",
+      "externalCallCount": 23,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/sync",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/make-client": {
+      "internalDefinitionCount": 258,
+      "internalDefinitionIdsSha256": "54d388e038e79a0e39e7163e5514d58a68f52fd4945b6dec7498606fde0a093a",
+      "externalCallCount": 31,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.set/difference",
+        "clojure.set/intersection",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.walk/postwalk",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/function",
+        "datomic.api/index-range",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/squuid",
+        "datomic.api/sync",
+        "datomic.api/tempid",
+        "datomic.api/transact",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "instaparse.core/failure?",
+        "instaparse.core/get-failure",
+        "instaparse.core/parser",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/current-zed-token": {
+      "internalDefinitionCount": 827,
+      "internalDefinitionIdsSha256": "a53ec97ea28f6396cc45291b4c2d9d7c5cc5902f1383369b62e968b303bf3c39",
+      "externalCallCount": 46,
+      "externalCalls": [
+        "clj-kondo/unknown-namespace/.lock",
+        "clj-kondo/unknown-namespace/.readLock",
+        "clj-kondo/unknown-namespace/.unlock",
+        "clj-kondo/unknown-namespace/.writeLock",
+        "clj-kondo/unknown-namespace/do",
+        "clj-kondo/unknown-namespace/finally",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/limits#",
+        "clj-kondo/unknown-namespace/lock#",
+        "clj-kondo/unknown-namespace/try",
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.set/difference",
+        "clojure.set/intersection",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "clojure.walk/postwalk",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/function",
+        "datomic.api/index-range",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/squuid",
+        "datomic.api/sync",
+        "datomic.api/tempid",
+        "datomic.api/transact",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/failure?",
+        "instaparse.core/get-failure",
+        "instaparse.core/parser",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datomic.core/zed-token-at-least-seconds-ago": {
+      "internalDefinitionCount": 829,
+      "internalDefinitionIdsSha256": "71252df4e131728c77e7d36c362a7762d992151628749d05564682dfda869624",
+      "externalCallCount": 46,
+      "externalCalls": [
+        "clj-kondo/unknown-namespace/.lock",
+        "clj-kondo/unknown-namespace/.readLock",
+        "clj-kondo/unknown-namespace/.unlock",
+        "clj-kondo/unknown-namespace/.writeLock",
+        "clj-kondo/unknown-namespace/do",
+        "clj-kondo/unknown-namespace/finally",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/limits#",
+        "clj-kondo/unknown-namespace/lock#",
+        "clj-kondo/unknown-namespace/try",
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.set/difference",
+        "clojure.set/intersection",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "clojure.walk/postwalk",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datomic.api/as-of",
+        "datomic.api/basis-t",
+        "datomic.api/datoms",
+        "datomic.api/db",
+        "datomic.api/entid",
+        "datomic.api/entity",
+        "datomic.api/function",
+        "datomic.api/index-range",
+        "datomic.api/pull",
+        "datomic.api/q",
+        "datomic.api/rseek-datoms",
+        "datomic.api/seek-datoms",
+        "datomic.api/squuid",
+        "datomic.api/sync",
+        "datomic.api/tempid",
+        "datomic.api/transact",
+        "datomic.api/tx->t",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/failure?",
+        "instaparse.core/get-failure",
+        "instaparse.core/parser",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/DatahikeAuthorization": {
+      "internalDefinitionCount": 740,
+      "internalDefinitionIdsSha256": "928624d12b8739400b788c27bfa86af12af0b49fb055629008245499a2e7ee58",
+      "externalCallCount": 32,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.set/difference",
+        "clojure.set/intersection",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "clojure.walk/postwalk",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/index-range",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.api/transact",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/failure?",
+        "instaparse.core/get-failure",
+        "instaparse.core/parser",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-read-relationships": {
+      "internalDefinitionCount": 360,
+      "internalDefinitionIdsSha256": "495728f911ac413bdc6a664e22d142f2b5ecadffdb6082516bc7cb41a1e3983f",
+      "externalCallCount": 21,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-write-relationships!": {
+      "internalDefinitionCount": 165,
+      "internalDefinitionIdsSha256": "d3877eca476710bd82fc568be0b96578f2500c263a9a21e950662b0c7b61cb12",
+      "externalCallCount": 22,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.api/transact",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-delete-object!": {
+      "internalDefinitionCount": 153,
+      "internalDefinitionIdsSha256": "7e11eb2132e9a727f36d358ded85ac2207099b054b8d5a9e0775e2f68864d5b2",
+      "externalCallCount": 20,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.api/transact",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-can?": {
+      "internalDefinitionCount": 473,
+      "internalDefinitionIdsSha256": "413fc47456f3e047300c9052d2f992438bc4a17177c8067edd8ace5e758967d6",
+      "externalCallCount": 21,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-lookup-resources": {
+      "internalDefinitionCount": 580,
+      "internalDefinitionIdsSha256": "b01a2e7a785bbe70c6b16883115bd0c6ecf2bce7e3a401bedfc70d4976631e2c",
+      "externalCallCount": 22,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-count-resources": {
+      "internalDefinitionCount": 477,
+      "internalDefinitionIdsSha256": "4e4349548e276f01e6803ba8d532100e063c6589a5f46886ae11344f4a94f382",
+      "externalCallCount": 21,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-lookup-subjects": {
+      "internalDefinitionCount": 580,
+      "internalDefinitionIdsSha256": "66685557a94741318e2c8bd7c25aef50bc099717105b8a6bf94a1ede62b79ef4",
+      "externalCallCount": 22,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/datahike-count-subjects": {
+      "internalDefinitionCount": 477,
+      "internalDefinitionIdsSha256": "11d20f8fe7c16d9940a278abd061536106f646bd58145b9f5aa167c51378b614",
+      "externalCallCount": 21,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datahike.api/as-of",
+        "datahike.api/commit-as-db",
+        "datahike.api/datoms",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/pull",
+        "datahike.api/q",
+        "datahike.api/rseek-datoms",
+        "datahike.api/seek-datoms",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datahike.core/make-client": {
+      "internalDefinitionCount": 112,
+      "internalDefinitionIdsSha256": "d48d53232e674e725baaae47d299ba2336608716ed64bcf3859d52560763527c",
+      "externalCallCount": 14,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "com.rpl.specter/transform",
+        "datahike.api/db",
+        "datahike.api/entity",
+        "datahike.api/q",
+        "datahike.api/transact",
+        "datahike.db.interface/-config",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/DataScriptAuthorization": {
+      "internalDefinitionCount": 725,
+      "internalDefinitionIdsSha256": "37b544c9913f205c6563667ba2d054df2d3e6bf64009d29b3e2ba582eeed0496",
+      "externalCallCount": 29,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.set/difference",
+        "clojure.set/intersection",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "clojure.walk/postwalk",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "datascript.core/transact!",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/failure?",
+        "instaparse.core/get-failure",
+        "instaparse.core/parser",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-read-relationships": {
+      "internalDefinitionCount": 355,
+      "internalDefinitionIdsSha256": "54872a4d5fc92243e60cbfb1d6745c3a83edfc8d18e258b09c03b0e11d98af8f",
+      "externalCallCount": 20,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-write-relationships!": {
+      "internalDefinitionCount": 151,
+      "internalDefinitionIdsSha256": "22dff6b614a8b0fc6ecb080abcf197dd8711284df865626693546bf2f38dd749",
+      "externalCallCount": 20,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "com.rpl.specter/ALL",
+        "com.rpl.specter/transform",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "datascript.core/transact!",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-delete-object!": {
+      "internalDefinitionCount": 142,
+      "internalDefinitionIdsSha256": "c98d080a063dee553de359d2609a074af5e42d1713fdfb4e16ed326cead22ea8",
+      "externalCallCount": 18,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "datascript.core/transact!",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-can?": {
+      "internalDefinitionCount": 465,
+      "internalDefinitionIdsSha256": "119b8e66699c3c778ee69f385751d9082c97984b567d3f68ae5254c309f64111",
+      "externalCallCount": 19,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-lookup-resources": {
+      "internalDefinitionCount": 572,
+      "internalDefinitionIdsSha256": "173ea1364ee526d030f652a49ca81fd2b861c23ccd97dbe3529760fae321e533",
+      "externalCallCount": 20,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-count-resources": {
+      "internalDefinitionCount": 469,
+      "internalDefinitionIdsSha256": "7c6c57272081c72af03edf31a7295954ed32653bc1677852b8ad7f3e60d5e6c8",
+      "externalCallCount": 19,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-lookup-subjects": {
+      "internalDefinitionCount": 572,
+      "internalDefinitionIdsSha256": "f25276de0ec532498e80920124be5995c7b02c93305044bba3326919644d02c9",
+      "externalCallCount": 20,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/split",
+        "clojure.string/starts-with?",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/datascript-count-subjects": {
+      "internalDefinitionCount": 469,
+      "internalDefinitionIdsSha256": "343844ad3b78841fda2c1189e1ede699986d210f7a13776492f6ca210335a39a",
+      "externalCallCount": 19,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "datascript.core/datoms",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/pull",
+        "datascript.core/q",
+        "datascript.core/rseek-datoms",
+        "datascript.core/seek-datoms",
+        "goog.crypt/stringToUtf8ByteArray",
+        "goog.crypt/utf8ByteArrayToString",
+        "unresolved/js/Date.now",
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    },
+    "eacl.datascript.core/make-client": {
+      "internalDefinitionCount": 108,
+      "internalDefinitionIdsSha256": "cbba43d81ac818b3ef668ea4933415e5d13450cdd546656d0cfb0c6a7f349a2f",
+      "externalCallCount": 14,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "com.rpl.specter/transform",
+        "datascript.core/db",
+        "datascript.core/entid",
+        "datascript.core/entity",
+        "datascript.core/q",
+        "datascript.core/transact!",
+        "goog.crypt/stringToUtf8ByteArray",
+        "unresolved/js/Date.now",
+        "unresolved/js/String.fromCharCode",
+        "unresolved/js/require"
+      ]
+    }
+  }
+}

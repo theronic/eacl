@@ -1,0 +1,4 @@
+{:result [:maximum-eid 4 3 2]
+ :duplicate-maximum-result [:maximum-eid]
+ :invariant
+ "Uninitialized duplicate-suppression state is disjoint from every EID value."}

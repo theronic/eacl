@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-003
+ :status :fixed
+ :discovered-by :property
+ :seed-or-trace "eacl.bench.pagination-test/permission-check-benchmark"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:datomic]
+ :root-cause
+ "The Datomic authenticated-store adapter labeled every signed shared-cache envelope :authenticated-v3 in the weighted provider. This erased the semantic cache kind, bypassing configured per-kind capacity and two-hit admission policies."
+ :fix
+ "authenticated-store now passes the semantic kind from the authenticated shared key to the weighted provider, with :authenticated-v3 only as a compatibility fallback."
+ :closing-evidence
+ ["eacl.datomic.cache-test/authenticated-store-preserves-logical-kind-test"
+  "eacl.bench.pagination-test/permission-check-benchmark"]}

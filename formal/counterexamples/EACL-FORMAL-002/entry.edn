@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-002
+ :status :fixed
+ :discovered-by :property
+ :seed-or-trace "eacl.bench.pagination-test/recursive-traversal-prefix-benchmark"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:datomic]
+ :root-cause
+ "The v3 Datomic client unconditionally returns nil from continuation-context, so neither recursive continuations, completed recursive pages, nor acyclic frontier heads are retained. Every cursor page deterministically replays its prefix; sufficiently deep valid walks can exceed traversal limits."
+ :fix
+ "Datomic clients now own a bounded private continuation store. Opaque states are accepted only with an identical per-client capability and a key committing to source, adapter, identity, schema, operation, query, dependency scope, and authenticated proof. Missing state still replays the exact selected snapshot."
+ :closing-evidence
+ ["eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test"
+  "eacl.datomic.lookup-cache-test/recursive-cursors-replay-across-independent-client-proofs-test"
+  "eacl.bench.pagination-test/recursive-traversal-prefix-benchmark"
+  "eacl.bench.pagination-test/recursive-page-size-work-benchmark"]}

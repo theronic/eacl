@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-057
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "generated-only-cutover/rebuilt-java-page-window-bridge"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 generated-only cutover before EACL-FORMAL-057"]
+ :affected-backends [:shared]
+ :root-cause
+ "The handwritten CLJ-to-generated-Java page-window smoke bridge retained the former six-argument RawPageRequest constructor after the v8 API cleanup removed deprecated limit/cursor presence flags from the Dafny datatype."
+ :fix
+ "Construct the current four-field RawPageRequest. Keep deprecated pagination-key rejection at the public host boundary instead of encoding removed API fields in the v8 formal datatype."
+ :closing-evidence
+ ["eacl.formal.page-window-bridge-test/generated-page-normalization-and-window-properties"
+  "eacl.formal.java-round-trip-test"
+  "eacl.formal.cross-runtime-vector-test"
+  "CLJ generated-runtime bridge suite: 47 tests, 15628 assertions, 0 failures/errors"]}

@@ -1,0 +1,15 @@
+{:max-inflight 2
+ :lifecycle :lifecycle-1
+ :tier :projection
+ :key :same
+ :parent-execution-context :thread-parent
+ :child-execution-context :thread-child
+ :inherited-resolving-keys
+ [[:lifecycle-1 :projection :same]]
+ :before-fix
+ {:parent-active-callbacks 1
+  :child-callback-counted false}
+ :after-fix
+ {:parent-active-callbacks 1
+  :child-active-callbacks 1
+  :maximum-active-callbacks 2}}

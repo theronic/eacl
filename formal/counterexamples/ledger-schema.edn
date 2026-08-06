@@ -1,0 +1,21 @@
+{:schema-version 2
+ :required
+ {:id :keyword
+  :status #{:open :fixed :accepted-risk}
+  :discovered-by
+  #{:dafny :apalache :differential :property :benchmark :manual-review}
+  :seed-or-trace [:or :integer :string]
+  :minimized-fixture :relative-path
+  :impact #{:false-grant :false-deny :omission :duplicate :wrong-order
+            :wrong-page-flags :mixed-snapshot :stale-reuse :scope-confusion
+            :fail-open :availability :performance :other}
+  :affected-versions [:vector :string]
+  :affected-backends [:vector #{:shared :datomic :datascript :datahike
+                                :third-party}]
+  :root-cause :string
+  :fix :string
+  :closing-evidence [:vector :string]}
+ :optional
+ {:cve :string
+  :disclosure :string
+  :notes :string}}

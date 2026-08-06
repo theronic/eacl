@@ -1,0 +1,7 @@
+{:intersects? true
+ :reseek-count 1
+ :reseek-trace [[0 35]]
+ :mutation-trace [[0 34]]
+ :opposite-side-mutation-trace [[1 35]]
+ :aggregate-count-alone-distinguishes-mutation false
+ :exact-event-trace-distinguishes-mutation true}

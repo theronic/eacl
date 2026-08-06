@@ -1,0 +1,8 @@
+{:intermediates []
+ :full-candidate-matches []
+ :direct-intersects? false
+ :exhaustive? false
+ :authorization-before false
+ :authorization-after false
+ :direct-intersection-phases-before 1
+ :direct-intersection-phases-after 0}

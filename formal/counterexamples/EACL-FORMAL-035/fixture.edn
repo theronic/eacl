@@ -1,0 +1,18 @@
+{:backend :datascript
+ :graph {:recursive-groups 16
+         :documents 64}
+ :operation-shapes [:recursive-page :cursor-continuation]
+ :page-size 20
+ :engine-modes [:legacy-authoritative :verified-authoritative]
+ :warmup 50
+ :before
+ {:recursive
+  {:verified-p95-allocation-overhead-bytes 3677688
+   :verified-to-legacy-p95-allocation-ratio 2.2785767725678556}
+  :cursor
+  {:verified-p95-allocation-overhead-bytes 4283960
+   :verified-to-legacy-p95-allocation-ratio 1.949615805443096}}
+ :jfr-dominant-avoidable-sites
+ [:java-reflect-method-copy
+  :reflector-method-lookup
+  :reflective-access-check]}

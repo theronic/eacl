@@ -1,0 +1,26 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+port=${EACL_NREPL_PORT:-}
+
+[ -n "$port" ] || {
+  printf '%s\n' \
+    "EACL_NREPL_PORT must name an nREPL started with:" \
+    "  clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 0" >&2
+  exit 2
+}
+
+clj-nrepl-eval -p "$port" --timeout 120000 \
+  "(do
+     (require '[cljs.build.api :as cljs] :reload)
+     (cljs/build
+       nil
+       {:main 'eacl.formal.indexed-traversal-benchmark
+        :target :nodejs
+        :optimizations :none
+        :output-dir \"target/formal/cljs-indexed-traversal-out\"
+        :output-to \"target/formal/cljs-indexed-traversal.js\"}))"
+
+node "$repo_root/target/formal/cljs-indexed-traversal.js"

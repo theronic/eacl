@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-018
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "exact-cache/flight-completion/removal-races-lifecycle-stable-selection"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree after EACL-FORMAL-017 and before serialized flight removal"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "Lifecycle capture, recursive-self detection, represented-entry lookup, and flight lookup were performed under the store lock, but a completing delay removed its coordinator flight without that lock. Functional joining remained safe because a selector retained the delay value it observed, yet the documented and modeled single-linearization-point claim was false: selection could observe state concurrently with flight removal."
+ :fix
+ "The owning delay now removes its lifecycle-qualified coordinator flight while holding the same store lock used by selection, installation, and lifecycle replacement. The miss-only completion path pays one additional lock acquisition; cache hits and per-edge traversal do not."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/flight-removal-serializes-with-lifecycle-selection-test"
+  "formal mutation :flight-removal-outside-selection-lock"
+  "formal/dafny/SubproblemCache.dfy LinearizedResolutionSelectionUsesOneLifecycle"]}

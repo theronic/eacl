@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-058
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "github-actions/31059929461/parity-corpus-and-mutations"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 generated-only cutover commit d96bc4c"]
+ :affected-backends [:shared]
+ :root-cause
+ "The counterexample replay shell entrypoint eagerly required eacl.lazy-merge-sort after that former production implementation was moved under formal/smoke. The broader local formal-smoke classpath contained it, while the deliberately narrower parity CI classpath did not."
+ :fix
+ "Remove eager loads of formal-only former-engine namespaces. Let the corpus runner resolve each closing regression lazily only when its evidence namespace is present, and retain a source regression forbidding those eager requires."
+ :closing-evidence
+ ["eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test"
+  "EACL_NREPL_PORT=<ordinary-dev-test-cljs-test-port> bin/formal counterexample-replay: 42 tests, 2923 assertions, 0 failures/errors"]}

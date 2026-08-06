@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-046
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "verified-authority/distinct-root-names/equal-normalized-rule-body"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["PR 101 before the canonical root-denotation identity"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "The semantic denotation cache key retained the queried root permission name. Two permission roots with identical normalized incoming rule bodies therefore occupied different entries even though their least-fixed-point grants were equal. The cache remained correct, but it could not reuse a shared subgraph across distinct top-level queries and was slower than completed-answer-only caching."
+ :fix
+ "Compile a root denotation identity from the exact portable indexed rule maps accepted by generated plan certification, remove only the matching root :head, and retain the structural set of resource type, relation entity ids, subject/intermediate types, target relation ids, and target permission nodes. Prove that equal semantic rule bodies preserve equal root grants throughout fixed-point iteration, bridge exact indexed bodies to those semantic bodies under the compiler certificate, and regression-test JVM/CLJS equal-body reuse plus non-collision for changed relations or target nodes."
+ :closing-evidence
+ ["formal/dafny/RootDenotation.dfy/EquivalentRuleBodiesHaveEqualSemanticDenotations"
+  "formal/dafny/IndexedRootDenotation.dfy/CertifiedEqualIndexedRootBodiesHaveEqualDenotations"
+  "eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies"
+  "eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test"
+  "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"
+  "formal/verification/performance-gates.edn"]}

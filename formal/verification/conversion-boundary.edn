@@ -1,0 +1,98 @@
+{:schema-version 1
+ :status :passed
+ :portable-boundary "modules/eacl/src/eacl/verified_kernel.cljc"
+ :categories
+ {:schema-ir
+  [object->dafny
+   dafny-object->object
+   permission-node
+   relation-node
+   rule-definition]
+  :relationships
+  [relationship->dafny]
+  :queries
+  [authorization-inputs
+   traversal-limits
+   page-presence
+   indexed-cursor-bound
+   indexed-render-mode]
+  :adapter-callbacks
+  [indexed-projection
+   indexed-scan-decision
+   indexed-rule
+   relation-binding
+   indexed-plan-decision
+   indexed-seed-decision
+   indexed-limits
+   indexed-projection-value
+   indexed-command-value
+   indexed-counters-value
+   compile-indexed-plan
+   indexed-init
+   indexed-drive
+   indexed-continue-page
+   indexed-resume]
+  :cache-and-cursors
+  [exact-selection
+   continuation-decision
+   cursor-bound-rebase-decision
+   proof-state
+   cache-candidate
+   cache-decision
+   candidate-state
+   subproblem-cache-decision
+   current-cache-stage
+   current-cache-decision]
+  :results
+  [work-counters
+   sequence-outcome
+   boolean-outcome
+   count-outcome
+   authorization-outcome
+   page-decision
+   keyset-page-decision
+   consistency-plan-decision
+   consistency-selection-decision
+   ordered-merge-decision
+   ordered-merge-chunk
+   indexed-public-result]
+  :typed-errors
+  [limit-kind
+   page-error
+   consistency-error
+   indexed-scan-rejection-reason
+   indexed-plan-rejection-reason
+   indexed-limit-kind
+   indexed-render-error]}
+ :runtimes
+ {:clj-java
+  {:source "modules/eacl/src/eacl/formal/production_kernel.clj"
+   :provider eacl.formal.production-kernel/GeneratedJavaKernel
+   :tests
+   ["eacl.formal.production-kernel-test"
+    "eacl.verified-kernel-test"]}
+  :cljs-javascript
+  {:source "modules/eacl/src/eacl/formal/production_kernel_js.cljs"
+   :provider eacl.formal.production-kernel-js/GeneratedJavaScriptKernel
+   :tests
+   ["eacl.formal.production-kernel-test"
+    "eacl.verified-kernel-test"]}}
+ :strict-boundary
+ [:input-validation
+  :result-validation
+  :unknown-field-rejection
+  :safe-integer-validation
+  :bounded-collection-validation
+  :complete-portable-error-comparison]
+ :qualification
+ {:authorization-decisions :generated
+  :conversion-code :trusted-ffi-boundary
+  :cross-runtime-function-presence :machine-checked
+  :semantic-evidence
+  [:generated-java-production-boundary-tests
+   :generated-javascript-production-boundary-tests
+   :cross-runtime-vectors
+   :complete-public-generated-reference-comparison]
+  :not-claimed
+  [:formal-proof-of-clojure-or-clojurescript-source
+   :runtime-or-compiler-correctness]}}

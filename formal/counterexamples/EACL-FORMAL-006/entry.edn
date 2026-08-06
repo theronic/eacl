@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-006
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "secure-format/namespaced-map-key"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:shared :datascript :datahike]
+ :root-cause
+ "Canonical authenticated payloads were rendered with the host pr-str implementation. JVM Clojure abbreviates a map whose keys share a namespace as a namespaced map, while ClojureScript emits explicit qualified keys, producing different authenticated bytes for the same portable value."
+ :fix
+ "Host-dependent collection printing was replaced by an explicit bounded portable EDN renderer. The same rendering order now drives canonical map and set ordering in CLJ and CLJS, while decoders retain support for previously issued JVM namespace-map payloads."
+ :closing-evidence
+ ["eacl.secure-format-test/canonical-portable-format-test (CLJ and CLJS)"
+  "eacl.secure-format-test/authenticated-cross-runtime-vectors-test (CLJ and CLJS)"
+  "full DataScript CLJS suite: 47 tests, 275 assertions"]}

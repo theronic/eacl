@@ -1,0 +1,6 @@
+{:operation :counterexample-replay
+ :entrypoint "bin/formal counterexample-replay"
+ :classpath-aliases [:dev :test :cljs-test :nrepl]
+ :removed-production-namespace eacl.lazy-merge-sort
+ :before {:eager-require true}
+ :observed-error :namespace-not-found}

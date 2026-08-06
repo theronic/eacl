@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-040
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "ordered-merge/production-has-last-and-balanced-fold-control"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit a212d0e3d50a9ed7f0210eaf727bcf3d805c0c2c"]
+ :affected-backends [:shared]
+ :root-cause
+ "The ordered-merge proof established the canonical two-stream union and an abstract balanced fold, while the production CLJ/CLJS implementation carried an explicit has-last state, drop-while exhaustion branches, empty-stream filtering, and a concrete pairwise round schedule that were not represented in the formal control model. Differential output agreement could not establish that those omitted states were semantically redundant under the strict-stream contract."
+ :fix
+ "Model the production recursion, exhausted-tail handling, explicit last-value presence, empty-stream filtering, and pairwise fold schedule in Dafny. Prove the exact source recursion equals the canonical merge for finite strictly ordered streams, prove strict order plus set equality determines the exact sequence and therefore the production fold equals the canonical fold, prove each two-stream recursion has at most |left|+|right| comparison iterations, compile the source model to Java and JavaScript, and compare both actual host implementations against it."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model"
+  "eacl.formal.production-kernel-test/production-javascript-two-stream-merge-refines-exact-source-model"
+  "eacl.formal.production-kernel-test/optimized-jvm-ordered-merge-refines-generated-chunks"
+  "eacl.formal.production-kernel-test/optimized-javascript-ordered-merge-refines-generated-chunks"
+  "formal/dafny/OrderedMerge.dfy"]}

@@ -1,0 +1,11 @@
+{:backend :datascript
+ :adapter-input
+ {:db :immutable-snapshot
+  :conn nil
+  :coherence-authority :managed}
+ :request-consistency :fully-consistent
+ :before
+ {:advertised-capability true
+  :selected-value :captured-immutable-snapshot}
+ :risk
+ :authoritative-head-request-could-silently-use-an-older-snapshot}

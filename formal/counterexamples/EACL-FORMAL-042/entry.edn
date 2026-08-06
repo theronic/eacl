@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-042
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "acyclic-arrow/empty-resource-side/wide-path"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["EACL v8 through PR 101 commit 2a32c59811e92391a5cee36e0b6f506fd00cde6c"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "The singleton shortcut required a truthy intermediate stream, so nil fell into the wide branch. An empty resource-side arrow therefore calculated direct-grant relations and could open subject-side scans even though its authorization result was necessarily false."
+ :fix
+ "Return false before singleton/wide selection when the resource-side stream is empty. Model the exact empty/singleton/wide source control in Dafny, prove zero or one intermediate skips direct intersection and the optimized result equals complete far-side evaluation, and compare generated Java/JavaScript Boolean and work traces with actual CLJ/CLJS execution."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/generated-java-acyclic-arrow-path-refines-source-control"
+  "eacl.formal.production-kernel-test/generated-javascript-acyclic-arrow-path-refines-source-control"
+  "formal acyclic-arrow source-control mutations"
+  "formal/dafny/AcyclicEngine.dfy"]}

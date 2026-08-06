@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "verificationPolicy": {
+    "dafny": {
+      "assertionBatchTimeLimitSeconds": 60,
+      "proofEffortResourceLimit": 50000000
+    }
+  },
+  "tools": {
+    "cljKondo": {
+      "version": "2025.02.20",
+      "license": {
+        "spdx": "EPL-1.0",
+        "url": "https://github.com/clj-kondo/clj-kondo/blob/v2025.02.20/LICENSE"
+      },
+      "assurance": "static-source-closure-only-not-a-proof-kernel"
+    },
+    "dafny": {
+      "version": "4.11.0",
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/dafny-lang/dafny/blob/v4.11.0/LICENSE"
+      },
+      "components": {
+        "boogie": "bundled",
+        "z3": [
+          "4.12.1",
+          "4.14.1"
+        ]
+      },
+      "artifacts": {
+        "darwin-arm64": {
+          "file": "dafny-4.11.0-arm64-macos-13.zip",
+          "url": "https://github.com/dafny-lang/dafny/releases/download/v4.11.0/dafny-4.11.0-arm64-macos-13.zip",
+          "sha256": "c90c75e7d5db9c6ccbb7127840dfe43f0ac938b039a7ebed146d8ead383a572f"
+        },
+        "linux-x86_64": {
+          "file": "dafny-4.11.0-x64-ubuntu-22.04.zip",
+          "url": "https://github.com/dafny-lang/dafny/releases/download/v4.11.0/dafny-4.11.0-x64-ubuntu-22.04.zip",
+          "sha256": "a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179"
+        }
+      }
+    },
+    "apalache": {
+      "version": "0.58.3",
+      "license": {
+        "spdx": "Apache-2.0",
+        "url": "https://github.com/apalache-mc/apalache/blob/v0.58.3/LICENSE"
+      },
+      "artifact": {
+        "file": "apalache-0.58.3.tgz",
+        "url": "https://github.com/apalache-mc/apalache/releases/download/v0.58.3/apalache-0.58.3.tgz",
+        "sha256": "ba622db9538aebf942cc7a7815f942a6b2b419012707e16dfdc25a73ff95d0a5",
+        "upstreamChecksumUrl": "https://github.com/apalache-mc/apalache/releases/download/v0.58.3/sha256sum.txt"
+      }
+    },
+    "tla2tools": {
+      "version": "1.7.4",
+      "license": {
+        "spdx": "MIT",
+        "url": "https://github.com/tlaplus/tlaplus/blob/v1.7.4/LICENSE"
+      },
+      "artifact": {
+        "file": "tla2tools-1.7.4.jar",
+        "url": "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar",
+        "sha256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+      }
+    }
+  }
+}

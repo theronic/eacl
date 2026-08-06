@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-037
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "verified-authority/schema-cache-shape/datomic-vs-datahike-vs-datascript"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit c138222bd667f5cbf5b38fb62e4610d6f2dc8506"]
+ :affected-backends [:datomic]
+ :root-cause
+ "The Datomic indexed schema cache omitted the shared traversal-analysis and recursive-plans generation slots used by the cross-backend engine. Verified-authoritative Datomic requests consequently took the compatibility host per-root classifier instead of invoking the generated recursive-routing certificate."
+ :fix
+ "Add and generation-evict both shared slots in the Datomic schema cache, and make the forced-authority harness require a recursive-routing-certificate call from every backend."
+ :closing-evidence
+ ["eacl.datomic.impl.indexed-test/schema-cache-carries-shared-engine-analysis-test"
+  "eacl.formal.verified-authority-suite/run-nonbenchmark!"
+  "formal/verification/verified-authority-suites.edn"]}

@@ -2,3 +2,13 @@
 .idea/
 .cpcache/
 /spicedb
+.autopilot.json
+.claude/
+.clojure-mcp/
+.codex/
+.lsp/
+*.iml
+target/
+formal/smoke/js/node_modules/
+.nrepl-port
+.cljs_node_repl/

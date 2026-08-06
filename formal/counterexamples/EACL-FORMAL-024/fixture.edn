@@ -1,0 +1,11 @@
+{:limit {:max-queued-work 1}
+ :fixed-point-round-queue-depths [1 1]
+ :instantaneous-maximum 1
+ :cumulative-enqueues 2
+ :production-outcome
+ {:status :complete
+  :count 2
+  :maximum-queue-depth 1}
+ :materialized-outcome-before-fix
+ {:status :limit-exceeded
+  :limit-kind :queued-work}}

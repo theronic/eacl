@@ -1,0 +1,13 @@
+{:workflow ".github/workflows/formal.yml"
+ :gate "bin/check-generated-artifact-size"
+ :gate-interpreter "bb"
+ :installed-before-fix
+ {:clojure :latest
+  :clj-kondo "2025.02.20"
+  :node "22"}
+ :failure
+ "/usr/bin/env: ‘bb’: No such file or directory"
+ :proofs-before-failure
+ {:modules 21
+  :proof-efforts 9207
+  :errors 0}}

@@ -1,0 +1,62 @@
+{:schema-version 1
+ :status :dispatch-key-closure-established
+ :assurance :static-literal-operation-closure-not-adapter-semantic-proof
+ :source-roots
+ ["modules/eacl/src"
+  "modules/eacl-datomic/src"
+  "modules/eacl-datahike/src"
+  "modules/eacl-datascript/src"]
+ :runtime-passes
+ {:clj
+  {:invoke-call-count 55
+   :operations
+   #{:snapshot-id
+     :source-scope
+     :graph-head
+     :contains-anchor?
+     :order-hint
+     :select-current
+     :select-authoritative
+     :select-at-least
+     :exact-locator
+     :select-exact
+     :object-id->internal
+     :internal-id->object
+     :relation-defs
+     :permission-defs
+     :subject->resources
+     :resource->subjects
+     :direct-match?
+     :all-permission-nodes
+     :schema-proof
+     :relation-proof}}
+  :cljs
+  {:invoke-call-count 55
+   :operations
+   #{:snapshot-id
+     :source-scope
+     :graph-head
+     :contains-anchor?
+     :order-hint
+     :select-current
+     :select-authoritative
+     :select-at-least
+     :exact-locator
+     :select-exact
+     :object-id->internal
+     :internal-id->object
+     :relation-defs
+     :permission-defs
+     :subject->resources
+     :resource->subjects
+     :direct-match?
+     :all-permission-nodes
+     :schema-proof
+     :relation-proof}}}
+ :requirements
+ {:every-invoke-operation-is-a-literal-keyword true
+  :observed-equals-required-snapshot-operations true
+  :make-adapter-requires-callable-operation-implementations true}
+ :remaining
+ [:backend-operation-semantics-remain-adapter-obligations
+  :storage-engine-and-host-runtime-remain-trusted]}

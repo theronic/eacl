@@ -1,0 +1,10 @@
+{:operation :normalize-consistency
+ :descriptor
+ {:consistency/mode :at-least-as-fresh
+  :zed/token "token"
+  :unexpected true}
+ :before
+ {:normalized
+  {:mode :at-least-as-fresh
+   :token "token"}}
+ :model-input :ConsistencyMalformed}

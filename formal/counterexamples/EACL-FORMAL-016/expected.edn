@@ -1,0 +1,8 @@
+{:value 42
+ :cached? false
+ :registered-flights-observed-at-decision 0
+ :represented-entries-observed-at-decision 0
+ :registered-flights-after-completion 0
+ :represented-entries-after-completion 1
+ :invariant
+ "An authoritative lookup action is applied before and controls the corresponding cache-state mutation."}

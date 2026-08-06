@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-027
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "acyclic-leapfrog/source-specialization/signed-adapter-domain"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree before the nonnegative adapter obligation"]
+ :affected-backends [:shared :third-party]
+ :root-cause
+ "The shared adapter contract and optional runtime guard admitted signed exact-integer object IDs, order hints, and scan values, while the generated boundary and Dafny engine accept only safe natural EIDs. This left the legacy acyclic implementation and formal engine with different declared input domains."
+ :fix
+ "The adapter contract now requires nonnegative internal identities and ordered scan values. Optional runtime guards reject negative object IDs, order hints, and scan outputs, and the portable certification harness rejects negative visible-object identities."
+ :closing-evidence
+ ["eacl.backend.v8-test/runtime-guards-reject-negative-internal-eids-test"
+  "all Datomic, Datahike, and DataScript adapter certification suites"
+  "formal/dafny/AcyclicEngine.dfy StrictAscendingEids safe-natural domain"]}

@@ -1,0 +1,14 @@
+{:mode :verified-authoritative
+ :tier :projection
+ :key :missing
+ :candidate-state :missing
+ :generated-lookup-action :start-computation
+ :before-fix
+ {:decision-order [:install-flight :invoke-generated-action]
+  :registered-flights-observed-by-kernel 1
+  :represented-entries-observed-by-kernel 1}
+ :after-fix
+ {:decision-order [:invoke-generated-action :conditionally-install-flight]
+  :registered-flights-observed-by-kernel 0
+  :represented-entries-observed-by-kernel 0
+  :contradictory-generated-action :rejected}}

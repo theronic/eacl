@@ -1,0 +1,6 @@
+{:portable-canonical-inner
+ "{:cursor {:kind :relationships, :offset 2, :scope [:read {:subject/id \"u1\"}], :v 9}, :expires-at 105, :issued-at 100, :version 3}"
+ :cross-runtime-contract
+ "Equal supported values, keys, domains, and clocks produce byte-identical authenticated tokens in CLJ and CLJS."
+ :failure-mode
+ "Authentication must fail closed for a non-identical token; no cross-runtime false grant is permitted."}

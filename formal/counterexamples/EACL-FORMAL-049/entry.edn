@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-049
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "github-actions/run-31006056253/job-92306089986/cursor-rebase-resource-gate"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 commit ffc7beaea8718641c6fa47ae2a28cda443e7433d"]
+ :affected-backends [:shared]
+ :root-cause
+ "The cursor-rebase scaling fixture compared successful single-chunk decisions with multi-chunk tail decisions. Multi-chunk success necessarily includes intermediate generated :restarted chunk results, so the endpoint ratio mixed two operation shapes instead of measuring one asymptotic domain. Running the JVM gate after a ClojureScript compiler build made the smallest single-chunk allocation unusually low and exposed the invalid comparison as a deterministic false positive."
+ :fix
+ "Measure JVM and JavaScript scaling over a fourfold size range wholly within each runtime's multi-chunk domain, fail the gate when a supplied fixture violates that domain, restart a fresh heap-bounded JVM before the JVM cursor gate, and print the complete observation before throwing. Preserve every latency, allocation, heap-delta, logical-work, and one-million-identity ceiling."
+ :closing-evidence
+ ["eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"
+  "eacl.formal.cursor-rebase-benchmark/run-gate!"
+  ".github/workflows/formal.yml/Restart heap-bounded nREPL for cursor resource gate"
+  "formal/verification/performance-gates.edn"]}

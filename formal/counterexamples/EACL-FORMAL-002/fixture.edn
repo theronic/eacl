@@ -1,0 +1,28 @@
+{:schema
+ "definition user {}
+  definition folder {
+    relation parent: folder
+    relation reader: user
+    permission read = reader + parent->read
+  }"
+ :objects
+ [[:user "alice"]
+  [:folder "root"]
+  [:folder "child"]
+  [:folder "grandchild"]]
+ :relationships
+ [[[:user "alice"] :reader [:folder "root"]]
+  [[:folder "root"] :parent [:folder "child"]]
+  [[:folder "child"] :parent [:folder "grandchild"]]]
+ :request
+ {:operation :lookup-resources
+  :subject [:user "alice"]
+  :permission :read
+  :resource-type :folder
+  :first 1}
+ :trace
+ [:request-page-1
+  :resume-page-2-with-authenticated-end-cursor]
+ :observed-page-2-stats
+ {:continuation-hits nil
+  :continuation-misses 1}}

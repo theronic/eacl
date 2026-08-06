@@ -1,0 +1,5 @@
+{:first-store-admitted? false
+ :second-store-admitted? true
+ :provider-kind :can?
+ :semantic-requirement
+ "Authentication changes the stored value representation, not the resource-policy class of the entry."}

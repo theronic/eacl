@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-041
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "leapfrog/reseek-count-equal-but-target-differs"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit aa6612e0bdc0ff2be35ebb30f732b9358378c940"]
+ :affected-backends [:shared]
+ :root-cause
+ "The leapfrog source-specialization differential compared the intersection result and aggregate reseek count but omitted each reseek's stream identity and target. The Dafny work model therefore could agree with production counts while a wrong source target changed backend work or, on another graph, the result."
+ :fix
+ "Extend the Dafny advance and leapfrog model with an ordered [side target] reseek trace, prove its length equals the reseek counter and every event carries the exact branch target, expose it through generated Java and JavaScript, compare it with the actual CLJ/CLJS callbacks over all 4,100 campaign cases per runtime, and certify inclusive/exclusive backend scan windows at every materialized fixture EID."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/optimized-jvm-leapfrog-intersection-refines-bounded-proof"
+  "eacl.formal.production-kernel-test/optimized-javascript-leapfrog-intersection-refines-bounded-proof"
+  "formal mutations :leapfrog-reseek-wrong-target and :leapfrog-reseek-wrong-side"
+  "eacl.formal.mutation-control-test/mutation-registry-is-complete-and-killed-test"
+  "eacl.adapter-certification"
+  "formal/dafny/AcyclicEngine.dfy"]}

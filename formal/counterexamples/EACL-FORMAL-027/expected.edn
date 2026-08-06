@@ -1,0 +1,8 @@
+{:adapter-obligation :nonnegative
+ :guarded-operations
+ [:object-id->internal
+  :subject->resources
+  :resource->subjects
+  :order-hint]
+ :negative-value-result :eacl/backend-contract-violation
+ :formal-eid-domain :safe-natural}

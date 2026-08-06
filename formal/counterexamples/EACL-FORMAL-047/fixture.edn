@@ -1,0 +1,33 @@
+{:operation :lookup-resources
+ :mode :recover-current
+ :query
+ {:subject {:type :user :id "u"}
+  :permission :admin
+  :resource/type :account
+  :first 1}
+ :initial-schema
+ {:account/admin {:relation :owner}}
+ :relationships
+ [{:subject [:user "u"] :relation :owner :resource [:account "a-1"]}
+  {:subject [:user "u"] :relation :owner :resource [:account "a-2"]}]
+ :first-page
+ {:data [[:account "a-1"]]
+  :cursor
+  {:kind :lookup-eid
+   :result-id [:account "a-1"]
+   :path-frontiers :old-proof-state}}
+ :current-schema
+ {:account/admin {:relation :viewer}}
+ :before-fix
+ {:legacy
+  {:data []
+   :cursor-recovery :rebased
+   :old-path-frontiers-reused? true}
+  :generated
+  {:data []
+   :cursor-recovery :restarted}}
+ :after-fix
+ {:legacy-and-generated
+  {:data []
+   :cursor-recovery :restarted
+   :old-path-frontiers-reused? false}}}

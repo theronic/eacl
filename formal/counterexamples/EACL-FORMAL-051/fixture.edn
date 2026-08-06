@@ -1,0 +1,29 @@
+{:workflow ".github/workflows/formal.yml"
+ :run 31013235764
+ :job 92330554511
+ :gate :warm-permission-check
+ :before
+ {:batch-medians-microseconds [1006.083 1006.3265 1004.884]
+  :median-microseconds 1006.083
+  :maximum-microseconds 1000
+  :status :failed}
+ :local-source-profile-before
+ {:median-microseconds 508.292
+  :permission-root-lookups-per-call 2
+  :permission-root-lookup-nanoseconds-per-operation 50819.948}
+ :local-paired-source-profile-after
+ {:batch-medians-microseconds [483.625 483.625 484.3125]
+  :median-microseconds 483.625
+  :permission-root-lookups-per-call 1
+  :before-to-after-ratio 0.951465}
+ :local-complete-heavy-after
+ {:batch-medians-microseconds [433.542 431.8545 431.6665]
+  :median-microseconds 431.8545
+  :cold-median-microseconds 434.79
+  :completed-cache-hit-median-microseconds 14.42
+  :tests 17
+  :assertions 4057
+  :failures 0
+  :errors 0}
+ :interpretation
+ :duplicated-schema-generation-root-classification-on-every-public-permission-check}

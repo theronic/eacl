@@ -1,0 +1,4 @@
+{:required-fields :present-and-schema-valid
+ :optional-fields :schema-valid-when-present
+ :relative-paths :non-absolute-without-parent-traversal
+ :invalid-ledger-value-result :test-failure}

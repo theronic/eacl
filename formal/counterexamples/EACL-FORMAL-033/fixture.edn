@@ -1,0 +1,14 @@
+{:left
+ {:snapshot-id {:database-id :datascript :basis-t 7}
+  :source-scope {:source-id "source" :branch nil}
+  :graph-head
+  {:graph-anchor "graph"
+   :order-hint 7
+   :exact-locator "client-a"}}
+ :right
+ {:snapshot-id {:database-id :datascript :basis-t 7}
+  :source-scope {:source-id "source" :branch nil}
+  :graph-head
+  {:graph-anchor "graph"
+   :order-hint 7
+   :exact-locator "client-b"}}}

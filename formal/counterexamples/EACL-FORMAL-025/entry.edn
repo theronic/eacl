@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-025
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "whole-graph-materialized-oracle-vs-query-local-indexed-limit/unrelated-team-grant"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 assurance reports before resource-scope separation"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "The assurance narrative treated typed limits from the materializing whole-graph semantic oracle as if they refined production's query-local indexed work. An unrelated direct grant increases the materialized initial pending set but is not seeded by a query for another subject type, so identical :max-queued-work values can intentionally produce different operational outcomes."
+ :fix
+ "Materialized completion remains a semantic value oracle only. Production limit and dimensional-counter refinement is now assigned exclusively to the generated indexed state machine under its certified ordered-adapter contract, and reports prohibit cross-scope resource substitution."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/materialized-resource-limits-are-whole-closure-scoped"
+  "eacl.formal.state-trace-differential-test/recursive-shadow-queue-limit-is-query-local"
+  "formal mutation :materialized-resource-counter-promoted-to-production"]}

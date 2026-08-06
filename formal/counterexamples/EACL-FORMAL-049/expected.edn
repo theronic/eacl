@@ -1,0 +1,22 @@
+{:resource-jvm
+ {:maximum-heap-bytes 1073741824
+  :cursor-gate-position :first-after-fresh-resource-jvm-start
+  :completed-jvm :terminated}
+ :scaling-domain
+ {:clj-java
+  {:adapter-chunk-items 4096
+   :sizes [8192 16384 32768]
+   :minimum-span 4
+   :status :passed}
+  :cljs-javascript
+  {:adapter-chunk-items 16384
+   :sizes [32768 65536 131072]
+   :minimum-span 4
+   :status :passed}}
+ :thresholds-relaxed false
+ :failed-result-printed true
+ :logical-work :exact-first-match-or-n-inspections
+ :large-recovery
+ {:size 1000001
+  :status :passed}
+ :status :passed}

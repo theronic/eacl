@@ -1,0 +1,4 @@
+{:compiler-entrypoint :cljs.build.api/build
+ :node-suite :passed
+ :persistent-nrepl-future :eacl.formal/agent-executor-alive
+ :executor-state :running}

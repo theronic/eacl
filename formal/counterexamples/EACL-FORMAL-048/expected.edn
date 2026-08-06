@@ -1,0 +1,15 @@
+{:resource-jvm
+ {:maximum-heap-bytes 1073741824
+  :routing-gate-position :first-after-fresh-resource-jvm-start
+  :completed-jvm :terminated}
+ :routing-gate
+ {:warmup-per-size 40
+  :samples-per-size 11
+  :failed-result-printed true
+  :logical-work :exact-p-plus-2v-plus-e
+  :thresholds
+  {:maximum-p50-allocated-bytes-per-node 8192.0
+   :maximum-normalized-allocation-ratio 1.5
+   :maximum-normalized-latency-ratio 5.0}
+  :thresholds-relaxed false
+  :status :passed}}

@@ -1,0 +1,14 @@
+{:formal
+ {:pairwise-ordering-contract-preserved true
+  :adjacent-executable-check-equivalent true
+  :changed-module-verification-errors 0}
+ :java
+ {:persistent-set-map-boundary true
+  :fixed-heap-completed true
+  :reverse-page-max-median-ms 2.78}
+ :javascript
+ {:persistent-set-map-sequence-boundary true
+  :largest-to-smallest-normalized-per-result-ratio
+  0.9499976911364107
+  :maximum-allowed-ratio 1.5
+  :scaling-gate :passed}}

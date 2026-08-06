@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-030
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recursive-routing/same-permission-name-on-distinct-resource-types"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 formal RecursiveEngine routing oracle before typed dependency edges"]
+ :affected-backends [:shared]
+ :root-cause
+ "The existing abstract PathDependencies function resolves an arrow-permission target by permission name alone because its compiled path has no resolved target resource type. Reusing that abstraction as an exact production SCC-routing oracle can connect an unrelated same-named permission to a recursive component."
+ :fix
+ "The executable production-routing oracle now consumes fully typed PermissionDependencyEdge values whose head and target are complete PermissionNode identities. The older path abstraction remains explicitly documented as a conservative cache-scope abstraction rather than an exact routing refinement."
+ :closing-evidence
+ ["RecursiveEngine.RoutingTraversalScanIsExact"
+  "RecursiveEngine.DecideTypedTraversalPermission"
+  "eacl.formal.production-kernel-test/generated-java-classifies-production-recursive-routing"
+  "eacl.formal.production-kernel-test/generated-javascript-classifies-production-recursive-routing"
+  "formal mutation :routing-node-identity-drops-resource-type"]}

@@ -1,0 +1,25 @@
+{:schema
+ "definition user {}
+  definition account {
+    relation owner: user
+    permission admin = owner
+  }"
+ :proof-mode :none
+ :objects
+ [[:user "alice"]
+  [:account "a1"]
+  [:account "a2"]
+  [:account "a3"]]
+ :initial-relationships
+ [[[:user "alice"] :owner [:account "a1"]]
+  [[:user "alice"] :owner [:account "a3"]]]
+ :request
+ {:operation :lookup-resources
+  :subject [:user "alice"]
+  :permission :admin
+  :resource-type :account
+  :first 1}
+ :trace
+ [{:page-1 ["a1"]}
+  {:write [[:user "alice"] :owner [:account "a2"]]}
+  {:page-2-observed ["a2"]}]}

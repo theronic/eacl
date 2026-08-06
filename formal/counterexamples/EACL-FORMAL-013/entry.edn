@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-013
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "subproblem-cache/resolve-own-key/lookup-own-flight"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["PR 101 worktree before lifecycle-qualified lookup self-detection"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "`resolve!` recorded active recursive ownership as `[lifecycle tier key]`, but `lookup!` tested `[tier key]`. A callback probing its own in-flight entry could therefore dereference its own unresolved delay instead of taking the documented recursive-self miss."
+ :fix
+ "`lookup!` now constructs the same lifecycle-qualified compound key as `resolve!`, returns a miss for its own flight, and increments the self-bypass and lookup-miss telemetry."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/recursive-lookup-of-own-flight-is-a-miss-test"
+  "formal mutation :lookup-self-scope-omits-lifecycle"]}

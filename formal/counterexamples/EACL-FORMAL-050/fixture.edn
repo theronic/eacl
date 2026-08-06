@@ -1,0 +1,25 @@
+{:workflow ".github/workflows/formal.yml"
+ :run 31009585419
+ :job 92318001441
+ :gate :warm-permission-check
+ :before
+ {:warmup-calls 2000
+  :measurement-batches 1
+  :samples-per-batch 5000
+  :aggregation :single-batch-median
+  :maximum-microseconds 1000
+  :observed-microseconds 1004.339
+  :status :failed}
+ :other-ci-observations
+ {:cold-microseconds 1039.13
+  :cold-maximum-microseconds 1500
+  :completed-cache-hit-microseconds 24.31
+  :completed-cache-maximum-microseconds 1000
+  :status :passed}
+ :fresh-local-forced-authority
+ {:warm-microseconds 440.42
+  :cold-microseconds 440.90
+  :completed-cache-hit-microseconds 17.25
+  :status :passed}
+ :interpretation
+ :single-batch-result-did-not-establish-steady-state-host-service-time}

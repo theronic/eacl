@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-001
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "heavy-pagination-suite/2026-08-02"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:datomic]
+ :root-cause
+ "The Datomic benchmark seeders constructed an EACL client before installing schema/v7-schema. Client construction initializes the mutation journal, whose graph entity uses :eacl/id, so all affected benchmarks aborted with :db.error/not-an-entity."
+ :fix
+ "Both heavy-suite seeders now transact schema/v7-schema before constructing a Datomic client."
+ :closing-evidence
+ ["eacl.bench.pagination-test/benchmark-seeders-initialize-empty-database-test"
+  "The focused regression passes against an initially empty Datomic database."]}

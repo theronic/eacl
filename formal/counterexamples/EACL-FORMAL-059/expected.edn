@@ -1,0 +1,5 @@
+{:direct-generated-page-fields [:first :last :after :before]
+ :removed-public-page-fields-rejected-at :host-boundary
+ :jvm-recursive-pages [[10 30] [20]]
+ :cljs-recursive-pages [[10 30] [20]]
+ :status :cross-runtime-generated-boundary-aligned}

@@ -1,0 +1,7 @@
+{:babashka-version "1.12.213"
+ :installed-before-gate true
+ :generated-builds-before-measurement
+ ["bin/formal build-java"
+  "bin/formal build-js"
+  "bin/formal browser-bundle"]
+ :artifact-gate-exit :measurement-result-not-missing-interpreter}

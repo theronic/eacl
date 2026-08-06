@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-012
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "indexed-scan/two-traversals/same-local-request-id"
+ :minimized-fixture "fixture.edn"
+ :impact :false-grant
+ :affected-versions ["PR 101 worktree before traversal-scope response binding"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "Generated indexed scan commands used traversal-local request IDs, while host responses echoed only that local ID and values. Two independent traversal states could therefore issue request 0—even for the same projection—and a response whose values satisfied the recipient command's ordering and bound checks could be accepted by the wrong state."
+ :fix
+ "Every live traversal receives a globally unique safe-natural request scope. Commands and responses carry that scalar scope plus the traversal-local request ID. The generated Dafny validator and strict JVM/JavaScript boundaries reject either mismatch. Pending generated state retains the complete projection, so a response need not serialize it."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary"
+  "eacl.formal.production-kernel-test/generated-javascript-indexed-scan-response-boundary"
+  "IndexedTraversal.ValidateScanResponse request-scope-and-local-id proof"]}

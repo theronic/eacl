@@ -1,0 +1,13 @@
+{
+  "name": "eacl-formal-js-smoke",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  },
+  "dependencies": {
+    "bignumber.js": "9.1.2",
+    "immutable": "5.1.9"
+  }
+}

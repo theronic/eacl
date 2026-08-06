@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-055
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "github-actions/run-31044563353/permission-check-benchmark"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["PR 101 commits 545c90516458cee444163999de4efd804ed7af06 through c1778a724aef889ad6e85a8f5231c20153fc4dc3"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Generated-authoritative can? always initialized the forward indexed traversal from the subject. A point query is anchored by one resource, but forward evaluation can enumerate every resource reachable from a broad subject before finding that target. Making generated authority the release default therefore changed a target-local authorization check into work proportional to subject fanout."
+ :fix
+ "Initialize the already-verified reverse indexed traversal from the concrete resource and use its Boolean renderer to stop when the requested subject is emitted or to exhaust the target-local reverse search before returning false. Add a direction regression and a 16-versus-1,040 reachable-resource logical/backend-work gate."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages"
+  "eacl.bench.pagination-test/permission-check-benchmark"
+  "IndexedReverseCompleteness.ExhaustedReverseTraversalRefinesLeastFixedPoint"
+  "IndexedTraversal.ReadRenderResult"]}

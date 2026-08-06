@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-019
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "ordered-merge/descending/maximum-eid-as-first-value"
+ :minimized-fixture "fixture.edn"
+ :impact :omission
+ :affected-versions
+ ["PR 101 worktree before explicit ordered-merge last-value presence"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "The optimized descending host merge used the runtime's maximum integer as the sentinel for ‘no previously emitted value’. When that maximum was a legitimate first EID, duplicate suppression mistook it for an already emitted value and dropped it. The Dafny merge carries explicit state and did not contain the defect."
+ :fix
+ "Ascending and descending specialized merges now carry an explicit `has-last?` bit independently of the last EID. Every integer value, including the runtime maximum, is therefore distinct from the uninitialized state."
+ :closing-evidence
+ ["eacl.backend.v8-test/descending-merge-retains-maximum-eid-test"
+  "formal/dafny/OrderedMerge.dfy source-specialization oracle"
+  "formal mutation :ordered-merge-wrong-comparator"]}

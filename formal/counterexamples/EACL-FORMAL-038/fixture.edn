@@ -1,0 +1,20 @@
+{:operation :recursive-routing-certificate
+ :input {:node-count 2
+         :path-count 2
+         :edge-count 2}
+ :hostile-results
+ [{:status :accepted
+   :traversal [true]
+   :path-checks 2
+   :node-checks 4
+   :edge-checks 2}
+  {:status :accepted
+   :traversal [true true]
+   :path-checks 1
+   :node-checks 3
+   :edge-checks 1}
+  {:status :rejected
+   :reason :invalid-component-witness
+   :path-checks 2
+   :node-checks 5
+   :edge-checks 2}]}

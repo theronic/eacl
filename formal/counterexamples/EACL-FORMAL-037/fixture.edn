@@ -1,0 +1,13 @@
+{:mode :verified-authoritative
+ :backend :datomic
+ :schema-cache-before
+ {:traversal-permissions :present
+  :traversal-analysis :absent
+  :recursive-plans :absent}
+ :query-shape
+ {:resource-type :document
+  :permission :view
+  :depends-on-recursive-scc true}
+ :before
+ {:classification-authority :host-per-root-fallback
+  :generated-routing-certificate-calls 0}}

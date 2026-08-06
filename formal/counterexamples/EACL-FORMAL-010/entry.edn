@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-010
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "acyclic/owner-viewer/interleaved-eids"
+ :minimized-fixture "fixture.edn"
+ :impact :wrong-order
+ :affected-versions ["PR 101 worktree during generated all-root cutover"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "The indexed worklist proves least-fixed-point set equality and deterministic rendering for an identical emission sequence, but it does not prove that discovery order equals the globally EID-ordered acyclic list contract. Routing an acyclic union through that worklist emitted relation-stream discovery order instead of the ordered merge."
+ :fix
+ "Generated worklist authority is restricted to roots that transitively depend on a recursive SCC, whose public contract is traversal order. Direct and acyclic roots retain the optimized ordered merge. Dafny proves ordered step and bounded-chunk reconstruction; generated Java and JavaScript are differential oracles. Per-EID generated routing failed the performance gate, so source-digested specialization refinement and independent review remain release gates."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/generated-mode-does-not-reorder-acyclic-multipath-pages"
+  "eacl.formal.production-kernel-test/optimized-jvm-ordered-merge-refines-generated-chunks"
+  "eacl.formal.production-kernel-test/optimized-javascript-ordered-merge-refines-generated-chunks"
+  "formal/dafny/OrderedMerge.dfy AscendingChunkReconstructsMerge and DescendingChunkReconstructsMerge"
+  "formal/mutations/registry.edn :ordered-merge-wrong-comparator"
+  "formal/verification/performance-gates.edn :rejected-acyclic-generated-prototype"
+  "formal/verification/indexed-traversal.edn explicitly withholds acyclic generated authority"]}
