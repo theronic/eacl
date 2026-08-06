@@ -255,7 +255,6 @@ case "$command" in
          ;; fixtures, then reload every lazily resolved regression namespace.
          (require 'eacl.cache :reload)
          (require 'eacl.subproblem-cache :reload)
-         (require 'eacl.lazy-merge-sort :reload)
          (require 'eacl.datomic.cache :reload)
          (doseq [test-ns
                  '[eacl.bench.pagination-test

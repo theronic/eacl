@@ -157,7 +157,7 @@ valuable precisely at this boundary.
 
 ## Bugs and regressions found
 
-The retained corpus contains 57 minimized findings, all marked fixed. Each
+The retained corpus contains 58 minimized findings, all marked fixed. Each
 entry under `formal/counterexamples/EACL-FORMAL-NNN/` records its witness,
 impact, affected backends/version, root cause, fix, and closing evidence. The
 complete corpus is the exact bug ledger; the table below calls out the
@@ -181,9 +181,10 @@ highest-value findings.
 | 055 | asymptotic authorization performance | Point `can?` searched forward from a broad subject, making one-resource checks grow with unrelated subject fanout. | Resource-anchored reverse generated traversal. The recorded local median fell from about 453 µs to 150 µs; deterministic work remains one command/one value at 16 and 1,040 unrelated resources. |
 | 056 | integration correctness | Direct DataScript/Datahike relationship paging could lose the generated kernel between page normalization and physical scan, a bug previously masked by fallback routing. | Resolve one decision kernel once per page and pass it through both phases; the direct relationship query matrix now covers the path. |
 | 057 | assurance-harness correctness | The CLJ-to-generated-Java page-window bridge still called a removed six-field datatype constructor after deprecated pagination inputs were removed. | Align the bridge with the four-field v8 datatype and keep deprecated-input rejection at the public host boundary; all 47 generated-runtime bridge tests now load and pass. |
+| 058 | assurance-workflow availability | Ordinary parity CI eagerly loaded a former engine namespace after it moved to the formal-only classpath; the broader local classpath masked the failure. | Remove eager formal-oracle loads, resolve closing regressions lazily, and test the entrypoint source against all retained former-engine namespaces. |
 
 These findings also expose defects in the verification program itself. Findings
-024–025, 028–034, 040–045, 048–050, and 056–057 are especially important: they
+024–025, 028–034, 040–045, 048–050, and 056–058 are especially important: they
 showed that a theorem, comparator, counter, fixture, or benchmark could be
 correct in isolation while failing to model the actual production boundary or
 target cost. The response was not to weaken the claim; it was to narrow or
@@ -201,7 +202,7 @@ The final pre-audit run on 2026-08-06 produced the following evidence:
 | Generated-only JVM public/backend suite | 509 tests, 34,773 assertions, 0 failures/errors across Datomic, Datahike, and DataScript |
 | Generated-only DataScript CLJS suite | 155 tests, 4,419 assertions, 0 failures/errors |
 | Heavy generated-only backend/performance suite | 17 tests, 4,062 assertions, 0 failures/errors |
-| Minimized counterexample replay | 57 tests, 18,121 assertions, 0 failures/errors |
+| Minimized counterexample replay | 59 tests / 18,164 assertions on the full formal-smoke classpath, 0 failures/errors; the exact ordinary CI classpath additionally runs 42 tests / 2,923 assertions |
 | Mutation control | 1 test, 230 assertions, 0 failures/errors; every registered mutant killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
 | Generated artifact size | browser bundle 578,108 bytes; Java classes/runtime 1,840,181 bytes; Java source 2,079,857 bytes; JavaScript/runtime 924,530 bytes; every ceiling passed |
@@ -270,7 +271,7 @@ Recommended:
 > EACL v8 uses a Dafny-generated authorization kernel in production. Its
 > backend-neutral ReBAC semantics, recursive traversal, pagination, cursor,
 > consistency, and cache decision laws are mechanically verified under
-> documented assumptions. Fifty-seven minimized correctness, assurance-harness,
+> documented assumptions. Fifty-eight minimized correctness, assurance-harness,
 > and performance defects were found and fixed during the verification
 > program. Datomic, Datahike, and DataScript are covered by shared adapter and
 > public-contract suites. Independent audit is pending.

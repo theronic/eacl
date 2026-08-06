@@ -118,7 +118,9 @@
     :EACL-FORMAL-056
     eacl.datascript.impl-test/read-relationships-query-matrix-test
     :EACL-FORMAL-057
-    eacl.formal.page-window-bridge-test/generated-page-normalization-and-window-properties})
+    eacl.formal.page-window-bridge-test/generated-page-normalization-and-window-properties
+    :EACL-FORMAL-058
+    eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test})
 
 (defn- read-edn
   [path]
@@ -162,6 +164,23 @@
       (catch java.io.FileNotFoundException _
         nil))))
 
+(deftest replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test
+  (let [entrypoint (slurp (repo/file "bin" "formal"))]
+    (doseq [test-only-ns
+            ["eacl.lazy-merge-sort"
+             "eacl.backend.spi"
+             "eacl.engine.indexed"]]
+      (is (not (re-find
+                (re-pattern
+                 (str
+                  "\\(require '"
+                  (java.util.regex.Pattern/quote test-only-ns)
+                  " :reload\\)"))
+                entrypoint))
+          (str
+           "the ordinary replay classpath must not eagerly load test-only "
+           test-only-ns)))))
+
 (deftest counterexample-corpus-is-complete-and-closed-test
   (let [schema (read-edn
                 (repo/file
@@ -197,8 +216,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-057 (:latest revision)))
-    (is (= 57 (count entries)))))
+    (is (= :EACL-FORMAL-058 (:latest revision)))
+    (is (= 58 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

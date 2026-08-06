@@ -2,6 +2,6 @@
  :corpus-revision :EACL-FORMAL-057
  :entries 57
  :status :passed
- :tests 57
- :assertions 18121
+ :tests 59
+ :assertions 18164
  :command "EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay"}
