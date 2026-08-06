@@ -1,0 +1,505 @@
+{:schema-version 1
+ :status :source-model-fidelity-established-independent-review-pending
+ :specializations
+ [{:id :ordered-eid-fold-merge
+   :production
+   {:source "modules/eacl/src/eacl/lazy_merge_sort.cljc"
+    :symbols
+    [eacl.lazy-merge-sort/lazy-merge2-dedupe-longs
+     eacl.lazy-merge-sort/fold2-merge-dedupe-longs
+     eacl.lazy-merge-sort/lazy-merge2-dedupe-longs-desc
+     eacl.lazy-merge-sort/fold2-merge-dedupe-longs-desc
+     eacl.lazy-merge-sort/lazy-fold2-merge-dedupe-sorted-by
+     eacl.lazy-merge-sort/lazy-fold2-merge-dedupe-sorted-by-desc]
+    :caller
+    eacl.engine.v8/merge-eid-seqs
+    :caller-key-function clojure.core/identity
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/OrderedMerge.dfy"
+    :definitions
+    [OrderedMerge.MergeAscending
+     OrderedMerge.MergeDescending
+     OrderedMerge.SourceDropLeadingValue
+     OrderedMerge.SourceMergeAscending
+     OrderedMerge.SourceMergeDescending
+     OrderedMerge.SourceNonEmptyStreams
+     OrderedMerge.DecideMergeStepSpec
+     OrderedMerge.MergeAscendingChunkSpec
+     OrderedMerge.MergeDescendingChunkSpec]
+    :lemmas
+    [OrderedMerge.AscendingMergeStepRefinesDefinition
+     OrderedMerge.DescendingMergeStepRefinesDefinition
+     OrderedMerge.AscendingChunkReconstructsMerge
+     OrderedMerge.DescendingChunkReconstructsMerge
+     OrderedMerge.ProductionAscendingMergeRefinesCanonical
+     OrderedMerge.ProductionDescendingMergeRefinesCanonical
+     OrderedMerge.SourceMergeAscendingIterationsAreLinear
+     OrderedMerge.SourceMergeDescendingIterationsAreLinear
+     OrderedMerge.SourceFoldBalancedAscending
+     OrderedMerge.SourceFoldBalancedDescending
+     OrderedMerge.StrictAscendingSequenceIsDeterminedBySet
+     OrderedMerge.StrictDescendingSequenceIsDeterminedBySet
+     OrderedMerge.ProductionAscendingFoldRefinesCanonical
+     OrderedMerge.ProductionDescendingFoldRefinesCanonical
+     OrderedMerge.FoldBalancedAscending
+     OrderedMerge.FoldBalancedDescending]}
+   :abstract-domain
+   {:values :safe-natural-eids
+    :inputs :finite-strictly-ordered-streams
+    :directions [:asc :desc]
+    :source-state
+    [:explicit-last-presence
+     :last-value
+     :exhausted-tail-drop-while
+     :empty-stream-filter
+     :adjacent-pairwise-fold]
+    :head-partitions
+    [:left-empty :right-empty :left-less :equal :right-less]}
+   :evidence
+   {:java-exhaustive-source-model-fixtures 8192
+    :javascript-exhaustive-source-model-fixtures 8192
+    :java-balanced-fold-source-model-fixtures 100
+    :javascript-balanced-fold-source-model-fixtures 50
+    :formal-two-stream-comparison-bound "|left|+|right|"
+    :mutation :ordered-merge-wrong-comparator
+    :counterexample-regressions
+    [:EACL-FORMAL-019 :EACL-FORMAL-020 :EACL-FORMAL-040]
+    :uninitialized-last-value-representation :explicit-presence-bit
+    :performance-report
+    "formal/verification/performance-gates.edn"
+    :source-digests-required
+    ["modules/eacl/src/eacl/lazy_merge_sort.cljc"
+     "modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/OrderedMerge.dfy"]}
+   :limitations
+   [:clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
+    :generic-host-key-merge-is-outside-the-eacl-identity-eid-caller-scope
+    :host-integer-comparison-and-sequence-semantics-remain-trusted
+    :independent-source-refinement-review-not-recorded]}
+  {:id :acyclic-leapfrog-sorted-eid-intersection
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbols
+    [eacl.engine.v8/advance-sorted-eids
+     eacl.engine.v8/sorted-eids-intersect?]
+    :caller eacl.engine.v8/can-uncached*
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.StrictAscendingEids
+     AcyclicEngine.DropEidsBefore
+     AcyclicEngine.AdvanceSortedEids
+     AcyclicEngine.AdvanceExaminedHeads
+     AcyclicEngine.AdvanceReseekCalls
+     AcyclicEngine.AdvanceReseekTrace]
+    :lemmas
+    [AcyclicEngine.DropEidsBeforeProperties
+     AcyclicEngine.AdvanceReseekTraceProperties
+     AcyclicEngine.AdvanceSortedEidsProperties
+     AcyclicEngine.LeapfrogSortedEidsIntersectWithWork
+     AcyclicEngine.LeapfrogSortedEidsIntersect]}
+   :abstract-domain
+   {:values :safe-natural-eids
+    :inputs :finite-strictly-ascending-streams
+    :reseek-contract :inclusive-first-value-greater-than-or-equal-to-target
+    :result :set-intersection-nonempty
+    :linear-probe-limit 16
+    :formal-resource-bounds
+    {:outer-iterations "|left| + |right|"
+     :reseek-calls "outer-iterations"
+     :probe-head-examinations "17 * outer-iterations"}}
+   :evidence
+   {:java-generated-oracle-fixtures 4100
+    :javascript-generated-oracle-fixtures 4100
+    :forced-production-reseek-fixtures 3
+    :mutations
+    [:leapfrog-equal-head-skipped
+     :leapfrog-reseek-target-excluded
+     :leapfrog-probe-limit-off-by-one
+     :leapfrog-reseek-wrong-target
+     :leapfrog-reseek-wrong-side]
+    :counterexample-regressions [:EACL-FORMAL-041]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]
+    :formal-resource-qualification
+    :dimensionally-separated-logical-control-flow
+    :source-counter-agreement
+    {:reseek-calls :exact-on-all-java-and-javascript-fixtures
+     :reseek-side-and-target-trace
+     :exact-on-all-java-and-javascript-fixtures
+     :probe-head-examinations
+     :formal-control-flow-measure-not-instrumented-in-production-source}}
+   :limitations
+   [:clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
+    :inclusive-reseek-contract-remains-an-adapter-obligation-with-every-materialized-fixture-bound-checked
+    :formal-head-examinations-do-not-include-outer-loop-head-reads
+    :backend-seek-complexity-and-allocation-remain-trusted
+    :no-formal-bound-on-lazy-realization-allocation-heap-or-wall-time
+    :host-long-and-javascript-safe-integer-semantics-remain-trusted
+    :independent-source-refinement-review-not-recorded]}
+  {:id :acyclic-arrow-path-control
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbol eacl.engine.v8/can-uncached*
+    :scope
+    :arrow-empty-singleton-direct-intersection-exhaustive-and-fallback-selection
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.AnyTrue
+     AcyclicEngine.FirstTrueCandidateChecks]
+    :lemmas
+    [AcyclicEngine.FirstTrueCandidateChecksProperties
+     AcyclicEngine.AcyclicArrowPathDecisionWithWork]}
+   :abstract-domain
+   {:intermediates :finite-ordered-resource-side-candidates
+    :full-candidate-matches
+    :exact-far-side-authorization-result-per-intermediate
+    :direct-intersection-contract
+    :positive-results-are-a-subset-of-full-candidate-matches
+    :exhaustive-contract
+    :direct-intersection-equals-full-candidate-evaluation
+    :formal-resource-bounds
+    {:zero-or-one-intermediate-direct-intersection-phases 0
+     :wide-intermediate-direct-intersection-phases 1
+     :full-candidate-checks "<= |intermediates|"}}
+   :evidence
+   {:java-source-control-fixtures 8
+    :javascript-source-control-fixtures 8
+    :covered-shapes
+    [:empty
+     :singleton-hit
+     :singleton-miss
+     :wide-direct-hit
+     :wide-exhaustive-hit
+     :wide-exhaustive-miss
+     :wide-fallback-hit
+     :wide-fallback-miss]
+    :mutations
+    [:arrow-empty-stream-enters-wide-path
+     :arrow-singleton-enters-wide-path
+     :arrow-direct-hit-runs-full-fallback
+     :arrow-exhaustive-miss-runs-full-fallback
+     :arrow-nonexhaustive-miss-skips-full-fallback]
+    :counterexample-regressions [:EACL-FORMAL-042]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :limitations
+   [:source-control-fixtures-exercise-arrow-permission-the-arrow-relation-variant-shares-the-selection-branch-and-is-covered-by-public-integration
+    :direct-match-subset-and-exhaustiveness-contracts-compose-with-the-permission-path-materialization-specialization-subject-to-its-trusted-boundary
+    :full-candidate-match-booleans-remain-callback-semantic-obligations
+    :path-materialization-alias-recursion-and-outer-path-fold-are-outside-this-narrow-control-model
+    :clojure-source-to-dafny-source-model-correspondence-is-digest-locked-reviewed-and-executable-not-a-formal-clojure-language-semantics-proof
+    :no-formal-bound-on-backend-seek-cost-allocation-retained-heap-or-wall-time
+    :independent-source-refinement-review-not-recorded]}
+  {:id :permission-path-materialization
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbols
+    [eacl.engine.v8/calc-permission-paths
+     eacl.engine.v8/calc-direct-grant-relations]
+    :scope
+    :raw-definitions-to-resolved-ranked-path-maps-and-direct-grant-summary
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.MatchingRawRelations
+     AcyclicEngine.MaterializeRawDefinition
+     AcyclicEngine.MaterializeRawDefinitions
+     AcyclicEngine.RankMaterializedPaths
+     AcyclicEngine.DirectGrantRelationEids
+     AcyclicEngine.AllSourcePathsAreRelations
+     AcyclicEngine.DirectGrantAny]
+    :lemmas
+    [AcyclicEngine.DirectGrantFactsAreSoundAndExhaustive]
+    :methods [AcyclicEngine.MaterializePermissionPaths]}
+   :abstract-domain
+   {:relation-definition
+    [:resource-type :relation-name :subject-type :nonnegative-relation-eid]
+    :permission-definition
+    [:resource-type
+     :permission-name
+     :self-or-via-source
+     :relation-or-permission-target
+     :target-name]
+    :materialized-paths
+    [:relation :self-permission :arrow-relation :arrow-permission]
+    :rank-order
+    [:relation :self-permission :arrow-relation :arrow-permission]
+    :direct-summary
+    {:relation-eids :only-relation-paths-matching-subject-type
+     :exhaustive :iff-every-materialized-path-is-a-relation}}
+   :evidence
+   {:java-source-control-fixtures 99
+    :javascript-source-control-fixtures 99
+    :subset-campaigns
+    {:definition-kinds 4
+     :definition-subsets 16
+     :subject-types 3
+     :relation-orders 2}
+    :missing-definition-fixtures 3
+    :adapter-certification
+    {:version "eacl.adapter-certification/v2"
+     :datomic-clj :passed
+     :datahike-clj :passed
+     :datascript-clj :passed
+     :datascript-cljs :passed}
+    :mutations
+    [:path-materialization-omits-expanded-relation
+     :path-materialization-admits-missing-target
+     :path-materialization-skips-cost-ranking
+     :direct-summary-includes-other-subject-type
+     :direct-summary-ignores-nonrelation-path]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "modules/eacl/test/eacl/adapter_certification.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :limitations
+   [:adapter-composition-is-finite-executable-certification-not-a-proof-of-each-storage-engine
+    :backend-definition-order-is-compared-on-forward-and-reversed-fixtures-not-all-host-sequences
+    :clojure-and-clojurescript-sort-and-sequence-semantics-remain-a-digest-locked-trusted-language-refinement
+    :permission-definition-query-filtering-is-an-adapter-certification-obligation
+    :path-callback-evaluation-and-outer-union-fold-remain-outside-this-materialization-model
+    :no-formal-bound-on-backend-schema-read-allocation-retained-heap-or-wall-time
+    :independent-source-refinement-review-not-recorded]}
+  {:id :public-can-root-classification
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbol eacl.engine.v8/can?
+    :scope
+    :public-endpoint-validation-permission-root-classification-and-generated-authority-dispatch
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.PublicCanBeforeRootHoist
+     AcyclicEngine.PublicCanAfterRootHoist
+     AcyclicEngine.PublicCanRootChecksBeforeHoist
+     AcyclicEngine.PublicCanRootChecksAfterHoist]
+    :lemmas
+    [AcyclicEngine.PublicCanRootClassificationHoistPreservesResult
+     AcyclicEngine.PublicCanRootClassificationHoistReducesWork]}
+   :abstract-domain
+   {:historical-pre-cutover-inputs
+    [:visible-endpoints
+     :generated-authoritative
+     :generated-shadow
+     :permission-root-defined
+     :generated-result
+     :legacy-result]
+    :current-runtime-inputs
+    [:visible-endpoints :permission-root-defined :generated-result]
+    :undefined-root-contract :result-is-false
+    :result :authorization-boolean}
+   :evidence
+   {:jvm-public-client-fixtures 1
+    :generated-production-root-lookups-per-call 1
+    :portable-result-regressions
+    :complete-verified-authority-clj-cljs-suites
+    :counterexample-regressions [:EACL-FORMAL-051]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :formal-resource-bounds
+   {:scope :one-production-dispatch-invocation
+    :generated-production-root-lookups 1
+    :historical-before-after-model
+    :retained-only-as-optimization-proof-evidence}
+   :limitations
+   [:undefined-root-denies-is-the-host-semantic-precondition-discharged-by-empty-permission-path-evaluation-and-public-regressions
+    :jvm-observes-the-exact-private-root-lookup-count-cljs-shares-the-same-cljc-branch-but-is-result-tested-only
+    :clojure-clojurescript-language-semantics-remain-a-digest-locked-trusted-refinement
+    :schema-cache-lookup-runtime-cost-remains-measured-not-proved
+    :independent-source-refinement-review-not-recorded]}
+  {:id :acyclic-outer-path-fold
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbol eacl.engine.v8/can-uncached*
+    :scope
+    :recursion-guard-cheapest-first-union-short-circuit-and-callback-kind-routing
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:source "formal/dafny/AcyclicEngine.dfy"
+    :definitions
+    [AcyclicEngine.EffectiveAcyclicPathResult
+     AcyclicEngine.AnyEffectiveAcyclicPathResult
+     AcyclicEngine.FirstEffectiveAcyclicPathChecks
+     AcyclicEngine.AcyclicCallbackTrace
+     AcyclicEngine.CallbackKindCount]
+    :lemmas
+    [AcyclicEngine.FirstEffectiveAcyclicPathChecksProperties
+     AcyclicEngine.AcyclicCallbackTraceProperties
+     AcyclicEngine.CallbackKindCountBound]
+    :methods [AcyclicEngine.AcyclicPathFoldWithTrace]}
+   :abstract-domain
+   {:path-kinds
+    {0 :direct-relation
+     1 :self-permission
+     2 :arrow}
+    :direct-result
+    :declared-subject-type-matches-and-direct-probe-is-positive
+    :self-and-arrow-result :nested-path-evaluation-result
+    :trace-event [:path-kind :materialized-path-index]}
+   :evidence
+   {:java-source-control-fixtures 407
+    :javascript-source-control-fixtures 407
+    :ordinary-sequences
+    {:path-observations 7
+     :lengths [0 1 2 3]
+     :fixtures 400}
+    :visited-state-fixtures 7
+    :exact
+    [:authorization-result
+     :realized-path-count
+     :direct-probe-count
+     :self-permission-callback-count
+     :arrow-evaluation-count
+     :ordered-callback-kind-and-path-index]
+    :mutations
+    [:acyclic-visited-state-evaluates-path
+     :acyclic-mismatched-direct-invokes-probe
+     :acyclic-path-fold-does-not-short-circuit
+     :acyclic-self-permission-routed-as-direct
+     :acyclic-arrow-callback-skipped]
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "formal/dafny/AcyclicEngine.dfy"]}
+   :formal-resource-bounds
+   {:path-checks "<= |materialized paths|"
+    :each-callback-kind "<= path checks"
+    :visited-state-path-and-callback-checks 0}
+   :limitations
+   [:callback-trace-proves-kind-and-path-index-not-the-complete-host-argument-vector
+    :nested-self-permission-and-arrow-results-remain-semantic-inputs-to-this-pure-fold
+    :direct-backend-probe-correctness-remains-an-adapter-and-runtime-obligation
+    :clojure-lazy-sequence-and-callback-language-semantics-remain-a-digest-locked-trusted-refinement
+    :no-formal-bound-on-backend-work-allocation-retained-heap-or-wall-time
+    :independent-source-refinement-review-not-recorded]}
+  {:id :recursive-scc-routing
+   :production
+   {:source "modules/eacl/src/eacl/engine/v8.cljc"
+    :symbols
+    [eacl.engine.v8/permission-query-dependencies
+     eacl.engine.v8/permission-graph
+     eacl.engine.v8/transpose-graph
+     eacl.engine.v8/graph-components
+     eacl.engine.v8/reachable-from-many
+     eacl.engine.v8/component-parent-tree
+     eacl.engine.v8/calc-traversal-artifacts
+     eacl.engine.v8/calc-traversal-analysis
+     eacl.engine.v8/traversal-permission?]
+    :algorithm
+    :deterministic-indexing-plus-iterative-kosaraju-reverse-reachability-and-proof-carrying-certificate
+    :runtime-targets [:clj-java :cljs-javascript]}
+   :formal
+   {:sources
+    ["formal/dafny/RecursiveEngine.dfy"
+     "formal/dafny/RoutingCertificate.dfy"]
+    :definitions
+    [RecursiveEngine.PermissionDependencyEdge
+     RecursiveEngine.RoutingStep
+     RecursiveEngine.RoutingClosure
+     RecursiveEngine.RoutingReachability
+     RecursiveEngine.RoutingStrongComponent
+     RecursiveEngine.RoutingRecursiveComponent
+     RecursiveEngine.RoutingDependsOnRecursiveComponent
+     RecursiveEngine.DecideTypedTraversalPermission
+     RoutingCertificate.RoutingProof
+     RoutingCertificate.ValidRoutingCertificate
+     RoutingCertificate.CheckRoutingCertificate]
+    :lemmas
+    [RecursiveEngine.RoutingStepIsMonotone
+     RecursiveEngine.RoutingClosureIsFixed
+     RecursiveEngine.RoutingClosureIsLeast
+     RecursiveEngine.RoutingReachabilityIsExactLeastClosure
+     RecursiveEngine.RoutingSelfEdgeScanIsExact
+     RecursiveEngine.RoutingComponentSelfScanIsExact
+     RecursiveEngine.IsRoutingRecursiveNodeIsExact
+     RecursiveEngine.RoutingTraversalScanIsExact
+     RoutingCertificate.SameCertificateComponentIsMutuallyReachable
+     RoutingCertificate.MutuallyReachableNodesShareCertificateComponent
+     RoutingCertificate.CertificateRecursiveComponentIsExact
+     RoutingCertificate.CertificateTraversalIsSound
+     RoutingCertificate.CertificateTraversalIsComplete
+     RoutingCertificate.AcceptedRoutingCertificateIsExact]}
+   :abstract-domain
+   {:nodes :complete-resource-type-and-permission-identities
+    :edges :fully-resolved-head-to-target-permission-dependencies
+    :recursive-component
+    :multi-node-strong-component-or-singleton-self-edge
+    :routed-roots
+    :recursive-component-members-and-every-transitive-acyclic-ancestor}
+   :evidence
+   {:java-source-differential-graph-shapes 519
+    :javascript-source-differential-graph-shapes 519
+    :certificate-backed-production-graph-shapes
+    {:java 519
+     :javascript 519}
+    :exhaustive-subcampaign
+    {:typed-nodes 3
+     :possible-directed-edges 9
+     :graphs 512}
+    :graph-shapes
+    [:empty
+     :singleton-self-loop
+     :multi-node-scc-with-ancestor
+     :disconnected-recursion
+     :acyclic-diamond
+     :deep-ancestor-chain
+     :same-permission-name-on-distinct-resource-types]
+    :counterexample-regressions [:EACL-FORMAL-030]
+    :mutations
+    [:routing-node-identity-drops-resource-type
+     :routing-only-recursive-component-members
+     :routing-singleton-self-loop-ignored
+     :routing-dependency-direction-reversed
+     :routing-certificate-splits-one-scc
+     :routing-certificate-reverses-parent-edge
+     :routing-certificate-omits-multi-member-witness
+     :routing-certificate-hides-recursive-traversal
+     :routing-certificate-result-length-unbound
+     :routing-certificate-result-counters-unbound
+     :routing-permission-path-omits-dependency-edge
+     :routing-relation-path-invents-dependency-edge
+     :routing-path-edge-order-unbound]
+    :scale-fixture
+    {:nodes 4096
+     :paths 4096
+     :edges 4096
+     :generated-path-checks 4096
+     :generated-node-checks 8192
+     :generated-edge-checks 4096
+     :certificate-runs-per-stamped-schema-generation 1
+     :runtime-targets [:clj-java :cljs-javascript]}
+    :source-digests-required
+    ["modules/eacl/src/eacl/engine/v8.cljc"
+     "modules/eacl/src/eacl/verified_kernel.cljc"
+     "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj"
+     "formal/dafny/RecursiveEngine.dfy"
+     "formal/dafny/RoutingCertificate.dfy"]}
+   :resource-claim
+   {:production
+    "O(V log V + P + E) comparison/logical work after permission paths are materialized: deterministic indexing is O(V log V), path derivation plus graph and certificate construction are O(V+P+E)"
+    :generated-certificate-checker
+    {:path-checks "P"
+     :node-checks "2V"
+     :edge-checks "E"
+     :logical-checks "P+2V+E"
+     :allocation-heap-latency :runtime-measurements-not-formal-theorems}
+    :lore-qualification
+    :historical-techniques-only-no-analyser-result-or-release-gate}
+   :limitations
+   [:accepted-certificate-proves-exact-descriptor-to-edge-derivation-but-not-backend-path-materialization-or-host-map-to-descriptor-translation
+    :proofless-raw-snapshots-use-the-temporal-safe-host-per-root-fallback
+    :externally-constructed-uncertified-schema-cache-maps-use-the-host-per-root-fallback
+    :path-materialization-cost-is-outside-this-specialization
+    :host-hash-map-set-and-vector-semantics-remain-trusted
+    :deterministic-pr-str-comparison-cost-is-a-host-assumption
+    :no-formal-bound-on-allocation-retained-heap-backend-work-or-wall-time
+    :independent-source-refinement-review-not-recorded]}]}

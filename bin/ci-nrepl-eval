@@ -1,0 +1,40 @@
+#!/bin/sh
+
+set -eu
+
+if [ "$#" -ne 2 ]; then
+  printf '%s\n' "usage: sh bin/ci-nrepl-eval <port> <clojure-form>" >&2
+  exit 2
+fi
+
+EACL_CI_NREPL_PORT=$1
+EACL_CI_NREPL_FORM=$2
+export EACL_CI_NREPL_PORT EACL_CI_NREPL_FORM
+
+exec clojure \
+  -Sdeps '{:deps {nrepl/nrepl {:mvn/version "1.3.1"}}}' \
+  -M \
+  -e '
+    (require (quote [nrepl.core :as nrepl]))
+    (let [port (parse-long (System/getenv "EACL_CI_NREPL_PORT"))
+          form (System/getenv "EACL_CI_NREPL_FORM")]
+      (with-open [connection (nrepl/connect :host "127.0.0.1" :port port)]
+        (let [client (nrepl/client connection 600000)
+              session (nrepl/client-session client)
+              responses
+              (doall
+               (nrepl/message
+                session
+                {:op "eval" :code form}))
+              statuses (into #{} (mapcat :status) responses)]
+          (doseq [response responses]
+            (when-let [output (:out response)]
+              (print output))
+            (when-let [error (:err response)]
+              (binding [*out* *err*] (print error)))
+            (when-let [value (:value response)]
+              (println value)))
+          (flush)
+          (when (or (contains? statuses "eval-error")
+                    (contains? statuses "interrupted"))
+            (System/exit 1)))))'

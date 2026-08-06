@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-048
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "github-actions/run-31003207937/job-92296807814/routing-certificate-gate"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 commit 80317386df0b4b67428137bd919875e1782d67cf"]
+ :affected-backends [:shared]
+ :root-cause
+ "The generated routing-certificate resource gate used only five per-size warmups and ran after two ClojureScript compiler builds in the same JVM. A clean HotSpot process could therefore measure tiered-compilation or compiler/GC state rather than steady-state routing work. The CI expression threw before printing the failed result, hiding which resource dimension crossed its unchanged ceiling."
+ :fix
+ "Run the routing gate first in the fresh 1 GiB generated-resource JVM, use 40 deterministic warmups and 11 samples per size, and print the complete observation before a failed result throws. The exact P+2V+E logical checks and all allocation/latency ceilings remain unchanged."
+ :closing-evidence
+ ["eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test"
+  "eacl.formal.routing-certificate-benchmark/run-gate!"
+  ".github/workflows/formal.yml/Gate routing-certificate logical work and JVM allocation"
+  "formal/verification/performance-gates.edn"]}

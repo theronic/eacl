@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-004
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "proof-mode-none/add-between-pages"
+ :minimized-fixture "fixture.edn"
+ :impact :stale-reuse
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "Cursor proof identity hashed nil schema/relation proofs when :proof-mode :none was selected. Cursor equivalence compared that constant digest and silently lifted graph-specific resume state without an explicit current-recovery or exact-snapshot decision."
+ :fix
+ "Every cursor is authenticated to the complete semantic query. Non-exact continuation re-evaluates on one selected current graph, without treating proof equivalence as authorization; explicit at-exact-snapshot continuation alone selects retained history."
+ :closing-evidence
+ ["eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test"
+  "eacl.relay-test/non-exact-continuation-recovers-on-current-graph-test (CLJ and CLJS)"
+  "formal/dafny/TemporalSafety.dfy recovery-mode lemmas"
+  "formal/tla/EaclTemporal.tla CursorCurrentSafe invariant"]}

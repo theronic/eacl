@@ -1,0 +1,11 @@
+{:required-order
+ [:transact-v7-schema
+  :make-client
+  :write-authorization-schema
+  :seed-objects-and-relationships]
+ :expected
+ {:seed-multipath! :returns-client
+  :seed-recursive-chain! :returns-client}
+ :security-impact
+ {:authorization-result-corruption false
+  :benchmark-availability true}}

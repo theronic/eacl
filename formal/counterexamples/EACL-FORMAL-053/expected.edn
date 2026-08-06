@@ -1,0 +1,11 @@
+{:public-result
+ {:exception-type :eacl/unsupported-consistency
+  :consistency
+  {:consistency/mode :at-least-as-fresh
+   :zed/token "token"
+   :unexpected true}}
+ :formal-normalization :ConsistencyRejected
+ :valid-token-descriptor-fields
+ #{:consistency/mode :zed/token}
+ :runtime-targets [:clj :cljs]
+ :backends [:datomic :datahike :datascript]}

@@ -1,0 +1,8 @@
+{:duplicate-map "{:duplicate 1, :duplicate 2}"
+ :unknown-tag "#eacl/unknown {:value true}"
+ :clj {:duplicate-map :malformed
+       :unknown-tag :malformed}
+ :cljs {:duplicate-map {:type :reader-exception
+                        :ex-kind :reader-error}
+        :unknown-tag {:type :reader-exception
+                      :ex-kind :reader-error}}}

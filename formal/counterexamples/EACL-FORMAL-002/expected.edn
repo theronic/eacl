@@ -1,0 +1,7 @@
+{:page-1 ["root"]
+ :page-2 ["child"]
+ :page-2-stats
+ {:continuation-hits 1
+  :continuation-misses nil}
+ :semantic-requirement
+ "Cache presence or absence must not change the page, but a same-client retained continuation must avoid deterministic prefix replay."}

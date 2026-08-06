@@ -38,14 +38,18 @@ Worried about load? You can horizontally scale Datomic Peers dedicated to author
 # What is EACL good for?
 
 - EACL is suitable for Clojure & Datomic Pro and Datomic Cloud applications.
-- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range`, `d/seek-datoms`, and `d/rseek-datoms` for acyclic paths, while recursive permission pagination uses deterministic traversal order with request-local dedupe instead of persisted grant caches.
+- EACL is especially suited to [Electric Clojure](https://electric.hyperfiddle.net/) applications backed by Datomic Pro, because it allows you to render dynamic permissioned menus in real-time. EACL uses low-level Datom access via `d/index-range`, `d/seek-datoms`, and `d/rseek-datoms` for acyclic paths, while recursive permission pagination uses deterministic traversal order with bounded ephemeral continuations instead of persisted grant caches.
 - EACL performance should scale to at least 1M permissioned resources with a goal of 10M resources. If you need more scale & billions of queries, EACL's data model allows you to migrate to SpiceDB with real-time incremental syncing by tailing to the Datomic Pro transactor and monitoring EACL attributes.
 - EACL query complexity scales with the size of your permission schema and the log-size of Relationship indices.
 
 > [!WARNING]
 > Even though EACL is used in production at CloudAfrica, it is under *active* development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
-> v7.3 is the current development version of EACL. It includes bidirectional cursor pagination, the recursive traversal engine, and direction-scoped cursor frontiers for deep acyclic lookup pages. Releases are not tagged yet, so pin the Git SHA.
+> The current branch is the [v8.0 cache candidate](release-notes-v8.0.md). It adds bounded
+> ephemeral authorization caching, resumable recursive continuations, and explicit consistency
+> tokens. The major version increments because it adds a Datomic schema attribute,
+> `:eacl/relation-version`; `write-schema!` installs it, so there is no migration step from v7.
+> Releases are not tagged yet, so pin the Git SHA.
 > Upgrading from v6? The relationship storage model changed — follow the [v6 → v7 migration guide](migration-v6-to-v7.md).
 
 # What is SpiceDB?
@@ -133,7 +137,8 @@ Embedded AuthZ offers some advantages for typical use-cases:
 
 1. Situated permissions avoids network I/O to an external AuthZ system, which should be faster at small-to-medium scale.
 2. Accurate ReBAC model allows 1-for-1 syncing of Relationships to SpiceDB without complex diffing, in real-time.
-3. Queries are fully consistent until you need the consistency semantics of SpiceDB.
+3. Reads support minimize-latency, fully-consistent, at-least-as-fresh, and
+   exact-snapshot consistency without an external authorization service.
 
 ## ReBAC: Relationship-based Access Control
 
@@ -168,12 +173,14 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 
 ## EACL API
 
-The `IAuthorization` protocol in [src/eacl/core.clj](src/eacl/core.clj) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
+The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](../modules/eacl/src/eacl/core.cljc) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
 - `(eacl/can? client subject permission resource) => true | false`
 - `(eacl/lookup-subjects client filters) => {:data [subjects...] :page-info {...}}`
 - `(eacl/lookup-resources client filters) => {:data [resources...] :page-info {...}}`
 - `(eacl/count-resources client filters) => {:keys [count limit]}` counts the full result set.
+- `(eacl/count-subjects client filters) => {:keys [count limit]}` counts the full subject result set.
+- Add `:count-limit n` to either count operation to bound work and receive `:truncated?`.
 - `(eacl/read-relationships client filters) => {:data [relationships...] :page-info {...}}`
 - `(eacl/write-relationships! client updates) => {:zed/token 'db-basis}`,
   - where `updates` is just a coll of `[operation relationship]` where `operation` is one of `:create`, `:touch` or `:delete`.
@@ -202,8 +209,8 @@ The other primary API call is `lookup-resources`, e.g.
 	page1
 	=> {:data [{:type :server :id "server-1"}
 	           {:type :server :id "server-2"}]
-	    :page-info {:start-cursor "eacl3_..."
-	                :end-cursor "eacl3_..."
+	    :page-info {:start-cursor "eacl4_..."
+	                :end-cursor "eacl4_..."
 	                :has-next-page? true
 	                :has-previous-page? false}}
 ```
@@ -220,8 +227,8 @@ To query the next page, pass the `:end-cursor` from page1 as `:after`:
 => {:data [{:type :server :id "server-3"}
            {:type :server :id "server-4"}
            {:type :server :id "server-5"}]
-    :page-info {:start-cursor "eacl3_..."
-                :end-cursor "eacl3_..."
+    :page-info {:start-cursor "eacl4_..."
+                :end-cursor "eacl4_..."
                 :has-next-page? true
                 :has-previous-page? true}}
 ```
@@ -319,8 +326,8 @@ Add the EACL dependency to your `deps.edn` file:
    :resource/type :product
    :first         1000})
 ; => {:data [{:type :product, :id "product-1"}]
-;     :page-info {:start-cursor "eacl3_..."
-;                 :end-cursor "eacl3_..."
+;     :page-info {:start-cursor "eacl4_..."
+;                 :end-cursor "eacl4_..."
 ;                 :has-next-page? false
 ;                 :has-previous-page? false}}
 ```
@@ -506,25 +513,13 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
    }")
 ```
 
-### Advanced: Programmatic Schema (Optional)
+### Schema Mutation Contract
 
-For advanced use cases, you can also define schema programmatically using the internal `Relation` and `Permission` functions:
-
-```clojure
-(require '[eacl.datomic.impl :refer [Relation Permission]])
-
-@(d/transact conn
-  [(Relation :account :owner :user)
-   (Permission :account :admin {:relation :owner})
-   (Relation :server :account :account)
-   (Permission :server :admin {:arrow :account :permission :admin})])
-```
-
-`Permission` supports the following spec syntax:
-- `{:relation some_relation}` - direct permission via relation
-- `{:permission some_permission}` - permission via another permission
-- `{:arrow source :permission via_permission}` - arrow to permission
-- `{:arrow source :relation via_relation}` - arrow to relation
+Use `eacl/write-schema!` for every schema change. The internal `Relation` and `Permission`
+records are not a supported schema API: transacting them directly bypasses validation, the
+schema-generation stamp, and client cache replacement. EACL reads `:eacl/schema-version` once
+when a client is created, never on ordinary authorization calls. Recreate clients after any
+out-of-band schema write.
 
 ## Example Schema
 
@@ -569,7 +564,11 @@ Now you can transact relationships:
 
 ## Limitations, Deficiencies & Gotchas:
 
-- No consistency semantics because all EACL queries are fully-consistent. Use SpiceDB if you need consistency semantics enabled by ZedTokens ala Zookies. SpiceDB is heavily optimised to maintain a consistent cache.
+- EACL v8 defaults reads to `:minimize-latency` and supports explicit
+  fully-consistent, at-least-as-fresh, and exact-snapshot modes with
+  authenticated Zed tokens. See the
+  [consistency and cache operations guide](v8-consistency-cache-operations.md)
+  for backend capability requirements and failure modes.
 - EACL makes no strong performance claims. It should be good for <1M Datomic entities. Goal is 10M entities.
 - Arrow syntax is limited to one level of nesting, e.g.
   - Supported: `permission arrow = relation->via-permission` is valid

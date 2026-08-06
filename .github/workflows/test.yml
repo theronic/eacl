@@ -7,13 +7,148 @@ on:
   workflow_dispatch:
 
 jobs:
+  generated-runtime:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Cache locked formal tools and JavaScript dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.npm
+          key: generated-runtime-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'formal/smoke/js/package-lock.json') }}
+
+      - name: Build released generated runtimes
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+          bin/formal browser-bundle
+
+      - name: Upload released generated runtimes
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-generated-runtimes
+          path: |
+            target/formal/java/classes
+            target/formal/browser/EaclKernel.browser.js
+
   test:
     # Same-repo branches already build via the push event; run the
     # pull_request event only for PRs from forks to avoid double runs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: generated-runtime
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download released generated runtimes
+        uses: actions/download-artifact@v4
+        with:
+          name: released-generated-runtimes
+          path: target/formal
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: cljdeps-${{ runner.os }}-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
+          restore-keys: cljdeps-${{ runner.os }}-
+
+      - name: Start test nREPL
+        # ^:benchmark load tests (modules/eacl-datomic/test/eacl/bench/) are
+        # excluded per AGENTS.md; run them explicitly through nREPL when
+        # validating performance changes.
+        run: |
+          mkdir -p target
+          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+            > target/ci-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/ci-nrepl.log
+          exit 1
+
+      - name: Run tests through nREPL
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cognitect.test-runner.api :as runner] :reload)
+               (let [result
+                     (runner/test
+                      {:dirs [\"modules/eacl/test\"
+                              \"modules/eacl-datomic/test\"
+                              \"modules/eacl-datascript/test\"
+                              \"modules/eacl-datahike/test\"]
+                       :excludes [:benchmark]})]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"nREPL test suite failed\" result)))
+                 result))"
+
+      - name: Run DataScript ClojureScript tests
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.main :as cljs] :reload)
+               (cljs/-main
+                \"-t\" \"node\" \"-O\" \"none\"
+                \"-o\" \"target/datascript-cljs-test.js\"
+                \"-c\" \"eacl.datascript.cljs-test-runner\"))"
+          node target/datascript-cljs-test.js
+
+  isolated-modules:
+    needs: generated-runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [eacl, eacl-datomic, eacl-datascript, eacl-datahike]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download released generated runtimes
+        uses: actions/download-artifact@v4
+        with:
+          name: released-generated-runtimes
+          path: target/formal
 
       - name: Set up Temurin JDK 21
         uses: actions/setup-java@v4
@@ -32,11 +167,42 @@ jobs:
           path: |
             ~/.m2/repository
             ~/.gitlibs
-          key: cljdeps-${{ runner.os }}-${{ hashFiles('deps.edn') }}
-          restore-keys: cljdeps-${{ runner.os }}-
+          key: cljdeps-${{ runner.os }}-${{ matrix.module }}-${{ hashFiles('modules/*/deps.edn') }}
+          restore-keys: cljdeps-${{ runner.os }}-${{ matrix.module }}-
 
-      - name: Run tests
-        # logback.xml keeps Datomic's DEBUG logging out of the CI log.
-        # ^:benchmark load tests (test/eacl/bench/) are excluded per AGENTS.md;
-        # run them explicitly (via nREPL) when validating performance changes.
-        run: clojure -J-Dlogback.configurationFile=logback.xml -X:test :excludes '[:benchmark]'
+      - name: Start isolated-module nREPL
+        working-directory: modules/${{ matrix.module }}
+        run: |
+          mkdir -p target
+          clojure -M:test:nrepl --port 7788 > target/ci-nrepl.log 2>&1 &
+          for attempt in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/ci-nrepl.log
+          exit 1
+
+      - name: Run isolated module tests through nREPL
+        working-directory: modules/${{ matrix.module }}
+        run: |
+          sh ../../bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cognitect.test-runner.api :as runner] :reload)
+               (let [result
+                     (runner/test
+                      {:dirs
+                       (if (= \"eacl\" \"${{ matrix.module }}\")
+                         [\"test\"]
+                         [\"test\" \"../eacl/test\"])
+                       :patterns
+                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]counterexample-replay-test$)(?!eacl[.]formal[.]mutation-control-test$).*-test$\"]
+                       :excludes [:benchmark]})]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"isolated nREPL tests failed\" result)))
+                 result))"
+
+      - name: Build isolated module artifact
+        working-directory: modules/${{ matrix.module }}
+        run: clojure -T:build jar

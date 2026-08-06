@@ -1,0 +1,90 @@
+(ns eacl.relationships.endpoint-pair
+  "Pure, backend-neutral representation of EACL's two endpoint relationship
+  halves. Database adapters own index access and transaction semantics; this
+  namespace only owns the value shape and its symmetry.")
+
+(def value-arity 4)
+
+(defn forward-value
+  [subject-type relation-eid resource-type resource-eid]
+  [subject-type relation-eid resource-type resource-eid])
+
+(defn reverse-value
+  [resource-type relation-eid subject-type subject-eid]
+  [resource-type relation-eid subject-type subject-eid])
+
+(defn endpoint-value?
+  "True for a stored endpoint value with the expected heterogeneous shape.
+  Eids are non-negative integers in committed Datomic, Datahike, and
+  DataScript database values."
+  [value]
+  (and (vector? value)
+       (= value-arity (count value))
+       (keyword? (nth value 0))
+       (nat-int? (nth value 1))
+       (keyword? (nth value 2))
+       (nat-int? (nth value 3))))
+
+(defn value-prefix?
+  "Whether a valid endpoint value begins with `prefix`. Oversized prefixes and
+  malformed stored values never match."
+  [value prefix]
+  (let [prefix (vec prefix)
+        prefix-size (count prefix)]
+    (and (endpoint-value? value)
+         (<= prefix-size value-arity)
+         (= prefix (subvec value 0 prefix-size)))))
+
+(defn decode-forward
+  [subject-eid value]
+  (when (endpoint-value? value)
+    (let [[subject-type relation-eid resource-type resource-eid] value]
+      {:subject-type subject-type
+       :subject-eid subject-eid
+       :relation-eid relation-eid
+       :resource-type resource-type
+       :resource-eid resource-eid})))
+
+(defn decode-reverse
+  [resource-eid value]
+  (when (endpoint-value? value)
+    (let [[resource-type relation-eid subject-type subject-eid] value]
+      {:subject-type subject-type
+       :subject-eid subject-eid
+       :relation-eid relation-eid
+       :resource-type resource-type
+       :resource-eid resource-eid})))
+
+(defn peer-half
+  "Returns the exact peer endpoint and value for one decoded physical half."
+  [direction endpoint-eid value]
+  (case direction
+    :forward
+    (when-let [{:keys [subject-type subject-eid relation-eid
+                       resource-type resource-eid] :as decoded}
+               (decode-forward endpoint-eid value)]
+      (assoc decoded
+             :direction :reverse
+             :endpoint-eid resource-eid
+             :value (reverse-value resource-type relation-eid
+                                   subject-type subject-eid)))
+
+    :reverse
+    (when-let [{:keys [subject-type subject-eid relation-eid
+                       resource-type resource-eid] :as decoded}
+               (decode-reverse endpoint-eid value)]
+      (assoc decoded
+             :direction :forward
+             :endpoint-eid subject-eid
+             :value (forward-value subject-type relation-eid
+                                   resource-type resource-eid)))
+
+    nil))
+
+(defn half-identity
+  "Stable identity of one physical half, independent of backend datom type."
+  [direction endpoint-eid value]
+  (when (and (#{:forward :reverse} direction)
+             (nat-int? endpoint-eid)
+             (endpoint-value? value))
+    [direction endpoint-eid value]))

@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-044
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recover-current/recursive-cursor/proof-change/stable-bound-still-present"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 through commit c22c2deaca6f1806bd2b378a097bc6498fb3581d"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "After a proof change, the recursive recover-current path discarded the authenticated cursor bound before evaluating the current answer. It therefore restarted even when the bound result identity was still present and could be rebound to its current ordinal."
+ :fix
+ "Retain the authenticated recursive result identity across current-snapshot selection, compute the current complete denotation, route identity lookup through an executable generated Dafny decision in verified modes, continue exclusively from the returned current ordinal, and restart the same scoped query only when the result identity is absent."
+ :closing-evidence
+ ["formal/dafny/PageWindow.dfy/RebaseCursorBound"
+  "eacl.formal.production-kernel-test/generated-java-production-decision-boundary"
+  "eacl.verified-kernel-test/cursor-bound-rebase-boundary-enforces-identity-and-cost"
+  "eacl.datomic.recursive-cache-test/recursive-cursor-rebases-after-relevant-write-test"
+  "eacl.datomic.recursive-cache-test/recursive-cursor-rebases-after-unrelated-basis-churn-test"
+  "eacl.contract-support/assert-v8-recursive-contracts!"]}

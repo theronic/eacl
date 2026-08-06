@@ -1,0 +1,6 @@
+{:data ["document-01" "document-02" "document-03"
+        "document-04" "document-05" "document-06"]
+ :order :strict-global-eid
+ :generated-worklist-routed? false
+ :invariant
+ "Direct and acyclic public pages are the duplicate-free ordered union of every complete permission-path stream."}

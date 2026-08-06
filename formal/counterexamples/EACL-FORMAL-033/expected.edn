@@ -1,0 +1,7 @@
+{:same-selected-graph true
+ :same-source-scope true
+ :same-snapshot-identity true
+ :same-graph-anchor true
+ :same-order-hint true
+ :same-exact-locator false
+ :classification :client-local-reconstruction-capability-not-graph-identity}

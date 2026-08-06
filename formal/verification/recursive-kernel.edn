@@ -1,0 +1,150 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :passed
+ :scope :recursive-kernel
+ :proof
+ {:source "formal/dafny/RecursiveEngine.dfy"
+  :verified-obligations 73
+  :claims
+  [:least-dependency-closure
+   :reachable-recursive-scc-detection
+   :typed-production-routing-edge-identity
+   :typed-production-routing-least-closure
+   :typed-production-routing-strong-components
+   :typed-production-routing-singleton-self-loop
+   :typed-production-routing-includes-acyclic-ancestors
+   :recursive-rule-compilation-denotation
+   :finite-forward-worklist-termination
+   :forward-soundness-and-completeness
+   :finite-reverse-goal-worklist-termination
+   :reverse-soundness-and-completeness
+   :typed-reverse-projection-soundness-and-completeness
+   :result-de-duplication
+   :recursive-can-membership
+   :recursive-bounded-forward-count
+   :recursive-bounded-typed-reverse-count
+   :derived-grant-limit-fails-closed
+   :advanced-datom-limit-fails-closed
+   :queued-work-limit-fails-closed
+   :strict-traversal-ordinals
+   :retained-replay-suffix-equivalence]}
+ :routing-certificate-proof
+ {:source "formal/dafny/RoutingCertificate.dfy"
+  :verified-obligations 46
+  :claims
+  [:accepted-path-descriptors-derive-exact-ordered-edge-vector
+   :relation-paths-emit-no-dependency-edge
+   :permission-paths-emit-exactly-one-directed-dependency-edge
+   :invalid-path-node-indices-fail-closed
+   :accepted-component-forest-proves-mutual-reachability
+   :component-ranks-prove-distinct-components-are-not-mutually-reachable
+   :multi-member-or-self-loop-recursion-witness-is-exact
+   :traversal-witness-chain-is-sound
+   :reverse-edge-propagation-is-complete
+   :accepted-traversal-vector-is-exact
+   :accepted-checker-path-checks-equal-path-count
+   :accepted-checker-node-checks-equal-two-times-node-count
+   :accepted-checker-edge-checks-equal-edge-count]}
+ :resource-interpretation
+ {:queued-work :maximum-instantaneous-pending-set-cardinality
+  :cumulative-enqueues :separate-production-request-counter
+  :scope :whole-graph-materialized-closure
+  :production-indexed-resource-refinement :not-claimed
+  :qualification
+  :the-materialized-counter-is-not-a-query-local-cumulative-work-or-runtime-bound}
+ :generated-targets
+  {:java
+  {:status :passed
+   :tests 35
+   :assertions 10393
+   :failures 0
+   :errors 0
+   :qualification :suite-spans-all-generated-java-production-kernel-operations}
+  :javascript
+  {:status :passed
+   :suite :generated-kernel-cljs-smoke
+   :tests 55
+   :assertions 10945
+   :failures 0
+   :errors 0
+   :qualification :suite-spans-generated-javascript-and-portable-boundary-operations}}
+ :differential
+ {:implementations
+  [:independent-least-fixed-point-oracle
+   :generated-java
+   :generated-javascript
+   :eacl-engine-v8-shared-traversal-analysis
+   :eacl-engine-v8-datascript]
+  :fixtures
+  [:recursive-chain
+   :cyclic
+   :diamond
+   :deep
+   :wide
+   :duplicate-path
+   :empty-seed
+   :limit-exceeded
+   :routing-empty
+   :routing-singleton-self-loop
+   :routing-two-node-scc-with-ancestor
+   :routing-disconnected-scc
+   :routing-acyclic-diamond
+   :routing-deep-ancestor-chain
+   :routing-same-permission-name-distinct-resource-types
+   :all-512-labeled-directed-graphs-on-three-typed-nodes
+   :all-four-production-materialized-routing-path-kinds
+   :mutated-routing-certificates
+   :mutated-routing-path-derivations
+   :4096-node-production-certificate-chain]
+  :status :passed
+  :retained-mismatches 0}
+ :routing-refinement
+ {:production-algorithm
+  :deterministic-indexing-plus-iterative-kosaraju-reverse-reachability-and-certificate-construction
+  :formal-oracle
+  :typed-permission-dependency-edge-least-closure
+  :generated-authority
+  :accepted-proof-carrying-path-derivation-and-routing-certificate
+  :complete-node-identity [:resource-type :permission]
+  :counterexample :EACL-FORMAL-030
+  :source-specialization-report
+  "formal/verification/source-specializations.edn"
+  :source-refinement-review :pending-independent-review
+  :stamped-schema-generations
+  {:authority :generated-traversal-vector
+   :certificate-runs :once-per-schema-cache-generation
+   :all-backends
+   {:datomic :exercised
+    :datahike :exercised
+    :datascript :exercised}}
+  :proofless-or-raw-snapshots
+  :host-per-root-fallback-no-persistent-cross-snapshot-derived-state
+  :resource-refinement
+  {:generated-checker
+   {:path-checks "P"
+    :node-checks "2V"
+    :edge-checks "E"
+    :logical-checks "P+2V+E"}
+   :production-construction
+   "O(V log V + P + E) after permission paths are materialized"
+   :allocation-retained-heap-latency :not-formally-proved}}
+ :performance-observation
+ {:status :schema-generation-cutover-ready
+  :scale-fixture
+  {:nodes 4096
+   :paths 4096
+   :edges 4096
+   :path-checks 4096
+   :node-checks 8192
+   :edge-checks 4096
+   :certificate-runs-per-generation 1}
+  :qualification
+  :logical-work-is-proved-but-jvm-and-javascript-runtime-peaks-remain-measured-platform-properties}
+ :limitations
+ [:permission-path-materialization-has-source-shaped-dafny-and-adapter-certification-v2-evidence-but-clojure-language-semantics-and-independent-review-remain-trusted
+  :host-map-to-indexed-descriptor-translation-remains-a-source-refinement-obligation
+  :proofless-raw-snapshots-do-not-call-the-generated-certificate
+  :older-name-only-path-dependency-is-conservative-cache-scope-not-exact-routing
+  :typed-routing-oracle-and-certificate-do-not-model-host-allocation-or-retained-heap
+  :full-pagination-and-cursor-obligations-remain
+  :independent-source-refinement-review-remains]}

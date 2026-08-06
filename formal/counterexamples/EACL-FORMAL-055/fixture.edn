@@ -1,0 +1,19 @@
+{:operation :can?
+ :engine-mode :verified-authoritative
+ :query
+ {:subject {:type :user :id "broad-subject"}
+  :permission :view
+  :resource {:type :document :id "target"}}
+ :schema
+ "definition user {}
+  definition document {
+    relation viewer: user
+    permission view = viewer
+  }"
+ :reachable-resource-counts [16 1040]
+ :before
+ {:direction :forward
+  :anchor :subject
+  :work-can-grow-with :reachable-resource-count}
+ :risk
+ :point-authorization-work-scaled-with-subject-fanout}

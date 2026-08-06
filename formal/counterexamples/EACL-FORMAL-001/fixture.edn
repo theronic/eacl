@@ -1,0 +1,13 @@
+{:schema-state :empty-datomic-database
+ :operations
+ [{:op :make-client
+   :options {:object-id-codec :eacl-id}}
+  {:op :transact
+   :schema :eacl.datomic.schema/v7-schema}]
+ :observed
+ {:phase :make-client
+  :exception-type :db.error/not-an-entity
+  :message "Unable to resolve entity: :eacl/id"}
+ :affected-seeders
+ [:eacl.bench.pagination-test/seed-multipath!
+  :eacl.bench.pagination-test/seed-recursive-chain!]}

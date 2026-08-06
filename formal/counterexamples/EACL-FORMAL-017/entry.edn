@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-017
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "verified-authoritative/subproblem-lookup/unrepresented-registered-flight"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 worktree after EACL-FORMAL-016 and before coordinator-aware lookup"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "The lifecycle-stable generated lookup input was derived only from the tier's represented entry. A valid same-key flight can remain registered after tier admission rejects it. A second resolver therefore received generated start-computation even though host flight arbitration later forced it to join, so the generated decision was still not authoritative and read/write contention could take an unnecessary failed installation path."
+ :fix
+ "Resolution selection now reads the represented entry and lifecycle-qualified coordinator flight under the same store linearization lock. A complete represented entry selects use-completed-value; either an incomplete represented entry or a registered unrepresented flight selects join-computation; only the absence of both selects start-computation. A defensive flight-install collision re-dispatches the generated computing-state decision instead of hard-coding join."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/cache-unadmitted-fallbacks-still-share-one-flight-test"
+  "formal mutation :unrepresented-flight-ignored-by-lookup"
+  "formal/dafny/SubproblemCache.dfy RegisteredUnrepresentedFlightIsJoined"]}

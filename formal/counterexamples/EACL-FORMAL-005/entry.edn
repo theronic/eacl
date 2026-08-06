@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-005
+ :status :fixed
+ :discovered-by :dafny
+ :seed-or-trace "portable-cursor/expires-at-boundary"
+ :minimized-fixture "fixture.edn"
+ :impact :stale-reuse
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:shared :datascript :datahike]
+ :root-cause
+ "Portable cursor decoding ignored the injected clock used by deterministic CLJ/CLJS tests and considered a token valid while now equaled expires-at. Datomic's encrypted cursor already rejects at equality, so identical expiry metadata had different validity across backends."
+ :fix
+ "The portable cursor now uses the caller-supplied deterministic clock when present and rejects when now is greater than or equal to expires-at, matching Datomic and the Dafny cursor predicate."
+ :closing-evidence
+ ["eacl.secure-format-test/portable-cursor-expiry-boundary-test (CLJ and CLJS)"
+  "formal/dafny/TemporalSafety.dfy ValidateCursor expiry branch"]}

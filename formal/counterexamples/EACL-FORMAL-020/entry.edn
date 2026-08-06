@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-020
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "ordered-merge/generic/nil-sort-key-as-first-value"
+ :minimized-fixture "fixture.edn"
+ :impact :omission
+ :affected-versions
+ ["PR 101 worktree before explicit generic ordered-merge last-key presence"]
+ :affected-backends [:shared]
+ :root-cause
+ "The generic host merge used nil to represent ‘no previously emitted key’. When nil was a legitimate first sort key, duplicate suppression mistook it for an already emitted key and dropped it. The Dafny merge carries explicit optional state and did not contain the defect."
+ :fix
+ "The generic merge now carries an explicit `has-last?` bit independently of the last sort key, matching the specialized EID merge and the Dafny optional-last model."
+ :closing-evidence
+ ["eacl.backend.v8-test/generic-merge-retains-nil-key-test"
+  "formal/dafny/OrderedMerge.dfy optional-last source-specialization oracle"
+  "formal mutation :generic-ordered-merge-nil-sentinel-collides-with-domain"]}

@@ -1,0 +1,11 @@
+{:adapter-contract-before-fix
+ {:object-id->internal -1
+  :subject->resources [-2 -1]
+  :resource->subjects [-2 -1]
+  :order-hint -1
+  :runtime-guard-result :accepted}
+ :generated-boundary
+ {:eid-domain :safe-natural
+  :negative-value-result :rejected}
+ :mismatch
+ :legacy-acyclic-source-accepted-values-outside-the-formal-engine-domain}

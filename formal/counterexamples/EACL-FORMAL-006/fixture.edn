@@ -1,0 +1,16 @@
+{:payload {:v 9
+           :kind :relationships
+           :scope [:read {:subject/id "u1"}]
+           :offset 2}
+ :options {:current-kid :current
+           :keyring {:current
+                     [32 33 34 35 36 37 38 39
+                      40 41 42 43 44 45 46 47
+                      48 49 50 51 52 53 54 55
+                      56 57 58 59 60 61 62 63]}
+           :now-seconds 100
+           :cursor-ttl-seconds 5}
+ :jvm-inner
+ "{:cursor {:kind :relationships, :offset 2, :scope [:read #:subject{:id \"u1\"}], :v 9}, :expires-at 105, :issued-at 100, :version 3}"
+ :javascript-inner
+ "{:cursor {:kind :relationships, :offset 2, :scope [:read {:subject/id \"u1\"}], :v 9}, :expires-at 105, :issued-at 100, :version 3}"}

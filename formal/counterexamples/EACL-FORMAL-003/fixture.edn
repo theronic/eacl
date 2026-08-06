@@ -1,0 +1,12 @@
+{:provider
+ {:kind-max-weight {:can? 8000}
+  :two-hit-kinds #{:can?}}
+ :authenticated-key
+ {:kind :can?
+  :semantic-key [:permission-check "alice" :view "document-1"]}
+ :operations
+ [[:store "signed-envelope"]
+  [:lookup]]
+ :observed
+ {:first-store-admitted? true
+  :provider-kind :authenticated-v3}}

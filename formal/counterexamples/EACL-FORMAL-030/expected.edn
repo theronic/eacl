@@ -1,0 +1,5 @@
+{:production-traversal-permission false
+ :typed-formal-traversal-permission false
+ :old-name-only-formal-traversal-permission true
+ :authorization-result-changed false
+ :routing-cost-class-changed true}

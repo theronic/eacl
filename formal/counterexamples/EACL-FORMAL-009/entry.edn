@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-009
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "public-client/cache-disabled/generated-authority"
+ :minimized-fixture "fixture.edn"
+ :impact :scope-confusion
+ :affected-versions ["PR 101 worktree before generated-routing audit"]
+ :affected-backends [:datomic :datascript :datahike]
+ :root-cause
+ "Each adapter bound the configured engine selection inside cache/resolve-current!, but its explicit non-cacheable branch invoked the engine before entering that boundary. Cache-disabled, exact, and otherwise bypassed public requests therefore silently ran legacy traversal even when verified-authoritative or verified-shadow was selected."
+ :fix
+ "Datomic, Datahike, and DataScript now bind the normalized engine selection around every engine evaluation, independently of completed-answer cache eligibility. The cross-backend state trace counts generated compile/initialize/drive/resume/read calls across explicit cache bypasses."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters"
+  "Datomic, Datahike, and DataScript explicit cache-bypass generated routing: 3 backends, all four indexed rule variants"]}

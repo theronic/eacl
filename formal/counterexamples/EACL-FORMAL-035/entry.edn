@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-035
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "authority-mode/datascript/recursive-and-cursor/64-groups/64-documents"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["PR 101 commit 2c3065e2468c199ad9a2947766471936bd8e42c2"]
+ :affected-backends [:datascript :datahike :datomic]
+ :root-cause
+ "The handwritten CLJ-to-generated-Java indexed conversion boundary invoked generated variant, destructor, and BigInteger methods without concrete type hints. Clojure therefore performed reflective method lookup on every generated drive/resume/scan round trip. The semantic model and opaque state were correct, but the trusted FFI boundary added avoidable allocation and latency."
+ :fix
+ "The Java conversion boundary now statically dispatches every generated variant, result, state, projection, command, counter, and numeric conversion call. A compile-time reflection audit covers the complete boundary source, while the generated-only heavy and resource gates separately measure latency, caller-thread allocation, backend operations, and retained live heap."
+ :closing-evidence
+ ["eacl.characterization-fixture-test/generated-java-boundary-is-reflection-free-test"
+  "eacl.formal.verified-authority-suite/run-heavy!"
+  "eacl.formal.retained-heap-benchmark/run!"
+  "formal mutation :generated-java-boundary-restores-reflection"]}

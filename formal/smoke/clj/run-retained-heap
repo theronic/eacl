@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+
+port=${EACL_NREPL_PORT:-}
+
+[ -n "$port" ] || {
+  printf '%s\n' \
+    "EACL_NREPL_PORT must name an nREPL started with:" \
+    "  clojure -M:dev:formal-smoke:nrepl --port 0" >&2
+  exit 2
+}
+
+clj-nrepl-eval -p "$port" --timeout 300000 \
+  "(do
+     (require 'eacl.formal.retained-heap-benchmark :reload)
+     (eacl.formal.retained-heap-benchmark/run!))"

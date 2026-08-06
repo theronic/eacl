@@ -1,0 +1,301 @@
+{:schema-version 1
+ :status :generated-authority-routed-and-full-suites-passed-release-gates-remain
+ :sources
+ ["formal/dafny/IndexedTraversal.dfy"
+  "formal/dafny/IndexedRefinement.dfy"
+  "formal/dafny/IndexedForwardCompleteness.dfy"
+  "formal/dafny/IndexedReverseCompleteness.dfy"
+  "formal/dafny/IndexedRendering.dfy"
+  "formal/dafny/IndexedCertification.dfy"
+  "formal/dafny/RootDenotation.dfy"
+  "formal/dafny/IndexedRootDenotation.dfy"]
+ :verified-obligations
+ {:indexed-transition-state-machine 669
+  :indexed-semantic-soundness-refinement 1811
+  :forward-least-fixed-point-completeness 1335
+  :reverse-least-fixed-point-completeness 5104
+  :traversal-order-rendering-and-ordered-nonimplication-witness 29
+  :source-plan-and-seed-certification 48
+  :semantic-root-denotation-equivalence 33
+  :indexed-root-denotation-compiler-bridge 137
+  :total 9166}
+ :generated-targets [:java :javascript]
+ :production-authoritative :release-default
+ :production-routing
+ {:scan-response-validation
+  {:status :verified-authoritative-mode-routed
+   :operation :indexed-scan-response
+   :rejects
+   [:invalid-command
+    :mismatched-request-scope
+    :mismatched-request
+    :oversized-chunk
+    :invalid-fetched-count
+    :non-progressing-response
+    :invalid-eid
+    :out-of-order
+    :bound-violation]}
+  :queue-and-grant-transitions
+  {:status :verified-authoritative-mode-routed
+   :permission-roots [:all-defined]
+   :state :opaque-generated-runtime-owned
+   :schema-indexes :compiled-once-per-schema-proof-and-root}
+  :rendering
+  {:status :verified-authoritative-mode-routed
+   :permission-roots [:all-defined]
+   :point-authorization-direction :reverse
+   :operations
+   [:can?
+    :lookup-resources
+    :lookup-subjects
+    :count-resources
+    :count-subjects]}
+  :point-authorization
+  {:counterexample :EACL-FORMAL-055
+   :anchor :concrete-resource
+   :direction :reverse
+   :positive-result :boolean-renderer-stops-at-requested-subject
+   :negative-result :returned-only-after-reverse-exhaustion
+   :semantic-basis
+   [:reverse-transition-semantic-soundness
+    :reverse-least-fixed-point-completeness
+    :completed-render-read-determinism]
+   :target-local-scaling
+   {:reachable-resource-counts [16 1040]
+    :backend-commands [1 1]
+    :adapter-fetched-values [1 1]
+    :engine-consumed-values [1 1]
+    :status :passed}}
+  :page-continuation
+  {:status :verified-authoritative-mode-routed
+   :directions [:forward :reverse]
+   :state :opaque-generated-runtime-owned
+   :public-boundary [:ordinal :eid]
+   :lookahead :retained-without-prefix-replay
+   :fallback :deterministic-pinned-snapshot-replay}
+  :source-plan-and-seed-certification
+  {:status :verified-modes-routed-at-schema-plan-compilation
+   :operations
+   [:indexed-plan-certification
+    :indexed-seed-certification]
+   :source
+   :raw-permission-and-relation-definitions-independent-of-path-compiler
+   :lifecycle :schema-proof-and-root-cached}}
+ :verified-transition-surface
+ [:data-valued-forward-continuations
+  :data-valued-reverse-continuations
+  :fifo-forward-work
+  :fifo-reverse-work
+  :reverse-consumer-registration
+  :pending-request-identity
+  :pending-traversal-scope-and-local-request-identity
+  :ordered-chunk-response-validation
+  :forward-scan-issue-and-resume
+  :reverse-scan-issue-and-resume
+  :forward-grant-deduplication
+  :reverse-goal-and-grant-deduplication
+  :forward-and-reverse-emission-ordinals
+  :forward-and-reverse-render-state
+  :forward-and-reverse-page-continuation
+  :authenticated-page-boundary
+  :lookahead-carry-without-prefix-replay
+  :forward-and-backward-pages
+  :bounded-and-unbounded-counts
+  :boolean-early-completion
+  :typed-traversal-limits
+  :forward-and-reverse-initialization
+  :fuel-bounded-forward-and-reverse-drivers]
+ :semantic-refinement
+ {:status :soundness-and-completeness-proved-under-explicit-assumptions
+  :assumptions
+  [:exact-object-eid-catalog
+   :exact-relation-eid-catalog
+   :exact-compiled-rule-expansion
+   :permission-closed-indexed-rules
+   :immutable-ordered-complete-projection-adapter]
+  :proved
+  [:direct-rule-soundness
+   :self-permission-soundness
+   :arrow-relation-soundness
+   :arrow-permission-soundness
+   :forward-initialization-soundness
+   :forward-step-soundness
+   :forward-exact-response-resume-soundness
+   :reverse-initialization-soundness
+   :reverse-goal-consumer-and-grant-soundness
+   :reverse-step-soundness
+   :reverse-exact-response-resume-soundness
+   :forward-operational-coverage
+   :reverse-bidirectional-join-coverage
+   :certified-forward-scan-resumption-coverage
+   :certified-reverse-scan-resumption-coverage
+   :forward-exhaustion-is-least-fixed-point-complete
+   :reverse-exhaustion-is-least-fixed-point-complete
+   :identical-complete-denotations-render-identically
+   :render-prefix-independent-of-adapter-chunk-boundary
+   :completed-render-read-determinism
+   :continued-page-preserves-semantic-frontier
+   :continued-page-preserves-cumulative-resource-counters
+   :continued-page-authenticates-ordinal-and-eid
+   :continued-page-starts-with-retained-lookahead
+   :canonical-source-plan-compilation-refines-normalized-rules
+   :certified-compiled-rules-imply-exact-compiled-rules
+   :certified-seed-bucket-implies-exact-forward-seed-bucket
+   :compiled-forward-index-initialization-equals-uncompiled-spec
+   :compiled-reverse-index-initialization-equals-uncompiled-spec
+   :equal-semantic-root-rule-bodies-have-equal-fixed-point-grants
+   :exact-equal-indexed-root-bodies-refine-equal-semantic-root-bodies]
+  :not-yet-proved
+  [:production-backend-adapter-certification]}
+ :resource-measures
+ {:backend-commands :unbounded-trace-counter
+  :adapter-fetched-values :unbounded-trace-counter
+  :engine-consumed-values :unbounded-trace-counter
+  :cumulative-enqueues :unbounded-trace-counter
+  :current-queue-depth :configured-bound-proved
+  :maximum-queue-depth :configured-bound-proved
+  :unique-grants :configured-bound-proved
+  :emitted-results :bounded-by-unique-grants
+  :rule-applications :exact-logical-transition-counter
+  :consumer-grant-joins :exact-logical-transition-counter
+  :render-advances :exact-logical-transition-counter
+  :forward-retained-logical-units :structural-measure-not-heap-bytes
+  :reverse-retained-logical-units :structural-measure-not-heap-bytes
+  :renderer-delivered-sequence :included-in-retained-logical-units
+  :generated-all-count-delivered-sequence :not-retained
+  :generated-all-count-final-denotation-publication :not-required
+  :source-plan-certification
+  :once-per-schema-proof-root-plan-and-cached
+  :seed-certification
+  :once-per-present-or-eligible-subject-type-per-compiled-plan
+  :certification-comparison-bound
+  :quadratic-when-subject-type-count-does-not-exceed-rule-count
+  :generated-rule-index-construction
+  :once-per-schema-proof-root-plan-not-per-query
+  :portable-state-conversion-per-transition
+  :zero-opaque-state-is-retained-by-generated-runtime
+  :jvm-or-javascript-heap :unknown
+  :cpu-time :benchmark-only
+  :wall-time :benchmark-only
+  :verifier-cpu-time :separate-build-pipeline-measure
+  :verifier-wall-time :separate-build-pipeline-measure}
+ :historical-resource-prompt
+ {:project "theronic/lore"
+  :revision "dabb5634b0d44e196e2b6ec63003917b3d445bec"
+  :analyser-status :outdated-untrusted
+  :role :historical-technique-source-only
+  :assurance :none
+  :lesson
+   :cache-weight-flight-ownership-actual-callbacks-waiters-and-host-resources-are-distinct}
+ :evidence
+ {:dafny
+  {:commands
+   ["dafny verify formal/dafny/IndexedTraversal.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedRefinement.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedForwardCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedReverseCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedRendering.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedCertification.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/RootDenotation.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedRootDenotation.dfy --verification-time-limit 60 --resource-limit 50000000"]
+   :status :passed
+   :measurements
+   {:indexed-transition-state-machine
+    {:obligations 669
+     :transparent-recursive-spec-maximum-resource-count 161654668
+     :opaque-explicit-unfold-maximum-resource-count 10270077
+     :resource-reduction-ratio 15.740355987593862}
+    :indexed-semantic-soundness-refinement
+    {:obligations 1811}
+    :forward-least-fixed-point-completeness
+    {:obligations 1335}
+    :reverse-least-fixed-point-completeness
+    {:obligations 5104}
+    :traversal-order-rendering-and-ordered-nonimplication-witness
+    {:obligations 29}
+    :source-plan-and-seed-certification
+    {:obligations 48}
+    :semantic-root-denotation-equivalence
+    {:obligations 33
+     :maximum-resource-count 149336}
+    :indexed-root-denotation-compiler-bridge
+    {:obligations 137
+     :maximum-resource-count 694159}}
+   :aggregate
+   {:indexed-obligations 9166
+    :whole-formal-tree-obligations 9776
+    :deterministic-proof-effort-resource-limit 50000000
+    :whole-tree-maximum-resource-count 33547591
+    :machine-readable-report "target/formal/dafny-verification.json"
+    :timing-recheck :passed-within-formal-job-bound}
+   :qualification
+   :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
+ :generated-java
+  {:namespace eacl.formal.production-kernel-test
+   :tests 36
+   :assertions 10395
+   :qualification :namespace-includes-non-indexed-production-decisions
+   :status :passed}
+ :generated-javascript
+  {:runner "formal/smoke/cljs/run"
+   :suite-tests 58
+   :suite-assertions 10968
+   :datascript-public-recursive-cache-mode-differential true
+   :status :passed}
+  :production-recursive-contract
+  {:namespaces
+   [eacl.backend.v8-test
+    eacl.datascript.contract-test]
+   :tests 30
+   :assertions 2871
+   :status :passed}
+  :public-state-trace
+  {:namespace eacl.formal.state-trace-differential-test
+   :backends [:datomic :datahike :datascript]
+   :indexed-rule-variants
+   [:relation :self-permission :arrow-relation :arrow-permission]
+   :cache-bypass-generated-routing true
+   :point-can-generated-reverse-routing true
+   :point-can-target-local-scaling-counterexample :EACL-FORMAL-055
+   :acyclic-ordering-counterexample-retained true
+   :recursive-generated-reference-result-comparison true
+   :dimensionally-matched-resource-counter-comparison true
+   :logical-retained-state-comparison
+   :separate-representation-specific-regression-gate
+   :typed-limit-error-comparison true
+   :materialized-resource-counters-compared false
+   :generated-page-normalization true
+   :typed-page-size-error-comparison true
+   :complete-portable-typed-error-data-comparison true
+   :complete-public-cache-provenance-comparison true
+   :complete-public-selected-graph-comparison true
+   :stale-cursor-error-shape-comparison true
+   :tests 9
+   :assertions 196
+   :status :passed}
+  :heavy-pagination
+  {:namespace eacl.bench.pagination-test
+   :tests 9
+   :assertions 3405
+   :failures 0
+   :errors 0
+   :status :passed-under-generated-authority}
+  :verified-authority
+  {:report "formal/verification/verified-authority-suites.edn"
+   :clj-backends [:datomic :datahike :datascript]
+   :cljs-backends [:datascript]
+   :nonbenchmark {:tests 509 :assertions 34773 :failures 0 :errors 0}
+   :heavy {:tests 17 :assertions 4062 :failures 0 :errors 0}
+   :cljs {:tests 155 :assertions 4419 :failures 0 :errors 0}
+   :required-generated-operations-observed-per-jvm-backend true
+   :retained-live-heap
+   {:status :passed
+    :report "formal/verification/retained-live-heap.edn"
+    :maximum-retained-delta-bytes 5344744}
+   :status :passed
+   :qualification
+   :executable-whole-suite-evidence-not-adapter-source-proof}}
+ :remaining
+ [:production-adapter-source-refinement
+  :acyclic-host-specialization-language-refinement
+  :independent-review]}

@@ -1,0 +1,14 @@
+{:schema-shape :recursive-self-permission
+ :direction :reverse
+ :operation :lookup-subjects
+ :host-before-fix
+ {:consumer-registration :immediate
+  :cumulative-enqueues 7
+  :maximum-queue-depth 3}
+ :generated
+ {:consumer-registration :queued-fifo-work
+  :cumulative-enqueues 8
+  :maximum-queue-depth 4}
+ :authorization-results-agreed true
+ :reason
+ "Value-only differentials concealed that the host and generated engines counted different state transitions under identical resource dimensions."}

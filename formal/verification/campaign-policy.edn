@@ -1,0 +1,17 @@
+{:schema-version 1
+ :fast {:seeds 25
+        :runtime-targets [:clj :cljs]
+        :test :eacl.formal.generators-test/coherent-schema-and-graph-generator-test}
+ :scheduled {:seeds 200
+             :sources [:authorization-oracle :generated-dafny-semantics]
+             :command
+             "sh bin/ci-nrepl-eval <formal-port> \"(eacl.formal.campaign/run-campaign! {})\""
+             :success-artifact "target/formal/campaign.edn"
+             :failure-artifact "target/formal/campaign.edn"
+             :shrink :coherence-preserving-relationship-deletion}
+ :exit-criteria {:unexplained-counterexamples 0
+                 :required-feature-coverage
+                 #{:alias :arrow-relation :arrow-permission :recursive-scc
+                   :multiple-subject-types :duplicate-semantic-path
+                   :disconnected :cycle :diamond :fan-in :fan-out
+                   :empty-relation :extreme-id}}}

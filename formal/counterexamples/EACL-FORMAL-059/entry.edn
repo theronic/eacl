@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-059
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "github-actions/31060219127/dafny-and-generated-boundaries"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 generated-only cutover commit d96bc4c"]
+ :affected-backends [:shared]
+ :root-cause
+ "The clean generated-JavaScript boundary retained two obsolete six-field RawPageRequest test arguments after the v8 datatype became four-field, and its recursive-page fixture expected an order different from the equivalent JVM fixture. Cached local generated artifacts masked both stale CLJS harness expectations."
+ :fix
+ "Make the direct generated-JavaScript page-window smoke construct only the current four-field datatype, leave removed pagination-key rejection to public host-boundary tests, and make the JVM and CLJS recursive-page tests consume one shared cross-runtime expectation."
+ :closing-evidence
+ ["eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test"
+  "eacl.formal.js-round-trip-test/generated-javascript-page-window-parity"
+  "eacl.formal.production-kernel-test/generated-javascript-drives-production-recursive-pages"
+  "GitHub Actions clean generated-JavaScript differential boundary"]}

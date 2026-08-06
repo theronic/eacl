@@ -1,0 +1,10 @@
+{:direction :desc
+ :streams [[:maximum-eid 4 2]
+           [:maximum-eid 3 2]]
+ :before-fix
+ {:last-sentinel :maximum-eid
+  :observed [4 3 2]}
+ :after-fix
+ {:has-last? false
+  :last-value 0
+  :observed [:maximum-eid 4 3 2]}}

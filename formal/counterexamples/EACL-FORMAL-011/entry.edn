@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-011
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "recursive-shadow/reverse-self-permission/resource-counters"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions ["PR 101 worktree before dimensional shadow comparison"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "The host reverse evaluator installed self-permission consumers immediately, while the generated indexed engine represented the same authorization-affecting registration as explicit FIFO work. Values happened to agree, but cumulative enqueues and maximum queue depth differed by one and the two transition systems could not support a dimensionally exact resource refinement."
+ :fix
+ "The host reverse evaluator now queues consumer registration before the dependent goal, matching the generated transition system. Shadow mode independently captures cache-free host and generated counters plus retained logical units and compares them without disclosing authorization values."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results"
+  "eacl.backend.v8-test reverse traversal characterization"
+  "DataScript CLJS full suite: 127 tests, 4165 assertions"]}

@@ -1,0 +1,10 @@
+{:schema
+ {:discovered-by
+  [:dafny :apalache :differential :property :manual-review]
+  :impact
+  [:false-grant :false-deny :omission :duplicate :wrong-order
+   :wrong-page-flags :mixed-snapshot :stale-reuse :scope-confusion
+   :fail-open :availability :other]}
+ :invalid-values-before-fix 9
+ :affected-entries 6
+ :old-test-result :passed-field-presence-only}

@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-032
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "verified-shadow/typed-error/string-boolean-vector-map-projection"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 commit 2c3065e2468c199ad9a2947766471936bd8e42c2"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "Recursive shadow comparison projected ExceptionInfo data through a keyword/integer allowlist. Different public string, boolean, vector, or map fields were discarded before comparison, so telemetry could report equality while verified authority changed the public typed error."
+ :fix
+ "The portable boundary now canonicalizes and compares the complete public ExceptionInfo data map internally. Diagnostics retain only changed top-level field names and typed error keywords. Untyped or non-portable exception data is reported as comparison-unavailable instead of silently passing."
+ :closing-evidence
+ ["eacl.verified-kernel-test/shadow-error-comparison-covers-complete-portable-ex-data"
+  "eacl.verified-kernel-test/shadow-error-comparison-reports-unavailable-nonportable-data"
+  "formal mutation :shadow-typed-error-drops-portable-values"]}

@@ -1,0 +1,10 @@
+{:reported-before-fix
+ {:generated-artifact-size :passed
+  :measurement :stale-foundation-baseline-only}
+ :rebuilt-full-kernel
+ {:java-source :exceeded-old-foundation-maximum
+  :java-classes-with-runtime :exceeded-old-foundation-maximum
+  :javascript-with-runtime :exceeded-old-foundation-maximum
+  :browser-iife :exceeded-old-foundation-maximum}
+ :mismatch
+ :release-gate-did-not-measure-the-current-generated-artifacts}

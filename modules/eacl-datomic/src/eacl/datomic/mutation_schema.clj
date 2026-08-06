@@ -1,0 +1,48 @@
+(ns eacl.datomic.mutation-schema)
+
+(def attributes
+  "Version-3 causal mutation journal and dependency identity attributes."
+  [{:db/ident       :eacl.mutation/id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique      :db.unique/identity
+    :db/index       true}
+   {:db/ident       :eacl.mutation/fingerprint
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.mutation/kind
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.mutation/issued-at
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.mutation/expires-at
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.graph/family-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.graph/head-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.graph/head-order
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.schema/mutation-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.relation/mutation-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.dependency/mutation-id
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}])

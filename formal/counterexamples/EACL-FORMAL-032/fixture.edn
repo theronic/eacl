@@ -1,0 +1,15 @@
+{:legacy-error
+ {:type :eacl.test/typed
+  :eacl/error :eacl.test/failure
+  :message-field "left"
+  :nested {:cursor ["a" 1]
+           :retained? true}}
+ :generated-error
+ {:type :eacl.test/typed
+  :eacl/error :eacl.test/failure
+  :message-field "right"
+  :nested {:cursor ["a" 2]
+           :retained? false}}
+ :old-keyword-integer-projection
+ {:type :eacl.test/typed
+  :eacl/error :eacl.test/failure}}

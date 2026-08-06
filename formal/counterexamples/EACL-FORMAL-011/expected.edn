@@ -1,0 +1,17 @@
+{:authorization-result :unchanged
+ :consumer-registration :queued-fifo-work
+ :resource-comparison
+ [:backend-commands
+  :adapter-fetched-values
+  :engine-consumed-values
+  :cumulative-enqueues
+  :current-queue-depth
+  :maximum-queue-depth
+  :unique-grants
+  :emitted-results
+  :rule-applications
+  :consumer-grant-joins
+  :render-advances
+  :retained-logical-units]
+ :invariant
+ "Only measurements with identical units and transition semantics may be compared, and equivalent reverse transitions must account for consumer registration identically."}

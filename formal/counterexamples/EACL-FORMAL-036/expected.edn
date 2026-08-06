@@ -1,0 +1,17 @@
+{:public-results :exactly-equal
+ :generated-page-continuation
+ {:forged-boundary :rejected
+  :valid-boundary :continued
+  :next-page-starts-with-retained-lookahead true
+  :prefix-backend-scans-reissued false}
+ :cache-reuse
+ {:complete-forward-denotation true
+  :complete-reverse-denotation true
+  :recursive-pages true
+  :process-private-continuations true
+  :miss-malformed-or-rejection-fallback :deterministic-replay}
+ :compatibility-telemetry :generated-counter-deltas
+ :verified-authority-suite
+ {:backends [:datomic :datahike :datascript]
+  :failures 0
+  :errors 0}}

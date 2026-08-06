@@ -1,0 +1,23 @@
+{:id :EACL-FORMAL-045
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "verified-authority/indexed-direct/15000-results/fixed-heap/bare-last"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["PR 101 through commit c22c2deaca6f1806bd2b378a097bc6498fb3581d"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Dafny's abstract set insertion counter was incorrectly treated as a target-runtime cost model. Dafny 4.11 Java copied HashSet values on immutable union, JavaScript used array sets/maps, JavaScript eager sequence suffixes copied represented values, and executable scan validation evaluated a pairwise quantified strict-order predicate as a quadratic nested loop. Functional semantics remained correct while generated target work and allocation became quadratic."
+ :fix
+ "Keep pairwise strict ordering as the Dafny specification, prove it equivalent to an adjacent-pair predicate, and use only the linear predicate in executable validation. Deterministically patch generated Java sets/maps to Clojure persistent collections and generated JavaScript sets/maps/sequences to Immutable HAMTs plus persistent virtual-length sequence views. Hash the patch boundary into the manifest and gate persistence, structural equality, collisions, fixed-heap completion, and target scaling."
+ :closing-evidence
+ ["formal/dafny/IndexedTraversal.dfy/StrictlyIncreasingIffAdjacent"
+  "formal/smoke/js/round_trip.mjs"
+  "formal/smoke/cljs/run-indexed-traversal-benchmark"
+  "eacl.formal.production-kernel-test"
+  "eacl.formal.state-trace-differential-test"
+  "formal/smoke/clj/run-verified-authority nonbenchmark"
+  "formal/smoke/cljs/run-verified-authority"
+  "formal/verification/performance-gates.edn"]}

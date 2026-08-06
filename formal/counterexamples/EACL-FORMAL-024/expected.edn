@@ -1,0 +1,8 @@
+{:status :complete
+ :count 2
+ :truncated? false
+ :counters
+ {:queued-work 1}
+ :resource-dimensions
+ {:queued-work :instantaneous-maximum-gauge
+  :cumulative-enqueues :separate-request-counter}}

@@ -1,0 +1,12 @@
+{:paths
+ [{:kind :relation :head 0}
+  {:kind :self-permission :head 0 :target 1}
+  {:kind :arrow-relation :head 1}
+  {:kind :arrow-permission :head 1 :target 2}]
+ :derived-edges
+ [{:head 0 :target 1}
+  {:head 1 :target 2}]
+ :mutants
+ [:omit-permission-edge
+  :invent-relation-edge
+  :permute-derived-edges]}
