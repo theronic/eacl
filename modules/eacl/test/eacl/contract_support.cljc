@@ -1,0 +1,166 @@
+(ns eacl.contract-support
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
+            [eacl.core :as eacl]))
+
+(def ->user (partial eacl/spice-object :user))
+(def ->platform (partial eacl/spice-object :platform))
+(def ->account (partial eacl/spice-object :account))
+(def ->server (partial eacl/spice-object :server))
+
+(def smoke-schema
+  "definition user {}
+
+   definition platform {
+     relation super_admin: user
+   }
+
+   definition account {
+     relation platform: platform
+     relation owner: user
+
+     permission admin = owner + platform->super_admin
+     permission view = admin
+   }
+
+   definition server {
+     relation account: account
+
+     permission view = account->view
+     permission reboot = account->admin
+   }")
+
+(def smoke-objects
+  [(->user "user-1")
+   (->user "user-2")
+   (->user "super-user")
+   (->platform "platform-1")
+   (->account "account-1")
+   (->server "server-1")
+   (->server "server-2")])
+
+(def smoke-relationships
+  [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))
+   (eacl/->Relationship (->user "super-user") :super_admin (->platform "platform-1"))
+   (eacl/->Relationship (->platform "platform-1") :platform (->account "account-1"))
+   (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
+   (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
+
+(defn- read-relationships-data
+  [client query]
+  (:data (eacl/read-relationships client query)))
+
+(defn assert-seeded-contracts!
+  [client]
+  (testing "schema round-trips through the logical representation"
+    (let [{:keys [relations permissions]} (eacl/read-schema client)]
+      (is (= 4 (count relations)))
+      (is (= 5 (count permissions)))))
+
+  (testing "permission checks traverse direct and arrow relations"
+    (is (true? (eacl/can? client (->user "user-1") :reboot (->server "server-1"))))
+    (is (true? (eacl/can? client (->user "super-user") :reboot (->server "server-2"))))
+    (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))
+    (is (false? (eacl/can? client (->user "missing-user") :reboot (->server "server-1")))))
+
+  (testing "unknown lookup anchors return canonical empty pages"
+    (let [forward-query {:subject       (->user "missing-user")
+                         :permission    :view
+                         :resource/type :server
+                         :limit         100}
+          reverse-query {:resource     (->server "missing-server")
+                         :permission   :view
+                         :subject/type :user
+                         :limit        100}]
+      (is (= {:data [] :cursor nil}
+             (eacl/lookup-resources client forward-query)))
+      (is (= {:count 0 :limit 100 :cursor nil}
+             (eacl/count-resources client forward-query)))
+      (is (= {:data [] :cursor nil}
+             (eacl/lookup-subjects client reverse-query)))
+      (is (= {:count 0 :limit 100 :cursor nil}
+             (eacl/count-subjects client reverse-query)))))
+
+  (testing "lookup-resources and count-resources share cursor semantics"
+    (let [{page1-data :data page1-cursor :cursor}
+          (eacl/lookup-resources client {:subject       (->user "user-1")
+                                         :permission    :view
+                                         :resource/type :server
+                                         :limit         1})
+          {page2-data :data}
+          (eacl/lookup-resources client {:subject       (->user "user-1")
+                                         :permission    :view
+                                         :resource/type :server
+                                         :limit         1
+                                         :cursor        page1-cursor})
+          {count :count count-cursor :cursor}
+          (eacl/count-resources client {:subject       (->user "user-1")
+                                        :permission    :view
+                                        :resource/type :server
+                                        :limit         1})]
+      (is (= [(->server "server-1")] page1-data))
+      (is (= [(->server "server-2")] page2-data))
+      (is (= 1 count))
+      (is (string? page1-cursor))
+      (is (string? count-cursor))))
+
+  (testing "lookup-subjects and count-subjects enumerate reverse access"
+    (let [subjects (->> (eacl/lookup-subjects client {:resource     (->server "server-1")
+                                                      :permission   :reboot
+                                                      :subject/type :user})
+                        :data
+                        set)
+          {count :count cursor :cursor}
+          (eacl/count-subjects client {:resource     (->server "server-1")
+                                       :permission   :reboot
+                                       :subject/type :user
+                                       :limit        1})]
+      (is (= #{(->user "user-1") (->user "super-user")} subjects))
+      (is (= 1 count))
+      (is (string? cursor))))
+
+  (testing "relationship writes and reads remain part of the contract"
+    (let [{initial-data :data initial-cursor :cursor}
+          (eacl/read-relationships client {:resource/type     :account
+                                           :resource/id       "account-1"
+                                           :resource/relation :owner
+                                           :subject/type      :user
+                                           :subject/id        "user-1"})]
+      (is (= [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))]
+             initial-data))
+      (is (string? initial-cursor)))
+
+    (let [{page-1-data :data page-1-cursor :cursor}
+          (eacl/read-relationships client {:subject/type      :account
+                                           :subject/id        "account-1"
+                                           :resource/type     :server
+                                           :resource/relation :account
+                                           :limit             1})
+          {page-2-data :data}
+          (eacl/read-relationships client {:subject/type      :account
+                                           :subject/id        "account-1"
+                                           :resource/type     :server
+                                           :resource/relation :account
+                                           :limit             1
+                                           :cursor            page-1-cursor})]
+      (is (= [(eacl/->Relationship (->account "account-1") :account (->server "server-1"))]
+             page-1-data))
+      (is (= [(eacl/->Relationship (->account "account-1") :account (->server "server-2"))]
+             page-2-data))
+      (is (string? page-1-cursor)))
+
+    (eacl/create-relationship! client (->user "user-2") :owner (->account "account-1"))
+    (is (true? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))
+    (let [read-result (eacl/read-relationships client {:resource/type     :account
+                                                       :resource/id       "account-1"
+                                                       :resource/relation :owner
+                                                       :subject/type      :user
+                                                       :subject/id        "user-2"})]
+      (is (= [(eacl/->Relationship (->user "user-2") :owner (->account "account-1"))]
+             (:data read-result)))
+      (eacl/delete-relationships! client read-result))
+    (is (= [] (read-relationships-data client {:resource/type     :account
+                                               :resource/id       "account-1"
+                                               :resource/relation :owner
+                                               :subject/type      :user
+                                               :subject/id        "user-2"})))
+    (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))

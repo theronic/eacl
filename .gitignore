@@ -2,3 +2,5 @@
 .idea/
 .cpcache/
 /spicedb
+target/
+.nrepl-port
