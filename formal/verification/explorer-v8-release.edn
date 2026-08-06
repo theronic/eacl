@@ -37,7 +37,7 @@
  :formal-verification
  {:command "bin/formal verify"
   :modules 25
-  :proof-efforts 9802
+  :proof-efforts 9806
   :errors 0
   :new-relationship-page-theorems
   [PageWindow.MatchingRelationshipPageScopeReusesExactPage
@@ -54,13 +54,25 @@
 
  :runtime-suites
  {:datascript-clj
-  {:tests 235 :assertions 8159 :failures 0 :errors 0}
+  {:tests 183 :assertions 4641 :failures 0 :errors 0}
   :datascript-cljs
-  {:tests 166 :assertions 4487 :failures 0 :errors 0}
+  {:tests 169 :assertions 4547 :failures 0 :errors 0}
   :datahike-clj
-  {:tests 34 :assertions 422 :failures 0 :errors 0}
-  :heavy-explorer
-  {:tests 4 :assertions 71 :failures 0 :errors 0}}
+  {:tests 34 :assertions 488 :failures 0 :errors 0}
+  :datomic-clj
+  {:tests 240 :assertions 11204 :failures 0 :errors 0}
+  :shared-core-clj
+  {:tests 85 :assertions 666 :failures 0 :errors 0}
+  :focused-enumeration-routing
+  {:tests 9 :assertions 51 :failures 0 :errors 0}
+  :heavy-explorer-100000
+  {:count 100000
+   :elapsed-ms 258.188958
+   :warmed-median-ms 248.518833
+   :permission-paths 5
+   :backend-scans 456
+   :count-pages 7
+   :recursive-work 0}}
 
  :matched-v7-cache-bypassed-clj
  {:host-class :same-host-same-process-shape-harness
@@ -102,14 +114,21 @@
   :super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 697
+   :backend-scans 231
    :merge-advances 50003
    :recursive-work 0}
   :empty-recursive-super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 697
+   :backend-scans 231
    :merge-advances 50003
+   :recursive-work 0}
+  :super-count-100000
+  {:count 100000
+   :count-pages 7
+   :backend-scans 456
+   :permission-paths 5
+   :merge-advances 100006
    :recursive-work 0}
   :cold-user-count-12000-of-40000
   {:count 12000
@@ -117,7 +136,7 @@
    :backend-scans 59
    :merge-advances 12000
    :recursive-work 0
-   :elapsed-ms 28.286459}}
+   :elapsed-ms 30.553917}}
 
  :explorer-browser
  {:url "http://localhost:18091/index.html"
@@ -160,7 +179,22 @@
    :post-seed-snapshot-retention-error false
    :post-seed-cursor-reset-to-page 1
    :hung false
-   :errors []}}
+   :errors []}
+  :recursive-schema-100000
+  {:cold-super-user-view-count 100000
+   :cold-super-user-view-count-ms 1087.7
+   :warm-super-user-view-count-ms 0.3
+   :owner-0001-count 2000
+   :owner-0001-count-ms 5.3
+   :snapshot-retention-error false
+   :hung false
+   :errors []}
+  :cljs-count-window-sweep-100000
+  {:window-2048-ms 1051.7
+   :window-8192-ms 885.3
+   :window-16384-ms 876.7
+   :window-65536-ms 918.8
+   :selected-window 16384}}
 
  :compatibility
  {:public-authorization-api :unchanged

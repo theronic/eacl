@@ -182,11 +182,13 @@
 
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
-        client (datascript/make-client conn {})]
+        store  (cache/local-store)
+        client (datascript/make-client conn {:cache store})]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))
 
@@ -444,7 +446,7 @@
 (deftest datascript-large-relationship-cursor-skips-item-proof-test
   (let [relationship-count 1505
         conn (datascript/create-conn)
-        client (datascript/make-client conn {})
+        client (datascript/make-client conn {:cache cache/no-cache})
         user-ids (mapv #(str "bulk-user-" %) (range relationship-count))
         server-ids (mapv #(str "bulk-server-" %) (range relationship-count))
         object-ids (into user-ids server-ids)]

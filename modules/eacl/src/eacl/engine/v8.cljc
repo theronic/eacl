@@ -14,11 +14,10 @@
 
   Counting keeps one merged traversal across windows. This override exists for
   deterministic work tests; it is not a public client option."
-  #?(:clj 16384
-     ;; ClojureScript pays substantially more for retaining a deep lazy merge
-     ;; spine. Smaller certified chunks keep browser exact-count traversal
-     ;; linear without changing emitted results or total logical work.
-     :cljs 2048))
+  ;; The count loop replaces its consumed lazy tail, so the browser does not
+  ;; retain earlier windows. A shared 16k bound amortizes generated-boundary
+  ;; and vector realization overhead without changing results or logical work.
+  16384)
 (def ^:private lookup-continuation-version 2)
 
 (def ^:private projection-key-version 1)

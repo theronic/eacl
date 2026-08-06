@@ -58,7 +58,7 @@
   nil)
 
 (def ^:private relay-page-keys
-  #{:first :last :after :before :consistency})
+  #{:first :last :after :before :consistency :cache?})
 
 (def ^:private cursor-transport-keys
   "Relay window controls do not define the authorized result set. They remain

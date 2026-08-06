@@ -3,6 +3,7 @@
             [cljs.test :as t]
             [eacl.backend.v8-test]
             [eacl.cache-test]
+            [eacl.core-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
@@ -37,6 +38,7 @@
 (defn -main []
   (t/run-tests 'eacl.backend.v8-test
                'eacl.cache-test
+               'eacl.core-test
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test

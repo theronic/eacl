@@ -45,11 +45,13 @@
 (defn- run-contract!
   [config]
   (let [conn   (datahike/create-conn nil config)
-        client (datahike/make-client conn {})]
+        store  (cache/local-store)
+        client (datahike/make-client conn {:cache store})]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datahike/make-client conn {:cache cache/no-cache}))))
 

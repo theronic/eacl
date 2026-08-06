@@ -739,8 +739,39 @@ Or bypass lookup and publication for one request:
 `:cache?` is accepted by the map arity of `can?` and by
 `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, and
 `read-relationships`. Lookups and counts expose `:cached?` and `:cache-basis`;
-`can?` returns only a Boolean. Cache data is never written to the application's
-database.
+`can?` returns only a Boolean. Call `check-permission` when the caller also
+needs provenance:
+
+```clojure
+(eacl/check-permission
+ acl
+ {:subject alice
+  :permission :view
+  :resource doc})
+;; => {:allowed? true, :cached? false, :cache-basis ...}
+```
+
+The detailed API is additive. Existing third-party `IAuthorization`
+implementations remain compatible; unless they implement the optional
+`IDetailedAuthorization` protocol, `check-permission` delegates to `can?` and
+reports an uncached decision.
+
+DataScript and Datahike keep completed answers in a client-private native
+cache. Inspect or expire that exact cache through the backend API:
+
+```clojure
+(eacl.datascript.core/cache-stats acl)
+(eacl.datascript.core/expire-cache! acl)
+```
+
+The backend-neutral `eacl.cache/local-store` still exposes additive portable
+metrics for users of that provider API. Capacity evictions are cumulative in
+`:evictions`. Explicit `evict!` calls and entries removed by `clear!` are
+cumulative in `:manual-evictions`; clearing resets occupancy but preserves
+request and validation counters. Provider implementations retain their native
+metrics shape.
+
+Cache data is never written to the application's database.
 
 Call the backend's `expire-cache!` to clear a client's in-memory cache on
 demand. For cache tiers, validity rules, eviction, concurrency, metrics,

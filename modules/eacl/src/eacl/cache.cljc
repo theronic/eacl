@@ -58,6 +58,36 @@
   [store]
   (instance? NoCache store))
 
+(defn validate-request-cache-option!
+  "Validates the per-request `:cache?` execution control."
+  [cache-option]
+  (when-not (or (nil? cache-option) (boolean? cache-option))
+    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
+                    {:type :eacl/invalid-request
+                     :key :cache?
+                     :value cache-option})))
+  cache-option)
+
+(defn- entry-kind
+  [key]
+  (or (:kind key)
+      (get-in key [:semantic-key :operation])
+      :unknown))
+
+(defn- add-metric
+  ([metrics metric]
+   (add-metric metrics metric 1))
+  ([metrics metric n]
+   (update metrics metric (fnil + 0) n)))
+
+(defn- add-kind-metric
+  ([metrics kind metric]
+   (add-kind-metric metrics kind metric 1))
+  ([metrics kind metric n]
+   (-> metrics
+       (add-metric metric n)
+       (update-in [:by-kind kind metric] (fnil + 0) n))))
+
 (defrecord ExactGeneration [snapshot order entries subproblems])
 (defrecord ManagedGeneration
   [schema-stamp installed-order entries subproblems])
@@ -510,31 +540,67 @@
   CacheStore
   (lookup [_ key]
     (let [value (get @entries key)]
-      (swap! metrics update (if (some? value) :hits :misses) inc)
+      (swap! metrics add-kind-metric (entry-kind key)
+             (if (some? value) :hits :misses))
       value))
   (store! [_ key value]
     (if (nil? value)
       false
-      (do
+      (let [evicted-key (atom nil)]
         (swap! entries
                (fn [current]
                  (let [updated (assoc current key value)]
                    (if (<= (count updated) max-entries)
                      updated
-                     ;; Portable reference implementation: deterministic
-                     ;; bounded admission, not a claim of LRU ordering.
-                     (dissoc updated (first (keys updated)))))))
-        (swap! metrics update :puts inc)
+                     (let [candidate (first (keys updated))]
+                       ;; Portable reference implementation: deterministic
+                       ;; bounded admission, not a claim of LRU ordering.
+                       (reset! evicted-key candidate)
+                       (dissoc updated candidate))))))
+        (swap! metrics
+               (fn [current]
+                 (cond-> (add-kind-metric
+                          current (entry-kind key) :puts)
+                   @evicted-key
+                   (add-kind-metric
+                    (entry-kind @evicted-key) :evictions))))
         true)))
   (evict! [_ key]
-    (let [present? (contains? @entries key)]
-      (swap! entries dissoc key)
-      present?))
+    (let [evicted-key (atom nil)]
+      (swap! entries
+             (fn [current]
+               (if (contains? current key)
+                 (do
+                   (reset! evicted-key key)
+                   (dissoc current key))
+                 current)))
+      (when @evicted-key
+        (swap! metrics add-kind-metric
+               (entry-kind @evicted-key) :manual-evictions))
+      (some? @evicted-key)))
   (clear! [_]
-    (reset! entries {})
+    (let [removed @entries
+          removed-by-kind (frequencies (map entry-kind (keys removed)))]
+      (reset! entries {})
+      (swap! metrics
+             (fn [current]
+               (reduce-kv
+                (fn [result kind n]
+                  (add-kind-metric result kind :manual-evictions n))
+                (add-metric current :clears)
+                removed-by-kind))))
     nil)
   (stats [_]
-    (assoc @metrics :entries (count @entries)))
+    (let [current @entries
+          entries-by-kind (frequencies (map entry-kind (keys current)))
+          occupancy {:entries (count current)
+                     :max-entries max-entries
+                     :entries-by-kind entries-by-kind}]
+      (assoc @metrics
+             :entries (:entries occupancy)
+             :max-entries max-entries
+             :entries-by-kind entries-by-kind
+             :tiers {:local occupancy})))
   CacheTelemetry
   (record-validation! [_ metric]
     (swap! metrics update metric (fnil inc 0))
@@ -562,7 +628,14 @@
                       :max-entries max-entries})))
    (->LocalStore (atom {})
                  (atom
-                  (merge {:hits 0 :misses 0 :puts 0 :errors 0}
+                  (merge {:hits 0
+                          :misses 0
+                          :puts 0
+                          :errors 0
+                          :evictions 0
+                          :manual-evictions 0
+                          :clears 0
+                          :by-kind {}}
                          (zipmap validation-metric-keys
                                  (repeat 0))))
                  max-entries)))

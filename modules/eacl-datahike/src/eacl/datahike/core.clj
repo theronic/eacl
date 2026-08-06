@@ -7,6 +7,7 @@
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl :refer [IAuthorization
+                                        IDetailedAuthorization
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate]]
@@ -294,7 +295,7 @@
         (page-context
          source-adapter opts selection :read-relationships filters nil nil)
         base-filters (apply dissoc filters
-                            [:first :last :after :before :consistency])
+                            [:first :last :after :before :consistency :cache?])
         _ (relationship-filters/validate! base-filters)
         subject-id (:subject/id base-filters)
         resource-id (:resource/id base-filters)
@@ -451,7 +452,7 @@
     (:data relationships)
     relationships))
 
-(defn datahike-can?
+(defn datahike-check-permission
   [db {:keys [spice-object->internal] :as opts}
    subject permission resource consistency]
   (let [{selected-db :db adapter :adapter
@@ -461,18 +462,29 @@
         internal-subject (spice-object->internal selected-db subject)
         internal-resource (spice-object->internal selected-db resource)]
     (if-not (and (:id internal-subject) (:id internal-resource))
-      false
-      (:value
-       (cached-engine-result
-        adapter opts :can?
-        {:public [subject permission resource]
-         :internal
-         [internal-subject permission internal-resource]}
-        (:type internal-resource)
-        permission
-        boolean?
-        #(engine/can?
-          adapter internal-subject permission internal-resource))))))
+      {:allowed? false
+       :cached? false
+       :cache-basis nil}
+      (let [answer
+            (cached-engine-result
+             adapter opts :can?
+             {:public [subject permission resource]
+              :internal
+              [internal-subject permission internal-resource]}
+             (:type internal-resource)
+             permission
+             boolean?
+             #(engine/can?
+               adapter internal-subject permission internal-resource))]
+        {:allowed? (:value answer)
+         :cached? (:cached? answer)
+         :cache-basis (:cache-basis answer)}))))
+
+(defn datahike-can?
+  [db opts subject permission resource consistency]
+  (:allowed?
+   (datahike-check-permission
+    db opts subject permission resource consistency)))
 
 (defn datahike-lookup-resources
   [db
@@ -540,11 +552,11 @@
       (let [internal-query
             (-> query
                 (assoc :subject internal-subject)
-                (dissoc :consistency))
+                (dissoc :consistency :cache?))
             answer
             (cached-engine-result
              adapter opts :count-resources
-             {:public (dissoc query :consistency)
+             {:public (dissoc query :consistency :cache?)
               :internal internal-query}
              (:resource/type internal-query)
              (:permission internal-query)
@@ -624,11 +636,11 @@
       (let [internal-query
             (-> query
                 (assoc :resource internal-resource)
-                (dissoc :consistency))
+                (dissoc :consistency :cache?))
             answer
             (cached-engine-result
              adapter opts :count-subjects
-             {:public (dissoc query :consistency)
+             {:public (dissoc query :consistency :cache?)
               :internal internal-query}
              (:type (:resource internal-query))
              (:permission internal-query)
@@ -638,11 +650,7 @@
 
 (defn- request-cache-enabled?
   [cache-option]
-  (when-not (or (nil? cache-option) (boolean? cache-option))
-    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
-                    {:type :eacl/invalid-request
-                     :key :cache?
-                     :value cache-option})))
+  (cache/validate-request-cache-option! cache-option)
   (not (false? cache-option)))
 
 (defrecord DatahikeAuthorization [conn opts]
@@ -752,7 +760,17 @@
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
                     {:type :eacl/not-implemented
-                     :method (quote expand-permission-tree)}))))
+                     :method (quote expand-permission-tree)})))
+
+  IDetailedAuthorization
+  (-check-permission
+    [_ {:keys [subject permission resource consistency] cache? :cache?}]
+    (datahike-check-permission
+     (d/db conn)
+     (assoc opts :completed-cache-request?
+            (request-cache-enabled? cache?))
+     subject permission resource
+     (or consistency consistency/fully-consistent))))
 
 (defn expire-cache!
   "Expires every completed answer owned by one Datahike EACL client."
