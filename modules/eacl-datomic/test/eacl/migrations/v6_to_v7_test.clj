@@ -12,7 +12,8 @@
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [eacl.migrations.v6-to-v7 :as mig]))
+            [eacl.migrations.v6-to-v7 :as mig]
+            [eacl.relationships.storage :as relationship-storage]))
 
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))
@@ -20,7 +21,10 @@
 
 (def v7-only-attr-idents
   "Attributes in v7-schema that did not exist in a v6 database."
-  #{:eacl/schema-version :eacl/storage-version mig/forward-attr mig/reverse-attr})
+  #{:eacl/schema-version
+    :eacl/storage-version
+    relationship-storage/forward-attribute
+    relationship-storage/reverse-attribute})
 
 (def v6-schema
   "A faithful v6 database schema: the shared attribute definitions (identical
@@ -99,7 +103,7 @@
         (is (= 7 (:storage-version report)))
         (is (= 2 (:relationships-backfilled report)))
         (is (= 0 (:normalized-schema-entity-ids report)))
-        (is (= 0 (:v6-entities-retracted report)))
+        (is (= 2 (:v6-entities-retracted report)))
         (is (true? (get-in report [:verify :complete?])))
         (testing "re-asserting an unchanged schema is a zero-delta no-op"
           (is (empty? (get-in report [:schema-deltas :relations :additions])))
@@ -107,11 +111,11 @@
           (is (empty? (get-in report [:schema-deltas :permissions :additions])))
           (is (empty? (get-in report [:schema-deltas :permissions :retractions]))))))
 
-    (testing "v6 entities are kept by default (rollback-friendly) and the migration is stamped"
-      (is (= :mixed (mig/detect-storage-version (d/db conn))))
+    (testing "migration converges to tuple-only storage and stamps it"
+      (is (= :v7 (mig/detect-storage-version (d/db conn))))
       (is (= 7 (mig/stamped-storage-version (d/db conn)))))
 
-    (testing "make-client now starts (the stamp marks leftover v6 entities as inert) and v7 reads are correct"
+    (testing "make-client now starts and tuple reads are correct"
       (let [acl (eacl.datomic/make-client conn {})]
         (assert-expected-permissions! acl)
         (is (= ["product-1"]
@@ -125,21 +129,33 @@
   (with-mem-conn [conn v6-schema]
     (populate-v6! conn)
     (mig/migrate! conn {:schema schema-str})
-    (let [count-forward-tuples (fn [] (count (seq (d/datoms (d/db conn) :aevt mig/forward-attr))))
+    (let [count-forward-tuples
+          (fn []
+            (count
+             (seq
+              (d/datoms
+               (d/db conn)
+               :aevt
+               relationship-storage/forward-attribute))))
           tuples-after-first   (count-forward-tuples)
           second-report        (mig/migrate! conn {:schema schema-str})]
       (is (= 2 tuples-after-first))
       (is (= tuples-after-first (count-forward-tuples)) "re-running migrate! adds no datoms")
       (is (true? (get-in second-report [:verify :complete?]))))))
 
-(deftest migrate!-retraction-test
+(deftest migrate!-removed-rollback-option-is-rejected-test
   (with-mem-conn [conn v6-schema]
     (populate-v6! conn)
-    (let [report (mig/migrate! conn {:schema schema-str :retract-v6-entities? true})]
-      (is (= 2 (:v6-entities-retracted report))))
-    (is (= :v7 (mig/detect-storage-version (d/db conn))))
-    (is (empty? (mig/v6-relationship-eids (d/db conn))))
-    (assert-expected-permissions! (eacl.datomic/make-client conn {}))))
+    (let [error
+          (try
+            (mig/migrate!
+             conn
+             {:schema schema-str :retract-v6-entities? true})
+            nil
+            (catch clojure.lang.ExceptionInfo exception
+              (ex-data exception)))]
+      (is (= :eacl/invalid-config (:type error)))
+      (is (= [:retract-v6-entities?] (:unknown-keys error))))))
 
 (deftest make-client-auto-migrate-test
   (testing "{:auto-migrate-v6 {:schema ...}} migrates during construction"
@@ -210,20 +226,6 @@
     (is (= :none (mig/detect-storage-version (d/db conn))))
     (is (some? (eacl.datomic/make-client conn {}))
         "no relationship data at all — nothing to migrate, startup proceeds")))
-
-(deftest manual-migration-stamp-test
-  (with-mem-conn [conn v6-schema]
-    (populate-v6! conn)
-    ;; The docs/migration-v6-to-v7.md manual path: install attrs + backfill,
-    ;; verify, deploy — but no stamp yet.
-    (mig/ensure-v7-attributes! conn)
-    (is (= 2 (mig/backfill-relationship-tuples! conn {})))
-    (is (= :mixed (mig/detect-storage-version (d/db conn))))
-    (is (true? (:complete? (mig/verify-backfill (d/db conn)))))
-    (is (thrown? clojure.lang.ExceptionInfo (eacl.datomic/make-client conn {}))
-        "mixed state without a stamp still refuses startup — could be mid-migration")
-    (mig/stamp-storage-version! conn)
-    (assert-expected-permissions! (eacl.datomic/make-client conn {}))))
 
 (deftest migrate!-rejects-unknown-options-test
   (with-mem-conn [conn v6-schema]

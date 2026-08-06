@@ -22,8 +22,7 @@
       bean)))
 
 (def ^:private selection
-  {:mode :verified-authoritative
-   :kernel production/generated-java-kernel})
+  {:kernel production/generated-java-kernel})
 
 (def ^:private cursor-rebase-chunk-items
   (verified/cursor-rebase-chunk-limit))

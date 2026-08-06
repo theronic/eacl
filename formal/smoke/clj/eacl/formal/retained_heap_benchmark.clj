@@ -1,20 +1,16 @@
 (ns eacl.formal.retained-heap-benchmark
-  "Post-full-GC retained-live-heap regression gate for recursive page walks.
+  "Generated-engine post-full-GC retained-live-heap regression gate.
 
   Logical cache weights, caller-thread allocation, and heap use are distinct
-  dimensions. This gate therefore measures JVM heap bytes directly. Every
-  before/after pair retains an explicit keepalive vector across both full-GC
-  snapshots so Clojure local clearing cannot make seed-only objects disappear
-  between measurements. Alternating legacy/generated trials reduce order
-  bias. The result is a host-runtime regression gate, not a portable peak-heap
-  theorem or SLA."
+  dimensions. This gate measures JVM heap bytes directly and retains the seed,
+  clients, and query across both snapshots. It is a host-runtime regression
+  gate, not a portable peak-heap theorem or SLA."
   (:refer-clojure :exclude [run!])
   (:require
    [datascript.core :as ds]
    [eacl.cache :as cache]
    [eacl.core :as eacl]
-   [eacl.datascript.core :as datascript]
-   [eacl.formal.production-kernel :as production])
+   [eacl.datascript.core :as datascript])
   (:import
    (java.lang.management ManagementFactory)
    (java.math BigInteger)
@@ -35,34 +31,29 @@
         (keep
          (fn [collector]
            (let [count' (.getCollectionCount collector)]
-             (when-not (= -1 count')
-               count')))
+             (when-not (= -1 count') count')))
          (ManagementFactory/getGarbageCollectorMXBeans))]
-    (when (seq counts)
-      (reduce + counts))))
+    (when (seq counts) (reduce + counts))))
 
 (defn- stabilized-heap-snapshot!
   []
-  (let [collection-count-before (collection-count)]
+  (let [before (collection-count)]
     (dotimes [_ 4]
       (System/gc)
       (Thread/sleep 100))
-    (let [collection-count-after (collection-count)
-          used-bytes
+    (let [after (collection-count)
+          used
           (.getUsed
            (.getHeapMemoryUsage
             (ManagementFactory/getMemoryMXBean)))]
-      (when (and collection-count-before
-                 collection-count-after
-                 (<= collection-count-after collection-count-before))
+      (when (and before after (<= after before))
         (throw
          (ex-info
           "Explicit full-GC heap measurement did not run a collection."
           {:type :eacl.formal/no-observed-full-gc
-           :before collection-count-before
-           :after collection-count-after})))
-      {:used-bytes used-bytes
-       :collection-count collection-count-after})))
+           :before before
+           :after after})))
+      {:used-bytes used :collection-count after})))
 
 (defn- transact-objects!
   [conn objects]
@@ -87,8 +78,7 @@
        (fn [[parent child]]
          (eacl/->Relationship parent :parent child))
        (partition 2 1 folders))))
-    {:user user
-     :folders folders}))
+    {:user user :folders folders}))
 
 (defn- digest-id!
   [^MessageDigest digest id]
@@ -104,8 +94,7 @@
       (let [page
             (eacl/lookup-resources
              client
-             (cond-> query
-               after (assoc :after after)))
+             (cond-> query after (assoc :after after)))
             data (:data page)]
         (doseq [item data]
           (digest-id! digest (:id item)))
@@ -119,190 +108,110 @@
            :result-sha256
            (format "%064x" (BigInteger. 1 (.digest digest)))})))))
 
-(defn- selection
-  [mode]
-  (case mode
-    :legacy
-    {:mode :legacy-authoritative}
-
-    :generated
-    {:mode :verified-authoritative
-     :kernel production/generated-java-kernel}))
-
 (defn- measure-once!
-  [mode result-count page-size]
+  [result-count page-size]
   (let [conn (datascript/create-conn)
-        common
-        {:security-key "01234567890123456789012345678901"}
+        common {:security-key "01234567890123456789012345678901"}
         writer
         (datascript/make-client
          conn
          (assoc common :cache cache/no-cache))
-        seeded
-        (seed-recursive-chain! conn writer result-count)
-        options
-        (assoc
-         common
-         :cache {:remember-answers false}
-         :engine-selection (selection mode))
+        seeded (seed-recursive-chain! conn writer result-count)
+        options (assoc common :cache {:remember-answers false})
         client (datascript/make-client conn options)
         query
         {:subject (:user seeded)
          :permission :read
          :resource/type :folder
          :first page-size}
-        ;; This vector is intentionally consumed after the second heap
-        ;; snapshot. Without it, Clojure/JIT local clearing can make writer or
-        ;; seed-only state die between snapshots and produce a false negative.
         keepalive [conn common writer seeded options client query]
         before (stabilized-heap-snapshot!)
         walk (walk-pages! client query)
         after (stabilized-heap-snapshot!)
         keepalive-count (count keepalive)
-        retained-delta-bytes
-        (- (:used-bytes after) (:used-bytes before))]
+        retained-delta (- (:used-bytes after) (:used-bytes before))]
     (when-not (= result-count (:items walk))
       (throw
        (ex-info
         "Retained-heap fixture returned an incomplete page walk."
         {:type :eacl.formal/incomplete-retained-heap-walk
-         :mode mode
          :expected result-count
          :actual (:items walk)})))
-    {:mode mode
-     :before-full-gc-used-bytes (:used-bytes before)
+    {:before-full-gc-used-bytes (:used-bytes before)
      :after-full-gc-used-bytes (:used-bytes after)
-     :retained-delta-bytes retained-delta-bytes
+     :retained-delta-bytes retained-delta
      :full-gc-count-before (:collection-count before)
      :full-gc-count-after (:collection-count after)
      :keepalive-count keepalive-count
      :walk walk}))
 
-(defn- percentile
-  [samples proportion]
-  (let [ordered (vec (sort samples))
-        index
-        (min
-         (dec (count ordered))
-         (long (Math/floor (* proportion (count ordered)))))]
-    (nth ordered index)))
-
 (defn run!
-  "Runs the retained-live-heap gate and throws if any reviewed condition fails.
+  "Runs the generated-only retained-live-heap gate.
 
-  Defaults:
-  - 4,000 recursively authorized results;
-  - page size 25;
-  - five alternating paired trials;
-  - at least 1 MiB positive retained signal per mode/trial;
-  - generated retained-live-heap delta at most 1.5x legacy."
+  The absolute ceiling replaces the removed v7-engine ratio. The fixture and
+  ceiling are deliberately explicit so a runtime or generated-artifact growth
+  regression fails even though no obsolete engine is packaged."
   ([]
    (run! {}))
   ([{:keys [result-count page-size trials minimum-signal-bytes
-            maximum-generated-to-legacy-ratio]
+            maximum-retained-delta-bytes]
      :or {result-count 4000
           page-size 25
           trials 5
           minimum-signal-bytes 1048576
-          maximum-generated-to-legacy-ratio 1.5}}]
-   (when-not (and (pos-int? result-count)
-                  (pos-int? page-size)
-                  (pos-int? trials)
-                  (pos-int? minimum-signal-bytes)
-                  (number? maximum-generated-to-legacy-ratio)
-                  (pos? maximum-generated-to-legacy-ratio))
+          maximum-retained-delta-bytes 8388608}}]
+   (when-not
+    (every?
+     pos-int?
+     [result-count page-size trials minimum-signal-bytes
+      maximum-retained-delta-bytes])
      (throw
       (ex-info
-       "Retained-heap gate options must be positive."
+       "Retained-heap gate options must be positive integers."
        {:type :eacl.formal/invalid-retained-heap-options})))
-   ;; Warm both language/runtime paths before the first measured baseline so
-   ;; class loading and generated-kernel initialization are not attributed to
-   ;; one engine.
-   (measure-once! :legacy 64 16)
-   (measure-once! :generated 64 16)
+   (measure-once! 64 16)
    (stabilized-heap-snapshot!)
-   (let [trial-results
+   (let [results
          (mapv
           (fn [trial]
-            (let [[first-mode second-mode]
-                  (if (even? trial)
-                    [:legacy :generated]
-                    [:generated :legacy])
-                  first-result
-                  (measure-once! first-mode result-count page-size)
-                  second-result
-                  (measure-once! second-mode result-count page-size)
-                  by-mode
-                  {first-mode first-result
-                   second-mode second-result}
-                  legacy-delta
-                  (get-in by-mode [:legacy :retained-delta-bytes])
-                  generated-delta
-                  (get-in by-mode [:generated :retained-delta-bytes])
-                  ratio (/ (double generated-delta) legacy-delta)]
-              {:trial trial
-               :order [first-mode second-mode]
-               :legacy-retained-delta-bytes legacy-delta
-               :generated-retained-delta-bytes generated-delta
-               :generated-to-legacy-ratio ratio
-               :legacy-result-sha256
-               (get-in by-mode [:legacy :walk :result-sha256])
-               :generated-result-sha256
-               (get-in by-mode [:generated :walk :result-sha256])
-               :walk-items
-               (get-in by-mode [:generated :walk :items])
-               :walk-pages
-               (get-in by-mode [:generated :walk :pages])}))
+            (assoc
+             (measure-once! result-count page-size)
+             :trial trial))
           (range trials))
-         deltas
-         (mapcat
-          (juxt
-           :legacy-retained-delta-bytes
-           :generated-retained-delta-bytes)
-          trial-results)
-         ratios (mapv :generated-to-legacy-ratio trial-results)
-         digests
-         (mapcat
-          (juxt :legacy-result-sha256 :generated-result-sha256)
-          trial-results)
+         deltas (mapv :retained-delta-bytes results)
+         digests (mapv #(get-in % [:walk :result-sha256]) results)
          positive-signal?
          (every? #(>= % minimum-signal-bytes) deltas)
+         below-ceiling?
+         (every? #(<= % maximum-retained-delta-bytes) deltas)
          same-results? (= 1 (count (set digests)))
-         maximum-ratio (apply max ratios)
-         passed?
-         (and
-          positive-signal?
-          same-results?
-          (<= maximum-ratio maximum-generated-to-legacy-ratio))
+         passed? (and positive-signal? below-ceiling? same-results?)
          result
          {:fixture
           {:backend :datascript
+           :engine :generated-only
            :permission-shape :recursive-chain
            :result-count result-count
            :page-size page-size
            :trials trials
            :cache {:remember-answers false}
-           :measurement :post-full-gc-live-heap-delta
-           :paired-order :alternating}
+           :measurement :post-full-gc-live-heap-delta}
           :required
           {:minimum-positive-retained-signal-bytes minimum-signal-bytes
-           :maximum-generated-to-legacy-ratio
-           maximum-generated-to-legacy-ratio
+           :maximum-retained-delta-bytes maximum-retained-delta-bytes
            :identical-complete-result-digest true
            :observed-full-gc-between-every-snapshot true
            :explicit-baseline-keepalive true}
-          :trials trial-results
+          :trials results
           :summary
           {:minimum-retained-delta-bytes (apply min deltas)
            :maximum-retained-delta-bytes (apply max deltas)
-           :median-generated-to-legacy-ratio
-           (percentile ratios 0.50)
-           :maximum-generated-to-legacy-ratio maximum-ratio
            :positive-signal? positive-signal?
+           :below-ceiling? below-ceiling?
            :same-results? same-results?
            :status (if passed? :passed :failed)}
           :qualification
-          [:same-process-alternating-post-full-gc-regression-measurement
+          [:generated-only-post-full-gc-regression-measurement
            :not-peak-heap
            :not-whole-process-rss
            :not-portable-runtime-guarantee

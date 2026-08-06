@@ -156,8 +156,6 @@ cursor frontier identity, and cache stamps. Backends declare consistency,
 snapshot, cursor, transaction, cache, and runtime capabilities
 explicitly.
 
-The legacy six-function SPI remains accepted for supported v7 third-party
-adapters; it is a compatibility seam, not the complete v8 contract. New v8
-adapters should follow [the adapter boundary inventory](v8-backend-adapter-boundary.md)
-and run the shared public API, recursive, cache, and independent-oracle
-contracts.
+EACL v8 accepts only the v8 adapter operation map. Third-party adapters must
+follow [the adapter boundary inventory](v8-backend-adapter-boundary.md) and run
+the shared public API, recursive, cache, and independent-oracle contracts.

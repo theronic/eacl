@@ -221,7 +221,6 @@
                 generated-artifacts
                 public-runtime
                 generated-indexed-authority
-                ordered-merge-source-specialization
                 layered-subproblem-cache
                 cross-backend-managed-proof
                 authority-mode-matrix
@@ -306,10 +305,8 @@
               observed
               (get-in consistency-selection-boundary
                       [:observed runtime])]
-          (is (<= (:median-p95-ratio observed)
-                  (:maximum-median-p95-ratio required)))
-          (is (<= (:median-p95-absolute-overhead-ns observed)
-                  (:maximum-median-p95-absolute-overhead-ns required)))
+          (is (<= (:median-p95-ns observed)
+                  (:maximum-median-p95-ns required)))
           (is (= :passed (:status observed))))))
     (testing "recoverable cursor rebase has generated logical and host gates"
       (let [required (:required recoverable-cursor-rebase)
@@ -445,7 +442,7 @@
       (is (= :passed (:status classification))))
     (let [permission-check (:permission-check public-runtime)
           scaling (:target-local-scaling permission-check)]
-      (is (= :verified-authoritative (:engine-mode permission-check)))
+      (is (= :generated-authoritative (:engine-mode permission-check)))
       (is (= :reverse (:point-query-direction permission-check)))
       (is (= :EACL-FORMAL-055 (:counterexample scaling)))
       (is (= [16 1040] (:reachable-resource-counts scaling)))
@@ -504,8 +501,9 @@
         (is (true? (:same-results? observed)))
         (is (<= (:minimum-positive-retained-signal-bytes required)
                 (:minimum-retained-delta-bytes observed)))
-        (is (<= (:maximum-generated-to-legacy-ratio observed)
-                (:maximum-generated-to-legacy-ratio required)))
+        (is (<= (:maximum-retained-delta-bytes observed)
+                (:maximum-retained-delta-bytes required)))
+        (is (true? (:below-ceiling? observed)))
         (is (true? (:observed-full-gc-between-every-snapshot required)))
         (is (true? (:explicit-baseline-keepalive required)))))
 
@@ -559,34 +557,18 @@
                (get-in release-performance-evaluation
                        [:dimensions :throughput :status])))))
 
-    (testing "public authority modes gate like resource dimensions separately"
-      (let [required (:required authority-mode-matrix)]
-        (is (= #{:direct :acyclic :recursive :cursor :cache-hot}
-               (set (keys (:observed authority-mode-matrix)))))
-        (is (= :passed (:status authority-mode-matrix)))
-        (doseq [[_ observation] (:observed authority-mode-matrix)]
-          (is (or
-               (<= (:median-p95-latency-ratio observation)
-                   (:maximum-median-p95-latency-ratio required))
-               (<= (:median-p95-absolute-overhead-ns observation)
-                   (:maximum-median-p95-absolute-overhead-ns required))))
-          (is (or
-               (<= (:median-p95-allocation-ratio observation)
-                   (:maximum-median-p95-allocation-ratio required))
-               (<= (:median-p95-allocation-overhead-bytes observation)
-                   (:maximum-median-p95-allocation-overhead-bytes
-                    required))))
-          (is (or
-               (<= (:median-p95-backend-operation-ratio observation)
-                   (:maximum-median-p95-backend-operation-ratio required))
-               (<= (:median-p95-backend-operation-overhead observation)
-                   (:maximum-median-p95-backend-operation-overhead
-                    required))))
-          (is (= :passed (:status observation))))
-        (is (zero?
-             (get-in authority-mode-matrix
-                     [:reflection-removal
-                      :generated-java-boundary-reflection-warnings])))))
+    (testing "the removed engine comparison is historical evidence only"
+      (is (= :historical-cutover-evidence
+             (:status authority-mode-matrix)))
+      (is (= :removed-with-runtime-engine-selector
+             (:runner authority-mode-matrix)))
+      (is (= :generated-authoritative
+             (get-in public-runtime
+                     [:permission-check :engine-mode])))
+      (is (zero?
+           (get-in authority-mode-matrix
+                   [:reflection-removal
+                    :generated-java-boundary-reflection-warnings]))))
 
     (testing "shared-subgraph gates are recomputed rather than trusted"
       (let [required (:required layered-subproblem-cache)
@@ -627,21 +609,13 @@
     (testing "noise rules require independent trials and robust summaries"
       (let [indexed
             (get-in generated-indexed-authority
-                    [:traversal-scope-binding-recheck])
-            merge-gates
-            (map
-             ordered-merge-source-specialization
-             [:page-prefix-gate
-              :complete-consumption-gate])]
+                    [:traversal-scope-binding-recheck])]
         (is (= 5 (count (:trials indexed))))
         (is (= :passed (get-in indexed [:summary :status])))
-        (doseq [gate merge-gates]
-          (is (= 5 (get-in gate [:fixture :independent-trials])))
-          (is (= :passed (:status gate)))
-          (is (<= (:median-p95-ratio gate)
-                  (get-in gate
-                          [:required
-                           :maximum-median-p95-ratio]))))
+        (doseq [runtime [:clj-java :cljs-javascript]]
+          (is (= :passed
+                 (get-in consistency-selection-boundary
+                         [:observed runtime :status]))))
         (is (= 5
                (get-in layered-subproblem-cache
                        [:observed :repeated-runs])))

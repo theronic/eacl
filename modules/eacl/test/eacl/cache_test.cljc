@@ -619,9 +619,8 @@
           {:permission-nodes #{:document}}
           [10] boolean?
           (fn [] (swap! calls inc) true)
-          {:engine-selection
-           {:mode :verified-authoritative
-            :kernel (->RejectingKernel)}})]
+          {:decision-kernel
+           {:kernel (->RejectingKernel)}})]
     (is (false? (:cached? (resolve))))
     (is (false? (:cached? (resolve))))
     (is (= 2 @calls))))

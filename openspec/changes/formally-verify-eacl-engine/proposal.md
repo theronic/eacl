@@ -10,9 +10,9 @@ EACL's authorization result is security-critical, but today its correctness is e
 - Specify and verify cache laws: a hit is observationally equal to recomputation on the selected immutable snapshot; exact hits are generation-identical; managed reuse is framed by complete relation dependencies and forward transaction stamps; exact/arbitrary DB work bypasses completed answers; and lifecycle races cannot expose stale publication.
 - Make backend behavior an explicit trusted contract rather than part of the proof: adapters provide immutable-snapshot, complete ordered-scan, identity, causal-anchor, exact-selection, and dependency-proof operations, with executable contract tests for Datomic, DataScript, and Datahike.
 - Add bounded temporal model checking and model-derived stateful tests to search adversarial write/cache/cursor interleavings, retain every minimized counterexample as a regression, and require known proof-harness mutants to be detected.
-- Differentially and shadow-test the verified kernel against the current Clojure engine and the independent authorization/causal oracles before making the verified kernel authoritative.
+- Differentially and shadow-test the verified kernel against the former Clojure engine and the independent authorization/causal oracles before making the verified kernel authoritative, then remove the former engine from production while retaining those test oracles and counterexamples.
 - Add reproducible formal-toolchain and CI entry points. Formal tools remain development/build dependencies and do not add Datomic, DataScript, or Datahike to the backend-neutral runtime.
-- Preserve the public EACL API, persisted schema, relationship representation, token envelope, and declared backend consistency behavior unless a counterexample demonstrates that existing behavior is unsound; any such correction will be documented with its minimized witness.
+- Preserve persisted schema, relationship representation, token envelope, storage migrations, and declared backend consistency behavior unless a counterexample demonstrates that existing behavior is unsound. EACL v8 may break public calls when doing so removes obsolete engine-selection contracts or exposes a materially clearer, safer API; any such correction will be documented with its minimized witness.
 
 ## Capabilities
 
@@ -32,4 +32,4 @@ None.
 - Affected adapter verification: Datomic, DataScript, and Datahike contract suites; backend implementations remain outside the formal proof and are checked against explicit assumptions.
 - New repository artifacts: formal semantics and proofs, temporal models, generated JVM integration code, differential generators, minimized counterexamples, toolchain locks, and CI jobs.
 - New development tooling: a pinned verification-aware JVM-targeting toolchain and a pinned TLA+ model checker; no new production service or database dependency.
-- Release risk is controlled by an opt-in shadow phase, output/exception equivalence checks, performance budgets, and a reversible authoritative-engine switch.
+- Release risk is controlled before release by differential/shadow evidence, output/exception equivalence checks, performance budgets, and retained counterexamples. EACL v8 ships only the generated authoritative engine; consumers recover operationally by deploying another library build, not by switching to an unverified runtime decision path.

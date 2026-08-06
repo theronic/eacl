@@ -5,6 +5,7 @@
             [eacl.datomic.mutation :as journal]
             [eacl.datomic.mutation-schema :as mutation-schema]
             [eacl.mutation :as mutation]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.spicedb.parser :as parser]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
@@ -242,7 +243,7 @@
     :db/unique      :db.unique/identity}
 
    ;; v7 Relationships: forward and reverse tuple indexes only.
-   {:db/ident       :eacl.v7.relationship/subject-type+relation+resource-type+resource
+   {:db/ident       relationship-storage/forward-attribute
     :db/doc         "EACL v7 relationship tuple from subject to resource."
     :db/valueType   :db.type/tuple
     :db/tupleTypes  [:db.type/keyword
@@ -252,7 +253,7 @@
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
-   {:db/ident       :eacl.v7.relationship/resource-type+relation+subject-type+subject
+   {:db/ident       relationship-storage/reverse-attribute
     :db/doc         "EACL v7 reverse relationship tuple from resource to subject."
     :db/valueType   :db.type/tuple
     :db/tupleTypes  [:db.type/keyword
@@ -276,7 +277,7 @@
       (reduce (fn [n _] (inc n))
               0
               (d/index-range db
-                             :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                             relationship-storage/forward-attribute
                              [subject-type relation-eid resource-type 0]
                              [subject-type relation-eid resource-type Long/MAX_VALUE])))))
 

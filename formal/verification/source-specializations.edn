@@ -286,18 +286,20 @@
     [AcyclicEngine.PublicCanRootClassificationHoistPreservesResult
      AcyclicEngine.PublicCanRootClassificationHoistReducesWork]}
    :abstract-domain
-   {:inputs
+   {:historical-pre-cutover-inputs
     [:visible-endpoints
      :generated-authoritative
      :generated-shadow
      :permission-root-defined
      :generated-result
      :legacy-result]
-    :undefined-root-contract :legacy-result-is-false
+    :current-runtime-inputs
+    [:visible-endpoints :permission-root-defined :generated-result]
+    :undefined-root-contract :result-is-false
     :result :authorization-boolean}
    :evidence
    {:jvm-public-client-fixtures 1
-    :generated-authoritative-root-lookups-per-call 1
+    :generated-production-root-lookups-per-call 1
     :portable-result-regressions
     :complete-verified-authority-clj-cljs-suites
     :counterexample-regressions [:EACL-FORMAL-051]
@@ -305,13 +307,10 @@
     ["modules/eacl/src/eacl/engine/v8.cljc"
      "formal/dafny/AcyclicEngine.dfy"]}
    :formal-resource-bounds
-   {:scope :one-dispatch-invocation
-    :generated-authoritative-root-lookups 1
-    :legacy-root-lookups 1
-    :outer-shadow-dispatch-root-lookups 2
-    :new-root-lookups "<= previous root lookups"
-    :whole-shadow-request
-    :composes-the-outer-shadow-and-nested-generated-authoritative-invocations}
+   {:scope :one-production-dispatch-invocation
+    :generated-production-root-lookups 1
+    :historical-before-after-model
+    :retained-only-as-optimization-proof-evidence}
    :limitations
    [:undefined-root-denies-is-the-host-semantic-precondition-discharged-by-empty-permission-path-evaluation-and-public-regressions
     :jvm-observes-the-exact-private-root-lookup-count-cljs-shares-the-same-cljc-branch-but-is-result-tested-only
@@ -498,7 +497,7 @@
    :limitations
    [:accepted-certificate-proves-exact-descriptor-to-edge-derivation-but-not-backend-path-materialization-or-host-map-to-descriptor-translation
     :proofless-raw-snapshots-use-the-temporal-safe-host-per-root-fallback
-    :externally-constructed-legacy-schema-cache-maps-use-the-host-per-root-fallback
+    :externally-constructed-uncertified-schema-cache-maps-use-the-host-per-root-fallback
     :path-materialization-cost-is-outside-this-specialization
     :host-hash-map-set-and-vector-semantics-remain-trusted
     :deterministic-pr-str-comparison-cost-is-a-host-assumption

@@ -28,7 +28,7 @@ The required assurance claim is deliberately narrower than whole-system verifica
 - Mechanically prove cursor window and cache-reuse theorems, including snapshot and causal-history conditions.
 - Run the verified implementation in the production decision path on both Clojure/JVM and supported ClojureScript targets.
 - Find current implementation and design defects through proof failures, model-checker counterexamples, differential random testing, and mutation controls.
-- Preserve EACL's public API and backend independence while making all assumptions and residual risks auditable.
+- Preserve backend independence and storage migrations while making all assumptions and residual risks auditable. Preserve public calls where they remain the right v8 contract, but do not retain runtime engine-selection or rollback APIs solely for pre-v8 compatibility.
 - Make every proof, model check, generator seed, and minimized counterexample reproducible in CI.
 
 **Non-Goals:**
@@ -206,22 +206,22 @@ A generated `verification-manifest` records theorem status, source/tool digests,
 
 Tool installation is repository-local or containerized and locked. The bootstrap verifies downloaded checksums and never depends on an unpinned globally installed verifier.
 
-### 9. Migrate by shadowing before authority
+### 9. Use shadowing as pre-release evidence, not a shipped runtime mode
 
-The first integration preserves the current Clojure engine as the response source and invokes the verified kernel in shadow mode on sampled or test traffic. A disagreement is a release blocker and is classified against the independent semantics rather than assuming either implementation is correct.
+During development, differential fixtures preserve the former Clojure engine as an independent response source and compare it with the verified kernel. A disagreement is a release blocker and is classified against the independent semantics rather than assuming either implementation is correct.
 
 After all theorem, adapter, cross-target, counterexample, and performance gates pass:
 
-1. make the verified kernel authoritative behind an opt-in client option;
-2. run the full backend suites and representative load tests in both modes;
-3. make the verified kernel the default while retaining the old path for one rollback window;
-4. remove the old decision path only after the compatibility window and counterexample corpus show no unexplained divergence.
+1. run the full backend suites and representative load tests against the generated authority;
+2. retain former-engine outputs only in characterization fixtures, minimized counterexamples, and test-only differential oracles;
+3. delete handwritten production authorization, pagination, cursor, consistency, and cache decisions;
+4. remove the engine-selection public/internal runtime contract so every v8 client has one authoritative decision path.
 
 Unsound legacy behavior is never preserved merely to make differential tests green. Its minimized witness, security impact, correction, and any migration note are documented.
 
 ## Risks / Trade-offs
 
-- [The verified kernel is a substantial second implementation before cutover] → Start from the small existing oracle and causal model, keep one normalized schema IR, port in theorem-sized increments, and delete the legacy decision path after the rollback window.
+- [The verified kernel is a substantial second implementation before cutover] → Start from the small existing oracle and causal model, keep one normalized schema IR, port in theorem-sized increments, and delete the former production decision path once the proof/differential gates pass.
 - [Dafny verification may become solver-fragile or slow] → Pin tool/solver versions, isolate lemmas, use explicit induction and bounded resource settings, record verification times, and reject proofs that depend on unstable global timeouts.
 - [Generated JavaScript may not fit every current browser/bundler target] → Make cross-target compilation and a browser/Node integration spike the first implementation milestone; keep the verified semantic oracle plus DRT bridge until the generated target meets packaging and performance gates.
 - [Extern adapter contracts can be violated by a backend] → Publish assumptions, add runtime shape/order checks, run generative adapter certification, and make coverage claims adapter-specific.
@@ -239,10 +239,12 @@ Unsound legacy behavior is never preserved merely to make differential tests gre
 4. Model-check cache/cursor histories early; convert every counterexample into a regression before optimizing or porting behavior.
 5. Implement and prove direct traversal, recursive traversal, lookup/count, pagination, and cache modules in dependency order.
 6. Certify adapter contracts and complete CLJ/CLJS differential testing.
-7. Run shadow mode, fix every unexplained divergence, and meet correctness/performance gates.
-8. Roll out opt-in authority, then default authority, then remove the legacy decision path.
+7. Retain the completed shadow evidence, fix every unexplained divergence, and
+   meet correctness/performance gates before removing the shadow and fallback
+   code from production.
+8. Make generated authority the only production v8 path, while retaining storage migrations and independent test evidence.
 
-Rollback before legacy removal switches the client option back to the current engine. The formal artifacts, regressions, and any security fixes remain; rollback never re-enables a demonstrated false-grant path.
+Operational rollback deploys another library build. EACL v8 does not ship a runtime switch that can re-enable an unverified or already-disproved authorization path. Persisted-data upgrades remain supported through the storage migration APIs and `write-schema!`.
 
 ## Open Questions
 

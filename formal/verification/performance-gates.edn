@@ -138,9 +138,9 @@
    {:cljs-generated-smoke
     {:tests 58 :assertions 10968 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 163 :assertions 4513 :failures 0 :errors 0}
+    {:tests 155 :assertions 4419 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 525 :assertions 28304 :failures 0 :errors 0}}
+    {:tests 509 :assertions 34773 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -355,34 +355,22 @@
    eacl.consistency-test/consistency-selection-logical-work-matches-formal-path-bounds}
   :required
   {:clj-java
-   {:maximum-median-p95-ratio 12.0
-    :maximum-median-p95-absolute-overhead-ns 10000.0}
+   {:maximum-median-p95-ns 15000.0}
    :cljs-javascript
-   {:maximum-median-p95-ratio 8.0
-    :maximum-median-p95-absolute-overhead-ns 10000.0}}
+   {:maximum-median-p95-ns 30000.0}}
   :observed
-  {:date "2026-08-04"
+  {:date "2026-08-06"
    :fixture
    {:repetitions 2000
     :warmup 10
     :samples 40
     :independent-trials 5
-   :paired-order :alternating}
+    :aggregation :median-of-trial-percentiles}
    :clj-java
-   {:legacy-p50-ns-representative 124.4165
-    :verified-p50-ns-representative 606.6045
-    :median-p50-ratio 4.900298071912455
-    :median-p95-ratio 4.991323323323324
-    :median-p50-absolute-overhead-ns 482.18800000000005
-    :median-p95-absolute-overhead-ns 512.3960000000001
+   {:median-p95-ns 6705.917
     :status :passed}
    :cljs-javascript
-   {:legacy-p50-ns-representative 738.6874999999691
-    :verified-p50-ns-representative 2432.958499999927
-    :median-p50-ratio 3.2992286174450025
-    :median-p95-ratio 3.1935030148304167
-    :median-p50-absolute-overhead-ns 1695.2499999999873
-    :median-p95-absolute-overhead-ns 1704.8129999999446
+   {:median-p95-ns 2023.458000000005
     :status :passed}}
   :resource-qualification
   {:logical-counters
@@ -457,7 +445,7 @@
    :max-page-median-max-ms 50
    :minimum-threshold-throughput-pages-per-second 20}
   :permission-check
-  {:engine-mode :verified-authoritative
+  {:engine-mode :generated-authoritative
    :point-query-direction :reverse
    :warm-baseline-microseconds 268
    :warm-max-microseconds 1000
@@ -1106,8 +1094,7 @@
   :status :passed}
 
  :authority-mode-matrix
- {:runner
-  "formal/smoke/clj/eacl/formal/authority_mode_benchmark.clj"
+ {:runner :removed-with-runtime-engine-selector
   :fixture
   {:backend :datascript
    :documents 512
@@ -1118,7 +1105,7 @@
    :independent-trials 5
    :paired-order :alternating
    :aggregation :median-of-trial-p95-values}
-  :engine-modes [:legacy-authoritative :verified-authoritative]
+  :engine-modes [:former-test-oracle :generated-authoritative]
   :scenarios [:direct :acyclic :recursive :cursor :cache-hot]
   :resource-dimensions
   {:public-result :exact-semantic-value
@@ -1187,7 +1174,7 @@
    :generated-java-boundary-reflection-warnings 0}
  :qualification
   :host-specific-regression-gate-not-retained-heap-or-worst-case-bound
-  :status :passed}
+  :status :historical-cutover-evidence}
 
  :recoverable-cursor-rebase
  {:counterexample :EACL-FORMAL-049
@@ -1324,24 +1311,22 @@
    :trials 5
    :paired-order :alternating
    :measurement :post-full-gc-live-heap-delta}
-  :required
+ :required
   {:minimum-positive-retained-signal-bytes 1048576
-   :maximum-generated-to-legacy-ratio 1.5
+   :maximum-retained-delta-bytes 8388608
    :identical-complete-result-digest true
    :observed-full-gc-between-every-snapshot true
    :explicit-baseline-keepalive true}
   :observed
-  {:minimum-retained-delta-bytes 5146600
-   :maximum-retained-delta-bytes 5336312
-   :median-generated-to-legacy-ratio 1.0364070653981357
-   :maximum-generated-to-legacy-ratio 1.036843888729995
+  {:minimum-retained-delta-bytes 5335984
+   :maximum-retained-delta-bytes 5344744
    :positive-signal? true
+   :below-ceiling? true
    :same-results? true}
   :loophole-controls
   [:seed-and-client-kept-live-across-both-snapshots
    :full-gc-collection-count-must-increase
-   :both-runtime-paths-warmed-before-measurement
-   :alternating-paired-order
+   :generated-runtime-warmed-before-measurement
    :one-mibibyte-positive-signal-floor
    :complete-ordered-result-digest-equality]
   :qualification
@@ -1384,9 +1369,9 @@
    {:status :passed
    :source
     [:generated-indexed-authority
-     :ordered-merge-source-specialization
+     :generated-consistency-boundary
      :layered-subproblem-cache
-     :authority-mode-matrix]}}
+     :generated-retained-live-heap]}}
   :required-dimensions
   [:retained-live-heap
    :entry-weight
@@ -1401,7 +1386,8 @@
   :release-cutover :passed}
 
  :shadow-rollout
- {:unexplained-differences-max 0
+ {:status :historical-cutover-evidence-not-runtime-mode
+  :unexplained-differences-max 0
   :false-grants-max 0
   :stages
   [{:name :ci

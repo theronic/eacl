@@ -1,22 +1,13 @@
 (ns eacl.backend.v8
   "Validated capability and operation contract for v8 backend snapshots.
 
-  The legacy six-function map SPI remains in eacl.backend.spi. This namespace
-  describes the richer snapshot boundary needed by recursive traversal,
-  Relay pagination, deletion, consistency selection, and exact cache proofs."
+  This is the sole production backend boundary for recursive traversal, Relay
+  pagination, deletion, consistency selection, and exact cache proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
 (def adapter-version 3)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
-
-(def legacy-spi-operations
-  #{:cache-stamp
-    :relation-defs
-    :permission-defs
-    :subject->resources
-    :resource->subjects
-    :direct-match?})
 
 (def required-snapshot-operations
   #{:snapshot-id
@@ -37,7 +28,6 @@
     :resource->subjects
     :direct-match?
     :all-permission-nodes
-    :frontier-key
     :schema-proof
     :relation-proof})
 
@@ -88,8 +78,6 @@
      :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
-   :frontier-key
-   #{:deterministic :injective-within-operation}
    :schema-proof
    #{:complete-dependency-scope :changes-on-relevant-schema-change
      :stable-on-irrelevant-change :snapshot-bound}
@@ -189,44 +177,6 @@
                          :unknown-consistency-modes (vec unknown-modes)
                          :known-consistency-modes known-consistency-modes}))
     normalized))
-
-(defn legacy-adapter?
-  "True when a map implements the original six-function SPI exactly enough to
-  remain usable by eacl.engine.indexed."
-  [candidate]
-  (and (map? candidate)
-       (every? (fn [operation]
-                 (fn? (get candidate operation)))
-               legacy-spi-operations)))
-
-(defn validate-legacy-adapter!
-  [candidate]
-  (when-not (legacy-adapter? candidate)
-    (invalid-adapter! "Legacy backend map is missing a six-function SPI operation."
-                      {:required-operations legacy-spi-operations
-                       :provided-operations
-                       (set (for [[operation implementation] candidate
-                                  :when (fn? implementation)]
-                              operation))}))
-  candidate)
-
-(defn require-legacy-evaluation!
-  "Allows the six-function SPI only for an explicitly supplied immutable
-  snapshot with caching and every v3 consistency guarantee disabled."
-  [candidate {:keys [explicit-snapshot? cache? consistency-mode]}]
-  (validate-legacy-adapter! candidate)
-  (when-not (and explicit-snapshot?
-                 (not cache?)
-                 (or (nil? consistency-mode)
-                     (= :snapshot-only consistency-mode)))
-    (unsupported!
-     :legacy
-     :v3-guarantee
-     {:explicit-snapshot? (boolean explicit-snapshot?)
-      :cache? (boolean cache?)
-      :consistency-mode consistency-mode}
-     #{:uncached-explicit-snapshot}))
-  candidate)
 
 (defn make-adapter
   [{:keys [id capabilities operations state fingerprint deterministic?
@@ -507,13 +457,6 @@
         (when-not (or (nil? value) (adapter? value))
           (contract-violation!
            backend-id operation-key :adapter-or-unavailable value))
-        value)
-
-      :frontier-key
-      (do
-        (when (nil? value)
-          (contract-violation!
-           backend-id operation-key :non-nil-key value))
         value)
 
       ;; These values are intentionally opaque at this boundary. Their

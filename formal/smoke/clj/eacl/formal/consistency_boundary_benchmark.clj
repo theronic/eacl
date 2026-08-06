@@ -1,5 +1,5 @@
 (ns eacl.formal.consistency-boundary-benchmark
-  "Paired wall-time gate for generated consistency decisions.
+  "Absolute wall-time gate for the generated consistency decision boundary.
 
   This measures the complete captured-current orchestration used by public
   backend clients. Identity makes its same-source proof reflexive, so it does
@@ -59,8 +59,11 @@
     adapter))
 
 (defn- run-batch
-  [adapter options repetitions]
-  (let [started (System/nanoTime)]
+  [adapter repetitions]
+  (let [options
+        {:coherence-authority :managed
+         :decision-kernel production/default-selection}
+        started (System/nanoTime)]
     (loop [iteration 0
            checksum 0]
       (if (= iteration repetitions)
@@ -79,10 +82,7 @@
            (+ checksum (System/identityHashCode selected))))))))
 
 (defn run!
-  "Runs one paired trial and returns per-request wall samples.
-
-  Alternating order reduces monotonic warmup bias. Batching keeps timer noise
-  below the generated FFI cost."
+  "Returns generated-boundary per-request wall-time samples."
   ([]
    (run! {}))
   ([{:keys [repetitions warmup samples]
@@ -90,123 +90,71 @@
           warmup 10
           samples 40}}]
    (let [adapter (benchmark-adapter)
-         legacy-options
-         {:coherence-authority :managed
-          :engine-selection :legacy-authoritative}
-         verified-options
-         {:coherence-authority :managed
-          :engine-selection
-          {:mode :verified-authoritative
-           :kernel production/generated-java-kernel}}
-         legacy-times (atom [])
-         verified-times (atom [])]
-     (dotimes [iteration (+ warmup samples)]
-       (let [legacy-first? (even? iteration)
-             [legacy-result verified-result]
-             (if legacy-first?
-               [(run-batch adapter legacy-options repetitions)
-                (run-batch adapter verified-options repetitions)]
-               (let [verified-result
-                     (run-batch adapter verified-options repetitions)
-                     legacy-result
-                     (run-batch adapter legacy-options repetitions)]
-                 [legacy-result verified-result]))]
-         (when-not (= (:checksum legacy-result)
-                      (:checksum verified-result))
-           (throw
-            (ex-info
-             "Consistency boundary benchmark changed the selected adapter."
-             {:iteration iteration})))
-         (when (>= iteration warmup)
-           (swap! legacy-times conj (:nanoseconds-per-call legacy-result))
-           (swap!
-            verified-times
-            conj
-            (:nanoseconds-per-call verified-result)))))
-     (let [legacy-p50 (percentile @legacy-times 0.50)
-           legacy-p95 (percentile @legacy-times 0.95)
-           verified-p50 (percentile @verified-times 0.50)
-           verified-p95 (percentile @verified-times 0.95)]
-       {:fixture
-        {:path :captured-current
-         :repetitions repetitions
-         :warmup warmup
-         :samples samples
-         :response-token false}
-        :logical-work
-        {:capability-observations 1
-         :plan-decisions 1
-         :authentication-attempts 0
-         :backend-selection-calls 0
-         :validation-decisions 0
-         :source-scope-reads 0
-         :contains-anchor-calls 0
-         :graph-head-reads 0
-         :order-hint-reads 0
-         :exact-locator-reads 0}
-        :resource-qualification
-        {:wall-time :host-specific-measurement
-         :jvm-live-heap-bytes :not-established
-         :cpu-time :not-established
-         :backend-io :none-in-fixture}
-        :legacy-ns @legacy-times
-        :verified-ns @verified-times
-        :legacy-p50-ns legacy-p50
-        :legacy-p95-ns legacy-p95
-        :verified-p50-ns verified-p50
-        :verified-p95-ns verified-p95
-        :p50-ratio (/ verified-p50 legacy-p50)
-        :p95-ratio (/ verified-p95 legacy-p95)
-        :p50-absolute-overhead-ns (- verified-p50 legacy-p50)
-        :p95-absolute-overhead-ns (- verified-p95 legacy-p95)}))))
+         observations
+         (mapv
+          (fn [_]
+            (run-batch adapter repetitions))
+          (range (+ warmup samples)))
+         measured (subvec observations warmup)
+         checksums (mapv :checksum measured)
+         times (mapv :nanoseconds-per-call measured)]
+     (when-not (apply = checksums)
+       (throw
+        (ex-info
+         "Consistency boundary selected different adapters."
+         {:checksums checksums})))
+     {:fixture
+      {:path :captured-current
+       :repetitions repetitions
+       :warmup warmup
+       :samples samples
+       :response-token false}
+      :logical-work
+      {:capability-observations 1
+       :plan-decisions 1
+       :authentication-attempts 0
+       :backend-selection-calls 0
+       :validation-decisions 0
+       :source-scope-reads 0
+       :contains-anchor-calls 0
+       :graph-head-reads 0
+       :order-hint-reads 0
+       :exact-locator-reads 0}
+      :resource-qualification
+      {:wall-time :host-specific-measurement
+       :jvm-live-heap-bytes :not-established
+       :cpu-time :not-established
+       :backend-io :none-in-fixture}
+      :generated-ns times
+      :generated-p50-ns (percentile times 0.50)
+      :generated-p95-ns (percentile times 0.95)})))
 
 (defn run-gate!
-  "Runs independent trials with absolute and relative median-p95 gates."
+  "Runs independent trials with an absolute median-p95 gate."
   ([]
    (run-gate! {}))
-  ([{:keys [trials maximum-median-p95-ratio
-            maximum-median-p95-absolute-overhead-ns]
+  ([{:keys [trials maximum-median-p95-ns]
      :or {trials 5
-          maximum-median-p95-ratio 12.0
-          maximum-median-p95-absolute-overhead-ns 10000.0}
+          maximum-median-p95-ns 15000.0}
      :as options}]
    (let [run-options
-         (dissoc
-          options
-          :trials
-          :maximum-median-p95-ratio
-          :maximum-median-p95-absolute-overhead-ns)
+         (dissoc options :trials :maximum-median-p95-ns)
          results (mapv (fn [_] (run! run-options)) (range trials))
-         p50-ratios (mapv :p50-ratio results)
-         p95-ratios (mapv :p95-ratio results)
-         p50-overheads (mapv :p50-absolute-overhead-ns results)
-         p95-overheads (mapv :p95-absolute-overhead-ns results)
-         median-p95-ratio (percentile p95-ratios 0.50)
-         median-p95-overhead (percentile p95-overheads 0.50)
-         passed?
-         (and
-          (<= median-p95-ratio maximum-median-p95-ratio)
-          (<= median-p95-overhead
-              maximum-median-p95-absolute-overhead-ns))]
+         p95-values (mapv :generated-p95-ns results)
+         median-p95 (percentile p95-values 0.50)
+         passed? (<= median-p95 maximum-median-p95-ns)]
      {:fixture
       (assoc
        (:fixture (first results))
        :independent-trials trials
        :aggregation :median-of-trial-percentiles)
       :required
-      {:maximum-median-p95-ratio maximum-median-p95-ratio
-       :maximum-median-p95-absolute-overhead-ns
-       maximum-median-p95-absolute-overhead-ns
+      {:maximum-median-p95-ns maximum-median-p95-ns
        :identical-selected-adapter-every-call true
        :exact-logical-work-correspondence true}
       :summary
-      {:median-p50-ratio (percentile p50-ratios 0.50)
-       :median-p95-ratio median-p95-ratio
-       :median-p50-absolute-overhead-ns
-       (percentile p50-overheads 0.50)
-       :median-p95-absolute-overhead-ns median-p95-overhead
+      {:median-p95-ns median-p95
        :status (if passed? :passed :failed)}
       :logical-work (:logical-work (first results))
-      :resource-qualification
-      (:resource-qualification (first results))
+      :resource-qualification (:resource-qualification (first results))
       :trials results})))

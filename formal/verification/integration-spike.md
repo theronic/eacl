@@ -83,6 +83,7 @@ These are spike measurements, not cutover thresholds:
 - generated JavaScript including Dafny runtime: 104 KiB;
 - esbuild browser bundle: 160 KiB uncompressed.
 
-The full kernel will be larger. Quantitative release thresholds are derived
-from the completed legacy benchmark and full generated kernel, not from this
-round-trip spike.
+The full kernel will be larger. The historical cutover thresholds were derived
+from the former handwritten-engine benchmark and full generated kernel, not
+from this round-trip spike. Current release gates measure the generated-only
+runtime directly.

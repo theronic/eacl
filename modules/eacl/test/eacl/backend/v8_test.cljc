@@ -1,10 +1,8 @@
 (ns eacl.backend.v8-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
-            [eacl.backend.spi :as legacy]
             [eacl.backend.v8 :as backend]
             [eacl.engine.v8 :as engine]
-            [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.spicedb.consistency :as consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -62,8 +60,7 @@
          (fn [_ _]
            (throw (ex-info "not used" {}))))
         selection
-        {:mode :verified-authoritative
-         :kernel kernel}
+        {:kernel kernel}
         restore
         #?(:clj
            (ns-resolve 'eacl.engine.v8 'restore-generated-continuation)
@@ -111,41 +108,6 @@
         "malformed counter envelopes are discarded before opaque restoration")
     (is (empty? @calls)
         "the indexed continuation method, not DecisionKernel, owns restore")))
-
-(deftest descending-merge-retains-maximum-eid-test
-  (let [maximum-eid #?(:clj Long/MAX_VALUE
-                       :cljs js/Number.MAX_SAFE_INTEGER)]
-    (is (= [maximum-eid 4 3 2]
-           (vec
-            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc
-             identity
-             [[maximum-eid 4 2]
-              [maximum-eid 3 2]]))))
-    (is (= [maximum-eid]
-           (vec
-            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc
-             identity
-             [[maximum-eid]
-              [maximum-eid]]))))))
-
-(deftest generic-merge-retains-nil-key-test
-  (let [keyfn :sort-key]
-    (is (= [{:sort-key nil :value :left-nil}
-            {:sort-key 1 :value :one}
-            {:sort-key 2 :value :two}]
-           (vec
-            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
-             keyfn
-             [[{:sort-key nil :value :left-nil}
-               {:sort-key 2 :value :two}]
-              [{:sort-key nil :value :right-nil}
-               {:sort-key 1 :value :one}]]))))
-    (is (= [{:sort-key nil :value :left-nil}]
-           (vec
-            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
-             keyfn
-             [[{:sort-key nil :value :left-nil}]
-              [{:sort-key nil :value :right-nil}]]))))))
 
 (deftest validated-v8-adapter-test
   (let [adapter (test-adapter)]
@@ -291,9 +253,7 @@
                  [:select-at-least (fn [& _] false)
                   [{} 100] :adapter-or-unavailable]
                  [:select-exact (fn [& _] [])
-                  [{} 100] :adapter-or-unavailable]
-                 [:frontier-key (fn [& _] nil)
-                  [{:id 1}] :non-nil-key]]]
+                  [{} 100] :adapter-or-unavailable]]]
           (is (= obligation
                  (:obligation
                   (violation operation implementation args)))
@@ -330,43 +290,6 @@
             (str operation " " failure))
         (is (= :nonnegative (:obligation failure))
             (str operation " " failure))))))
-
-(deftest legacy-six-function-spi-remains-compatible-test
-  (let [calls (atom [])
-        implementation
-        {:cache-stamp (fn [] (swap! calls conj [:cache-stamp]) :stamp)
-         :relation-defs (fn [& args]
-                          (swap! calls conj [:relation-defs args])
-                          :relations)
-         :permission-defs (fn [& args]
-                            (swap! calls conj [:permission-defs args])
-                            :permissions)
-         :subject->resources (fn [& args]
-                               (swap! calls conj [:subject->resources args])
-                               :resources)
-         :resource->subjects (fn [& args]
-                               (swap! calls conj [:resource->subjects args])
-                               :subjects)
-         :direct-match? (fn [& args]
-                          (swap! calls conj [:direct-match? args])
-                          true)}]
-    (is (identical? implementation
-                    (backend/validate-legacy-adapter! implementation)))
-    (is (= :stamp (legacy/cache-stamp implementation)))
-    (is (= :relations (legacy/relation-defs implementation :doc :reader)))
-    (is (= :permissions
-           (legacy/permission-defs implementation :doc :view)))
-    (is (= :resources
-           (legacy/subject->resources
-            implementation :user 1 2 :doc {:direction :asc})))
-    (is (= :subjects
-           (legacy/resource->subjects
-            implementation :doc 3 2 :user {:direction :desc})))
-    (is (true?
-         (legacy/direct-match?
-          implementation :user 1 2 :doc 3)))
-    (is (= [:cache-stamp] (first @calls)))
-    (is (= 6 (count @calls)))))
 
 (deftest recursive-routing-is-compiled-once-for-the-schema-generation-test
   (let [permission-defs
@@ -420,6 +343,8 @@
           :schema-proof (fn
                           ([] :schema-proof)
                           ([_] :schema-proof))
+          :object-id->internal identity
+          :internal-id->object identity
           :permission-defs
           (fn [resource-type permission-name]
             (get permission-defs
@@ -596,12 +521,11 @@
               :indexed-seed-certification)
              {:status :certified})))
         selection
-        {:mode :verified-authoritative
-         :kernel kernel}
+        {:kernel kernel}
         stats (atom {})]
     (binding [engine/*schema-cache* schema-cache
               engine/*recursive-traversal-stats* stats
-              subproblem/*engine-selection* selection]
+              subproblem/*decision-kernel* selection]
       (is (seq (:components
                 (engine/recursive-component-plan
                  adapter :folder :read))))
@@ -653,211 +577,8 @@
       (is (= 4 (count @calls))
           "the schema-proof/root plan cache also caches certification"))))
 
-(deftest recursive-page-stream-batches-track-the-requested-window-test
-  (let [permission-defs
-        [{:permission-id 1
-          :resource-type :node
-          :permission-name :read
-          :source-relation-name :self
-          :target-type :relation
-          :target-name :reader}
-         {:permission-id 2
-          :resource-type :node
-          :permission-name :read
-          :source-relation-name :self
-          :target-type :permission
-          :target-name :read}]
-        operations
-        (merge
-         (operation-map)
-         {:snapshot-id (fn [] {:database-id :test :basis-t 1})
-          :source-scope (fn [] {:source-id :test :branch nil})
-          :schema-proof (fn
-                          ([] :schema-proof)
-                          ([_] :schema-proof))
-          :object-id->internal identity
-          :internal-id->object identity
-          :permission-defs
-          (fn [resource-type permission-name]
-            (if (= [:node :read]
-                   [resource-type permission-name])
-              permission-defs
-              []))
-          :relation-defs
-          (fn [resource-type relation-name]
-            (if (= [:node :reader]
-                   [resource-type relation-name])
-              [{:relation-id 3
-                :resource-type :node
-                :relation-name :reader
-                :subject-type :user}]
-              []))
-          :subject->resources
-          (fn [_subject-type _subject-id _relation-id _resource-type
-               {:keys [bound-eid]}]
-            (range (inc (or bound-eid 0)) 2001))
-          :all-permission-nodes
-          (fn [] #{[:node :read]})})
-        adapter
-        (backend/make-adapter
-         {:id :test
-          :capabilities
-          {:consistency #{:fully-consistent}
-           :snapshots #{:current}
-           :cursor #{:forward :reverse}
-           :transactions #{}
-           :cache-proofs #{:schema :relations :snapshot-bound}
-           :runtime #{#?(:clj :clj :cljs :cljs)}}
-          :operations operations})
-        schema-cache (engine/make-schema-cache adapter :schema-proof)
-        query
-        (fn [page-size]
-          {:subject {:type :user :id 1001}
-           :permission :read
-           :resource/type :node
-           :first page-size})
-        run-page
-        (fn [page-size]
-          (let [stats (atom {})
-                stored-continuations (atom [])
-                page
-                (binding [engine/*schema-cache* schema-cache
-                          engine/*recursive-traversal-stats* stats]
-                  (engine/lookup-resources
-                   adapter
-                   (query page-size)
-                   {:continuation-cache
-                    {:put! (fn [_edge continuation _weight]
-                             (swap! stored-continuations conj continuation)
-                             true)}}))]
-            {:page page
-             :stats @stats
-             :stored-continuations @stored-continuations}))]
-    (doseq [[page-size expected-fills expected-fetched]
-            [[20 2 34]
-             [100 4 132]
-             [300 5 325]]]
-      (testing (str "page size " page-size)
-        (let [{:keys [page stats stored-continuations]}
-              (run-page page-size)]
-          (is (= page-size (count (:data page))))
-          (is (= expected-fills (:stream-fills stats)))
-          (is (= expected-fetched (:fetched-stream-datoms stats)))
-          (is (= 1 (count stored-continuations)))
-          (is (not-any? fn?
-                        (mapcat #(tree-seq coll? seq %)
-                                stored-continuations))
-              "persisted recursive state contains only data-valued commands")
-          (let [{:keys [queue seen-grants emitted-root counters]}
-                (:state (first stored-continuations))]
-            (is (= (count queue)
-                   (:current-queue-depth counters)))
-            (is (<= (:current-queue-depth counters)
-                    (:maximum-queue-depth counters)
-                    (:cumulative-enqueues counters)))
-            (is (= (count seen-grants)
-                   (:derived-grants counters)
-                   (:unique-grants counters)))
-            (is (= (count emitted-root)
-                   (:emitted-results counters)))
-            (is (= (:advanced-datoms counters)
-                   (:engine-consumed-values counters)))
-            (is (= (:rule-applications counters)
-                   (inc (:consumer-grant-joins counters)))
-                "one indexed seed rule is applied before one rule per
-                 forward consumer/grant join")
-            (is (= (:emitted-results counters)
-                   (:render-advances counters)))
-            (is (<= (:adapter-fetched-values counters)
-                    (:fetched-stream-datoms stats)))
-            (doseq [counter-key [:rule-applications
-                                 :consumer-grant-joins
-                                 :render-advances]]
-              (is (= (inc (get counters counter-key))
-                     (get stats counter-key))
-                  "request diagnostics include the one-item page lookahead;
-                   the stored continuation stops at the last returned item"))))))
-    (is (= 1 (count @(:recursive-plans schema-cache)))
-        "batch tuning never changes the schema-derived traversal plan")))
 
-#?(:clj
-   (deftest forward-seeding-uses-subject-type-index-test
-     (let [index-rules
-           (ns-resolve
-            'eacl.engine.v8
-            'forward-seeds-by-subject-type)
-           seed-state
-           (ns-resolve 'eacl.engine.v8 'forward-seed-state)
-           relevant
-           {:id [:relation [:server :view] :user 1]
-            :rule :relation
-            :node [:server :view]
-            :resource-type :server
-            :relation-eid 1
-            :subject-type :user}
-           irrelevant
-           (mapv (fn [index]
-                   {:id [:relation [:server :view] :service index]
-                    :rule :relation
-                    :node [:server :view]
-                    :resource-type :server
-                    :relation-eid (+ 100 index)
-                    :subject-type :service})
-                 (range 1000))
-           indexed (index-rules (into [relevant] irrelevant))
-           stats (atom {})
-           state
-           (binding [engine/*recursive-traversal-stats* stats]
-             (seed-state
-              nil
-              :user
-              42
-              {:forward-consumers {}
-               :forward-seeds-by-subject-type indexed}))]
-       (is (= 1 (count (:queue state))))
-       (is (= 1 (get-in state [:counters :rule-applications])))
-       (is (= 1 (:rule-applications @stats))
-           "query initialization applies the matching seed bucket, not every
-            reachable schema rule")
-       (is (= 1000
-              (count (get indexed :service)))
-           "unrelated seed rules remain compiled once in their own bucket"))))
 
-#?(:clj
-   (deftest duplicate-reverse-consumers-do-not-replay-grants-test
-     (let [add-consumer
-           (ns-resolve 'eacl.engine.v8 'add-reverse-consumer)
-           key [[:folder :view] 10]
-           consumer
-           {:op :reverse-propagate-grant
-            :node [:folder :read]
-            :resource-eid 20}
-           grant
-           {:kind :grant
-            :node [:folder :view]
-            :resource-eid 10
-            :subject-type :user
-            :subject-eid 30}
-           initial
-           {:queue clojure.lang.PersistentQueue/EMPTY
-            :counters {}
-            :seen-consumers #{}
-            :consumers {}
-            :consumer-count 0
-           :grants-by-goal {key [grant]}}
-           stats (atom {})
-           [once twice]
-           (binding [engine/*recursive-traversal-stats* stats]
-             (let [once (add-consumer initial key consumer)]
-               [once (add-consumer once key consumer)]))]
-       (is (= 1 (:consumer-count twice)))
-       (is (= 1 (count (:seen-consumers twice))))
-       (is (= 1 (count (get-in twice [:consumers key]))))
-       (is (= 1 (count (:queue twice)))
-           "the existing grant is replayed only for the first registration")
-       (is (= 1 (get-in twice [:counters :consumer-grant-joins])))
-       (is (= 1 (:consumer-grant-joins @stats))
-           "duplicate registration does not repeat the join"))))
 
 (defn- bounded-values
   [values {:keys [direction bound-eid inclusive-bound?]}]

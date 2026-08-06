@@ -6,7 +6,7 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->group ->server ->account ->vpc ->nic ->network ->lease ->backup ->backup-schedule]]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
-            [eacl.lazy-merge-sort :refer [lazy-merge-dedupe-sort]]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
                      can?
@@ -16,13 +16,6 @@
 ; Test grouping & cleanup is in progress.
 
 (def ^:dynamic *conn* nil)
-
-(deftest lazy-merge-sort-tests
-  (is (= [1 2 3 4 5 6 7 8 9 10 11]
-         (let [seq1 [1 3 5 7 9]
-               seq2 [2 3 6 8 9 10]
-               seq3 [1 4 5 6 11]]
-           (take 20 (lazy-merge-dedupe-sort [seq1 seq2 seq3]))))))
 
 ;; Load schema from SpiceDB DSL file
 (def fixtures-schema-string
@@ -91,14 +84,6 @@
 (defn page-end-cursor
   [page]
   (get-in page [:page-info :end-cursor]))
-
-(defn lookup-cursor
-  [db eacl-id]
-  {:kind :lookup-eid
-   :result-eid (d/entid db [:eacl/id eacl-id])})
-
-(def ^:private forward-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
 
 (defn- relationship-eid-pair
   [{:keys [subject resource]}]
@@ -377,13 +362,13 @@
                                                             :owner
                                                             (->account :test/account1))))))
       (let [db' (d/db *conn*)
-            attr-eid (d/entid db' forward-relationship-attr)
+            attr-eid (d/entid db' relationship-storage/forward-attribute)
             relation-eids (set (d/q '[:find [?relation ...]
-                                       :in $ ?relation-name ?subject-type
-                                       :where
-                                       [?relation :eacl.relation/relation-name ?relation-name]
-                                       [?relation :eacl.relation/subject-type ?subject-type]]
-                                     db' :owner :user))
+                                      :in $ ?relation-name ?subject-type
+                                      :where
+                                      [?relation :eacl.relation/relation-name ?relation-name]
+                                      [?relation :eacl.relation/subject-type ?subject-type]]
+                                    db' :owner :user))
             page (read-relationships db' {:subject/type :user
                                           :resource/relation :owner
                                           :first 20})
@@ -448,7 +433,8 @@
                resources))
         (testing "end cursor should be the last resource"
           (is page1-end-cursor)
-          (let [last-resource-ent (d/entity db (:result-eid page1-end-cursor))
+          (let [last-resource-ent
+                (d/entity db (get-in page1-end-cursor [:result :eid]))
                 last-resource-internal (spice-object :server (:eacl/id last-resource-ent))]
             (is (= (spice-object :server "account2-server1") last-resource-internal))))))
 
@@ -642,14 +628,14 @@
                                  (first (impl/tx-relationship (d/db *conn*)
                                                               (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
                                  (second (impl/tx-relationship (d/db *conn*)
-                                           (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
+                                                               (Relationship (->user :user/super-user) :shared_admin (->server :test/server1))))
                                  ; Tempids in Relationship require explicit opt-in now (audit §12).
                                  (first (impl/tx-relationship (d/db *conn*)
-                                          (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
-                                          {:allow-tempids? true}))
+                                                              (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
+                                                              {:allow-tempids? true}))
                                  (second (impl/tx-relationship (d/db *conn*)
-                                           (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
-                                           {:allow-tempids? true}))])))
+                                                               (Relationship (->user :user/super-user) :shared_admin (->server "server3"))
+                                                               {:allow-tempids? true}))])))
 
       (let [db' (d/db *conn*)]
         (testing "ensure user1 can only see servers from account1, so excludes server-3"
@@ -662,74 +648,20 @@
                       (paginated->spice db')))))
 
         (testing "enumerate super-user servers with :first 10 should return all 4 servers"
-          (is (= [(spice-object :server "account1-server1")
-                  (spice-object :server "account1-server2")
-                  (spice-object :server "account2-server1")
-                  (spice-object :server "server-3")]
+          (is (= #{(spice-object :server "account1-server1")
+                   (spice-object :server "account1-server2")
+                   (spice-object :server "account2-server1")
+                   (spice-object :server "server-3")}
                  (->> (lookup-resources db' {:first 10
                                              :resource/type :server
                                              :permission :view
                                              :subject (->user super-user-eid)})
-                      (paginated->spice db'))))
+                      (paginated->spice-set db'))))
 
           (testing "count-resources matches above"
             (is (= 4 (:count (count-resources db' {:resource/type :server
                                                    :permission :view
                                                    :subject (->user super-user-eid)}))))))
-
-        (testing ":after the first result should exclude the first result"
-          (is (= [(spice-object :server "account1-server2") ; (spice-object :server "account1-server1") is excludced.
-                  (spice-object :server "account2-server1")
-                  (spice-object :server "server-3")]
-                 (->> (lookup-resources db' {:first 10
-                                             :after (lookup-cursor db' "account1-server1")
-                                             :resource/type :server
-                                             :permission :view
-                                             :subject (->user super-user-eid)})
-                      (paginated->spice db')))))
-
-        (testing ":first 1 after the second result should skip the first two and return only the third result"
-          (is (= [(spice-object :server "account2-server1")]
-                 (->> (lookup-resources db' {:after (lookup-cursor db' "account1-server2")
-                                             :first 1
-                                             :resource/type :server
-                                             :permission :view
-                                             :subject (->user super-user-eid)})
-                      (paginated->spice db)))))
-
-        (testing ":first 1 after the third result should return the fourth result"
-          (is (= [(spice-object :server "server-3")]
-                 (->> (lookup-resources db' {:after (lookup-cursor db' "account2-server1")
-                                             :first 1
-                                             :resource/type :server
-                                             :permission :view
-                                             :subject (->user super-user-eid)})
-                      (paginated->spice db')))))
-
-        (testing ":first 10 after the third result returns only the fourth result"
-          (is (= [(spice-object :server "server-3")]
-                 (->> (lookup-resources db' {:after (lookup-cursor db' "account2-server1")
-                                             :first 10
-                                             :resource/type :server
-                                             :permission :view
-                                             :subject (->user super-user-eid)})
-                      (paginated->spice db')))))
-
-        (testing ":after the last cursor should be empty"
-          (let [empty-page (lookup-resources db' {:first 10
-                                                  :after (lookup-cursor db' "server-3")
-                                                  :resource/type :server
-                                                  :permission :view
-                                                  :subject (->user super-user-eid)})]
-            (is (empty? (paginated->spice db' empty-page)))
-            (is (nil? (page-start-cursor empty-page)))
-            (is (nil? (page-end-cursor empty-page)))
-            ;; A page with no items carries no cursors, so it can advertise
-            ;; neither direction: has-*-page? true alongside a nil cursor gave
-            ;; clients a loop with no exit (and :after nil silently restarted
-            ;; at page 1). Both flags are clamped to false on an empty page.
-            (is (false? (get-in empty-page [:page-info :has-next-page?])))
-            (is (false? (get-in empty-page [:page-info :has-previous-page?])))))
 
         (testing "forward pages compose with :after end-cursor"
           (let [both-pages (lookup-resources db' {:first 5
@@ -756,11 +688,11 @@
             (is (page-end-cursor page1))
             (is (page-start-cursor page2))
             (is (page-end-cursor page2))
-            (is (= [(spice-object :server "account1-server1")
-                    (spice-object :server "account1-server2")
-                    (spice-object :server "account2-server1")
-                    (spice-object :server "server-3")]
-                   both-pages-resolved))
+            (is (= #{(spice-object :server "account1-server1")
+                     (spice-object :server "account1-server2")
+                     (spice-object :server "account2-server1")
+                     (spice-object :server "server-3")}
+                   (set both-pages-resolved)))
             (is (= page1-expected (paginated-data->spice db' (:data page1))))
             (is (= page2-expected (paginated-data->spice db' (:data page2))))
             (is (nil? page3-expected))
@@ -771,7 +703,14 @@
             (is (true? (get-in page2 [:page-info :has-previous-page?])))))
 
         (testing "backward pages compose with :before start-cursor"
-          (let [last-page (lookup-resources db' {:last 2
+          (let [complete
+                (paginated->spice
+                 db'
+                 (lookup-resources db' {:first 10
+                                        :resource/type :server
+                                        :permission :view
+                                        :subject (->user super-user-eid)}))
+                last-page (lookup-resources db' {:last 2
                                                  :resource/type :server
                                                  :permission :view
                                                  :subject (->user super-user-eid)})
@@ -780,11 +719,9 @@
                                                      :resource/type :server
                                                      :permission :view
                                                      :subject (->user super-user-eid)})]
-            (is (= [(spice-object :server "account2-server1")
-                    (spice-object :server "server-3")]
+            (is (= (subvec (vec complete) 2 4)
                    (paginated->spice db' last-page)))
-            (is (= [(spice-object :server "account1-server1")
-                    (spice-object :server "account1-server2")]
+            (is (= (subvec (vec complete) 0 2)
                    (paginated->spice db' previous-page)))
             (is (false? (get-in last-page [:page-info :has-next-page?])))
             (is (true? (get-in last-page [:page-info :has-previous-page?])))
@@ -823,146 +760,7 @@
             (is (= [(spice-object :account "account-2")]
                    (paginated->spice db' page2)))
             (is (= [(spice-object :account "account-1")]
-                   (paginated->spice db' previous-page)))
-
-            (testing "cursor-tree state is versioned, stable per path, and scoped to its scan direction"
-              (let [forward-edge (page-end-cursor page1)
-                    next-forward-edge (page-end-cursor page2)
-                    reverse-edge (page-start-cursor previous-page)]
-                (is (= 1 (:frontier-version forward-edge)))
-                (is (= :asc (:frontier-direction forward-edge)))
-                (is (seq (:path-frontiers forward-edge)))
-                (is (= (set (keys (:path-frontiers forward-edge)))
-                       (set (keys (:path-frontiers next-forward-edge)))))
-                ;; page2's ascending frontier must be ignored when it is used
-                ;; as a descending :before boundary; the result assertion above
-                ;; proves that switching direction remains correct.
-                (is (= :desc (:frontier-direction reverse-edge)))
-                (is (seq (:path-frontiers reverse-edge)))))
-
-            (testing "malformed frontier state is rejected"
-              (is (= :eacl.pagination/invalid-cursor
-                     (:eacl/error
-                      (thrown-ex-data
-                       #(lookup-resources
-                         db'
-                         {:first 1
-                          :after {:kind :lookup-eid
-                                  :result-eid (d/entid db' [:eacl/id "account-1"])
-                                  :frontier-version 1
-                                  :frontier-direction :asc
-                                  :path-frontiers {"path" {:not "an eid"}}}
-                          :resource/type :account
-                          :permission :view
-                          :subject (->user super-user-eid)}))))))))))))
-
-(deftest aliased-permission-cursor-frontier-test
-  (with-mem-conn [conn schema/v7-schema]
-    (schema/write-schema!
-     conn
-     "definition user {}
-
-      definition account {
-        relation owner: user
-        permission admin = owner
-      }
-
-      definition server {
-        relation account: account
-        permission admin = account->admin
-        permission view = admin
-      }")
-    @(d/transact conn
-                 (concat [{:db/id "user" :eacl/id "user"}]
-                         (mapcat (fn [n]
-                                   [{:db/id (str "account-" n)
-                                     :eacl/id (str "account-" n)}
-                                    {:db/id (str "server-" n)
-                                     :eacl/id (str "server-" n)}])
-                                 (range 8))))
-    (let [db-before-relationships (d/db conn)
-          relationships (mapcat
-                         (fn [n]
-                           [(Relationship (spice-object :user "user")
-                                          :owner
-                                          (spice-object :account (str "account-" n)))
-                            (Relationship (spice-object :account (str "account-" n))
-                                          :account
-                                          (spice-object :server (str "server-" n)))])
-                         (range 8))]
-      @(d/transact conn
-                   (into []
-                         (mapcat #(impl/tx-relationship db-before-relationships %))
-                         relationships)))
-    (let [db (d/db conn)
-          user-eid (d/entid db [:eacl/id "user"])
-          original-subject->resources impl.indexed/subject->resources
-          {:keys [result-eids calls-by-page frontier-counts]}
-          (loop [after nil
-                 result-eids []
-                 calls-by-page []
-                 frontier-counts []]
-            (let [calls (atom 0)
-                  page (with-redefs [impl.indexed/subject->resources
-                                    (fn [& args]
-                                      (swap! calls inc)
-                                      (apply original-subject->resources args))]
-                         (lookup-resources
-                          db
-                          (cond-> {:subject (spice-object :user user-eid)
-                                   :permission :view
-                                   :resource/type :server
-                                   :first 1}
-                            after (assoc :after after))))
-                  end-cursor (page-end-cursor page)
-                  result-eids' (into result-eids (map :id (:data page)))
-                  calls-by-page' (conj calls-by-page @calls)
-                  frontier-counts' (conj frontier-counts
-                                         (count (:path-frontiers end-cursor)))]
-              (if (get-in page [:page-info :has-next-page?])
-                (recur end-cursor
-                       result-eids'
-                       calls-by-page'
-                       frontier-counts')
-                {:result-eids result-eids'
-                 :calls-by-page calls-by-page'
-                 :frontier-counts frontier-counts'})))
-          reverse-page (lookup-subjects
-                        db
-                        {:resource (spice-object
-                                    :server
-                                    (d/entid db [:eacl/id "server-0"]))
-                         :permission :view
-                         :subject/type :user
-                         :first 1})]
-      (testing "self-permission aliases retain nested arrow frontiers"
-        (is (= 8 (count result-eids)))
-        (is (= 8 (count (distinct result-eids))))
-        (is (every? pos? frontier-counts))
-        (is (< (last calls-by-page) (first calls-by-page))))
-      (testing "reverse lookup aliases retain nested arrow frontiers"
-        (is (seq (:path-frontiers (page-end-cursor reverse-page))))))))
-
-(deftest lookup-cursor-eid-validation-test
-  (let [db (d/db *conn*)
-        subject (->user (d/entid db :user/super-user))
-        valid-result-eid (d/entid db [:eacl/id "account-1"])
-        invalid-eid 999999999999999999999999N
-        query {:resource/type :account
-               :permission :view
-               :subject subject
-               :first 1}]
-    (doseq [cursor [{:kind :lookup-eid
-                     :result-eid invalid-eid}
-                    {:kind :lookup-eid
-                     :result-eid valid-result-eid
-                     :frontier-version 1
-                     :frontier-direction :asc
-                     :path-frontiers {"path" invalid-eid}}]]
-      (is (= :eacl.pagination/invalid-cursor
-             (:eacl/error
-              (thrown-ex-data
-               #(lookup-resources db (assoc query :after cursor)))))))))
+                   (paginated->spice db' previous-page)))))))))
 
 (deftest tx-relationship-strictness-test
   ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.
@@ -972,24 +770,24 @@
     (let [db (d/db conn)]
       (testing "a typo'd string id throws :eacl/unknown-object instead of minting a ghost entity"
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
-              (impl/tx-relationship db
-                (Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1x"))))))
+                              (impl/tx-relationship db
+                                                    (Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1x"))))))
 
       (testing "unallocated positive numeric eids are rejected with the typed error, not a raw transactor error"
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown object"
-              (impl/tx-relationship db
-                (Relationship (spice-object :user 17592186999999) :owner (spice-object :account [:eacl/id "acct-1"]))))))
+                              (impl/tx-relationship db
+                                                    (Relationship (spice-object :user 17592186999999) :owner (spice-object :account [:eacl/id "acct-1"]))))))
 
       (testing "{:allow-tempids? true} supports same-transaction entity+relationship creation"
         (let [tx (concat [{:db/id "new-user" :eacl/id "new-user"}]
                          (impl/tx-relationship db
-                           (Relationship (spice-object :user "new-user") :owner (spice-object :account [:eacl/id "acct-1"]))
-                           {:allow-tempids? true}))
+                                               (Relationship (spice-object :user "new-user") :owner (spice-object :account [:eacl/id "acct-1"]))
+                                               {:allow-tempids? true}))
               {:keys [db-after]} @(d/transact conn tx)]
           (is (impl/find-one-relationship-id db-after
-                {:subject  (spice-object :user [:eacl/id "new-user"])
-                 :relation :owner
-                 :resource (spice-object :account [:eacl/id "acct-1"])})))))))
+                                             {:subject  (spice-object :user [:eacl/id "new-user"])
+                                              :relation :owner
+                                              :resource (spice-object :account [:eacl/id "acct-1"])})))))))
 
 (deftest relation-datoms-keyword-collation-test
   ;; Audit §2: the old [:a]..[:z] index-range made relations whose subject-type
@@ -1003,9 +801,9 @@
     @(d/transact conn [{:db/id "z1" :eacl/id "zebra-1"}
                        {:db/id "zone1" :eacl/id "zone-1"}])
     @(d/transact conn (impl/tx-relationship (d/db conn)
-                        (Relationship (spice-object :zebra [:eacl/id "zebra-1"])
-                                      :owner
-                                      (spice-object :zone [:eacl/id "zone-1"]))))
+                                            (Relationship (spice-object :zebra [:eacl/id "zebra-1"])
+                                                          :owner
+                                                          (spice-object :zone [:eacl/id "zone-1"]))))
     (let [db (d/db conn)]
       (testing "relations are visible for any legal subject-type keyword"
         (is (= [[:zone :editor :Admin]] (mapv :v (impl.indexed/relation-datoms db :zone :editor))))
@@ -1089,45 +887,6 @@
 
     (testing "Empty paths for non-existent permission"
       (is (empty? (impl.indexed/get-permission-paths db :server :nonexistent))))))
-
-(deftest traverse-paths-tests
-  (let [db (d/db *conn*)]
-    (testing "Direct path traversal"
-      (let [user1-eid (d/entid db :test/user1)
-            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :account nil)]
-        ;; User1 should be able to view account1
-        (is (seq resources))
-        (is (some #(= (d/entid db :test/account1) %) resources))))
-
-    (testing "Arrow path traversal"
-      (let [user1-eid (d/entid db :test/user1)
-            resources (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)]
-        ;; User1 should be able to view servers in account1
-        (is (seq resources))
-        (is (= [(->server "account1-server1")
-                (->server "account1-server2")])
-            resources)))
-
-    (testing "Complex nested path traversal"
-      (let [vpc1-eid (d/entid db :test/vpc1)
-            resources (impl.indexed/traverse-permission-path db :vpc vpc1-eid :view :server nil)]
-        ;; VPC1 should be able to view servers through the network chain
-        (is (= [(d/entid db :test/server1)]
-               resources))))
-
-    (testing "Cursor pagination"
-      (let [user1-eid (d/entid db :test/user1)
-            ;; Get first result
-            first-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server nil)
-            first-eid (first first-batch)
-            ;; Get next result after cursor
-            second-batch (impl.indexed/traverse-permission-path db :user user1-eid :view :server first-eid)]
-        (is (= ["account1-server1"
-                "account1-server2"
-                "account3-server3.1"] (map (comp :eacl/id #(d/entity db %)) first-batch)))
-        (is (= ["account1-server2"
-                "account3-server3.1"] (map (comp :eacl/id #(d/entity db %)) second-batch)))
-        (is (not= (first first-batch) (first second-batch)))))))
 
 (deftest lookup-resources-optimized-tests
   (let [db (d/db *conn*)]
@@ -1409,9 +1168,10 @@
                                                         :result-eid (d/entid db [:eacl/id "root"])}}))))))
 
       (testing "recursive traversal guardrails throw typed errors"
-        (binding [impl.indexed/*recursive-traversal-limits* {:max-derived-grants 1
-                                                            :max-advanced-datoms 100
-                                                            :max-queued-work 100}]
+        (binding [impl.indexed/*recursive-traversal-limits*
+                  {:max-derived-grants 1
+                   :max-advanced-datoms 100
+                   :max-queued-work 100}]
           (is (= :eacl.recursive-traversal/limit-exceeded
                  (:eacl/error
                   (thrown-ex-data

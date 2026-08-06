@@ -9,14 +9,11 @@
    [datahike.api :as dh]
    [datomic.api :as d]
    [datascript.core :as ds]
-   [eacl.backend.v8 :as backend]
    [eacl.cache :as shared-cache]
    [eacl.core :as eacl]
-   [eacl.datahike.backend :as datahike-backend]
    [eacl.datahike.core :as datahike]
    [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
-   [eacl.datomic.backend :as datomic-backend]
    [eacl.datomic.cache :as datomic-cache]
    [eacl.datomic.core :as datomic]
    [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -24,7 +21,6 @@
    [eacl.engine.v8 :as engine]
    [eacl.formal.differential-runner :as differential]
    [eacl.formal.production-kernel :as production]
-   [eacl.subproblem-cache :as subproblem]
    [eacl.verified-kernel :as verified]))
 
 (def authorization-schema
@@ -59,9 +55,8 @@
    group-member-relationship
    document-group-relationship])
 
-(def engine-selection
-  {:mode :verified-authoritative
-   :kernel production/generated-java-kernel})
+(def decision-kernel
+  {:kernel production/generated-java-kernel})
 
 (def formal-objects
   [{:type "user" :id "user"}
@@ -141,11 +136,18 @@
     (swap! calls update :indexed-traversal-read (fnil inc 0))
     (verified/-read-indexed-result delegate direction state)))
 
-(defn- counting-engine-selection
+(defn- counting-decision-kernel
   [calls]
-  {:mode :verified-authoritative
-   :kernel
+  {:kernel
    (->CountingGeneratedKernel production/generated-java-kernel calls)})
+
+(defn- make-client-with-kernel
+  "Formal-only injection seam. Production clients expose no decision-kernel
+  option; a test can temporarily replace the released default while the
+  client's private options are constructed."
+  [constructor connection options selection]
+  (with-redefs [production/default-selection selection]
+    (constructor connection options)))
 
 (defn- call-count
   [calls]
@@ -184,14 +186,13 @@
 (defn- formal-evaluate
   [relationships request]
   (verified/decide
-   engine-selection
+   decision-kernel
    :authorization-evaluation
    {:objects formal-objects
     :schema formal-schema
     :relationships (mapv formal-relationship relationships)
     :request request
-    :limits formal-limits}
-   #(throw (ex-info "legacy authorization oracle must not run" {}))))
+    :limits formal-limits}))
 
 (defn- public-object-set
   [page]
@@ -437,15 +438,20 @@
     (let [conn (datascript/create-conn)
           calls (atom {})
           common
-          {:engine-selection (counting-engine-selection calls)
-           :coherence-authority :managed
+          {:coherence-authority :managed
            :security-key
            "01234567890123456789012345678901"
            :exact-snapshot-registry-size 16}
-          cached (datascript/make-client conn common)
+          selection (counting-decision-kernel calls)
+          cached
+          (make-client-with-kernel
+           datascript/make-client conn common selection)
           uncached
-          (datascript/make-client
-           conn (assoc common :cache shared-cache/no-cache))]
+          (make-client-with-kernel
+           datascript/make-client
+           conn
+           (assoc common :cache shared-cache/no-cache)
+           selection)]
       (eacl/write-schema! cached authorization-schema)
       (ds/transact!
        conn
@@ -464,14 +470,19 @@
     (let [conn (datahike/create-conn)
           calls (atom {})
           common
-          {:engine-selection (counting-engine-selection calls)
-           :coherence-authority :managed
+          {:coherence-authority :managed
            :security-key
            "01234567890123456789012345678901"}
-          cached (datahike/make-client conn common)
+          selection (counting-decision-kernel calls)
+          cached
+          (make-client-with-kernel
+           datahike/make-client conn common selection)
           uncached
-          (datahike/make-client
-           conn (assoc common :cache shared-cache/no-cache))]
+          (make-client-with-kernel
+           datahike/make-client
+           conn
+           (assoc common :cache shared-cache/no-cache)
+           selection)]
       (eacl/write-schema! cached authorization-schema)
       (dh/transact
        conn
@@ -490,21 +501,24 @@
     (with-mem-conn [conn datomic-schema/v7-schema]
       (let [calls (atom {})
             common
-            {:engine-selection (counting-engine-selection calls)
-             :coherence-authority :managed
+            {:coherence-authority :managed
              :page-token-key
              "01234567890123456789012345678901"
              :zed-token-key
              "12345678901234567890123456789012"}
+            selection (counting-decision-kernel calls)
             cached
-            (datomic/make-client
+            (make-client-with-kernel
+             datomic/make-client
              conn
-             (assoc common
-                    :cache {:remember-answers true}))
+             (assoc common :cache {:remember-answers true})
+             selection)
             uncached
-            (datomic/make-client
+            (make-client-with-kernel
+             datomic/make-client
              conn
-             (assoc common :cache datomic-cache/no-cache))]
+             (assoc common :cache datomic-cache/no-cache)
+             selection)]
         (eacl/write-schema! cached authorization-schema)
         @(d/transact
           conn
@@ -530,12 +544,13 @@
   (let [conn (datascript/create-conn)
         calls (atom {})
         client
-        (datascript/make-client
+        (make-client-with-kernel
+         datascript/make-client
          conn
          {:cache shared-cache/no-cache
           :security-key
-          "01234567890123456789012345678901"
-          :engine-selection (counting-engine-selection calls)})
+          "01234567890123456789012345678901"}
+         (counting-decision-kernel calls))
         user (eacl/spice-object :user "ordered-user")
         documents
         (mapv
@@ -567,9 +582,9 @@
       documents))
     (let [query
           {:subject user
-          :permission :view
-          :resource/type :document
-          :first 20}
+           :permission :view
+           :resource/type :document
+           :first 20}
           first-page (eacl/lookup-resources client query)
           after-first-page (indexed-call-count calls)
           second-page
@@ -621,102 +636,12 @@
       (is (pos? (get @calls :indexed-traversal-drive 0)))
       (is (pos? (get @calls :indexed-traversal-read 0))))))
 
-(defn- shadow-selection
-  ([reports]
-   (shadow-selection reports nil))
-  ([reports calls]
-   {:mode :verified-shadow
-    :kernel
-    (if calls
-      (->CountingGeneratedKernel production/generated-java-kernel calls)
-      production/generated-java-kernel)
-    :report-divergence #(swap! reports conj %)}))
-
-(deftest acyclic-shadow-compares-generated-authority-and-legacy-stays-host-only
-  (let [conn (datascript/create-conn)
-        reports (atom [])
-        shadow-calls (atom {})
-        legacy-calls (atom {})
-        common
-        {:cache shared-cache/no-cache
-         :security-key
-         "01234567890123456789012345678901"}
-        shadow-client
-        (datascript/make-client
-         conn
-         (assoc common
-                :engine-selection
-                (shadow-selection reports shadow-calls)))
-        legacy-client
-        (datascript/make-client
-         conn
-         (assoc
-          common
-          :engine-selection
-          {:mode :legacy-authoritative
-           :kernel
-           (->CountingGeneratedKernel
-            production/generated-java-kernel legacy-calls)}))
-        user (eacl/spice-object :user "shadow-user")
-        document-1 (eacl/spice-object :document "shadow-document-1")
-        document-2 (eacl/spice-object :document "shadow-document-2")
-        forward-query
-        {:subject user
-         :permission :view
-         :resource/type :document
-         :first 10}
-        reverse-query
-        {:resource document-2
-         :permission :view
-         :subject/type :user
-         :first 10}]
-    (eacl/write-schema!
-     shadow-client
-     "definition user {}
-      definition document {
-        relation owner: user
-        relation viewer: user
-        permission view = owner + viewer
-      }")
-    (ds/transact!
-     conn
-     [{:eacl/id (:id user)}
-      {:eacl/id (:id document-1)}
-      {:eacl/id (:id document-2)}])
-    (eacl/create-relationships!
-     shadow-client
-     [(eacl/->Relationship user :owner document-1)
-      (eacl/->Relationship user :viewer document-2)])
-    (doseq [client [shadow-client legacy-client]]
-      (is (= ["shadow-document-1" "shadow-document-2"]
-             (ids (eacl/lookup-resources client forward-query))))
-      (is (= ["shadow-user"]
-             (ids (eacl/lookup-subjects client reverse-query))))
-      (is (= 2
-             (:count
-              (eacl/count-resources
-               client
-               (dissoc forward-query :first)))))
-      (is (= 1
-             (:count
-              (eacl/count-subjects
-               client
-               (dissoc reverse-query :first)))))
-      (is (true? (eacl/can? client user :view document-2))))
-    (is (empty? @reports)
-        (str "generated acyclic shadow divergence: " (pr-str @reports)))
-    (is (pos? (indexed-call-count shadow-calls))
-        "shadow alternate must execute generated indexed authority")
-    (is (zero? (indexed-call-count legacy-calls))
-        "legacy authority must retain the optimized host-only acyclic path")))
-
 (deftest generated-can-reuses-the-public-root-classification
   (let [conn (datascript/create-conn)
         client
         (datascript/make-client
          conn
-         {:cache shared-cache/no-cache
-          :engine-selection engine-selection})
+         {:cache shared-cache/no-cache})
         user (eacl/spice-object :user "root-probe-user")
         document (eacl/spice-object :document "root-probe-document")
         root-var (ns-resolve 'eacl.engine.v8 'permission-root-defined?)
@@ -749,12 +674,13 @@
   (let [conn (datascript/create-conn)
         calls (atom {})
         client
-        (datascript/make-client
+        (make-client-with-kernel
+         datascript/make-client
          conn
          {:cache shared-cache/no-cache
           :security-key
-          "01234567890123456789012345678901"
-          :engine-selection (counting-engine-selection calls)})
+          "01234567890123456789012345678901"}
+         (counting-decision-kernel calls))
         user (eacl/spice-object :user "removed-root-user")
         document-1 (eacl/spice-object :document "removed-root-document-1")
         document-2 (eacl/spice-object :document "removed-root-document-2")
@@ -796,254 +722,8 @@
         (is (= :restarted
                (get-in recovered [:page-info :cursor-recovery])))))))
 
-(defn- selected-graph-identity
-  [adapter]
-  (let [graph-head (backend/invoke adapter :graph-head)]
-    {:snapshot-id (backend/invoke adapter :snapshot-id)
-     ;; Exact locators are client-local reconstruction capabilities. DataScript
-     ;; clients legitimately mint different registry handles for the same
-     ;; immutable graph, so graph identity is the authenticated anchor/order
-     ;; pair in one source scope, not the locator representation.
-     :graph-head (select-keys graph-head [:graph-anchor :order-hint])
-     :source-scope (backend/invoke adapter :source-scope)}))
-
-(defn- page-info-shadow-view
-  [page-info]
-  (cond->
-   (select-keys
-    page-info
-    [:has-next-page? :has-previous-page?])
-    (contains? page-info :start-cursor)
-    (assoc :start-cursor? (some? (:start-cursor page-info)))
-
-    (contains? page-info :end-cursor)
-    (assoc :end-cursor? (some? (:end-cursor page-info)))))
-
-(defn- public-value-shadow-view
-  [value]
-  (if (map? value)
-    (cond-> (dissoc value :cached? :cache-basis :data :page-info)
-      (contains? value :data)
-      (assoc :data
-             (mapv
-              (fn [object]
-                (select-keys object [:type :id]))
-              (:data value)))
-
-      (contains? value :page-info)
-      (assoc :page-info
-             (page-info-shadow-view (:page-info value))))
-    value))
-
-(defn- public-result-shadow-view
-  [selected-graph result]
-  (if (and (map? result) (contains? result :outcome))
-    result
-    {:outcome :value
-     :value (public-value-shadow-view result)
-     :cache-provenance
-     (when (map? result)
-       {:cached? (:cached? result)
-        :cache-basis (:cache-basis result)})
-     :selected-graph selected-graph}))
-
-(defn- invoke-public-shadow
-  [selected-graph-fn operation call]
-  (try
-    (let [value (call)]
-      (public-result-shadow-view (selected-graph-fn) value))
-    (catch Exception error
-      (assoc
-       (verified/error-shadow-view error)
-       :selected-graph (selected-graph-fn)
-       :operation operation))))
-
-(defn- compare-public-shadow!
-  [reports operation legacy-graph verified-graph legacy-call verified-call]
-  (let [legacy
-        (invoke-public-shadow legacy-graph operation legacy-call)]
-    (verified/compare-shadow!
-     (shadow-selection reports)
-     operation
-     legacy
-     #(invoke-public-shadow verified-graph operation verified-call))))
-
-(defn- assert-public-provenance-and-graph-shadow!
-  [label legacy verified legacy-graph verified-graph unrelated-write!]
-  (testing label
-    (eacl/create-relationships!
-     legacy
-     (into [relationship-1 relationship-2]
-           support-relationships))
-    (let [query
-          {:subject user
-           :permission :view
-           :resource/type :document
-           :first 10}
-          first-query (assoc query :first 1)
-          reports (atom [])
-          compare!
-          (fn [operation legacy-call verified-call]
-            (compare-public-shadow!
-             reports operation legacy-graph verified-graph
-             legacy-call verified-call))]
-      (compare!
-       :public-lookup-resources-cache-miss
-       #(eacl/lookup-resources legacy query)
-       #(eacl/lookup-resources verified query))
-      (compare!
-       :public-lookup-resources-cache-hit
-       #(eacl/lookup-resources legacy query)
-       #(eacl/lookup-resources verified query))
-      (compare!
-       :public-count-resources-cache-miss
-       #(eacl/count-resources legacy (dissoc query :first))
-       #(eacl/count-resources verified (dissoc query :first)))
-      (compare!
-       :public-count-resources-cache-hit
-       #(eacl/count-resources legacy (dissoc query :first))
-       #(eacl/count-resources verified (dissoc query :first)))
-      (compare!
-       :public-can
-       #(eacl/can? legacy user :view document-2)
-       #(eacl/can? verified user :view document-2))
-      (let [legacy-first (eacl/lookup-resources legacy first-query)
-            verified-first (eacl/lookup-resources verified first-query)]
-        (verified/compare-shadow!
-         (shadow-selection reports)
-         :public-forward-page-1
-         (public-result-shadow-view (legacy-graph) legacy-first)
-         #(public-result-shadow-view
-           (verified-graph) verified-first))
-        (compare!
-         :public-forward-page-2
-         #(eacl/lookup-resources
-           legacy
-           (assoc first-query
-                  :after
-                  (get-in legacy-first
-                          [:page-info :end-cursor])))
-         #(eacl/lookup-resources
-           verified
-           (assoc first-query
-                  :after
-                  (get-in verified-first
-                          [:page-info :end-cursor])))))
-      (compare!
-       :public-invalid-page-error
-       #(eacl/lookup-resources legacy (assoc query :first 0))
-       #(eacl/lookup-resources verified (assoc query :first 0)))
-      (unrelated-write!)
-      (compare!
-       :public-causal-proof-lift
-       #(eacl/lookup-resources legacy query)
-       #(eacl/lookup-resources verified query))
-      (is (empty? @reports)
-          (str "complete public shadow divergence: "
-               (pr-str @reports))))))
-
-(deftest public-shadow-compares-cache-provenance-and-selected-graph
-  (testing "DataScript"
-    (let [conn (datascript/create-conn)
-          common
-          {:coherence-authority :managed
-           :security-key
-           "01234567890123456789012345678901"
-           :exact-snapshot-registry-size 16}
-          legacy (datascript/make-client conn common)
-          verified
-          (datascript/make-client
-           conn
-           (assoc common :engine-selection engine-selection))]
-      (eacl/write-schema! legacy authorization-schema)
-      (ds/transact!
-       conn
-       [{:eacl/id "user"}
-        {:eacl/id "document-1"}
-        {:eacl/id "document-2"}
-        {:eacl/id "group"}])
-      (assert-public-provenance-and-graph-shadow!
-       "DataScript public provenance and graph"
-       legacy verified
-       #(selected-graph-identity
-         (datascript-backend/snapshot-adapter
-          (ds/db conn) (:opts legacy)))
-       #(selected-graph-identity
-         (datascript-backend/snapshot-adapter
-          (ds/db conn) (:opts verified)))
-       #(ds/transact! conn [{:db/doc "unrelated-shadow"}]))))
-
-  (testing "Datahike"
-    (let [conn (datahike/create-conn)
-          common
-          {:coherence-authority :managed
-           :security-key
-           "01234567890123456789012345678901"}
-          legacy (datahike/make-client conn common)
-          verified
-          (datahike/make-client
-           conn
-           (assoc common :engine-selection engine-selection))]
-      (eacl/write-schema! legacy authorization-schema)
-      (dh/transact
-       conn
-       [{:eacl/id "user"}
-        {:eacl/id "document-1"}
-        {:eacl/id "document-2"}
-        {:eacl/id "group"}])
-      (assert-public-provenance-and-graph-shadow!
-       "Datahike public provenance and graph"
-       legacy verified
-       #(selected-graph-identity
-         (datahike-backend/snapshot-adapter
-          (dh/db conn) (:opts legacy)))
-       #(selected-graph-identity
-         (datahike-backend/snapshot-adapter
-          (dh/db conn) (:opts verified)))
-       #(dh/transact conn [{:db/doc "unrelated-shadow"}]))))
-
-  (testing "Datomic"
-    (with-mem-conn [conn datomic-schema/v7-schema]
-      (let [common
-            {:coherence-authority :managed
-             :cache {:remember-answers true}
-             :page-token-key
-             "01234567890123456789012345678901"
-             :zed-token-key
-             "12345678901234567890123456789012"}
-            legacy (datomic/make-client conn common)
-            verified
-            (datomic/make-client
-             conn
-             (assoc common :engine-selection engine-selection))]
-        (eacl/write-schema! legacy authorization-schema)
-        @(d/transact
-          conn
-          [{:db/id (d/tempid :db.part/user)
-            :eacl/id "user"}
-           {:db/id (d/tempid :db.part/user)
-            :eacl/id "document-1"}
-           {:db/id (d/tempid :db.part/user)
-            :eacl/id "document-2"}
-           {:db/id (d/tempid :db.part/user)
-            :eacl/id "group"}])
-        (assert-public-provenance-and-graph-shadow!
-         "Datomic public provenance and graph"
-         legacy verified
-         #(selected-graph-identity
-           (datomic-backend/snapshot-adapter
-            (d/db conn) (:opts legacy)))
-         #(selected-graph-identity
-           (datomic-backend/snapshot-adapter
-            (d/db conn) (:opts verified)))
-         #(deref
-           (d/transact
-            conn
-            [{:db/id (d/tempid :db.part/user)
-              :db/doc "unrelated-shadow"}])))))))
-
-(defn- assert-recursive-shadow!
-  [client limited-clients reports]
+(defn- assert-recursive-generated!
+  [client limited-clients]
   (eacl/create-relationships!
    client [relationship-1 relationship-2])
   (let [query
@@ -1108,20 +788,15 @@
              (:limit-kind (ex-data limit-error))))
       (is (= 1
              (:limit (ex-data limit-error)))))
-    (is (= {:size 0} (ex-data page-error)))
-    (is (empty? @reports)
-        (str "generated recursive shadow divergence: "
-             (pr-str @reports)))))
+    (is (= {:size 0} (ex-data page-error)))))
 
-(deftest recursive-shadow-compares-complete-public-results
+(deftest recursive-generated-authority-covers-complete-public-results
   (testing "DataScript"
     (let [conn (datascript/create-conn)
-          reports (atom [])
           common
           {:cache shared-cache/no-cache
            :security-key
-           "01234567890123456789012345678901"
-           :engine-selection (shadow-selection reports)}
+           "01234567890123456789012345678901"}
           client (datascript/make-client conn common)
           limited-clients
           (into
@@ -1143,16 +818,14 @@
        [{:eacl/id "user"}
         {:eacl/id "document-1"}
         {:eacl/id "document-2"}])
-      (assert-recursive-shadow! client limited-clients reports)))
+      (assert-recursive-generated! client limited-clients)))
 
   (testing "Datahike"
     (let [conn (datahike/create-conn)
-          reports (atom [])
           common
           {:cache shared-cache/no-cache
            :security-key
-           "01234567890123456789012345678901"
-           :engine-selection (shadow-selection reports)}
+           "01234567890123456789012345678901"}
           client (datahike/make-client conn common)
           limited-clients
           (into
@@ -1174,18 +847,16 @@
        [{:eacl/id "user"}
         {:eacl/id "document-1"}
         {:eacl/id "document-2"}])
-      (assert-recursive-shadow! client limited-clients reports)))
+      (assert-recursive-generated! client limited-clients)))
 
   (testing "Datomic"
     (with-mem-conn [conn datomic-schema/v7-schema]
-      (let [reports (atom [])
-            common
+      (let [common
             {:cache datomic-cache/no-cache
              :page-token-key
              "01234567890123456789012345678901"
              :zed-token-key
-             "12345678901234567890123456789012"
-             :engine-selection (shadow-selection reports)}
+             "12345678901234567890123456789012"}
             client (datomic/make-client conn common)
             limited-clients
             (into
@@ -1210,9 +881,9 @@
             :eacl/id "document-1"}
            {:db/id (d/tempid :db.part/user)
             :eacl/id "document-2"}])
-        (assert-recursive-shadow! client limited-clients reports)))))
+        (assert-recursive-generated! client limited-clients)))))
 
-(deftest recursive-shadow-compares-stale-cursor-error-shape
+(deftest generated-stale-cursor-error-shape
   (let [conn (datascript/create-conn)
         client
         (datascript/make-client
@@ -1220,8 +891,6 @@
          {:cache shared-cache/no-cache
           :security-key
           "01234567890123456789012345678901"})
-        reports (atom [])
-        selection (shadow-selection reports)
         query
         {:subject user
          :permission :view
@@ -1240,9 +909,7 @@
           (datascript-backend/snapshot-adapter
            (ds/db conn)
            (:opts client))
-          page
-          (binding [subproblem/*engine-selection* selection]
-            (engine/lookup-resources adapter query))
+          page (engine/lookup-resources adapter query)
           bound (get-in page [:page-info :end-cursor])]
       (eacl/delete-relationships! client [relationship-1])
       (let [changed-adapter
@@ -1251,10 +918,9 @@
              (:opts client))
             error
             (try
-              (binding [subproblem/*engine-selection* selection]
-                (engine/lookup-resources
-                 changed-adapter
-                 (assoc query :after bound)))
+              (engine/lookup-resources
+               changed-adapter
+               (assoc query :after bound))
               nil
               (catch Exception exception
                 exception))]
@@ -1263,21 +929,16 @@
         (is (= :eacl.pagination/stale-cursor
                (:eacl/error (ex-data error))))
         (is (= {:eacl/error :eacl.pagination/stale-cursor}
-               (ex-data error)))
-        (is (empty? @reports)
-            (str "generated stale-cursor shadow divergence: "
-                 (pr-str @reports)))))))
+               (ex-data error)))))))
 
-(deftest recursive-shadow-queue-limit-is-query-local
+(deftest generated-queue-limit-is-query-local
   (let [conn (datascript/create-conn)
-        reports (atom [])
         client
         (datascript/make-client
          conn
          {:cache shared-cache/no-cache
           :security-key
           "01234567890123456789012345678901"
-          :engine-selection (shadow-selection reports)
           :recursive-traversal-limits
           {:max-queued-work 1}})
         subject (eacl/spice-object :user "u1")
@@ -1313,7 +974,4 @@
             :resource/type :folder
             :count-limit 10})]
       (is (= 2 (:count result)))
-      (is (false? (:truncated? result)))
-      (is (empty? @reports)
-          (str "query-local queue-limit shadow divergence: "
-               (pr-str @reports))))))
+      (is (false? (:truncated? result))))))

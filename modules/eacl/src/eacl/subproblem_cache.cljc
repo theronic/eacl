@@ -5,7 +5,11 @@
   one exact selected graph generation; replacing that generation makes the
   complete store unreachable."
   (:refer-clojure :exclude [resolve])
-  (:require [eacl.verified-kernel :as verified])
+  (:require [eacl.verified-kernel :as verified]
+            #?(:clj
+               [eacl.formal.production-kernel]
+               :cljs
+               [eacl.formal.production-kernel-js]))
   #?(:clj
      (:import [java.util.concurrent Semaphore])))
 
@@ -32,13 +36,16 @@
   "Portable source/family/branch identity for managed projection keys."
   nil)
 
-(def ^:dynamic *engine-selection*
+(def ^:dynamic *decision-kernel*
   "Generated-kernel selection inherited from the enclosing public client.
 
-  nil preserves the legacy-authoritative path. Verified modes route pure
-  lookup, admission, and publication decisions through generated code while
-  storage mutation and value computation remain host-runtime responsibilities."
-  nil)
+  Pure lookup, admission, and publication decisions run through generated
+  code while storage mutation and value computation remain host-runtime
+  responsibilities."
+  #?(:clj
+     eacl.formal.production-kernel/default-selection
+     :cljs
+     eacl.formal.production-kernel-js/default-selection))
 
 (def ^:dynamic ^:private *decision-memo* nil)
 
@@ -164,37 +171,21 @@
   nil)
 
 (defn- cache-decision
-  [input legacy-decision]
-  ;; The default public mode was normalized when the client was constructed.
-  ;; Keep its hot path identical to the pre-kernel cache: normalizing and
-  ;; validating this same selection at every projection probe would turn a
-  ;; constant branch into measurable per-edge overhead. Verified modes still
-  ;; cross the strict generated boundary for every decision.
-  (if (or (nil? *engine-selection*)
-          (= :legacy-authoritative *engine-selection*)
-          (and (map? *engine-selection*)
-               (= :legacy-authoritative
-                  (:mode *engine-selection*))))
-    (legacy-decision)
-    (if (and *decision-memo*
-             (map? *engine-selection*)
-             (= :verified-authoritative
-                (:mode *engine-selection*)))
-      (if-let [cached (find @*decision-memo* input)]
-        (val cached)
-        (let [decision
-              (verified/decide
-               *engine-selection*
-               :subproblem-cache-decision
-               input
-               legacy-decision)]
-          (vswap! *decision-memo* assoc input decision)
-          decision))
-      (verified/decide
-       *engine-selection*
-       :subproblem-cache-decision
-       input
-       legacy-decision))))
+  [input]
+  (if *decision-memo*
+    (if-let [cached (find @*decision-memo* input)]
+      (val cached)
+      (let [decision
+            (verified/decide
+             *decision-kernel*
+             :subproblem-cache-decision
+             input)]
+        (vswap! *decision-memo* assoc input decision)
+        decision))
+    (verified/decide
+     *decision-kernel*
+     :subproblem-cache-decision
+     input)))
 
 (defn with-decision-memo
   "Runs one top-level authorization computation with request-local memoization
@@ -203,9 +194,8 @@
   The generated decision is still invoked and boundary-checked once for every
   distinct complete input. Repeated identical lookup states inside a deep
   shared subgraph reuse that checked result instead of paying the CLJ/CLJS FFI
-  conversion cost at every edge. The memo is request-scoped, never stores
-  authorization values, and is deliberately disabled in shadow mode so every
-  sampled legacy/generated comparison remains observable."
+  conversion cost at every edge. The memo is request-scoped and never stores
+  authorization values."
   [compute]
   (if *decision-memo*
     (compute)
@@ -217,12 +207,7 @@
   (cache-decision
    {:decision :lookup
     :recursive-self? recursive-self?
-    :candidate candidate}
-   #(cond
-      recursive-self? :bypass-recursive-self
-      (= :complete candidate) :use-completed-value
-      (= :computing candidate) :join-computation
-      :else :start-computation)))
+    :candidate candidate}))
 
 (defn- admission-action
   [candidate-present? represented-candidates maximum-candidates]
@@ -230,11 +215,7 @@
    {:decision :admission
     :candidate-present? candidate-present?
     :represented-candidates represented-candidates
-    :maximum-candidates maximum-candidates}
-   #(cond
-      candidate-present? :join-existing
-      (< represented-candidates maximum-candidates) :admit-computation
-      :else :compute-without-admission)))
+    :maximum-candidates maximum-candidates}))
 
 (defn- publication-action
   [ticket-current? complete? valid? weight budget]
@@ -244,14 +225,7 @@
     :complete? complete?
     :valid? valid?
     :weight weight
-    :budget budget}
-   #(if (and ticket-current?
-             complete?
-             valid?
-             (pos? weight)
-             (<= weight budget))
-      :retain-publication
-      :drop-publication)))
+    :budget budget}))
 
 (defn- positive-weight!
   [option value]

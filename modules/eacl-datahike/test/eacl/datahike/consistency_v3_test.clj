@@ -7,6 +7,7 @@
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as ddb]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.spicedb.consistency :as consistency])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -386,12 +387,12 @@
            (ddb/eavt-datoms
             (d/db conn)
             document-eid
-            :eacl.v7.relationship/resource-type+relation+subject-type+subject))]
+            relationship-storage/reverse-attribute))]
       (d/transact
        conn
        [[:db/retract
          document-eid
-         :eacl.v7.relationship/resource-type+relation+subject-type+subject
+         relationship-storage/reverse-attribute
          (vec (:v reverse))]])
       (let [half-proof
             (backend/invoke

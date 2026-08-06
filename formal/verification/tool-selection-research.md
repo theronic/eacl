@@ -27,7 +27,7 @@ database implementation:
 This split matches the problem's trust boundary: Dafny proves functional
 algorithms and termination; TLA+/Apalache explores state histories and races;
 contract tests discharge observable adapter obligations; differential testing
-checks the handwritten boundaries and legacy implementation.
+checks the handwritten host boundaries and generated production implementation.
 
 ## Why Dafny
 

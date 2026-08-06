@@ -74,8 +74,8 @@
         acc'))))
 
 (defn- collect-paged-backward
-  "Collects a full nonrecursive lookup in ascending result order via
-  :last/:before. This also exercises descending cursor frontiers."
+  "Collects a full nonrecursive lookup in canonical generated discovery order
+  via :last/:before."
   [lookup-fn db query page-size]
   (loop [before nil
          acc    ()]
@@ -98,7 +98,7 @@
         acc'))))
 
 (defn- check-forward-invariants!
-  [db label subject permission resource-type all-resource-eids sorted?]
+  [db label subject permission resource-type all-resource-eids backward?]
   (let [query {:subject subject :permission permission :resource/type resource-type}
         full  (collect-paged db query 500)
         truth (set (filter #(idx/can? db subject permission (spice-object resource-type %))
@@ -107,13 +107,10 @@
         (str label ": lookup-resources set must equal can? ground truth"))
     (is (= (count full) (count (distinct full)))
         (str label ": no duplicates"))
-    (when sorted?
-      (is (= full (sort full))
-          (str label ": non-recursive results are in ascending eid order")))
     (doseq [page-size [1 3 7]]
       (is (= full (collect-paged db query page-size))
           (str label ": paginated union at page size " page-size " must equal the full enumeration")))
-    (when sorted?
+    (when backward?
       (doseq [page-size [1 3 7]]
         (is (= full (collect-paged-backward idx/lookup-resources db query page-size))
             (str label ": reverse-paginated union at page size " page-size

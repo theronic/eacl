@@ -123,7 +123,7 @@
     "formal/dafny/IndexedRootDenotation.dfy"]
    :report "formal/verification/indexed-traversal.edn"
    :integration-status
-   :all-defined-permission-roots-internal-authority-and-shadow-passed
+   :all-defined-permission-roots-generated-authority-passed
    :claim
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
@@ -166,15 +166,15 @@
   :retained-live-heap
   {:status :passed
    :report "formal/verification/retained-live-heap.edn"
-   :maximum-generated-to-legacy-ratio 1.036843888729995
-   :maximum-allowed-ratio 1.5}}
+   :maximum-retained-delta-bytes 5344744
+   :maximum-allowed-bytes 8388608}}
  :unified-differential-runner
  {:status :passed
   :report "formal/verification/differential-runner.edn"
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-055
+ {:latest :EACL-FORMAL-057
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -229,11 +229,13 @@
           :EACL-FORMAL-052
           :EACL-FORMAL-053
           :EACL-FORMAL-054
-          :EACL-FORMAL-055]}
+          :EACL-FORMAL-055
+          :EACL-FORMAL-056
+          :EACL-FORMAL-057]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 55}
+  :entries 57}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -258,14 +260,13 @@
  {:status :passed
    :gate-enforcement :passed
    :report "formal/verification/performance-gates.edn"
-   :managed-legacy-heavy-suite :passed
    :current-generation-cache-heavy-suite :passed
-   :forced-verified-authority-heavy-suite :passed
+   :generated-authority-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed
    :completed-answer-hot-nonregression :passed
    :cache-disabled-nonregression :passed
    :cross-backend-workload-baseline :passed
-   :legacy-vs-verified-authority-mode-matrix :passed
+   :generated-authority-absolute-and-scaling-gates :passed
    :indexed-target-collection-refinement :passed-for-named-fixture
    :verified-authority-backward-pagination
    :passed-bounded-continuation-walk
@@ -274,7 +275,7 @@
    :retained-live-heap
    :passed-for-named-post-full-gc-regression
    :verified-kernel-cutover
-   :default-passed-with-explicit-legacy-rollback
+   :generated-only-production-engine
    :blocking-findings []}
  :mutation-control
  {:status :passed

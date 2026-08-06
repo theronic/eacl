@@ -47,7 +47,7 @@
                          :schema-completeness :direct-scan-equivalence]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-all-defined-permission-roots
+   :generated-only-all-defined-permission-roots
    :point-check-routing
    {:direction :reverse
     :anchor :concrete-resource
@@ -88,7 +88,7 @@
                          :permission-node-completeness]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-all-defined-permission-roots
+   :generated-only-all-defined-permission-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -112,7 +112,7 @@
                          :schema-completeness :ordered-complete-scans]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-all-defined-permission-roots
+   :generated-only-all-defined-permission-roots
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -144,8 +144,7 @@
     :at-least-anchor-completeness
     :exact-locator-and-graph-anchor-identity]
    :runtime-targets [:clj-java :cljs-javascript]
-   :production-authoritative
-   :generated-in-verified-authoritative-host-specialized-in-legacy
+   :production-authoritative :generated-only
    :remaining
    [:backend-selection-source-refinement
     :authenticated-token-decoder-refinement
@@ -267,7 +266,7 @@
     :compiled-plan-refinement]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :internal-verified-authoritative-all-defined-permission-roots
+   :generated-only-all-defined-permission-roots
    :remaining
    [:production-adapter-source-refinement
     :independent-review]

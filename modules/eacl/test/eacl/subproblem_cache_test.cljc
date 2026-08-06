@@ -523,9 +523,8 @@
            (expected-cache-action operation input)))
         result
         (binding
-         [subproblem/*engine-selection*
-          {:mode :verified-authoritative
-           :kernel kernel}]
+         [subproblem/*decision-kernel*
+          {:kernel kernel}]
           (subproblem/resolve!
            store :projection :missing {}
            (constantly 42)))]
@@ -546,12 +545,11 @@
   (let [store (subproblem/store)
         calls (atom [])
         kernel (->ObservingKernel calls expected-cache-action)
-        selection {:mode :verified-authoritative
-                   :kernel kernel}]
+        selection {:kernel kernel}]
     (doseq [key [:first :second]]
       (subproblem/resolve!
        store :projection key {} (constantly key)))
-    (binding [subproblem/*engine-selection* selection]
+    (binding [subproblem/*decision-kernel* selection]
       (subproblem/with-decision-memo
        (fn []
          (is (= :first
@@ -568,7 +566,7 @@
             :recursive-self? false
             :candidate :complete}
            (second (first @calls))))
-    (binding [subproblem/*engine-selection* selection]
+    (binding [subproblem/*decision-kernel* selection]
       (subproblem/with-decision-memo
        #(subproblem/lookup!
          store :projection :first {})))
@@ -744,9 +742,8 @@
            (fn [k]
              (future
                (binding
-                [subproblem/*engine-selection*
-                 {:mode :verified-authoritative
-                  :kernel kernel}]
+                [subproblem/*decision-kernel*
+                 {:kernel kernel}]
                  (:value
                   (subproblem/resolve!
                    store :projection k {} (compute k))))))

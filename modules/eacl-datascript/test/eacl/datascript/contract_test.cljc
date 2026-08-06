@@ -17,20 +17,19 @@
                                 :eacl/id id})
                              contract/smoke-objects)))
 
-(deftest generated-authority-is-the-default-with-explicit-legacy-rollback-test
+(deftest generated-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-selection
-        (get-in (datascript/make-client conn {}) [:opts :engine-selection])
-        legacy-selection
-        (get-in
-         (datascript/make-client
-          conn
-          {:engine-selection {:mode :legacy-authoritative}})
-         [:opts :engine-selection])]
-    (is (= :verified-authoritative (:mode default-selection)))
+        (get-in (datascript/make-client conn {}) [:opts :decision-kernel])
+        error
+        (try
+          (datascript/make-client conn {:engine-selection :anything})
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
+            (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-    (is (= :legacy-authoritative (:mode legacy-selection)))
-    (is (nil? (:kernel legacy-selection)))))
+    (is (= :eacl/invalid-config (:type error)))
+    (is (= [:engine-selection] (:unknown-keys error)))))
 
 (defn- reusable-denotation-hits
   [stats]
@@ -611,25 +610,16 @@
                                       (assoc query
                                              :after
                                              (get-in page-2
-                                                     [:page-info :end-cursor])))
-        verified-authoritative?
-        (= :verified-authoritative
-           (get-in client [:opts :engine-selection :mode]))]
+                                                     [:page-info :end-cursor])))]
     (testing "v8 cursors retain direction-scoped shared-engine state"
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
       (is (= 10 (:v envelope)))
-      (if verified-authoritative?
-        (do
-          (is (= :recursive-traversal
-                 (get-in envelope [:edge :kind])))
-          (is (= :forward
-                 (get-in envelope [:edge :direction]))))
-        (do
-          (is (= :lookup-eid (get-in envelope [:edge :kind])))
-          (is (= :asc
-                 (get-in envelope [:edge :frontier-direction]))))))
+      (is (= :recursive-traversal
+             (get-in envelope [:edge :kind])))
+      (is (= :forward
+             (get-in envelope [:edge :direction]))))
 
     (testing "a forward cursor cannot be reused for reverse traversal"
       (is (= :query-mismatch

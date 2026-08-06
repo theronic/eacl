@@ -506,20 +506,6 @@
                   :issue-count total}))))
     nil))
 
-;; Keep old function for backwards compatibility, but delegate to new validation
-(defn validate-operators
-  "DEPRECATED: Use validate-eacl-restrictions instead.
-   Kept for backwards compatibility."
-  [parse-tree]
-  (let [issues (filter #(= :unsupported-operator (:type %))
-                 (collect-parse-tree-issues parse-tree))]
-    (when (seq issues)
-      (throw (ex-info "Unsupported operator in schema"
-               {:operators (set (map :operator issues))
-                :message   (str "EACL only supports union (+) operators. "
-                             "Found unsupported operators. "
-                             "Exclusion (-) and intersection (&) are not supported.")})))))
-
 ;; ============================================================================
 ;; Permission Expression Transformation
 ;; Converts new grammar parse tree to component list for EACL

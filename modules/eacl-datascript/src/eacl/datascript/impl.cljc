@@ -2,10 +2,9 @@
   (:require [datascript.core :as ds]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datascript.db :as ddb]
-            [eacl.datascript.schema :as schema]
-            [eacl.engine.indexed :as engine]
             [eacl.engine.relationships :as relationship-engine]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
 (def Relation model/Relation)
@@ -14,9 +13,6 @@
 (defn Relationship
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
-
-(def permission-paths-cache
-  (atom {}))
 
 (def max-entid
   #?(:clj Long/MAX_VALUE
@@ -29,11 +25,6 @@
     :eacl.permission/source-relation-name
     :eacl.permission/target-type
     :eacl.permission/target-name])
-
-(defn evict-permission-paths-cache!
-  ([] (evict-permission-paths-cache! permission-paths-cache))
-  ([cache-atom]
-   (engine/evict-permission-paths-cache! cache-atom)))
 
 (defn relation-datoms
   "Returns relation datoms for the exact resource/relation name pair, for ANY
@@ -107,7 +98,7 @@
               #(> bound-eid %))
             (constantly true)))]
     (->> (ddb/eavt-endpoint-prefix
-          db subject-id schema/forward-relationship-attr
+          db subject-id relationship-storage/forward-attribute
           [subject-type relation-id resource-type]
           bound-eid direction)
          (map (comp #(nth % 3) :v))
@@ -137,7 +128,7 @@
               #(> bound-eid %))
             (constantly true)))]
     (->> (ddb/eavt-endpoint-prefix
-          db resource-id schema/reverse-relationship-attr
+          db resource-id relationship-storage/reverse-attribute
           [resource-type relation-id subject-type]
           bound-eid direction)
          (map (comp #(nth % 3) :v))
@@ -237,13 +228,13 @@
                         (ddb/eavt-datoms
                          db
                          (:subject-id resolved)
-                         schema/forward-relationship-attr
+                         relationship-storage/forward-attribute
                          (relationship-tuple resolved)))
                        (seq
                         (ddb/eavt-datoms
                          db
                          (:resource-id resolved)
-                         schema/reverse-relationship-attr
+                         relationship-storage/reverse-attribute
                          (reverse-relationship-tuple resolved))))]
     (when existing?
       resolved)))
@@ -256,22 +247,22 @@
   [resolved]
   [[:db/add
     (:subject-id resolved)
-    schema/forward-relationship-attr
+    relationship-storage/forward-attribute
     (relationship-tuple resolved)]
    [:db/add
     (:resource-id resolved)
-    schema/reverse-relationship-attr
+    relationship-storage/reverse-attribute
     (reverse-relationship-tuple resolved)]])
 
 (defn- retract-relationship-txes
   [resolved]
   [[:db/retract
     (:subject-id resolved)
-    schema/forward-relationship-attr
+    relationship-storage/forward-attribute
     (relationship-tuple resolved)]
    [:db/retract
     (:resource-id resolved)
-    schema/reverse-relationship-attr
+    relationship-storage/reverse-attribute
     (reverse-relationship-tuple resolved)]])
 
 (defn direct-match?
@@ -279,7 +270,7 @@
   (boolean
    (seq
     (ddb/eavt-datoms
-     db subject-id schema/forward-relationship-attr
+     db subject-id relationship-storage/forward-attribute
      (endpoint-pair/forward-value
       subject-type relation-id resource-type resource-id)))))
 
@@ -288,7 +279,7 @@
   (boolean
    (seq
     (ddb/eavt-datoms
-     db resource-id schema/reverse-relationship-attr
+     db resource-id relationship-storage/reverse-attribute
      (endpoint-pair/reverse-value
       resource-type relation-id subject-type subject-id)))))
 
@@ -377,7 +368,7 @@
 (defn read-relationships
   ([db filters]
    (read-relationships db filters nil))
-  ([db filters engine-selection]
+  ([db filters decision-kernel]
   (validate-relationship-filters! filters)
   (let [subject-id'  (when (contains? filters :subject/id)
                        (internal-id db (:subject/id filters)))
@@ -436,7 +427,7 @@
                   (->> (ddb/eavt-endpoint-prefix
                         db
                         (:subject-id spec)
-                        schema/forward-relationship-attr
+                        relationship-storage/forward-attribute
                         [(:subject-type spec)
                          (:relation-id spec)
                          (:resource-type spec)]
@@ -455,7 +446,7 @@
                   (->> (ddb/eavt-endpoint-prefix
                         db
                         (:resource-id spec)
-                        schema/reverse-relationship-attr
+                        relationship-storage/reverse-attribute
                         [(:resource-type spec)
                          (:relation-id spec)
                          (:subject-type spec)]
@@ -471,7 +462,7 @@
               (scan-forward-partial [spec cursor direction]
                 (->> (ddb/avet-endpoint-prefix
                       db
-                      schema/forward-relationship-attr
+                      relationship-storage/forward-attribute
                       [(:subject-type spec)
                        (:relation-id spec)
                        (:resource-type spec)]
@@ -486,7 +477,7 @@
               (scan-reverse-partial [spec cursor direction]
                 (->> (ddb/avet-endpoint-prefix
                       db
-                      schema/reverse-relationship-attr
+                      relationship-storage/reverse-attribute
                       [(:resource-type spec)
                        (:relation-id spec)
                        (:subject-type spec)]
@@ -520,7 +511,7 @@
           (if-not (or (contains? filters' :limit)
                       (contains? filters' :cursor))
             (relationship-engine/execute-page
-             scan-specs filters' engine-selection scan-spec)
+             scan-specs filters' decision-kernel scan-spec)
             (relationship-engine/execute-plan
              scan-specs filters' scan-spec))))))))
 
@@ -535,12 +526,12 @@
   [subject-type subject-id relation-id resource-type resource-id]
   [[:db/retract
     subject-id
-    schema/forward-relationship-attr
+    relationship-storage/forward-attribute
     (endpoint-pair/forward-value
      subject-type relation-id resource-type resource-id)]
    [:db/retract
     resource-id
-    schema/reverse-relationship-attr
+    relationship-storage/reverse-attribute
     (endpoint-pair/reverse-value
      resource-type relation-id subject-type subject-id)]])
 
@@ -565,7 +556,7 @@
               subject-type object-eid relation-eid
               resource-type resource-eid)))
          (ddb/eavt-datoms
-          db object-eid schema/forward-relationship-attr))
+          db object-eid relationship-storage/forward-attribute))
 
         (mapcat
          (fn [{:keys [v]}]
@@ -576,7 +567,7 @@
               subject-type subject-eid relation-eid
               resource-type object-eid)))
          (ddb/eavt-datoms
-          db object-eid schema/reverse-relationship-attr))
+          db object-eid relationship-storage/reverse-attribute))
 
         (mapcat
          (fn [[resource-type relation-id subject-type]]
@@ -586,7 +577,7 @@
                subject-type object-eid relation-id
                resource-type resource-id))
             (ddb/avet-datoms
-             db schema/reverse-relationship-attr
+             db relationship-storage/reverse-attribute
              (endpoint-pair/reverse-value
               resource-type relation-id subject-type object-eid))))
          triples)
@@ -599,7 +590,7 @@
                subject-type subject-id relation-id
                resource-type object-eid))
             (ddb/avet-datoms
-             db schema/forward-relationship-attr
+             db relationship-storage/forward-attribute
              (endpoint-pair/forward-value
               subject-type relation-id resource-type object-eid))))
          triples))
@@ -617,8 +608,8 @@
           (when (and (vector? op)
                      (= :db/retract (first op))
                      (contains?
-                      #{schema/forward-relationship-attr
-                        schema/reverse-relationship-attr}
+                      #{relationship-storage/forward-attribute
+                        relationship-storage/reverse-attribute}
                       (nth op 2 nil)))
             (nth (nth op 3) 1))))
        distinct
@@ -632,7 +623,7 @@
   [db]
   (concat
    (for [{subject-id :e value :v}
-         (ddb/avet-datoms db schema/forward-relationship-attr)
+         (ddb/avet-datoms db relationship-storage/forward-attribute)
          :let [decoded (endpoint-pair/decode-forward subject-id value)
                peer (endpoint-pair/peer-half :forward subject-id value)]
          :when
@@ -640,18 +631,18 @@
              (empty?
               (ddb/eavt-datoms
                db (:endpoint-eid peer)
-               schema/reverse-relationship-attr
+               relationship-storage/reverse-attribute
                (:value peer))))]
      {:half :forward
       :e subject-id
-      :attr schema/forward-relationship-attr
+      :attr relationship-storage/forward-attribute
       :v (if (sequential? value) (vec value) value)
       :subject-eid subject-id
       :resource-eid (:resource-eid decoded)
       :relation-eid (:relation-eid decoded)
       :value-arity (when (counted? value) (count value))})
    (for [{resource-id :e value :v}
-         (ddb/avet-datoms db schema/reverse-relationship-attr)
+         (ddb/avet-datoms db relationship-storage/reverse-attribute)
          :let [decoded (endpoint-pair/decode-reverse resource-id value)
                peer (endpoint-pair/peer-half :reverse resource-id value)]
          :when
@@ -659,162 +650,13 @@
              (empty?
               (ddb/eavt-datoms
                db (:endpoint-eid peer)
-               schema/forward-relationship-attr
+               relationship-storage/forward-attribute
                (:value peer))))]
      {:half :reverse
       :e resource-id
-      :attr schema/reverse-relationship-attr
+      :attr relationship-storage/reverse-attribute
       :v (if (sequential? value) (vec value) value)
       :subject-eid (:subject-eid decoded)
       :resource-eid resource-id
       :relation-eid (:relation-eid decoded)
       :value-arity (when (counted? value) (count value))})))
-
-(defn- normalize-backend-options
-  [cache-stamp-or-opts]
-  (cond
-    (nil? cache-stamp-or-opts) {}
-    (fn? cache-stamp-or-opts) {:cache-stamp cache-stamp-or-opts}
-    (map? cache-stamp-or-opts) cache-stamp-or-opts
-    :else (throw (ex-info "Unsupported DataScript backend options"
-                          {:value cache-stamp-or-opts}))))
-
-(defn- schema-catalog-data
-  [db schema-catalog]
-  (cond
-    (nil? schema-catalog) nil
-    (fn? schema-catalog) (schema-catalog db)
-    :else schema-catalog))
-
-(defn- relation-defs-from-db
-  [db resource-type relation-name]
-  (mapv (fn [datom]
-          {:relation-id (:e datom)
-           :resource-type resource-type
-           :relation-name relation-name
-           :subject-type (nth (:v datom) 2)})
-        (relation-datoms db resource-type relation-name)))
-
-(defn- permission-defs-from-db
-  [db resource-type permission-name]
-  (mapv (fn [perm]
-          {:permission-id (:db/id perm)
-           :resource-type (:eacl.permission/resource-type perm)
-           :permission-name (:eacl.permission/permission-name perm)
-           :source-relation-name (:eacl.permission/source-relation-name perm)
-           :target-type (:eacl.permission/target-type perm)
-           :target-name (:eacl.permission/target-name perm)})
-        (find-permission-defs db resource-type permission-name)))
-
-(defn indexed-backend
-  ([db]
-   (indexed-backend db nil))
-  ([db cache-stamp-or-opts]
-   (let [{:keys [cache-stamp
-                 schema-catalog]
-          :as options} (normalize-backend-options cache-stamp-or-opts)
-         permission-paths-cache-atom (:permission-paths-cache options)]
-     {:cache-stamp (or cache-stamp
-                       (fn []
-                         (hash db)))
-      :permission-paths-cache (or permission-paths-cache-atom permission-paths-cache)
-      :relation-defs (fn [resource-type relation-name]
-                       (if-let [catalog (schema-catalog-data db schema-catalog)]
-                         (get-in catalog [:relation-defs [resource-type relation-name]] [])
-                         (relation-defs-from-db db resource-type relation-name)))
-      :permission-defs (fn [resource-type permission-name]
-                         (if-let [catalog (schema-catalog-data db schema-catalog)]
-                           (->> (get-in catalog [:permission-defs [resource-type permission-name]] [])
-                                (mapv (fn [perm]
-                                        {:permission-id (:db/id perm)
-                                         :resource-type (:eacl.permission/resource-type perm)
-                                         :permission-name (:eacl.permission/permission-name perm)
-                                         :source-relation-name (:eacl.permission/source-relation-name perm)
-                                         :target-type (:eacl.permission/target-type perm)
-                                         :target-name (:eacl.permission/target-name perm)})))
-                           (permission-defs-from-db db resource-type permission-name)))
-    :subject->resources (fn [subject-type subject-id relation-id resource-type cursor-resource-id]
-                          (subject->resources db subject-type subject-id relation-id resource-type cursor-resource-id))
-    :resource->subjects (fn [resource-type resource-id relation-id subject-type cursor-subject-id]
-                          (resource->subjects db resource-type resource-id relation-id subject-type cursor-subject-id))
-	    :direct-match?
-        (fn [subject-type subject-id relation-id resource-type resource-id]
-          (direct-match?
-           db subject-type subject-id relation-id resource-type resource-id))})))
-
-(defn- backend*
-  [db-or-backend]
-  (if (and (map? db-or-backend) (contains? db-or-backend :cache-stamp))
-    db-or-backend
-    (indexed-backend db-or-backend)))
-
-(defn calc-permission-paths
-  ([db-or-backend resource-type permission-name]
-   (engine/calc-permission-paths (backend* db-or-backend) resource-type permission-name))
-  ([db-or-backend resource-type permission-name visited-perms]
-   (engine/calc-permission-paths (backend* db-or-backend) resource-type permission-name visited-perms)))
-
-(defn get-permission-paths
-  [db-or-backend resource-type permission-name]
-  (let [backend    (backend* db-or-backend)
-        cache-atom (or (:permission-paths-cache backend) permission-paths-cache)]
-    (engine/get-permission-paths cache-atom calc-permission-paths backend resource-type permission-name)))
-
-(defn can?
-  ([db subject permission resource]
-   (can? db nil subject permission resource))
-  ([db cache-stamp-or-opts subject permission resource]
-   (let [subject-id  (internal-id db (:id subject))
-         resource-id (internal-id db (:id resource))]
-     (engine/can?
-      (indexed-backend db cache-stamp-or-opts)
-      get-permission-paths
-      (assoc subject :id subject-id)
-      permission
-      (assoc resource :id resource-id)))))
-
-(defn- internalize-anchor
-  [db object]
-  (update object :id #(internal-id db %)))
-
-(defn lookup-resources
-  ([db query]
-   (lookup-resources db nil query))
-  ([db cache-stamp-or-opts query]
-   (engine/lookup
-    (indexed-backend db cache-stamp-or-opts)
-    engine/forward-direction
-    get-permission-paths
-    (update query :subject #(internalize-anchor db %)))))
-
-(defn lookup-subjects
-  ([db query]
-   (lookup-subjects db nil query))
-  ([db cache-stamp-or-opts query]
-   (engine/lookup
-    (indexed-backend db cache-stamp-or-opts)
-    engine/reverse-direction
-    get-permission-paths
-    (update query :resource #(internalize-anchor db %)))))
-
-(defn count-resources
-  ([db query]
-   (count-resources db nil query))
-  ([db cache-stamp-or-opts query]
-   (engine/count-results
-    (indexed-backend db cache-stamp-or-opts)
-    engine/forward-direction
-    get-permission-paths
-    (update query :subject #(internalize-anchor db %))
-    :resource)))
-
-(defn count-subjects
-  ([db query]
-   (count-subjects db nil query))
-  ([db cache-stamp-or-opts query]
-   (engine/count-results
-    (indexed-backend db cache-stamp-or-opts)
-    engine/reverse-direction
-    get-permission-paths
-    (update query :resource #(internalize-anchor db %))
-    :subject)))

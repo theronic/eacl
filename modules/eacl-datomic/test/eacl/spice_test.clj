@@ -173,14 +173,6 @@
                                                                        :permission :admin
                                                                        :resource/type :account})))))))
 
-        (testing "the deprecated :entity->object-id alias still works"
-          (let [alias-client (spiceomic/make-client conn
-                               {:entity->object-id (fn [ent] (str "ALIAS-" (:eacl/id ent)))})]
-            (is (= ["ALIAS-a1"]
-                   (mapv :id (:data (eacl/lookup-resources alias-client {:subject (spice-object :user "u1")
-                                                                         :permission :admin
-                                                                         :resource/type :account})))))))
-
         (testing "unknown option keys fail fast instead of silently falling back to defaults"
           (try
             (spiceomic/make-client conn {:entid->objectid (fn [_db eid] eid)}) ; misspelled
@@ -189,13 +181,15 @@
               (is (= :eacl/invalid-config (:type (ex-data e))))
               (is (= [:entid->objectid] (:unknown-keys (ex-data e)))))))
 
-        (testing "supplying both the canonical key and the alias is rejected"
+        (testing "the removed v7 :entity->object-id alias is rejected"
           (try
-            (spiceomic/make-client conn {:entid->object-id (fn [_db eid] eid)
-                                         :entity->object-id (fn [ent] (:eacl/id ent))})
+            (spiceomic/make-client conn
+              {:entity->object-id (fn [ent] (:eacl/id ent))})
             (is false "should have thrown")
             (catch clojure.lang.ExceptionInfo e
-              (is (= :eacl/invalid-config (:type (ex-data e)))))))))))
+              (is (= :eacl/invalid-config (:type (ex-data e))))
+              (is (= [:entity->object-id]
+                     (:unknown-keys (ex-data e)))))))))))
 
 (deftest spicedb-helper-tests
   (testing "spice-object takes [type id ?relation] and yields a SpiceObject with support for subject_relation"

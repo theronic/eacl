@@ -1,9 +1,7 @@
 (ns eacl.lazy-merge-sort
-  "Optimized lazy merge-sort with deduplication for sorted sequences.
+  "Test-only handwritten merge oracle retained for source-refinement checks.
 
-  Primary entry point: `lazy-fold2-merge-dedupe-sorted-by`.
-
-  Legacy helper names remain as wrappers for compatibility with older tests.")
+  The v8 production engine uses the generated ordered-merge implementation.")
 
 (defn- lazy-merge2-dedupe-longs
   ([x y] (lazy-merge2-dedupe-longs false 0 x y))
@@ -208,11 +206,3 @@
                      (merge2 (first pair) (second pair))
                      (first pair)))
                  (partition-all 2 non-empty))))))))
-
-(defn lazy-merge-dedupe-sort
-  [seqs]
-  (lazy-fold2-merge-dedupe-sorted-by identity seqs))
-
-(defn lazy-merge-dedupe-sort-by
-  [keyfn seqs]
-  (lazy-fold2-merge-dedupe-sorted-by keyfn seqs))

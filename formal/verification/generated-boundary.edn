@@ -8,8 +8,10 @@
   :cross-runtime-converter-presence :machine-checked
   :semantic-qualification :differential-evidence
   :conversion-code :trusted-ffi-boundary}
- :modes
- [:legacy-authoritative :verified-shadow :verified-authoritative]
+ :production-modes [:generated-authoritative]
+ :runtime-engine-selection-contract :removed
+ :test-only-reference-implementations
+ [:former-materialized-v8-oracle :former-indexed-oracle]
  :generated-providers
  {:clj-java eacl.formal.production-kernel/GeneratedJavaKernel
    :cljs-javascript
@@ -68,10 +70,10 @@
   :javascript-source-model-two-stream-fixtures 8192
   :java-source-model-balanced-fold-fixtures 100
   :javascript-source-model-balanced-fold-fixtures 50
-  :hot-production-path :optimized-clj-cljs-specialization
-  :per-eid-generated-routing :rejected-by-performance-gate
+  :hot-production-path :generated-indexed-traversal
+  :host-source-model-location :formal-smoke-only
   :formal-source-refinement
-  :exact-source-control-model-proved-clojure-language-correspondence-and-independent-review-remain-trusted}
+  :exact-source-control-model-proved-host-language-correspondence-and-independent-review-remain-trusted}
  :recursive-routing-proof-oracle
  {:sources
   ["formal/dafny/RecursiveEngine.dfy"
@@ -137,7 +139,7 @@
   :production-plan-observation-matrix
   {:clj 16
    :cljs 16
-   :legacy-and-generated-error-routing-equal true}
+   :generated-public-error-routing-exact true}
   :production-validation-observation-scenarios
   {:clj 24
    :cljs 24
@@ -201,9 +203,9 @@
   :generated-scan-request-scope-ownership true
   :production-scan-response-routing true
   :production-plan-certification-routing
-  :verified-modes-schema-plan-compilation
+  :generated-only-schema-plan-compilation
   :production-state-transition-routing
-  :verified-authoritative-mode-all-defined-permission-roots
+  :generated-only-all-defined-permission-roots
   :opaque-generated-state-between-adapter-round-trips true
   :per-query-schema-rule-index-rebuild false
   :compiled-plan-soundness-refinement true
@@ -255,7 +257,7 @@
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407
     :datascript-public-recursive-cache-mode-differential true
-    :datascript-complete-public-provenance-and-graph-shadow true
+    :datascript-complete-public-provenance-and-graph-reference true
     :shared-scc-routing-differential true}}
   :materialized-reference
   {:comparison-contract
@@ -290,7 +292,7 @@
     :count-subjects]
    :cache-bypass-generated-routing true
    :acyclic-ordering-counterexample-retained true
-   :recursive-shadow-result-comparison true
+   :recursive-generated-reference-result-comparison true
    :dimensionally-matched-resource-counter-comparison true
    :logical-retained-state-comparison
    :separate-representation-specific-regression-gate
@@ -321,17 +323,17 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 525 :assertions 28304 :failures 0 :errors 0}
+    :tests 509 :assertions 34773 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4062 :failures 0 :errors 0}
    :cljs-datascript
-   {:tests 163 :assertions 4513 :failures 0 :errors 0}
+   {:tests 155 :assertions 4419 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed
     :report "formal/verification/retained-live-heap.edn"
-    :maximum-generated-to-legacy-ratio 1.036843888729995}
+    :maximum-retained-delta-bytes 5344744}
    :status :passed}}
  :public-can-root-classification
  {:counterexample :EACL-FORMAL-051

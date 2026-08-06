@@ -179,20 +179,20 @@ The verification harness SHALL keep logical work, backend operations, allocation
 - **WHEN** the same benchmark runs on hosts with different service rates
 - **THEN** deterministic scaling/work gates still detect algorithmic regressions independently of the separately recorded absolute latency ceiling
 
-### Requirement: Differential and shadow migration gate
-The verified kernel SHALL NOT become authoritative until it agrees with the formal semantics and every unexplained difference from the legacy engine has been resolved. Unsound legacy behavior SHALL be corrected rather than encoded into the formal semantics solely for compatibility.
+### Requirement: Differential cutover evidence without a production rollback engine
+The verified kernel SHALL NOT become authoritative until it agrees with the formal semantics and every unexplained difference from the former engine has been resolved. Unsound former behavior SHALL be corrected rather than encoded into the formal semantics solely for compatibility. Once those gates pass, EACL v8 SHALL contain one production authorization decision engine; former handwritten implementations MAY remain only as test oracles, characterization fixtures, and minimized counterexamples.
 
 #### Scenario: Unexplained shadow disagreement
 - **WHEN** shadow execution produces a legacy/verified difference that has not been classified against the formal semantics
 - **THEN** the authoritative-engine rollout is blocked
 
-#### Scenario: Legacy false grant
-- **WHEN** a minimized witness proves the legacy engine grants a tuple absent from the formal authorization relation
+#### Scenario: Former-engine false grant
+- **WHEN** a minimized witness proves the former engine grants a tuple absent from the formal authorization relation
 - **THEN** EACL fixes the behavior, retains the witness as a regression, and documents compatibility impact before rollout
 
-#### Scenario: Verified authority rollback
-- **WHEN** deployment metrics require rollback during the compatibility window
-- **THEN** operators can select the legacy engine without removing formal artifacts or re-enabling any already-demonstrated security defect
+#### Scenario: Released v8 runtime
+- **WHEN** a consumer constructs a Datomic, Datahike, or DataScript client
+- **THEN** every authorization, pagination, consistency, cursor, and cache decision uses the generated authoritative kernel and no engine-selection option can reactivate a handwritten production decision path
 
 ### Requirement: Reproducible verification and release evidence
 The repository SHALL pin verification tools and solvers, verify downloaded tool artifacts, provide deterministic proof/model/build entry points, and generate a release manifest containing theorem status, tool and source digests, adapter certification, tested runtimes, counterexample-corpus revision, residual assumptions, and performance-gate status.

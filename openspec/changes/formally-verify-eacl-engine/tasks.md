@@ -151,7 +151,7 @@
 - [x] 11.9 Add a mutation-control target proving every registered mutant is killed by a named proof, model invariant, or differential test.
 - [x] 11.10 Run sustained bug-finding campaigns until coverage and new-counterexample rates meet the recorded exit criteria; resolve or explicitly block rollout on every finding.
 
-## 12. Production Integration and Shadow Migration
+## 12. Production Integration and Verified Cutover
 
 - [x] 12.1 Add an internal engine-selection option with legacy-authoritative, verified-shadow, and verified-authoritative modes while preserving public request/response shapes.
 - [x] 12.2 Invoke the verified kernel in shadow mode without allowing it to alter legacy responses, cache state, cursors, or backend transactions.
@@ -162,7 +162,7 @@
 - [x] 12.7 Make verified-authoritative mode opt-in after all proof, adapter, cross-target, mutation, regression, and performance gates pass.
 - [x] 12.8 Run the full non-benchmark and heavy suites through nREPL with verified authority on Datomic, DataScript CLJ/CLJS, and Datahike.
 - [x] 12.9 Make verified authority the default while retaining the legacy rollback path for the documented compatibility window.
-- [ ] 12.10 Remove the legacy decision path after the window closes, preserving characterization fixtures, counterexamples, and security fixes.
+- [x] 12.10 Remove the former handwritten decision path from production and remove the runtime engine-selection contract, preserving storage migrations, characterization fixtures, counterexamples, independent test oracles, and security fixes.
 
 ## 13. CI, Verification Manifest, and Documentation
 
@@ -173,7 +173,7 @@
 - [x] 13.5 Ensure every Clojure and ClojureScript correctness suite is launched through nREPL-compatible project workflows rather than cold `clojure` CLI test execution.
 - [x] 13.6 Generate the verification manifest from machine-readable theorem results, source/tool/generated digests, adapter reports, runtime targets, corpus revision, assumptions, and performance gates.
 - [x] 13.7 Fail CI and withhold verified status when a theorem is admitted, missing, times out, depends on an undocumented assumption, or lacks required adapter coverage.
-- [x] 13.8 Document local setup, proof structure, theorem navigation, counterexample reproduction, adapter certification, shadow operations, rollback, and how to interpret the assurance claim.
+- [x] 13.8 Document local setup, proof structure, theorem navigation, counterexample reproduction, adapter certification, generated-authority operation, storage migration, and how to interpret the assurance claim.
 - [x] 13.9 Add release notes for every behavior corrected by a counterexample, including affected versions/backends, security impact, and migration guidance.
 - [ ] 13.10 Obtain a security/formal-methods review of the theorem statements, trusted boundary, axioms, FFI validation, temporal invariants, and verification manifest.
 

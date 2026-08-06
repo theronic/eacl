@@ -19,6 +19,7 @@
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.secure-format :as secure]
+            [eacl.verified-kernel :as verified]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :refer [->user ->account ->server ->team ->vpc ->platform]]))
 
@@ -1241,9 +1242,10 @@
             (documents
              can-target-local-small-resources
              can-target-local-large-resources)]
-        (is (= :verified-authoritative
-               (get-in acl [:opts :engine-selection :mode]))
-            "the release-default permission benchmark must exercise generated authority")
+        (is (satisfies?
+             verified/DecisionKernel
+             (get-in acl [:opts :decision-kernel :kernel]))
+            "the release benchmark must exercise the generated authority")
         (eacl/write-schema!
          acl
          "definition user {}

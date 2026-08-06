@@ -1,6 +1,6 @@
 (ns eacl.cache
-  "Backend-neutral private current-generation caching plus legacy portable
-  authenticated-entry validation."
+  "Backend-neutral private current-generation caching and authenticated
+  provider-entry validation."
   (:require [eacl.backend.v8 :as backend]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
@@ -128,8 +128,8 @@
 (defn current-cache-for-option
   "Builds the private current cache corresponding to a public `:cache` option.
 
-  `no-cache` disables it. Portable/custom CacheStore values continue to serve
-  provider/telemetry compatibility, but completed native answers are isolated
+  `no-cache` disables it. Portable/custom CacheStore values serve
+  provider and telemetry roles, but completed native answers are isolated
   in this client-owned cache. A config map contributes only native capacity
   settings."
   [value]
@@ -337,35 +337,11 @@
         nil))))
 
 (defn- current-cache-action
-  [engine-selection stage available?]
-  (let [legacy
-        #(case stage
-           (:eligibility :generation)
-           (if available?
-             :probe-exact-entry
-             :bypass-current-cache)
-
-           :exact-entry
-           (if available?
-             :use-exact-entry
-             :probe-managed-entry)
-
-           :managed-entry
-           (if available?
-             :use-managed-entry
-             :compute-current-value))]
-    ;; Preserve the default cache hot path. Verified modes cross the generated
-    ;; boundary at every authorization-affecting cache-selection stage.
-    (if (or (nil? engine-selection)
-            (= :legacy-authoritative engine-selection)
-            (and (map? engine-selection)
-                 (= :legacy-authoritative (:mode engine-selection))))
-      (legacy)
-      (verified/decide
-       engine-selection
-       :current-cache-decision
-       {:stage stage :available? available?}
-       legacy))))
+  [decision-kernel stage available?]
+  (verified/decide
+   (or decision-kernel subproblem/*decision-kernel*)
+   :current-cache-decision
+   {:stage stage :available? available?}))
 
 (defn resolve-current!
   "Resolves one completed semantic answer against a captured current snapshot.
@@ -382,7 +358,7 @@
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
            managed-descriptor-key-fn managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
-           engine-selection remember-answer?]
+           decision-kernel remember-answer?]
     :or {same-snapshot? =
          cacheable? true
          remember-answer? true}}
@@ -392,7 +368,7 @@
                     {:type :eacl/invalid-config})))
   (if (= :bypass-current-cache
          (current-cache-action
-          engine-selection
+          decision-kernel
           :eligibility
           (and (some? store) cacheable?)))
     (do
@@ -402,7 +378,9 @@
                         subproblem/*managed-store* nil
                         subproblem/*managed-key-fn* nil
                         subproblem/*managed-scope* nil
-                        subproblem/*engine-selection* engine-selection]
+                        subproblem/*decision-kernel*
+                        (or decision-kernel
+                            subproblem/*decision-kernel*)]
                 (compute))
        :cached? false
        :cache-tier nil
@@ -428,15 +406,16 @@
             entry-key [semantic-key kind]]
         (if (= :bypass-current-cache
                (current-cache-action
-                engine-selection :generation active?))
+                decision-kernel :generation active?))
           (do
             (swap! (:metrics store) update :bypasses inc)
             {:value (binding [subproblem/*store* nil
                               subproblem/*managed-store* nil
                               subproblem/*managed-key-fn* nil
                               subproblem/*managed-scope* nil
-                              subproblem/*engine-selection*
-                              engine-selection]
+                              subproblem/*decision-kernel*
+                              (or decision-kernel
+                                  subproblem/*decision-kernel*)]
                       (compute))
              :cached? false
              :cache-tier nil
@@ -447,7 +426,7 @@
                    (:entries generation) entry-key valid-value?))
                 exact-action
                 (current-cache-action
-                 engine-selection :exact-entry (some? entry))]
+                 decision-kernel :exact-entry (some? entry))]
             (if (= :use-exact-entry exact-action)
             (do
               (swap! (:metrics store) update :exact-hits inc)
@@ -478,7 +457,7 @@
                      valid-value?))
                   managed-action
                   (current-cache-action
-                   engine-selection :managed-entry (some? managed-entry))]
+                   decision-kernel :managed-entry (some? managed-entry))]
               (if (= :use-managed-entry managed-action)
                 (do
                   (put-entry!
@@ -498,8 +477,9 @@
                                 managed-subproblem-key-fn
                                 subproblem/*managed-scope*
                                 managed-subproblem-scope
-                                subproblem/*engine-selection*
-                                engine-selection]
+                                subproblem/*decision-kernel*
+                                (or decision-kernel
+                                    subproblem/*decision-kernel*)]
                         (subproblem/with-decision-memo compute))
                       entry {:value value
                              :cache-basis cache-basis}
@@ -623,7 +603,7 @@
 (defn- encode-entry
   [format-options payload]
   (secure/encode-authenticated
-   (merge (dissoc format-options :engine-selection)
+   (merge (dissoc format-options :decision-kernel)
           {:domain cache-entry-domain
            :prefix cache-entry-prefix})
    payload))
@@ -655,25 +635,13 @@
     {:status :decoded
      :entry
      (secure/decode-authenticated
-      (merge (dissoc format-options :engine-selection)
+      (merge (dissoc format-options :decision-kernel)
              {:domain cache-entry-domain
               :prefix cache-entry-prefix
               :payload-keys cache-entry-keys})
       entry)}
     (catch #?(:clj Exception :cljs :default) _
       {:status :unauthenticated-entry})))
-
-(defn- legacy-cache-decision
-  [authenticated? key-matches? source-matches? contains? exact? proof-matches?]
-  (cond
-    (not authenticated?) {:status :miss :reason :unauthenticated}
-    (not key-matches?) {:status :miss :reason :scope-mismatch}
-    (not source-matches?) {:status :miss :reason :scope-mismatch}
-    (not contains?) {:status :miss :reason :future-or-sibling}
-    (not proof-matches?) {:status :miss :reason :proof-mismatch}
-    :else
-    {:status :hit
-     :provenance (if exact? :exact-hit :causal-proof-lift)}))
 
 (defn- cache-result
   [decision decoded]
@@ -730,11 +698,6 @@
                  source-matches?
                  (backend/invoke
                   adapter :contains-anchor? candidate-anchor))
-            proof-matches?
-            (= (secure/canonicalize
-                {:schema schema-proof
-                 :relations relation-proof})
-               (secure/canonicalize (:proof decoded)))
             expected-key
             (boundary-digest
              "eacl/cache/kernel-key/v1"
@@ -780,16 +743,10 @@
               :proof candidate-proof}}
             decision
             (verified/decide
-             (:engine-selection format-options)
+             (or (:decision-kernel format-options)
+                 subproblem/*decision-kernel*)
              :cache-validation
-             input
-             #(legacy-cache-decision
-               authenticated?
-               key-matches?
-               source-matches?
-               contains?
-               exact?
-               proof-matches?))]
+             input)]
         (cache-result decision decoded)))))
 
 (defn- safe-store-call

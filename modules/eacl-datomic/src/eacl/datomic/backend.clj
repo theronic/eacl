@@ -6,7 +6,8 @@
             [eacl.datomic.db :as ddb]
             [eacl.datomic.mutation :as journal]
             [eacl.mutation :as mutation]
-            [eacl.relationships.endpoint-pair :as endpoint-pair])
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.storage :as relationship-storage])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
            [java.util Base64]))
@@ -118,8 +119,8 @@
 (defn- content-relation-proof
   [db relation-ids external-id]
   (let [wanted (set relation-ids)
-        forward-attr ddb/forward-relationship-attr
-        reverse-attr ddb/reverse-relationship-attr
+        forward-attr relationship-storage/forward-attribute
+        reverse-attr relationship-storage/reverse-attribute
         forward
         (when (and (seq wanted) (d/entid db forward-attr))
           (for [{subject :e value :v}
@@ -376,17 +377,6 @@
         :all-permission-nodes
         (fn []
           (ddb/all-permission-nodes db))
-
-        :frontier-key
-        (fn [identity]
-          (let [bytes (.getBytes (pr-str identity)
-                                 StandardCharsets/UTF_8)
-                digest (.digest
-                        (MessageDigest/getInstance "SHA-256")
-                        bytes)]
-            (.encodeToString
-             (.withoutPadding (Base64/getUrlEncoder))
-             digest)))
 
         :schema-proof
         (fn

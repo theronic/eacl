@@ -6,7 +6,7 @@
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
             [eacl.datahike.integrity :as integrity]
-            [eacl.datahike.schema :as schema]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
 (def ^:private relationship-schema
@@ -83,11 +83,11 @@
      :forward
      (vec
       (ddb/eavt-datoms
-       db user-eid schema/forward-relationship-attr))
+       db user-eid relationship-storage/forward-attribute))
      :reverse
      (vec
       (ddb/eavt-datoms
-       db account-eid schema/reverse-relationship-attr))}))
+       db account-eid relationship-storage/reverse-attribute))}))
 
 (deftest relationships-use-two-datomic-compatible-tuple-datoms-test
   (doseq [[label attribute-refs?] modes]
@@ -133,14 +133,14 @@
                       (ddb/eavt-datoms
                        db-after
                        user-eid
-                       schema/forward-relationship-attr)))
+                       relationship-storage/forward-attribute)))
                   "cardinality-many retains both resources on the subject")
               (is (= 1
                      (count
                       (ddb/eavt-datoms
                        db-after
                        account-2-eid
-                       schema/reverse-relationship-attr))))))
+                       relationship-storage/reverse-attribute))))))
           (finally
             (d/release conn)))))))
 
@@ -302,7 +302,7 @@
              conn
              [[:db/retract
                account-eid
-               schema/reverse-relationship-attr
+               relationship-storage/reverse-attribute
                (vec (:v (first reverse)))]])
             (is (= {:valid? false
                     :dangling-count 1
@@ -327,7 +327,7 @@
                conn
                [[:db/retract
                  user-eid
-                 schema/forward-relationship-attr
+                 relationship-storage/forward-attribute
                  (vec (:v (first forward)))]])
               (eacl/delete-relationship! client relationship)
               (let [{:keys [forward reverse]}

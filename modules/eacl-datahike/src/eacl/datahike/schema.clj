@@ -3,14 +3,9 @@
             [eacl.datahike.db :as ddb]
             [eacl.datahike.mutation :as journal]
             [eacl.mutation :as mutation]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
-
-(def forward-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
-
-(def reverse-relationship-attr
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (def relation-key-attr
   :eacl.relation/resource-type+relation-name+subject-type)
@@ -141,7 +136,7 @@
     :db/cardinality :db.cardinality/one
     :db/unique      :db.unique/identity}
 
-   {:db/ident       forward-relationship-attr
+   {:db/ident       relationship-storage/forward-attribute
     :db/valueType   :db.type/tuple
     :db/tupleTypes  [:db.type/keyword
                      :db.type/ref
@@ -150,7 +145,7 @@
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
-   {:db/ident       reverse-relationship-attr
+   {:db/ident       relationship-storage/reverse-attribute
     :db/valueType   :db.type/tuple
     :db/tupleTypes  [:db.type/keyword
                      :db.type/ref
@@ -244,7 +239,7 @@
       (count
        (ddb/avet-range
         db
-        forward-relationship-attr
+        relationship-storage/forward-attribute
         [subject-type relation-eid resource-type 0]
         [subject-type relation-eid resource-type max-entid])))))
 

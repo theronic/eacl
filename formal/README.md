@@ -38,7 +38,7 @@ verified status is withheld. The larger scheduled temporal bound is available
 as `bin/formal apalache-scheduled`.
 
 The operational guide, theorem navigation, adapter certification,
-counterexample workflow, rollout/rollback policy, and assurance wording are in
+counterexample workflow, generated-engine cutover policy, and assurance wording are in
 [`../docs/formal-verification.md`](../docs/formal-verification.md). Behavior
 changes discovered by this work are listed in
 [`../docs/formal-verification-corrections.md`](../docs/formal-verification-corrections.md).

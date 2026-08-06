@@ -1,7 +1,7 @@
 {:schema-version 1
- :date "2026-08-05"
+ :date "2026-08-06"
  :status :passed
- :mode :verified-authoritative
+ :mode :generated-only
  :execution :persistent-nrepl
  :ci-process-isolation
  {:generated-boundary-jvm :fresh-heap-bounded
@@ -14,14 +14,14 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 525
-  :assertions 28304
+  :tests 509
+  :assertions 34773
   :failures 0
   :errors 0
   :injected-clients
-  {:datomic 332
-   :datahike 58
-   :datascript 63}
+  {:datomic 338
+   :datahike 66
+   :datascript 87}
   :required-generated-operations
   [:recursive-routing-certificate
    :cursor-bound-rebase
@@ -52,19 +52,19 @@
    :retained-live-heap
    {:status :passed
     :report "formal/verification/retained-live-heap.edn"
-    :maximum-generated-to-legacy-ratio 1.036843888729995
-    :maximum-allowed-ratio 1.5
+    :maximum-retained-delta-bytes 5344744
+    :maximum-allowed-bytes 8388608
     :qualification
     :host-specific-post-full-gc-regression-not-peak-heap-rss-or-portable-sla}}}
  :cljs-datascript
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/cljs/run-verified-authority"
   :backend :datascript
-  :tests 163
-  :assertions 4513
+  :tests 155
+  :assertions 4419
   :failures 0
   :errors 0
-  :injected-clients 55
+  :injected-clients 56
   :generated-calls-observed true
   :persistent-nrepl-executor-postcondition :passed}
  :qualification

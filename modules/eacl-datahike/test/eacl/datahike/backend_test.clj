@@ -52,19 +52,6 @@
                   (vec (take 2 (:v (first (ddb/avet-datoms db schema/relation-key-attr))))))
             "precondition: the wanted relation is not the first datom of the attribute")))))
 
-(deftest can-answers-without-a-prebuilt-schema-catalog
-  ;; impl/can? on a bare db takes relation-defs straight from the index, which
-  ;; is the seek path make-client's catalog bypasses.
-  (doseq [[label config] modes]
-    (testing label
-      (let [[conn _] (seeded-conn config)
-            db       (d/db conn)
-            user     (fn [id] (eacl/spice-object :user [:eacl/id id]))
-            server   (fn [id] (eacl/spice-object :server [:eacl/id id]))]
-        (is (true? (impl/can? db (user "user-1") :reboot (server "server-1"))))
-        (is (true? (impl/can? db (user "super-user") :reboot (server "server-2"))))
-        (is (false? (impl/can? db (user "user-2") :reboot (server "server-1"))))))))
-
 (deftest a-relation-in-use-cannot-be-dropped-from-the-schema
   ;; The guard counts the Datomic-layout forward tuple range. Under-counting
   ;; would let a schema write orphan live relationships.

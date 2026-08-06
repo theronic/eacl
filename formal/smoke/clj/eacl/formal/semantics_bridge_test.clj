@@ -489,7 +489,6 @@
          :direct-match? direct-match?
          :all-permission-nodes
          (constantly (:permission-nodes fixture))
-         :frontier-key pr-str
          :schema-proof (fn ([] :schema-1) ([_] :schema-1))
          :relation-proof
          (fn [relation-ids]

@@ -71,9 +71,8 @@ strongly connected component. It first proves that the indexed edge sequence
 is exactly derived from every supplied materialized-path descriptor: relation
 paths emit no edge and permission paths emit one directed edge. The generated
 checker makes exactly one path pass, two node passes, and one edge pass on
-acceptance. In
-verified-authoritative mode, stamped schema generations consume only that
-generated traversal vector; the host classification is not the returned
+acceptance. Production consumes only that generated traversal vector for
+stamped schema generations; the host classification is not authorization
 authority.
 
 The theorem is conditional on the path descriptors. Clojure still obtains
@@ -82,11 +81,11 @@ fields to typed descriptors, and assigns stable indices. The generated
 boundary, rather than Clojure, decides which descriptors emit dependency
 edges; production constructs its graph and certificate from that same edge
 vector. Exhaustive typed-graph differentials, path-derivation and certificate
-mutations, backend certification, and forced-authority suites test the earlier
-adapter/map-to-descriptor extraction, but do not prove Clojure bytecode or
-backend truthfulness. Proofless/raw snapshots deliberately retain the
-uncached host per-root classifier rather than paying schema-wide certification
-on every query or publishing derived state across snapshot boundaries.
+mutations, backend certification, and generated-authority suites test the
+earlier adapter/map-to-descriptor extraction, but do not prove Clojure bytecode
+or backend truthfulness. Raw snapshots may recompute host routing metadata for
+diagnostics and pagination restrictions, but every authorization result still
+comes from the generated indexed plan and state machine.
 
 ### Snapshot-consistency observation boundary
 
@@ -134,12 +133,12 @@ Generated Java and JavaScript compare eight Boolean/work traces with actual
 CLJ/CLJS execution. The first comparison found and removed the empty-arrow
 wide-path work recorded as EACL-FORMAL-042.
 It also models the public `can?` root-classification hoist. Under the
-established contract that an undefined permission root denies, the old and new
-dispatches return the same Boolean, while generated-authoritative and legacy
-calls perform one root classification rather than two. A JVM public-client
-fixture observes the exact private lookup count; CLJS executes the identical
-CLJC branch and is covered for results, but its private call count is not
-instrumented.
+established contract that an undefined permission root denies, the
+pre-optimization and optimized generated dispatches return the same Boolean,
+while the production call performs one root classification rather than two. A
+JVM public-client fixture observes the exact private lookup count; CLJS executes
+the identical CLJC branch and is covered for results, but its private call
+count is not instrumented.
 The source digests and public call closure make any host-source edit invalidate
 the reviewed evidence.
 

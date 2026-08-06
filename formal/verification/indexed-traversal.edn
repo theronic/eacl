@@ -258,7 +258,7 @@
    :point-can-generated-reverse-routing true
    :point-can-target-local-scaling-counterexample :EACL-FORMAL-055
    :acyclic-ordering-counterexample-retained true
-   :recursive-shadow-result-comparison true
+   :recursive-generated-reference-result-comparison true
    :dimensionally-matched-resource-counter-comparison true
    :logical-retained-state-comparison
    :separate-representation-specific-regression-gate
@@ -284,14 +284,14 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :clj-backends [:datomic :datahike :datascript]
    :cljs-backends [:datascript]
-   :nonbenchmark {:tests 525 :assertions 28304 :failures 0 :errors 0}
+   :nonbenchmark {:tests 509 :assertions 34773 :failures 0 :errors 0}
    :heavy {:tests 17 :assertions 4062 :failures 0 :errors 0}
-   :cljs {:tests 163 :assertions 4513 :failures 0 :errors 0}
+   :cljs {:tests 155 :assertions 4419 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed
     :report "formal/verification/retained-live-heap.edn"
-    :maximum-generated-to-legacy-ratio 1.036843888729995}
+    :maximum-retained-delta-bytes 5344744}
    :status :passed
    :qualification
    :executable-whole-suite-evidence-not-adapter-source-proof}}

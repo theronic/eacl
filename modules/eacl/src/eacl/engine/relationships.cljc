@@ -1,5 +1,5 @@
 (ns eacl.engine.relationships
-  (:require [eacl.engine.v8 :as engine]
+  (:require [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def default-limit 1000)
@@ -173,32 +173,23 @@
    {:first (page-presence query :first false)
     :last (page-presence query :last false)
     :after (page-presence query :after true)
-    :before (page-presence query :before true)
-    :has-legacy-limit? (contains? query :limit)
-    :has-legacy-cursor? (contains? query :cursor)}
+    :before (page-presence query :before true)}
    :default-size default-limit
    :maximum-size maximum-limit})
 
-(defn- legacy-normalization-decision
-  [query]
-  (let [{:keys [direction size]}
-        (engine/normalize-page-request query)]
-    {:status :valid
-     :direction direction
-     :size size
-     :start 0
-     :end 0
-     :has-next? false
-     :has-previous? false}))
-
 (defn- normalized-page
-  [engine-selection query]
+  [decision-kernel query]
+  (when-let [unsupported
+             (some #(when (contains? query %) %) [:cursor :limit])]
+    (throw
+     (ex-info
+      "EACL v8 pagination accepts only :first/:after or :last/:before."
+      {:key unsupported})))
   (let [decision
         (verified/decide
-         engine-selection
+         (or decision-kernel subproblem/*decision-kernel*)
          :relationship-page
-         (raw-page-input query)
-         #(legacy-normalization-decision query))]
+         (raw-page-input query))]
     (when (= :invalid (:status decision))
       (throw
        (ex-info
@@ -208,26 +199,6 @@
          :reason (:reason decision)})))
     decision))
 
-(defn- legacy-keyset-decision
-  [direction size bound? realized-count]
-  (let [take-count (min size realized-count)
-        any? (pos? take-count)
-        more? (> realized-count size)]
-    {:take-count take-count
-     :reverse? (= :desc direction)
-     :has-next?
-     (boolean
-      (and any?
-           (case direction
-             :asc more?
-             :desc bound?)))
-     :has-previous?
-     (boolean
-      (and any?
-           (case direction
-             :asc bound?
-             :desc more?)))}))
-
 (defn execute-page
   "Executes one Relay page directly over ordered relationship indexes.
 
@@ -236,8 +207,10 @@
   object ids are resolved only for the selected page."
   ([scan-specs query scan-fn]
    (execute-page scan-specs query nil scan-fn))
-  ([scan-specs query engine-selection scan-fn]
-   (let [{:keys [direction size]} (normalized-page engine-selection query)
+  ([scan-specs query decision-kernel scan-fn]
+   (let [decision-kernel
+         (or decision-kernel subproblem/*decision-kernel*)
+         {:keys [direction size]} (normalized-page decision-kernel query)
          bound (case direction
                  :asc (:after query)
                  :desc (:before query))
@@ -247,14 +220,12 @@
                    scan-specs direction size bound scan-fn)
          page-decision
          (verified/decide
-          engine-selection
+          decision-kernel
           :relationship-keyset-page
-          {:direction direction
+         {:direction direction
            :size size
            :bound? (some? bound)
-           :realized-count (count realized)}
-          #(legacy-keyset-decision
-            direction size (some? bound) (count realized)))
+           :realized-count (count realized)})
          selected-desc (take (:take-count page-decision) realized)
          selected (vec
                    (if (:reverse? page-decision)

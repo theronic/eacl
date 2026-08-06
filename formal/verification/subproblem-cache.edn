@@ -177,15 +177,15 @@
    :count-resources :count-subjects :cursor-forward :cursor-backward]
   :backends-smoke-passed [:datomic :datahike :datascript]
   :latest-validation
-  {:date "2026-08-05"
+  {:date "2026-08-06"
    :verified-authority-clj
    {:backends [:datomic :datahike :datascript]
-    :tests 525 :assertions 28304}
+    :tests 509 :assertions 34773}
    :verified-authority-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4062}
    :verified-authority-datascript-cljs
-   {:tests 163 :assertions 4513}
+   {:tests 155 :assertions 4419}
    :heavy-pagination {:tests 9 :assertions 3405}
    :heavy-subproblem-cache {:tests 6 :assertions 20}
    :failures 0
@@ -250,7 +250,7 @@
   :atomic-relation-projections-and-certified-root-denotations
   :managed-derived-denotation-proof
   :certified-root-body-plus-complete-managed-frame
-  :generated-production-decision-kernel :verified-authoritative
+  :generated-production-decision-kernel :generated-only
   :production-source-refinement false
   :whole-engine-resource-safety false
   :independent-review false

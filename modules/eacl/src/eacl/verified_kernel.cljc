@@ -5,13 +5,7 @@
   orchestration remains responsible for authenticated decoding, immutable
   snapshot selection, and backend calls, but it cannot use a cursor or cache
   candidate that an authoritative kernel rejected."
-  (:require [eacl.backend.v8 :as backend]
-            [eacl.secure-format :as secure]))
-
-(def modes
-  #{:legacy-authoritative
-    :verified-shadow
-    :verified-authoritative})
+  (:require [eacl.backend.v8 :as backend]))
 
 (def operations
   #{:relationship-page
@@ -111,7 +105,7 @@
 (defn- nonempty-string?
   [value]
   (and (string? value)
-       (not (empty? value))
+       (seq value)
        (<= (count value) maximum-boundary-string-length)))
 
 (defn- bounded-string?
@@ -150,16 +144,13 @@
      operation
      :request
      request
-     #{:first :last :after :before :has-legacy-limit?
-       :has-legacy-cursor?})
+     #{:first :last :after :before})
     (doseq [field [:first :last :after :before]]
       (require-value!
        operation
        field
        page-presence?
        (get request field)))
-    (doseq [field [:has-legacy-limit? :has-legacy-cursor?]]
-      (require-value! operation field boolean? (get request field)))
     input))
 
 (defn- validate-keyset-page-input!
@@ -2215,37 +2206,25 @@
   [selection]
   (let [selection
         (cond
-          (nil? selection) {:mode :legacy-authoritative}
-          (keyword? selection) {:mode selection}
+          (kernel? selection) {:kernel selection}
           (map? selection) selection
           :else
           (boundary-error!
-           "Engine selection must be a mode keyword or configuration map."
+           "Kernel selection must be a generated DecisionKernel or configuration map."
            {:selection selection}))
-        allowed #{:mode :kernel :report-divergence}
+        allowed #{:kernel}
         unknown (seq (remove allowed (keys selection)))
-        mode (or (:mode selection) :legacy-authoritative)
-        kernel (:kernel selection)
-        reporter (:report-divergence selection)]
+        kernel (:kernel selection)]
     (when unknown
       (boundary-error!
-       "Engine selection contains unknown fields."
+       "Kernel selection contains unknown fields."
        {:unknown-fields (vec unknown)
         :allowed-fields allowed}))
-    (require-value! :engine-selection :mode modes mode)
-    (when (and (not= :legacy-authoritative mode)
-               (not (kernel? kernel)))
+    (when-not (kernel? kernel)
       (boundary-error!
-       "Verified engine modes require a generated DecisionKernel."
-       {:mode mode
-        :kernel-type (str (type kernel))}))
-    (when (and reporter (not (fn? reporter)))
-      (boundary-error!
-       "The shadow divergence reporter must be a function."
-       {:reporter reporter}))
-    {:mode mode
-     :kernel kernel
-     :report-divergence reporter}))
+       "EACL v8 requires a generated DecisionKernel."
+       {:kernel-type (str (type kernel))}))
+    {:kernel kernel}))
 
 (defn- invoke-kernel
   [kernel operation input]
@@ -2412,17 +2391,11 @@
 
 (defn- indexed-kernel
   [selection operation]
-  (let [{:keys [mode kernel]} (normalize-selection selection)]
-    (when (= :legacy-authoritative mode)
-      (boundary-error!
-       "Legacy-authoritative mode has no generated indexed traversal."
-       {:operation operation
-        :mode mode}))
+  (let [{:keys [kernel]} (normalize-selection selection)]
     (when-not (indexed-traversal-kernel? kernel)
       (boundary-error!
        "The selected generated kernel has no indexed traversal implementation."
        {:operation operation
-        :mode mode
         :kernel-type (str (type kernel))}))
     kernel))
 
@@ -2529,129 +2502,11 @@
        #(-read-indexed-result kernel direction state)
        validate-indexed-public-result!))))
 
-(defn- report!
-  [reporter diagnostic]
-  (when reporter
-    (try
-      (reporter diagnostic)
-      (catch #?(:clj Exception :cljs :default) _
-        nil))))
-
-(defn- result-variant
-  [result]
-  (cond
-    (keyword? result) result
-    (boolean? result) :boolean
-    (and (map? result)
-         (= :error (:outcome result))
-         (map? (get-in result [:error :data])))
-    (let [error-data (get-in result [:error :data])]
-      (cond->
-       {:outcome :error}
-        (keyword? (:type error-data))
-        (assoc :type (:type error-data))
-
-        (keyword? (:eacl/error error-data))
-        (assoc :eacl/error (:eacl/error error-data))))
-
-    (and (map? result)
-         (= :comparison-unavailable (:outcome result)))
-    (cond->
-     {:outcome :comparison-unavailable}
-      (keyword? (get-in result [:error :type]))
-      (assoc :type (get-in result [:error :type]))
-
-      (keyword? (get-in result [:error :eacl/error]))
-      (assoc :eacl/error (get-in result [:error :eacl/error])))
-
-    (map? result)
-    (select-keys result
-                 [:status :operation :reason :provenance :direction
-                  :cache-tier :type :eacl/error])
-    (sequential? result) :sequence
-    (set? result) :set
-    (nil? result) :nil
-    :else :scalar))
-
-(defn error-shadow-view
-  "Builds the internal comparison value for one thrown public operation.
-
-  Every portable `ExceptionInfo` data field participates in equality. The
-  value is never sent to the shadow reporter: `result-variant` exposes only
-  stable typed-error keywords and `changed-result-fields` exposes only changed
-  top-level field names. An untyped or non-portable exception is explicitly
-  marked unavailable so rollout telemetry cannot silently count it as an
-  equality."
-  [error]
-  (let [data (ex-data error)]
-    (if (map? data)
-      (try
-        {:outcome :error
-         :error {:data (secure/canonicalize data)}}
-        (catch #?(:clj Exception :cljs :default) _
-          {:outcome :comparison-unavailable
-           :error
-           (cond->
-            {:field-count (count data)}
-             (keyword? (:type data))
-             (assoc :type (:type data))
-
-             (keyword? (:eacl/error data))
-             (assoc :eacl/error (:eacl/error data)))}))
-      {:outcome :comparison-unavailable
-       :error {}})))
-
-(defn- changed-result-fields
-  [legacy verified]
-  (if (and (map? legacy) (map? verified))
-    (->> (into #{} (concat (keys legacy) (keys verified)))
-         (filter
-          #(not=
-            (secure/canonicalize (get legacy % ::missing))
-            (secure/canonicalize (get verified % ::missing))))
-         (sort-by pr-str)
-         vec)
-    [:value]))
-
 (defn decide
-  "Runs one pure decision under the configured migration mode.
-
-  `legacy-decision` is a zero-argument function. Shadow failures and
-  disagreements are reported using only operation/result shape; they contain
-  no request, object, authorization value, or guessable digest and cannot alter
-  the legacy result."
-  [selection operation input legacy-decision]
-  (let [{:keys [mode kernel report-divergence]}
-        (normalize-selection selection)]
-    (case mode
-      :legacy-authoritative
-      (legacy-decision)
-
-      :verified-authoritative
-      (invoke-kernel kernel operation input)
-
-      :verified-shadow
-      (let [legacy (legacy-decision)]
-        (try
-          (let [verified (invoke-kernel kernel operation input)]
-            (when-not (= (secure/canonicalize legacy)
-                         (secure/canonicalize verified))
-              (report!
-               report-divergence
-               {:type :eacl.verification/shadow-divergence
-                :operation operation
-                :changed-fields
-                (changed-result-fields legacy verified)
-                :legacy-variant (result-variant legacy)
-                :verified-variant (result-variant verified)}))
-            legacy)
-          (catch #?(:clj Exception :cljs :default) error
-            (report!
-             report-divergence
-             {:type :eacl.verification/shadow-kernel-failure
-              :operation operation
-              :error-type (:type (ex-data error))})
-            legacy))))))
+  "Runs one validated pure decision through the generated v8 kernel."
+  [selection operation input]
+  (let [{:keys [kernel]} (normalize-selection selection)]
+    (invoke-kernel kernel operation input)))
 
 (defn decide-cursor-bound-rebase
   "Rebinds one authenticated stable result identity to its current ordinal.
@@ -2663,9 +2518,8 @@
   restart semantics proved by `RebaseCursorBoundChunked`.
 
   The shared CLJC chunk orchestration remains handwritten trusted-boundary
-  code. Every chunk decision is generated-authoritative in that mode, and
-  differential tests compare this whole-sequence result with the direct
-  legacy scan."
+  code. Every chunk decision is generated-authoritative, and differential
+  tests compare this whole-sequence result with an independent direct scan."
   [selection values bound-eid]
   (require-value!
    :cursor-bound-rebase
@@ -2691,16 +2545,7 @@
                selection
                :cursor-bound-rebase
                {:values chunk
-                :bound-eid bound-eid}
-               #(loop [local-ordinal 0]
-                  (if (= local-ordinal (count chunk))
-                    {:status :restarted
-                     :inspected-count local-ordinal}
-                    (if (= bound-eid (nth chunk local-ordinal))
-                      {:status :rebased
-                       :ordinal local-ordinal
-                       :inspected-count (inc local-ordinal)}
-                      (recur (inc local-ordinal))))))]
+                :bound-eid bound-eid})]
           (case (:status decision)
             :rebased
             {:status :rebased
@@ -2710,48 +2555,3 @@
 
             :restarted
             (recur end)))))))
-
-(defn compare-shadow!
-  "Compares an already-authoritative legacy result with a lazily computed
-  generated result when `selection` is `:verified-shadow`.
-
-  This is the orchestration counterpart of `decide`: it is for stateful
-  adapter-driven algorithms whose generated implementation cannot be invoked
-  through the pure `DecisionKernel` operation table. The reporter receives
-  only result shape and changed field names. Generated failures and
-  disagreements can never alter or disclose the legacy authorization result."
-  [selection operation legacy verified-result]
-  (when-not (fn? verified-result)
-    (boundary-error!
-     "Shadow result computation must be a function."
-     {:operation operation}))
-  (let [{:keys [mode report-divergence]}
-        (normalize-selection selection)]
-    (when (= :verified-shadow mode)
-      (try
-        (let [verified (verified-result)]
-          (if (or (= :comparison-unavailable (:outcome legacy))
-                  (= :comparison-unavailable (:outcome verified)))
-            (report!
-             report-divergence
-             {:type :eacl.verification/shadow-comparison-unavailable
-              :operation operation
-              :legacy-variant (result-variant legacy)
-              :verified-variant (result-variant verified)})
-            (when-not (= (secure/canonicalize legacy)
-                         (secure/canonicalize verified))
-              (report!
-               report-divergence
-               {:type :eacl.verification/shadow-divergence
-                :operation operation
-                :changed-fields
-                (changed-result-fields legacy verified)
-                :legacy-variant (result-variant legacy)
-                :verified-variant (result-variant verified)}))))
-        (catch #?(:clj Exception :cljs :default) error
-          (report!
-           report-divergence
-           {:type :eacl.verification/shadow-kernel-failure
-            :operation operation
-            :error-type (:type (ex-data error))}))))
-    legacy))

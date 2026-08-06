@@ -28,6 +28,4 @@ When a consumer bypasses EACL and retracts the resource entity directly, only
 the subject-owned direct tuple can survive. A reverse miss therefore probes
 that exact tuple before invoking the generated forward Boolean driver. This
 does not make ordinary misses scale with subject fan-out, and it preserves the
-accepted raw-EID ghost behavior. Because legacy shadow execution is forward
-and generated point execution is reverse, shadow mode compares their public
-Boolean values rather than their non-equivalent directional work counters.
+accepted raw-EID ghost behavior.

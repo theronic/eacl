@@ -26,7 +26,7 @@
     :EACL-FORMAL-010
     eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
     :EACL-FORMAL-011
-    eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results
+    eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results
     :EACL-FORMAL-012
     eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
     :EACL-FORMAL-013
@@ -48,15 +48,15 @@
     :EACL-FORMAL-021
     eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test
     :EACL-FORMAL-022
-    eacl.formal.state-trace-differential-test/recursive-shadow-compares-complete-public-results
+    eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results
     :EACL-FORMAL-023
-    eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape
+    eacl.formal.state-trace-differential-test/generated-stale-cursor-error-shape
     :EACL-FORMAL-024
     eacl.formal.production-kernel-test/generated-materialized-queue-limit-is-instantaneous
     :EACL-FORMAL-025
-    eacl.formal.state-trace-differential-test/recursive-shadow-queue-limit-is-query-local
+    eacl.formal.state-trace-differential-test/generated-queue-limit-is-query-local
     :EACL-FORMAL-026
-    eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape
+    eacl.formal.state-trace-differential-test/generated-stale-cursor-error-shape
     :EACL-FORMAL-027
     eacl.backend.v8-test/runtime-guards-reject-negative-internal-eids-test
     :EACL-FORMAL-028
@@ -64,13 +64,13 @@
     :EACL-FORMAL-029
     eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test
     :EACL-FORMAL-030
-    eacl.formal.production-kernel-test/generated-java-classifies-production-recursive-routing
+    eacl.formal.production-kernel-test/generated-java-checks-linear-routing-certificates
     :EACL-FORMAL-031
     eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
     :EACL-FORMAL-032
-    eacl.verified-kernel-test/shadow-error-comparison-covers-complete-portable-ex-data
+    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
     :EACL-FORMAL-033
-    eacl.formal.state-trace-differential-test/public-shadow-compares-cache-provenance-and-selected-graph
+    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
     :EACL-FORMAL-034
     eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
     :EACL-FORMAL-035
@@ -82,15 +82,15 @@
     :EACL-FORMAL-038
     eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
     :EACL-FORMAL-039
-    eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation
+    eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
     :EACL-FORMAL-040
     eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model
     :EACL-FORMAL-041
-    eacl.formal.production-kernel-test/optimized-jvm-leapfrog-intersection-refines-bounded-proof
+    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
     :EACL-FORMAL-042
-    eacl.formal.production-kernel-test/generated-java-acyclic-arrow-path-refines-source-control
+    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
     :EACL-FORMAL-043
-    eacl.formal.state-trace-differential-test/acyclic-shadow-compares-generated-authority-and-legacy-stays-host-only
+    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
     :EACL-FORMAL-044
     eacl.datomic.recursive-cache-test/recursive-cursor-rebases-after-relevant-write-test
     :EACL-FORMAL-045
@@ -114,7 +114,11 @@
     :EACL-FORMAL-054
     eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test
     :EACL-FORMAL-055
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages})
+    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    :EACL-FORMAL-056
+    eacl.datascript.impl-test/read-relationships-query-matrix-test
+    :EACL-FORMAL-057
+    eacl.formal.page-window-bridge-test/generated-page-normalization-and-window-properties})
 
 (defn- read-edn
   [path]
@@ -193,8 +197,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-055 (:latest revision)))
-    (is (= 55 (count entries)))))
+    (is (= :EACL-FORMAL-057 (:latest revision)))
+    (is (= 57 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

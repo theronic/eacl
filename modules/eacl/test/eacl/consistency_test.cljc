@@ -277,9 +277,8 @@
         options {:format-options format-options
                  :coherence-authority :managed
                  :timeout-ms 1000
-                 :engine-selection
-                 {:mode :verified-authoritative
-                  :kernel (->RecordingKernel calls)}}]
+                 :decision-kernel
+                 {:kernel (->RecordingKernel calls)}}]
     (is (identical?
          source
          (:adapter
@@ -363,9 +362,8 @@
           verified-options
           (assoc
            options
-           :engine-selection
-           {:mode :verified-authoritative
-            :kernel (->RecordingKernel calls)})]
+           :decision-kernel
+           {:kernel (->RecordingKernel calls)})]
       (is (= expected
              (observed-plan-outcome source mode options)))
       (is (= expected
@@ -439,9 +437,8 @@
              :coherence-authority :managed
              :issue-token? false
              :timeout-ms 1000
-             :engine-selection
-             {:mode :verified-authoritative
-              :kernel (->RecordingKernel calls)}}
+             :decision-kernel
+             {:kernel (->RecordingKernel calls)}}
             selection-present? (not= :absent candidate)
             selected-adapter?
             (contains?
@@ -510,9 +507,8 @@
         options {:format-options format-options
                  :coherence-authority :managed
                  :timeout-ms 1000
-                 :engine-selection
-                 {:mode :verified-authoritative
-                  :kernel (->RecordingKernel kernel-calls)}}
+                 :decision-kernel
+                 {:kernel (->RecordingKernel kernel-calls)}}
         request-token (token "anchor" 20 20)
         run!
         (fn [f expected-backend-work]
@@ -686,7 +682,7 @@
                  (assoc options
                         :coherence-authority :unknown)))))))))
 
-(deftest capability-matrix-and-legacy-restriction-test
+(deftest capability-matrix-test
   (doseq [[mode descriptor]
           [[:fully-consistent public-consistency/fully-consistent]
            [:minimize-latency public-consistency/minimize-latency]
@@ -723,29 +719,7 @@
                  (token "head" 1 1)))]
           (is (some? (error-data
                       #(consistency/select
-                        only-mode other-descriptor options))))))))
-  (let [legacy
-        {:cache-stamp (constantly :stamp)
-         :relation-defs (fn [& _])
-         :permission-defs (fn [& _])
-         :subject->resources (fn [& _])
-         :resource->subjects (fn [& _])
-         :direct-match? (fn [& _])}]
-    (is (identical?
-         legacy
-         (backend/require-legacy-evaluation!
-          legacy
-          {:explicit-snapshot? true
-           :cache? false
-           :consistency-mode :snapshot-only})))
-    (is (= :eacl/unsupported-capability
-           (:type
-            (error-data
-             #(backend/require-legacy-evaluation!
-               legacy
-               {:explicit-snapshot? true
-                :cache? true
-                :consistency-mode :snapshot-only})))))))
+                        only-mode other-descriptor options)))))))))
 
 (deftest selection-error-taxonomy-test
   (let [selected (adapter {:source-id "source"

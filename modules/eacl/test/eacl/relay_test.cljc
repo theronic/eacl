@@ -46,42 +46,32 @@
      (operation-map snapshot-id nil)
      :select-exact (fn [& _] exact))}))
 
-(def dependencies
-  {:schema-scope {:permission-nodes [[:document :view]]
-                  :relation-ids [1]}
-   :relation-ids [1]})
-
 (deftest cursor-proof-identity-test
   (testing "even equal dependency proofs cannot lift across revisions"
     (let [first-context
           (relay/dependency-context
-           (adapter 1 {:digest "same"} true)
-           dependencies)
+           (adapter 1 {:digest "same"} true))
           later-context
           (relay/dependency-context
-           (adapter 2 {:digest "same"} true)
-           dependencies)]
+           (adapter 2 {:digest "same"} true))]
       (is (not= (:proof-digest first-context)
                 (:proof-digest later-context)))))
 
   (testing "the same exact snapshot has a stable identity"
     (let [first-context
-          (relay/dependency-context (adapter 1 nil true) dependencies)
+          (relay/dependency-context (adapter 1 nil true))
           later-context
-          (relay/dependency-context (adapter 1 {:different "proof"} true)
-                                    dependencies)]
+          (relay/dependency-context (adapter 1 {:different "proof"} true))]
       (is (= (:proof-digest first-context)
              (:proof-digest later-context)))))
 
   (testing "adapter determinism cannot enable cross-revision lifting"
     (let [first-context
           (relay/dependency-context
-           (adapter 1 {:digest "same"} false)
-           dependencies)
+           (adapter 1 {:digest "same"} false))
           later-context
           (relay/dependency-context
-           (adapter 2 {:digest "same"} false)
-           dependencies)]
+           (adapter 2 {:digest "same"} false))]
       (is (not= (:proof-digest first-context)
                 (:proof-digest later-context))))))
 
@@ -110,9 +100,9 @@
         original relay/dependency-context
         calls (atom 0)]
     (with-redefs [relay/dependency-context
-                  (fn [adapter dependencies]
+                  (fn [adapter]
                     (swap! calls inc)
-                    (original adapter dependencies))]
+                    (original adapter))]
       (let [page
             (relay/externalize-page
              snapshot {} :lookup-resources lookup-query lookup-page)]

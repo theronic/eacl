@@ -8,6 +8,7 @@
             [eacl.datascript.integrity :as integrity]
             [eacl.datascript.schema :as schema]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
 (def relationship-schema
@@ -49,17 +50,17 @@
      :forward
      (vec
       (ddb/eavt-datoms
-       db user-eid schema/forward-relationship-attr))
+       db user-eid relationship-storage/forward-attribute))
      :reverse
      (vec
       (ddb/eavt-datoms
-       db account-eid schema/reverse-relationship-attr))}))
+       db account-eid relationship-storage/reverse-attribute))}))
 
 (deftest endpoint-attributes-are-two-indexed-ordinary-values-test
   (let [forward-definition
-        (get schema/datascript-schema schema/forward-relationship-attr)
+        (get schema/datascript-schema relationship-storage/forward-attribute)
         reverse-definition
-        (get schema/datascript-schema schema/reverse-relationship-attr)
+        (get schema/datascript-schema relationship-storage/reverse-attribute)
         removed-attributes
         [:eacl.relationship/subject
          :eacl.relationship/relation
@@ -102,28 +103,28 @@
            (concat
             (map (fn [value]
                    [:db/add subject-a
-                    schema/forward-relationship-attr value])
+                    relationship-storage/forward-attribute value])
                  values)
-            [[:db/add subject-a schema/forward-relationship-attr
+            [[:db/add subject-a relationship-storage/forward-attribute
               [:user (inc relation-eid) :document resource-a]]
-             [:db/add subject-a schema/forward-relationship-attr
+             [:db/add subject-a relationship-storage/forward-attribute
               [:user relation-eid :folder resource-a]]
-             [:db/add subject-b schema/forward-relationship-attr
+             [:db/add subject-b relationship-storage/forward-attribute
               [:user relation-eid :document resource-a]]
-             [:db/add resource-a schema/reverse-relationship-attr
+             [:db/add resource-a relationship-storage/reverse-attribute
               [:document relation-eid :user subject-a]]]))
         db (ds/db conn)
         eavt-values
         (fn [direction cursor]
           (mapv :v
                 (ddb/eavt-endpoint-prefix
-                 db subject-a schema/forward-relationship-attr
+                 db subject-a relationship-storage/forward-attribute
                  prefix cursor direction)))
         avet-values
         (fn [direction cursor]
           (mapv :v
                 (ddb/avet-endpoint-prefix
-                 db schema/forward-relationship-attr
+                 db relationship-storage/forward-attribute
                  prefix cursor direction)))]
     (testing "equal-length vectors traverse in component order"
       (is (= values (eavt-values :asc nil)))
@@ -140,11 +141,11 @@
     (testing "missing and adjacent prefixes terminate exactly"
       (is (empty?
            (ddb/eavt-endpoint-prefix
-            db subject-a schema/forward-relationship-attr
+            db subject-a relationship-storage/forward-attribute
             [:user 99 :document])))
       (is (empty?
            (ddb/eavt-endpoint-prefix
-            db subject-a schema/reverse-relationship-attr prefix))))
+            db subject-a relationship-storage/reverse-attribute prefix))))
     (testing "EAVT isolates the endpoint while AVET intentionally spans it"
       (is (= 2 (count (eavt-values :asc nil))))
       (is (= 3 (count (avet-values :asc nil)))))))
@@ -205,7 +206,7 @@
     (ds/transact!
      conn
      [[:db/retract
-       account-eid schema/reverse-relationship-attr
+       account-eid relationship-storage/reverse-attribute
        (:v (first reverse))]])
     (is (= {:valid? false
             :dangling-count 1
@@ -234,7 +235,7 @@
       (ds/transact!
        conn
        [[:db/retract
-         user-eid schema/forward-relationship-attr
+         user-eid relationship-storage/forward-attribute
          (:v (first forward))]]))
     (eacl/delete-relationship! client relationship)
     (let [{:keys [forward reverse]} (relationship-state (ds/db conn))]

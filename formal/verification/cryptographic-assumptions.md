@@ -64,7 +64,7 @@ representation, and distinct accepted values do not share that representation.
   depth, encoded size, and field allowlists in CLJ and CLJS.
 - `canonical-records-digest-test` covers record order and content stability.
 - `authenticated-cross-runtime-vectors-test` covers byte-identical CLJ/CLJS
-  cursor and cache outputs and legacy JVM cursor readability.
+  cursor and cache outputs and current-format JVM cursor readability.
 - Counterexamples `EACL-FORMAL-006` and `EACL-FORMAL-007` retain the two
   host-runtime discrepancies found while testing this assumption.
 

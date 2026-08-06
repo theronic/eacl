@@ -10,8 +10,7 @@
    [eacl.verified-kernel :as verified]))
 
 (def ^:private selection
-  {:mode :verified-authoritative
-   :kernel production/generated-javascript-kernel})
+  {:kernel production/generated-javascript-kernel})
 
 (def ^:private direct-rule
   {:kind :relation

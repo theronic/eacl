@@ -29,21 +29,20 @@
 (defn- ex-data-of [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-(deftest generated-authority-is-the-default-with-explicit-legacy-rollback-test
+(deftest generated-authority-is-the-only-production-engine-test
   #_{:clj-kondo/ignore [:unresolved-symbol]}
   (with-mem-conn [conn schema/v7-schema]
     (let [default-selection
-          (get-in (core/make-client conn {}) [:opts :engine-selection])
-          legacy-selection
-          (get-in
-           (core/make-client
-            conn
-            {:engine-selection {:mode :legacy-authoritative}})
-           [:opts :engine-selection])]
-      (is (= :verified-authoritative (:mode default-selection)))
+          (get-in (core/make-client conn {}) [:opts :decision-kernel])
+          error
+          (try
+            (core/make-client conn {:engine-selection :anything})
+            nil
+            (catch clojure.lang.ExceptionInfo exception
+              (ex-data exception)))]
       (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-      (is (= :legacy-authoritative (:mode legacy-selection)))
-      (is (nil? (:kernel legacy-selection))))))
+      (is (= :eacl/invalid-config (:type error)))
+      (is (= [:engine-selection] (:unknown-keys error))))))
 
 (defn- seed-acyclic!
   "n accounts, all owned by user u."

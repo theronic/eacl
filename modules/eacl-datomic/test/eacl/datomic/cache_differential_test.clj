@@ -337,12 +337,8 @@
               _ (is (get-in page-1 [:page-info :has-next-page?]))
               cursor (get-in page-1 [:page-info :end-cursor])
               page-2 (eacl/lookup-resources acl (assoc query :first 3 :after cursor))]
-          (if (= :verified-authoritative
-                 (get-in acl [:opts :engine-selection :mode]))
-            (is (= 1 (:continuation-hits @stats 0))
-                "generated authority resumes its proof-keyed opaque state")
-            (is (= 1 (:lookup-head-hits @stats 0))
-                "legacy authority resumes proof-keyed stream heads"))
+          (is (= 1 (:continuation-hits @stats 0))
+              "generated authority resumes its proof-keyed opaque state")
           (is (= (mapv :id (:data (eacl/lookup-resources
                                    oracle (assoc query :first 3 :after cursor))))
                  (mapv :id (:data page-2)))

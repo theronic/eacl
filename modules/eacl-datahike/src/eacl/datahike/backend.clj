@@ -8,6 +8,7 @@
             [eacl.datahike.schema :as schema]
             [eacl.mutation :as mutation]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure])
   (:import [java.util UUID]))
 
@@ -140,7 +141,7 @@
         (when (seq wanted)
           (for [{subject :e value :v}
                 (ddb/avet-datoms
-                 db schema/forward-relationship-attr)
+                 db relationship-storage/forward-attribute)
                 :let [decoded
                       (endpoint-pair/decode-forward subject value)]
                 :when (contains? wanted (:relation-eid decoded))]
@@ -152,7 +153,7 @@
         (when (seq wanted)
           (for [{resource :e value :v}
                 (ddb/avet-datoms
-                 db schema/reverse-relationship-attr)
+                 db relationship-storage/reverse-attribute)
                 :let [decoded
                       (endpoint-pair/decode-reverse resource value)]
                 :when (contains? wanted (:relation-eid decoded))]
@@ -339,8 +340,6 @@
          (->> (ddb/avet-datoms db schema/permission-key-attr)
               (map :v)
               set))
-
-       :frontier-key pr-str
 
        :schema-proof
        (fn

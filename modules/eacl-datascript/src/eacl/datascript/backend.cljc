@@ -5,9 +5,9 @@
             [eacl.datascript.db :as ddb]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.mutation :as journal]
-            [eacl.datascript.schema :as schema]
             [eacl.mutation :as mutation]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]))
 
 (def capabilities
@@ -124,7 +124,7 @@
         (when (seq wanted)
           (for [{subject-eid :e value :v}
                 (ddb/avet-datoms
-                 db schema/forward-relationship-attr)
+                 db relationship-storage/forward-attribute)
                 :let [decoded
                       (endpoint-pair/decode-forward subject-eid value)]
                 :when (contains? wanted (:relation-eid decoded))]
@@ -141,7 +141,7 @@
         (when (seq wanted)
           (for [{resource-eid :e value :v}
                 (ddb/avet-datoms
-                 db schema/reverse-relationship-attr)
+                 db relationship-storage/reverse-attribute)
                 :let [decoded
                       (endpoint-pair/decode-reverse resource-eid value)]
                 :when (contains? wanted (:relation-eid decoded))]
@@ -343,8 +343,6 @@
                db :avet :eacl.permission/resource-type+permission-name)
               (map :v)
               set))
-
-       :frontier-key pr-str
 
        :schema-proof
        (fn

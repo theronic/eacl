@@ -2,14 +2,9 @@
   (:require [datascript.core :as ds]
             [eacl.datascript.mutation :as journal]
             [eacl.mutation :as mutation]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
-
-(def forward-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
-
-(def reverse-relationship-attr
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (def max-entid
   #?(:clj Long/MAX_VALUE
@@ -74,10 +69,10 @@
    :eacl.relation/mutation-id {:db/index true}
    :eacl.dependency/mutation-id {:db/index true}
 
-   :eacl.v7.relationship/subject-type+relation+resource-type+resource
+   relationship-storage/forward-attribute
    {:db/cardinality :db.cardinality/many
     :db/index true}
-   :eacl.v7.relationship/resource-type+relation+subject-type+subject
+   relationship-storage/reverse-attribute
    {:db/cardinality :db.cardinality/many
     :db/index true}})
 
@@ -133,10 +128,10 @@
       0
       ;; nil-padded to full value arity: DataScript sorts vectors length-first.
       (->> (ds/seek-datoms db :avet
-                           forward-relationship-attr
+                           relationship-storage/forward-attribute
                            [subject-type relation-eid resource-type nil])
            (take-while (fn [datom]
-                         (and (= forward-relationship-attr (:a datom))
+                         (and (= relationship-storage/forward-attribute (:a datom))
                               (let [v (:v datom)]
                                 (and (vector? v)
                                      (= 4 (count v))

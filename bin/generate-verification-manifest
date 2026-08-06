@@ -84,7 +84,6 @@
           "bin/public-source-closure.mjs"
           "bin/summarize-dafny-verification.mjs"
           "bin/validate-verification-manifest"
-          "formal/smoke/clj/eacl/formal/ordered_merge_benchmark.clj"
           "formal/smoke/cljs/run"
           "formal/smoke/cljs/run-cursor-rebase-benchmark"
           "formal/smoke/cljs/run-indexed-traversal-benchmark"

@@ -3,6 +3,7 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.causal-token :as causal-token]
             [eacl.spicedb.consistency :as public-consistency]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def error-types
@@ -102,43 +103,13 @@
 
         (throw error)))))
 
-(defn- legacy-engine-selection?
-  [selection]
-  (or (nil? selection)
-      (= :legacy-authoritative selection)
-      (and (map? selection)
-           (= :legacy-authoritative
-              (or (:mode selection) :legacy-authoritative)))))
-
 (defn- decide
-  [options operation input legacy-decision]
-  (let [selection (:engine-selection options)]
-    (if (legacy-engine-selection? selection)
-      (legacy-decision)
-      (verified/decide selection operation input legacy-decision))))
-
-(defn- expected-selection-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
-  (cond
-    (not capability-supported?)
-    (case mode
-      :minimize-latency :unsupported-capability
-
-      :at-exact-snapshot
-      :exact-snapshot-unavailable
-
-      :unsupported-head-barrier)
-
-    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
-
-    :else
-    (case mode
-      :minimize-latency :select-current
-      :fully-consistent :select-authoritative
-      :at-least-as-fresh :authenticate-and-select-at-least
-      :at-exact-snapshot :authenticate-and-select-exact)))
+  [options operation input]
+  (verified/decide
+   (or (:decision-kernel options)
+       subproblem/*decision-kernel*)
+   operation
+   input))
 
 (defn- capability-error
   [source mode]
@@ -196,8 +167,8 @@
   "Returns the validated selection action for one normalized descriptor.
 
   The capability observation and writer-authority observation remain adapter
-  boundary facts. The finite decision over those facts is generated in
-  verified modes and remains allocation-light on the default legacy path."
+  boundary facts. The finite decision over those facts is made by the
+  generated kernel."
   [source {:keys [mode]} options]
   (let [capability-supported?
         (backend/supports? source :consistency mode)
@@ -210,8 +181,7 @@
         (decide
          options
          :consistency-plan
-         input
-         #(expected-selection-plan input))]
+         input)]
     (if (contains?
          #{:select-current
            :select-authoritative
@@ -221,28 +191,6 @@
       decision
       (reject-plan!
        source mode options decision capability-supported?))))
-
-(defn- expected-selection-validation
-  [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
-  (cond
-    (not selection-present?)
-    (if (= :exact kind)
-      :exact-snapshot-unavailable
-      :invalid-selected-adapter)
-
-    (not selected-adapter?)
-    :invalid-selected-adapter
-
-    (not same-source-scope?)
-    :incomparable-scope
-
-    (and (#{:at-least :exact} kind)
-         (not anchor-satisfied?))
-    :history-divergence
-
-    :else
-    :accept))
 
 (defn- selected-adapter!
   [source selected kind anchor-check options]
@@ -275,8 +223,7 @@
         (decide
          options
          :consistency-validation
-         input
-         #(expected-selection-validation input))]
+         input)]
     (case decision
       :accept selected
 

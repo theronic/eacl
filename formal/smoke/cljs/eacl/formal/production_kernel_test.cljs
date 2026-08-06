@@ -18,8 +18,7 @@
    [eacl.verified-kernel :as verified]))
 
 (def selection
-  {:mode :verified-authoritative
-   :kernel production/generated-javascript-kernel})
+  {:kernel production/generated-javascript-kernel})
 
 (defn- expected-cursor-rebase
   [values bound-eid]
@@ -79,8 +78,7 @@
              (verified/decide
               selection
               :consistency-plan
-              input
-              #(throw (ex-info "legacy must not run" {})))))))
+              input)))))
   (doseq [kind [:current :authoritative :at-least :exact]
           selection-present? [false true]
           selected-adapter? [false true]
@@ -96,8 +94,7 @@
              (verified/decide
               selection
               :consistency-validation
-              input
-              #(throw (ex-info "legacy must not run" {}))))))))
+              input))))))
 
 (defn- expected-consistency-work
   [path issue-response-token?]
@@ -178,7 +175,7 @@
       {:mode mode}
       {:coherence-authority
        (if managed-authority? :managed :unknown)
-       :engine-selection selection})]
+       :decision-kernel selection})]
     (catch cljs.core.ExceptionInfo error
       [:rejected (:type (ex-data error))])))
 
@@ -216,509 +213,14 @@
             mode
             managed-authority?))))))
 
-(defn- generated-merge-two
-  [direction left right]
-  (loop [left (vec left)
-         right (vec right)
-         merged []]
-    (if (or (empty? left) (empty? right))
-      (into merged (if (empty? left) right left))
-      (let [{:keys [values left-consumed right-consumed]}
-            (verified/decide
-             selection
-             :ordered-merge-chunk
-             {:direction direction
-              :left left
-              :right right}
-             #(throw (ex-info "legacy must not run" {})))]
-        (recur
-         (subvec left left-consumed)
-         (subvec right right-consumed)
-         (into merged values))))))
-
 (defn- power-set
   [values]
   (reduce
    (fn [subsets value]
-     (into subsets (map #(conj % value)) subsets))
+     (into subsets (map #(conj % value) subsets)))
    [[]]
    values))
 
-(defn- source-leapfrog-intersection
-  [left right]
-  (let [reseek-trace (atom [])
-        exact-reseek
-        (fn [side values]
-          (fn [target]
-            (swap! reseek-trace conj [side target])
-            (drop-while #(< % target) values)))]
-    {:intersects?
-     (engine/sorted-eids-intersect?
-      left (exact-reseek 0 left)
-      right (exact-reseek 1 right))
-     :reseek-trace @reseek-trace
-     :reseeks (count @reseek-trace)}))
-
-(defn- generated-leapfrog-intersection
-  [left right]
-  (production/acyclic-leapfrog-intersection
-   {:left left :right right}))
-
-(defn- bounded-ascending-values
-  [values options]
-  (if-let [bound (:bound-eid options)]
-    (drop-while #(< % bound) values)
-    values))
-
-(defn- source-acyclic-arrow-path-decision
-  [{:keys [intermediates direct-matches full-matches exhaustive?]}]
-  (let [direct-intersection-phases (atom 0)
-        full-candidate-checks (atom 0)
-        allowed?
-        (with-redefs
-         [engine/get-permission-paths
-          (fn [& _]
-            [{:type :arrow
-              :target-type :group
-              :via-relation-eid 11
-              :target-permission :member}])
-          engine/resource->subjects
-          (fn [& arguments]
-            (bounded-ascending-values intermediates (last arguments)))
-          engine/direct-grant-relations
-          (fn [& _]
-            (swap! direct-intersection-phases inc)
-            {:relation-eids [22]
-             :exhaustive? exhaustive?})
-          engine/subject->resources
-          (fn [& arguments]
-            (bounded-ascending-values direct-matches (last arguments)))
-          engine/can*
-          (fn [_ _ _ _ _ intermediate-eid _]
-            (swap! full-candidate-checks inc)
-            (contains? full-matches intermediate-eid))]
-          (engine/can-uncached*
-           nil :user 9 :view :document 10 #{}))]
-    {:allowed? allowed?
-     :direct-intersection-phases @direct-intersection-phases
-     :full-candidate-checks @full-candidate-checks}))
-
-(defn- generated-acyclic-arrow-path-decision
-  [{:keys [intermediates direct-matches full-matches exhaustive?]}]
-  (production/acyclic-arrow-path-decision
-   {:full-candidate-matches
-    (mapv #(contains? full-matches %) intermediates)
-    :direct-intersects?
-    (boolean (some (set direct-matches) intermediates))
-    :exhaustive? exhaustive?}))
-
-(def acyclic-path-observations
-  [{:kind 0 :direct-subject-type-matches? false :path-result true}
-   {:kind 0 :direct-subject-type-matches? true :path-result false}
-   {:kind 0 :direct-subject-type-matches? true :path-result true}
-   {:kind 1 :direct-subject-type-matches? false :path-result false}
-   {:kind 1 :direct-subject-type-matches? false :path-result true}
-   {:kind 2 :direct-subject-type-matches? false :path-result false}
-   {:kind 2 :direct-subject-type-matches? false :path-result true}])
-
-(defn- observation-sequences
-  [length]
-  (if (zero? length)
-    [[]]
-    (for [head acyclic-path-observations
-          tail (observation-sequences (dec length))]
-      (into [head] tail))))
-
-(defn- observed-path-seq
-  [indexed-paths path-checks]
-  (lazy-seq
-   (when-let [[[index path] & more] (seq indexed-paths)]
-     (swap! path-checks inc)
-     (cons path (observed-path-seq more path-checks)))))
-
-(defn- source-acyclic-path-fold
-  [{:keys [visited? observations]}]
-  (let [path-checks (atom 0)
-        direct-probe-checks (atom 0)
-        self-permission-checks (atom 0)
-        arrow-checks (atom 0)
-        callback-trace (atom [])
-        paths
-        (mapv
-         (fn [index
-              {:keys [kind direct-subject-type-matches?]}]
-           (case kind
-             0 {:type :relation
-                :subject-type
-                (if direct-subject-type-matches? :user :service)
-                :relation-eid (inc index)}
-             1 {:type :self-permission
-                :target-permission (keyword (str "self-" index))}
-             2 {:type :arrow
-                :target-type :group
-                :via-relation-eid (inc index)
-                :target-permission (keyword (str "arrow-" index))}))
-         (range)
-         observations)
-        results
-        (into
-         {}
-         (map-indexed
-          (fn [index {:keys [kind path-result]}]
-            [[kind index] path-result]))
-         observations)
-        target-index
-        (into
-         {}
-         (keep-indexed
-          (fn [index {:keys [kind]}]
-            (when (pos? kind)
-              [(keyword
-                (str (if (= 1 kind) "self-" "arrow-") index))
-               [kind index]])))
-         observations)
-        state [:user 9 :view :document 10]]
-    (with-redefs [engine/get-permission-paths
-                  (fn [& _]
-                    (observed-path-seq
-                     (map-indexed vector paths)
-                     path-checks))
-                  engine/direct-match-datoms-in-relationship-index
-                  (fn [_ _ _ relation-eid _ _]
-                    (let [index (dec relation-eid)
-                          event [0 index]]
-                      (swap! direct-probe-checks inc)
-                      (swap! callback-trace conj event)
-                      (if (get results event) [true] [])))
-                  engine/resource->subjects
-                  (fn [_ _ _ via-relation-eid _ _]
-                    [(+ 1000 via-relation-eid)])
-                  engine/can*
-                  (fn [_ _ _ target-permission _ _ _]
-                    (let [[kind index :as event]
-                          (get target-index target-permission)]
-                      (swap!
-                       (if (= 1 kind)
-                         self-permission-checks
-                         arrow-checks)
-                       inc)
-                      (swap! callback-trace conj event)
-                      (get results [kind index])))]
-      (let [allowed?
-            (engine/can-uncached*
-             nil :user 9 :view :document 10
-             (if visited? #{state} #{}))]
-        {:allowed? allowed?
-         :path-checks @path-checks
-         :direct-probe-checks @direct-probe-checks
-         :self-permission-checks @self-permission-checks
-         :arrow-checks @arrow-checks
-         :callback-trace @callback-trace}))))
-
-(defn- generated-acyclic-path-fold
-  [{:keys [visited? observations]}]
-  (production/acyclic-path-fold
-   {:visited? visited?
-    :kinds (mapv :kind observations)
-    :direct-subject-type-matches
-    (mapv :direct-subject-type-matches? observations)
-    :path-results (mapv :path-result observations)}))
-
-(defn- acyclic-path-fold-fixtures
-  []
-  (let [ordinary
-        (map
-         (fn [observations]
-           {:visited? false :observations (vec observations)})
-         (mapcat observation-sequences (range 4)))
-        visited
-        (map
-         (fn [observations]
-           {:visited? true :observations (vec observations)})
-         (take 7 (observation-sequences 3)))]
-    (into (vec ordinary) visited)))
-
-(def path-materialization-relations
-  [{:resource-type "document"
-    :relation-name "reader"
-    :subject-type "user"
-    :relation-eid 11}
-   {:resource-type "document"
-    :relation-name "reader"
-    :subject-type "service"
-    :relation-eid 12}
-   {:resource-type "document"
-    :relation-name "parent"
-    :subject-type "group"
-    :relation-eid 21}
-   {:resource-type "document"
-    :relation-name "parent"
-    :subject-type "folder"
-    :relation-eid 22}
-   {:resource-type "group"
-    :relation-name "member"
-    :subject-type "user"
-    :relation-eid 31}
-   {:resource-type "group"
-    :relation-name "member"
-    :subject-type "service"
-    :relation-eid 32}
-   {:resource-type "folder"
-    :relation-name "member"
-    :subject-type "user"
-    :relation-eid 41}
-   {:resource-type "group"
-    :relation-name "admin"
-    :subject-type "user"
-    :relation-eid 33}
-   {:resource-type "folder"
-    :relation-name "admin"
-    :subject-type "service"
-    :relation-eid 42}])
-
-(def path-materialization-definitions
-  [{:resource-type "document"
-    :permission-name "view"
-    :source-is-self? false
-    :source-relation-name "parent"
-    :target-is-relation? false
-    :target-name "admin"}
-   {:resource-type "document"
-    :permission-name "view"
-    :source-is-self? true
-    :source-relation-name "self"
-    :target-is-relation? false
-    :target-name "read"}
-   {:resource-type "document"
-    :permission-name "view"
-    :source-is-self? true
-    :source-relation-name "self"
-    :target-is-relation? true
-    :target-name "reader"}
-   {:resource-type "document"
-    :permission-name "view"
-    :source-is-self? false
-    :source-relation-name "parent"
-    :target-is-relation? true
-    :target-name "member"}])
-
-(defn- keywordize-raw-definition
-  [{:keys [resource-type permission-name source-is-self?
-           source-relation-name target-is-relation? target-name]}]
-  {:eacl.permission/resource-type (keyword resource-type)
-   :eacl.permission/permission-name (keyword permission-name)
-   :eacl.permission/source-relation-name
-   (if source-is-self? :self (keyword source-relation-name))
-   :eacl.permission/target-type
-   (if target-is-relation? :relation :permission)
-   :eacl.permission/target-name (keyword target-name)})
-
-(defn- canonical-path
-  [path]
-  (cond-> (into
-           {}
-           (map
-            (fn [[key value]]
-              [key
-               (if (and (keyword? value) (not= :type key))
-                 (name value)
-                 value)]))
-           (dissoc path :sub-paths))
-    (:sub-paths path)
-    (assoc :sub-paths (mapv canonical-path (:sub-paths path)))))
-
-(defn- source-materialize-permission-paths
-  [{:keys [relations definitions subject-type]}]
-  (let [relation-datoms
-        (fn [_ resource-type relation-name]
-          (->> relations
-               (filter
-                #(and (= (keyword (:resource-type %)) resource-type)
-                      (= (keyword (:relation-name %)) relation-name)))
-               (mapv
-                (fn [{:keys [resource-type relation-name
-                             subject-type relation-eid]}]
-                  {:e relation-eid
-                   :v [(keyword resource-type)
-                       (keyword relation-name)
-                       (keyword subject-type)]}))))
-        permission-definitions
-        (mapv keywordize-raw-definition definitions)]
-    (with-redefs [engine/find-permission-defs
-                  (fn [& _] permission-definitions)
-                  engine/relation-datoms relation-datoms]
-      (let [paths
-            (engine/calc-permission-paths nil :document :view)
-            summary
-            (engine/calc-direct-grant-relations
-             nil :document :view (keyword subject-type))]
-        {:paths (mapv canonical-path paths)
-         :direct-relation-eids (vec (:relation-eids summary))
-         :exhaustive? (:exhaustive? summary)}))))
-
-(defn- path-materialization-fixtures
-  []
-  (let [definition-count (count path-materialization-definitions)
-        exhaustive
-        (for [mask (range (bit-shift-left 1 definition-count))
-              subject-type ["user" "service" "auditor"]
-              reverse-relations? [false true]]
-          {:relations
-           (cond-> path-materialization-relations
-             reverse-relations? reverse)
-           :definitions
-           (into
-            []
-            (keep-indexed
-             (fn [index definition]
-               (when (bit-test mask index)
-                 definition)))
-            path-materialization-definitions)
-           :subject-type subject-type})
-        missing
-        (for [definition
-              [{:resource-type "document"
-                :permission-name "view"
-                :source-is-self? true
-                :source-relation-name "self"
-                :target-is-relation? true
-                :target-name "missing"}
-               {:resource-type "document"
-                :permission-name "view"
-                :source-is-self? false
-                :source-relation-name "missing"
-                :target-is-relation? false
-                :target-name "read"}
-               {:resource-type "document"
-                :permission-name "view"
-                :source-is-self? false
-                :source-relation-name "parent"
-                :target-is-relation? true
-                :target-name "missing"}]]
-          {:relations path-materialization-relations
-           :definitions [definition]
-           :subject-type "user"})]
-    (into (vec exhaustive) missing)))
-
-(defn- routing-node
-  [[resource-type permission]]
-  {:resource-type (pr-str resource-type)
-   :permission (pr-str permission)})
-
-(defn- generated-traversal-analysis
-  [nodes edges]
-  (let [permissions (mapv routing-node nodes)
-        input-edges
-        (mapv
-         (fn [[head target]]
-           {:head (routing-node head)
-            :target (routing-node target)})
-         edges)]
-    (into
-     {}
-     (map
-      (fn [root]
-        [root
-         (production/typed-traversal-permission?
-          {:root (routing-node root)
-           :edges input-edges
-           :permissions permissions})])
-      nodes))))
-
-(defn- routing-test-adapter
-  [nodes edges]
-  (let [edge-records
-        (map-indexed
-         (fn [index [[source-type source-permission :as head]
-                    [target-type target-permission]]]
-           (let [relation-name
-                 (keyword "formal.routing" (str "edge-" index))]
-             {:head head
-              :relation-name relation-name
-              :relation
-              (when (not= source-type target-type)
-                {:relation-id (inc index)
-                 :resource-type source-type
-                 :relation-name relation-name
-                 :subject-type target-type})
-              :permission
-              {:permission-id (+ 1000 index)
-               :resource-type source-type
-               :permission-name source-permission
-               :source-relation-name
-               (if (= source-type target-type)
-                 :self
-                 relation-name)
-               :target-type :permission
-               :target-name target-permission}}))
-         edges)
-        relations
-        (into
-         {}
-         (keep
-          (fn [{:keys [relation]}]
-            (when relation
-              [[(:resource-type relation)
-                (:relation-name relation)]
-               [relation]])))
-         edge-records)
-        permissions
-        (->> edge-records
-             (group-by :head)
-             (into {}
-                   (map
-                    (fn [[head records]]
-                      [head (mapv :permission records)]))))]
-    (backend/make-adapter
-     {:id :formal-routing-test
-      :capabilities
-      {:consistency #{:minimize-latency}
-       :snapshots #{:current}
-       :source #{:scoped}
-       :cursor #{:forward :backward}
-       :transactions #{}
-       :cache-proofs #{:schema :relations}
-       :runtime #{:cljs}}
-      :operations
-      (merge
-       (into {}
-             (map
-              (fn [operation]
-                [operation (fn [& _] nil)]))
-             backend/required-snapshot-operations)
-       {:snapshot-id
-        (constantly {:database-id :formal-routing :basis-t 1})
-        :source-scope
-        (constantly {:source-id :formal-routing :branch nil})
-        :schema-proof
-        (fn
-          ([] :schema-proof)
-          ([_] :schema-proof))
-        :relation-defs
-        (fn [resource-type relation-name]
-          (get relations [resource-type relation-name] []))
-        :permission-defs
-        (fn [resource-type permission-name]
-          (get permissions [resource-type permission-name] []))
-        :all-permission-nodes
-        (constantly (set nodes))})})))
-
-(defn- source-traversal-analysis
-  ([nodes edges]
-   (source-traversal-analysis nodes edges nil))
-  ([nodes edges engine-selection]
-   (let [adapter (routing-test-adapter nodes edges)
-         schema-cache (engine/make-schema-cache adapter :schema-proof)]
-     (binding [engine/*schema-cache* schema-cache
-               subproblem/*engine-selection* engine-selection]
-       (into
-        {}
-        (map
-         (fn [[resource-type permission :as node]]
-           [node
-            (engine/traversal-permission?
-             adapter resource-type permission)])
-         nodes))))))
 
 (def routing-certificate-input
   {:node-count 2
@@ -800,8 +302,7 @@
          (verified/decide
           selection
           :recursive-routing-certificate
-          routing-certificate-input
-          (constantly nil))))
+          routing-certificate-input)))
   (is (= :invalid-dependency-edge
          (:reason
           (verified/decide
@@ -810,8 +311,7 @@
            (assoc-in
             routing-certificate-input
             [:certificate :traversal]
-            [false true])
-           (constantly nil)))))
+            [false true])))))
   (is (= :routing-path-edge-mismatch
          (:reason
           (verified/decide
@@ -820,8 +320,7 @@
            (assoc-in
             routing-certificate-input
             [:path-descriptors 0]
-            {:kind :relation :head 0})
-           (constantly nil)))))
+            {:kind :relation :head 0})))))
   (is (= :invalid-routing-path
          (:reason
           (verified/decide
@@ -830,8 +329,7 @@
            (assoc-in
             routing-certificate-input
             [:path-descriptors 0 :target]
-            2)
-           (constantly nil)))))
+            2)))))
   (is (= :accepted
          (:status
           (verified/decide
@@ -843,8 +341,7 @@
             [{:kind :relation :head 0}
              {:kind :arrow-relation :head 1}
              {:kind :self-permission :head 0 :target 1}
-             {:kind :arrow-permission :head 1 :target 1}])
-           (constantly nil)))))
+             {:kind :arrow-permission :head 1 :target 1}])))))
   (is (= :routing-path-edge-mismatch
          (:reason
           (verified/decide
@@ -853,8 +350,7 @@
            (update
             routing-certificate-input
             :path-descriptors
-            #(vec (reverse %)))
-           (constantly nil)))))
+            #(vec (reverse %)))))))
   (is (= :invalid-component-witness
          (:reason
           (verified/decide
@@ -863,15 +359,13 @@
            (assoc-in
             routing-certificate-input
             [:certificate :traversal-witness-edge]
-            [-1 -1])
-           (constantly nil)))))
+            [-1 -1])))))
   (is (= :accepted
          (:status
           (verified/decide
            selection
            :recursive-routing-certificate
-           scc-routing-certificate-input
-           (constantly nil)))))
+           scc-routing-certificate-input))))
   (doseq [[label input expected-reason]
           [["split one SCC into two claimed components"
             (-> scc-routing-certificate-input
@@ -903,8 +397,7 @@
               (verified/decide
                selection
                :recursive-routing-certificate
-               input
-               (constantly nil))))))))
+               input)))))))
 
 (deftest generated-javascript-routing-certificate-scales-linearly
   (let [node-count 4096
@@ -912,8 +405,7 @@
         (verified/decide
          selection
          :recursive-routing-certificate
-         (chain-routing-certificate-input node-count)
-         (constantly nil))]
+         (chain-routing-certificate-input node-count))]
     (is (= :accepted (:status decision)))
     (is (= node-count (:path-checks decision)))
     (is (= (* 2 node-count) (:node-checks decision)))
@@ -921,186 +413,6 @@
     (is (= node-count (count (:traversal decision))))
     (is (every? true? (:traversal decision)))))
 
-(deftest generated-javascript-production-routing-is-certified-once-per-schema-generation
-  (let [node-count 4096
-        nodes
-        (mapv
-         #(vector :resource (keyword (str "permission-" %)))
-         (range node-count))
-        edges
-        (conj
-         (mapv vector nodes (subvec nodes 1))
-         [(peek nodes) (peek nodes)])
-        calls (atom 0)
-        counting-kernel
-        (reify
-          verified/DecisionKernel
-          (-decide [_ operation input]
-            (when (= :recursive-routing-certificate operation)
-              (swap! calls inc))
-            (verified/-decide
-             production/generated-javascript-kernel
-             operation
-             input)))
-        certified
-        (source-traversal-analysis
-         nodes
-         edges
-         {:mode :verified-authoritative
-          :kernel counting-kernel})]
-    (is (= 1 @calls))
-    (is (= node-count (count certified)))
-    (is (every? true? (vals certified)))))
-
-(deftest generated-javascript-certifies-production-path-to-edge-derivation
-  (let [document-view [:document :view]
-        document-edit [:document :edit]
-        team-view [:team :view]
-        nodes [document-view document-edit team-view]
-        ordered-nodes (vec (sort-by pr-str nodes))
-        node-index (zipmap ordered-nodes (range))
-        captured (atom nil)
-        capturing-kernel
-        (reify
-          verified/DecisionKernel
-          (-decide [_ operation input]
-            (when (= :recursive-routing-certificate operation)
-              (reset! captured input))
-            (verified/-decide
-             production/generated-javascript-kernel
-             operation
-             input)))
-        materialized-paths
-        [{:type :relation}
-         {:type :self-permission
-          :target-permission :edit}
-         {:type :arrow
-          :target-type :team
-          :target-relation :member}
-         {:type :arrow
-          :target-type :team
-          :target-permission :view}]]
-    (with-redefs [engine/get-permission-paths
-                  (fn [_ resource-type permission]
-                    (if (= [resource-type permission] document-view)
-                      materialized-paths
-                      []))]
-      (is
-       (every?
-        false?
-        (vals
-         (source-traversal-analysis
-          nodes
-          []
-          {:mode :verified-authoritative
-           :kernel capturing-kernel})))))
-    (let [head (get node-index document-view)
-          document-target (get node-index document-edit)
-          team-target (get node-index team-view)]
-      (is
-       (=
-        [{:kind :relation :head head}
-         {:kind :self-permission
-          :head head
-          :target document-target}
-         {:kind :arrow-relation :head head}
-         {:kind :arrow-permission
-          :head head
-          :target team-target}]
-        (:path-descriptors @captured)))
-      (is
-       (=
-        [{:head head :target document-target}
-         {:head head :target team-target}]
-        (:edges @captured))))
-    (with-redefs [engine/get-permission-paths
-                  (fn [_ resource-type permission]
-                    (if (= [resource-type permission] document-view)
-                      materialized-paths
-                      []))]
-      (let [failure
-            (try
-              (source-traversal-analysis
-               [document-view]
-               []
-               selection)
-              nil
-              (catch cljs.core.ExceptionInfo error
-                (ex-data error)))]
-        (is (= :invalid-routing-path (:reason failure)))))))
-
-(deftest generated-javascript-classifies-production-recursive-routing
-  (let [a [:alpha :read]
-        b [:beta :read]
-        c [:charlie :read]
-        d [:delta :read]
-        e [:echo :read]
-        document-read [:document :read]
-        team-view [:team :view]
-        folder-view [:folder :view]
-        cases
-        [{:label "empty graph"
-          :nodes [a b]
-          :edges []
-          :expected {a false b false}}
-         {:label "singleton self-loop"
-          :nodes [a b]
-          :edges [[a a]]
-          :expected {a true b false}}
-         {:label "two-node SCC and acyclic ancestor"
-          :nodes [a b c d]
-          :edges [[a b] [b a] [c a]]
-          :expected {a true b true c true d false}}
-         {:label "disconnected recursive component"
-          :nodes [a b c d]
-          :edges [[a b] [b a] [c d]]
-          :expected {a true b true c false d false}}
-         {:label "acyclic diamond"
-          :nodes [a b c d]
-          :edges [[a b] [a c] [b d] [c d]]
-          :expected {a false b false c false d false}}
-         {:label "deep ancestor chain"
-          :nodes [a b c d e]
-          :edges [[a b] [b c] [c d] [d e] [e e]]
-          :expected {a true b true c true d true e true}}
-         {:label "same permission name on unrelated resource types"
-          :nodes [document-read team-view folder-view]
-          :edges [[document-read team-view]
-                  [folder-view folder-view]]
-          :expected
-          {document-read false
-           team-view false
-           folder-view true}}]]
-    (doseq [{:keys [label nodes edges expected]} cases]
-      (testing label
-        (let [source (source-traversal-analysis nodes edges)
-              certified
-              (source-traversal-analysis nodes edges selection)
-              generated (generated-traversal-analysis nodes edges)]
-          (is (= expected source))
-          (is (= source certified))
-          (is (= source generated)))))))
-
-(deftest generated-javascript-exhausts-three-node-recursive-routing-graphs
-  (let [nodes
-        [[:document :view]
-         [:team :view]
-         [:folder :read]]
-        possible-edges
-        (vec
-         (for [head nodes
-               target nodes]
-           [head target]))
-        graphs (power-set possible-edges)]
-    (is (= 512 (count graphs)))
-    (doseq [edges graphs]
-      (let [source (source-traversal-analysis nodes edges)]
-        (is (= source
-               (source-traversal-analysis nodes edges selection))
-            (str "certificate mismatch for edges " (pr-str edges)))
-        (is (= source
-               (generated-traversal-analysis nodes edges))
-            (str "routing mismatch for edges " (pr-str edges)))))))
 
 (def authorization-input
   {:objects [{:type "user" :id "u1"}
@@ -1109,44 +421,27 @@
              {:type "folder" :id "f1"}]
    :schema
    {:relations
-    [{:resource-type "folder"
-      :relation "reader"
-      :subject-type "user"}
-     {:resource-type "folder"
-      :relation "parent"
-      :subject-type "folder"}
-     {:resource-type "folder"
-      :relation "team-reader"
-      :subject-type "team"}]
-    :permissions
-    [{:resource-type "folder"
-      :permission "read"}]
+    [{:resource-type "folder" :relation "reader" :subject-type "user"}
+     {:resource-type "folder" :relation "parent" :subject-type "folder"}
+     {:resource-type "folder" :relation "team-reader" :subject-type "team"}]
+    :permissions [{:resource-type "folder" :permission "read"}]
     :definitions
     [{:kind :direct-relation
-      :resource-type "folder"
-      :permission "read"
-      :relation "reader"
-      :subject-type "user"}
+      :resource-type "folder" :permission "read"
+      :relation "reader" :subject-type "user"}
      {:kind :arrow-permission
-      :resource-type "folder"
-      :permission "read"
-      :via-relation "parent"
-      :target-permission "read"}
+      :resource-type "folder" :permission "read"
+      :via-relation "parent" :target-permission "read"}
      {:kind :direct-relation
-      :resource-type "folder"
-      :permission "read"
-      :relation "team-reader"
-      :subject-type "team"}]}
+      :resource-type "folder" :permission "read"
+      :relation "team-reader" :subject-type "team"}]}
    :relationships
    [{:resource {:type "folder" :id "f0"}
-     :relation "reader"
-     :subject {:type "user" :id "u1"}}
+     :relation "reader" :subject {:type "user" :id "u1"}}
     {:resource {:type "folder" :id "f1"}
-     :relation "parent"
-     :subject {:type "folder" :id "f0"}}
+     :relation "parent" :subject {:type "folder" :id "f0"}}
     {:resource {:type "folder" :id "f1"}
-     :relation "team-reader"
-     :subject {:type "team" :id "t1"}}]
+     :relation "team-reader" :subject {:type "team" :id "t1"}}]
    :request
    {:operation :lookup-resources
     :subject {:type "user" :id "u1"}
@@ -1163,33 +458,21 @@
     {:type "document" :id "document-2"}]
    :schema
    {:relations
-    [{:resource-type "document"
-      :relation "reader"
-      :subject-type "user"}
-     {:resource-type "document"
-      :relation "parent"
-      :subject-type "document"}]
-    :permissions
-    [{:resource-type "document"
-      :permission "view"}]
+    [{:resource-type "document" :relation "reader" :subject-type "user"}
+     {:resource-type "document" :relation "parent" :subject-type "document"}]
+    :permissions [{:resource-type "document" :permission "view"}]
     :definitions
     [{:kind :direct-relation
-      :resource-type "document"
-      :permission "view"
-      :relation "reader"
-      :subject-type "user"}
+      :resource-type "document" :permission "view"
+      :relation "reader" :subject-type "user"}
      {:kind :arrow-permission
-      :resource-type "document"
-      :permission "view"
-      :via-relation "parent"
-      :target-permission "view"}]}
+      :resource-type "document" :permission "view"
+      :via-relation "parent" :target-permission "view"}]}
    :relationships
    [{:resource {:type "document" :id "document-1"}
-     :relation "reader"
-     :subject {:type "user" :id "user"}}
+     :relation "reader" :subject {:type "user" :id "user"}}
     {:resource {:type "document" :id "document-2"}
-     :relation "parent"
-     :subject {:type "document" :id "document-1"}}]
+     :relation "parent" :subject {:type "document" :id "document-1"}}]
    :limits
    {:max-derived-grants 1000
     :max-advanced-datoms 1000
@@ -1205,11 +488,7 @@
     :authorization-evaluation
     (assoc public-recursive-authorization-input
            :request request
-           :limits limits)
-    #(throw
-      (ex-info
-       "legacy JavaScript authorization oracle must not run"
-       {})))))
+           :limits limits))))
 
 (def indexed-plan-input
   (let [head {:resource-type "folder" :permission "read"}
@@ -1438,7 +717,7 @@
         stats (atom {})]
     (binding [engine/*schema-cache* schema-cache
               engine/*recursive-traversal-stats* stats
-              subproblem/*engine-selection* selection]
+              subproblem/*decision-kernel* selection]
       (is (seq
            (:components
             (engine/recursive-component-plan
@@ -1461,51 +740,34 @@
          :resource/type :folder
          :first 2}
         run-forward
-        (fn [engine-selection schema-cache query']
+        (fn [schema-cache query']
           (binding [engine/*schema-cache* schema-cache
-                    subproblem/*engine-selection* engine-selection]
+                    subproblem/*decision-kernel* selection]
             (engine/lookup-resources adapter query')))
-        legacy-cache
-        (engine/make-schema-cache adapter :schema-proof)
         generated-cache
         (engine/make-schema-cache adapter :schema-proof)
-        legacy-first
-        (run-forward
-         :legacy-authoritative legacy-cache query)
         generated-first
-        (run-forward selection generated-cache query)
+        (run-forward generated-cache query)
         after (get-in generated-first [:page-info :end-cursor])
-        legacy-second
-        (run-forward
-         :legacy-authoritative
-         legacy-cache
-         (assoc query :after after))
         generated-second
-        (run-forward
-         selection generated-cache (assoc query :after after))
+        (run-forward generated-cache (assoc query :after after))
         reverse-query
         {:resource {:type :folder :id 20}
          :permission :read
          :subject/type :user
          :first 10}
         run-reverse
-        (fn [engine-selection schema-cache]
+        (fn [schema-cache]
           (binding [engine/*schema-cache* schema-cache
-                    subproblem/*engine-selection* engine-selection]
+                    subproblem/*decision-kernel* selection]
             (engine/lookup-subjects adapter reverse-query)))
-        legacy-reverse
-        (run-reverse
-         :legacy-authoritative
-         (engine/make-schema-cache adapter :schema-proof))
         generated-reverse
-        (run-reverse
-         selection
-         (engine/make-schema-cache adapter :schema-proof))
+        (run-reverse (engine/make-schema-cache adapter :schema-proof))
         run-operation
-        (fn [engine-selection operation]
+        (fn [operation]
           (binding [engine/*schema-cache*
                     (engine/make-schema-cache adapter :schema-proof)
-                    subproblem/*engine-selection* engine-selection]
+                    subproblem/*decision-kernel* selection]
             (operation)))
         can-operation
         #(engine/can?
@@ -1528,29 +790,22 @@
           {:resource {:type :folder :id 20}
            :permission :read
            :subject/type :user})]
-    (is (= legacy-first generated-first))
+    (is (= [10 20]
+           (mapv :id (:data generated-first))))
     (is (true? (get-in generated-first
                        [:page-info :has-next-page?])))
-    (is (= legacy-second generated-second))
-    (is (= legacy-reverse generated-reverse))
+    (is (= [30]
+           (mapv :id (:data generated-second))))
     (is (= [{:type :user :id 1}]
            (mapv
             #(select-keys % [:type :id])
             (:data generated-reverse))))
-    (is (= (run-operation :legacy-authoritative can-operation)
-           (run-operation selection can-operation)
-           true))
-    (is (= (run-operation
-            :legacy-authoritative limited-count-operation)
-           (run-operation selection limited-count-operation)
+    (is (true? (run-operation can-operation)))
+    (is (= (run-operation limited-count-operation)
            {:count 2 :limit 2 :truncated? true}))
-    (is (= (run-operation
-            :legacy-authoritative all-count-operation)
-           (run-operation selection all-count-operation)
+    (is (= (run-operation all-count-operation)
            {:count 3 :limit -1}))
-    (is (= (run-operation
-            :legacy-authoritative reverse-count-operation)
-           (run-operation selection reverse-count-operation)
+    (is (= (run-operation reverse-count-operation)
            {:count 1 :limit -1}))))
 
 (deftest generated-javascript-production-decision-boundary
@@ -1568,12 +823,9 @@
            :request {:first 2
                      :last :absent
                      :after 0
-                     :before :absent
-                     :has-legacy-limit? false
-                     :has-legacy-cursor? false}
+                     :before :absent}
            :default-size 1000
-           :maximum-size 10000}
-    #(throw (ex-info "legacy must not run" {})))))
+           :maximum-size 10000})))
 
   (is (= {:take-count 20
           :reverse? false
@@ -1585,8 +837,7 @@
           {:direction :asc
            :size 20
            :bound? false
-           :realized-count 21}
-          #(throw (ex-info "legacy must not run" {})))))
+           :realized-count 21})))
   (is (= :rebase-current
          (verified/decide
           selection
@@ -1600,8 +851,7 @@
            :cursor-proof "old"
            :mode :recover-current
            :cursor-graph 0
-           :exact nil}
-          #(throw (ex-info "legacy must not run" {})))))
+           :exact nil})))
   (is (= {:status :rebased
           :ordinal 2
           :inspected-count 3}
@@ -1609,16 +859,14 @@
           selection
           :cursor-bound-rebase
           {:values [11 17 23 29]
-           :bound-eid 23}
-          #(throw (ex-info "legacy must not run" {})))))
+           :bound-eid 23})))
   (is (= {:status :restarted
           :inspected-count 4}
          (verified/decide
           selection
           :cursor-bound-rebase
           {:values [11 17 23 29]
-           :bound-eid 31}
-          #(throw (ex-info "legacy must not run" {})))))
+           :bound-eid 31})))
   (is (= {:status :rebased
           :ordinal 1
           :inspected-count 2}
@@ -1626,8 +874,7 @@
           selection
           :cursor-bound-rebase
           {:values [0 backend/maximum-exact-integer]
-           :bound-eid backend/maximum-exact-integer}
-          #(throw (ex-info "legacy must not run" {})))))
+           :bound-eid backend/maximum-exact-integer})))
   (is (= {:status :rebased
           :ordinal 0
           :inspected-count 1}
@@ -1635,8 +882,7 @@
           selection
           :cursor-bound-rebase
           {:values [17 17]
-           :bound-eid 17}
-          #(throw (ex-info "legacy must not run" {})))))
+           :bound-eid 17})))
   (let [values (vec (range 8200))]
     (is (= {:status :rebased
             :ordinal 4096
@@ -1682,8 +928,7 @@
                    :key "key"
                    :source "source"
                    :graph 2
-                   :proof "proof"}}
-          #(throw (ex-info "legacy must not run" {}))))))
+                   :proof "proof"}}))))
 
 (deftest generated-javascript-materialized-queue-limit-is-instantaneous
   (let [result
@@ -1708,8 +953,7 @@
           :subproblem-cache-decision
           {:decision :lookup
            :recursive-self? false
-           :candidate :complete}
-          #(throw (ex-info "legacy must not run" {})))))
+           :candidate :complete})))
   (is (= :compute-without-admission
          (verified/decide
           selection
@@ -1717,8 +961,7 @@
           {:decision :admission
            :candidate-present? false
            :represented-candidates 8
-           :maximum-candidates 8}
-          #(throw (ex-info "legacy must not run" {})))))
+           :maximum-candidates 8})))
   (is (= :drop-publication
          (verified/decide
           selection
@@ -1728,8 +971,7 @@
            :complete? true
            :valid? true
            :weight 1025
-           :budget 1024}
-          #(throw (ex-info "legacy must not run" {}))))))
+           :budget 1024}))))
 
 (deftest generated-javascript-current-cache-decisions
   (doseq [[input expected]
@@ -1745,8 +987,7 @@
            (verified/decide
             selection
             :current-cache-decision
-            input
-            #(throw (ex-info "legacy must not run" {})))))))
+            input)))))
 
 (deftest generated-javascript-ordered-merge-step-decisions
   (doseq [[input expected]
@@ -1768,15 +1009,13 @@
            (verified/decide
             selection
             :ordered-merge-step
-            input
-            #(throw (ex-info "legacy must not run" {}))))))
+            input))))
   (is (= :eacl.verification/invalid-boundary
          (try
            (verified/decide
             selection
             :ordered-merge-step
-            {:direction :asc :left-head -1 :right-head 2}
-            #(throw (ex-info "legacy must not run" {})))
+            {:direction :asc :left-head -1 :right-head 2})
            nil
            (catch :default error
              (:type (ex-data error))))))
@@ -1788,8 +1027,7 @@
           :ordered-merge-chunk
           {:direction :asc
            :left [1 3 5]
-           :right [2 4 6]}
-          #(throw (ex-info "legacy must not run" {})))))
+           :right [2 4 6]})))
   (is (= {:values [6 5 4 3 2]
           :left-consumed 3
           :right-consumed 2}
@@ -1798,8 +1036,7 @@
           :ordered-merge-chunk
           {:direction :desc
            :left [6 4 2]
-           :right [5 3 1]}
-          #(throw (ex-info "legacy must not run" {})))))
+           :right [5 3 1]})))
   (is (= :eacl.verification/invalid-boundary
          (try
            (verified/decide
@@ -1807,8 +1044,7 @@
             :ordered-merge-chunk
             {:direction :asc
              :left [2 1]
-             :right [3 4]}
-            #(throw (ex-info "legacy must not run" {})))
+             :right [3 4]})
            nil
            (catch :default error
              (:type (ex-data error)))))))
@@ -1842,219 +1078,6 @@
              " right=" right
              " direction=" direction))))))
 
-(deftest optimized-javascript-ordered-merge-refines-generated-chunks
-  (doseq [seed (range 50)
-          direction [:asc :desc]]
-    (let [ascending-left
-          (vec (filter #(zero? (mod (+ % seed) 3)) (range 80)))
-          ascending-right
-          (vec (filter #(zero? (mod (+ % (* 2 seed)) 5)) (range 80)))
-          [left right]
-          (if (= :asc direction)
-            [ascending-left ascending-right]
-            [(vec (reverse ascending-left))
-             (vec (reverse ascending-right))])
-          actual
-          (vec
-           ((case direction
-              :asc lazy-sort/lazy-fold2-merge-dedupe-sorted-by
-              :desc lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc)
-            identity
-            [left right]))]
-      (is (= (generated-merge-two direction left right)
-             actual)
-          (str "seed=" seed " direction=" direction))))
-  (doseq [seed (range 25)
-          direction [:asc :desc]]
-    (let [ascending-streams
-          (mapv
-           (fn [divisor]
-             (vec
-              (filter
-               #(zero? (mod (+ % seed) divisor))
-               (range 120))))
-           [2 3 5 7 11])
-          streams
-          (if (= :asc direction)
-            (vec (concat [[]] ascending-streams [[]]))
-            (vec
-             (concat
-              [[]]
-              (mapv #(vec (reverse %)) ascending-streams)
-              [[]])))
-          expected
-          (->> streams
-               (apply concat)
-               distinct
-               (sort (case direction :asc < :desc >))
-               vec)
-          actual
-          (vec
-           ((case direction
-              :asc lazy-sort/lazy-fold2-merge-dedupe-sorted-by
-              :desc lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc)
-              identity
-              streams))]
-      (is (= expected actual)
-          (str "balanced seed=" seed " direction=" direction))
-      (is (= (production/production-ordered-fold
-              {:direction direction
-               :streams streams})
-             actual)
-          (str
-           "modeled balanced seed=" seed
-           " direction=" direction)))))
-
-(deftest optimized-javascript-leapfrog-intersection-refines-bounded-proof
-  (let [subsets (power-set [0 1 2 17 1000 9007199254740991])
-        cases
-        (concat
-         (for [left subsets
-               right subsets]
-           [left right])
-         [[(vec (range 18)) [17]]
-          [(vec (range 513)) [512]]
-          [(vec (range 512)) [700]]
-          [(vec (range 0 512 2)) (vec (range 1 512 2))]])
-        mismatches
-        (into
-         []
-         (keep
-          (fn [[left right :as input]]
-            (let [expected (boolean (some (set left) right))
-                  source (source-leapfrog-intersection left right)
-                  generated (generated-leapfrog-intersection left right)]
-              (when-not
-               (and (= expected (:intersects? source))
-                    (= expected (:intersects? generated))
-                    (= (:reseeks source)
-                       (:reseek-calls generated))
-                    (= (:reseek-trace source)
-                       (:reseek-trace generated))
-                    (= (:reseek-calls generated)
-                       (count (:reseek-trace generated)))
-                    (<= (:iterations generated)
-                        (+ (count left) (count right)))
-                    (<= (:reseek-calls generated)
-                        (:iterations generated))
-                    (<= (:examined-heads generated)
-                        (* 17 (:iterations generated))))
-                {:input input
-                 :expected expected
-                 :source source
-                 :generated generated}))))
-         cases)
-        skewed-source
-        (source-leapfrog-intersection (vec (range 513)) [512])]
-    (is (= 4100 (count cases)))
-    (is (empty? mismatches) (pr-str (first mismatches)))
-    (is (true? (:intersects? skewed-source)))
-    (is (pos? (:reseeks skewed-source)))))
-
-(deftest generated-javascript-acyclic-arrow-path-refines-source-control
-  (doseq [{:keys [label expected] :as fixture}
-          [{:label :empty
-            :intermediates []
-            :direct-matches []
-            :full-matches #{}
-            :exhaustive? false
-            :expected
-            {:allowed? false
-             :direct-intersection-phases 0
-             :full-candidate-checks 0}}
-           {:label :singleton-hit
-            :intermediates [10]
-            :direct-matches []
-            :full-matches #{10}
-            :exhaustive? false
-            :expected
-            {:allowed? true
-             :direct-intersection-phases 0
-             :full-candidate-checks 1}}
-           {:label :singleton-miss
-            :intermediates [10]
-            :direct-matches []
-            :full-matches #{}
-            :exhaustive? true
-            :expected
-            {:allowed? false
-             :direct-intersection-phases 0
-             :full-candidate-checks 1}}
-           {:label :wide-direct-hit
-            :intermediates [10 20 30]
-            :direct-matches [30]
-            :full-matches #{30}
-            :exhaustive? false
-            :expected
-            {:allowed? true
-             :direct-intersection-phases 1
-             :full-candidate-checks 0}}
-           {:label :wide-exhaustive-hit
-            :intermediates [10 20 30]
-            :direct-matches [20]
-            :full-matches #{20}
-            :exhaustive? true
-            :expected
-            {:allowed? true
-             :direct-intersection-phases 1
-             :full-candidate-checks 0}}
-           {:label :wide-exhaustive-miss
-            :intermediates [10 20 30]
-            :direct-matches []
-            :full-matches #{}
-            :exhaustive? true
-            :expected
-            {:allowed? false
-             :direct-intersection-phases 1
-             :full-candidate-checks 0}}
-           {:label :wide-fallback-hit
-            :intermediates [10 20 30]
-            :direct-matches []
-            :full-matches #{20}
-            :exhaustive? false
-            :expected
-            {:allowed? true
-             :direct-intersection-phases 1
-             :full-candidate-checks 2}}
-           {:label :wide-fallback-miss
-            :intermediates [10 20 30]
-            :direct-matches []
-            :full-matches #{}
-            :exhaustive? false
-            :expected
-            {:allowed? false
-             :direct-intersection-phases 1
-             :full-candidate-checks 3}}]]
-    (let [input (dissoc fixture :label :expected)
-          source (source-acyclic-arrow-path-decision input)
-          generated (generated-acyclic-arrow-path-decision input)]
-      (is (= expected source generated)
-          (pr-str {:label label
-                   :source source
-                   :generated generated})))))
-
-(deftest generated-javascript-acyclic-path-fold-refines-source-control
-  (let [fixtures (acyclic-path-fold-fixtures)]
-    (is (= 407 (count fixtures)))
-    (doseq [[index fixture] (map-indexed vector fixtures)]
-      (let [source (source-acyclic-path-fold fixture)
-            generated (generated-acyclic-path-fold fixture)]
-        (is (= source generated)
-            (pr-str {:fixture index
-                     :input fixture
-                     :source source
-                     :generated generated}))))))
-
-(deftest generated-javascript-permission-path-materialization-refines-source
-  (let [fixtures (path-materialization-fixtures)]
-    (is (= 99 (count fixtures)))
-    (doseq [[index fixture] (map-indexed vector fixtures)]
-      (let [source (source-materialize-permission-paths fixture)
-            generated (production/materialize-permission-paths fixture)]
-        (is (= source generated)
-            (pr-str {:fixture index
-                     :source source
-                     :generated generated}))))))
 
 (deftest generated-javascript-indexed-plan-certification-boundary
   (let [decide
@@ -2062,8 +1085,7 @@
           (verified/decide
            selection
            :indexed-plan-certification
-           input
-           #(throw (ex-info "legacy must not run" {}))))
+           input))
         direct (first (:indexed-rules indexed-plan-input))]
     (is (= {:status :certified}
            (decide indexed-plan-input)))
@@ -2092,8 +1114,7 @@
           (verified/decide
            selection
            :indexed-seed-certification
-           input
-           #(throw (ex-info "legacy must not run" {}))))
+           input))
         direct (first (:indexed-rules indexed-seed-input))]
     (is (= {:status :certified}
            (decide indexed-seed-input)))
@@ -2120,7 +1141,7 @@
            :relation-eid 2
            :resource-type "document"
            :bound-eid 10}
-         :chunk-size 3}
+          :chunk-size 3}
          :response
          {:request-scope 31
           :request-id 7
@@ -2132,8 +1153,7 @@
           (verified/decide
            selection
            :indexed-scan-response
-           input
-           #(throw (ex-info "legacy must not run" {}))))]
+           input))]
     (is (= {:status :accepted
             :values [11 13 18]
             :terminal? false
@@ -2547,7 +1567,7 @@
                                  :denotation-max-weight 1024
                                  :max-inflight 1})
         computes (atom 0)]
-    (binding [subproblem/*engine-selection* selection]
+    (binding [subproblem/*decision-kernel* selection]
       (is (= 7
              (:value
               (subproblem/resolve!
@@ -2567,8 +1587,7 @@
           (verified/decide
            selection
            :authorization-evaluation
-           (assoc authorization-input :request request)
-           #(throw (ex-info "legacy must not run" {}))))
+           (assoc authorization-input :request request)))
         lookup
         (evaluate (:request authorization-input))
         can-result
@@ -2648,7 +1667,7 @@
 (deftest production-lookup-cursor-and-cache-use-generated-javascript-decisions
   (let [adapter (test-adapter)
         cursor-opts
-        {:engine-selection selection
+        {:decision-kernel selection
          :cursor-dependencies
          {:schema-scope {:permission-nodes #{[:document :view]}}
           :relation-ids [10]}
@@ -2685,7 +1704,7 @@
           [10]
           boolean?
           (fn [] (swap! calls inc) true)
-          {:engine-selection selection})]
+          {:decision-kernel selection})]
     (is (identical? adapter selected))
     (is (= {:kind :lookup-eid :result-eid 1}
            (:after internal-query)))
@@ -2693,16 +1712,10 @@
     (is (true? (:cached? (resolve-cache))))
     (is (= 1 @calls))))
 
-(deftest datascript-public-recursive-cache-modes-compare-generated-javascript
+(deftest datascript-public-recursive-cache-modes-use-generated-javascript
   (let [conn (datascript/create-conn)
-        reports (atom [])
-        shadow
-        {:mode :verified-shadow
-         :kernel production/generated-javascript-kernel
-         :report-divergence #(swap! reports conj %)}
         common
-        {:security-key "01234567890123456789012345678901"
-         :engine-selection shadow}
+        {:security-key "01234567890123456789012345678901"}
         cached
         (datascript/make-client
          conn
@@ -2844,9 +1857,7 @@
           (datascript-backend/snapshot-adapter
            (ds/db conn)
            (:opts uncached))
-          raw-page
-          (binding [subproblem/*engine-selection* shadow]
-            (engine/lookup-resources raw-adapter page-query))
+          raw-page (engine/lookup-resources raw-adapter page-query)
           raw-bound (get-in raw-page [:page-info :end-cursor])
           compare!
           (fn [case-id values]
@@ -2942,175 +1953,13 @@
              (:opts uncached))
             stale-error
             (try
-              (binding [subproblem/*engine-selection* shadow]
-                (engine/lookup-resources
-                 changed-adapter
-                 (assoc page-query :after raw-bound)))
+              (engine/lookup-resources
+               changed-adapter
+               (assoc page-query :after raw-bound))
               nil
               (catch :default error
                 error))]
         (is (= :eacl.pagination/stale-cursor
                (:eacl/error (ex-data stale-error))))
         (is (= {:eacl/error :eacl.pagination/stale-cursor}
-               (ex-data stale-error))))
-      (is (empty? @reports)
-          (str "generated JavaScript shadow divergence: "
-               (pr-str @reports))))))
-
-(defn- cljs-selected-graph-identity
-  [client conn]
-  (let [adapter
-        (datascript-backend/snapshot-adapter
-         (ds/db conn) (:opts client))
-        graph-head (backend/invoke adapter :graph-head)]
-    {:snapshot-id (backend/invoke adapter :snapshot-id)
-     :graph-head (select-keys graph-head [:graph-anchor :order-hint])
-     :source-scope (backend/invoke adapter :source-scope)}))
-
-(defn- cljs-public-value-shadow-view
-  [value]
-  (if (map? value)
-    (cond-> (dissoc value :cached? :cache-basis :data :page-info)
-      (contains? value :data)
-      (assoc :data
-             (mapv #(select-keys % [:type :id])
-                   (:data value)))
-
-      (contains? value :page-info)
-      (assoc
-       :page-info
-       (let [page-info (:page-info value)]
-         (cond->
-          (select-keys
-           page-info
-           [:has-next-page? :has-previous-page?])
-           (contains? page-info :start-cursor)
-           (assoc :start-cursor?
-                  (some? (:start-cursor page-info)))
-
-           (contains? page-info :end-cursor)
-           (assoc :end-cursor?
-                  (some? (:end-cursor page-info)))))))
-    value))
-
-(defn- cljs-public-shadow-view
-  [client conn call]
-  (try
-    (let [value (call)]
-      {:outcome :value
-       :value (cljs-public-value-shadow-view value)
-       :cache-provenance
-       (when (map? value)
-         {:cached? (:cached? value)
-          :cache-basis (:cache-basis value)})
-       :selected-graph
-       (cljs-selected-graph-identity client conn)})
-    (catch :default error
-      (assoc
-       (verified/error-shadow-view error)
-       :selected-graph
-       (cljs-selected-graph-identity client conn)))))
-
-(deftest datascript-complete-public-shadow-compares-generated-javascript
-  (let [conn (datascript/create-conn)
-        common
-        {:coherence-authority :managed
-         :security-key "01234567890123456789012345678901"
-         :exact-snapshot-registry-size 16
-         :cache {:remember-answers true}}
-        legacy (datascript/make-client conn common)
-        authoritative
-        (datascript/make-client
-         conn
-         (assoc common :engine-selection selection))
-        reports (atom [])
-        compared (atom 0)
-        shadow
-        {:mode :verified-shadow
-         :kernel production/generated-javascript-kernel
-         :report-divergence #(swap! reports conj %)}
-        user (spice-object :user "complete-user")
-        document-1 (spice-object :document "complete-document-1")
-        document-2 (spice-object :document "complete-document-2")
-        query
-        {:subject user
-         :permission :view
-         :resource/type :document
-         :first 10}
-        compare!
-        (fn [operation legacy-call verified-call]
-          (swap! compared inc)
-          (let [legacy-result
-                (cljs-public-shadow-view legacy conn legacy-call)]
-            (verified/compare-shadow!
-             shadow
-             operation
-             legacy-result
-             #(cljs-public-shadow-view
-               authoritative conn verified-call))))]
-    (eacl/write-schema!
-     legacy
-     "definition user {}
-      definition document {
-        relation reader: user
-        relation parent: document
-        permission view = reader + parent->view
-      }")
-    (ds/transact!
-     conn
-     [{:eacl/id "complete-user"}
-      {:eacl/id "complete-document-1"}
-      {:eacl/id "complete-document-2"}])
-    (eacl/create-relationships!
-     legacy
-     [(eacl/->Relationship user :reader document-1)
-      (eacl/->Relationship document-1 :parent document-2)])
-    (compare!
-     :cljs-public-cache-miss
-     #(eacl/lookup-resources legacy query)
-     #(eacl/lookup-resources authoritative query))
-    (compare!
-     :cljs-public-cache-hit
-     #(eacl/lookup-resources legacy query)
-     #(eacl/lookup-resources authoritative query))
-    (compare!
-     :cljs-public-count
-     #(eacl/count-resources legacy (dissoc query :first))
-     #(eacl/count-resources authoritative (dissoc query :first)))
-    (compare!
-     :cljs-public-can
-     #(eacl/can? legacy user :view document-2)
-     #(eacl/can? authoritative user :view document-2))
-    (let [first-query (assoc query :first 1)
-          legacy-first (eacl/lookup-resources legacy first-query)
-          verified-first
-          (eacl/lookup-resources authoritative first-query)]
-      (swap! compared inc)
-      (verified/compare-shadow!
-       shadow
-       :cljs-public-page-1
-       (cljs-public-shadow-view
-        legacy conn (constantly legacy-first))
-       #(cljs-public-shadow-view
-         authoritative conn (constantly verified-first)))
-      (compare!
-       :cljs-public-page-2
-       #(eacl/lookup-resources
-         legacy
-         (assoc first-query
-                :after
-                (get-in legacy-first [:page-info :end-cursor])))
-       #(eacl/lookup-resources
-         authoritative
-         (assoc first-query
-                :after
-                (get-in verified-first [:page-info :end-cursor])))))
-    (compare!
-     :cljs-public-invalid-page-error
-     #(eacl/lookup-resources legacy (assoc query :first 0))
-     #(eacl/lookup-resources
-       authoritative (assoc query :first 0)))
-    (is (= 7 @compared))
-    (is (empty? @reports)
-        (str "complete DataScript JavaScript public divergence: "
-             (pr-str @reports)))))
+               (ex-data stale-error)))))))

@@ -1,6 +1,6 @@
 (ns eacl.formal.verified-authority-suite
   "Runs the public JVM suites with generated authority injected into every
-  backend client that did not explicitly select a migration mode.
+  backend client through a formal-only default-kernel seam.
 
   The suite records generated calls by backend. A value-only pass is
   insufficient: zero calls for any backend fails the cutover gate because it
@@ -120,25 +120,21 @@
     (verified/-read-indexed-result delegate direction state)))
 
 (defn- verified-selection
-  [backend calls]
-  {:mode :verified-authoritative
-   :kernel
-   (->CountingKernel production/generated-java-kernel backend calls)})
+  [selection backend calls]
+  {:kernel
+   (->CountingKernel (:kernel selection) backend calls)})
 
 (defn- injecting-constructor
   [backend constructor calls]
   (fn [connection options]
-    (let [options (or options {})]
-      (if (contains? options :engine-selection)
-        (constructor connection options)
-        (do
-          (swap! calls update-in [backend :injected-clients] (fnil inc 0))
-          (constructor
-           connection
-           (assoc
-            options
-            :engine-selection
-            (verified-selection backend calls))))))))
+    (swap! calls update-in [backend :injected-clients] (fnil inc 0))
+    ;; Preserve any fixture-local generated wrapper and add the suite counter
+    ;; around the selection visible at the actual constructor call.
+    (let [selection
+          (verified-selection production/default-selection backend calls)]
+      (with-redefs
+       [production/default-selection selection]
+        (constructor connection (or options {}))))))
 
 (defn- load-namespaces!
   [namespaces]

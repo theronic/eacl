@@ -13,8 +13,8 @@ measured p95 allocation premium fell from 3,677,688 to 343,576 bytes for a
 recursive page and from 4,283,960 to 706,496 bytes for cursor continuation.
 Those figures are host measurements, not formal memory bounds.
 
-The five-trial representative gate uses 512 documents and 64 recursive groups.
-It compares direct, acyclic, recursive, cursor, and hot-cache public operations
-between legacy and verified authority. Exact public results are mandatory;
-latency, caller-thread allocation, and backend operations are measured and
-gated as separate dimensions.
+The generated-only heavy suite retains direct, acyclic, recursive, cursor,
+cache, latency, caller-thread allocation, and backend-operation gates. A
+separate generated-only post-full-GC fixture measures retained live heap.
+The obsolete runtime engine comparison was removed with the v8 fallback
+engine; its measurements remain historical evidence, not a runnable v8 mode.

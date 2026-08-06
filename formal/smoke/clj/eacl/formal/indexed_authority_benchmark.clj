@@ -124,9 +124,8 @@
           conn
           (assoc
            common
-           :engine-selection
-           {:mode :verified-authoritative
-            :kernel production/generated-java-kernel}))
+           :decision-kernel
+           {:kernel production/generated-java-kernel}))
          query
          {:subject user
           :permission :read

@@ -83,10 +83,9 @@
               :cljs cljs.core.ExceptionInfo)
            #"boundary"
            (verified/decide
-            {:mode :verified-authoritative :kernel kernel}
+            {:kernel kernel}
             :cache-validation
-            input
-            #(throw (ex-info "legacy must not run" {})))))))
+            input)))))
   (let [kernel
         (->FunctionKernel
          (fn [_ _]
@@ -97,10 +96,9 @@
          #?(:clj clojure.lang.ExceptionInfo
             :cljs cljs.core.ExceptionInfo)
          (verified/decide
-          {:mode :verified-authoritative :kernel kernel}
+          {:kernel kernel}
           :cache-validation
-          valid-cache-input
-          #(throw (ex-info "legacy must not run" {})))))))
+          valid-cache-input)))))
 
 (deftest routing-certificate-result-is-bound-to-its-input
   (let [accepted
@@ -112,25 +110,21 @@
         decide
         (fn [result]
           (verified/decide
-           {:mode :verified-authoritative
-            :kernel (->FunctionKernel (fn [_ _] result))}
+           {:kernel (->FunctionKernel (fn [_ _] result))}
            :recursive-routing-certificate
-           valid-routing-certificate-input
-           #(throw (ex-info "legacy must not run" {}))))]
+           valid-routing-certificate-input))]
     (is (= accepted (decide accepted)))
     (is
      (thrown?
       #?(:clj clojure.lang.ExceptionInfo
          :cljs cljs.core.ExceptionInfo)
       (verified/decide
-       {:mode :verified-authoritative
-        :kernel (->FunctionKernel (fn [_ _] accepted))}
+       {:kernel (->FunctionKernel (fn [_ _] accepted))}
        :recursive-routing-certificate
        (assoc-in
         valid-routing-certificate-input
         [:path-descriptors 0]
-        {:kind :relation :head 0 :target 1})
-       #(throw (ex-info "legacy must not run" {})))))
+        {:kind :relation :head 0 :target 1}))))
     (doseq [result
             [(assoc accepted :traversal [true])
              (assoc accepted :path-checks 1)
@@ -151,28 +145,25 @@
               :cljs cljs.core.ExceptionInfo)
            (decide result))))))
 
-(deftest authoritative-kernel-controls-the-result
+(deftest generated-kernel-result-is-authoritative
   (let [kernel
         (->FunctionKernel
          (fn [_ _]
            {:status :miss :reason :proof-mismatch}))]
     (is (= {:status :miss :reason :proof-mismatch}
            (verified/decide
-            {:mode :verified-authoritative :kernel kernel}
+            {:kernel kernel}
             :cache-validation
-            valid-cache-input
-            (constantly
-             {:status :hit :provenance :exact-hit}))))))
+            valid-cache-input)))))
 
 (deftest current-cache-stage-boundary-is-strict
   (let [input {:stage :exact-entry :available? true}
         decide
         (fn [kernel value]
           (verified/decide
-           {:mode :verified-authoritative :kernel kernel}
+           {:kernel kernel}
            :current-cache-decision
-           value
-           #(throw (ex-info "legacy must not run" {}))))]
+           value))]
     (is (= :use-exact-entry
            (decide
             (->FunctionKernel
@@ -191,7 +182,7 @@
          (decide
           (->FunctionKernel
            (fn [_ _] :use-managed-entry))
-	          input)))))
+          input)))))
 
 (defn- expected-consistency-plan
   [{:keys [mode capability-supported? managed-authority?]}]
@@ -242,12 +233,10 @@
             expected (expected-consistency-plan input)]
         (is (= expected
                (verified/decide
-                {:mode :verified-authoritative
-                 :kernel
+                {:kernel
                  (->FunctionKernel (fn [_ _] expected))}
                 :consistency-plan
-                input
-                #(throw (ex-info "legacy must not run" {}))))))))
+                input))))))
   (testing "all well-formed post-selection observations are exact"
     (doseq [kind [:current :authoritative :at-least :exact]
             selection-present? [false true]
@@ -263,12 +252,10 @@
             expected (expected-consistency-validation input)]
         (is (= expected
                (verified/decide
-                {:mode :verified-authoritative
-                 :kernel
+                {:kernel
                  (->FunctionKernel (fn [_ _] expected))}
                 :consistency-validation
-                input
-                #(throw (ex-info "legacy must not run" {}))))))))
+                input))))))
   (testing "snapshot absence and a malformed present value remain distinct"
     (let [absent {:kind :exact
                   :selection-present? false
@@ -293,10 +280,8 @@
           decide
           (fn [operation input result]
             (verified/decide
-             {:mode :verified-authoritative
-              :kernel (->FunctionKernel (fn [_ _] result))}
-             operation input
-             #(throw (ex-info "legacy must not run" {}))))]
+             {:kernel (->FunctionKernel (fn [_ _] result))}
+             operation input))]
       (doseq [[operation input result]
               [[:consistency-plan
                 (assoc plan :unknown true)
@@ -323,11 +308,9 @@
         decide
         (fn [input result]
           (verified/decide
-           {:mode :verified-authoritative
-            :kernel (->FunctionKernel (fn [_ _] result))}
+           {:kernel (->FunctionKernel (fn [_ _] result))}
            :subproblem-cache-decision
-           input
-           #(throw (ex-info "legacy must not run" {}))))]
+           input))]
     (is (= :start-computation
            (decide input :start-computation)))
     (is (thrown?
@@ -356,11 +339,9 @@
         decide
         (fn [input result]
           (verified/decide
-           {:mode :verified-authoritative
-            :kernel (->FunctionKernel (fn [_ _] result))}
+           {:kernel (->FunctionKernel (fn [_ _] result))}
            :ordered-merge-chunk
-           input
-           #(throw (ex-info "legacy must not run" {}))))]
+           input))]
     (is (= result (decide input result)))
     (doseq [invalid-input
             [(assoc input :unknown true)
@@ -402,10 +383,9 @@
         kernel (->FunctionKernel (fn [_ _] result))
         decide
         #(verified/decide
-          {:mode :verified-authoritative :kernel kernel}
+          {:kernel kernel}
           :relationship-keyset-page
-          %
-          (constantly nil))]
+          %)]
     (is (= result (decide input)))
     (doseq [invalid
             [(assoc input :unknown true)
@@ -423,11 +403,9 @@
            #?(:clj clojure.lang.ExceptionInfo
               :cljs cljs.core.ExceptionInfo)
            (verified/decide
-            {:mode :verified-authoritative
-             :kernel oversized-result-kernel}
+            {:kernel oversized-result-kernel}
             :relationship-keyset-page
-            input
-            (constantly nil)))))))
+            input))))))
 
 (deftest cursor-bound-rebase-boundary-enforces-identity-and-cost
   (let [input {:values [11 17 23 29]
@@ -438,13 +416,11 @@
         decide
         (fn [candidate-input candidate-result]
           (verified/decide
-           {:mode :verified-authoritative
-            :kernel
+           {:kernel
             (->FunctionKernel
              (fn [_ _] candidate-result))}
            :cursor-bound-rebase
-           candidate-input
-           (constantly nil)))]
+           candidate-input))]
     (is (= result (decide input result)))
     (doseq [invalid-input
             [(assoc input :unknown true)
@@ -500,8 +476,7 @@
                   :ordinal ordinal
                   :inspected-count (inc ordinal)}
                  (recur (inc ordinal)))))))
-        selection {:mode :verified-authoritative
-                   :kernel kernel}
+        selection {:kernel kernel}
         chunk-size #?(:clj 4096
                       :cljs 16384)
         value-count (+ (* 2 chunk-size) 808)
@@ -548,9 +523,9 @@
         kernel (->FunctionKernel (fn [_ _] result))
         decide
         #(verified/decide
-          {:mode :verified-authoritative :kernel kernel}
+          {:kernel kernel}
           :authorization-evaluation
-          % (constantly nil))]
+          %)]
     (is (= result (decide valid-authorization-input)))
     (doseq [invalid
             [(assoc valid-authorization-input :unknown true)
@@ -578,195 +553,6 @@
            #?(:clj clojure.lang.ExceptionInfo
               :cljs cljs.core.ExceptionInfo)
            (verified/decide
-            {:mode :verified-authoritative
-             :kernel invalid-result-kernel}
+            {:kernel invalid-result-kernel}
             :authorization-evaluation
-            valid-authorization-input
-            (constantly nil)))))))
-
-(deftest shadow-never-alters-legacy-result
-  (testing "disagreement"
-    (let [diagnostics (atom [])
-          legacy {:status :hit :provenance :exact-hit}
-          kernel
-          (->FunctionKernel
-           (fn [_ _]
-             {:status :miss :reason :proof-mismatch}))]
-      (is (= legacy
-             (verified/decide
-              {:mode :verified-shadow
-               :kernel kernel
-               :report-divergence #(swap! diagnostics conj %)}
-              :cache-validation
-              valid-cache-input
-              (constantly legacy))))
-      (is (= :eacl.verification/shadow-divergence
-             (:type (first @diagnostics))))
-      (is (= [:provenance :reason :status]
-             (:changed-fields (first @diagnostics))))
-      (is (= {:status :hit :provenance :exact-hit}
-             (:legacy-variant (first @diagnostics))))
-      (is (= {:status :miss :reason :proof-mismatch}
-             (:verified-variant (first @diagnostics))))
-      (is (nil? (:input-digest (first @diagnostics))))
-      (is (nil? (:legacy (first @diagnostics))))
-      (is (nil? (:verified (first @diagnostics))))))
-  (testing "kernel failure"
-    (let [diagnostics (atom [])
-          legacy {:status :miss :reason :missing}
-          kernel
-          (->FunctionKernel
-           (fn [_ _]
-             (throw (ex-info "broken provider" {}))))]
-      (is (= legacy
-             (verified/decide
-              {:mode :verified-shadow
-               :kernel kernel
-               :report-divergence #(swap! diagnostics conj %)}
-              :cache-validation
-              valid-cache-input
-              (constantly legacy))))
-      (is (= :eacl.verification/shadow-kernel-failure
-             (:type (first @diagnostics)))))))
-
-(deftest stateful-shadow-comparison-is-redacted-and-never-authoritative
-  (let [diagnostics (atom [])
-        kernel (->FunctionKernel (fn [_ _] nil))
-        legacy {:data [{:type :folder :id 41}]
-                :page-info {:has-next-page? false}}
-        selection
-        {:mode :verified-shadow
-         :kernel kernel
-         :report-divergence #(swap! diagnostics conj %)}]
-    (is (= legacy
-           (verified/compare-shadow!
-            selection
-            :indexed-forward-page
-            legacy
-            (constantly
-             {:data [{:type :folder :id 99}]
-              :page-info {:has-next-page? true}}))))
-    (is (= {:type :eacl.verification/shadow-divergence
-            :operation :indexed-forward-page
-            :changed-fields [:data :page-info]
-            :legacy-variant {}
-            :verified-variant {}}
-           (first @diagnostics)))
-    (is (nil? (:legacy (first @diagnostics))))
-    (is (nil? (:verified (first @diagnostics)))))
-  (testing "generated failure is fail-open and value-free"
-    (let [diagnostics (atom [])
-          legacy true
-          kernel (->FunctionKernel (fn [_ _] nil))]
-      (is (true?
-           (verified/compare-shadow!
-            {:mode :verified-shadow
-             :kernel kernel
-             :report-divergence #(swap! diagnostics conj %)}
-            :indexed-forward-boolean
-            legacy
-            #(throw
-              (ex-info
-               "sensitive authorization value"
-               {:type :generated-failure
-                :secret "must-not-escape"})))))
-      (is (= {:type :eacl.verification/shadow-kernel-failure
-              :operation :indexed-forward-boolean
-              :error-type :generated-failure}
-             (first @diagnostics)))))
-  (testing "non-shadow modes never pay for the duplicate traversal"
-    (let [called? (atom false)]
-      (is (= :legacy
-             (verified/compare-shadow!
-              :legacy-authoritative
-              :indexed-forward-page
-              :legacy
-              #(do (reset! called? true) :generated))))
-      (is (false? @called?)))))
-
-(deftest shadow-error-comparison-covers-complete-portable-ex-data
-  (let [legacy-error
-        (ex-info
-         "legacy"
-         {:type :eacl.test/typed
-          :eacl/error :eacl.test/failure
-          :message-field "left"
-          :nested {:cursor ["a" 1] :retained? true}})
-        equal-error
-        (ex-info
-         "generated"
-         {:nested {:retained? true :cursor ["a" 1]}
-          :message-field "left"
-          :eacl/error :eacl.test/failure
-          :type :eacl.test/typed})
-        different-error
-        (ex-info
-         "generated"
-         {:type :eacl.test/typed
-          :eacl/error :eacl.test/failure
-          :message-field "right"
-          :nested {:cursor ["a" 2] :retained? false}})
-        legacy (verified/error-shadow-view legacy-error)
-        reports (atom [])
-        selection
-        {:mode :verified-shadow
-         :kernel (->FunctionKernel (fn [_ _] nil))
-         :report-divergence #(swap! reports conj %)}]
-    (is (= legacy
-           (verified/error-shadow-view equal-error)))
-    (is (= legacy
-           (verified/compare-shadow!
-            selection
-            :typed-error-comparison
-            legacy
-            #(verified/error-shadow-view equal-error))))
-    (is (empty? @reports))
-    (is (= legacy
-           (verified/compare-shadow!
-            selection
-            :typed-error-comparison
-            legacy
-            #(verified/error-shadow-view different-error))))
-    (is (= [{:type :eacl.verification/shadow-divergence
-             :operation :typed-error-comparison
-             :changed-fields [:error]
-             :legacy-variant
-             {:outcome :error
-              :type :eacl.test/typed
-              :eacl/error :eacl.test/failure}
-             :verified-variant
-             {:outcome :error
-              :type :eacl.test/typed
-              :eacl/error :eacl.test/failure}}]
-           @reports))
-    (is (nil? (:legacy (first @reports))))
-    (is (nil? (:verified (first @reports))))))
-
-(deftest shadow-error-comparison-reports-unavailable-nonportable-data
-  (let [reports (atom [])
-        selection
-        {:mode :verified-shadow
-         :kernel (->FunctionKernel (fn [_ _] nil))
-         :report-divergence #(swap! reports conj %)}
-        unavailable
-        (verified/error-shadow-view
-         (ex-info
-          "nonportable"
-          {:type :eacl.test/nonportable
-           :opaque #?(:clj (Object.) :cljs (js-obj))}))]
-    (is (= :comparison-unavailable (:outcome unavailable)))
-    (is (= unavailable
-           (verified/compare-shadow!
-            selection
-            :typed-error-comparison
-            unavailable
-            (constantly unavailable))))
-    (is (= [{:type :eacl.verification/shadow-comparison-unavailable
-             :operation :typed-error-comparison
-             :legacy-variant
-             {:outcome :comparison-unavailable
-              :type :eacl.test/nonportable}
-             :verified-variant
-             {:outcome :comparison-unavailable
-              :type :eacl.test/nonportable}}]
-           @reports))))
+            valid-authorization-input))))))

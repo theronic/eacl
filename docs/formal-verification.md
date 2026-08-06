@@ -4,12 +4,13 @@ EACL's formal work proves a backend-neutral authorization kernel under named
 adapter, runtime, and cryptographic assumptions. It does not verify Clojure,
 ClojureScript, storage engines, compilers, cryptographic primitives, or a
 customer's policy intent. The current release manifest reports
-`:conditionally-verified`: production routing, cross-adapter campaigns,
-performance, and shadow gates pass, while independent security/formal-methods
-review remains an explicit unmet release obligation. Verified authority is
-the default client mode on Datomic, Datahike, and DataScript. The explicit
-`:legacy-authoritative` selection remains the documented rollback during the
-compatibility window.
+`:conditionally-verified`: production routing, cross-adapter campaigns, and
+performance gates pass, while independent security/formal-methods review
+remains an explicit unmet release obligation. The generated engine is the only
+production decision engine on Datomic, Datahike, and DataScript. Differential
+fixtures and the former handwritten engine are retained outside production
+source paths as independent test oracles; no runtime option can reactivate
+them.
 
 The measured performance consequences and recommended cache-free reference,
 consistency, cache, cursor, and backend architecture are recorded in the
@@ -164,22 +165,25 @@ canonicalization, proof equality, collision resistance, entropy/key management,
 and clock axioms to production functions and tests. These remain assumptions,
 not proved cryptographic claims.
 
-## Shadow operation and rollback
+## Generated authority and retained differential evidence
 
-The internal `:engine-selection` client option now supports
-`:legacy-authoritative`, `:verified-shadow`, and `:verified-authoritative`.
 Generated Java and JavaScript providers implement the portable
-`eacl.verified-kernel/DecisionKernel` boundary. Cursor continuation,
+`eacl.verified-kernel/DecisionKernel` boundary. Production clients always
+install that generated provider; `:engine-selection` is rejected as an unknown
+client option. Cursor continuation,
 relationship request normalization, relationship keyset page flags/window
-size, and decoded cache-entry decisions are routed through that boundary in
-verified modes. The indexed relationship engine retains only an authenticated
+size, and decoded cache-entry decisions are routed through that boundary. The
+indexed relationship engine retains only an authenticated
 physical edge and consumes at most one page plus lookahead; executable
 forward/backward walk tests establish stable, complete, duplicate-free
 composition over certified adapter scans. This is deliberately not a theorem
-of a global or cross-backend result order. Shadow mode reports only the operation,
-changed field names, and non-sensitive result variants. It deliberately emits
-neither raw values nor hashes of low-entropy request/result data; a generated
-exception, invalid result, or disagreement cannot alter the legacy decision.
+of a global or cross-backend result order.
+
+The pre-cutover shadow campaign and its minimized counterexamples remain
+evidence, not executable production behavior. Test-only injection seams run
+the generated provider, retained materialized oracle, and independent
+reference implementations against the same fixtures without adding a
+production rollback branch.
 
 The same boundary now converts complete materialized schema IR, objects,
 relationships, traversal limits, all five authorization request variants, and
@@ -188,8 +192,8 @@ cache-free semantic reference used by differential tests. Its completed
 authorization values are compared with completed indexed results. Its work
 counters and typed limit outcomes are not production resource refinements:
 the reference closes the whole finite fixture, while production is
-query-local. Production limits and dimensionally matching counters are instead
-shadowed against the generated indexed state machine. Cached and uncached
+query-local. Production limits and dimensionally matching counters are
+compared against the generated indexed state machine. Cached and uncached
 public-client state traces cover Datomic, Datahike, and DataScript, including
 unrelated transactions and revocation.
 
@@ -263,27 +267,15 @@ immutable result does not cover current source. It proves no production time,
 allocation, heap, or backend-work bound.
 
 Materializing an entire database remains unacceptable on large EACL graphs.
-The default verified-authoritative route therefore uses the generated indexed
-state machine over certified ordered adapter scans rather than a whole-graph
-runtime evaluator. Public permission checks, lookup, count, pagination, and
-cache/cursor decisions now route through the mapped generated boundaries in
-that mode, and forced-authority shadow/load suites pass on all three backends
-and the supported CLJS target. The legacy route remains explicitly selectable
-for rollback during the compatibility window. Independent review remains a
-separate release-assurance obligation, so the manifest reports
-`:conditionally-verified`, not an unqualified whole-deployment claim.
-
-The planned rollout order is:
-
-1. legacy traversal authority with read-only generated decision shadowing;
-2. opt-in complete generated authority after zero unexplained divergences and all gates;
-3. **current:** generated authority by default with the legacy rollback path retained;
-4. removal of the legacy decision path only after the compatibility window.
-
-Shadow evaluation may not mutate cache entries, cursor/continuation state, or
-backend transactions. Rollback switches authority only; it must retain all
-security fixes, formal artifacts, regression fixtures, and authenticated wire
-compatibility corrections.
+The production route therefore uses the generated indexed state machine over
+certified ordered adapter scans rather than a whole-graph runtime evaluator.
+Public permission checks, lookup, count, pagination, and cache/cursor decisions
+route through the mapped generated boundaries, and generated-authority/load
+suites pass on all three backends and the supported CLJS target. No handwritten
+authorization engine or runtime engine-selection branch is packaged in
+production. Independent review remains a separate release-assurance
+obligation, so the manifest reports `:conditionally-verified`, not an
+unqualified whole-deployment claim.
 
 ## Interpreting the assurance claim
 

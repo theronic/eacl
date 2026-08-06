@@ -153,20 +153,6 @@
   (with-engine-bindings
     (engine/traversal-nodes (snapshot-adapter db))))
 
-(defn traverse-permission-path
-  ([db subject-type subject-id permission-name resource-type cursor]
-   (with-engine-bindings
-     (engine/traverse-permission-path
-      (snapshot-adapter db)
-      subject-type subject-id permission-name resource-type cursor)))
-  ([db subject-type subject-id permission-name resource-type
-    cursor visited-paths]
-   (with-engine-bindings
-     (engine/traverse-permission-path
-      (snapshot-adapter db)
-      subject-type subject-id permission-name resource-type
-      cursor visited-paths))))
-
 (defn can?
   ([db subject permission resource]
    (with-engine-bindings

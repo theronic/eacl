@@ -41,9 +41,7 @@
            {:before 1}
            {:first 0}
            {:last -1}
-           {:first 10001}
-           {:limit 1}
-           {:cursor "legacy"}]]
+           {:first 10001}]]
     (is (= :invalid (:status (formal/paginate [0 1 2] request)))
         (pr-str request)))
   (doseq [n (range 21)

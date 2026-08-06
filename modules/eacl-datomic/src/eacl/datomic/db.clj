@@ -1,12 +1,7 @@
 (ns eacl.datomic.db
   "Datomic-only entity, schema-definition, and ordered adjacency operations."
-  (:require [datomic.api :as d]))
-
-(def forward-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
-
-(def reverse-relationship-attr
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
+  (:require [datomic.api :as d]
+            [eacl.relationships.storage :as relationship-storage]))
 
 (defn object-eid
   [db object-id]
@@ -31,7 +26,7 @@
   [db subject-type subject-id relation-id resource-type cursor-or-options]
   (let [{:keys [direction bound-eid inclusive-bound?]}
         (scan-options cursor-or-options)
-        attr-id (d/entid db forward-relationship-attr)
+        attr-id (d/entid db relationship-storage/forward-attribute)
         prefix [subject-type relation-id resource-type]
         start-tuple (conj prefix
                           (case direction
@@ -60,7 +55,7 @@
   [db resource-type resource-id relation-id subject-type cursor-or-options]
   (let [{:keys [direction bound-eid inclusive-bound?]}
         (scan-options cursor-or-options)
-        attr-id (d/entid db reverse-relationship-attr)
+        attr-id (d/entid db relationship-storage/reverse-attribute)
         prefix [resource-type relation-id subject-type]
         start-tuple (conj prefix
                           (case direction
@@ -136,7 +131,7 @@
   (boolean
    (seq
     (d/datoms
-     db :eavt subject-id forward-relationship-attr
+     db :eavt subject-id relationship-storage/forward-attribute
      [subject-type relation-id resource-type resource-id]))))
 
 (defn schema-version

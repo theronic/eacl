@@ -145,17 +145,9 @@ path does, and `backend-test` covers it directly.
 The schema-prefix and relationship-storage regressions run in both attribute
 representations so a keyword-only implementation cannot pass silently.
 
-## Adapter surfaces
+## Adapter surface
 
-`eacl.backend.spi` remains a six-function compatibility map:
-
-`cache-stamp` · `relation-defs` · `permission-defs` · `subject->resources` ·
-`resource->subjects` · `direct-match?`
-
-None of them mention datoms, seeks, or attribute ids — those are all private to
-this module.
-
-The public v8 client uses `eacl.datahike.backend/snapshot-adapter`. Its
+The public client uses `eacl.datahike.backend/snapshot-adapter`. Its
 validated operation map adds snapshot identity, object ID conversion,
 permission-node discovery, cursor frontier identity, and scoped schema/relation
 proofs. Direct-writer stores support authoritative current selection; retained

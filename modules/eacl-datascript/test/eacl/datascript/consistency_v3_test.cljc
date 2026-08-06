@@ -9,6 +9,7 @@
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.engine.v8 :as engine]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.spicedb.consistency :as consistency]))
 
 (def schema
@@ -476,7 +477,7 @@
         (first
          (ds/datoms
           (ds/db conn) :eavt document-eid
-          datascript-schema/reverse-relationship-attr))]
+          relationship-storage/reverse-attribute))]
     (is (= #{:content-digest} (set (keys schema-proof))))
     (is (= 43 (count (:content-digest schema-proof))))
     (is (= #{:content-digest} (set (keys before-proof))))
@@ -486,7 +487,7 @@
        conn
        [[:db/retract
          document-eid
-         datascript-schema/reverse-relationship-attr
+         relationship-storage/reverse-attribute
          (:v reverse-datom)]])
       (let [half-changed-adapter
             (datascript-backend/snapshot-adapter
@@ -499,7 +500,7 @@
        conn
        [[:db/add
          document-eid
-         datascript-schema/reverse-relationship-attr
+         relationship-storage/reverse-attribute
          (:v reverse-datom)]])
       (is (= before-proof
              (backend/invoke

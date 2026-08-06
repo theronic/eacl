@@ -1,0 +1,10 @@
+{:operation :relationship-page-normalization
+ :entrypoint :clj-java-ffi-bridge
+ :generated-datatype
+ {:name PageWindow.RawPageRequest
+  :fields [:first :last :after :before]}
+ :before
+ {:bridge-arguments
+  [:first :last :after :before :legacy-limit-present? :legacy-cursor-present?]}
+ :observed-error
+ "No matching method create found taking 6 args for class PageWindow.RawPageRequest"}

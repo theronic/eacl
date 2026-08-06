@@ -10,8 +10,8 @@
  [:formal-semantics
   :verified-generated-java
   :verified-generated-javascript
-  :legacy-v8
-  :legacy-indexed
+  :former-v8-test-oracle
+  :former-indexed-test-oracle
   :public-cache-enabled
   :public-cache-disabled
   :datomic
@@ -19,7 +19,7 @@
   :datascript-cljs
   :datahike]
  :runs
- [{:name :semantic-generated-legacy
+ [{:name :semantic-generated-former-oracles
    :namespace eacl.formal.semantics-bridge-test
    :tests 7
    :assertions 226
@@ -61,7 +61,7 @@
     :count-resources
     :count-subjects
    :cursor-continuation
-    :typed-indexed-limit-shadow
+    :typed-indexed-limit-comparison
     :typed-page-normalization
     :typed-stale-cursor]
    :materialized-reference

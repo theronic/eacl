@@ -250,14 +250,8 @@
    {:mode :exact-snapshot}))
 
 (defn dependency-context
-  "Builds bounded metadata that pins a cursor to one exact immutable snapshot.
-
-  `dependencies` is retained as an ignored argument for source compatibility
-  with callers compiled against the former proof-lifting strategy. Cursor
-  correctness no longer depends on proving that two revisions have equal
-  relationship projections: a continuation either uses the identical current
-  revision or reconstructs the authenticated original revision."
-  [adapter _dependencies]
+  "Builds bounded metadata that pins a cursor to one exact immutable snapshot."
+  [adapter]
   (let [graph-head (backend/invoke adapter :graph-head)
         snapshot-id (backend/invoke adapter :snapshot-id)]
     {:source-scope
@@ -381,70 +375,39 @@
    [(:dependency-scope-digest context)
     (:proof-digest context)]))
 
-(defn- same-continuation-proof?
-  [left right]
-  (and
-   (= (:dependency-scope-digest left)
-      (:dependency-scope-digest right))
-   (= (:proof-digest left)
-      (:proof-digest right))))
-
-(defn- legacy-continuation-decision
-  [opts current envelope exact]
-  (cond
-    (identity-mismatch current envelope) :scope-mismatch
-    (same-continuation-proof? current envelope) :current
-    (not= :at-exact-snapshot
-          (:cursor-consistency-mode opts))
-    :rebase-current
-    (nil? exact) :snapshot-unavailable
-    (or (identity-mismatch exact envelope)
-        (not (same-continuation-proof? exact envelope))
-        (not= 0
-              (graph-code
-               (get-in envelope [:graph-head :graph-anchor])
-               (get-in exact [:graph-head :graph-anchor]))))
-    :history-divergence
-    :else :exact))
-
 (defn- continuation-decision
   [opts current envelope exact]
-  (if (= :legacy-authoritative
-         (or (get-in opts [:engine-selection :mode])
-             :legacy-authoritative))
-    (legacy-continuation-decision opts current envelope exact)
-    (let [source (execution-identity current)
-          cursor-source (execution-identity envelope)
-          current-proof (continuation-proof current)
-          cursor-proof (continuation-proof envelope)
-          mode
-          (if (= :at-exact-snapshot
-                 (:cursor-consistency-mode opts))
-            :exact-snapshot
-            :recover-current)
-          exact-decision
-          (when exact
-            {:graph
-             (graph-code
-              (get-in envelope [:graph-head :graph-anchor])
-              (get-in exact [:graph-head :graph-anchor]))
-             :source (execution-identity exact)
-             :proof (continuation-proof exact)})]
-      (verified/decide
-       (:engine-selection opts)
-       :cursor-continuation
-       {:authenticated? true
-        :scope-matches? true
-        :expired? false
-        :source source
-        :cursor-source cursor-source
-        :current-proof current-proof
-        :cursor-proof cursor-proof
-        :mode mode
-        :cursor-graph 0
-        :exact exact-decision}
-       #(legacy-continuation-decision
-         opts current envelope exact)))))
+  (let [source (execution-identity current)
+        cursor-source (execution-identity envelope)
+        current-proof (continuation-proof current)
+        cursor-proof (continuation-proof envelope)
+        mode
+        (if (= :at-exact-snapshot
+               (:cursor-consistency-mode opts))
+          :exact-snapshot
+          :recover-current)
+        exact-decision
+        (when exact
+          {:graph
+           (graph-code
+            (get-in envelope [:graph-head :graph-anchor])
+            (get-in exact [:graph-head :graph-anchor]))
+           :source (execution-identity exact)
+           :proof (continuation-proof exact)})]
+    (verified/decide
+     (or (:decision-kernel opts)
+         subproblem/*decision-kernel*)
+     :cursor-continuation
+     {:authenticated? true
+      :scope-matches? true
+      :expired? false
+      :source source
+      :cursor-source cursor-source
+      :current-proof current-proof
+      :cursor-proof cursor-proof
+      :mode mode
+      :cursor-graph 0
+      :exact exact-decision})))
 
 (defn- stale-context!
   [message reason]
@@ -502,7 +465,7 @@
 
 (defn- current-context
   [adapter _opts]
-  (dependency-context adapter nil))
+  (dependency-context adapter))
 
 (defn- validate-context!
   [adapter opts envelope]
@@ -543,7 +506,7 @@
                :eacl/error
                :eacl.consistency/snapshot-expired})))
           (let [exact-context
-                (dependency-context exact nil)
+                (dependency-context exact)
                 decision
                 (continuation-decision
                  opts current envelope exact-context)]
@@ -668,7 +631,7 @@
 
 (defn- externalize-page-cursors
   [adapter opts operation query page]
-  (let [context (delay (dependency-context adapter nil))
+  (let [context (delay (dependency-context adapter))
         scope (cursor-scope operation query)
         encode-edge
         (fn [edge]

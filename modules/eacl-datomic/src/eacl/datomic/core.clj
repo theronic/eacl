@@ -24,6 +24,7 @@
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]
@@ -850,8 +851,8 @@
          (:current-cache-store opts))
         (assoc consistency-context
                :result
-               (binding [subproblem/*engine-selection*
-                         (:engine-selection opts)]
+               (binding [subproblem/*decision-kernel*
+                         (:decision-kernel opts)]
                  (portable-result kind (compute)))
                :cached? false
                :cache-tier nil
@@ -868,7 +869,7 @@
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
-              :engine-selection (:engine-selection opts)
+              :decision-kernel (:decision-kernel opts)
               :managed-descriptor-key-fn
               (when (:managed-cache-enabled? opts)
                 #(vec (sort (distinct (relation-ids)))))
@@ -910,8 +911,8 @@
   "Client-private cache handles for recursive state, recursive pages, and
   acyclic frontier heads.
 
-  Opaque engine state may contain legacy process-local closures or generated
-  runtime objects, so it must never be accepted from a caller-supplied
+  Opaque generated engine state contains runtime objects, so it must never be
+  accepted from a caller-supplied
   provider or serialized. The private store is created by make-client and is
   not shared across clients. Its key commits to the exact source, adapter,
   identity, schema, query, and snapshot context authenticated by the cursor.
@@ -1092,13 +1093,12 @@
    :relation relation
    :resource (resolve-existing-object db object-id->entid resource)})
 
-(def ^:private relationship-attrs
-  #{:eacl.v7.relationship/subject-type+relation+resource-type+resource
-    :eacl.v7.relationship/resource-type+relation+subject-type+subject})
-
 (defn- relationship-attr-eids
   [db]
-  (into #{} (keep #(d/entid db %)) relationship-attrs))
+  (into
+   #{}
+   (keep #(d/entid db %))
+   relationship-storage/attributes))
 
 (defn- relationship-retraction-count
   [db-after tx-data]
@@ -1144,9 +1144,9 @@
 
   There is no process-local cache bookkeeping here. The committed transaction
   atomically carries the v3 mutation record, graph head, and affected relation
-  mutation identities. Legacy :eacl/relation-version CAS datoms remain only as
-  a Datomic write-serialization mechanism for the existing relationship
-  storage schema; cache validity never depends on them."
+  mutation identities. The :eacl/relation-version CAS datoms are the current
+  Datomic write-serialization mechanism for relationship updates; cache
+  validity never depends on them."
   [conn opts updates]
   (let [updates (vec updates)
         mutation-id (mutation/new-id)]
@@ -1335,22 +1335,6 @@
                          (assoc % key created)))
                key)))))
 
-(def ^:private cursor-equivalence-fields
-  [:source-scope
-   :adapter-fingerprint
-   :identity-contract
-   :dependency-scope-digest
-   :proof-digest])
-
-(defn- cursor-context-equivalent?
-  [current cursor-envelope]
-  (and current
-       (every?
-        (fn [field]
-          (= (secure/canonicalize (get current field))
-             (secure/canonicalize (get cursor-envelope field))))
-        cursor-equivalence-fields)))
-
 (def ^:private cursor-execution-identity-fields
   [:source-scope :adapter-fingerprint :identity-contract])
 
@@ -1374,21 +1358,10 @@
     0
     1))
 
-(defn- legacy-cursor-decision
+(defn- cursor-decision
   [mode current cursor-envelope exact]
-  (cond
-    (cursor-context-equivalent? current cursor-envelope) :current
-    (not= :at-exact-snapshot mode) :rebase-current
-    (nil? exact) :snapshot-unavailable
-    (and (= 0 (cursor-graph-code cursor-envelope exact))
-         (cursor-context-equivalent? exact cursor-envelope))
-    :exact
-    :else :history-divergence))
-
-(defn- generated-cursor-decision
-  [opts mode current cursor-envelope exact]
   (verified/decide
-   (:engine-selection opts)
+   production-kernel/default-selection
    :cursor-continuation
    {:authenticated? true
     :scope-matches? true
@@ -1408,9 +1381,7 @@
     (when exact
       {:graph (cursor-graph-code cursor-envelope exact)
        :source (cursor-execution-identity exact)
-       :proof (cursor-continuation-proof exact)})}
-   #(legacy-cursor-decision
-     mode current cursor-envelope exact)))
+       :proof (cursor-continuation-proof exact)})}))
 
 (defn- snapshot-result-context
   [opts snapshot-adapter prepare decoded]
@@ -1432,7 +1403,7 @@
                      opts db permission-dependency-key))))
         cache-scope [:basis basis-t]
         cursor-context
-        (relay/dependency-context snapshot-adapter nil)]
+        (relay/dependency-context snapshot-adapter)]
     (assoc prepared
            :db db
            :adapter snapshot-adapter
@@ -1464,7 +1435,7 @@
         selection-options
         {:format-options (:format-options opts)
          :coherence-authority (:coherence-authority opts)
-         :engine-selection (:engine-selection opts)
+         :decision-kernel (:decision-kernel opts)
          :issue-token? false
          :timeout-ms (:consistency-sync-timeout-ms opts)}]
     (if (= :minimize-latency (:mode descriptor))
@@ -1506,8 +1477,7 @@
           (let [current-cursor-context
                 (:cursor-context selected-context)
                 initial
-                (generated-cursor-decision
-                 opts mode current-cursor-context decoded nil)]
+                (cursor-decision mode current-cursor-context decoded nil)]
             (case initial
               :current
               selected-context
@@ -1542,8 +1512,8 @@
                     exact-context
                     (snapshot-result-context opts exact prepare decoded)
                     exact-decision
-                    (generated-cursor-decision
-                     opts mode current-cursor-context decoded
+                    (cursor-decision
+                     mode current-cursor-context decoded
                      (:cursor-context exact-context))]
                 (if (= :exact exact-decision)
                   (assoc exact-context :mode :at-exact-snapshot)
@@ -1610,8 +1580,8 @@
         (delay (selected-schema-cache! opts adapter db))
         evaluate
         #(binding [impl.indexed/*schema-cache* @schema-cache
-                   subproblem/*engine-selection*
-                   (:engine-selection opts)]
+                   subproblem/*decision-kernel*
+                   (:decision-kernel opts)]
            (portable-result kind (compute)))
         cacheable?
         (and (:current-cache-store opts)
@@ -1638,7 +1608,7 @@
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
-              :engine-selection (:engine-selection opts)
+              :decision-kernel (:decision-kernel opts)
               :managed-descriptor-key-fn
               (when (:managed-cache-enabled? opts)
                 #(vec
@@ -2229,11 +2199,9 @@
 
 (def ^:private known-client-opt-keys
   #{:entid->object-id
-    :entity->object-id
     :object-id->ident
     :cache
     :page-token-key
-    :page-token-keys
     :page-token-keyring
     :page-token-kid
     :page-token-ttl-seconds
@@ -2248,8 +2216,7 @@
     :adapter-deterministic?
     :consistency-sync-timeout-ms
     :recursive-traversal-limits
-    :auto-migrate-v6
-    :engine-selection})
+    :auto-migrate-v6})
 
 (def ^:private known-cache-opt-keys
   #{:store
@@ -2432,7 +2399,6 @@
   Options (unknown keys throw :eacl/invalid-config — a silently ignored key
   means silently wrong ID coercion):
   - :entid->object-id  (fn [db eid] external-id) — canonical ID coercion, as documented in the README.
-  - :entity->object-id (fn [entity] external-id) — deprecated alias; do not combine with the above.
   - :object-id->ident  (fn [external-id] ident-resolvable-by-d-entid). Default: [:eacl/id id].
   - :cache — controls this client's private current-generation cache.
 
@@ -2476,9 +2442,7 @@
                          skips evaluation. :on-repeat retains it only after the
                          same check has demonstrated reuse.
 
-    Legacy provider/capacity keys remain accepted during the v8 development
-    window, but do not make portable provider values authoritative completed
-    answers. Cursor continuation state is kept in a separate bounded private
+    Cursor continuation state is kept in a separate bounded private
     store. Missing graph-specific continuations restart on the selected current
     graph for ordinary modes; explicit exact mode retains exact replay.
 
@@ -2488,7 +2452,7 @@
     exact-current caching only. Reset, restore, branch/history manipulation,
     and unstamped repair require explicit expire-cache!.
 
-  - :page-token-key / :page-token-keys / :page-token-keyring / :page-token-kid —
+  - :page-token-key / :page-token-keyring / :page-token-kid —
     AES-GCM page-token key material. Default: a random per-client key, meaning
     page tokens do not survive restarts and are not portable across clients;
     supply stable key material in production.
@@ -2512,11 +2476,9 @@
   [conn
    {:as   config-opts
     :keys [entid->object-id
-           entity->object-id
            object-id->ident
            cache
            page-token-key
-           page-token-keys
            page-token-keyring
            page-token-kid
            page-token-ttl-seconds
@@ -2531,8 +2493,7 @@
            adapter-deterministic?
            consistency-sync-timeout-ms
            recursive-traversal-limits
-           auto-migrate-v6
-           engine-selection]
+           auto-migrate-v6]
     :or   {object-id->ident (fn [obj-id] [:eacl/id obj-id])}}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
@@ -2540,10 +2501,6 @@
              {:type :eacl/invalid-config
               :unknown-keys (vec unknown-keys)
               :known-keys known-client-opt-keys})))
-  (when (and entid->object-id entity->object-id)
-    (throw (ex-info "EACL Config Error: supply only one of :entid->object-id (canonical) or :entity->object-id (deprecated alias)."
-             {:type :eacl/invalid-config
-              :conflicting-keys [:entid->object-id :entity->object-id]})))
   (when (contains? config-opts :page-token-ttl-seconds)
     (validate-page-token-ttl! page-token-ttl-seconds))
   (when-not (fn? object-id->ident)
@@ -2643,11 +2600,8 @@
         custom-codec?
         (boolean
          (or entid->object-id
-             entity->object-id
              (contains? config-opts :object-id->ident)))
         entid->object-id   (or entid->object-id
-                               (when entity->object-id
-                                 (fn [db eid] (entity->object-id (d/entity db eid))))
                                (fn [db eid] (:eacl/id (d/entity db eid))))
         object-id->entid   (fn [db object-id]
                              (d/entid db (object-id->ident object-id)))
@@ -2658,7 +2612,7 @@
           true)
         current-kid        (or page-token-kid :current)
         _                  (validate-token-key-id! :page-token-kid current-kid)
-        configured-keyring (or page-token-keyring page-token-keys)
+        configured-keyring page-token-keyring
         keyring            (if configured-keyring
                              (normalize-token-keyring
                               :page-token-keyring
@@ -2737,10 +2691,8 @@
                                        :eacl-id-immutable-v1)})
                                 :adapter-deterministic?
                                 adapter-deterministic?}))
-                            ;; Compatibility/introspection aliases retained
-                            ;; for v7 callers and cache telemetry. Completed
-                            ;; answers execute only through
-                            ;; :shared-cache-store below.
+                            ;; Provider and continuation stores remain separate
+                            ;; from native completed answers.
                             :lookup-cache-store (:store cache-config)
                             :continuation-cache-store
                             (:continuation-store cache-config)
@@ -2785,10 +2737,7 @@
                             :zed-token-current-kid zed-current-kid
                             :zed-token-keyring zed-keyring
                             :format-options format-options
-                            :engine-selection
-                            (verified/normalize-selection
-                             (or engine-selection
-                                 production-kernel/default-selection))
+                            :decision-kernel production-kernel/default-selection
                             :coherence-authority coherence-authority
                             :proof-mode proof-mode
                             :token-ttl-seconds

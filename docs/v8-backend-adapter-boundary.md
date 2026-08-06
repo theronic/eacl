@@ -46,10 +46,9 @@ relationship reads, and mutation transaction planning. Algorithms call these
 operations through `eacl.backend.v8/invoke`; they do not inspect Datomic
 `Database`, DataScript DB, Datahike DB, datom, or tuple implementation types.
 
-The legacy six-function SPI in `eacl.backend.spi` is unchanged. It remains the
-compatibility surface for v7-style third-party adapters. A v8 adapter opts into
-the richer contract and declares exactly which consistency, snapshot, cursor,
-transaction, proof, and runtime capabilities it provides.
+There is one production backend contract. An adapter declares exactly which
+consistency, snapshot, cursor, transaction, proof, and runtime capabilities it
+provides.
 
 ## Capability policy
 

@@ -6,7 +6,8 @@
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.schema :as schema]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.relationships.storage :as relationship-storage]))
 
 (def scan-schema
   "definition user {}
@@ -88,7 +89,7 @@
 
 (defn- forward-reference
   [db subject-type subject-id relation-id resource-type cursor-resource-id]
-  (->> (ds/datoms db :eavt subject-id schema/forward-relationship-attr)
+  (->> (ds/datoms db :eavt subject-id relationship-storage/forward-attribute)
        (keep (fn [{:keys [v]}]
                (when (= [subject-type relation-id resource-type]
                         (subvec v 0 3))
@@ -99,7 +100,7 @@
 
 (defn- reverse-reference
   [db resource-type resource-id relation-id subject-type cursor-subject-id]
-  (->> (ds/datoms db :eavt resource-id schema/reverse-relationship-attr)
+  (->> (ds/datoms db :eavt resource-id relationship-storage/reverse-attribute)
        (keep (fn [{:keys [v]}]
                (when (= [resource-type relation-id subject-type]
                         (subvec v 0 3))

@@ -20,9 +20,9 @@
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
-            [eacl.verified-kernel :as verified]
             [eacl.spicedb.consistency :as consistency]))
 
 (def cursor->token cursor/cursor->token)
@@ -83,7 +83,7 @@
         selection-options
         {:format-options (:format-options opts)
          :coherence-authority (:coherence-authority opts)
-         :engine-selection (:engine-selection opts)
+         :decision-kernel (:decision-kernel opts)
          :issue-token? false
          :timeout-ms (:consistency-sync-timeout-ms opts)}
         selection
@@ -202,8 +202,8 @@
         #(binding [engine/*schema-cache* @schema-cache
                    engine/*recursive-traversal-limits*
                    (:recursive-traversal-limits opts)
-                   subproblem/*engine-selection*
-                   (:engine-selection opts)]
+                   subproblem/*decision-kernel*
+                   (:decision-kernel opts)]
            (compute))
         cacheable?
         (and (:current-cache-store opts)
@@ -235,7 +235,7 @@
           :snapshot-order (:max-tx db)
           :same-snapshot? identical?
           :cache-basis (backend/invoke adapter :snapshot-id)
-          :engine-selection (:engine-selection opts)
+          :decision-kernel (:decision-kernel opts)
           :managed-descriptor-key-fn
           (when (:managed-cache-enabled? opts)
             #(vec (sort (distinct (:relation-ids @dependencies)))))
@@ -299,20 +299,13 @@
        :read-relationships
        filters
        (impl/read-relationships
-        page-db internal-query (:engine-selection cursor-opts))))))
+        page-db internal-query (:decision-kernel cursor-opts))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
   {:subject (spice-object->internal db subject)
    :relation relation
    :resource (spice-object->internal db resource)})
-
-(defn- source-id
-  [db family-id]
-  (let [{:keys [backend id]} (get-in db [:config :store])]
-    {:store-backend backend
-     :store-id (str id)
-     :family-id family-id}))
 
 (defn- response-token
   [db opts]
@@ -371,14 +364,13 @@
         (journal/ensure-migrated! conn)
         (write-response (d/db conn) opts)))))
 
-(def ^:private relationship-attrs
-  #{schema/forward-relationship-attr
-    schema/reverse-relationship-attr})
-
 (defn- relationship-retraction-count
   [db tx-data]
   (let [attr-reprs
-        (into #{} (map #(ddb/attr-repr db %)) relationship-attrs)]
+        (into
+         #{}
+         (map #(ddb/attr-repr db %))
+         relationship-storage/attributes)]
     (count
      (filter
       (fn [{:keys [a added]}]
@@ -455,12 +447,7 @@
 
 (defn datahike-lookup-resources
   [db
-   {:as opts
-    :keys [spice-object->internal
-           entid->object-id
-           object-id->lookup-ref
-           internal-cursor->spice
-           spice-cursor->internal]}
+   {:as opts :keys [spice-object->internal]}
    {:as query :keys [subject]}]
   (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency query))
@@ -493,8 +480,8 @@
              (with-cache-info
                (binding [subproblem/*store*
                          (:subproblem-store answer)
-                         subproblem/*engine-selection*
-                         (:engine-selection cursor-opts)]
+                         subproblem/*decision-kernel*
+                         (:decision-kernel cursor-opts)]
                  (relay/externalize-page
                   adapter cursor-opts :lookup-resources query
                   (:value answer)))
@@ -504,12 +491,9 @@
 
 (defn datahike-count-resources
   [db
-   {:as opts
-    :keys [spice-object->internal
-           spice-cursor->internal
-           internal-cursor->spice]}
+   {:as opts :keys [spice-object->internal]}
    {:as query :keys [subject]}]
-  (let [{selected-db :db adapter :adapter selection :selection
+  (let [{selected-db :db adapter :adapter
          completed-cache? :completed-cache?}
         (selected-context db opts (:consistency query))
         opts (assoc opts :completed-cache? completed-cache?)
@@ -536,11 +520,7 @@
 
 (defn datahike-lookup-subjects
   [db
-   {:as opts
-    :keys [entid->object-id
-           spice-object->internal
-           spice-cursor->internal
-           internal-cursor->spice]}
+   {:as opts :keys [spice-object->internal]}
    query]
   (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency query))
@@ -578,8 +558,8 @@
              (with-cache-info
                (binding [subproblem/*store*
                          (:subproblem-store answer)
-                         subproblem/*engine-selection*
-                         (:engine-selection cursor-opts)]
+                         subproblem/*decision-kernel*
+                         (:decision-kernel cursor-opts)]
                  (relay/externalize-page
                   adapter cursor-opts :lookup-subjects query
                   (:value answer)))
@@ -589,10 +569,7 @@
 
 (defn datahike-count-subjects
   [db
-   {:as opts
-    :keys [spice-object->internal
-           spice-cursor->internal
-           internal-cursor->spice]}
+   {:as opts :keys [spice-object->internal]}
    query]
   (let [{selected-db :db adapter :adapter
          completed-cache? :completed-cache?}
@@ -670,7 +647,7 @@
     (datahike-write-relationships! conn opts
                                    [(->RelationshipUpdate operation
                                                           (->Relationship subject relation resource))]))
-  (write-relationship! [_ {:as demand :keys [operation subject relation resource]}]
+  (write-relationship! [_ {:keys [operation subject relation resource]}]
     (datahike-write-relationships! conn opts
                                    [(->RelationshipUpdate operation
                                                           (->Relationship subject relation resource))]))
@@ -690,7 +667,7 @@
                                      (->RelationshipUpdate :delete rel))))
   (delete-object! [_ object]
     (datahike-delete-object! conn opts object))
-  (delete-relationship! [_ {:as relationship :keys [subject relation resource]}]
+  (delete-relationship! [_ {:keys [subject relation resource]}]
     (datahike-write-relationships! conn opts
                                    [(->RelationshipUpdate :delete
                                                           (->Relationship subject relation resource))]))
@@ -755,7 +732,6 @@
 
 (def ^:private known-client-opt-keys
   #{:entid->object-id
-    :entity->object-id
     :object-id->lookup-ref
     :internal-cursor->spice
     :spice-cursor->internal
@@ -771,8 +747,7 @@
     :proof-mode
     :adapter-fingerprint
     :adapter-deterministic?
-    :consistency-sync-timeout-ms
-    :engine-selection})
+    :consistency-sync-timeout-ms})
 
 (defn make-client
   "Builds an IAuthorization client over a datahike conn.
@@ -780,7 +755,6 @@
   Options (unknown keys throw :eacl/invalid-config - a silently ignored key
   means silently wrong ID coercion, audit 5):
   - :entid->object-id  (fn [db eid] external-id) - canonical.
-  - :entity->object-id (fn [entity] external-id) - deprecated alias; do not combine.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
   - :cache - omitted creates a bounded client-private current-generation
     cache; eacl.cache/no-cache disables it; {:max-entries n} bounds it.
@@ -791,7 +765,6 @@
   [conn
    {:as   config-opts
     :keys [entid->object-id
-           entity->object-id
            object-id->lookup-ref
            internal-cursor->spice
            spice-cursor->internal
@@ -807,8 +780,7 @@
            proof-mode
            adapter-fingerprint
            adapter-deterministic?
-           consistency-sync-timeout-ms
-           engine-selection]
+           consistency-sync-timeout-ms]
     :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -818,10 +790,6 @@
                     {:type :eacl/invalid-config
                      :unknown-keys (vec unknown-keys)
                      :known-keys known-client-opt-keys})))
-  (when (and entid->object-id entity->object-id)
-    (throw (ex-info "EACL Config Error: supply only one of :entid->object-id (canonical) or :entity->object-id (deprecated alias)."
-                    {:type :eacl/invalid-config
-                     :conflicting-keys [:entid->object-id :entity->object-id]})))
   (when (and security-key security-keyring)
     (throw (ex-info "EACL Config Error: supply only one of :security-key or :security-keyring."
                     {:type :eacl/invalid-config
@@ -905,7 +873,6 @@
         custom-codec?
         (boolean
          (or entid->object-id
-             entity->object-id
              (contains? config-opts :object-id->lookup-ref)))
         cache-eligible? (or (not custom-codec?)
                             (and (some? adapter-fingerprint)
@@ -930,8 +897,6 @@
               (:max-entries cache)
               2048)}))
         entid->object-id (or entid->object-id
-                             (when entity->object-id
-                               (fn [db eid] (entity->object-id (d/entity db eid))))
                              (fn [db eid] (:eacl/id (d/entity db eid))))
         opts             {:object-id->lookup-ref object-id->lookup-ref
                           :conn conn
@@ -955,10 +920,7 @@
                           :object-id->entid object-id->entid
                           :cursor-ttl-seconds cursor-ttl-seconds
                           :format-options format-options
-                          :engine-selection
-                          (verified/normalize-selection
-                           (or engine-selection
-                               production-kernel/default-selection))
+                          :decision-kernel production-kernel/default-selection
                           :coherence-authority coherence-authority
                           :proof-mode proof-mode
                           :consistency-sync-timeout-ms

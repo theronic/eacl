@@ -33,9 +33,7 @@
    (presence request :first)
    (presence request :last)
    (presence request :after)
-   (presence request :before)
-   (contains? request :limit)
-   (contains? request :cursor)))
+   (presence request :before)))
 
 (defn paginate
   [values request]

@@ -688,10 +688,10 @@ Or bypass lookup and publication for one request:
 `can?` returns only a Boolean. Cache data is never written to the application's
 database.
 
-After a reset, restore, branch replacement, manual history change, or unstamped
-repair, quiesce the client and call the backend's `expire-cache!`. For cache
-tiers, validity rules, eviction, concurrency, metrics, tuning, and performance
-guidance, read the [cache architecture guide](docs/cache.md).
+Call the backend's `expire-cache!` to clear a client's in-memory cache on
+demand. For cache tiers, validity rules, eviction, concurrency, metrics,
+tuning, and performance guidance, read the
+[cache architecture guide](docs/cache.md).
 
 ### Consistency and Zed tokens
 

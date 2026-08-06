@@ -402,7 +402,6 @@
 (defn- page-error
   [error]
   (cond
-    (.-is_LegacyPagination error) :legacy-pagination
     (.-is_BothDirections error) :both-directions
     (.-is_BothBounds error) :both-bounds
     (.-is_AfterWithoutFirst error) :after-without-first
@@ -422,9 +421,7 @@
          (page-presence (:first request))
          (page-presence (:last request))
          (page-presence (:after request))
-         (page-presence (:before request))
-         (:has-legacy-limit? request)
-         (:has-legacy-cursor? request))
+         (page-presence (:before request)))
         result
         (js-invoke
          (.-__default page-window)
@@ -1735,5 +1732,4 @@
   (->GeneratedJavaScriptKernel))
 
 (def default-selection
-  {:mode :verified-authoritative
-   :kernel generated-javascript-kernel})
+  {:kernel generated-javascript-kernel})

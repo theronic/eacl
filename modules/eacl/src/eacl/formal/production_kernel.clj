@@ -503,7 +503,6 @@
 (defn- page-error
   [^PageError error]
   (cond
-    (.is_LegacyPagination error) :legacy-pagination
     (.is_BothDirections error) :both-directions
     (.is_BothBounds error) :both-bounds
     (.is_AfterWithoutFirst error) :after-without-first
@@ -520,9 +519,7 @@
          (page-presence (:first request))
          (page-presence (:last request))
          (page-presence (:after request))
-         (page-presence (:before request))
-         (:has-legacy-limit? request)
-         (:has-legacy-cursor? request))
+         (page-presence (:before request)))
         ^Tuple2 result
         (PageWindow.__default/PaginateRelationshipItems
          TypeDescriptor/BIG_INTEGER
@@ -1671,5 +1668,4 @@
   (->GeneratedJavaKernel))
 
 (def default-selection
-  {:mode :verified-authoritative
-   :kernel generated-java-kernel})
+  {:kernel generated-java-kernel})

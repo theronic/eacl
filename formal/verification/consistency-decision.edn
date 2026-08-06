@@ -128,8 +128,8 @@
   ["modules/eacl-datomic/src/eacl/datomic/core.clj"
    "modules/eacl-datahike/src/eacl/datahike/core.clj"
    "modules/eacl-datascript/src/eacl/datascript/core.cljc"]
-  :migration-modes
-  [:legacy-authoritative :verified-shadow :verified-authoritative]
+  :production-modes [:generated-authoritative]
+  :runtime-engine-selection-contract :removed
   :captured-current-specialization
   {:selected-adapter :identical-captured-source
    :backend-selection-calls 0

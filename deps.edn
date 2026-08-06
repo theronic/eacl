@@ -20,10 +20,12 @@
         ;; Parsing
         instaparse/instaparse {:mvn/version "1.5.0"}}
  :aliases {:formal-smoke
-           {:extra-paths ["formal/smoke/clj"]
+           {:extra-paths ["formal/smoke/shared"
+                          "formal/smoke/clj"]
             :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}}
            :formal-cljs-smoke
-           {:extra-paths ["formal/smoke/cljs"]
+           {:extra-paths ["formal/smoke/shared"
+                          "formal/smoke/cljs"]
             :extra-deps {org.clojure/clojurescript
                          {:mvn/version "1.12.42"}}}
            :dev {:extra-paths ["modules/eacl/test"

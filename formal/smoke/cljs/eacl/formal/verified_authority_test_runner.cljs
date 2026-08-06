@@ -72,22 +72,18 @@
     (verified/-read-indexed-result delegate direction state)))
 
 (def selection
-  {:mode :verified-authoritative
-   :kernel
+  {:kernel
    (->CountingKernel production/generated-javascript-kernel)})
 
 (def original-make-client datascript/make-client)
 
 (defn- injecting-make-client
   [connection options]
-  (let [options (or options {})]
-    (if (contains? options :engine-selection)
-      (original-make-client connection options)
-      (do
-        (swap! injected-clients inc)
-        (original-make-client
-         connection
-         (assoc options :engine-selection selection))))))
+  (swap! injected-clients inc)
+  ;; Production exposes no kernel selector. The formal runner replaces the
+  ;; released generated default only for the synchronous constructor call.
+  (with-redefs [production/default-selection selection]
+    (original-make-client connection (or options {}))))
 
 (defmethod t/report [::t/default :end-run-tests]
   [summary]

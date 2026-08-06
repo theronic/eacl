@@ -126,9 +126,9 @@ generation, then reuses it. `:managed-proof-max-atoms` provides a hard ceiling;
 overflow or malformed evidence disables managed reuse for that candidate and
 falls back to exact evaluation.
 
-History replacement, branch forcing, restore, and unstamped repair are outside
-the forward managed-writer contract. They require explicit lifecycle
-invalidation.
+Authorization-relevant writes outside the EACL mutation API are outside the
+managed-writer contract. Use `:coherence-authority :unknown` when such writes
+are possible.
 
 ## Shared-subgraph reuse
 
@@ -281,14 +281,14 @@ older computation basis while still equal to recomputation on the selected
 database because its complete schema and relation dependency evidence remains
 unchanged. `can?` returns only a Boolean.
 
-## Lifecycle invalidation
+## Explicit cache clearing
 
 Ordinary forward transactions require no manual cache expiry. Exact entries
 are isolated by immutable database identity, and managed entries change keys
 when a relevant stamp changes.
 
-After reset, restore, branch replacement, manual history manipulation, or an
-unstamped repair, quiesce the client and call:
+Applications and development tools can clear one client's in-memory cache on
+demand:
 
 ```clojure
 (eacl.datomic.core/expire-cache! acl)
@@ -296,8 +296,9 @@ unstamped repair, quiesce the client and call:
 (eacl.datascript.core/expire-cache! acl)
 ```
 
-Expiry atomically swaps the complete cache lifecycle. Work already in flight
-retains only the detached lifecycle and cannot repopulate the new one.
+Clearing atomically swaps the complete cache lifecycle. Work already in flight
+retains only the detached lifecycle and cannot repopulate the new one. This is
+an operational cache-control API, not a v8 rollback or migration mechanism.
 
 ## Cursors and historical reads
 

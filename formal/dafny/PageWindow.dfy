@@ -22,13 +22,10 @@ module PageWindow {
     first: Presence<int>,
     last: Presence<int>,
     after: Presence<nat>,
-    before: Presence<nat>,
-    hasLegacyLimit: bool,
-    hasLegacyCursor: bool
+    before: Presence<nat>
   )
 
   datatype PageError =
-    | LegacyPagination
     | BothDirections
     | BothBounds
     | AfterWithoutFirst
@@ -63,9 +60,7 @@ module PageWindow {
                 maximumSize
               ).size <= maximumSize
   {
-    if raw.hasLegacyLimit || raw.hasLegacyCursor then
-      InvalidPageRequest(LegacyPagination)
-    else if !raw.first.Absent? && !raw.last.Absent? then
+    if !raw.first.Absent? && !raw.last.Absent? then
       InvalidPageRequest(BothDirections)
     else if !raw.after.Absent? && !raw.before.Absent? then
       InvalidPageRequest(BothBounds)
@@ -120,9 +115,7 @@ module PageWindow {
     defaultSize: nat,
     maximumSize: nat
   )
-    requires raw.hasLegacyLimit ||
-             raw.hasLegacyCursor ||
-             (!raw.first.Absent? && !raw.last.Absent?) ||
+    requires (!raw.first.Absent? && !raw.last.Absent?) ||
              (!raw.after.Absent? && !raw.before.Absent?) ||
              (!raw.after.Absent? && raw.first.Absent?) ||
              (!raw.before.Absent? && raw.last.Absent?) ||
@@ -531,9 +524,7 @@ module PageWindow {
       raw.first,
       raw.last,
       if raw.after.Absent? then raw.after else rebound,
-      if raw.before.Absent? then raw.before else rebound,
-      raw.hasLegacyLimit,
-      raw.hasLegacyCursor
+      if raw.before.Absent? then raw.before else rebound
     )
   }
 

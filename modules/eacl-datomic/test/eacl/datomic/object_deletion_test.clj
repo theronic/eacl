@@ -20,7 +20,8 @@
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.integrity :as integrity]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.relationships.storage :as relationship-storage]))
 
 (def ^:private test-schema
   "definition user {}
@@ -41,10 +42,10 @@
      :a (d/entid db [:eacl/id "a"])}))
 
 (defn- forward-count [db eid]
-  (count (seq (d/datoms db :eavt eid :eacl.v7.relationship/subject-type+relation+resource-type+resource))))
+  (count (seq (d/datoms db :eavt eid relationship-storage/forward-attribute))))
 
 (defn- reverse-count [db eid]
-  (count (seq (d/datoms db :eavt eid :eacl.v7.relationship/resource-type+relation+subject-type+subject))))
+  (count (seq (d/datoms db :eavt eid relationship-storage/reverse-attribute))))
 
 (deftest retract-entity-leaves-orphans-that-delete-object-prevents-test
   (testing "deleting the RESOURCE: the subject's forward half used to keep granting"
@@ -134,10 +135,10 @@
                     (d/db conn)
                     :eavt
                     u
-                    :eacl.v7.relationship/subject-type+relation+resource-type+resource))]
+                    relationship-storage/forward-attribute))]
       @(d/transact conn [[:db/retract
                           u
-                          :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                          relationship-storage/forward-attribute
                           (vec (:v forward))]])
       (is (= 1 (reverse-count (d/db conn) a)))
       (is (= 1
@@ -295,9 +296,9 @@
       (testing ":delete removes both halves even when only one is present"
         ;; hand-retract the forward half only, simulating a partial write
         (let [forward (first (d/datoms (d/db conn) :eavt u
-                                       :eacl.v7.relationship/subject-type+relation+resource-type+resource))]
+                                       relationship-storage/forward-attribute))]
           @(d/transact conn [[:db/retract u
-                              :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                              relationship-storage/forward-attribute
                               (vec (:v forward))]]))
         (is (= 1 (reverse-count (d/db conn) a)) "reverse half survives")
 
@@ -307,9 +308,9 @@
     (let [{:keys [u a]} (seed! conn)]
       (testing ":touch re-asserts a missing half instead of reporting it present"
         (let [reverse-datom (first (d/datoms (d/db conn) :eavt a
-                                             :eacl.v7.relationship/resource-type+relation+subject-type+subject))]
+                                             relationship-storage/reverse-attribute))]
           @(d/transact conn [[:db/retract a
-                              :eacl.v7.relationship/resource-type+relation+subject-type+subject
+                              relationship-storage/reverse-attribute
                               (vec (:v reverse-datom))]]))
         (is (zero? (reverse-count (d/db conn) a)))
 

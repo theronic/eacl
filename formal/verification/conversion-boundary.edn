@@ -92,7 +92,7 @@
   [:generated-java-production-boundary-tests
    :generated-javascript-production-boundary-tests
    :cross-runtime-vectors
-   :complete-public-shadow-comparison]
+   :complete-public-generated-reference-comparison]
   :not-claimed
   [:formal-proof-of-clojure-or-clojurescript-source
    :runtime-or-compiler-correctness]}}

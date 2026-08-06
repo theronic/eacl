@@ -14,8 +14,7 @@
    (java.lang.management ManagementFactory)))
 
 (def ^:private selection
-  {:mode :verified-authoritative
-   :kernel production/generated-java-kernel})
+  {:kernel production/generated-java-kernel})
 
 (def ^:private allocation-bean
   (let [bean (ManagementFactory/getThreadMXBean)]
@@ -81,11 +80,7 @@
         (verified/decide
          selection
          :recursive-routing-certificate
-         input
-         #(throw
-           (ex-info
-            "Legacy routing oracle ran during generated benchmark."
-            {})))
+         input)
         elapsed (- (System/nanoTime) started)
         allocated-after (allocated-bytes)]
     {:node-count node-count

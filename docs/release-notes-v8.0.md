@@ -175,10 +175,9 @@ snapshot-token calculation, canonicalization, or result-envelope creation.
 Cache-disabled callers therefore do not pay the expensive parts of the cache
 strategy.
 
-Caller-supplied portable providers are no longer trusted for completed native
+Caller-supplied portable providers are not trusted for completed native
 authorization answers. Provider corruption/failure cannot produce an allow.
-Legacy provider types remain as compatibility and test surfaces, while
-continuation state is isolated in a separate bounded private store.
+Continuation state is isolated in a separate bounded private store.
 
 ## Cursor redesign
 
@@ -355,9 +354,9 @@ trusted or empirically certified boundaries.
 The release manifest is therefore `:conditionally-verified`, not unqualified
 `:verified`. It deliberately withholds verified release status until an
 independent security/formal-methods review is recorded. Generated authority is
-now the packaged default for Datomic, Datahike, and DataScript; explicit
-`:legacy-authoritative` selection remains the compatibility-window rollback.
-Removing that legacy path remains a later rollout task.
+the only packaged decision engine for Datomic, Datahike, and DataScript. The
+former handwritten engine remains only as a test oracle outside production
+source paths.
 
 ## Performance evidence
 

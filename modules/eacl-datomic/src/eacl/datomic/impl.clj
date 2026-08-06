@@ -7,7 +7,8 @@
    [eacl.datomic.impl.base :as base]
    [eacl.datomic.impl.indexed :as impl.indexed]
    [eacl.engine.v8 :as engine]
-   [eacl.relationships.endpoint-pair :as endpoint-pair]))
+   [eacl.relationships.endpoint-pair :as endpoint-pair]
+   [eacl.relationships.storage :as relationship-storage]))
 
 (def Relation base/Relation)
 (def Permission base/Permission)
@@ -70,12 +71,6 @@
     (engine/count-subjects
      (backend/snapshot-adapter db)
      query)))
-
-(def ^:private forward-relationship-attr
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
-
-(def ^:private reverse-relationship-attr
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
 
 (def ^:private relation-version-attr :eacl/relation-version)
 (def ^:private schema-version-attr :eacl/schema-version)
@@ -215,31 +210,31 @@
 (defn- add-relationship-txes
   [resolved]
   [[:db/add (:subject-eid resolved)
-    forward-relationship-attr
+    relationship-storage/forward-attribute
     (relationship-tuple resolved)]
    [:db/add (:resource-eid resolved)
-    reverse-relationship-attr
+    relationship-storage/reverse-attribute
     (reverse-relationship-tuple resolved)]
    (tx-relation-version-stamp (:relation-eid resolved))])
 
 (defn- retract-relationship-txes
   [resolved]
   [[:db/retract (:subject-eid resolved)
-    forward-relationship-attr
+    relationship-storage/forward-attribute
     (relationship-tuple resolved)]
    [:db/retract (:resource-eid resolved)
-    reverse-relationship-attr
+    relationship-storage/reverse-attribute
     (reverse-relationship-tuple resolved)]
    (tx-relation-version-stamp (:relation-eid resolved))])
 
 (defn- forward-tuple-exists?
   [db {:keys [subject-eid] :as resolved}]
-  (boolean (seq (d/datoms db :eavt subject-eid forward-relationship-attr
+  (boolean (seq (d/datoms db :eavt subject-eid relationship-storage/forward-attribute
                           (relationship-tuple resolved)))))
 
 (defn- reverse-tuple-exists?
   [db {:keys [resource-eid] :as resolved}]
-  (boolean (seq (d/datoms db :eavt resource-eid reverse-relationship-attr
+  (boolean (seq (d/datoms db :eavt resource-eid relationship-storage/reverse-attribute
                           (reverse-relationship-tuple resolved)))))
 
 (defn- relationship-exists?
@@ -369,7 +364,7 @@
       subject-eid
       {:key :subject-forward
        :index :eavt
-       :attr-eid (d/entid db forward-relationship-attr)
+       :attr-eid (d/entid db relationship-storage/forward-attribute)
        :fixed-eid subject-eid
        :tuple-prefix (not-empty (forward-tuple-prefix filters relation-hint))
        :decode decode-forward-datom}
@@ -377,7 +372,7 @@
       resource-eid
       {:key :resource-reverse
        :index :eavt
-       :attr-eid (d/entid db reverse-relationship-attr)
+       :attr-eid (d/entid db relationship-storage/reverse-attribute)
        :fixed-eid resource-eid
        :tuple-prefix (not-empty (reverse-tuple-prefix filters relation-hint))
        :decode decode-reverse-datom}
@@ -385,14 +380,14 @@
       (seq (forward-tuple-prefix filters relation-hint))
       {:key :global-forward
        :index :avet
-       :attr-eid (d/entid db forward-relationship-attr)
+       :attr-eid (d/entid db relationship-storage/forward-attribute)
        :tuple-prefix (forward-tuple-prefix filters relation-hint)
        :decode decode-forward-datom}
 
       :else
       {:key :global-reverse
        :index :avet
-       :attr-eid (d/entid db reverse-relationship-attr)
+       :attr-eid (d/entid db relationship-storage/reverse-attribute)
        :tuple-prefix (not-empty (reverse-tuple-prefix filters relation-hint))
        :decode decode-reverse-datom})))
 
@@ -641,9 +636,9 @@
 (defn- relationship-pair-retractions
   "Both halves of one relationship, as retraction ops."
   [subject-type subject-eid relation-eid resource-type resource-eid]
-  [[:db/retract subject-eid forward-relationship-attr
+  [[:db/retract subject-eid relationship-storage/forward-attribute
     [subject-type relation-eid resource-type resource-eid]]
-   [:db/retract resource-eid reverse-relationship-attr
+   [:db/retract resource-eid relationship-storage/reverse-attribute
     [resource-type relation-eid subject-type subject-eid]]])
 
 (defn- op-attr
@@ -659,8 +654,8 @@
   op. Both tuple attributes carry the relation eid at position 1."
   [op]
   (let [attr (op-attr op)]
-    (when (or (identical? attr forward-relationship-attr)
-              (identical? attr reverse-relationship-attr))
+    (when (or (identical? attr relationship-storage/forward-attribute)
+              (identical? attr relationship-storage/reverse-attribute))
       (let [v (nth op 3 nil)]
         (when (and (vector? v) (<= 2 (count v)))
           (nth v 1))))))
@@ -781,11 +776,11 @@
                 reverse-value [resource-type relation-eid subject-type eid]]
             (when (or (= eid resource-eid)
                       (empty? (d/datoms db :eavt resource-eid
-                                        reverse-relationship-attr
+                                        relationship-storage/reverse-attribute
                                         reverse-value)))
               (relationship-pair-retractions subject-type eid relation-eid
                                              resource-type resource-eid))))
-        (d/datoms db :eavt eid forward-relationship-attr))
+        (d/datoms db :eavt eid relationship-storage/forward-attribute))
 
        ;; Orphaned reverse halves. Healthy self-edges were emitted above.
        (mapcat
@@ -793,11 +788,11 @@
           (let [[resource-type relation-eid subject-type subject-eid] (:v datom)
                 forward-value [subject-type relation-eid resource-type eid]]
             (when (empty? (d/datoms db :eavt subject-eid
-                                    forward-relationship-attr
+                                    relationship-storage/forward-attribute
                                     forward-value))
               (relationship-pair-retractions subject-type subject-eid
                                              relation-eid resource-type eid))))
-        (d/datoms db :eavt eid reverse-relationship-attr))
+        (d/datoms db :eavt eid relationship-storage/reverse-attribute))
 
        ;; Peer halves naming this object as the SUBJECT.
        (mapcat
@@ -808,7 +803,7 @@
              (when (not= eid (:e datom))
                (relationship-pair-retractions subject-type eid relation-eid
                                               resource-type (:e datom))))
-           (d/datoms db :avet reverse-relationship-attr
+           (d/datoms db :avet relationship-storage/reverse-attribute
                      [resource-type relation-eid subject-type eid])))
         triples)
 
@@ -820,7 +815,7 @@
              (when (not= eid (:e datom))
                (relationship-pair-retractions subject-type (:e datom)
                                               relation-eid resource-type eid)))
-           (d/datoms db :avet forward-relationship-attr
+           (d/datoms db :avet relationship-storage/forward-attribute
                      [subject-type relation-eid resource-type eid])))
         triples)))
     ()))
@@ -855,26 +850,26 @@
   value (not history/filter)."
   [db]
   (concat
-   (for [datom (d/datoms db :aevt forward-relationship-attr)
+   (for [datom (d/datoms db :aevt relationship-storage/forward-attribute)
          :let  [subject-eid (:e datom)
                 [subject-type relation-eid resource-type resource-eid] (:v datom)]
-         :when (empty? (d/datoms db :eavt resource-eid reverse-relationship-attr
+         :when (empty? (d/datoms db :eavt resource-eid relationship-storage/reverse-attribute
                                  [resource-type relation-eid subject-type subject-eid]))]
      {:half          :forward
       :e             subject-eid
-      :attr          forward-relationship-attr
+      :attr          relationship-storage/forward-attribute
       :v             (vec (:v datom))
       :subject-eid   subject-eid
       :resource-eid  resource-eid
       :relation-eid  relation-eid})
-   (for [datom (d/datoms db :aevt reverse-relationship-attr)
+   (for [datom (d/datoms db :aevt relationship-storage/reverse-attribute)
          :let  [resource-eid (:e datom)
                 [resource-type relation-eid subject-type subject-eid] (:v datom)]
-         :when (empty? (d/datoms db :eavt subject-eid forward-relationship-attr
+         :when (empty? (d/datoms db :eavt subject-eid relationship-storage/forward-attribute
                                  [subject-type relation-eid resource-type resource-eid]))]
      {:half          :reverse
       :e             resource-eid
-      :attr          reverse-relationship-attr
+      :attr          relationship-storage/reverse-attribute
       :v             (vec (:v datom))
       :subject-eid   subject-eid
       :resource-eid  resource-eid

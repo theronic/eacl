@@ -87,6 +87,6 @@
   :production-authority
   {:clj-java :generated
    :cljs-javascript :generated
-   :legacy :equivalent-shadowed-fallback}
+   :runtime-engine-selector :absent}
   :counterexample :EACL-FORMAL-044}
  :remaining []}

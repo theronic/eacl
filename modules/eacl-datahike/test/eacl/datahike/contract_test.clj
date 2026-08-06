@@ -28,20 +28,19 @@
                                    :eacl/id id})
                                 contract/smoke-objects))))
 
-(deftest generated-authority-is-the-default-with-explicit-legacy-rollback-test
+(deftest generated-authority-is-the-only-production-engine-test
   (let [conn (datahike/create-conn)
         default-selection
-        (get-in (datahike/make-client conn {}) [:opts :engine-selection])
-        legacy-selection
-        (get-in
-         (datahike/make-client
-          conn
-          {:engine-selection {:mode :legacy-authoritative}})
-         [:opts :engine-selection])]
-    (is (= :verified-authoritative (:mode default-selection)))
+        (get-in (datahike/make-client conn {}) [:opts :decision-kernel])
+        error
+        (try
+          (datahike/make-client conn {:engine-selection :anything})
+          nil
+          (catch clojure.lang.ExceptionInfo exception
+            (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-    (is (= :legacy-authoritative (:mode legacy-selection)))
-    (is (nil? (:kernel legacy-selection)))))
+    (is (= :eacl/invalid-config (:type error)))
+    (is (= [:engine-selection] (:unknown-keys error)))))
 
 (defn- run-contract!
   [config]
