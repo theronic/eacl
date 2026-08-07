@@ -301,6 +301,24 @@ jobs:
                      \"generated JVM cursor rebase resource gate regressed\"
                      result)))
                  (:summary result)))"
+
+      - name: Gate Explorer enumeration against recorded v7 baselines
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.bench.explorer-enumeration-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.bench.explorer-enumeration-test)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (or (pos? (:fail result)) (pos? (:error result)))
+                   (throw
+                    (ex-info
+                     \"explorer enumeration gate regressed\"
+                     result)))
+                 result))"
           sh bin/ci-nrepl-eval 7788 \
             "(do
                (require '[cljs.build.api :as cljs] :reload)
@@ -378,6 +396,9 @@ jobs:
           bin/formal tla-typecheck
           bin/formal apalache-check
           bin/formal apalache-invariant
+
+      - name: Require temporal cache spec mutants to fail (kill controls)
+        run: bin/formal apalache-mutation-control
 
       - name: Run larger scheduled temporal bound
         if: github.event_name == 'schedule'

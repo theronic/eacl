@@ -1460,3 +1460,25 @@
       (is (= killed (count registered-clojure)))
       (is (<= required-score score))
       (is (= 1 score)))))
+
+(deftest ledger-matches-registry-test
+  ;; The recorded mutation-control ledger must track the registry: a
+  ;; registered mutant that the ledger does not count is a silently
+  ;; dormant control (the 103-vs-96 drift found in the v8 audit).
+  (let [{:keys [mutants]} (registry)
+        clojure-mutants
+        (filterv #(not= :apalache (get-in % [:control :kind])) mutants)
+        apalache-mutants
+        (filterv #(= :apalache (get-in % [:control :kind])) mutants)
+        ledger (edn/read-string
+                (slurp (repo/file "formal" "verification"
+                                  "mutation-control.edn")))]
+    (testing "totals"
+      (is (= (count mutants) (:mutants ledger)))
+      (is (= (:mutants ledger) (:killed ledger)))
+      (is (zero? (:survived ledger))))
+    (testing "per-control-kind counts"
+      (is (= (count clojure-mutants)
+             (get-in ledger [:controls :clojure :mutants])))
+      (is (= (count apalache-mutants)
+             (get-in ledger [:controls :apalache :mutants]))))))
