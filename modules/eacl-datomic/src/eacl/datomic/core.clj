@@ -1873,8 +1873,8 @@
             answer
             (cached-authorization-result
              selected-opts result-context :lookup-resources
-             {:public (dissoc query :consistency :cache?)
-              :internal internal-query}
+             (shared-cache/lookup-page-query-identity
+              query internal-query)
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
@@ -1996,8 +1996,8 @@
             answer
             (cached-authorization-result
              selected-opts result-context :lookup-subjects
-             {:public (dissoc query :consistency :cache?)
-              :internal internal-query}
+             (shared-cache/lookup-page-query-identity
+              query internal-query)
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)

@@ -68,6 +68,32 @@
                      :value cache-option})))
   cache-option)
 
+(defn lookup-page-query-identity
+  "Builds the semantic cache identity for an authenticated lookup page.
+
+  Public cursors are signed transport envelopes whose snapshot metadata can
+  change when the same logical boundary is recovered on a newer current
+  snapshot. The authenticated internal boundary is the semantic position.
+  `:rebase?` is likewise an execution instruction, not part of that position.
+
+  Call only after the public cursor has been authenticated and internalized."
+  [public-query internal-query]
+  (let [semantic-bound
+        (fn [bound]
+          (if (map? bound)
+            (dissoc bound :rebase?)
+            bound))]
+    {:public
+     (dissoc public-query
+             :consistency :cache? :after :before)
+     :internal
+     (cond-> (dissoc internal-query :consistency :cache?)
+       (contains? internal-query :after)
+       (update :after semantic-bound)
+
+       (contains? internal-query :before)
+       (update :before semantic-bound))}))
+
 (defn- entry-kind
   [key]
   (or (:kind key)

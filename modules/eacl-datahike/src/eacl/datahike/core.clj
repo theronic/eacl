@@ -510,8 +510,7 @@
              answer
              (cached-engine-result
               adapter cursor-opts :lookup-resources
-              {:public (dissoc query :consistency)
-               :internal internal-query}
+              (cache/lookup-page-query-identity query internal-query)
               (:resource/type internal-query)
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
@@ -593,8 +592,7 @@
              answer
              (cached-engine-result
               adapter cursor-opts :lookup-subjects
-              {:public (dissoc query :consistency)
-               :internal internal-query}
+              (cache/lookup-page-query-identity query internal-query)
               (:type (:resource internal-query))
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))

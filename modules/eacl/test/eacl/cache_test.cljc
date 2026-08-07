@@ -885,6 +885,45 @@
    :semantic-key {:operation kind
                   :id id}})
 
+(deftest authenticated-page-query-identity-ignores-cursor-transport-test
+  (let [base-public
+        {:subject {:type :user :id "user"}
+         :permission :view
+         :resource/type :document
+         :first 20}
+        base-internal
+        {:subject {:type :user :id 1}
+         :permission :view
+         :resource/type :document
+         :first 20}
+        boundary {:kind :lookup-eid :resource 42}
+        original
+        (cache/lookup-page-query-identity
+         (assoc base-public :after "signed-snapshot-a")
+         (assoc base-internal :after boundary))
+        recovered
+        (cache/lookup-page-query-identity
+         (assoc base-public
+                :after "signed-snapshot-b"
+                :cache? true)
+         (assoc base-internal
+                :after (assoc boundary :rebase? true)))]
+    (is (= original recovered)
+        "snapshot transport and recovery instructions are not semantics")
+    (is (not=
+         original
+         (cache/lookup-page-query-identity
+          (assoc base-public :after "signed-snapshot-c")
+          (assoc base-internal
+                 :after (assoc boundary :resource 43))))
+        "the authenticated internal boundary still distinguishes pages")
+    (is (not=
+         original
+         (cache/lookup-page-query-identity
+          (assoc base-public :after "signed-snapshot-d" :first 50)
+          (assoc base-internal :after boundary :first 50)))
+        "page size remains semantic")))
+
 (deftest local-store-capacity-and-kind-metrics-test
   (let [store (cache/local-store {:max-entries 2})
         can-key (store-key :can? 1)
