@@ -2,10 +2,10 @@
 
 All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). Every performance task tightens a recorded gate envelope; every correctness task adds or un-skips a pinning test. Task numbers reference design decisions (D-1…D-10) and specs.
 
-> **PROGRESS — 35/54 done. Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
-> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6). Partials: 11.1 (watermark), 11.3 (warnings/prints).
+> **PROGRESS — 39/54 done. Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
+> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6), 8 (managed cert + fail-safe default/R9). Partials: 11.1 (watermark), 11.3 (warnings/prints).
 > - **Deferred with cause:** 6.4 (AEAD portable codec — sync CLJS GCM; see design D-4 note).
-> - **Remaining:** 8 (managed cert + DataScript default flip/R9), 9 (backend de-fork/R7), 10 (CLJS engine/R8), 11 remainder + Dafny cleanup (R10), 12 (batched protocol — conditional on the latency gate; likely triggers).
+> - **Remaining:** 9 (backend de-fork/R7), 10 (CLJS engine/R8), 11 remainder + Dafny cleanup (R10), 12 (batched protocol — conditional on the latency gate; likely triggers).
 
 ## 1. Gates and counters first (D-10, recursion-performance-gates)
 
@@ -65,10 +65,10 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 8. Managed certification and authority posture (D-5, managed-reuse-certification)
 
-- [ ] 8.1 Flip the DataScript default to `:coherence-authority :unknown`; update the one asserting contract test; add the stale-ALLOW pinning regression (raw retraction on a default client must deny)
-- [ ] 8.2 Rewrite docs (cache.md, v8-subproblem-cache.md, v8-consistency-cache-operations.md, release notes, README quickstart): managed cross-revision reuse covers projections AND denotations; writer contract; `:managed` as explicit opt-in; remove the "denotations disabled" claims
-- [ ] 8.3 Add `:managed` configurations to the randomized differential oracles on all three backends (interleaved EACL-API writes, cached-vs-cache-free equality); port the cache model oracle to DataScript
-- [ ] 8.4 Add the dependency-closure completeness assertion to plan compilation (compiled rule relation eids ⊆ closure, typed failure)
+- [x] 8.1 Flip the DataScript default to `:coherence-authority :unknown`; update the one asserting contract test; add the stale-ALLOW pinning regression (raw retraction on a default client must deny)
+- [x] 8.2 Rewrite docs (cache.md, v8-subproblem-cache.md, v8-consistency-cache-operations.md, release notes, README quickstart): managed cross-revision reuse covers projections AND denotations; writer contract; `:managed` as explicit opt-in; remove the "denotations disabled" claims (also corrected the stale max-fold dependency-stamp description to the sorted per-relation vector)
+- [x] 8.3 Add `:managed` configurations to the randomized differential oracles on all three backends (interleaved EACL-API writes, cached-vs-cache-free equality); port the cache model oracle to DataScript (and Datahike; DataScript port also runs in the CLJS suite)
+- [x] 8.4 Add the dependency-closure completeness assertion to plan compilation (compiled rule relation eids ⊆ closure, typed failure) (engine-direct raw op-count envelope re-recorded 10→11 path calcs with rationale — the one closure walk per compile; memoized to zero under any schema cache)
 
 ## 9. Backend de-fork (D-7, backend-unification)
 

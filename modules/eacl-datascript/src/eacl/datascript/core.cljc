@@ -867,11 +867,13 @@
   - :entid->object-id  (fn [db eid] external-id) - canonical.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
   - :cache - omitted creates a bounded client-private current-generation
-    cache; eacl.cache/no-cache disables it; {:max-entries n} bounds it.
-    DataScript defaults to :coherence-authority :managed because the EACL
-    client is assumed to own every schema and relationship mutation. Set
-    :coherence-authority :unknown when authorization-relevant writes can
-    bypass EACL; unknown authority remains exact-current.
+    cache; eacl.cache/no-cache disables it; a config map bounds it.
+    :coherence-authority defaults to :unknown on every backend: cached
+    entries are reused only for the exact immutable database value they
+    were computed on, which stays correct under raw ds/transact! writes.
+    Pass :coherence-authority :managed - an explicit writer contract that
+    every schema and relationship mutation goes through EACL's APIs - to
+    let unchanged cache portions survive unrelated transactions.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn
@@ -959,7 +961,9 @@
                      :key :exact-snapshot-registry-size
                      :value exact-snapshot-registry-size})))
   (let [_ (journal/ensure-migrated! conn)
-        coherence-authority (or coherence-authority :managed)
+        ;; Fail-safe default (D-5): managed reuse is an explicit writer
+        ;; contract, never a silent default one raw ds/transact! can violate.
+        coherence-authority (or coherence-authority :unknown)
         proof-mode (case (or proof-mode :auto)
                      :auto (if (= :managed coherence-authority)
                              :mutation

@@ -25,9 +25,16 @@
    :maximum-plan-compiles 1        ; 3.3 ratchet: nil-store lookup deleted the duplicate
    :maximum-denotation-key-builds 0    ; 3.3 ratchet: no key work without a store
    :maximum-denotation-dependency-calcs 0 ; 3.3 ratchet
-   :maximum-permission-path-calcs 10   ; engine-direct raw (no request
+   :maximum-permission-path-calcs 11   ; engine-direct raw (no request
                                        ; context bound); the Datomic facade
-                                       ; path measures 1 via 3.2's memo
+                                       ; path measures 1 via 3.2's memo.
+                                       ; 10->11 recorded by 8.4: plan
+                                       ; compilation now cross-checks the
+                                       ; compiled rules against the managed
+                                       ; dependency closure (one closure
+                                       ; walk per engine-direct compile;
+                                       ; memoized to zero under any schema
+                                       ; cache)
    :maximum-backend-scans 2100}    ; keyset semantics (5.x): a first page
                                    ; whose result exceeds the page size
                                    ; materializes the closure once via

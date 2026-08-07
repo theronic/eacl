@@ -2391,10 +2391,36 @@
            (range)
            ordered-ids)}))
 
+(defn- assert-complete-dependency-closure!
+  "Managed denotation reuse frames validity by the root's relation dependency
+  closure. A compiled rule referencing a relation outside that closure would
+  let a relevant write leave the managed stamp unchanged, so compilation fails
+  instead of permitting under-framed reuse."
+  [db root-node rules]
+  (let [closure (set (permission-relationship-eids
+                      db (first root-node) (second root-node)))
+        referenced
+        (into (sorted-set)
+              (mapcat
+               (fn [rule]
+                 (keep rule [:relation-eid
+                             :via-relation-eid
+                             :target-relation-eid])))
+              rules)
+        missing (into [] (remove closure) referenced)]
+    (when (seq missing)
+      (recursive-traversal-error!
+       "Compiled recursive rules reference relations outside the permission's dependency closure."
+       {:eacl/error :eacl.recursive-traversal/incomplete-dependency-closure
+        :root-node root-node
+        :missing-relation-eids missing
+        :dependency-closure (vec (sort closure))}))))
+
 (defn- compile-recursive-plan
   [db root-node]
   (inc-stat! :compiled-recursive-plans)
   (let [rules (compile-recursive-rules db root-node)
+        _ (assert-complete-dependency-closure! db root-node rules)
         component-plan (compile-recursive-components db root-node)
         rules-by-node' (rules-by-node rules)
         forward-seeds (forward-seeds-by-subject-type rules)

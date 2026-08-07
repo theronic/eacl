@@ -63,12 +63,18 @@ are retained as useful negative results. Direct membership probes use the same
 relation-stamped mechanism.
 
 Acyclic denotations and completed recursive least-fixed-point result vectors
-are currently exact-generation-only. Recursive state is publishable only after
-the worklist completes; visited-set fragments and partial page walks are never
-shared. Forward/reverse lookup, count, `can?`, and cursor rendering can reuse a
-completed compatible denotation on that exact snapshot. Cross-revision reuse
-of derived denotations remains disabled until their complete dependency-proof
-union has a bounded implementation and proof.
+are publishable only after the worklist completes; visited-set fragments and
+partial page walks are never shared. Forward/reverse lookup, count, `can?`,
+and cursor rendering can reuse a completed compatible denotation on the exact
+snapshot, and under `:coherence-authority :managed` a completed denotation is
+additionally reusable across unrelated forward transactions: its managed key
+commits to the schema stamp and the complete sorted per-relation stamp vector
+of the permission's dependency closure, and plan compilation fails if a
+compiled rule could reference a relation outside that closure. This is the
+same relation-stamp framing completed answers and projections use — one
+generation-layering implementation, differentially tested against the
+cache-free oracle under interleaved writes. Its dedicated machine-checked
+framing proof remains open and is tracked in the assurance matrix.
 
 ## Bounds and hit costs
 

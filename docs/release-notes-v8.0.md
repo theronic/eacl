@@ -132,19 +132,32 @@ authorization and does not support time travel.
 
 ### Managed-current tier
 
-DataScript selects `:coherence-authority :managed` by default and therefore
-assumes all authorization-affecting relationship writes use EACL's writers.
-DataScript applications that cannot make that guarantee must select
-`:coherence-authority :unknown`. Datomic and Datahike require managed authority
-to be selected explicitly.
+**BREAKING (pre-release):** every backend — DataScript included — now
+defaults to `:coherence-authority :unknown`, which is exact-current-only and
+remains sound with uninstrumented writers. Managed authority is an explicit
+opt-in on all three backends: it is a writer contract (every
+authorization-affecting relationship and schema write goes through EACL's
+writers), and one raw backend transaction outside that contract can retract
+authorization data without touching a relation stamp. The prior DataScript
+default could therefore serve a stale allow to stock consumers; a pinning
+regression test now encodes that adversarial sequence against the default
+configuration. Stock DataScript writers under `:unknown` also no longer mint
+zed tokens (managed stamps are the token authority), which fails loudly at
+the point of use rather than silently trusting unstamped writes.
+
+Managed reuse covers completed answers, relationship projections, AND
+completed denotations (acyclic and recursive least fixed points) under one
+relation-stamp framing:
 
 - The semantic query key contains normalized internal object IDs, operation,
   permission, result kind, and relevant configuration.
 - A schema-generation object owns all managed entries. A real schema update
   discards the complete old generation.
-- Each entry is keyed by the maximum current transaction stamp over its
-  complete compiled relation dependency set.
-- Under ordinary forward transactions, a relevant write raises that maximum;
+- Each entry is keyed by the complete sorted per-relation stamp vector over
+  its compiled dependency closure (transaction and mutation identity per
+  relation — not a folded maximum), and plan compilation fails with a typed
+  error if a compiled rule could reference a relation outside that closure.
+- Under ordinary forward transactions, a relevant write changes the vector;
   an unrelated write leaves it unchanged.
 - Missing/malformed stamps disable managed reuse rather than becoming a
   reusable zero value.
@@ -154,10 +167,9 @@ to be selected explicitly.
   transactions.
 - Custom object-ID codecs remain exact-current-only unless they supply the
   additional deterministic dependency contract.
-
-DataScript defaults to managed authority. Datomic and Datahike default to
-`:coherence-authority :unknown`, which is exact-current-only and remains sound
-with uninstrumented writers.
+- Randomized cached-versus-cache-free differential oracles run with the
+  managed tier active on all three backends, interleaving EACL-API writes
+  with checks, lookups, and counts.
 
 ### Cache operations
 

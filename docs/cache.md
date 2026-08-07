@@ -92,10 +92,10 @@ externalized through a different snapshot.
 
 ## Managed coherence
 
-DataScript defaults to `:coherence-authority :managed`; Datomic and Datahike
-default to `:coherence-authority :unknown`. Unknown authority enables exact
-reuse only and is the required DataScript opt-out if any
-authorization-relevant relationship or schema write can bypass EACL.
+Every backend defaults to `:coherence-authority :unknown`. Unknown authority
+enables exact reuse only, which stays correct when authorization-relevant
+relationship or schema writes bypass EACL. Managed reuse is an explicit,
+audited opt-in on every backend.
 
 `:coherence-authority :managed` is an explicit writer contract:
 
@@ -148,9 +148,17 @@ recursive traversal plans are compiled once per schema generation and reused
 by every compatible operation in the client.
 
 Completed acyclic and recursive denotations can be reused by compatible
-operations on the exact same immutable snapshot. They are not carried across
-revisions because that would require a bounded proof covering every derived
-dependency.
+operations on the exact same immutable snapshot, and — under
+`:coherence-authority :managed` — across unrelated forward transactions: the
+compiled permission supplies the complete relation dependency closure (plan
+compilation fails if a compiled rule could reference a relation outside it),
+and the managed key commits to the schema stamp plus the complete sorted
+per-relation stamp vector, exactly as completed answers and projections do.
+The dedicated machine-checked proof for cross-revision denotation framing
+remains open; the mechanism is covered today by the closure-completeness
+compilation guard, the randomized cached-versus-cache-free differential
+oracles under interleaved writes, and the directed cross-revision reuse
+tests.
 
 ## Eviction and resource bounds
 

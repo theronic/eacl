@@ -73,6 +73,26 @@ sanctioned.
 
 ## Done (commits, newest first at time of writing)
 
+- **8.1–8.4** — managed certification + fail-safe defaults (R9): every
+  backend defaults `:coherence-authority :unknown` (stale-ALLOW pinning
+  regression on a default DataScript client); docs/README/release notes
+  rewritten (managed denotation reuse is LIVE, sorted per-relation stamp
+  vector, breaking-default entry); randomized cached-vs-cache-free managed
+  oracles on all three backends (Datomic extended; DataScript ported as CLJC
+  — also in the CLJS runner; Datahike ported); dependency-closure
+  completeness guard in `compile-recursive-plan` (typed
+  `:eacl.recursive-traversal/incomplete-dependency-closure`; raw op-count
+  envelope 10→11 path calcs, rationale recorded in the EDN).
+- **7.1–7.4** (`c1e333c`) — answer-cache fold-in (R6): `:answer` tier in the
+  weighted SubproblemStore (LRU, budget/4 per-entry ceiling via the verified
+  publication decision, `:oversized-rejections`); `resolve-current!` routes
+  exact/managed answers through `lookup!`/`resolve!` layering (managed hits
+  promote through the shared publication path); deleted `bounded-assoc`/
+  `admit-entry?`/standalone generation entry maps/portable `LocalStore`;
+  `:admit-on-repeat?` made honest (FIFO sighting window of `:max-entries`
+  first sightings — 50× keyspace regression pinned); Datomic finally honors
+  its answer weight fn. Deviation recorded: `install-managed-generation!`
+  kept (schema-stamp CAS install; only its entries map died).
 - `8a3377b` 11.3 partial — parser fn returns nil instead of printing
 - `e71c5ce` 11.3 partial — hot-path schema warning deduped + `*schema-warning-reporter*`
 - `d915cb2` **6.1–6.3+6.5** — dependency-scoped cursor validity (the big group-6 win)
