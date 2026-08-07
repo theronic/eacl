@@ -708,13 +708,14 @@ portions survive unrelated transactions; a schema change invalidates the
 managed generation.
 
 Most applications need no cache configuration. To set a completed-answer
-capacity:
+weight budget (answers are byte-weight bounded with least-recently-used
+eviction; default 16 MiB):
 
 ```clojure
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:max-entries 4096}}))
+   {:cache {:subproblem-cache {:answer-max-weight (* 32 1024 1024)}}}))
 ```
 
 Disable caching for a client without changing authorization semantics:
@@ -763,13 +764,6 @@ cache. Inspect or expire that exact cache through the backend API:
 (eacl.datascript.core/cache-stats acl)
 (eacl.datascript.core/expire-cache! acl)
 ```
-
-The backend-neutral `eacl.cache/local-store` still exposes additive portable
-metrics for users of that provider API. Capacity evictions are cumulative in
-`:evictions`. Explicit `evict!` calls and entries removed by `clear!` are
-cumulative in `:manual-evictions`; clearing resets occupancy but preserves
-request and validation counters. Provider implementations retain their native
-metrics shape.
 
 Cache data is never written to the application's database.
 

@@ -52,11 +52,40 @@
 (def ^:dynamic ^:private *resolving-keys* #{})
 (def ^:dynamic ^:private *computation-owner* nil)
 
-(def ^:private known-tiers #{:projection :denotation})
+(def ^:private known-tiers #{:projection :denotation :answer})
 (def ^:private default-projection-max-weight (* 4 1024 1024))
 (def ^:private default-denotation-max-weight (* 4 1024 1024))
+(def ^:private default-answer-max-weight (* 16 1024 1024))
 (def ^:private default-max-inflight 256)
 (def ^:private default-managed-proof-max-atoms 256)
+
+(defn- tier-hit-metric
+  [tier]
+  (case tier
+    :projection :projection-hits
+    :denotation :denotation-hits
+    :answer :answer-hits))
+
+(defn- managed-tier-hit-metric
+  [tier]
+  (case tier
+    :projection :managed-projection-hits
+    :denotation :managed-denotation-hits
+    :answer :managed-answer-hits))
+
+(defn- exact-cache-tier
+  [tier]
+  (case tier
+    :projection :exact-projection
+    :denotation :exact-denotation
+    :answer :exact-answer))
+
+(defn- managed-cache-tier
+  [tier]
+  (case tier
+    :projection :managed-projection
+    :denotation :managed-denotation
+    :answer :managed-answer))
 
 (declare positive-weight!)
 
@@ -85,9 +114,11 @@
   strictly precedes the owner's deref in resolve!, and every flight body
   runs under *computation-owner*, so all nested resolves compute inline.
   The wait-for graph therefore cannot cycle: flight monitor chains strictly
-  descend the tier rank exact-denotation -> managed-denotation ->
-  exact-projection -> {managed-projection, projection-proof} -> leaf
-  (denotation computes never resolve another denotation key — compiled
+  descend the tier rank exact-answer -> managed-answer -> exact-denotation ->
+  managed-denotation -> exact-projection -> {managed-projection,
+  projection-proof} -> leaf (completed-answer flights exist only at the top
+  of a public operation and nothing below them ever resolves an answer key;
+  denotation computes never resolve another denotation key — compiled
   plans carry the full rule closure and call back only into projection
   scans — and managed proof providers must remain cache-free), while
   semaphore waiters hold no monitors and every monitor holder is
@@ -258,21 +289,28 @@
 (defn store
   "Creates a weighted exact-generation subproblem store.
 
-  Projection and denotation budgets are deliberately isolated so one large
-  fixed-point result cannot evict every hot relationship chunk."
+  Projection, denotation, and completed-answer budgets are deliberately
+  isolated so one large fixed-point result cannot evict every hot
+  relationship chunk, and a page-heavy answer workload cannot starve the
+  traversal tiers. The `:answer` tier additionally enforces a per-entry
+  ceiling of one quarter of its budget; a heavier completed answer is
+  rejected and counted under `:oversized-rejections`."
   ([]
    (store {}))
-  ([{:keys [projection-max-weight denotation-max-weight max-inflight
-            managed-proof-max-atoms computation-coordinator]
+  ([{:keys [projection-max-weight denotation-max-weight answer-max-weight
+            max-inflight managed-proof-max-atoms computation-coordinator]
      :or {projection-max-weight default-projection-max-weight
           denotation-max-weight default-denotation-max-weight
+          answer-max-weight default-answer-max-weight
           max-inflight default-max-inflight
           managed-proof-max-atoms default-managed-proof-max-atoms}}]
    (let [budgets
          {:projection
           (positive-weight! :projection-max-weight projection-max-weight)
           :denotation
-          (positive-weight! :denotation-max-weight denotation-max-weight)}
+          (positive-weight! :denotation-max-weight denotation-max-weight)
+          :answer
+          (positive-weight! :answer-max-weight answer-max-weight)}
          max-inflight
          (positive-weight! :max-inflight max-inflight)
          computation-coordinator
@@ -318,10 +356,12 @@
              :lookup-misses 0
              :projection-hits 0
              :denotation-hits 0
+             :answer-hits 0
              :acyclic-denotation-hits 0
              :recursive-component-hits 0
              :managed-projection-hits 0
              :managed-denotation-hits 0
+             :managed-answer-hits 0
              :managed-proof-reads 0
              :managed-proof-hits 0
              :managed-proof-failures 0
@@ -503,9 +543,24 @@
          evictions
          probes]))))
 
+(defn- publication-weight-ceiling
+  "The maximum weight one entry may occupy in `tier`.
+
+  Projection and denotation entries may fill their complete tier budget.
+  Completed answers are additionally capped at one quarter of the answer
+  budget so a single oversized page cannot displace every retained answer;
+  a heavier answer is dropped at publication and counted under
+  `:oversized-rejections`."
+  [store tier]
+  (let [budget (get (:budgets store) tier)]
+    (if (= :answer tier)
+      (max 1 (quot budget 4))
+      budget)))
+
 (defn- finalize-entry!
   [store tier key ticket weight]
   (let [maximum-weight (get (:budgets store) tier)
+        entry-ceiling (publication-weight-ceiling store tier)
         evictions (volatile! 0)
         eviction-probes (volatile! 0)
         rejected-oversized? (volatile! false)
@@ -519,7 +574,7 @@
                          (identical? ticket (:ticket entry))))
                    action
                    (publication-action
-                    ticket-current? true true weight maximum-weight)]
+                    ticket-current? true true weight entry-ceiling)]
                (case action
                  :drop-publication
                  (if ticket-current?
@@ -817,10 +872,7 @@
             (do
               (swap! (:metrics store) update :hits inc)
               (swap! (:metrics store)
-                     update (if (= tier :projection)
-                              :projection-hits
-                              :denotation-hits)
-                     inc))
+                     update (tier-hit-metric tier) inc))
             (swap! (:metrics store) update :single-flight-waits inc)))
         (when needs-slot?
           ;; Structural invariant: same-thread nesting never reaches this
@@ -855,10 +907,7 @@
                 (touch-entry! store tier key (:ticket entry))
                 {:value value
                  :cached? true
-                 :cache-tier
-                 (if (= tier :projection)
-                   :exact-projection
-                   :exact-denotation)})
+                 :cache-tier (exact-cache-tier tier)})
               (let [admitted? @(:admitted? entry)
                     valid-value?
                     (try
@@ -902,9 +951,7 @@
                          :cached? (not flight-owner?)
                          :cache-tier
                          (when-not flight-owner?
-                           (if (= tier :projection)
-                             :exact-projection
-                             :exact-denotation))})))))))
+                           (exact-cache-tier tier))})))))))
           (catch #?(:clj Throwable :cljs :default) error
             (remove-entry-if-ticket!
              store tier key (:ticket entry))
@@ -1024,11 +1071,7 @@
               compute)]
          (when (:cached? managed)
            (swap! (:metrics *store*)
-                  update
-                  (if (= tier :projection)
-                    :managed-projection-hits
-                    :managed-denotation-hits)
-                  inc)
+                  update (managed-tier-hit-metric tier) inc)
            (record-avoided-backend-operation! *store*))
          (:value managed))
        (compute)))))
@@ -1059,18 +1102,12 @@
                     key]
                    options)]
          (swap! (:metrics *store*)
-                update
-                (if (= tier :projection)
-                  :managed-projection-hits
-                  :managed-denotation-hits)
-                inc)
+                update (managed-tier-hit-metric tier) inc)
          (record-avoided-backend-operation! *store*)
          (assoc
           resolved
           :cache-tier
-          (if (= tier :projection)
-            :managed-projection
-            :managed-denotation)))))))
+          (managed-cache-tier tier)))))))
 
 (defn lookup!
   "Returns a complete existing value without starting a computation.
@@ -1107,10 +1144,7 @@
             (do
               (swap! (:metrics store) update :hits inc)
               (swap! (:metrics store)
-                     update (if (= tier :projection)
-                              :projection-hits
-                              :denotation-hits)
-                     inc))
+                     update (tier-hit-metric tier) inc))
             (swap! (:metrics store) update :single-flight-waits inc))
           (try
             (let [value
@@ -1143,10 +1177,7 @@
                       (touch-entry! store tier key (:ticket entry))
                       {:value value
                        :cached? true
-                       :cache-tier
-                       (if (= tier :projection)
-                         :exact-projection
-                         :exact-denotation)})
+                       :cache-tier (exact-cache-tier tier)})
                     (do
                       (remove-entry-if-ticket!
                        store tier key (:ticket entry))

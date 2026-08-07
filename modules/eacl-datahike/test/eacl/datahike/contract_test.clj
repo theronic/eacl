@@ -45,7 +45,7 @@
 (defn- run-contract!
   [config]
   (let [conn   (datahike/create-conn nil config)
-        store  (cache/local-store)
+        store  (contract/portable-store)
         client (datahike/make-client conn {:cache store})]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
@@ -102,7 +102,7 @@
       (let [conn-1 (datahike/create-conn nil
                                          {:attribute-refs? attribute-refs?})
             conn-2 (d/connect (:config (d/db conn-1)))
-            store (cache/local-store)
+            store (contract/portable-store)
             client-1 (datahike/make-client conn-1 {:cache store})
             client-2 (datahike/make-client conn-2 {:cache store})
             query {:subject (contract/->user "user-2")

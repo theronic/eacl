@@ -1,9 +1,8 @@
 # eacl-v8-root-fixes — session handoff
 
 Checkpoint for a fresh session with none of the prior context. Read this,
-then `proposal.md` → `design.md` → `tasks.md` → `specs/**`. Progress: **31/54
-tasks**, groups 1–6 landed (with recorded partials), group 7 in-flight,
-groups 8–12 remaining.
+then `proposal.md` → `design.md` → `tasks.md` → `specs/**`. Progress: **35/54
+tasks**, groups 1–7 landed (with recorded partials), groups 8–12 remaining.
 
 ## What this change is
 
@@ -133,16 +132,12 @@ sanctioned.
 
 ## In-flight
 
-- **Group 7 (answer-cache fold-in, R6)** was delegated to a background agent
-  (started ~19:1x). It folds completed answers into the `SubproblemStore` as an
-  `:answer` tier (weighted, LRU, oversized-rejecting) and deletes
-  `bounded-assoc`/`admit-entry?`/the dead `local-store` from `cache.cljc`.
-  **NEXT SESSION: first `git status`** — if the agent left uncommitted changes
-  in `cache.cljc`/`subproblem_cache.cljc`/`datomic core.clj`/cache tests/
-  `docs/cache.md`, cold-compile and run the group-7 verify list from
-  `tasks.md` 7.x on a FRESH JVM; if green, commit as "7.1–7.4"; if broken or
-  absent, re-delegate group 7 from the `answer-cache-bounding` spec. Do NOT
-  assume it finished — check the tree.
+- Nothing. Group 7 landed (the delegated agent's src/test work was verified,
+  completed — remaining stale tests, the 7.3 scenario suite, docs, README,
+  closure ledger — and committed as "7.1–7.4" with two recorded deviations:
+  `install-managed-generation!` kept minus its entries map, and
+  `:admit-on-repeat?` made honest via a FIFO sighting window rather than
+  deleted).
 
 ## Remaining (groups 8–12) — order and pointers
 

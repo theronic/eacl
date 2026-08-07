@@ -1058,10 +1058,6 @@
                           :retention-grace-seconds
                           (or retention-grace-seconds
                               mutation/default-retention-grace-seconds)
-                          :cache-store
-                          (if cache-eligible?
-                            (eacl.cache/cache-store cache)
-                            eacl.cache/no-cache)
                           :current-cache-store
                           current-cache-store
                           :continuation-cache-store

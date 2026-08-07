@@ -507,11 +507,10 @@
 
 (deftest exact-registry-eviction-and-cache-lifting-test
   (let [conn (datascript/create-conn)
-        store (cache/local-store)
         authorization
         (managed-client
          conn
-         {:cache store
+         {:cache {}
           :exact-snapshot-registry-size 1})
         _ (seed! conn authorization)
         token

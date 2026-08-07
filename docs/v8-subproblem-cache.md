@@ -93,17 +93,22 @@ Configuration:
   {:enabled? true
    :projection-max-weight (* 8 1024 1024)
    :denotation-max-weight (* 8 1024 1024)
+   :answer-max-weight (* 16 1024 1024)
    :max-inflight 256}}}
 ```
 
 The weights are deterministic admission units approximating retained key/value
-size, not a portable JVM/JavaScript heap-byte measurement.
+size, not a portable JVM/JavaScript heap-byte measurement. Completed answers
+are the store's third weighted tier: bounded by `:answer-max-weight`, evicted
+least-recently-used, and capped at one quarter of the budget per entry with
+oversized rejection, so answers can never grow byte-unbounded and one
+maximum-size page cannot displace every retained answer.
 
 `cache-stats` exposes exact and managed completed-answer counts plus
-`:subproblems` and `:managed-subproblems`. Relevant counters include projection
-and denotation hits, managed projection hits, proof reads/hits/failures,
-single-flight waits, admission/oversize rejection, eviction, fetched
-projection values, and avoided backend operations.
+`:subproblems` and `:managed-subproblems`. Relevant counters include
+projection, denotation, and answer hits, managed projection hits, proof
+reads/hits/failures, single-flight waits, admission/oversize rejection,
+eviction, fetched projection values, and avoided backend operations.
 
 ## Performance gate
 

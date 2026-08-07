@@ -10,6 +10,38 @@
 (def ->account (partial eacl/spice-object :account))
 (def ->server (partial eacl/spice-object :server))
 
+(defrecord PortableContractStore [entries metrics]
+  cache/CacheStore
+  (lookup [_ key] (get @entries key))
+  (store! [_ key value]
+    (if (nil? value)
+      false
+      (do (swap! entries assoc key value)
+          true)))
+  (evict! [_ key]
+    (let [existed? (contains? @entries key)]
+      (swap! entries dissoc key)
+      existed?))
+  (clear! [_]
+    (reset! entries {})
+    nil)
+  (stats [_]
+    (assoc @metrics :entries (count @entries)))
+  cache/CacheTelemetry
+  (record-validation! [_ metric]
+    (swap! metrics update metric (fnil inc 0))
+    nil))
+
+(defn portable-store
+  "A minimal portable CacheStore stand-in for contract tests.
+
+  The production portable reference store was deleted with the D-6
+  answer-tier fold-in; contract suites only need an inert provider adapter
+  to prove native completed answers remain client-private and that request
+  bypass touches no provider state."
+  []
+  (->PortableContractStore (atom {}) (atom {})))
+
 (def smoke-schema
   "definition user {}
 

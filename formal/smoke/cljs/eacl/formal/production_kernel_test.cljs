@@ -1643,7 +1643,17 @@
         (relay/internalize-page-query
          selected cursor-opts :lookup-resources
          (assoc query :after token))
-        store (cache/local-store)
+        entries (atom {})
+        store (reify cache/CacheStore
+                (lookup [_ key] (get @entries key))
+                (store! [_ key value]
+                  (swap! entries assoc key value)
+                  true)
+                (evict! [_ key]
+                  (swap! entries dissoc key)
+                  true)
+                (clear! [_] (reset! entries {}) nil)
+                (stats [_] {:entries (count @entries)}))
         calls (atom 0)
         resolve-cache
         #(cache/resolve!

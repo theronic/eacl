@@ -890,7 +890,7 @@
             (sort-by first relation-stamps))})))))
 
 (defn- cached-authorization-result
-  [opts consistency-context op query-identity kind valid-result? _weight-fn compute]
+  [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [{:keys [adapter db relationship-dependencies
                 permission-dependencies basis-t completed-cache?]}
         consistency-context
@@ -939,6 +939,7 @@
                      [dependency]))))
               :managed-subproblem-scope
               (backend/invoke adapter :source-scope)
+              :answer-weight-fn weight-fn
               :remember-answer?
               (:cache-remember-answers? opts)}
              {:operation op
@@ -2521,8 +2522,13 @@
       nil         the same client-private cache as omission
       cache/no-cache
                   no caching at all
-      <map>       native capacity/compatibility options; :max-entries bounds
-                  complete answers.
+      <map>       native capacity/compatibility options. Complete native
+                  answers are weight-bounded (see :subproblem-cache
+                  :answer-max-weight, default 16 MiB) with LRU eviction and
+                  oversized rejection; :max-entries remains accepted and
+                  still bounds the portable provider store and the
+                  :on-repeat sighting window, but no longer counts native
+                  answers.
 
     Pass cache/no-cache when the same permission check is essentially never
     asked twice — a batch job sweeping distinct resources, say — or when direct
@@ -2547,10 +2553,10 @@
       :max-weight, :max-entry-weight, :max-entries, :ttl-ms  capacity bounds
       :namespace         isolates entries between clients sharing an adapter
       :kind-max-weight, :two-hit-kinds, :admission-entries   per-kind tuning
-      :subproblem-cache   shared projection/denotation cache limits, including
-                          :enabled?, :projection-max-weight,
-                          :denotation-max-weight, :max-inflight, and
-                          :managed-proof-max-atoms
+      :subproblem-cache   shared projection/denotation/answer cache limits,
+                          including :enabled?, :projection-max-weight,
+                          :denotation-max-weight, :answer-max-weight,
+                          :max-inflight, and :managed-proof-max-atoms
       :checkpoints       bounded revision checkpoints
       :remember-answers  false | true (default) | :on-repeat — whether a
                          finished answer is kept so an identical later check

@@ -103,6 +103,37 @@
 
       {:status :invalid :reason :rejected})))
 
+(defrecord PortableTestStore [entries metrics]
+  cache/CacheStore
+  (lookup [_ key] (get @entries key))
+  (store! [_ key value]
+    (if (nil? value)
+      false
+      (do (swap! entries assoc key value)
+          true)))
+  (evict! [_ key]
+    (let [existed? (contains? @entries key)]
+      (swap! entries dissoc key)
+      existed?))
+  (clear! [_]
+    (reset! entries {})
+    nil)
+  (stats [_]
+    (assoc @metrics :entries (count @entries)))
+  cache/CacheTelemetry
+  (record-validation! [_ metric]
+    (swap! metrics update metric (fnil inc 0))
+    nil))
+
+(defn- portable-store
+  "Minimal portable CacheStore for exercising authenticated `cache/resolve!`.
+
+  The production portable reference store was deleted with the D-6
+  answer-tier fold-in; these proof-validation tests only need map storage
+  plus telemetry counters."
+  []
+  (->PortableTestStore (atom {}) (atom {})))
+
 (defn- snapshot-object
   []
   #?(:clj (Object.)
@@ -568,7 +599,7 @@
                       :relations {10 :relation-1
                                   20 :unrelated-1}})
         snapshot (adapter proofs)
-        store (cache/local-store)
+        store (portable-store)
         calls (atom 0)
         compute #(do (swap! calls inc) {:answer true})
         resolve #(cache/resolve!
@@ -611,7 +642,7 @@
                       :schema {:document :schema-1}
                       :relations {10 :relation-1}})
         snapshot (adapter proofs)
-        store (cache/local-store)
+        store (portable-store)
         calls (atom 0)
         resolve
         #(cache/resolve!
@@ -634,7 +665,7 @@
                :schema {:document :schema}
                :relations {10 :relation}})
         snapshot (adapter proofs)
-        store (cache/local-store)
+        store (portable-store)
         calls (atom 0)
         resolve
         #(cache/resolve!
@@ -666,7 +697,7 @@
                       :schema {:document :schema}
                       :relations {10 :relation}})
         snapshot (adapter proofs)
-        corrupt-store (cache/local-store)
+        corrupt-store (portable-store)
         _ (cache/store! corrupt-store :key {:answer :unvalidated})
         computed (atom 0)
         compute #(do (swap! computed inc) false)]
@@ -704,7 +735,7 @@
                           :schema {:document :schema}
                           :relations {10 :relation}
                           failure-key true})
-            store (cache/local-store)
+            store (portable-store)
             computed (atom 0)
             answer
             (cache/resolve!
@@ -721,7 +752,7 @@
         (is (= 1 (:provider-failure (cache/stats store))))))))
 
 (deftest cache-scope-and-proof-availability-test
-  (let [store (cache/local-store)
+  (let [store (portable-store)
         first-proof
         (atom {:basis 1
                :source "first"
@@ -772,7 +803,7 @@
                       :relations {10 #{[:user "u1" :document "d1"]}
                                   20 #{[:user "u2" :other "o1"]}}})
         authorization (atom true)
-        store (cache/local-store)
+        store (portable-store)
         calls (atom 0)
         resolve
         #(cache/resolve!
@@ -836,7 +867,7 @@
                       :schema {:document :dishonest-constant}
                       :relations {10 :dishonest-constant}})
         actual (atom true)
-        store (cache/local-store)
+        store (portable-store)
         resolve
         #(cache/resolve!
           (adapter proofs) store :collision-double :can?
@@ -879,12 +910,6 @@
         "the concurrent unvalidated replacement is never returned")
     (is (= 2 @calls))))
 
-(defn- store-key
-  [kind id]
-  {:kind kind
-   :semantic-key {:operation kind
-                  :id id}})
-
 (deftest authenticated-page-query-identity-ignores-cursor-transport-test
   (let [base-public
         {:subject {:type :user :id "user"}
@@ -924,57 +949,113 @@
           (assoc base-internal :after boundary :first 50)))
         "page size remains semantic")))
 
-(deftest local-store-capacity-and-kind-metrics-test
-  (let [store (cache/local-store {:max-entries 2})
-        can-key (store-key :can? 1)
-        lookup-key (store-key :lookup-resources 2)
-        count-key (store-key :count-resources 3)]
-    (cache/store! store can-key :allowed)
-    (cache/store! store lookup-key :page)
-    (is (= :allowed (cache/lookup store can-key)))
-    (is (nil? (cache/lookup store (store-key :can? :missing))))
-    (cache/store! store count-key :count)
+(deftest completed-answer-hot-key-survives-churn-test
+  ;; R6 regression scenario "hot key survives churn": the deleted
+  ;; completed-answer map evicted in hash-iteration order, so a repeatedly
+  ;; accessed key was as likely to die as any cold key. The weighted
+  ;; :answer tier evicts least-recently-used.
+  (let [store (cache/current-cache
+               {:subproblem-cache {:answer-max-weight 4096}})
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1
+                 ;; Fixed per-answer weight: the tier retains 8 answers.
+                 :answer-weight-fn (constantly 512)}
+        resolve
+        (fn [key]
+          (cache/resolve-current!
+           store context key :decision boolean? (constantly true)))]
+    (resolve :hot)
+    (dotimes [i 64]
+      (resolve [:cold i])
+      (is (true? (:cached? (resolve :hot)))
+          "the repeatedly accessed answer stays resident through churn"))
+    (let [tier (get-in (cache/current-cache-stats store)
+                       [:subproblems :tiers :answer])]
+      (is (<= (:weight tier) 4096)
+          "retained answer weight never exceeds the configured budget")
+      (is (false? (:cached? (resolve [:cold 0])))
+          "cold keys evicted; only the hot answer and the newest survive"))))
 
-    (let [metrics (cache/stats store)]
-      (is (= 2 (:entries metrics)))
-      (is (= 2 (:max-entries metrics)))
-      (is (= 1 (:evictions metrics)))
-      (is (= 3 (:puts metrics)))
-      (is (= 1 (:hits metrics)))
-      (is (= 1 (:misses metrics)))
-      (is (= 3 (reduce + (map :puts (vals (:by-kind metrics))))))
-      (is (= 2 (reduce + (vals (:entries-by-kind metrics)))))
-      (is (= {:entries 2
-              :max-entries 2
-              :entries-by-kind (:entries-by-kind metrics)}
-             (get-in metrics [:tiers :local]))))))
+(deftest completed-answer-byte-budget-and-oversized-rejection-test
+  ;; R6 regression scenario "page-heavy workload stays within budget": the
+  ;; deleted answer map was entry-bounded only (weight fn accepted and
+  ;; ignored), measured at 95.5 MB retained. The :answer tier is
+  ;; weight-bounded with a budget/4 per-entry ceiling.
+  (let [store (cache/current-cache
+               {:subproblem-cache {:answer-max-weight 8192}})
+        snapshot (snapshot-object)
+        page (fn [n] {:data (vec (range n))})
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
+        resolve
+        (fn [key value]
+          (cache/resolve-current!
+           store context key :lookup-resources map?
+           (fn [] value)))]
+    ;; Saturate with page answers under the default row-count weight
+    ;; (512 + 128/row: 1792 each, so at most four fit).
+    (dotimes [i 32]
+      (resolve [:page i] (page 10)))
+    (let [tier (get-in (cache/current-cache-stats store)
+                       [:subproblems :tiers :answer])]
+      (is (pos? (:entries tier)))
+      (is (<= (:weight tier) 8192)
+          "retained answer weight stays within the configured budget"))
+    ;; One answer heavier than budget/4 is rejected at publication and
+    ;; recomputed on the next request instead of retained unbounded.
+    (resolve :oversized (page 100))
+    (is (pos? (get-in (cache/current-cache-stats store)
+                      [:subproblems :oversized-rejections])))
+    (is (false? (:cached? (resolve :oversized (page 100))))
+        "an oversized answer is never served from cache")))
 
-(deftest local-store-manual-eviction-and-clear-metrics-test
-  (let [store (cache/local-store {:max-entries 4})
-        can-key (store-key :can? 1)
-        lookup-key (store-key :lookup-resources 2)
-        count-key (store-key :count-resources 3)]
-    (cache/store! store can-key :allowed)
-    (is (= :allowed (cache/lookup store can-key)))
-    (is (true? (cache/evict! store can-key)))
-    (is (false? (cache/evict! store can-key)))
-    (cache/store! store lookup-key :page)
-    (cache/store! store count-key :count)
-    (cache/clear! store)
-
-    (let [metrics (cache/stats store)]
-      (is (= 0 (:entries metrics)))
-      (is (= {} (:entries-by-kind metrics)))
-      (is (= 3 (:manual-evictions metrics)))
-      (is (= 1 (:clears metrics)))
-      (is (= 1 (:hits metrics))
-          "request counters remain cumulative after clear")
-      (is (= 1 (get-in metrics
-                       [:by-kind :can? :manual-evictions])))
-      (is (= 1 (get-in metrics
-                       [:by-kind :lookup-resources
-                        :manual-evictions])))
-      (is (= 1 (get-in metrics
-                       [:by-kind :count-resources
-                        :manual-evictions])))
-      (is (= 0 (get-in metrics [:tiers :local :entries]))))))
+(deftest repeat-admission-survives-large-keyspace-churn-test
+  ;; R6 regression scenario "repeat admission at scale": the deleted
+  ;; admissions map evicted its hash-trie-order minimum, freezing into a
+  ;; fixed hash-lucky sighting set (measured 2.3% admit at 50x keyspace).
+  ;; The first-in-first-out sighting window forgets oldest first sightings,
+  ;; so admission tracks access recency at any keyspace size.
+  (let [window 64
+        store (cache/current-cache
+               {:max-entries window
+                :admit-on-repeat? true})
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
+        resolve
+        (fn [key]
+          (cache/resolve-current!
+           store context key :decision boolean? (constantly true)))]
+    ;; Churn 50x the window in distinct single-sighting keys.
+    (dotimes [i (* 50 window)]
+      (resolve [:cold i]))
+    ;; A key then seen twice in close succession is admitted.
+    (resolve :fresh)
+    (resolve :fresh)
+    (is (true? (:cached? (resolve :fresh)))
+        "a second sighting within the window admits the answer")
+    ;; A second sighting within window-many distinct first sightings still
+    ;; admits; one spaced past the window is forgotten and starts over.
+    (resolve :spaced)
+    (dotimes [i (dec window)]
+      (resolve [:filler i]))
+    (resolve :spaced)
+    (is (true? (:cached? (resolve :spaced)))
+        "the sighting window spans max-entries distinct first sightings")
+    (resolve :forgotten)
+    (dotimes [i (inc window)]
+      (resolve [:beyond i]))
+    ;; Had the first sighting survived the window, this call would admit
+    ;; and store, making the next call a cache hit. It restarts instead.
+    (resolve :forgotten)
+    (is (false? (:cached? (resolve :forgotten)))
+        "a sighting spaced past the window restarts admission")
+    (is (<= (:admission-entries (cache/current-cache-stats store)) window)
+        "sighting state stays bounded by the window at 50x keyspace")))

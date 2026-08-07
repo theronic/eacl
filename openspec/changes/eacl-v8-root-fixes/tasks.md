@@ -2,9 +2,8 @@
 
 All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). Every performance task tightens a recorded gate envelope; every correctness task adds or un-skips a pinning test. Task numbers reference design decisions (D-1…D-10) and specs.
 
-> **PROGRESS — 31/54 done. Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
-> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1). Partials: 11.1 (watermark), 11.3 (warnings/prints).
-> - **In-flight:** group 7 (answer-cache fold-in/R6) — delegated to a background agent; next session must `git status` and verify/commit or re-run it.
+> **PROGRESS — 35/54 done. Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
+> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6). Partials: 11.1 (watermark), 11.3 (warnings/prints).
 > - **Deferred with cause:** 6.4 (AEAD portable codec — sync CLJS GCM; see design D-4 note).
 > - **Remaining:** 8 (managed cert + DataScript default flip/R9), 9 (backend de-fork/R7), 10 (CLJS engine/R8), 11 remainder + Dafny cleanup (R10), 12 (batched protocol — conditional on the latency gate; likely triggers).
 
@@ -59,10 +58,10 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 7. Answer-cache fold-in (D-6, answer-cache-bounding) — after group 2
 
-- [ ] 7.1 Add the `:answer` tier to the SubproblemStore (weight fn honored, per-entry ceiling, oversized-rejection metric); route `can?`/pages/counts through layered resolution
-- [ ] 7.2 Delete `bounded-assoc`, `admit-entry?`, `install-managed-generation!`, the standalone answer maps, and the dead portable `local-store` path
-- [ ] 7.3 Hot-key-survives-churn and byte-budget tests; repeat-admission behavior test at 50× keyspace (the frozen-set scenario must pass post-fix)
-- [ ] 7.4 Update `cache-stats` shape and docs; verify the exact/managed answer promotion path through the shared layering
+- [x] 7.1 Add the `:answer` tier to the SubproblemStore (weight fn honored, per-entry ceiling, oversized-rejection metric); route `can?`/pages/counts through layered resolution
+- [x] 7.2 Delete `bounded-assoc`, `admit-entry?`, `install-managed-generation!`, the standalone answer maps, and the dead portable `local-store` path (recorded deviation: `install-managed-generation!` kept — the schema-stamp CAS install still rolls the managed store forward; its standalone entries map died; `:admit-on-repeat?` kept but made honest via a FIFO sighting window instead of deleted)
+- [x] 7.3 Hot-key-survives-churn and byte-budget tests; repeat-admission behavior test at 50× keyspace (the frozen-set scenario must pass post-fix)
+- [x] 7.4 Update `cache-stats` shape and docs; verify the exact/managed answer promotion path through the shared layering
 
 ## 8. Managed certification and authority posture (D-5, managed-reuse-certification)
 

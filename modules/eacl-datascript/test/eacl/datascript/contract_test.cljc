@@ -194,7 +194,7 @@
 
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
-        store  (cache/local-store)
+        store  (contract/portable-store)
         client (datascript/make-client conn {:cache store})]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
