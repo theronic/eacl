@@ -7,6 +7,19 @@
   candidate that an authoritative kernel rejected."
   (:require [eacl.backend.v8 :as backend]))
 
+(def ^:dynamic *kernel-crossing-stats*
+  "Optional atom counting generated-kernel invocations by operation keyword.
+
+  Covers both pure decisions (invoke-kernel) and opaque indexed-traversal
+  crossings (invoke-indexed-kernel). Observation-only: counters never
+  influence control flow; unbound means zero overhead beyond one branch."
+  nil)
+
+(defn- record-kernel-crossing!
+  [operation]
+  (when *kernel-crossing-stats*
+    (swap! *kernel-crossing-stats* update operation (fnil inc 0))))
+
 (def operations
   #{:relationship-page
     :relationship-keyset-page
@@ -2500,6 +2513,7 @@
 (defn- invoke-kernel
   [kernel operation input]
   (validate-input! operation input)
+  (record-kernel-crossing! operation)
   (try
     (let [result
           (validate-result! operation (-decide kernel operation input))]
@@ -2698,6 +2712,7 @@
 
 (defn- invoke-indexed-kernel
   [operation invoke validate-result]
+  (record-kernel-crossing! operation)
   (try
     (validate-result (invoke))
     (catch #?(:clj Exception :cljs :default) error

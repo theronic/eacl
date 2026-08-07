@@ -51,6 +51,15 @@
   because it scans a large, valid authorization set."
   nil)
 
+(def ^:dynamic *recursive-traversal-stats*
+  "Optional atom populated by tests, benchmarks, and diagnostic callers.
+
+  Counts recursive-traversal work plus request-shape observers
+  (:permission-path-calcs, :denotation-key-builds,
+  :denotation-dependency-calcs). Observation-only: counters never
+  influence control flow."
+  nil)
+
 (def ^:dynamic *acyclic-route?* false)
 
 (def ^:dynamic *inactive-recursive-cycle-guards*
@@ -662,6 +671,8 @@
   "Returns path maps with resolved relation eids, cheapest-to-check first.
   Permission edges remain symbolic and are evaluated against concrete resources at runtime."
   [db resource-type permission-name]
+  (when *recursive-traversal-stats*
+    (swap! *recursive-traversal-stats* update :permission-path-calcs (fnil inc 0)))
   (->> (find-permission-defs db resource-type permission-name)
        (mapcat
         (fn [{:eacl.permission/keys [source-relation-name
@@ -1623,8 +1634,6 @@
 
 (def ^:dynamic *recursive-traversal-limits*
   default-recursive-traversal-limits)
-
-(def ^:dynamic *recursive-traversal-stats* nil)
 
 (def ^:dynamic *count-stats*
   "Optional atom recording bounded count-page work for tests/benchmarks."
@@ -2988,6 +2997,7 @@
 
 (defn- recursive-denotation-key
   [db direction root-node anchor-type anchor-eid result-type]
+  (inc-stat! :denotation-key-builds)
   [denotation-key-version
    :permission-fixed-point
    recursive-denotation-version
@@ -3000,6 +3010,7 @@
 
 (defn- recursive-denotation-dependencies
   [db root-node]
+  (inc-stat! :denotation-dependency-calcs)
   (permission-relationship-eids db (first root-node) (second root-node)))
 
 (defn- record-permission-denotation-hit!

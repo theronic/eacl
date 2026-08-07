@@ -474,8 +474,17 @@
       (contract-violation!
        backend-id operation-key :registered-runtime-guard value))))
 
+(def ^:dynamic *backend-op-stats*
+  "Optional atom counting backend adapter invocations by operation keyword.
+
+  Includes proof operations (:schema-proof, :relation-proof) and index
+  scans. Observation-only: never influences dispatch or guard behavior."
+  nil)
+
 (defn invoke
   [adapter operation-key & args]
+  (when *backend-op-stats*
+    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
   (let [value (apply (operation adapter operation-key) args)]
     (if (runtime-guards? adapter)
       (guard-output! adapter operation-key args value)
