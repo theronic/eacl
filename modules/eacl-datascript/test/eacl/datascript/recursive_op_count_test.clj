@@ -59,6 +59,7 @@
               engine/*recursive-traversal-stats* rts]
       (f))
     {:schema-proof (get @bops :schema-proof 0)
+     :schema-proof-computations (get @bops :schema-proof-computations 0)
      :plan-compiles (get @rts :compiled-recursive-plans 0)
      :path-calcs (get @rts :permission-path-calcs 0)
      :key-builds (get @rts :denotation-key-builds 0)
@@ -101,6 +102,10 @@
               :permission :view :resource/type :account :first 50}))]
     (testing "schema proofs per raw list request (:schema-proof)"
       (is (<= (:schema-proof m) (:maximum-schema-proof-reads e)) (pr-str m)))
+    (testing "memoized proof computations per raw list request"
+      (is (<= (:schema-proof-computations m)
+              (:maximum-schema-proof-computations e))
+          (pr-str m)))
     (testing "recursive plan compiles per raw request (:compiled-recursive-plans)"
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "denotation cache-key work against a nil store"
@@ -142,6 +147,10 @@
                                    (rf/resource-query config rf/user-1)))]
     (testing "schema proofs per client list request (:schema-proof)"
       (is (<= (:schema-proof m) (:maximum-schema-proof-reads e)) (pr-str m)))
+    (testing "memoized proof computations per client list request"
+      (is (<= (:schema-proof-computations m)
+              (:maximum-schema-proof-computations e))
+          (pr-str m)))
     (testing "plan compiles amortized by the client schema cache"
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "scan envelope (:stream-fills)"
