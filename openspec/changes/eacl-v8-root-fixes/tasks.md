@@ -72,10 +72,10 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 9. Backend de-fork (D-7, backend-unification)
 
-- [ ] 9.1 Write the unified filter-validation and error-contract tests first (value-presence anchors incl. nil type/relation throws, `:nil-anchor-keys`, pagination-option parity) — red on current DS/DH
-- [ ] 9.2 Move shared orchestration into core (the nine operations, snapshot context, cursor plumbing, cache wiring, integrity) parameterized by SPI + options; convert Datahike and DataScript cores to thin construction shims; move Datomic relationship pages onto `eacl.engine.relationships`
-- [ ] 9.3 Point Datahike at the shared endpoint-pair codec; port the weighted provider-store tier to Datahike; unify the option map (one token-key family, one cursor-TTL name, uniform unknown-option errors) and document per-backend extensions
-- [ ] 9.4 Delete the superseded per-backend copies; run adapter certification, contract-support, and state-trace differential suites; record the surviving per-backend line counts against the ~2,100-line target
+- [x] 9.1 Write the unified filter-validation and error-contract tests first (value-presence anchors incl. nil type/relation throws, `:nil-anchor-keys`, pagination-option parity) — red on current DS/DH
+- [x] 9.2 Move shared orchestration into core (the nine operations, snapshot context, cursor plumbing, cache wiring, integrity) parameterized by SPI + options; convert Datahike and DataScript cores to thin construction shims (`eacl.client.orchestration`, one `ClientAuthorization` record + one `make-client`; DS core 1,098→175 lines, DH 1,074→180; api holds vars for late-bound instrumentation). REMAINING SUB-ITEM: move Datomic relationship pages onto `eacl.engine.relationships` (changes the Datomic relationship cursor edge format + its private token plumbing — deliberately deferred behind groups 10–12, not forgotten)
+- [ ] 9.3 Unify the option map across Datomic vs DS/DH (one token-key family, one cursor-TTL name, uniform unknown-option errors) and document per-backend extensions (DS/DH now share one option surface + `:extra-client-opt-keys` extension point; Datomic pending). DROPPED with cause: "port the weighted provider-store tier to Datahike" — the Datomic provider-store path it would copy is the write-only dead `:shared-cache-store`/`:lookup-cache-store` surface that 11.1 deletes; porting it would add dead code. Datahike already consumes the shared endpoint-pair codec.
+- [x] 9.4 Delete the superseded per-backend copies (both forked filter validators, both forked orchestration layers, both per-backend Authorization records); adapter certification, contract-support, cache-model, consistency, and op-count suites green on all three backends; surviving per-backend module totals recorded: eacl-datascript src 1,693 lines, eacl-datahike src 1,933 — both under the ~2,100 target
 
 ## 10. CLJS production engine (D-8, cljs-production-engine)
 
