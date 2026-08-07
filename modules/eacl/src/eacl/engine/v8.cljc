@@ -103,13 +103,37 @@
                  (update operation (fnil inc 0))))))
   nil)
 
+(def ^:dynamic *schema-warning-reporter*
+  "Optional (fn [message data]) for schema-resolution warnings. nil uses
+  the deduplicated default reporter."
+  nil)
+
+(def ^:private warned-schema-conditions (atom #{}))
+
 (defn- warn
+  "Reports a schema-resolution condition at most ONCE per distinct
+  [message data] per process (a schema with one dangling relation
+  reference previously wrote unbuffered stderr on EVERY authorization
+  check — audited hot-path defect). `pr-str` runs only when the
+  condition is new or a custom reporter is bound."
   [message data]
-  #?(:clj
-     (binding [*out* *err*]
-       (println message (pr-str data)))
-     :cljs
-     (.warn js/console message (pr-str data))))
+  (if *schema-warning-reporter*
+    (*schema-warning-reporter* message data)
+    (let [condition [message data]]
+      (when-not (contains? @warned-schema-conditions condition)
+        (when (contains?
+               (swap! warned-schema-conditions
+                      (fn [seen]
+                        (if (or (contains? seen condition)
+                                (>= (count seen) 256))
+                          seen
+                          (conj seen condition))))
+               condition)
+          #?(:clj
+             (binding [*out* *err*]
+               (println message (pr-str data)))
+             :cljs
+             (.warn js/console message (pr-str data))))))))
 
 
 (defn object-eid

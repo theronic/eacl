@@ -83,7 +83,7 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 - [ ] 11.1 Delete dead code: authenticated-envelope completed-cache path + `:shared-cache-store`/`:lookup-cache-store` options, `watermark.clj`, zed-v2 constructors, relay `:path-frontiers` branch, `:latest-result` kind; audit test asserting absence
 - [ ] 11.2 Enable `*warn-on-reflection*` with warnings-as-errors for core + backends in CI; hint the kernel decode loops
-- [ ] 11.3 Rate-limit/optionalize the schema-resolution warning (once per generation or via reporter); remove parser REPL prints from shipped namespaces
+- [x] 11.3 Rate-limit/optionalize the schema-resolution warning (schema warn; parser prints deferred) (once per generation or via reporter); remove parser REPL prints from shipped namespaces
 - [ ] 11.4 Dafny cleanup pass (Phase B, may trail): delete the ordinal rebase family + backward-render mode + `AfterCursor` arm; retarget or delete `Pagination.dfy`; update the assurance matrix so every model maps to shipped code; regenerate kernels, vectors, and manifests
 
 ## 12. Conditional: wave-batched scan protocol (D-9 phase 2, kernel-boundary-efficiency)
