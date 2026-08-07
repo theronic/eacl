@@ -142,11 +142,19 @@
    (when (= :broad-union shape) [reader-1 le-viewer legal-entity-1])))
 
 (defn object-transactions
-  "Datomic/DataScript-style tempid transaction maps for app objects."
+  "Datomic/DataScript-style tempid transaction maps for app objects.
+
+  String tempids, deliberately: on Datomic 1.0.7622 raw negative-long
+  tempids resolve into implicit partitions whose eids exceed the 2^53
+  safe-integer bound that eacl.secure-format enforces on canonicalized
+  payloads, so relationship writes referencing such objects fail with
+  :eacl.format/invalid. (Recorded as a live finding for the
+  backend-unification capability; the explorer fixture's negative-long
+  pattern has the same hazard on current Datomic peers.)"
   [config]
   (map-indexed
    (fn [index {:keys [id]}]
-     {:db/id (- (inc index))
+     {:db/id (str "recursive-fixture-" index)
       :eacl/id id})
    (objects config)))
 
