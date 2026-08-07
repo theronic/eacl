@@ -8,7 +8,7 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 - [x] 1.2 Create `recursive_fixture.cljc`: star/chain/mixed/broad-union populated-recursion generators at 2k/10k with deterministic ids and expected counts
 - [x] 1.3 Add the populated-recursion op-count test namespaces (non-benchmark, per-push): crossing law, scan envelope, schema-proof count (record current truth: raw 2 / client 3), plan-compile count (record 2; 3 with recovery cursor), nil-store key work (record 2), continuation resumption, linearity; self-check that recursive counters are nonzero
 - [ ] 1.4 Record matched-v7 latency baselines (same-host harness against the pre-v8 commit) into `formal/verification/explorer-v8-recursive-performance.edn` with the 2.0× bound and variance policy; add the heavy 10k acceptance gates to the formal workflow (fresh bounded JVM, measured first)
-- [ ] 1.5 Add cache-maintenance invariants: LRU records ≤ max(1024, 2×entries); eviction probes ≤ evictions + consumed stale records; continuation-store puts ≤ pages+1; per-resume recovery-decision bound
+- [x] 1.5 Add cache-maintenance invariants: LRU records ≤ max(1024, 2×entries); eviction probes ≤ evictions + consumed stale records; continuation-store puts ≤ pages+1; per-resume recovery-decision bound
 - [ ] 1.6 Wire the dormant gates: `apalache-mutation-control` step in the formal workflow; explorer 10k gate; regenerate the mutation ledger (103 vs 96 drift) and assert registry/ledger consistency in CI
 
 ## 2. Single-flight wedge fix (D-1, single-flight-coordination)
