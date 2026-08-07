@@ -2,6 +2,12 @@
 
 All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). Every performance task tightens a recorded gate envelope; every correctness task adds or un-skips a pinning test. Task numbers reference design decisions (D-1…D-10) and specs.
 
+> **PROGRESS — 31/54 done. Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
+> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1). Partials: 11.1 (watermark), 11.3 (warnings/prints).
+> - **In-flight:** group 7 (answer-cache fold-in/R6) — delegated to a background agent; next session must `git status` and verify/commit or re-run it.
+> - **Deferred with cause:** 6.4 (AEAD portable codec — sync CLJS GCM; see design D-4 note).
+> - **Remaining:** 8 (managed cert + DataScript default flip/R9), 9 (backend de-fork/R7), 10 (CLJS engine/R8), 11 remainder + Dafny cleanup (R10), 12 (batched protocol — conditional on the latency gate; likely triggers).
+
 ## 1. Gates and counters first (D-10, recursion-performance-gates)
 
 - [x] 1.1 Add host-side observer counters: kernel crossings by operation (`verified_kernel.cljc` choke points), backend ops by key (`backend/v8.cljc` invoke), denotation-key builds + dependency-calc counters, cold permission-path-calc counter (all no-op-when-unbound; regenerate the public-source-closure ledger)
