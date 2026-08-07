@@ -18,7 +18,9 @@
             :fixture {:shape :star :accounts 2000}}
  :work-envelopes
  {:raw-lookup-first-50
-  {:maximum-schema-proof-reads 2   ; memoized invocations (cheap)
+  {:maximum-schema-proof-reads 3   ; memoized invocations (cheap): route
+                                   ; validation + actual + certificate
+                                   ; identities all deref one delay
    :maximum-schema-proof-computations 1 ; 3.1 ratchet: one scan per request
    :maximum-plan-compiles 1        ; 3.3 ratchet: nil-store lookup deleted the duplicate
    :maximum-denotation-key-builds 0    ; 3.3 ratchet: no key work without a store

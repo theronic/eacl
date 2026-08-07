@@ -21,7 +21,7 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 ## 3. Raw request context (D-3, raw-request-context)
 
 - [x] 3.1 Memoize zero-arity `:schema-proof` with a per-adapter-instance delay in `make-adapter`; keep the scoped arity uncached; adapter-double test asserting one computation per instance
-- [ ] 3.2 Add `request-schema-cache` (memo atoms; `:request-local? true`; no `:traversal-analysis`) and the unified `derived-cache-active?` predicate across the six gate sites; hook the raw facades of all three backends via a shared with-request-engine wrapper that builds one adapter per call
+- [x] 3.2 Add `request-schema-cache` (memo atoms; `:request-local? true`; no `:traversal-analysis`) and the unified `derived-cache-active?` predicate across the six gate sites; hook the raw facades of all three backends via a shared with-request-engine wrapper that builds one adapter per call
 - [x] 3.3 Add nil-store short-circuits to the four denotation lookup/resolve fns (key/dependency construction gated behind store presence)
 - [ ] 3.4 Tighten gate envelopes: schema proofs raw 2→1 and client 3→2; plan compiles 2–3→1; nil-store key work 2→0; cold path walks → once per unique node; rerun the 0tx-shape scenarios and record
 

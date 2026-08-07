@@ -568,6 +568,55 @@
     :recursive-plans (atom {})
     :direct-grant-relations (atom {})}))
 
+(defn- derived-cache-active?
+  "True when the bound schema cache may serve derived state.
+
+  Two regimes: a stamped client generation (non-nil :schema-version,
+  proof-keyed, shared across requests) or a request-local context
+  (:request-local? true, one immutable snapshot, discarded at request
+  end). Raw evaluation with no binding stays deliberately uncached."
+  []
+  (and *schema-cache*
+       (or (some? (:schema-version *schema-cache*))
+           (true? (:request-local? *schema-cache*)))))
+
+(defn request-schema-cache
+  "Derived-schema context scoped to ONE request on ONE immutable snapshot.
+
+  Retains permission paths, roots, routing analysis inputs, cycle guards,
+  dependency closures, and compiled/certified recursive plans for the
+  duration of a single raw-facade call, eliminating the audited
+  duplicate work (repeated cold path walks, duplicate plan
+  compile+certify) without publishing anything across requests or
+  snapshots — write-schema! remains the only cross-request invalidation
+  signal, and speculative/filtered/historical database values get a
+  fresh context per call by construction.
+
+  Deliberately carries NO :traversal-analysis: raw routing keeps the
+  per-root recursive-permission-query? classification (the compatibility
+  branch of traversal-permission?), so a single-root raw call never pays
+  the whole-schema certified analysis and the certified analysis remains
+  exclusive to client generation caches. :schema-version stays nil so
+  can? performs zero proof reads; enumeration identities read the
+  adapter's memoized proof.
+
+  DataScript/Datahike raw callers invoke the engine directly on an
+  adapter — bind this via engine/*schema-cache* there; the Datomic raw
+  facade binds it automatically."
+  [snapshot]
+  {:backend-id (backend/backend-id snapshot)
+   :source-scope nil
+   :schema-version nil
+   :routing-schema-identity nil
+   :request-local? true
+   :permission-roots (atom {})
+   :permission-paths (atom {})
+   :traversal-permissions (atom {})
+   :recursive-cycle-guards (atom {})
+   :relationship-dependencies (atom {})
+   :recursive-plans (atom {})
+   :direct-grant-relations (atom {})})
+
 (defn schema-cache-key
   "Identity of schema-derived state for one selected immutable snapshot.
 
@@ -645,7 +694,7 @@
 
 (defn- permission-root-defined?
   [db resource-type permission-name]
-  (if-not (and (some? (:schema-version *schema-cache*))
+  (if-not (and (derived-cache-active?)
                (some? (:permission-roots *schema-cache*)))
     (boolean
      (seq (find-permission-defs db resource-type permission-name)))
@@ -727,7 +776,7 @@
 
 (defn get-permission-paths
   [db resource-type permission-name]
-  (if-not (some? (:schema-version *schema-cache*))
+  (if-not (derived-cache-active?)
     (calc-permission-paths db resource-type permission-name)
     (let [cache-key (permission-paths-cache-key resource-type permission-name)
           cache-atom (:permission-paths *schema-cache*)
@@ -836,7 +885,7 @@
   affect one permission lookup. A stamped client memoises the vector for its
   schema generation, so live-result reads do not sort dependencies."
   [db resource-type permission-name]
-  (if-not (some? (:schema-version *schema-cache*))
+  (if-not (derived-cache-active?)
     (calc-permission-relationship-eids db resource-type permission-name)
     (let [cache-key (permission-paths-cache-key resource-type permission-name)
           cache-atom (:relationship-dependencies *schema-cache*)
@@ -1351,7 +1400,7 @@
 (defn- recursive-cycle-guards
   [db resource-type permission-name]
   (if-let [cache-atom
-           (and (some? (:schema-version *schema-cache*))
+           (and (derived-cache-active?)
                 (:recursive-cycle-guards *schema-cache*))]
     (let [cache-key
           (permission-paths-cache-key resource-type permission-name)
@@ -1467,7 +1516,7 @@
   permission node in a schema generation. Raw db evaluation and unstamped
   clients recompute the requested root."
   [db resource-type permission-name]
-  (if-not (some? (:schema-version *schema-cache*))
+  (if-not (derived-cache-active?)
     (recursive-permission-query? db resource-type permission-name)
     (if-let [analysis-atom (:traversal-analysis *schema-cache*)]
       (let [analysis-delay
@@ -2357,7 +2406,7 @@
   authorization answer or request-local traversal state."
   [db root-node]
   (let [cache-atom (:recursive-plans *schema-cache*)]
-    (if-not (and cache-atom (some? (:schema-version *schema-cache*)))
+    (if-not (and cache-atom (derived-cache-active?))
       (compile-recursive-plan db root-node)
       (let [candidate (delay (compile-recursive-plan db root-node))
             plan-delay
