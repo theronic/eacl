@@ -62,7 +62,7 @@
   (quot Long/MAX_VALUE 1000))
 (def ^:private default-consistency-sync-timeout-ms 30000)
 (def ^:private maximum-token-key-id-length 128)
-(def ^:private secure-random (SecureRandom.))
+(def ^:private ^SecureRandom secure-random (SecureRandom.))
 
 (defn- now-seconds []
   (quot (System/currentTimeMillis) 1000))
@@ -761,8 +761,10 @@
 (def ^:private answer-cache-kinds
   "The entry kinds that hold a finished answer, as opposed to the traversal and
   pagination state EACL caches regardless. :remember-answers governs exactly
-  these four."
-  #{:can? :lookup-page :count :latest-result})
+  these three. (The vestigial :latest-result kind was deleted by
+  trusted-surface-hygiene 11.1 — nothing has minted it since the v8 cursor
+  redesign.)"
+  #{:can? :lookup-page :count})
 
 (defn- internal-page-weight
   [page]
@@ -1285,7 +1287,11 @@
 
 (defmacro ^:private with-client-schema-write
   [schema-lock & body]
-  `(let [^Lock lock# (.writeLock ^ReentrantReadWriteLock ~schema-lock)]
+  ;; The hint rides a let-bound local: reader metadata attached directly to
+  ;; an unquoted form is dropped by syntax-quote, leaving a reflective
+  ;; field access at every expansion site.
+  `(let [rw# ~schema-lock
+         ^Lock lock# (.writeLock ^ReentrantReadWriteLock rw#)]
      (.lock lock#)
      (try
        ~@body
@@ -1325,7 +1331,8 @@
   [conn schema-lock schema-state & body]
   `(do
      (adopt-schema-generation! ~conn ~schema-state ~schema-lock)
-     (let [^Lock lock# (.readLock ^ReentrantReadWriteLock ~schema-lock)]
+     (let [rw# ~schema-lock
+           ^Lock lock# (.readLock ^ReentrantReadWriteLock rw#)]
        (.lock lock#)
        (try
          (binding [impl.indexed/*schema-cache* (deref ~schema-state)]
@@ -1367,7 +1374,6 @@
   (shared-cache/validate-request-cache-option! cache-option)
   (if (false? cache-option)
     (assoc opts
-           :lookup-cache-store nil
            :continuation-cache-store nil
            :current-cache-store nil
            :cache-remember-answers? false)
@@ -2819,18 +2825,15 @@
                                        :eacl-id-immutable-v1)})
                                 :adapter-deterministic?
                                 adapter-deterministic?}))
-                            ;; Provider and continuation stores remain separate
-                            ;; from native completed answers.
-                            :lookup-cache-store (:store cache-config)
+                            ;; Continuation state is the only provider-store
+                            ;; surface; native completed answers stay
+                            ;; client-private. (The write-only
+                            ;; :shared-cache-store/:lookup-cache-store options
+                            ;; were deleted by trusted-surface-hygiene 11.1.)
                             :continuation-cache-store
                             (:continuation-store cache-config)
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
                             :cache-namespace (:namespace cache-config)
-                            :shared-cache-store
-                            (cache/authenticated-store
-                             (:store cache-config)
-                             (:namespace cache-config)
-                             (:ttl-ms cache-config))
                             :current-cache-store
                             (when (and
                                    (:store cache-config)

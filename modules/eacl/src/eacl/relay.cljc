@@ -366,24 +366,16 @@
      relation-ids)
     (dependency-context adapter)))
 
-(defn- transform-frontier-ids
-  [f frontiers]
-  (into {}
-        (map (fn [[path-key frontier]]
-               [path-key
-                (if (= :exhausted frontier)
-                  frontier
-                  (f frontier))]))
-        frontiers))
-
 (defn- transform-edge-ids
+  ;; v11 :lookup-eid edges carry only the boundary :result-eid; path
+  ;; frontiers live exclusively in the private continuation store and never
+  ;; cross the cursor envelope (the dead frontier-coercion branch was
+  ;; deleted by trusted-surface-hygiene 11.1).
   [f edge]
   (case (:kind edge)
     :lookup-eid
     (cond-> edge
-      (:result-eid edge) (update :result-eid f)
-      (:path-frontiers edge)
-      (update :path-frontiers #(transform-frontier-ids f %)))
+      (:result-eid edge) (update :result-eid f))
 
     :relationship-index
     (-> edge

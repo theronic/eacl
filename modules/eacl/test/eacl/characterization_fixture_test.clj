@@ -454,7 +454,8 @@
             expected
             (:default-subproblem-cache memory-and-token)]
         (is (= {:projection (:projection-max-weight expected)
-                :denotation (:denotation-max-weight expected)}
+                :denotation (:denotation-max-weight expected)
+                :answer (:answer-max-weight expected)}
                (:budgets store)))
         (is (= (:max-inflight expected)
                (:max-inflight store)))

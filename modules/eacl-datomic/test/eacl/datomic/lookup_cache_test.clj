@@ -575,16 +575,18 @@
       (is (some? (core/make-client
                   conn {:cache (cache/local-store {:max-entries 8})}))))
     (testing "whatever :cache holds must BE a cache"
-      (let [store-of #(:lookup-cache-store (:opts (core/make-client conn %)))]
+      ;; The write-only :lookup-cache-store option died with 11.1; the
+      ;; native completed-answer store is now the observable cache switch.
+      (let [store-of #(:current-cache-store (:opts (core/make-client conn %)))]
         (testing "nil and absent both mean the default adapter"
           (is (some? (store-of {})))
           (is (some? (store-of {:cache nil}))))
         (testing "no-cache is the only way to turn it off"
           (is (nil? (store-of {:cache cache/no-cache})))
           (is (nil? (store-of {:cache {:store cache/no-cache}}))))
-        (testing "an explicit adapter is used as given"
+        (testing "an explicit adapter still enables caching"
           (let [adapter (cache/local-store)]
-            (is (identical? adapter (store-of {:cache adapter})))))
+            (is (some? (store-of {:cache adapter})))))
         (testing "booleans are rejected rather than interpreted"
           ;; They read as a flag in a slot that holds a cache, and they left
           ;; nil ambiguous between "the default" and "none".
@@ -754,8 +756,9 @@
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
-          store (get-in client [:opts :lookup-cache-store])
-          puts #(:puts (cache/stats store))
+          ;; Native answer publications are the live put stream since the
+          ;; provider answer path died with 11.1.
+          puts #(:puts (core/cache-stats client))
           calls [[:can? #(eacl/can? client (assoc % :subject alice
                                                  :permission :admin
                                                  :resource account))]

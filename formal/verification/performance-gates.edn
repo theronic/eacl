@@ -1281,6 +1281,8 @@
   :default-subproblem-cache
   {:projection-max-weight 4194304
    :denotation-max-weight 4194304
+   :answer-max-weight 16777216 ; D-6 answer tier (7.1): completed answers
+                               ; joined the weighted store
    :max-inflight 256
    :managed-proof-max-atoms 256}
   :recursive-4000-result-gc-stabilized-delta-bytes

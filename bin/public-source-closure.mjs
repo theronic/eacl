@@ -33,7 +33,6 @@ const roots = [
   "eacl.cursor/cursor->token",
   "eacl.cursor/token->cursor",
   "eacl.cache/resolve-current!",
-  "eacl.cache/resolve!",
   "eacl.subproblem-cache/resolve!",
   "eacl.subproblem-cache/resolve-bound!",
   "eacl.subproblem-cache/resolve-layered-bound!",

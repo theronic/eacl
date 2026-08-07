@@ -26,6 +26,27 @@
             :statistic :median
             :logical-work-remains-authoritative true}
  :latency-gate {:maximum-ratio-to-v7 2.0}
+ :batching-trigger-decision
+ {:task "eacl-v8-root-fixes 12.1"
+  :evaluated-at "2026-08-07 (post groups 3/4/5/6/7/8/9-core)"
+  :decision :triggered
+  :basis
+  "The 2.0x bound fails on every crossing-dominated op in the recorded
+   post-group-5 medians (exact counts 3.7-5.9x, deep point checks 5.7-56x
+   where v7 completes) and groups 6-9 did not touch the drive/resume
+   crossing count - group 6 scoped cursor validity, 7 bounded the answer
+   tier, 8 certified managed reuse, 9 de-forked client orchestration; the
+   engine-direct raw op-count envelopes (recursive-op-count-envelopes.edn)
+   still record ~2 crossings per frontier stream with ~98% empty probes.
+   Only the wave-batched scan protocol (D-9 phase 2 / 12.2-12.3) changes
+   that architectural layer."
+  :scope-note
+  "12.2/12.3 are the recorded 6-10 week Dafny effort (pending-scan
+   coverage-invariant generalization via the ghost-view trick;
+   Yielded-on-partial-batch for order determinism; cursor-digest version
+   bump; batched-crossings gate 2*ceil(streams/batch)+constant). They are
+   deliberately NOT begun inside eacl-v8-root-fixes sessions that cannot
+   carry a multi-week proof effort; this record is the 12.1 deliverable."}
  :scenarios
  {:star-2k
   {:fixture {:shape :star :accounts 2000}

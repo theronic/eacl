@@ -1612,7 +1612,10 @@
     (is (true? (get-in second-page
                        [:page-info :has-previous-page?])))))
 
-(deftest production-lookup-cursor-and-cache-use-generated-javascript-decisions
+(deftest production-lookup-cursor-uses-generated-javascript-decisions
+  ;; The authenticated-envelope provider path this test also exercised was
+  ;; deleted by trusted-surface-hygiene 11.1; cursor continuation remains
+  ;; the generated-decision surface under test here.
   (let [adapter (test-adapter)
         cursor-opts
         {:decision-kernel selection
@@ -1642,33 +1645,10 @@
         internal-query
         (relay/internalize-page-query
          selected cursor-opts :lookup-resources
-         (assoc query :after token))
-        entries (atom {})
-        store (reify cache/CacheStore
-                (lookup [_ key] (get @entries key))
-                (store! [_ key value]
-                  (swap! entries assoc key value)
-                  true)
-                (evict! [_ key]
-                  (swap! entries dissoc key)
-                  true)
-                (clear! [_] (reset! entries {}) nil)
-                (stats [_] {:entries (count @entries)}))
-        calls (atom 0)
-        resolve-cache
-        #(cache/resolve!
-          adapter store :semantic-key :can?
-          {:permission-nodes #{[:document :view]}}
-          [10]
-          boolean?
-          (fn [] (swap! calls inc) true)
-          {:decision-kernel selection})]
+         (assoc query :after token))]
     (is (identical? adapter selected))
     (is (= {:kind :lookup-eid :result-eid 1}
-           (:after internal-query)))
-    (is (false? (:cached? (resolve-cache))))
-    (is (true? (:cached? (resolve-cache))))
-    (is (= 1 @calls))))
+           (:after internal-query)))))
 
 (deftest datascript-public-recursive-cache-modes-use-generated-javascript
   (let [conn (datascript/create-conn)

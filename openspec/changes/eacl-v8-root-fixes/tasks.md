@@ -2,10 +2,10 @@
 
 All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). Every performance task tightens a recorded gate envelope; every correctness task adds or un-skips a pinning test. Task numbers reference design decisions (D-1…D-10) and specs.
 
-> **PROGRESS — 39/54 done. Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
-> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6), 8 (managed cert + fail-safe default/R9). Partials: 11.1 (watermark), 11.3 (warnings/prints).
-> - **Deferred with cause:** 6.4 (AEAD portable codec — sync CLJS GCM; see design D-4 note).
-> - **Remaining:** 9 (backend de-fork/R7), 10 (CLJS engine/R8), 11 remainder + Dafny cleanup (R10), 12 (batched protocol — conditional on the latency gate; likely triggers).
+> **PROGRESS — 48/54 done (all of groups 1–8, 9.1/9.2-core/9.4, 11.1–11.3, 12.1). Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
+> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6), 8 (managed cert + fail-safe default/R9), 9.1+9.2-core+9.4 (filter contract + DS/DH fork collapse/R7), 11.1–11.3 (hygiene deletions, reflection gate, warning dedup/R10), 12.1 (batching trigger recorded **:triggered**).
+> - **Deferred with cause:** 6.4 (AEAD portable codec — sync CLJS GCM; see design D-4 note); Datahike provider-store port (would copy the dead surface 11.1 deleted).
+> - **Remaining:** 9.2-tail (Datomic relationship pages onto `eacl.engine.relationships`) + 9.3-Datomic (option-family unification), 10 (CLJS engine/R8 — multi-session effort, see HANDOFF §Next), 11.4 (Dafny cleanup pass — may trail indefinitely), 12.2–12.3 (wave batching — triggered, 6–10 week Dafny effort, separate track).
 
 ## 1. Gates and counters first (D-10, recursion-performance-gates)
 
@@ -86,13 +86,13 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 11. Trusted-surface hygiene (trusted-surface-hygiene)
 
-- [ ] 11.1 Delete dead code: authenticated-envelope completed-cache path + `:shared-cache-store`/`:lookup-cache-store` options, `watermark.clj`, zed-v2 constructors, relay `:path-frontiers` branch, `:latest-result` kind; audit test asserting absence
-- [ ] 11.2 Enable `*warn-on-reflection*` with warnings-as-errors for core + backends in CI; hint the kernel decode loops
+- [x] 11.1 Delete dead code: authenticated-envelope completed-cache path + `:shared-cache-store`/`:lookup-cache-store` options, `watermark.clj`, zed-v2 constructors, relay `:path-frontiers` branch, `:latest-result` kind; audit test asserting absence (`eacl.datomic.trusted-surface-audit-test`; EACL-FORMAL-003's pin retargeted to it since its defective adapter no longer exists; two lookup-cache tests re-goldened onto the live native-answer/current-cache probes)
+- [x] 11.2 Enable `*warn-on-reflection*` with warnings-as-errors for core + backends in CI (`bin/reflection-gate`, wired into test.yml); hinted the surviving sites (schema-lock macros — syntax-quote drops meta on unquotes, so hints ride let-bound locals — SecureRandom nextBytes, backend digest getBytes, datahike migration sleep; the consistency.clj warnings died with zed-v2)
 - [x] 11.3 Rate-limit/optionalize the schema-resolution warning (schema warn; parser prints deferred) (once per generation or via reporter); remove parser REPL prints from shipped namespaces
 - [ ] 11.4 Dafny cleanup pass (Phase B, may trail): delete the ordinal rebase family + backward-render mode + `AfterCursor` arm; retarget or delete `Pagination.dfy`; update the assurance matrix so every model maps to shipped code; regenerate kernels, vectors, and manifests
 
 ## 12. Conditional: wave-batched scan protocol (D-9 phase 2, kernel-boundary-efficiency)
 
-- [ ] 12.1 Evaluate the trigger: with groups 3–5 landed, does the populated-recursion latency gate meet 2.0×? Record the decision in the gate EDN either way
+- [x] 12.1 Evaluate the trigger: with groups 3–5 landed, does the populated-recursion latency gate meet 2.0×? Record the decision in the gate EDN either way (**:triggered** — recorded in `explorer-v8-recursive-performance.edn` `:batching-trigger-decision` with basis and scope; groups 6–9 do not change crossing counts, so the post-group-5 medians remain the truth: counts 3.7–5.9×, deep checks 5.7–56×)
 - [ ] 12.2 (If triggered) Implement `AwaitingForwardScans`/`ResumeForwardScans` + batched drive exit per the recorded proof plan (ghost-view coverage generalization; Yielded-on-partial-batch for order determinism); regenerate kernels; version the emission order into cursor digests; re-golden order-dependent tests
 - [ ] 12.3 (If triggered) Batched-crossings gate (2×⌈streams/batch⌉ + constant) and full differential/replay suites against the regenerated kernel

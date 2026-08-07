@@ -10,7 +10,7 @@
     :EACL-FORMAL-002
     eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test
     :EACL-FORMAL-003
-    eacl.datomic.cache-test/authenticated-store-preserves-logical-kind-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-004
     eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test
     :EACL-FORMAL-005
