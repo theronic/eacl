@@ -27,18 +27,6 @@
       (.readFileSync "formal/cross-runtime/vectors.edn" "utf8")
       reader/read-string))
 
-(defn- expected-cursor-rebase
-  [values bound-eid]
-  (loop [ordinal 0]
-    (if (= ordinal (count values))
-      {:status :restarted
-       :inspected-count ordinal}
-      (if (= bound-eid (nth values ordinal))
-        {:status :rebased
-         :ordinal ordinal
-         :inspected-count (inc ordinal)}
-        (recur (inc ordinal))))))
-
 (defn- expected-consistency-plan
   [{:keys [mode capability-supported? managed-authority?]}]
   (cond
@@ -872,66 +860,6 @@
            :mode :recover-current
            :cursor-graph 0
            :exact nil})))
-  (is (= {:status :rebased
-          :ordinal 2
-          :inspected-count 3}
-         (verified/decide
-          selection
-          :cursor-bound-rebase
-          {:values [11 17 23 29]
-           :bound-eid 23})))
-  (is (= {:status :restarted
-          :inspected-count 4}
-         (verified/decide
-          selection
-          :cursor-bound-rebase
-          {:values [11 17 23 29]
-           :bound-eid 31})))
-  (is (= {:status :rebased
-          :ordinal 1
-          :inspected-count 2}
-         (verified/decide
-          selection
-          :cursor-bound-rebase
-          {:values [0 backend/maximum-exact-integer]
-           :bound-eid backend/maximum-exact-integer})))
-  (is (= {:status :rebased
-          :ordinal 0
-          :inspected-count 1}
-         (verified/decide
-          selection
-          :cursor-bound-rebase
-          {:values [17 17]
-           :bound-eid 17})))
-  (let [values (vec (range 8200))]
-    (is (= {:status :rebased
-            :ordinal 4096
-            :inspected-count 4097}
-           (verified/decide-cursor-bound-rebase
-            selection values 4096)))
-    (is (= {:status :rebased
-            :ordinal 8199
-            :inspected-count 8200}
-           (verified/decide-cursor-bound-rebase
-            selection values 8199)))
-    (is (= {:status :restarted
-            :inspected-count 8200}
-           (verified/decide-cursor-bound-rebase
-            selection values 8201))))
-  (doseq [[size bound-eid]
-          [[0 0]
-           [1 0]
-           [4095 4094]
-           [4096 4095]
-           [4097 4096]
-           [16383 16382]
-           [16384 16383]
-           [16385 16384]
-           [32769 32770]]]
-    (let [values (vec (range size))]
-      (is (= (expected-cursor-rebase values bound-eid)
-             (verified/decide-cursor-bound-rebase
-              selection values bound-eid)))))
   (is (= {:status :miss :reason :future-or-sibling}
          (verified/decide
           selection
@@ -1971,15 +1899,35 @@
             (datascript-backend/snapshot-adapter
              (ds/db conn)
              (:opts uncached))
-            stale-error
+            current-ids
+            (mapv :id
+                  (:data
+                   (engine/lookup-resources
+                    changed-adapter
+                    (assoc page-query :first 10))))
+            resumed
+            (engine/lookup-resources
+             changed-adapter
+             (assoc page-query :after raw-bound))]
+        (is (= (filterv #(> % (:result-eid raw-bound)) current-ids)
+               (mapv :id (:data resumed)))
+            "a raw keyset bound resumes exclusively after its eid on the current graph"))
+      (let [render-rejected
             (try
-              (engine/lookup-resources
-               changed-adapter
-               (assoc page-query :after raw-bound))
+              (engine/generated-traversal-error!
+               :forward
+               {}
+               {:status :render-rejected
+                :state :opaque
+                :error {:reason :cursor-result-mismatch
+                        :ordinal 1
+                        :expected-eid 15
+                        :actual-eid 16}})
               nil
               (catch :default error
                 error))]
         (is (= :eacl.pagination/stale-cursor
-               (:eacl/error (ex-data stale-error))))
+               (:eacl/error (ex-data render-rejected))))
         (is (= {:eacl/error :eacl.pagination/stale-cursor}
-               (ex-data stale-error)))))))
+               (ex-data render-rejected))
+            "generated render rejection keeps the minimal public stale-cursor shape")))))

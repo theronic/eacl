@@ -931,20 +931,40 @@
             (datascript-backend/snapshot-adapter
              (ds/db conn)
              (:opts client))
-            error
-            (try
-              (engine/lookup-resources
-               changed-adapter
-               (assoc query :after bound))
-              nil
-              (catch Exception exception
-                exception))]
-        (is (= [(get-in bound [:result :eid])]
+            current-ids
+            (mapv :id
+                  (:data
+                   (engine/lookup-resources
+                    changed-adapter
+                    (assoc query :first 10))))
+            resumed
+            (engine/lookup-resources
+             changed-adapter
+             (assoc query :after bound))]
+        (is (= [(:result-eid bound)]
                (mapv :id (:data page))))
-        (is (= :eacl.pagination/stale-cursor
-               (:eacl/error (ex-data error))))
-        (is (= {:eacl/error :eacl.pagination/stale-cursor}
-               (ex-data error)))))))
+        (is (= (filterv #(> % (:result-eid bound)) current-ids)
+               (mapv :id (:data resumed)))
+            "a raw keyset bound resumes exclusively after its eid on the current graph")))
+    (let [render-rejected
+          (try
+            (#'engine/generated-traversal-error!
+             :forward
+             {}
+             {:status :render-rejected
+              :state :opaque
+              :error {:reason :cursor-result-mismatch
+                      :ordinal 1
+                      :expected-eid 15
+                      :actual-eid 16}})
+            nil
+            (catch Exception exception
+              exception))]
+      (is (= :eacl.pagination/stale-cursor
+             (:eacl/error (ex-data render-rejected))))
+      (is (= {:eacl/error :eacl.pagination/stale-cursor}
+             (ex-data render-rejected))
+          "generated render rejection keeps the minimal public stale-cursor shape"))))
 
 (deftest generated-queue-limit-is-query-local
   (let [conn (datascript/create-conn)

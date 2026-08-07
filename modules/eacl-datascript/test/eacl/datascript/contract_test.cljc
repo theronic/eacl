@@ -628,7 +628,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 10 (:v envelope)))
+      (is (= 11 (:v envelope)))
       (is (= :lookup-eid
              (get-in envelope [:edge :kind])))
       (is (= "server-1"

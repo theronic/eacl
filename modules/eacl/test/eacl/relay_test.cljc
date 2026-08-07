@@ -187,12 +187,9 @@
         (assoc-in
          lookup-page
          [:page-info :end-cursor]
-         {:kind :recursive-traversal
-          :engine-version 8
-          :direction :forward
-          :result-kind :resource
-          :ordinal 1
-          :result {:type :document :eid "document-1"}})
+         {:kind :lookup-eid
+          :frontier-direction :asc
+          :result-eid "document-1"})
         first-page
         (relay/externalize-page
          original {} :lookup-resources lookup-query recursive-page)

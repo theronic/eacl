@@ -206,8 +206,8 @@
     (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
                       page-source))
         "the generated RawPageRequest smoke must use only current v8 fields")
-    (is (= {:first-page [10 30]
-            :continuation-page [20]}
+    (is (= {:first-page [10 20]
+            :continuation-page [30]}
            (:production-recursive-pages vectors)))
     (is (re-find
          #":production-recursive-pages \(cross-runtime-vectors\)"

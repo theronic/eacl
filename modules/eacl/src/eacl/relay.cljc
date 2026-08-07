@@ -286,10 +286,6 @@
       (:path-frontiers edge)
       (update :path-frontiers #(transform-frontier-ids f %)))
 
-    :recursive-traversal
-    (cond-> edge
-      (get-in edge [:result :eid]) (update-in [:result :eid] f))
-
     :relationship-index
     (-> edge
         (update :subject-id f)
@@ -302,7 +298,7 @@
   (when edge
     (cursor/cursor->token
      (merge
-      {:v 10
+      {:v 11
        :scope scope
        :edge (transform-edge-ids
               #(backend/invoke adapter :internal-id->object %)
@@ -332,7 +328,7 @@
                  "Invalid Relay cursor."
                  {:reason (:reason (ex-data error))}
                  error))))]
-      (when-not (and (= 10 (:v envelope))
+      (when-not (and (= 11 (:v envelope))
                      (map? (:edge envelope)))
         (invalid-cursor! "Invalid Relay cursor envelope."
                          {:reason :invalid-envelope}
@@ -554,7 +550,7 @@
        :recovery :restarted}
       {:edge
        (cond-> transformed
-         (#{:lookup-eid :recursive-traversal} (:kind transformed))
+         (#{:lookup-eid} (:kind transformed))
          (assoc :rebase? true))
        :recovery :rebased})))
 

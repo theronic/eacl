@@ -63,8 +63,9 @@
          "Restart heap-bounded nREPL for generated resource gates"
          "Gate routing-certificate logical work and JVM allocation"
          "Gate generated consistency-boundary overhead"
-         "Restart heap-bounded nREPL for cursor resource gate"
-         "Gate recoverable cursor rebase work and host resources"
+         "Restart heap-bounded nREPL for recorded-baseline gates"
+         "Gate populated recursion against recorded v7 baselines"
+         "Gate Explorer enumeration against recorded v7 baselines"
          "Stop CI nREPL"]]
     (is (= 4
            (count
@@ -224,7 +225,6 @@
                 layered-subproblem-cache
                 cross-backend-managed-proof
                 authority-mode-matrix
-                recoverable-cursor-rebase
                 memory-and-token
                 retained-live-heap-gate
                 release-performance-evaluation
@@ -308,64 +308,6 @@
           (is (<= (:median-p95-ns observed)
                   (:maximum-median-p95-ns required)))
           (is (= :passed (:status observed))))))
-    (testing "recoverable cursor rebase has generated logical and host gates"
-      (let [required (:required recoverable-cursor-rebase)
-            observed (:observed recoverable-cursor-rebase)
-            formal-work (:formal-logical-work
-                         recoverable-cursor-rebase)]
-        (is (= :passed (:status recoverable-cursor-rebase)))
-        (is (= :none (:whole-denotation-cap formal-work)))
-        (is (= {:clj-java 4096
-                :cljs-javascript 16384}
-               (:maximum-adapter-input-items formal-work)))
-        (is (= :dafny-exact-first-match-and-bounded-adapter-chunk-theorems
-               (:assurance formal-work)))
-        (doseq [runtime [:clj-java :cljs-javascript]]
-          (let [runtime-required (get-in required [runtime])
-                runtime-fixture (get-in observed [runtime :fixture])
-                sizes (:sizes runtime-fixture)]
-            (is (= :multi-chunk-current-denotation
-                   (:scaling-domain runtime-fixture)))
-            (is (every?
-                 #(<= (:minimum-scaling-size runtime-required) %)
-                 sizes))
-            (is (<= (* (:minimum-scaling-span runtime-required)
-                       (first sizes))
-                    (last sizes)))))
-        (is (<= (get-in observed
-                        [:clj-java :maximum-p50-ns-per-item])
-                (get-in required
-                        [:clj-java :maximum-p50-ns-per-item])))
-        (is (<= (get-in observed
-                        [:clj-java
-                         :maximum-p50-allocated-bytes-per-item])
-                (get-in required
-                        [:clj-java
-                         :maximum-p50-allocated-bytes-per-item])))
-        (is (= (get-in required
-                       [:clj-java :large-recovery-size])
-               (get-in observed
-                       [:clj-java :large-recovery :size])))
-        (is (<= (get-in observed
-                        [:cljs-javascript :maximum-p50-ns-per-item])
-                (get-in required
-                        [:cljs-javascript :maximum-p50-ns-per-item])))
-        (is (= :not-established
-               (get-in recoverable-cursor-rebase
-                       [:resource-qualification :retained-live-heap])))
-        (is (= :none
-               (get-in recoverable-cursor-rebase
-                       [:resource-qualification
-                        :lore-analyser-contribution])))
-        (is (str/includes?
-             formal-workflow
-             "Restart heap-bounded nREPL for cursor resource gate"))
-        (is (str/includes?
-             formal-workflow
-             "cursor-rebase-benchmark/run-gate!"))
-        (is (str/includes?
-             formal-workflow
-             "cursor-rebase-benchmark.js"))))
     (is (= "bin/formal artifact-size"
            (:measurement-command generated-artifacts)))
     (is (= :after-all-generated-artifacts-are-rebuilt

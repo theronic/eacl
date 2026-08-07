@@ -588,9 +588,13 @@
       (and edge (= :desc (:direction page-req))) (assoc :before edge))))
 
 (defn- empty-anchor-cursor-recovery
+  "A resume whose subject/resource anchor no longer resolves cannot be a
+  benign rebase: the keyset boundary's result identity is unverifiable,
+  so report the honest restart (agent-found successor of the dead
+  :recursive-traversal special case)."
   [captured decoded]
   (if (and (= :rebased (:cursor-recovery captured))
-           (= :recursive-traversal (get-in decoded [:edge :kind])))
+           (= :lookup-eid (get-in decoded [:edge :kind])))
     :restarted
     (:cursor-recovery captured)))
 
@@ -718,18 +722,6 @@
     :lookup-eid
     (when (positive-eid? (:result-eid cursor))
       {:eid (:result-eid cursor)})
-
-    :recursive-traversal
-    (let [{:keys [engine-version direction result-kind ordinal result]} cursor]
-      (when (and (integer? engine-version)
-                 (pos? engine-version)
-                 (#{:forward :reverse} direction)
-                 (#{:resource :subject} result-kind)
-                 (integer? ordinal)
-                 (not (neg? ordinal))
-                 (keyword? (:type result))
-                 (positive-eid? (:eid result)))
-        result))
 
     nil))
 
@@ -1482,7 +1474,7 @@
               selected-context
 
               :rebase-current
-              (if (#{:lookup-eid :recursive-traversal}
+              (if (#{:lookup-eid}
                    (get-in decoded [:edge :kind]))
                 (assoc
                  (snapshot-result-context

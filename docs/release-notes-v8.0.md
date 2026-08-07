@@ -191,15 +191,29 @@ identity, graph anchor, and exact snapshot locator. Relay window size and
 direction remain caller-controlled so the same boundary supports forward and
 backward navigation.
 
-- Continuation on the same current immutable snapshot is direct.
-- For non-exact modes, a changed proof is re-evaluated against the selected
-  current snapshot. If the authenticated stable result identity still belongs
-  to the current denotation, EACL resumes exclusively from its current
-  position and reports `:cursor-recovery :rebased`.
-- If that result identity no longer belongs to the current denotation, EACL
-  drops the bound, restarts in the requested page direction, and reports
-  `:cursor-recovery :restarted`. Proof-specific recursive continuations and
-  ordinary per-path frontiers are never reused across that proof change.
+- Both enumeration routes — acyclic and recursive — emit one cursor kind:
+  a keyset boundary on the internal result EID. Recursive enumeration
+  presents the canonical strictly-ascending EID order of its completed
+  denotation; the previous ordinal cursors over worklist derivation order
+  no longer exist, and cursors survive a schema edit that re-routes a
+  permission between the acyclic and recursive engines.
+- Continuation on the same current immutable snapshot is direct. For a
+  recursive walk, the first page resolves (and, with the subproblem cache,
+  publishes) the complete sorted denotation; every later page is a
+  logarithmic slice with zero backend work.
+- For non-exact modes after a write, the keyset boundary is re-validated by
+  membership in the freshly evaluated denotation. A surviving boundary
+  resumes exclusively after the same EID — surviving results are never
+  skipped or duplicated, because an entity's EID cannot move in the order.
+  A revoked or deleted boundary drops the bound, restarts in the requested
+  page direction, and reports `:cursor-recovery :restarted`.
+- Raw (cache-free) recursive first pages keep streaming early-stop
+  economics while the result fits the page; a larger result materializes
+  its closure once (probe-then-continue on the same verified machine
+  state, no replay) — the irreducible price of sorted first pages. A
+  denotation beyond `:max-derived-grants` fails with the typed
+  recursive-limit error on every raw page; attach the subproblem store,
+  raise the limit, or use `:count-limit` for bounded counts.
 - `at-exact-snapshot` retains exact continuation and returns a typed
   snapshot-expired failure if that explicit snapshot is unavailable.
 - Relationship cursors bind their selected graph anchor rather than hashing
@@ -212,17 +226,17 @@ backward navigation.
   They read at most `page-size + 1` matching internal rows instead of
   materializing and sorting every match before every page.
 
-EACL does not promise a global, lexical, domain, or cross-backend order now that
-recursive schema has multiple valid traversal orders. It promises one
-deterministic sequence for a fixed query on the cursor-pinned immutable
-snapshot. A complete valid walk has no item movement, omission, or duplication.
-Relationship pages use each backend's tuple-index order; that order is an
-internal pagination contract, not a presentation-order API.
+Permission enumeration presents ascending internal-EID order on both
+routes: one deterministic sequence for a fixed query on the selected
+snapshot, stable under writes for all surviving results. It is not a
+lexical, domain, or cross-backend order (internal EIDs differ per
+backend). Relationship pages use each backend's tuple-index order; that
+order is an internal pagination contract, not a presentation-order API.
 
-Recovery has ordinary weak-pagination behavior under concurrent mutation:
-duplicates or omissions across page boundaries are possible, but every
-returned page is freshly authorized on one selected graph. Exact walks require
-the explicit exact-snapshot consistency mode.
+Under concurrent mutation, results granted below a keyset boundary
+between pages are not revisited and revoked results disappear — ordinary
+keyset semantics; surviving results appear exactly once across a walk.
+Exact walks require the explicit exact-snapshot consistency mode.
 
 All old cursor/cache/token candidate envelopes are intentionally incompatible
 with the final v8 formats.

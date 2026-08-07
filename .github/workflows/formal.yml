@@ -259,7 +259,7 @@ jobs:
                  \"target/formal/consistency-boundary-cljs.js\"}))"
           node target/formal/consistency-boundary-cljs.js
 
-      - name: Restart heap-bounded nREPL for cursor resource gate
+      - name: Restart heap-bounded nREPL for recorded-baseline gates
         run: |
           old_pid="$(cat target/formal/ci-nrepl.pid)"
           kill "$old_pid" 2>/dev/null || true
@@ -282,25 +282,6 @@ jobs:
           done
           cat target/formal/ci-nrepl.log
           exit 1
-
-      - name: Gate recoverable cursor rebase work and host resources
-        run: |
-          sh bin/ci-nrepl-eval 7788 \
-            "(do
-               (require
-                'eacl.formal.cursor-rebase-benchmark
-                :reload)
-               (let [result
-                     (eacl.formal.cursor-rebase-benchmark/run-gate!)]
-                 (binding [*out* *err*]
-                   (prn result)
-                   (flush))
-                 (when (= :failed (:status result))
-                   (throw
-                    (ex-info
-                     \"generated JVM cursor rebase resource gate regressed\"
-                     result)))
-                 (:summary result)))"
 
       - name: Gate populated recursion against recorded v7 baselines
         run: |
@@ -337,19 +318,6 @@ jobs:
                      \"explorer enumeration gate regressed\"
                      result)))
                  result))"
-          sh bin/ci-nrepl-eval 7788 \
-            "(do
-               (require '[cljs.build.api :as cljs] :reload)
-               (cljs/build
-                nil
-                {:main 'eacl.formal.cursor-rebase-benchmark
-                 :target :nodejs
-                 :optimizations :none
-                 :output-dir
-                 \"target/formal/cljs-cursor-rebase-benchmark-out\"
-                 :output-to
-                 \"target/formal/cljs-cursor-rebase-benchmark.js\"}))"
-          node --expose-gc target/formal/cljs-cursor-rebase-benchmark.js
 
       - name: Assert verified status remains withheld while gates are unmet
         run: |

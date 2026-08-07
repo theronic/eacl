@@ -35,13 +35,13 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 ## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — after group 2
 
 - [x] 5.1 Sort in the two denotation completers with permutation guard; strict-ascending `valid-recursive-denotation?`; bump the denotation key version
-- [ ] 5.2 Extract the shared certified-keyset-page helper (realized slice → `DecideAcyclicPage` → work gate → lookup-items) from the acyclic path
-- [ ] 5.3 Implement probe-then-continue for the no-store path: bounded `RenderPage(S)` probe minting no cursors; exhausted → sort ≤S items; `has-next?` → `continue-indexed-page` to closure on the same state, sort, slice; verify the continuation window validation path accepts to-closure windows (fallback: restart materialization, waste bounded by the probe)
-- [ ] 5.4 Rewrite recursive forward/reverse pages onto resolve-denotation → rebase/validate → certified-keyset-page; binary-search membership rebase per the FORMAL-047 contract (`:rebased`/`:restarted`)
-- [ ] 5.5 Unify cursors on `:lookup-eid`; delete the ordinal cursor kind, its validators, the rebase chunk orchestration in `verified_kernel.cljc` + both production kernels, the direction-unscoped recursive page cache, and the `unsupported-recursive-last` restrictions; bump the relay envelope version and the Datomic cursor-context version
-- [ ] 5.6 Binary-search `can?` membership on sorted denotations; store-bound counts publish denotations on miss (count→list denotation-hit gate from 1.3 goes green)
-- [ ] 5.7 New regression tests: order-perturbing-write skip/dup scenario (the V4 repro — must fail on old code), route-change cursor survival, rebase hit/miss, bare `:last`, `:desc` slices, sorted-parity acyclic-vs-recursive on a dual-expressible schema
-- [ ] 5.8 Update ordinal-order-dependent tests across the three backends and relay/kernel/smoke suites; rewrite the release-notes cursor section (order promise, recovery semantics, the >max-derived-grants raw cliff with actionable error text)
+- [x] 5.2 Extract the shared certified-keyset-page helper (realized slice → `DecideAcyclicPage` → work gate → lookup-items) from the acyclic path
+- [x] 5.3 Implement probe-then-continue for the no-store path: bounded `RenderPage(S)` probe minting no cursors; exhausted → sort ≤S items; `has-next?` → `continue-indexed-page` to closure on the same state, sort, slice; verify the continuation window validation path accepts to-closure windows (fallback: restart materialization, waste bounded by the probe)
+- [x] 5.4 Rewrite recursive forward/reverse pages onto resolve-denotation → rebase/validate → certified-keyset-page; binary-search membership rebase per the FORMAL-047 contract (`:rebased`/`:restarted`)
+- [x] 5.5 Unify cursors on `:lookup-eid`; delete the ordinal cursor kind, its validators, the rebase chunk orchestration in `verified_kernel.cljc` + both production kernels, the direction-unscoped recursive page cache, and the `unsupported-recursive-last` restrictions; bump the relay envelope version and the Datomic cursor-context version
+- [x] 5.6 Binary-search `can?` membership on sorted denotations; store-bound counts publish denotations on miss (count→list denotation-hit gate from 1.3 goes green)
+- [x] 5.7 New regression tests: order-perturbing-write skip/dup scenario (the V4 repro — must fail on old code), route-change cursor survival, rebase hit/miss, bare `:last`, `:desc` slices, sorted-parity acyclic-vs-recursive on a dual-expressible schema
+- [x] 5.8 Update ordinal-order-dependent tests across the three backends and relay/kernel/smoke suites; rewrite the release-notes cursor section (order promise, recovery semantics, the >max-derived-grants raw cliff with actionable error text)
 
 ## 6. Cursor dependency validity (D-4, cursor-dependency-validity)
 

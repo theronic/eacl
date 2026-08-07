@@ -460,7 +460,7 @@
         (is (nil? (:recursive-page-hits @stats))
             "no unauthenticated recursive page is reused across clients")))))
 
-(deftest recursive-cursors-resume-private-continuations-within-client-test
+(deftest recursive-cursors-resume-from-the-client-private-denotation-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -495,9 +495,10 @@
                       (get-in first-page [:page-info :end-cursor]))))]
         (is (= ["root"] (mapv :id (:data first-page))))
         (is (= ["child"] (mapv :id (:data second-page))))
-        (is (= 1 (:continuation-hits @stats)))
-        (is (nil? (:continuation-misses @stats))))
-      (testing "rejected private-cache admission deterministically replays"
+        (is (zero? (get @stats :stream-fills 0))
+            "a later page slices the client-private denotation with zero backend work")
+        (is (zero? (get @stats :derived-grants 0))))
+      (testing "a bounded shared cache does not disturb denotation reuse"
         (let [bounded-client
               (core/make-client
                conn
@@ -515,8 +516,8 @@
                         :after
                         (get-in first-page [:page-info :end-cursor]))))]
           (is (= ["child"] (mapv :id (:data second-page))))
-          (is (nil? (:continuation-hits @stats)))
-          (is (= 1 (:continuation-misses @stats))))))))
+          (is (zero? (get @stats :stream-fills 0)))
+          (is (zero? (get @stats :derived-grants 0))))))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]

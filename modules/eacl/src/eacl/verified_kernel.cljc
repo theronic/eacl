@@ -24,7 +24,6 @@
   #{:relationship-page
     :relationship-keyset-page
     :cursor-continuation
-    :cursor-bound-rebase
     :consistency-plan
     :consistency-validation
     :cache-validation
@@ -44,19 +43,7 @@
     :authorization-evaluation})
 
 (def ^:private maximum-boundary-items 1000000)
-(def ^:private cursor-rebase-chunk-items
-  #?(:clj 4096
-     :cljs 16384))
 (def ^:private maximum-boundary-string-length 65536)
-
-(defn cursor-rebase-chunk-limit
-  "Returns the host-specific maximum identities sent through one generated
-  cursor-rebase adapter call.
-
-  Resource gates consume this value directly so their scaling domain cannot
-  drift from the production chunk orchestration."
-  []
-  cursor-rebase-chunk-items)
 
 (defprotocol DecisionKernel
   (-decide [kernel operation input]
@@ -228,46 +215,6 @@
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
-    input))
-
-(defn- validate-cursor-bound-rebase-input!
-  [input]
-  (let [operation :cursor-bound-rebase
-        _ (exact-keys!
-           operation :input input #{:values :bound-eid})
-        values
-        (require-value!
-         operation
-         :values
-         #(and (vector? %)
-               (<= (count %) cursor-rebase-chunk-items))
-         (:values input))]
-    #?(:clj
-       (let [^clojure.lang.IPersistentVector values values
-             element-count (long (count values))]
-         (loop [index (long 0)]
-           (when (< index element-count)
-             (let [value (.nth values (int index))]
-               (when-not (safe-natural? value)
-                 (boundary-error!
-                  "Generated-kernel boundary value has an invalid representation."
-                  {:operation operation
-                   :field [:values index]
-                   :value-type (str (type value))}))
-               (recur (unchecked-inc index))))))
-       :cljs
-       (loop [index 0]
-         (when (< index (count values))
-           (let [value (nth values index)]
-             (when-not (safe-natural? value)
-               (boundary-error!
-                "Generated-kernel boundary value has an invalid representation."
-                {:operation operation
-                 :field [:values index]
-                 :value-type (str (type value))}))
-             (recur (inc index))))))
-    (require-value!
-     operation :bound-eid safe-natural? (:bound-eid input))
     input))
 
 (def ^:private consistency-modes
@@ -1705,8 +1652,6 @@
     :relationship-page (validate-page-input! input)
     :relationship-keyset-page (validate-keyset-page-input! input)
     :cursor-continuation (validate-continuation-input! input)
-    :cursor-bound-rebase
-    (validate-cursor-bound-rebase-input! input)
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
@@ -1804,40 +1749,6 @@
   [result]
   (require-value!
    :cursor-continuation :result continuation-decisions result))
-
-(defn- validate-cursor-bound-rebase-result!
-  [result]
-  (let [operation :cursor-bound-rebase]
-    (when-not (map? result)
-      (boundary-error!
-       "Generated cursor rebase result must be a map."
-       {:operation operation :result result}))
-    (case (:status result)
-      :rebased
-      (do
-        (exact-keys!
-         operation :result result
-         #{:status :ordinal :inspected-count})
-        (doseq [field [:ordinal :inspected-count]]
-          (require-value!
-           operation field safe-natural? (get result field)))
-        result)
-
-      :restarted
-      (do
-        (exact-keys!
-         operation :result result
-         #{:status :inspected-count})
-        (require-value!
-         operation
-         :inspected-count
-         safe-natural?
-         (:inspected-count result))
-        result)
-
-      (boundary-error!
-       "Generated cursor rebase result has an unknown variant."
-       {:operation operation :result result}))))
 
 (def consistency-plan-decisions
   #{:select-current
@@ -2451,8 +2362,6 @@
     :relationship-page (validate-page-result! result)
     :relationship-keyset-page (validate-keyset-page-result! result)
     :cursor-continuation (validate-continuation-result! result)
-    :cursor-bound-rebase
-    (validate-cursor-bound-rebase-result! result)
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
@@ -2535,34 +2444,7 @@
          {:operation operation
           :size (:size input)
           :take-count (:take-count result)}))
-      (when (= :cursor-bound-rebase operation)
-        (let [values (:values input)
-              bound-eid (:bound-eid input)]
-          (case (:status result)
-            :rebased
-            (let [ordinal (:ordinal result)]
-              (when (or (>= ordinal (count values))
-                        (not= bound-eid (nth values ordinal nil))
-                        (not= (inc ordinal)
-                              (:inspected-count result)))
-                (boundary-error!
-                 "Generated cursor rebase contradicts its validated input."
-                 {:operation operation
-                  :status :rebased
-                  :value-count (count values)
-                  :ordinal ordinal
-                  :inspected-count (:inspected-count result)})))
-
-            :restarted
-            (when (or (some #{bound-eid} values)
-                      (not= (count values)
-                            (:inspected-count result)))
-              (boundary-error!
-               "Generated cursor restart contradicts its validated input."
-               {:operation operation
-                :status :restarted
-                :value-count (count values)
-                :inspected-count (:inspected-count result)})))))
+      
       (when (and (= :consistency-plan operation)
                  (not= result (expected-consistency-plan input)))
         (boundary-error!
@@ -2820,50 +2702,3 @@
   (let [{:keys [kernel]} (normalize-selection selection)]
     (invoke-kernel kernel operation input)))
 
-(defn decide-cursor-bound-rebase
-  "Rebinds one authenticated stable result identity to its current ordinal.
-
-  The host denotation is not artificially capped: only each generated
-  invocation is capped at `cursor-rebase-chunk-items`. This keeps the
-  Java/JavaScript adapter representation bounded without turning a large but
-  recoverable current page into an error, and it preserves the first-match/
-  restart semantics proved by `RebaseCursorBoundChunked`.
-
-  The shared CLJC chunk orchestration remains handwritten trusted-boundary
-  code. Every chunk decision is generated-authoritative, and differential
-  tests compare this whole-sequence result with an independent direct scan."
-  [selection values bound-eid]
-  (require-value!
-   :cursor-bound-rebase
-   :values
-   vector?
-   values)
-  (require-value!
-   :cursor-bound-rebase
-   :bound-eid
-   safe-natural?
-   bound-eid)
-  (let [selection (normalize-selection selection)
-        value-count (count values)]
-    (loop [offset 0]
-      (if (= offset value-count)
-        {:status :restarted
-         :inspected-count value-count}
-        (let [end (min value-count
-                       (+ offset cursor-rebase-chunk-items))
-              chunk (subvec values offset end)
-              decision
-              (decide
-               selection
-               :cursor-bound-rebase
-               {:values chunk
-                :bound-eid bound-eid})]
-          (case (:status decision)
-            :rebased
-            {:status :rebased
-             :ordinal (+ offset (:ordinal decision))
-             :inspected-count
-             (+ offset (:inspected-count decision))}
-
-            :restarted
-            (recur end)))))))

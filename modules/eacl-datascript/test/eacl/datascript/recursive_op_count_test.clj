@@ -194,13 +194,19 @@
           (pr-str m)))
     (assert-crossing-law! m)))
 
-(deftest continuation-resumption-test
+(deftest keyset-page-reuse-test
+  ;; Keyset semantics (5.x): the first page resolves and publishes the
+  ;; complete sorted denotation; the second page is a zero-scan
+  ;; binary-search slice of the cached denotation.
   (let [{:keys [client]} (seed-star!)
+        e (:client-lookup-first-50 envelopes)
         page-1 (eacl/lookup-resources client (rf/resource-query config rf/user-1 50))
         cursor (get-in page-1 [:page-info :end-cursor])
         m (measured
            #(eacl/lookup-resources client
                                    (assoc (rf/resource-query config rf/user-1 50)
                                           :after cursor)))]
-    (testing "second page resumes server-side continuation state (:continuation-hits)"
-      (is (= 1 (:continuation-hits m)) (pr-str m)))))
+    (testing "second page slices the cached denotation with zero scans"
+      (is (<= (:stream-fills m) (:maximum-later-page-scans e)) (pr-str m))
+      (is (zero? (:drive m)) (pr-str m))
+      (is (zero? (:resume m)) (pr-str m)))))

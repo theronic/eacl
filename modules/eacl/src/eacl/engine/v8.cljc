@@ -2442,51 +2442,6 @@
     db (permission-query-node resource-type permission-name))
    [:root-component-id :node->component-id :components]))
 
-(defn- recursive-edge
-  [direction result-kind ordinal result-type result-eid]
-  {:kind :recursive-traversal
-   :engine-version recursive-engine-version
-   :direction direction
-   :result-kind result-kind
-   :ordinal ordinal
-   :result {:type result-type
-            :eid result-eid}})
-
-(defn- validate-recursive-bound!
-  [bound direction result-kind]
-  (when bound
-    (when-not (= :recursive-traversal (:kind bound))
-      (recursive-traversal-error!
-       "Recursive traversal cursor has the wrong kind."
-       {:eacl/error :eacl.pagination/wrong-cursor-kind
-        :expected :recursive-traversal
-        :actual (:kind bound)}))
-    (when-not (= recursive-engine-version (:engine-version bound))
-      (recursive-traversal-error!
-       "Recursive traversal cursor was created by a different engine version."
-       {:eacl/error :eacl.pagination/stale-cursor
-        :expected recursive-engine-version
-        :actual (:engine-version bound)}))
-    (when-not (= direction (:direction bound))
-      (recursive-traversal-error!
-       "Recursive traversal cursor direction does not match the lookup."
-       {:eacl/error :eacl.pagination/wrong-cursor-kind
-        :expected direction
-        :actual (:direction bound)}))
-    (when-not (= result-kind (:result-kind bound))
-      (recursive-traversal-error!
-       "Recursive traversal cursor result kind does not match the lookup."
-       {:eacl/error :eacl.pagination/wrong-cursor-kind
-        :expected result-kind
-        :actual (:result-kind bound)}))))
-
-(defn- same-recursive-bound-result?
-  [bound item]
-  (and (= (get-in bound [:result :type])
-          (get-in item [:cursor :result :type]))
-       (= (get-in bound [:result :eid])
-          (get-in item [:cursor :result :eid]))))
-
 (defn continuation-weight
   [state]
   ;; Conservative retained-work estimate. Cache bounds are admission controls,
@@ -2514,76 +2469,6 @@
                       (count (:consumers state)))))))
 
 
-(defn- note-continuation-miss!
-  "A missing continuation is never fatal: the caller replays the cursor's
-  deterministic prefix against its pinned historical basis."
-  [bound continuation]
-  (when (and bound (nil? continuation))
-    (inc-stat! :continuation-misses))
-  continuation)
-
-(defn- evict-continuation!
-  [continuation-cache edge]
-  (when-let [evict! (:evict! continuation-cache)]
-    (try
-      (evict! edge)
-      (catch #?(:clj Exception :cljs :default) _
-        false))))
-
-
-(defn- cached-generated-continuation
-  [continuation-cache bound direction result-kind]
-  (when-let [get-continuation (:get continuation-cache)]
-    (when-let [{:keys [engine-version implementation state counters
-                       retained-logical-units]
-                :as continuation}
-               (try
-                 (get-continuation bound)
-                 (catch #?(:clj Exception :cljs :default) _
-                   nil))]
-      (when (and (= recursive-engine-version engine-version)
-                 (= :generated-indexed implementation)
-                 (= direction (:direction continuation))
-                 (= result-kind (:result-kind continuation))
-                 (= bound (:bound continuation))
-                 (some? state)
-                 (map? counters)
-                 (= (set dimensional-counter-keys)
-                    (set (keys counters)))
-                 (every? portable-page-natural? (vals counters))
-                 (portable-page-natural? retained-logical-units))
-        (inc-stat! :continuation-hits)
-        continuation))))
-
-(defn- generated-continuation-weight
-  [retained-logical-units]
-  ;; This is a constant-time admission estimate, not a JVM heap theorem.
-  ;; Dafny computes retained logical units from the exact generated state;
-  ;; direct JVM/Node peak measurements gate the estimate against real heaps.
-  (+ 4096
-     (* 256
-        (min retained-logical-units
-             (quot (- backend/maximum-exact-integer 4096) 256)))))
-
-(defn- store-generated-continuation!
-  [continuation-cache edge direction result-kind result]
-  (when-let [put-continuation! (:put! continuation-cache)]
-    (try
-      (put-continuation!
-       edge
-       {:engine-version recursive-engine-version
-        :implementation :generated-indexed
-        :direction direction
-        :result-kind result-kind
-        :bound edge
-        :state (:state result)
-        :counters (:counters result)
-        :retained-logical-units (:retained-logical-units result)}
-       (generated-continuation-weight
-        (:retained-logical-units result)))
-      (catch #?(:clj Exception :cljs :default) _
-        false))))
-
 ;; NOTE ON `traversal` VS `page-direction`
 ;;
 ;; `traversal` is the traversal axis and is CONSTANT per API: :forward for
@@ -2595,79 +2480,6 @@
 ;; because {:first N :after C} and {:last N :before C} carry the same bound and
 ;; size while naming completely different pages.
 
-(defn- recursive-page-end-key
-  "Physical key for a page by the ordinal it ENDS on.
-
-  Deliberately not scoped by page-direction: a page ending at ordinal k with
-  size N covers ordinals k-N+1..k whichever way it was produced, so an :asc
-  page is a valid answer for a :desc request bounded just past it. An :asc page
-  can only be short when it is the final page, in which case no :before cursor
-  past it exists."
-  [traversal result-kind end-ordinal size]
-  [:end traversal result-kind end-ordinal size])
-
-(defn- recursive-page-request-key
-  "Physical key for one requested page, scoped by the caller's pagination axis.
-
-  Omitting page-direction here let a :last/:before page be served to a later
-  :first/:after request with the same cursor and size."
-  [traversal result-kind page-direction bound size]
-  [:request traversal result-kind page-direction bound size])
-
-(defn- cached-recursive-request-page
-  [continuation-cache traversal result-kind page-direction bound size]
-  (when-let [get-page (:get-page continuation-cache)]
-    (when-let [page (try
-                      (get-page
-                       (recursive-page-request-key
-                        traversal result-kind page-direction bound size))
-                      (catch #?(:clj Exception :cljs :default) _
-                        nil))]
-      (inc-stat! :recursive-page-hits)
-      page)))
-
-(defn- cached-recursive-previous-page
-  [continuation-cache traversal result-kind bound size]
-  (when-let [get-page (:get-page continuation-cache)]
-    (when-let [page (try
-                      (get-page
-                       (recursive-page-end-key traversal
-                                               result-kind
-                                               (dec (:ordinal bound))
-                                               size))
-                      (catch #?(:clj Exception :cljs :default) _
-                        nil))]
-      (when (and (map? page)
-                 (vector? (:data page))
-                 (<= (count (:data page)) size)
-                 (= (dec (:ordinal bound))
-                    (get-in page [:page-info :end-cursor :ordinal])))
-        (inc-stat! :recursive-page-hits)
-        page))))
-
-(defn- store-recursive-page!
-  [continuation-cache traversal result-kind page-direction bound size page]
-  (when-let [put-page! (:put-page! continuation-cache)]
-    (let [weight (+ 512 (* 192 (count (:data page))))
-          request-stored?
-          (try
-            (put-page! (recursive-page-request-key
-                        traversal result-kind page-direction bound size)
-                       page
-                       weight)
-            (catch #?(:clj Exception :cljs :default) _
-              false))]
-      (when-let [end-ordinal (get-in page [:page-info :end-cursor :ordinal])]
-        (try
-          (put-page! (recursive-page-end-key
-                      traversal result-kind end-ordinal size)
-                     page
-                     weight)
-          (catch #?(:clj Exception :cljs :default) _
-            false)))
-      request-stored?)))
-
-
 (def ^:dynamic ^:private *stream-chunk-size*
   "Backend scan batch size selected by the enclosing recursive page.
 
@@ -2675,18 +2487,6 @@
   caller did not ask for. Count operations and large pages keep the larger
   batch so index-seek overhead remains amortized."
   64)
-
-
-(defn- generated-page-stream-chunk-size
-  "Uses one generated scan round trip for the common small Relay window.
-
-  The generated renderer needs `page-size + 1` results to decide has-next.
-  Choosing exactly that size avoids a second FFI drive/resume boundary without
-  increasing adapter lookahead beyond the one value already required by the
-  scan contract. Larger windows retain the bounded 64-value batch."
-  [page-size]
-  (min 64 (inc page-size)))
-
 
 
 (defn- scan-eids
@@ -2943,23 +2743,6 @@
                (generated-traversal-error!
                 direction limits outcome)))))))))
 
-(defn- generated-render
-  [direction size bound]
-  (let [portable-bound
-        (when bound
-          {:ordinal (:ordinal bound)
-           :eid (get-in bound [:result :eid])})]
-    (case direction
-      :asc
-      {:kind :page
-       :size size
-       :bound portable-bound}
-
-      :desc
-      {:kind :backward-page
-       :size size
-       :bound portable-bound})))
-
 (defn- generated-forward-result
   ([db plan subject-type subject-eid root-node result-type render]
    (generated-forward-result
@@ -3010,27 +2793,6 @@
       :max-queued-work
       (:max-queued-work *recursive-traversal-limits*)}}
     continuation)))
-
-(defn- generated-page-response
-  [direction result-kind result-type result]
-  (let [start (:start-ordinal result)
-        items
-        (mapv
-         (fn [offset eid]
-           {:node (spice-object result-type eid)
-            :cursor
-            (recursive-edge
-             direction
-             result-kind
-             (+ start offset)
-             result-type
-             eid)})
-         (range)
-         (:items result))]
-    (page-response
-     {:items items
-      :has-next? (:has-next? result)
-      :has-previous? (:has-previous? result)})))
 
 (def ^:private recursive-denotation-version 3) ; v3: sorted canonical form (5.1)
 
@@ -3182,94 +2944,6 @@
       (recursive-denotation-dependencies db root-node)
       #(vec values)))))
 
-(defn- recursive-denotation-item
-  [direction result-kind result-type ordinal eid]
-  {:node (spice-object result-type eid)
-   :cursor
-   (recursive-edge
-    direction result-kind ordinal result-type eid)})
-
-(defn- recursive-denotation-items
-  [direction result-kind result-type start-ordinal values]
-  (mapv
-   (fn [offset eid]
-     (recursive-denotation-item
-      direction result-kind result-type (+ start-ordinal offset) eid))
-   (range)
-   values))
-
-(defn- validate-denotation-bound!
-  [direction result-kind result-type values bound]
-  (when bound
-    (let [ordinal (:ordinal bound)]
-      (when-not (and (integer? ordinal)
-                     (<= 0 ordinal)
-                     (< ordinal (count values)))
-        (recursive-traversal-error!
-         "Recursive traversal cursor no longer exists."
-         {:eacl/error :eacl.pagination/stale-cursor
-          :bound bound}))
-      (let [actual
-            (recursive-denotation-item
-             direction result-kind result-type ordinal (nth values ordinal))]
-        (when-not (same-recursive-bound-result? bound actual)
-          (recursive-traversal-error!
-           "Recursive traversal cursor points at a different result."
-           {:eacl/error :eacl.pagination/stale-cursor
-            :bound bound
-            :actual (:cursor actual)}))))))
-
-(defn- page-from-recursive-denotation
-  [direction result-kind result-type values page-direction bound size]
-  (let [value-count (count values)
-        _ (validate-denotation-bound!
-           direction result-kind result-type values bound)]
-    (case page-direction
-      :asc
-      (let [start (if bound (inc (:ordinal bound)) 0)
-            end (min value-count (+ start size))]
-        (page-response
-         {:items
-          (recursive-denotation-items
-           direction result-kind result-type start
-           (subvec values start end))
-          :has-next? (< end value-count)
-          :has-previous? (boolean bound)}))
-
-      :desc
-      (let [end (if bound (:ordinal bound) value-count)
-            start (max 0 (- end size))]
-        (page-response
-         {:items
-          (recursive-denotation-items
-           direction result-kind result-type start
-           (subvec values start end))
-          :has-next? (boolean bound)
-          :has-previous? (pos? start)})))))
-
-(defn- rebase-recursive-bound
-  [values bound]
-  (if-not (:rebase? bound)
-    {:bound bound
-     :restarted? false}
-    (let [bound-eid (get-in bound [:result :eid])
-          decision
-          (verified/decide-cursor-bound-rebase
-           subproblem/*decision-kernel*
-           values
-           bound-eid)]
-      (case (:status decision)
-        :rebased
-        {:bound
-         (-> bound
-             (dissoc :rebase?)
-             (assoc :ordinal (:ordinal decision)))
-         :restarted? false}
-
-        :restarted
-        {:bound nil
-         :restarted? true}))))
-
 (defn- mark-recursive-restart
   [page restarted?]
   (cond-> page
@@ -3291,110 +2965,218 @@
        query)
      restart?]))
 
+(declare valid-cursor-eid?)
+
+(defn- lookup-edge
+  [eid]
+  {:kind :lookup-eid
+   :result-eid eid})
+
+(defn- lookup-items
+  [result-type eids]
+  (mapv
+   (fn [eid]
+     {:node (spice-object result-type eid)
+      :cursor (lookup-edge eid)})
+   eids))
+
+(defn- validate-lookup-eid-bound!
+  [bound]
+  (when bound
+    (when-not (= :lookup-eid (:kind bound))
+      (page-error!
+       "Lookup page cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :expected :lookup-eid
+        :actual (:kind bound)}))
+    (when-not (valid-cursor-eid? (:result-eid bound))
+      (page-error!
+       "Lookup page cursor has an invalid result boundary."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :result-eid (:result-eid bound)}))))
+
+(defn- eid-insertion-point
+  "Index of the first eid in the canonical sorted vector satisfying
+  (pred eid). Binary search: values is strictly ascending."
+  [values pred]
+  (loop [low 0
+         high (count values)]
+    (if (>= low high)
+      low
+      (let [mid (quot (+ low high) 2)]
+        (if (pred (nth values mid))
+          (recur low mid)
+          (recur (inc mid) high))))))
+
+(defn- denotation-member?
+  "O(log n) membership on the canonical sorted denotation."
+  [values eid]
+  (let [index (eid-insertion-point values #(<= eid %))]
+    (and (< index (count values))
+         (= eid (nth values index)))))
+
+(defn- keyset-window
+  "Realized scan-order window (at most size+1 eids, sentinel included)
+  from the canonical sorted denotation for one keyset bound. :desc
+  windows are returned in descending scan order for the certified page
+  decision, exactly like the acyclic streaming route."
+  [values page-direction bound-eid size]
+  (let [value-count (count values)]
+    (case page-direction
+      :asc
+      (let [start (if bound-eid
+                    (eid-insertion-point values #(> % bound-eid))
+                    0)]
+        (subvec values start (min value-count (+ start (inc size)))))
+
+      :desc
+      (let [end (if bound-eid
+                  (eid-insertion-point values #(>= % bound-eid))
+                  value-count)
+            start (max 0 (- end (inc size)))]
+        (vec (rseq (subvec values start end)))))))
+
+(defn- keyset-rebase
+  "FORMAL-047 contract on the sorted denotation: a recover-current bound
+  survives only when its result identity is a member of the CURRENT
+  denotation (binary search - the page needs the denotation anyway).
+  Hit: exclusive resume from the same eid. Miss: drop the bound and
+  restart honestly."
+  [values bound]
+  (if-not (:rebase? bound)
+    [bound false]
+    (let [eid (:result-eid bound)]
+      (if (and eid (denotation-member? values eid))
+        [{:kind :lookup-eid :result-eid eid} false]
+        [nil true]))))
+
+(defn- certified-keyset-page
+  "Certified slice shared by the acyclic streaming route and the keyset
+  recursive route: every emitted page window passes the generated
+  DecideAcyclicPage ordering/window decision (strict per-direction
+  order revalidated at the kernel boundary)."
+  [result-type page-direction size bound? realized restarted?]
+  (let [page-decision
+        (verified/decide
+         subproblem/*decision-kernel*
+         :acyclic-page
+         {:direction page-direction
+          :realized-eids realized
+          :size size
+          :bound? bound?})
+        scan-order
+        (vec (take (:take-count page-decision) realized))
+        page-eids
+        (if (:reverse? page-decision)
+          (vec (reverse scan-order))
+          scan-order)
+        page
+        (mark-recursive-restart
+         (page-response
+          {:items (lookup-items result-type page-eids)
+           :has-next? (:has-next? page-decision)
+           :has-previous? (:has-previous? page-decision)})
+         restarted?)]
+    {:page page
+     :page-decision page-decision
+     :scan-order scan-order
+     :has-sentinel? (> (count realized) size)}))
+
+(defn- continue-probe-to-closure
+  "Extends a bounded probe's machine state to the complete fixed point
+  through the verified page continuation - zero replay - and returns
+  the canonical concatenated emission."
+  [db plan direction run-continued probe]
+  (let [items (:items probe)
+        last-ordinal (dec (+ (:start-ordinal probe 0) (count items)))
+        continued
+        (run-continued
+         {:kind :page
+          :size (:max-derived-grants *recursive-traversal-limits*)
+          :bound {:ordinal last-ordinal :eid (peek items)}}
+         {:state (:state probe)
+          :counters (:counters probe)})]
+    (when (= :continuation-rejected (:status continued))
+      (recursive-traversal-error!
+       "Probe continuation was rejected by the generated runtime."
+       {:eacl/error :eacl.recursive-traversal/invalid-generated-outcome
+        :direction direction
+        :outcome-status :probe-continuation-rejected}))
+    (when (:has-next? continued)
+      (recursive-traversal-error!
+       "Recursive denotation exceeds :max-derived-grants, so no sorted page can be produced. Raise :recursive-traversal-limits, attach the subproblem store (a client caches the one-time closure), use :count-limit for bounded counts, or model the permission acyclically."
+       {:eacl/error :eacl.recursive-traversal/limit-exceeded
+        :direction direction
+        :limit (:max-derived-grants *recursive-traversal-limits*)
+        :outcome-status :incomplete-denotation}))
+    (canonical-denotation (into (vec items) (:items continued)))))
+
+(defn- probe-then-continue-forward
+  "No-store denotation materialization at streaming cost for small
+  results: a bounded probe keeps today's early-stop economics (the
+  machine halts the fixed point once size+1 results are delivered); a
+  result that fits one page IS the complete denotation. Larger results
+  pay closure-minus-probe - the irreducible price of sorted first
+  pages - via the verified continuation on the same state."
+  [db subject-type subject-eid root-node result-type size]
+  (let [plan (recursive-plan db root-node)
+        probe (generated-forward-result
+               db plan subject-type subject-eid root-node result-type
+               {:kind :page :size size :bound nil})]
+    (if-not (:has-next? probe)
+      (canonical-denotation (:items probe))
+      (continue-probe-to-closure
+       db plan :forward
+       (fn [render continuation]
+         (generated-forward-result
+          db plan subject-type subject-eid root-node result-type
+          render continuation))
+       probe))))
+
+(defn- probe-then-continue-reverse
+  [db resource-type resource-eid root-node subject-type size]
+  (let [plan (recursive-plan db root-node)
+        probe (generated-reverse-result
+               db plan subject-type root-node resource-eid subject-type
+               {:kind :page :size size :bound nil})]
+    (if-not (:has-next? probe)
+      (canonical-denotation (:items probe))
+      (continue-probe-to-closure
+       db plan :reverse
+       (fn [render continuation]
+         (generated-reverse-result
+          db plan subject-type root-node resource-eid subject-type
+          render continuation))
+       probe))))
+
 (defn- recursive-forward-page
   [db query continuation-cache]
   (let [{:keys [direction size bound]} (normalize-page-request query)
-        _ (validate-recursive-bound! bound :forward :resource)
+        _ (validate-lookup-eid-bound! bound)
         {:keys [subject permission]} query
         subject-type (:type subject)
         subject-eid (object-eid db (:id subject))
         result-type (:resource/type query)
-        root-node (permission-query-node result-type permission)
-        _ (when (and (= :desc direction)
-                     (nil? bound)
-                     (traversal-permission?
-                      db result-type permission))
-            (page-error! "Bare :last is not supported for recursive traversal pagination because it requires a full closure traversal."
-                         {:eacl/error :eacl.pagination/unsupported-recursive-last
-                          :reason :requires-full-traversal}))]
+        root-node (permission-query-node result-type permission)]
     (if-not subject-eid
       (page-response {:items []
                       :has-next? false
                       :has-previous? (boolean bound)})
-      (let [cached-denotation
-            (lookup-forward-denotation
-             db subject-type subject-eid root-node result-type)
-            cached-page
-            (case direction
-              :asc (cached-recursive-request-page
-                    continuation-cache :forward :resource :asc bound size)
-              :desc (cached-recursive-previous-page
-                     continuation-cache :forward :resource bound size))]
-        (or
-         (when (:rebase? bound)
-           (let [values
-                 (or cached-denotation
-                     (resolve-forward-denotation
-                      db subject-type subject-eid root-node result-type))
-                 {rebased-bound :bound
-                  restarted? :restarted?}
-                 (rebase-recursive-bound values bound)]
-             (mark-recursive-restart
-              (page-from-recursive-denotation
-               :forward :resource result-type values direction rebased-bound size)
-              restarted?)))
-         cached-page
-         (when cached-denotation
-           (page-from-recursive-denotation
-            :forward :resource result-type cached-denotation
-            direction bound size))
-         (when (and (= :desc direction) (nil? bound))
-           (page-from-recursive-denotation
-            :forward
-            :resource
-            result-type
-            (resolve-forward-denotation
-             db subject-type subject-eid root-node result-type)
-            direction
-            nil
-            size))
-         (binding [*stream-chunk-size*
-                   (generated-page-stream-chunk-size size)]
-           (let [plan (recursive-plan db root-node)
-                 continuation
-                 (when (and bound (= :asc direction))
-                   (note-continuation-miss!
-                    bound
-                    (cached-generated-continuation
-                     continuation-cache bound :forward :resource)))
-                 run-page
-                 #(generated-forward-result
-                   db plan subject-type subject-eid root-node result-type
-                   (generated-render direction size bound)
-                   %)
-                 attempted (run-page continuation)
-                 rejected?
-                 (= :continuation-rejected (:status attempted))
-                 _ (when rejected?
-                     (evict-continuation! continuation-cache bound)
-                     (inc-stat! :continuation-misses))
-                 result (if rejected? (run-page nil) attempted)
-                 page
-                 (generated-page-response
-                  :forward :resource result-type result)
-                 _ (when (and (nil? bound)
-                              (not (:has-next? result)))
-                     (publish-forward-denotation!
-                      db subject-type subject-eid root-node result-type
-                      (:items result)))
-                 continuation-stored?
-                 (when (and (= :asc direction)
-                            (:has-next? result))
-                   (store-generated-continuation!
-                    continuation-cache
-                    (get-in page [:page-info :end-cursor])
-                    :forward :resource result))
-                 page-stored?
-                 (store-recursive-page!
-                  continuation-cache
-                  :forward :resource direction bound size page)]
-             (when (and continuation
-                        (not rejected?)
-                        page-stored?
-                        (or (not (:has-next? result))
-                            continuation-stored?))
-               (evict-continuation! continuation-cache bound))
-             page)))))))
+      (let [values
+            (if subproblem/*store*
+              (or (lookup-forward-denotation
+                   db subject-type subject-eid root-node result-type)
+                  (resolve-forward-denotation
+                   db subject-type subject-eid root-node result-type))
+              (probe-then-continue-forward
+               db subject-type subject-eid root-node result-type size))
+            [bound' restarted?] (keyset-rebase values bound)
+            realized (keyset-window
+                      values direction (:result-eid bound') size)]
+        (:page
+         (certified-keyset-page
+          result-type direction size (boolean bound')
+          realized restarted?))))))
 
 (defn- complete-generated-reverse-denotation
   [db resource-type resource-eid root-node subject-type]
@@ -3476,121 +3258,31 @@
                  {:eacl/error :eacl.pagination/unsupported-filter
                   :filter :subject/relation}))
   (let [{:keys [direction size bound]} (normalize-page-request query)
-        _ (validate-recursive-bound! bound :reverse :subject)
+        _ (validate-lookup-eid-bound! bound)
         {:keys [resource permission]} query
         resource-type (:type resource)
         resource-eid (object-eid db (:id resource))
         subject-type (:subject/type query)
-        root-node (permission-query-node resource-type permission)
-        _ (when (and (= :desc direction)
-                     (nil? bound)
-                     (traversal-permission?
-                      db resource-type permission))
-            (page-error! "Bare :last is not supported for recursive traversal pagination because it requires a full closure traversal."
-                         {:eacl/error :eacl.pagination/unsupported-recursive-last
-                          :reason :requires-full-traversal}))]
+        root-node (permission-query-node resource-type permission)]
     (if-not resource-eid
       (page-response {:items []
                       :has-next? false
                       :has-previous? (boolean bound)})
-      (let [cached-denotation
-            (lookup-reverse-denotation
-             db resource-type resource-eid root-node subject-type)
-            cached-page
-            (case direction
-              :asc (cached-recursive-request-page
-                    continuation-cache :reverse :subject :asc bound size)
-              :desc (cached-recursive-previous-page
-                     continuation-cache :reverse :subject bound size))]
-        (or
-         (when (:rebase? bound)
-           (let [values
-                 (or cached-denotation
-                     (resolve-reverse-denotation
-                      db
-                      resource-type
-                      resource-eid
-                      root-node
-                      subject-type))
-                 {rebased-bound :bound
-                  restarted? :restarted?}
-                 (rebase-recursive-bound values bound)]
-             (mark-recursive-restart
-              (page-from-recursive-denotation
-               :reverse
-               :subject
-               subject-type
-               values
-               direction
-               rebased-bound
-               size)
-              restarted?)))
-         cached-page
-         (when cached-denotation
-           (page-from-recursive-denotation
-            :reverse :subject subject-type cached-denotation
-            direction bound size))
-         (when (and (= :desc direction) (nil? bound))
-           (page-from-recursive-denotation
-            :reverse
-            :subject
-            subject-type
-            (resolve-reverse-denotation
-             db
-             resource-type
-             resource-eid
-             root-node
-             subject-type)
-            direction
-            nil
-            size))
-         (binding [*stream-chunk-size*
-                   (generated-page-stream-chunk-size size)]
-           (let [plan (recursive-plan db root-node)
-                 continuation
-                 (when (and bound (= :asc direction))
-                   (note-continuation-miss!
-                    bound
-                    (cached-generated-continuation
-                     continuation-cache bound :reverse :subject)))
-                 run-page
-                 #(generated-reverse-result
-                   db plan subject-type root-node resource-eid subject-type
-                   (generated-render direction size bound)
-                   %)
-                 attempted (run-page continuation)
-                 rejected?
-                 (= :continuation-rejected (:status attempted))
-                 _ (when rejected?
-                     (evict-continuation! continuation-cache bound)
-                     (inc-stat! :continuation-misses))
-                 result (if rejected? (run-page nil) attempted)
-                 page
-                 (generated-page-response
-                  :reverse :subject subject-type result)
-                 _ (when (and (nil? bound)
-                              (not (:has-next? result)))
-                     (publish-reverse-denotation!
-                      db resource-type resource-eid root-node subject-type
-                      (:items result)))
-                 continuation-stored?
-                 (when (and (= :asc direction)
-                            (:has-next? result))
-                   (store-generated-continuation!
-                    continuation-cache
-                    (get-in page [:page-info :end-cursor])
-                    :reverse :subject result))
-                 page-stored?
-                 (store-recursive-page!
-                  continuation-cache
-                  :reverse :subject direction bound size page)]
-             (when (and continuation
-                        (not rejected?)
-                        page-stored?
-                        (or (not (:has-next? result))
-                            continuation-stored?))
-               (evict-continuation! continuation-cache bound))
-             page)))))))
+      (let [values
+            (if subproblem/*store*
+              (or (lookup-reverse-denotation
+                   db resource-type resource-eid root-node subject-type)
+                  (resolve-reverse-denotation
+                   db resource-type resource-eid root-node subject-type))
+              (probe-then-continue-reverse
+               db resource-type resource-eid root-node subject-type size))
+            [bound' restarted?] (keyset-rebase values bound)
+            realized (keyset-window
+                      values direction (:result-eid bound') size)]
+        (:page
+         (certified-keyset-page
+          subject-type direction size (boolean bound')
+          realized restarted?))))))
 
 (defn- recursive-can?
   "Evaluates one point query with the generated monotone indexed machine.
@@ -3601,11 +3293,10 @@
   cannot be retracted by later least-fixed-point iterations."
   [db subject-type subject-eid root-node resource-type resource-eid]
   (if subproblem/*store*
-    (boolean
-     (some
-      #{resource-eid}
-      (resolve-forward-denotation
-       db subject-type subject-eid root-node resource-type)))
+    (denotation-member?
+     (resolve-forward-denotation
+      db subject-type subject-eid root-node resource-type)
+     resource-eid)
     (let [plan (recursive-plan db root-node)
           reverse-result
           ;; A point authorization query is anchored by one concrete resource.
@@ -3702,19 +3393,6 @@
   ;; contains only normalized schema identities and relation EIDs.
   (pr-str (path-frontier-identity path)))
 
-(defn- lookup-edge
-  [eid]
-  {:kind :lookup-eid
-   :result-eid eid})
-
-(defn- lookup-items
-  [result-type eids]
-  (mapv
-   (fn [eid]
-     {:node (spice-object result-type eid)
-      :cursor (lookup-edge eid)})
-   eids))
-
 (defn- resume-scan-opts
   [direction page-opts resume-eid]
   (if resume-eid
@@ -3778,21 +3456,6 @@
   (and (integer? eid)
        (pos? eid)
        (<= eid backend/maximum-exact-integer)))
-
-(defn- validate-lookup-eid-bound!
-  [bound]
-  (when bound
-    (when-not (= :lookup-eid (:kind bound))
-      (page-error!
-       "Lookup page cursor has the wrong kind."
-       {:eacl/error :eacl.pagination/wrong-cursor-kind
-        :expected :lookup-eid
-        :actual (:kind bound)}))
-    (when-not (valid-cursor-eid? (:result-eid bound))
-      (page-error!
-       "Lookup page cursor has an invalid result boundary."
-       {:eacl/error :eacl.pagination/invalid-cursor
-        :result-eid (:result-eid bound)}))))
 
 (defn- valid-lookup-continuation?
   [value]
@@ -4404,8 +4067,6 @@
              (when bound
                (case (:kind bound)
                  :lookup-eid (validate-lookup-eid-bound! bound)
-                 :recursive-traversal
-                 (validate-recursive-bound! bound :forward :resource)
                  (page-error!
                   "Lookup page cursor has the wrong kind."
                   {:eacl/error :eacl.pagination/wrong-cursor-kind
@@ -4456,8 +4117,6 @@
              (when bound
                (case (:kind bound)
                  :lookup-eid (validate-lookup-eid-bound! bound)
-                 :recursive-traversal
-                 (validate-recursive-bound! bound :reverse :subject)
                  (page-error!
                   "Lookup page cursor has the wrong kind."
                   {:eacl/error :eacl.pagination/wrong-cursor-kind
@@ -4528,12 +4187,17 @@
              root-node (permission-query-node result-type permission)]
          (if-not subject-eid
            {:count 0 :truncated? false}
-           (if-let [cached
-                    (lookup-forward-denotation
-                     db (:type subject) subject-eid root-node result-type)]
-             (count-denotation cached limit)
-             ;; Recursive roots retain the generated fixed-point count and its
-             ;; fail-closed safety limits.
+           (if subproblem/*store*
+             ;; Store-bound counts resolve (and therefore PUBLISH) the
+             ;; complete denotation so distinct/overlapping counts, pages,
+             ;; and point checks stop repaying the full fixed point (the
+             ;; audited count-amortization gap).
+             (count-denotation
+              (resolve-forward-denotation
+               db (:type subject) subject-eid root-node result-type)
+              limit)
+             ;; Cache-free counts keep the bounded generated renders so
+             ;; :count-limit truncation still stops the machine early.
              (select-keys
               (generated-forward-result
                db
@@ -4583,10 +4247,11 @@
              root-node (permission-query-node (:type resource) permission)]
          (if-not resource-eid
            {:count 0 :truncated? false}
-           (if-let [cached
-                    (lookup-reverse-denotation
-                     db (:type resource) resource-eid root-node subject-type)]
-             (count-denotation cached limit)
+           (if subproblem/*store*
+             (count-denotation
+              (resolve-reverse-denotation
+               db (:type resource) resource-eid root-node subject-type)
+              limit)
              (select-keys
               (generated-reverse-result
                db
