@@ -1,8 +1,12 @@
 # eacl-v8-root-fixes — session handoff
 
 Checkpoint for a fresh session with none of the prior context. Read this,
-then `proposal.md` → `design.md` → `tasks.md` → `specs/**`. Progress: **35/54
-tasks**, groups 1–7 landed (with recorded partials), groups 8–12 remaining.
+then `proposal.md` → `design.md` → `tasks.md` → `specs/**`. Progress:
+**48/54 tasks** — groups 1–8 complete, 9 complete except two recorded
+Datomic sub-items, 11.1–11.3 complete, 12.1 recorded (**:triggered**).
+Remaining engineering: the two Datomic 9.x sub-items, group 10 (CLJS
+engine — the one large remaining build), 11.4 (Dafny cleanup, may trail),
+and 12.2–12.3 (wave batching — triggered, its own multi-week track).
 
 ## What this change is
 
@@ -19,233 +23,221 @@ sanctioned.
 
 ## Where the code lives (critical)
 
-- **This worktree** is on branch `claude/eacl-v8-correctness-optimization-a58fe3`,
-  which was fast-forwarded onto the v8 tip and now *is* the v8 lineage plus
-  this change's commits. The module layout is `modules/eacl` (core, `.cljc`),
-  `modules/eacl-datomic|-datahike|-datascript`.
+- **This worktree** is
+  `/Users/petrus/Code/eacl/.claude/worktrees/eacl-v8-correctness-optimization-a58fe3`
+  on branch `claude/eacl-v8-correctness-optimization-a58fe3` — the v8
+  lineage plus this change's commits. Module layout: `modules/eacl` (core,
+  `.cljc`), `modules/eacl-datomic|-datahike|-datascript`.
 - **NOT `main`** — main is v7.3. The audit's read-only reference copy of the
   pre-change v8 tip is `/Users/petrus/.codex/worktrees/4916/eacl` (branch
-  `codex/restore-v8-enumeration-performance`); use it only to diff against, not
-  to edit.
+  `codex/restore-v8-enumeration-performance`); diff against it, never edit it.
 - The generated kernel artifacts (`target/formal/java/classes`,
-  `target/formal/browser/EaclKernel.browser.js`) were copied in from the 4916
-  worktree and are on the classpath; they are Dafny-built (not committed).
+  `target/formal/browser/EaclKernel.browser.js`) are Dafny-built, on the
+  classpath, not committed.
+- **Concurrent-agent hazard:** a delegated background agent once edited this
+  worktree while a new session was reading it. Before editing, check
+  `ps aux | grep -i claude` and recent mtimes
+  (`find modules -mmin -10`), and wait for quiescence if something is live.
 
 ## How to work in this repo (hard-won gotchas)
 
-1. **Stale-nREPL mixing produces false test results.** This repo has bitten us
-   repeatedly: a long-lived nREPL that loaded pre-edit namespaces will report
-   phantom failures (or phantom passes) after you edit src. **After any src
-   change that matters, start a FRESH nREPL** and run the suite there:
-   `nohup clojure -M:nrepl > /tmp/nrepl.log 2>&1 &` then `sleep 25` then
-   `clj-nrepl-eval --discover-ports` (use the port whose directory is THIS
-   worktree). Always double-quote code for `clj-nrepl-eval` (single quotes
-   strip `!`). For a definitive check, cold-compile in a clean process:
-   `clojure -M:dev -e "(require 'some.ns) (println :ok)"`.
-2. **Forward references bite on cold compile but not warm REPL.** A warm REPL
-   with everything already loaded will accept a fn used above its def; the CI
-   cold compile won't. Always finish with a `clojure -M:dev -e "(require ...)"`
-   cold check before committing.
-3. **Public source closure ledger.** Touching any public engine/backend src
+1. **Stale-nREPL mixing produces false test results.** After any src change
+   that matters, verify on a FRESH JVM:
+   `clojure -M:dev -e "(require 'the.ns :reload) ..."` or run suites via a
+   fresh `clojure -M:dev -e "(require 'clojure.test 'ns1 ...) (run-tests ...)"`.
+   Always double-quote code args (single quotes strip `!`). When piping
+   output, remember the pipe eats the exit code — write to a log file and
+   `echo $?` (this bit us once tonight: a "green" run had 2 failures).
+2. **Forward references bite on cold compile but not warm REPL.** Finish with
+   a cold `clojure -M:dev -e "(require ...)"` before committing.
+3. **Public source-closure ledger.** Touching public engine/backend src
    changes the reachable-var closure; CI enforces it. Regenerate with
-   `node bin/public-source-closure.mjs write` then `... check`. If clj-kondo
-   throws an "invalid-arity" error on `lazy_merge_sort.cljc` you're missing a
-   local kondo config — `echo "{}" > .clj-kondo/config.edn` (it's gitignored;
-   the script's own `--config` carries the needed `:lint-as` for
-   `with-request-engine`).
-4. **Datomic tempid hazard.** On Datomic 1.0.7622, negative-long tempids
-   resolve into implicit partitions whose eids exceed 2^53, which
-   `eacl.secure-format` rejects (`:eacl.format/invalid`) on relationship
-   writes. Use STRING tempids in fixtures (see
-   `modules/eacl/test/eacl/bench/recursive_fixture.cljc`). The explorer fixture
-   still uses negative-longs — a live finding for group 9 (`backend-unification`).
-5. **Delegating to agents works well here** for large mechanical passes
-   (re-goldening test suites after a semantics change, sweeping a deleted
-   symbol). Give them: the exact new contract, the fresh-nREPL discipline
-   above, "preserve every data/soundness assertion, re-golden only what the
-   semantics changed," and an explicit "STOP and report if you find a real src
-   bug rather than patching src." They must run a fresh JVM at the end.
-6. **Verification EDN files are ratchets, not code.** Op-count envelopes
-   (`formal/verification/recursive-op-count-envelopes.edn`) and latency
-   baselines (`explorer-v8-recursive-performance.edn`) record *current truth*;
-   each fix tightens the relevant number. Don't loosen a bound to make a test
-   pass — that inverts the whole gate philosophy.
+   `node bin/public-source-closure.mjs write` then `... check`. The ROOTS
+   live in `bin/public-source-closure.mjs` — deleting or moving a root var
+   (e.g. a record) requires editing that list (the de-fork retargeted the
+   DS/DH roots to `eacl.client.orchestration/ClientAuthorization`).
+   If clj-kondo throws invalid-arity on `lazy_merge_sort.cljc`:
+   `echo "{}" > .clj-kondo/config.edn`.
+4. **Datomic tempid hazard.** Negative-long tempids resolve into implicit
+   partitions whose eids exceed 2^53, which `eacl.secure-format` rejects.
+   Use STRING tempids in fixtures (`recursive_fixture.cljc` shows how).
+5. **Verification EDN files are ratchets, not code.** Never loosen a bound to
+   pass a test. When a deliberate semantic change moves a number, re-record
+   it WITH an inline rationale naming the task (precedent: group 5's keyset
+   scan envelope; 8.4's path-calc 10→11; group 7's `:answer` budget in
+   `performance-gates.edn`).
+6. **Reflection gate.** `bin/reflection-gate` (in test.yml) compiles core +
+   backends with `*warn-on-reflection*`; any warning fails CI. Gotcha it
+   exists to remember: reader metadata attached to an UNQUOTED form inside
+   syntax-quote is dropped — hint through a let-bound local in macros.
+7. **The api map holds vars.** `eacl.datascript.core`/`eacl.datahike.core`
+   pass `#'impl/...` vars (not values) to the shared orchestration so
+   `with-redefs` instrumentation works. Keep it that way.
+8. **Verify-everything command set** (fresh JVM, all must be 0F/0E):
+   `eacl.verified-kernel-test eacl.backend.v8-test
+   eacl.single-flight-coordination-test eacl.subproblem-cache-test
+   eacl.subproblem-maintenance-test eacl.cache-test eacl.relay-test
+   eacl.datascript.recursive-op-count-test eacl.datascript.keyset-recursion-test
+   eacl.datascript.contract-test eacl.datascript.consistency-v3-test
+   eacl.datascript.cache-model-test eacl.datascript.impl-test
+   eacl.datahike.contract-test eacl.datahike.cache-model-test
+   eacl.datomic.raw-op-count-test eacl.datomic.recursive-cache-test
+   eacl.datomic.contract-test eacl.datomic.consistency-v3-test
+   eacl.datomic.lookup-cache-test eacl.datomic.cache-differential-test
+   eacl.datomic.cache-model-test eacl.datomic.trusted-surface-audit-test
+   eacl.formal.counterexample-replay-test eacl.characterization-fixture-test`.
+   Formal smoke: `clojure -M:dev:formal-smoke -e "(require ... 'eacl.formal.production-kernel-test) ..."`.
+   CLJS: `clojure -M:datascript-cljs-test && node target/datascript-cljs-test.js`
+   (failures=0 errors=0). Plus ledger check + reflection gate.
 
-## Done (commits, newest first at time of writing)
+## Done (commits, newest first)
 
-- **8.1–8.4** — managed certification + fail-safe defaults (R9): every
-  backend defaults `:coherence-authority :unknown` (stale-ALLOW pinning
-  regression on a default DataScript client); docs/README/release notes
-  rewritten (managed denotation reuse is LIVE, sorted per-relation stamp
-  vector, breaking-default entry); randomized cached-vs-cache-free managed
-  oracles on all three backends (Datomic extended; DataScript ported as CLJC
-  — also in the CLJS runner; Datahike ported); dependency-closure
-  completeness guard in `compile-recursive-plan` (typed
-  `:eacl.recursive-traversal/incomplete-dependency-closure`; raw op-count
-  envelope 10→11 path calcs, rationale recorded in the EDN).
-- **7.1–7.4** (`c1e333c`) — answer-cache fold-in (R6): `:answer` tier in the
-  weighted SubproblemStore (LRU, budget/4 per-entry ceiling via the verified
-  publication decision, `:oversized-rejections`); `resolve-current!` routes
-  exact/managed answers through `lookup!`/`resolve!` layering (managed hits
-  promote through the shared publication path); deleted `bounded-assoc`/
-  `admit-entry?`/standalone generation entry maps/portable `LocalStore`;
-  `:admit-on-repeat?` made honest (FIFO sighting window of `:max-entries`
-  first sightings — 50× keyspace regression pinned); Datomic finally honors
-  its answer weight fn. Deviation recorded: `install-managed-generation!`
-  kept (schema-stamp CAS install; only its entries map died).
-- `8a3377b` 11.3 partial — parser fn returns nil instead of printing
-- `e71c5ce` 11.3 partial — hot-path schema warning deduped + `*schema-warning-reporter*`
-- `d915cb2` **6.1–6.3+6.5** — dependency-scoped cursor validity (the big group-6 win)
-- `9b81320` 11.1 partial — deleted dead `watermark` ns
-- `c1aabfc` — recorded post-group-5 gate medians + keyset raw-page trade note
-- `bf551b9` **5.2–5.8** — keyset recursive pagination (fixes V4 skip/dup)
-- `42918cd` 5.1 — sorted canonical denotations
-- `5a9a1bd` **4.1–4.4** — kernel-boundary phase 1 (host marshalling)
-- `8f7b4e6` 3.4 — post-group-3 truth + ratchets
-- `0b7e7d1` 3.3 — nil-store short-circuits
-- `9047e70` 3.2 — request-local schema cache
-- `49abb6b` 3.1 — per-adapter schema-proof memo
-- `126c71a` **2.1–2.4** — wedge-free single flight (fixes the deadlock)
-- (group 1: `1a7fb5e` 1.4, `e9cf7e8` 1.6, `bf28d46` 1.5, `a371466` 1.3,
-  `f34c625` 1.2, `23c549c` 1.1) — gates + counters first
+- `44ecbb1` **11.1–11.2 + 12.1** — hygiene deletions (envelope cache path,
+  zed-v2 constructors, relay frontier branch, `:latest-result`,
+  `:shared-cache-store`/`:lookup-cache-store`), absence audit test,
+  reflection gate + hints, batching trigger recorded `:triggered`.
+- `f88555e` **9.2+9.4** — DS/DH client fork collapsed onto
+  `eacl.client.orchestration` (one record, one make-client, api map);
+  DS core 1,098→175 lines, DH 1,074→180.
+- `1dafb9f` **9.1** — one filter contract on all backends
+  (`eacl.relationships.filters`): nil anchors throw `:nil-anchor-keys`,
+  the DS/DH nil-type/relation wildcard hole (audited P0-5) is closed,
+  `:cursor`/`:limit` classify uniformly.
+- `00f3f0a` **8.1–8.4** — every backend defaults
+  `:coherence-authority :unknown` (stale-ALLOW pinning regression);
+  docs rewritten (managed denotation reuse is LIVE; sorted per-relation
+  stamp vector); randomized managed-vs-cache-free oracles on all three
+  backends (`eacl.<backend>.cache-model-test`, DataScript port also in the
+  CLJS runner); dependency-closure completeness guard in
+  `compile-recursive-plan`.
+- `c1e333c` **7.1–7.4** — completed answers are the weighted SubproblemStore's
+  third tier (LRU, budget/4 per-entry ceiling via the verified publication
+  decision, `:oversized-rejections`); honest FIFO sighting-window admission;
+  `bounded-assoc`/`admit-entry?`/standalone maps/portable `LocalStore`
+  deleted. Deviations recorded in tasks.md 7.2.
+- `b4e83a6` and earlier — groups 1–6 (see git log and the previous handoff in
+  history; group summaries remain accurate in `tasks.md`).
 
-### What groups 1–6 delivered (the substance, not just labels)
+## Remaining work — instructions
 
-- **Group 1 (gates first):** observer counters (`verified-kernel/*kernel-crossing-stats*`,
-  `backend.v8/*backend-op-stats*`, `engine.v8/*request-shape-stats*` — the last
-  split out in group 4 so acyclic routes still show ZERO recursive work);
-  populated-recursion fixtures (`recursive_fixture.cljc`, star/chain/mixed/
-  broad-union, exact count oracles); per-push op-count gates
-  (`recursive_op_count_test.clj` on DataScript + Datomic raw twin) against
-  ratcheted envelopes; matched-v7 latency baselines + acceptance gate
-  (`recursive_performance_gate_test.clj`, wired into `formal.yml`);
-  cache-maintenance invariants (`subproblem_maintenance_test.cljc`); wired the
-  dormant `apalache-mutation-control` and explorer gates into CI + a
-  ledger↔registry consistency test.
-- **Group 2 (R3 deadlock):** `subproblem_cache.cljc` restructured to
-  owner-acquires-first ("i-b" in design D-1) with body-level
-  `*computation-owner*` binding; the deterministic wedge schedule
-  (`single_flight_coordination_test.clj`) verifiably froze the pre-fix code and
-  passes now; `:stolen-computations` metric; honest hit/wait split.
-- **Group 3 (R4 raw waste):** per-adapter `:schema-proof` memo (2–3 scans → 1),
-  `request-schema-cache` bound by the Datomic raw facades, nil-store
-  short-circuits. Raw `can?` deep 15×→~9× v7; first-50 4.3×→2.7×.
-- **Group 4 (R5 marshalling):** limits/fuel marshalled once per traversal
-  (JVM + CLJS), type-name interning (JVM), empty-response interning with an
-  immutability pin, host per-value walk removed for the certified validator.
-- **Group 5 (R2 skip/dup — the one HIGH correctness defect):** recursive route
-  now emits keyset `:lookup-eid` cursors over canonical SORTED denotations,
-  sliced through the existing certified `DecideAcyclicPage` (no new Dafny).
-  Probe-then-continue keeps streaming economics for page-sized results;
-  larger raw results pay closure-once (documented trade + client remediation).
-  O(log n) `can?` membership; counts publish denotations. Deleted 21 dead
-  engine forms + the `:cursor-bound-rebase` generated op + both benchmarks.
-  Fixed by construction (eids can't move), pinned by `keyset_recursion_test.clj`.
-- **Group 6 (R1 whole-DB validity):** cursor continuation proofs are now
-  dependency-scoped (schema stamp + per-relation stamps). Unrelated writes →
-  continuation REUSE (nil `:cursor-recovery`, zero traversal work) instead of
-  rebase-on-every-write; relevant writes still recover. Schema-generation check
-  is unconditional (Datomic bypass removed; stamp is the real mutation
-  identity). Verified decisions get computed inputs (expired/scope-mismatch
-  tokens rejected AT the kernel). Defaulted-key startup warning + GCM rotation
-  docs.
+Run items sequentially; they share files with each other far less than the
+finished groups did, but 9.2-tail and 11.4 both touch cursor formats.
 
-## In-flight
+### 1. Group 9.2-tail — Datomic relationship pages onto `eacl.engine.relationships`
 
-- Nothing. Group 7 landed (the delegated agent's src/test work was verified,
-  completed — remaining stale tests, the 7.3 scenario suite, docs, README,
-  closure ledger — and committed as "7.1–7.4" with two recorded deviations:
-  `install-managed-generation!` kept minus its entries map, and
-  `:admit-on-repeat?` made honest via a FIFO sighting window rather than
-  deleted).
+Replace `eacl.datomic.impl/relationship-page` (impl.clj ~440–525: the
+private scan-plan/relationship-datoms machinery over `d/seek-datoms` with
+`:relationship`-kind cursor edges) with the shared planner/executor
+`eacl.engine.relationships/execute-page` that DS/DH already use
+(`plan-scans` builds per-relation-def scan-specs; `execute-page` takes a
+`scan-fn [spec resume-edge direction] -> rows` where each row is
+`{:spec-idx n :subject-id eid :resource-id eid :relationship (->Relationship ...)}`;
+edges are `{:kind :relationship-index :v 1 :scan-index n :subject-id eid
+:resource-id eid}`). Steps:
+1. Write a Datomic `scan-fn` over the v7 tuple indexes (see
+   `eacl.datascript.impl/read-relationships`'s scan fns as the model; the
+   endpoint-pair codec is shared already —
+   `eacl.relationships.endpoint-pair/forward-value`/`reverse-value` +
+   `eacl.datascript.db/eavt-endpoint-prefix`-style seeks exist as
+   `d/seek-datoms` calls in the current private code you are deleting).
+2. **Cursor format changes** (pre-release, sanctioned): the datomic
+   relationship page token's internal edge switches from `:relationship`
+   kind to `:relationship-index`. Update the datomic core sites that
+   validate/authenticate the edge (`authenticate-page-bound`,
+   `internal-page-query`, `validate-page-token-schema!` callers around
+   core.clj 1075–1126) and the cursor-context version constant so old
+   tokens fail with typed `:eacl.pagination/invalid-cursor`, not silently.
+3. Delete the superseded private fns (scan-plan, relationship-datoms,
+   matching-index-datom?, relationship-edge/-item,
+   validate-relationship-bound!, relationship-page).
+4. Re-golden `eacl.datomic.contract-test` +
+   `eacl.datomic.api-contract-test` + `eacl.datomic.impl` read tests; the
+   `datascript-large-relationship-cursor-skips-item-proof-test` has a
+   Datomic twin — check `raw-op-count`/`v8-characterization` for cursor
+   fixtures. The shared `assert-unified-filter-validation!` already runs on
+   Datomic and must stay green.
+5. Update the closure-ledger roots if any datomic fn named there dies.
 
-## Remaining (groups 8–12) — order and pointers
+### 2. Group 9.3-Datomic — option-family unification
 
-Dependency order matters; several groups collide on shared files (docs/cache.md,
-datascript/core, cache tests) so run them sequentially, not in parallel.
+DS/DH now share `eacl.client.orchestration/base-client-opt-keys`
+(`:security-key(ring)/(kid)`, `:cursor-ttl-seconds`, ...). Datomic still
+uses `:page-token-key(ring)/(kid)` + `:zed-token-*` + `:page-token-ttl-seconds`
+(core.clj ~2325–2340 known keys, ~2600–2790 parsing). Decide and implement
+ONE family (design D-7 says one token-key family, one cursor-TTL name,
+uniform unknown-option errors): recommended — accept the shared names on
+Datomic as canonical aliases, keep the zed-specific extension keys
+documented via a Datomic `:extra-client-opt-keys`-style doc block, and make
+unknown-option ex-data shape match the orchestration's (`:unknown-keys` +
+`:known-keys`). Also resolve the now-decorative `:cache {:store adapter}`
+provider option: either wire provider adapters back to something real
+(continuation store override) or reject with a helpful error — the spec
+demands "options that had no effect now either work or are rejected".
+Re-golden `eacl.datomic.config-test` + `lookup_cache_test` option blocks.
 
-1. **Group 8 — managed certification + DataScript default flip (R9).** Spec:
-   `specs/managed-reuse-certification/spec.md`; design D-5. The verification
-   wave (A3) already decided: flip DataScript default to
-   `:coherence-authority :unknown` (exact code changes are in the
-   `docs/reports` review's Part II §13 and the A3 verdict — the stale-ALLOW
-   repro must become a passing regression). Fix the stale "denotations
-   disabled" docs (they're live). Add `:managed` to the randomized differential
-   oracles (currently they run `:unknown` only, so the managed tier is
-   untested). Add the dependency-closure completeness assert to
-   `compile-recursive-plan`. **Must land after group 7** (shares cache docs +
-   differential test files).
-2. **Group 9 — backend de-fork (R7).** Spec: `backend-unification`. Write the
-   unified filter-validator + error-contract tests FIRST (red on current
-   DS/DH: nil type/relation anchors currently wildcard instead of throwing —
-   the corrected V7 semantics). Then collapse the ~900-line DS/DH orchestration
-   fork into core over the 21-op SPI; move Datomic's private relationship-page
-   reimpl onto `eacl.engine.relationships`; one token-key option family. Also
-   fix the explorer fixture's negative-long tempids (gotcha #4). Biggest
-   mechanical group — good candidate for careful agent delegation.
-3. **Group 10 — CLJS production engine (R8).** Spec: `cljs-production-engine`;
-   design D-8. Promote the handwritten CLJC oracle engine (currently in
-   `formal/smoke/`) to the CLJS production kernel via the `:cljs` kernel-default
-   branch, keeping the generated JS kernel as the differential oracle. Add a CI
-   `:advanced` build (broken today: zero externs, 452 access sites) and an
-   absolute ns/result ceiling gate. The recorded fallback if one-engine-
-   everywhere is mandated: widen `{:nativeType}` + replace the Proxy rope +
-   emit ESM/externs.
-4. **Group 11 — trusted-surface hygiene (R10), remainder.** Done: watermark
-   deleted (11.1 partial), hot-path warning + parser print (11.3 partial).
-   REMAINING: delete the dead authenticated-envelope completed-cache path +
-   `:shared-cache-store`/`:lookup-cache-store` options + zed-v2 constructors
-   (`modules/eacl-datomic/src/eacl/datomic/consistency.clj`: `zed-token`/
-   `token-data`/`token-revision` and their exclusively-dead helpers — the LIVE
-   fns to KEEP are `derive-signing-key`, `revision-checkpoints`,
-   `checkpoint-values`, `observe!`, `revision-at-least-seconds-ago`, and the
-   shared crypto `hmac-sha-256`/`utf8-bytes`/`signing-algorithm`/
-   `signing-key-domain`; delete `consistency_test.clj`'s zed-token tests) +
-   relay `:path-frontiers` branch + `:latest-result` kind. 11.2:
-   `*warn-on-reflection*` in CI + hint the sites (confirmed warnings in
-   `datomic/backend.clj:69`, `datomic/consistency.clj:151,180` (die with zed-v2),
-   `datomic/core.clj` lock-field refs ~1304/2150+ and `nextBytes` ~80). 11.4
-   is the Dafny cleanup pass (may trail indefinitely — dead generated ops are
-   never invoked): delete the ordinal rebase family + backward-render mode +
-   `AfterCursor` arm, retarget/delete `Pagination.dfy`, update the assurance
-   matrix, regenerate kernels/vectors/manifests.
-5. **Group 12 — batched scan protocol (D-9 phase 2), CONDITIONAL.** Only if the
-   populated-recursion latency gate still fails 2.0× after groups 3–5 (12.1 is
-   the trigger evaluation — record the decision either way in the gate EDN).
-   The recorded medians show counts/deep-chain checks remain crossing-dominated
-   (~3.7–6× v7), so the trigger likely fires. This is 6–10 weeks of Dafny proof
-   work (coverage-invariant generalization via the ghost-view trick); it's the
-   only remaining architectural lever and is explicitly gated on measured need.
+### 3. Group 10 — CLJS production engine (R8; the big one; own sessions)
 
-## Deferred with cause (not remaining work — decisions)
+Design D-8. The switch point is
+`eacl.formal.production-kernel-js/default-selection` (currently
+`{:kernel generated-javascript-kernel}`). The promotion target is the
+handwritten CLJC engine `eacl.engine.indexed`
+(`formal/smoke/clj/eacl/engine/indexed.cljc` — move it back under
+`modules/eacl/src` when promoting). **Honest scoping from this session:**
+the kernel boundary is two protocols in `eacl.verified-kernel`
+(`DecisionKernel/-decide` with ~15 pure decision operations, and
+`IndexedTraversalKernel` — compile/init/drive/resume/continue-page/read —
+the scan-command state machine). Backing those with the handwritten engine
+means writing a handwritten CLJS state machine honoring the generated
+contract, certified by the existing rig
+(`formal/smoke/cljs/.../verified_authority_test_runner.cljs`, cross-runtime
+vectors, 62-case counterexample replay, mutation controls, plus the new
+`eacl.datascript.cache-model-test` already in the CLJS runner). That is
+multi-session work; do NOT start it at the end of a long session. Tractable
+first steps in order: (a) 10.2's rig-against-CLJS-engine job — the
+semantics-bridge differential (`formal/smoke/clj/.../semantics_bridge_test`)
+already compares `eacl.engine.indexed` to the generated kernel on JVM; add
+the CLJS twin to CI. (b) 10.3's `:advanced` build job (expect it red; the
+452 unexterned access sites live in the generated foreign-lib consumers —
+`eacl.formal.production-kernel-js` + `dafny-seq` shim). (c) 10.4's ns/result
+ceiling gate recorded into
+`formal/verification/explorer-v8-release.edn`-style EDN. (d) only then the
+engine swap itself.
 
-- **6.4 (AEAD portable codec):** deferred. Sync AES-GCM on CLJS isn't
-  responsibly implementable here (WebCrypto is Promise-only; no vetted sync
-  GCM). Recorded in design.md D-4 status note + Open Questions. Portable
-  cursors stay HMAC-authenticated (not encrypted); the split is documented.
-- **Managed-by-default:** stays off until the group-8 randomized oracle soaks.
-- **Endpoint-local (per-tuple) stamps, adaptive sizing:** design Non-Goals;
-  follow-up changes.
+### 4. Group 11.4 — Dafny cleanup pass (may trail indefinitely)
 
-## Current perf picture (raw Datomic, matched-v7, `explorer-v8-recursive-performance.edn`)
+Delete the ordinal rebase family + backward-render mode + `AfterCursor` arm
+from `formal/dafny` (dead generated ops are never invoked, so this is
+proof-tree hygiene, not behavior); retarget or delete `Pagination.dfy`;
+update `formal/verification/assurance-matrix.edn` so every model maps to
+shipped code; regenerate kernels/vectors/manifests via `bin/formal`. Needs a
+Dafny toolchain and the regeneration pipeline; budget a full session.
 
-Post-group-5 (fresh-JVM gate): star-2k first-50 pays the keyset closure per raw
-page (documented trade — client walks amortize; small raw results keep
-early-stop); counts ~3.7×, deep-chain checks ~5–7×, all `:known-regression`
-(gate asserts completion, doesn't fail). v7 stack-overflows on chain-10k deep
-`can?` where v8 completes (recorded robustness win). The gate flips ops to
-`:enforced` as groups tighten; group 12 (if triggered) is what reaches ≤2.0×
-on the crossing-dominated ops.
+### 5. Groups 12.2–12.3 — wave-batched scan protocol (TRIGGERED)
 
-## Verify-everything command set
+The 12.1 decision is recorded in
+`formal/verification/explorer-v8-recursive-performance.edn`
+(`:batching-trigger-decision`). The proof plan (pending-scans ghost-view
+generalization through `IndexedForwardCompleteness`/`IndexedReverseCompleteness`/
+`IndexedRefinement`; drive returns bounded command batches; resume folds
+ordered responses; fuel exhaustion Yields without partial batches; cursor
+digests version the emission order) lives in the workflow record cited in
+design D-9. 6–10 weeks of Dafny; run it as its own OpenSpec change or a
+dedicated track, not inside a night session.
 
-Fresh JVM, then the correctness-critical suites (all must be 0F/0E):
-`eacl.verified-kernel-test eacl.backend.v8-test eacl.single-flight-coordination-test
-eacl.subproblem-cache-test eacl.cache-test eacl.datascript.recursive-op-count-test
-eacl.datomic.raw-op-count-test eacl.datomic.recursive-cache-test
-eacl.datascript.keyset-recursion-test eacl.relay-test eacl.datascript.contract-test
-eacl.datomic.contract-test eacl.datascript.consistency-v3-test
-eacl.datomic.consistency-v3-test`. Plus CLJS: `clojure -M:datascript-cljs-test`
-then `node target/datascript-cljs-test.js` (failures=0). Plus the closure
-ledger check and (heavy, ~1 GiB JVM) the recursive + explorer gates in
-`formal.yml`.
+## Deferred with cause (decisions, not omissions)
+
+- **6.4 AEAD portable codec:** sync CLJS GCM is not responsibly
+  implementable (design D-4 status note). Portable cursors stay
+  HMAC-authenticated; split documented in release notes.
+- **Datahike provider-store port (was in 9.3):** dropped — it would have
+  copied the exact provider surface 11.1 deleted as dead.
+- **Managed-by-default:** stays off; revisit only after the 8.3 randomized
+  managed oracles have soaked in CI.
+
+## Current perf picture
+
+Unchanged from post-group-5 recording (groups 6–9 don't touch crossing
+counts): star/chain counts 3.7–5.9× v7, deep checks 5.7×–56× (v7
+stack-overflows where v8 completes on chain-10k), raw first-50 pays the
+documented keyset closure trade. The path to ≤2.0× on crossing-dominated
+ops is 12.2 batching (triggered) — everything host-side is done.
