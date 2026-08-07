@@ -3043,34 +3043,43 @@
 
 (defn- resolve-forward-denotation
   [db subject-type subject-eid root-node result-type]
-  (let [key
-        (recursive-denotation-key
-         db :forward root-node subject-type subject-eid result-type)
-        resolved
-        (subproblem/resolve-layered-bound!
-         :denotation
-         key
-         {:valid? valid-recursive-denotation?
-          :weight-fn recursive-denotation-weight}
-         (recursive-denotation-dependencies db root-node)
-         #(complete-generated-forward-denotation
-           db subject-type subject-eid root-node result-type))]
-    (when (:cached? resolved)
-      (record-permission-denotation-hit! db root-node))
-    (:value resolved)))
+  (if-not subproblem/*store*
+    ;; No store: key construction would compile and certify the plan and
+    ;; walk the dependency closure purely to build keys no cache can use
+    ;; (audited raw-path waste). Behaviorally identical: resolve-bound!
+    ;; with a nil store computes uncached, and the :cached? gate meant
+    ;; the hit recorder never fired on this branch.
+    (complete-generated-forward-denotation
+     db subject-type subject-eid root-node result-type)
+    (let [key
+          (recursive-denotation-key
+           db :forward root-node subject-type subject-eid result-type)
+          resolved
+          (subproblem/resolve-layered-bound!
+           :denotation
+           key
+           {:valid? valid-recursive-denotation?
+            :weight-fn recursive-denotation-weight}
+           (recursive-denotation-dependencies db root-node)
+           #(complete-generated-forward-denotation
+             db subject-type subject-eid root-node result-type))]
+      (when (:cached? resolved)
+        (record-permission-denotation-hit! db root-node))
+      (:value resolved))))
 
 (defn- lookup-forward-denotation
   [db subject-type subject-eid root-node result-type]
-  (when-let [resolved
-             (subproblem/lookup-layered-bound!
-              :denotation
-              (recursive-denotation-key
-               db :forward root-node subject-type subject-eid result-type)
-              {:valid? valid-recursive-denotation?
-               :weight-fn recursive-denotation-weight}
-              (recursive-denotation-dependencies db root-node))]
-    (record-permission-denotation-hit! db root-node)
-    (:value resolved)))
+  (when subproblem/*store*
+    (when-let [resolved
+               (subproblem/lookup-layered-bound!
+                :denotation
+                (recursive-denotation-key
+                 db :forward root-node subject-type subject-eid result-type)
+                {:valid? valid-recursive-denotation?
+                 :weight-fn recursive-denotation-weight}
+                (recursive-denotation-dependencies db root-node))]
+      (record-permission-denotation-hit! db root-node)
+      (:value resolved))))
 
 (defn- publish-forward-denotation!
   [db subject-type subject-eid root-node result-type values]
@@ -3323,34 +3332,39 @@
 
 (defn- resolve-reverse-denotation
   [db resource-type resource-eid root-node subject-type]
-  (let [key
-        (recursive-denotation-key
-         db :reverse root-node resource-type resource-eid subject-type)
-        resolved
-        (subproblem/resolve-layered-bound!
-         :denotation
-         key
-         {:valid? valid-recursive-denotation?
-          :weight-fn recursive-denotation-weight}
-         (recursive-denotation-dependencies db root-node)
-         #(complete-generated-reverse-denotation
-           db resource-type resource-eid root-node subject-type))]
-    (when (:cached? resolved)
-      (record-permission-denotation-hit! db root-node))
-    (:value resolved)))
+  (if-not subproblem/*store*
+    ;; Mirror of resolve-forward-denotation's nil-store fast path.
+    (complete-generated-reverse-denotation
+     db resource-type resource-eid root-node subject-type)
+    (let [key
+          (recursive-denotation-key
+           db :reverse root-node resource-type resource-eid subject-type)
+          resolved
+          (subproblem/resolve-layered-bound!
+           :denotation
+           key
+           {:valid? valid-recursive-denotation?
+            :weight-fn recursive-denotation-weight}
+           (recursive-denotation-dependencies db root-node)
+           #(complete-generated-reverse-denotation
+             db resource-type resource-eid root-node subject-type))]
+      (when (:cached? resolved)
+        (record-permission-denotation-hit! db root-node))
+      (:value resolved))))
 
 (defn- lookup-reverse-denotation
   [db resource-type resource-eid root-node subject-type]
-  (when-let [resolved
-             (subproblem/lookup-layered-bound!
-              :denotation
-              (recursive-denotation-key
-               db :reverse root-node resource-type resource-eid subject-type)
-              {:valid? valid-recursive-denotation?
-               :weight-fn recursive-denotation-weight}
-              (recursive-denotation-dependencies db root-node))]
-    (record-permission-denotation-hit! db root-node)
-    (:value resolved)))
+  (when subproblem/*store*
+    (when-let [resolved
+               (subproblem/lookup-layered-bound!
+                :denotation
+                (recursive-denotation-key
+                 db :reverse root-node resource-type resource-eid subject-type)
+                {:valid? valid-recursive-denotation?
+                 :weight-fn recursive-denotation-weight}
+                (recursive-denotation-dependencies db root-node))]
+      (record-permission-denotation-hit! db root-node)
+      (:value resolved))))
 
 (defn- publish-reverse-denotation!
   [db resource-type resource-eid root-node subject-type values]

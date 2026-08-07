@@ -20,9 +20,9 @@
  {:raw-lookup-first-50
   {:maximum-schema-proof-reads 2   ; memoized invocations (cheap)
    :maximum-schema-proof-computations 1 ; 3.1 ratchet: one scan per request
-   :maximum-plan-compiles 2        ; V2 current truth; target 1 (task 3.4)
-   :maximum-denotation-key-builds 1    ; nil-store waste; target 0 (task 3.4)
-   :maximum-denotation-dependency-calcs 1 ; nil-store waste; target 0
+   :maximum-plan-compiles 1        ; 3.3 ratchet: nil-store lookup deleted the duplicate
+   :maximum-denotation-key-builds 0    ; 3.3 ratchet: no key work without a store
+   :maximum-denotation-dependency-calcs 0 ; 3.3 ratchet
    :maximum-permission-path-calcs 20   ; cold walks, schema-shape-bound
    :maximum-backend-scans 60}      ; streaming early-stop: ~page+1 streams
   :raw-can
