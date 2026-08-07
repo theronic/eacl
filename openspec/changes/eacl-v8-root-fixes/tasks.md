@@ -13,10 +13,10 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 2. Single-flight wedge fix (D-1, single-flight-coordination)
 
-- [ ] 2.1 Restructure `subproblem_cache.cljc` per (i-b): acquire the computation slot strictly before the owner's flight deref; run the flight delay body under `*computation-owner*` binding; ticket-guarded flight cleanup on pre-realization throw; keep CLJS saturation-throw semantics
-- [ ] 2.2 Add the dev-mode top-level-acquire assertion, the documented coordinator invariant (rank-function acyclicity + never-acquire-holding-a-monitor), and the `:stolen-computations` metric
-- [ ] 2.3 Add the deterministic wedge-schedule regression test (max-inflight 1, latched cross-join — must wedge current code, pass fixed code, with permit/active/flights leak assertions) and the 16-thread randomized soak; both in the per-push suite
-- [ ] 2.4 Split hit metrics from join waits (joins are not hits) and verify via the metrics test
+- [x] 2.1 Restructure `subproblem_cache.cljc` per (i-b): acquire the computation slot strictly before the owner's flight deref; run the flight delay body under `*computation-owner*` binding; ticket-guarded flight cleanup on pre-realization throw; keep CLJS saturation-throw semantics
+- [x] 2.2 Add the dev-mode top-level-acquire assertion, the documented coordinator invariant (rank-function acyclicity + never-acquire-holding-a-monitor), and the `:stolen-computations` metric
+- [x] 2.3 Add the deterministic wedge-schedule regression test (max-inflight 1, latched cross-join — must wedge current code, pass fixed code, with permit/active/flights leak assertions) and the 16-thread randomized soak; both in the per-push suite
+- [x] 2.4 Split hit metrics from join waits (joins are not hits) and verify via the metrics test
 
 ## 3. Raw request context (D-3, raw-request-context)
 
