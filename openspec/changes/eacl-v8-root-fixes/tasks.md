@@ -27,10 +27,10 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 4. Kernel boundary phase 1 (D-9, kernel-boundary-efficiency)
 
-- [ ] 4.1 Marshal `IndexedLimits` and fuel once per traversal (cache the Dafny objects from init) on JVM and CLJS
-- [ ] 4.2 Key the verification-identity catalog by raw `DafnySequence` (drop per-command string decode); intern the empty scan response with a no-mutation assertion on received response sequences
-- [ ] 4.3 Remove the host per-value response walk in favor of the certified kernel validator, JVM and CLJS in lockstep; document the boundary-contract change
-- [ ] 4.4 Tighten the crossing-cost envelope and rerun the populated-recursion latency scenarios; record the new truth
+- [x] 4.1 Marshal `IndexedLimits` and fuel once per traversal (cache the Dafny objects from init) on JVM and CLJS
+- [x] 4.2 Key the verification-identity catalog by raw `DafnySequence` (drop per-command string decode); intern the empty scan response with a no-mutation assertion on received response sequences
+- [x] 4.3 Remove the host per-value response walk in favor of the certified kernel validator, JVM and CLJS in lockstep; document the boundary-contract change
+- [x] 4.4 Tighten the crossing-cost envelope and rerun the populated-recursion latency scenarios; record the new truth
 
 ## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — after group 2
 

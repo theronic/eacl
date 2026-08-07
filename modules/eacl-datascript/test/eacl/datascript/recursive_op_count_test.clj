@@ -53,17 +53,18 @@
 (defn- measured
   "Runs f with all three observer counters bound; returns the counters."
   [f]
-  (let [kx (atom {}) bops (atom {}) rts (atom {})]
+  (let [kx (atom {}) bops (atom {}) rts (atom {}) shape (atom {})]
     (binding [verified/*kernel-crossing-stats* kx
               backend/*backend-op-stats* bops
-              engine/*recursive-traversal-stats* rts]
+              engine/*recursive-traversal-stats* rts
+              engine/*request-shape-stats* shape]
       (f))
     {:schema-proof (get @bops :schema-proof 0)
      :schema-proof-computations (get @bops :schema-proof-computations 0)
      :plan-compiles (get @rts :compiled-recursive-plans 0)
-     :path-calcs (get @rts :permission-path-calcs 0)
-     :key-builds (get @rts :denotation-key-builds 0)
-     :dep-calcs (get @rts :denotation-dependency-calcs 0)
+     :path-calcs (get @shape :permission-path-calcs 0)
+     :key-builds (get @shape :denotation-key-builds 0)
+     :dep-calcs (get @shape :denotation-dependency-calcs 0)
      :drive (get @kx :indexed-traversal-drive 0)
      :resume (get @kx :indexed-traversal-resume 0)
      :stream-fills (get @rts :stream-fills 0)

@@ -124,7 +124,7 @@ function analyzeSource() {
       "--lint",
       ...sourcePaths,
       "--config",
-      "{:output {:format :json} :analysis true}",
+      "{:output {:format :json} :analysis true :lint-as {eacl.datomic.impl/with-request-engine clojure.core/with-open}}",
       "--fail-level",
       "error",
     ],

@@ -1205,13 +1205,13 @@
      operation :request-scope safe-natural? (:request-scope response))
     (require-value!
      operation :request-id safe-natural? (:request-id response))
-    (doseq [[index value]
-            (map-indexed
-             vector
-             (bounded-vector!
-              operation :values (:values response)))]
-      (require-value!
-       operation [:values index] safe-natural? value))
+    ;; Deliberate boundary-contract change (eacl-v8-root-fixes 4.3): the
+    ;; per-value safe-natural? walk duplicated the certified kernel
+    ;; validator — ValidateScanResponse walks every value inside the
+    ;; generated runtime and fails closed with :scan-rejected on any
+    ;; malformed element. The host keeps O(1) shape checks per response
+    ;; on both JVM and CLJS.
+    (bounded-vector! operation :values (:values response))
     (require-value!
      operation :terminal? boolean? (:terminal? response))
     (require-value!

@@ -67,16 +67,17 @@
   impl.indexed's dynamic (with-shared-engine), so raw callers observe
   through the impl-level var."
   [f]
-  (let [kx (atom {}) bops (atom {}) rts (atom {})]
+  (let [kx (atom {}) bops (atom {}) rts (atom {}) shape (atom {})]
     (binding [verified/*kernel-crossing-stats* kx
               backend/*backend-op-stats* bops
-              impl.indexed/*recursive-traversal-stats* rts]
+              impl.indexed/*recursive-traversal-stats* rts
+              engine/*request-shape-stats* shape]
       (f))
     {:schema-proof (get @bops :schema-proof 0)
      :schema-proof-computations (get @bops :schema-proof-computations 0)
      :plan-compiles (get @rts :compiled-recursive-plans 0)
-     :key-builds (get @rts :denotation-key-builds 0)
-     :dep-calcs (get @rts :denotation-dependency-calcs 0)
+     :key-builds (get @shape :denotation-key-builds 0)
+     :dep-calcs (get @shape :denotation-dependency-calcs 0)
      :drive (get @kx :indexed-traversal-drive 0)
      :resume (get @kx :indexed-traversal-resume 0)
      :stream-fills (get @rts :stream-fills 0)
@@ -156,3 +157,18 @@
               (+ accounts (:maximum-backend-scans-slack e)))
           (pr-str m)))
     (assert-crossing-law! m)))
+
+(deftest interned-empty-response-immutability-test
+  ;; 4.2 pin: the interned empty scan-response payload must stay empty
+  ;; after traversal storms — generated code mutates only freshly
+  ;; constructed wrappers (the collection shims' contract). The suite's
+  ;; other tests have already driven thousands of empty responses
+  ;; through the interned instance by the time this runs.
+  (let [{:keys [db user-1-eid]} @state]
+    (dimpl/count-resources
+     db {:subject {:type :user :id user-1-eid}
+         :permission :view :resource/type :account})
+    (is (zero? (.cardinalityInt
+                ^dafny.DafnySequence
+                @@(resolve 'eacl.formal.production-kernel/empty-values-sequence)))
+        "interned empty DafnySequence mutated by generated code")))

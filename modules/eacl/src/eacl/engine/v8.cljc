@@ -54,11 +54,24 @@
 (def ^:dynamic *recursive-traversal-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
-  Counts recursive-traversal work plus request-shape observers
-  (:permission-path-calcs, :denotation-key-builds,
-  :denotation-dependency-calcs). Observation-only: counters never
-  influence control flow."
+  Counts recursive-traversal work only. Request-shape observers live in
+  *request-shape-stats* so the enumeration-routing invariant — an
+  acyclic route performs ZERO recursive work — stays assertable as
+  (empty? @stats). Observation-only."
   nil)
+
+(def ^:dynamic *request-shape-stats*
+  "Optional atom counting request-shape work that is not traversal work:
+  :permission-path-calcs (cold path walks), :denotation-key-builds and
+  :denotation-dependency-calcs (cache-key construction). Kept separate
+  from *recursive-traversal-stats* deliberately — see that var's
+  docstring. Observation-only."
+  nil)
+
+(defn- inc-shape-stat!
+  [k]
+  (when *request-shape-stats*
+    (swap! *request-shape-stats* update k (fnil inc 0))))
 
 (def ^:dynamic *acyclic-route?* false)
 
@@ -720,8 +733,7 @@
   "Returns path maps with resolved relation eids, cheapest-to-check first.
   Permission edges remain symbolic and are evaluated against concrete resources at runtime."
   [db resource-type permission-name]
-  (when *recursive-traversal-stats*
-    (swap! *recursive-traversal-stats* update :permission-path-calcs (fnil inc 0)))
+  (inc-shape-stat! :permission-path-calcs)
   (->> (find-permission-defs db resource-type permission-name)
        (mapcat
         (fn [{:eacl.permission/keys [source-relation-name
@@ -3046,7 +3058,7 @@
 
 (defn- recursive-denotation-key
   [db direction root-node anchor-type anchor-eid result-type]
-  (inc-stat! :denotation-key-builds)
+  (inc-shape-stat! :denotation-key-builds)
   [denotation-key-version
    :permission-fixed-point
    recursive-denotation-version
@@ -3059,7 +3071,7 @@
 
 (defn- recursive-denotation-dependencies
   [db root-node]
-  (inc-stat! :denotation-dependency-calcs)
+  (inc-shape-stat! :denotation-dependency-calcs)
   (permission-relationship-eids db (first root-node) (second root-node)))
 
 (defn- record-permission-denotation-hit!

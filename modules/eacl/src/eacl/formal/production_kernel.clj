@@ -139,6 +139,53 @@
   [descriptor values]
   (DafnySequence/fromList descriptor values))
 
+(def ^:private fuel-memo (volatile! nil))
+
+(defn- dafny-fuel
+  [fuel]
+  (let [cached @fuel-memo]
+    (if (and cached (= (first cached) fuel))
+      (second cached)
+      (let [built (dafny-nat fuel)]
+        (vreset! fuel-memo [fuel built])
+        built))))
+
+(def ^:private unicode-memo
+  "Bounded intern table for type-name decodes keyed by the raw
+  DafnySequence (the patched runtime implements equals/hashCode).
+  Scan commands carry a handful of distinct type names but previously
+  decoded UTF-32 strings per command."
+  (atom {}))
+
+(defn- dafny-unicode-interned
+  [^DafnySequence value]
+  (or (get @unicode-memo value)
+      (let [decoded (.verbatimString value)]
+        (swap! unicode-memo
+               (fn [memo]
+                 (if (or (contains? memo value)
+                         (>= (count memo) 64))
+                   memo
+                   (assoc memo value decoded))))
+        decoded)))
+
+(def ^:private empty-values-sequence
+  "Interned empty scan-response payload: ~98% of populated-recursion
+  scan responses realize zero datoms (audited emptiness probes). Sound
+  under the collection shims' contract that generated code mutates only
+  freshly constructed wrappers — pinned by a regression asserting the
+  interned instance stays empty after traversals."
+  (delay (dafny-sequence [])))
+
+(def ^:private limits-memo
+  "Single-slot identity memo: traversal limits are one map value per
+  request (usually the engine's default), yet the sequential protocol
+  re-marshalled three BigIntegers on EVERY drive and EVERY resume —
+  2x crossings avoidable allocations per traversal (audited). Volatile
+  race is harmless: last write wins, both objects are equivalent pure
+  values."
+  (volatile! nil))
+
 (defn- object->dafny
   [{:keys [type id]}]
   (ObjectRef/create
@@ -1222,7 +1269,10 @@
         (ScanResponse/create
          (dafny-nat (:request-scope response))
          (dafny-nat (:request-id response))
-         (dafny-sequence (:values response))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence values)
+             @empty-values-sequence))
          (:terminal? response)
          (dafny-nat (:fetched-values response)))
         decision
@@ -1331,11 +1381,19 @@
        (indexed-plan-rejection-reason (.dtor_error decision))})))
 
 (defn- indexed-limits
-  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}]
-  (IndexedLimits/create
-   (dafny-nat max-derived-grants)
-   (dafny-nat max-advanced-datoms)
-   (dafny-nat max-queued-work)))
+  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]
+    :as limits}]
+  (let [cached @limits-memo]
+    (if (and cached (identical? (first cached) limits))
+      (second cached)
+      (let [built (IndexedLimits/create
+                   (dafny-nat max-derived-grants)
+                   (dafny-nat max-advanced-datoms)
+                   (dafny-nat max-queued-work))]
+        (vreset! limits-memo [limits built])
+        built))))
+
+
 
 (defn- indexed-cursor-bound
   [bound]
@@ -1394,16 +1452,16 @@
   [^Projection projection]
   (if (.is_SubjectToResources projection)
     {:kind :subject->resources
-     :subject-type (dafny-unicode (.dtor_subjectType projection))
+     :subject-type (dafny-unicode-interned (.dtor_subjectType projection))
      :subject-eid (dafny-long (.dtor_subjectEid projection))
      :relation-eid (dafny-long (.dtor_relationEid projection))
-     :resource-type (dafny-unicode (.dtor_resourceType projection))
+     :resource-type (dafny-unicode-interned (.dtor_resourceType projection))
      :bound-eid (indexed-bound-value (.dtor_bound projection))}
     {:kind :resource->subjects
-     :resource-type (dafny-unicode (.dtor_resourceType projection))
+     :resource-type (dafny-unicode-interned (.dtor_resourceType projection))
      :resource-eid (dafny-long (.dtor_resourceEid projection))
      :relation-eid (dafny-long (.dtor_relationEid projection))
-     :subject-type (dafny-unicode (.dtor_subjectType projection))
+     :subject-type (dafny-unicode-interned (.dtor_subjectType projection))
      :bound-eid (indexed-bound-value (.dtor_bound projection))}))
 
 (defn- indexed-command-value
@@ -1516,11 +1574,11 @@
         (case direction
           :forward
           (IndexedTraversal.__default/DriveForwardIterative
-           state (indexed-limits limits) (dafny-nat fuel))
+           state (indexed-limits limits) (dafny-fuel fuel))
 
           :reverse
           (IndexedTraversal.__default/DriveReverseIterative
-           state (indexed-limits limits) (dafny-nat fuel)))
+           state (indexed-limits limits) (dafny-fuel fuel)))
         prefix
         (case direction
           :forward "Forward"
@@ -1599,7 +1657,10 @@
         (ScanResponse/create
          (dafny-nat (:request-scope response))
          (dafny-nat (:request-id response))
-         (dafny-sequence (:values response))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence values)
+             @empty-values-sequence))
          (:terminal? response)
          (dafny-nat (:fetched-values response)))
         outcome
