@@ -302,6 +302,24 @@ jobs:
                      result)))
                  (:summary result)))"
 
+      - name: Gate populated recursion against recorded v7 baselines
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.bench.recursive-performance-gate-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.bench.recursive-performance-gate-test)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (or (pos? (:fail result)) (pos? (:error result)))
+                   (throw
+                    (ex-info
+                     \"populated-recursion performance gate regressed\"
+                     result)))
+                 result))"
+
       - name: Gate Explorer enumeration against recorded v7 baselines
         run: |
           sh bin/ci-nrepl-eval 7788 \
