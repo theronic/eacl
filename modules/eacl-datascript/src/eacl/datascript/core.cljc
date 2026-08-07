@@ -329,6 +329,9 @@
    {:as opts
    :keys [object-id->entid]}
    filters]
+  ;; The unified filter contract validates the complete public query before
+  ;; any snapshot selection or cursor work (backend-unification 9.1).
+  (relationship-filters/validate! filters)
   (let [{source-adapter :adapter selection :selection}
         (selected-context db opts (:consistency filters))
         {adapter :adapter page-db :db cursor-opts :opts
@@ -337,7 +340,6 @@
          source-adapter opts selection :read-relationships filters nil nil)
         base-filters (apply dissoc filters
                             [:first :last :after :before :consistency :cache?])
-        _ (relationship-filters/validate! base-filters)
         subject-id (:subject/id base-filters)
         resource-id (:resource/id base-filters)
         subject-eid (when subject-id

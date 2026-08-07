@@ -51,6 +51,7 @@
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-unified-filter-validation! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datahike/make-client conn {:cache cache/no-cache}))))

@@ -8,6 +8,7 @@
    [eacl.datomic.impl.indexed :as impl.indexed]
    [eacl.engine.v8 :as engine]
    [eacl.relationships.endpoint-pair :as endpoint-pair]
+   [eacl.relationships.filters :as relationship-filters]
    [eacl.relationships.storage :as relationship-storage]))
 
 (def Relation base/Relation)
@@ -522,53 +523,12 @@
                                                 :desc (> (count realized)
                                                          size)))}}))))
 
-(def ^:private known-relationship-filter-keys
-  "Filter + pagination keys read-relationships accepts. :cursor and :limit are
-  included so normalize-page-request can reject them with their specific
-  errors; :consistency, :page/basis and :cache? are validated and consumed by
-  the client layer but must be listed here, since an unknown key is a hard
-  error rather than something to ignore."
-  #{:subject/type :subject/id
-    :resource/type :resource/id :resource/relation
-    :first :last :after :before :cursor :limit
-    :page/basis :consistency :cache?})
-
-(def ^:private relationship-anchor-keys
-  #{:subject/type :subject/id :resource/type :resource/id :resource/relation})
-
-(defn- validate-relationship-filters!
-  "An absent, misspelled, or unsupported filter key must fail loudly: silently
-  dropping one degrades the query to a broader scan that returns rows the
-  caller did not intend to read (same failure class as audit §4)."
-  [filters]
-  (doseq [[unsupported-key hint]
-          [[:resource/id-prefix "Filter on :resource/id, or filter external ids client-side."]
-           [:subject/relation "EACL does not support subject-relation filters."]]]
-    (when (contains? filters unsupported-key)
-      (throw (ex-info (str (pr-str unsupported-key) " is not supported by read-relationships. " hint)
-               {:eacl/error :eacl.pagination/unsupported-filter
-                :filter unsupported-key}))))
-  (when-let [unknown-keys (seq (remove known-relationship-filter-keys (keys filters)))]
-    (throw (ex-info (str "read-relationships was passed unknown filter key(s): " (pr-str (vec unknown-keys))
-                         ". Known keys: " (pr-str (vec (sort known-relationship-filter-keys))) ".")
-             {:eacl/error :eacl.filters/unknown-filter
-              :unknown-keys (vec unknown-keys)})))
-  ;; some? not contains?: a present-but-nil anchor (the shape you get from
-  ;; {:subject/id (get-in req [:params :user-id])} with the param missing) is
-  ;; treated as absent by every consumer below, so accepting it as an anchor
-  ;; degraded the read to exactly the global scan this guard exists to prevent.
-  (when-not (some #(some? (get filters %)) relationship-anchor-keys)
-    (throw (ex-info (str "read-relationships requires at least one non-nil anchor filter of "
-                         (pr-str (vec (sort relationship-anchor-keys)))
-                         ". An unfiltered read would scan the entire relationship index.")
-             {:eacl/error :eacl.filters/missing-anchor
-              :nil-anchor-keys (vec (sort (filter #(and (contains? filters %)
-                                                        (nil? (get filters %)))
-                                                  relationship-anchor-keys)))}))))
-
 (defn read-relationships
   [db filters]
-  (validate-relationship-filters! filters)
+  ;; The unified filter contract shared by every backend
+  ;; (backend-unification 9.1). Value-presence anchor semantics: a
+  ;; present-but-nil anchor throws instead of widening the read.
+  (relationship-filters/validate! filters)
   (let [relations    (find-relations db filters)
         subject-id    (:subject/id filters)
         resource-id   (:resource/id filters)

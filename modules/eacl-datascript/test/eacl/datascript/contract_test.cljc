@@ -619,6 +619,9 @@
       (is (= :eacl.schema/duplicate-permission
              (:type (thrown-data #(eacl/write-schema! client schema))))))))
 
+(deftest unified-filter-validation-contract-test
+  (contract/assert-unified-filter-validation! (seeded-client)))
+
 (deftest v7-3-query-validation-test
   (let [client (seeded-client)]
     (testing "relationship reads require a known anchor and reject broadened scans"

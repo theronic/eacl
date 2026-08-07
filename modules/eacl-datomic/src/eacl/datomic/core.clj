@@ -26,6 +26,7 @@
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
+            [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
@@ -1076,6 +1077,10 @@
   [conn
    {:keys [object-id->entid] :as opts}
    filters]
+  ;; The unified filter contract validates the complete public query before
+  ;; page normalization or snapshot work (backend-unification 9.1), so
+  ;; misuse classifies identically on every backend.
+  (relationship-filters/validate! filters)
   (reject-live-basis! filters)
   (let [query-shape (list-query-shape :read-relationships filters)
         page-req (impl.indexed/normalize-page-request filters)
