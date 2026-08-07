@@ -5,7 +5,7 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 ## 1. Gates and counters first (D-10, recursion-performance-gates)
 
 - [x] 1.1 Add host-side observer counters: kernel crossings by operation (`verified_kernel.cljc` choke points), backend ops by key (`backend/v8.cljc` invoke), denotation-key builds + dependency-calc counters, cold permission-path-calc counter (all no-op-when-unbound; regenerate the public-source-closure ledger)
-- [ ] 1.2 Create `recursive_fixture.cljc`: star/chain/mixed/broad-union populated-recursion generators at 2k/10k with deterministic ids and expected counts
+- [x] 1.2 Create `recursive_fixture.cljc`: star/chain/mixed/broad-union populated-recursion generators at 2k/10k with deterministic ids and expected counts
 - [ ] 1.3 Add the populated-recursion op-count test namespaces (non-benchmark, per-push): crossing law, scan envelope, schema-proof count (record current truth: raw 2 / client 3), plan-compile count (record 2; 3 with recovery cursor), nil-store key work (record 2), continuation resumption, linearity; self-check that recursive counters are nonzero
 - [ ] 1.4 Record matched-v7 latency baselines (same-host harness against the pre-v8 commit) into `formal/verification/explorer-v8-recursive-performance.edn` with the 2.0× bound and variance policy; add the heavy 10k acceptance gates to the formal workflow (fresh bounded JVM, measured first)
 - [ ] 1.5 Add cache-maintenance invariants: LRU records ≤ max(1024, 2×entries); eviction probes ≤ evictions + consumed stale records; continuation-store puts ≤ pages+1; per-resume recovery-decision bound
