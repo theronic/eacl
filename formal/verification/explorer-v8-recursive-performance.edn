@@ -20,7 +20,7 @@
   the v8 gate is completion itself."
  :recorded {:host-class :apple-silicon-dev
             :v7-commit "77b3986"
-            :v8-commit "e9cf7e8"
+            :v8-commit "9047e70" ; post group-3 (request context + memo + nil-store)
             :warmups 3
             :samples 7
             :statistic :median
@@ -30,27 +30,27 @@
  {:star-2k
   {:fixture {:shape :star :accounts 2000}
    :ops
-   {:can-deep {:v7-median-ms 0.066 :v8-median-ms 0.989 :ratio 15.0
+   {:can-deep {:v7-median-ms 0.066 :v8-median-ms 0.550 :ratio 8.3
                :status :known-regression}
-    :first-50 {:v7-median-ms 0.922 :v8-median-ms 3.971 :ratio 4.3
+    :first-50 {:v7-median-ms 0.922 :v8-median-ms 2.053 :ratio 2.2
                :status :known-regression}
-    :exact-count {:v7-median-ms 15.918 :v8-median-ms 58.711 :ratio 3.7
+    :exact-count {:v7-median-ms 15.918 :v8-median-ms 48.999 :ratio 3.1
                   :status :known-regression}}}
   :star-10k
   {:fixture {:shape :star :accounts 10000}
    :ops
-   {:can-deep {:v7-median-ms 0.016 :v8-median-ms 2.162 :ratio 137.3
+   {:can-deep {:v7-median-ms 0.016 :v8-median-ms 0.549 :ratio 34.3
                :status :known-regression}
-    :first-50 {:v7-median-ms 0.230 :v8-median-ms 6.934 :ratio 30.2
+    :first-50 {:v7-median-ms 0.230 :v8-median-ms 2.124 :ratio 9.2
                :status :known-regression}
-    :exact-count {:v7-median-ms 40.366 :v8-median-ms 258.315 :ratio 6.4
+    :exact-count {:v7-median-ms 40.366 :v8-median-ms 252.774 :ratio 6.3
                   :status :known-regression}}}
   :chain-2k
   {:fixture {:shape :chain :accounts 2000}
    :ops
-   {:can-deep {:v7-median-ms 9.673 :v8-median-ms 78.319 :ratio 8.1
+   {:can-deep {:v7-median-ms 9.673 :v8-median-ms 78.127 :ratio 8.1
                :status :known-regression}
-    :first-50 {:v7-median-ms 0.212 :v8-median-ms 3.261 :ratio 15.4
+    :first-50 {:v7-median-ms 0.212 :v8-median-ms 2.303 :ratio 10.9
                :status :known-regression}
     :exact-count {:v7-median-ms 7.769 :v8-median-ms 49.083 :ratio 6.3
                   :status :known-regression}}}
@@ -58,11 +58,11 @@
   {:fixture {:shape :chain :accounts 10000}
    :ops
    {:can-deep {:v7-unsupported :stack-overflow
-               :v8-median-ms 366.172
+               :v8-median-ms 354.306
                :status :v8-completes-where-v7-cannot}
-    :first-50 {:v7-median-ms 0.209 :v8-median-ms 3.473 :ratio 16.6
+    :first-50 {:v7-median-ms 0.209 :v8-median-ms 2.035 :ratio 9.7
                :status :known-regression}
-    :exact-count {:v7-median-ms 38.801 :v8-median-ms 242.324 :ratio 6.2
+    :exact-count {:v7-median-ms 38.801 :v8-median-ms 233.247 :ratio 6.0
                   :status :known-regression}}}}
  :notes
  ["Every recorded ratio exceeds the 2.0 release bound — this is the
