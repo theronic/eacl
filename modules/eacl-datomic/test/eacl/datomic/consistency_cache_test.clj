@@ -187,6 +187,38 @@
         (is (zero? @calls)
             "boundary resolution returns before graph traversal or result caching")))))
 
+(deftest detailed-permission-check-cache-provenance-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (cached-client conn)
+          _ (seed! conn client)
+          demand {:subject (spice-object :user "alice")
+                  :permission :admin
+                  :resource (spice-object :account "acct")}
+          calls (atom 0)
+          original impl/can?]
+      (with-redefs [impl/can?
+                    (fn [db subject permission resource]
+                      (swap! calls inc)
+                      (original db subject permission resource))]
+        (let [miss (eacl/check-permission client demand)
+              hit (eacl/check-permission client demand)
+              bypass
+              (eacl/check-permission
+               client (assoc demand :cache? false))
+              retained-hit (eacl/check-permission client demand)]
+          (is (= true
+                 (:allowed? miss)
+                 (:allowed? hit)
+                 (:allowed? bypass)
+                 (:allowed? retained-hit)))
+          (is (false? (:cached? miss)))
+          (is (true? (:cached? hit)))
+          (is (false? (:cached? bypass)))
+          (is (true? (:cached? retained-hit)))
+          (is (= 2 @calls)
+              "the bypass computes once without replacing the retained entry")
+          (is (boolean? (eacl/can? client demand))))))))
+
 (deftest exact-lookup-uses-cache-or-historical-replay-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)

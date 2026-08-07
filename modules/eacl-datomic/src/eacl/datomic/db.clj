@@ -134,6 +134,21 @@
      db :eavt subject-id relationship-storage/forward-attribute
      [subject-type relation-id resource-type resource-id]))))
 
+(defn relation-populated?
+  [db subject-type relation-id resource-type]
+  (let [attribute relationship-storage/forward-attribute
+        attribute-id (d/entid db attribute)
+        prefix [subject-type relation-id resource-type]
+        datom
+        (first
+         (d/seek-datoms
+          db :avet attribute
+          (conj prefix 0)))]
+    (boolean
+     (and datom
+          (= attribute-id (:a datom))
+          (= prefix (subvec (:v datom) 0 3))))))
+
 (defn schema-version
   [db]
   (when (d/entid db :eacl/id)

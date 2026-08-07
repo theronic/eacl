@@ -79,9 +79,10 @@ uses a separate bounded private store.
 
 ## Exact-current versus managed-current
 
-The default `:coherence-authority :unknown` enables exact-current reuse only.
-It is sound with out-of-band writers because a changed immutable DB generation
-cannot hit the previous generation.
+DataScript defaults to `:coherence-authority :managed`; Datomic and Datahike
+default to `:coherence-authority :unknown`. Unknown authority enables
+exact-current reuse only. It is sound with out-of-band writers because a
+changed immutable DB generation cannot hit the previous generation.
 
 Use managed reuse only under this explicit contract:
 

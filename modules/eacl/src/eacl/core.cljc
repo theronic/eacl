@@ -104,6 +104,34 @@
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
 
+(defprotocol IDetailedAuthorization
+  "Optional authorization extension for callers that need cache provenance."
+  (-check-permission [this demand]))
+
+(defn check-permission
+  "Returns an authorization decision with cache provenance.
+
+  Existing IAuthorization implementations remain compatible: implementations
+  that do not opt into IDetailedAuthorization are evaluated through can? and
+  reported as an uncached decision."
+  ([authorization demand]
+   (if (satisfies? IDetailedAuthorization authorization)
+     (-check-permission authorization demand)
+     {:allowed? (can? authorization demand)
+      :cached? false
+      :cache-basis nil}))
+  ([authorization subject permission resource]
+   (check-permission authorization
+                     {:subject subject
+                      :permission permission
+                      :resource resource}))
+  ([authorization subject permission resource consistency]
+   (check-permission authorization
+                     {:subject subject
+                      :permission permission
+                      :resource resource
+                      :consistency consistency})))
+
 ; Spice affordances from previous impl.
 (defrecord Relationship [subject relation resource])
 (defrecord RelationshipUpdate [operation relationship])

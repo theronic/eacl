@@ -878,3 +878,103 @@
     (is (false? (:cached? (resolve)))
         "the concurrent unvalidated replacement is never returned")
     (is (= 2 @calls))))
+
+(defn- store-key
+  [kind id]
+  {:kind kind
+   :semantic-key {:operation kind
+                  :id id}})
+
+(deftest authenticated-page-query-identity-ignores-cursor-transport-test
+  (let [base-public
+        {:subject {:type :user :id "user"}
+         :permission :view
+         :resource/type :document
+         :first 20}
+        base-internal
+        {:subject {:type :user :id 1}
+         :permission :view
+         :resource/type :document
+         :first 20}
+        boundary {:kind :lookup-eid :resource 42}
+        original
+        (cache/lookup-page-query-identity
+         (assoc base-public :after "signed-snapshot-a")
+         (assoc base-internal :after boundary))
+        recovered
+        (cache/lookup-page-query-identity
+         (assoc base-public
+                :after "signed-snapshot-b"
+                :cache? true)
+         (assoc base-internal
+                :after (assoc boundary :rebase? true)))]
+    (is (= original recovered)
+        "snapshot transport and recovery instructions are not semantics")
+    (is (not=
+         original
+         (cache/lookup-page-query-identity
+          (assoc base-public :after "signed-snapshot-c")
+          (assoc base-internal
+                 :after (assoc boundary :resource 43))))
+        "the authenticated internal boundary still distinguishes pages")
+    (is (not=
+         original
+         (cache/lookup-page-query-identity
+          (assoc base-public :after "signed-snapshot-d" :first 50)
+          (assoc base-internal :after boundary :first 50)))
+        "page size remains semantic")))
+
+(deftest local-store-capacity-and-kind-metrics-test
+  (let [store (cache/local-store {:max-entries 2})
+        can-key (store-key :can? 1)
+        lookup-key (store-key :lookup-resources 2)
+        count-key (store-key :count-resources 3)]
+    (cache/store! store can-key :allowed)
+    (cache/store! store lookup-key :page)
+    (is (= :allowed (cache/lookup store can-key)))
+    (is (nil? (cache/lookup store (store-key :can? :missing))))
+    (cache/store! store count-key :count)
+
+    (let [metrics (cache/stats store)]
+      (is (= 2 (:entries metrics)))
+      (is (= 2 (:max-entries metrics)))
+      (is (= 1 (:evictions metrics)))
+      (is (= 3 (:puts metrics)))
+      (is (= 1 (:hits metrics)))
+      (is (= 1 (:misses metrics)))
+      (is (= 3 (reduce + (map :puts (vals (:by-kind metrics))))))
+      (is (= 2 (reduce + (vals (:entries-by-kind metrics)))))
+      (is (= {:entries 2
+              :max-entries 2
+              :entries-by-kind (:entries-by-kind metrics)}
+             (get-in metrics [:tiers :local]))))))
+
+(deftest local-store-manual-eviction-and-clear-metrics-test
+  (let [store (cache/local-store {:max-entries 4})
+        can-key (store-key :can? 1)
+        lookup-key (store-key :lookup-resources 2)
+        count-key (store-key :count-resources 3)]
+    (cache/store! store can-key :allowed)
+    (is (= :allowed (cache/lookup store can-key)))
+    (is (true? (cache/evict! store can-key)))
+    (is (false? (cache/evict! store can-key)))
+    (cache/store! store lookup-key :page)
+    (cache/store! store count-key :count)
+    (cache/clear! store)
+
+    (let [metrics (cache/stats store)]
+      (is (= 0 (:entries metrics)))
+      (is (= {} (:entries-by-kind metrics)))
+      (is (= 3 (:manual-evictions metrics)))
+      (is (= 1 (:clears metrics)))
+      (is (= 1 (:hits metrics))
+          "request counters remain cumulative after clear")
+      (is (= 1 (get-in metrics
+                       [:by-kind :can? :manual-evictions])))
+      (is (= 1 (get-in metrics
+                       [:by-kind :lookup-resources
+                        :manual-evictions])))
+      (is (= 1 (get-in metrics
+                       [:by-kind :count-resources
+                        :manual-evictions])))
+      (is (= 0 (get-in metrics [:tiers :local :entries]))))))

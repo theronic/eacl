@@ -57,6 +57,9 @@
     TraversalLimits
     WorkCounters)
    (RoutingCertificate
+    EnumerationRoute
+    EnumerationRouteDecision
+    EnumerationRouteError
     IndexedDependencyEdge
     IndexedRoutingPath
     RoutingDerivationCounters
@@ -65,6 +68,12 @@
     RoutingProof)
    (SubproblemCache CandidateState)
    (AcyclicEngine
+    AcyclicContinuationAction
+    AcyclicCountDecision
+    AcyclicDirection
+    AcyclicPageDecision
+    AcyclicPageWork
+    AcyclicWorkDecision
     MaterializedRelationPath
     RawPermissionDefinition
     RawRelationDefinition
@@ -260,6 +269,99 @@
         :reason
         (routing-certificate-error (.dtor_error decision))}
        work))))
+
+(defn- enumeration-route-decision
+  [{:keys [schema-identity certificate-schema-identity
+           root-defined? recursive? recursive-data-active?]}]
+  (let [^EnumerationRouteDecision decision
+        (RoutingCertificate.__default/SelectEnumerationRoute
+         (dafny-string schema-identity)
+         (dafny-string certificate-schema-identity)
+         root-defined?
+         recursive?
+         recursive-data-active?)]
+    (if (.is_EnumerationRouteAccepted decision)
+      (let [^EnumerationRoute route (.dtor_route decision)]
+        {:status :accepted
+         :route
+         (cond
+           (.is_UndefinedEnumerationRoute route) :undefined
+           (.is_CertifiedAcyclicEnumerationRoute route) :acyclic
+           :else :recursive)})
+      (let [^EnumerationRouteError error (.dtor_error decision)]
+        {:status :rejected
+         :reason
+         (if (.is_MissingSchemaIdentity error)
+           :missing-schema-identity
+           :schema-identity-mismatch)}))))
+
+(defn- acyclic-direction
+  [direction]
+  (case direction
+    :asc
+    (AcyclicDirection/create_AcyclicAscending)
+
+    :desc
+    (AcyclicDirection/create_AcyclicDescending)))
+
+(defn- acyclic-page-decision
+  [{:keys [direction realized-eids size bound?]}]
+  (let [^AcyclicPageDecision decision
+        (AcyclicEngine.__default/DecideAcyclicPage
+         (acyclic-direction direction)
+         (dafny-sequence realized-eids)
+         (dafny-nat size)
+         bound?)
+        ^AcyclicPageWork work (.dtor_work decision)]
+    {:take-count (dafny-long (.dtor_takeCount decision))
+     :reverse? (.dtor_reverseOutput decision)
+     :has-next? (.dtor_hasNext decision)
+     :has-previous? (.dtor_hasPrevious decision)
+     :merge-advances (dafny-long (.dtor_mergeAdvances work))
+     :emitted-results (dafny-long (.dtor_emittedResults work))
+     :recursive-work (dafny-long (.dtor_recursiveWork work))}))
+
+(defn- acyclic-continuation-decision
+  [{:keys [authenticated? schema-matches? query-matches?
+           snapshot-matches? entry-present? entry-valid?]}]
+  (let [^AcyclicContinuationAction action
+        (AcyclicEngine.__default/DecideAcyclicContinuation
+         authenticated?
+         schema-matches?
+         query-matches?
+         snapshot-matches?
+         entry-present?
+         entry-valid?)]
+    (cond
+      (.is_ResumePrivateContinuation action) :resume
+      (.is_ReplayAuthenticatedBoundary action) :replay
+      :else :reject)))
+
+(defn- acyclic-count-decision
+  [{:keys [unique-count more? limit]}]
+  (let [^AcyclicCountDecision decision
+        (AcyclicEngine.__default/DecideAcyclicCount
+         (dafny-nat unique-count)
+         more?
+         (some? limit)
+         (dafny-nat (or limit 0)))]
+    {:count (dafny-long (.dtor_count decision))
+     :truncated? (.dtor_truncated decision)
+     :recursive-work
+     (dafny-long (.dtor_recursiveWork decision))}))
+
+(defn- acyclic-work-decision
+  [{:keys [requested-window merge-advances
+           emitted-results recursive-work]}]
+  (let [^AcyclicWorkDecision decision
+        (AcyclicEngine.__default/CertifyAcyclicWork
+         (dafny-nat requested-window)
+         (dafny-nat merge-advances)
+         (dafny-nat emitted-results)
+         (dafny-nat recursive-work))]
+    (if (.is_AcyclicWorkAccepted decision)
+      :accepted
+      :rejected)))
 
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]
@@ -1645,6 +1747,12 @@
       :ordered-merge-chunk (ordered-merge-chunk input)
       :recursive-routing-certificate
       (routing-certificate-decision input)
+      :enumeration-route (enumeration-route-decision input)
+      :acyclic-page (acyclic-page-decision input)
+      :acyclic-continuation
+      (acyclic-continuation-decision input)
+      :acyclic-count (acyclic-count-decision input)
+      :acyclic-work (acyclic-work-decision input)
       :indexed-scan-response (indexed-scan-decision input)
       :indexed-plan-certification (indexed-plan-decision input)
       :indexed-seed-certification (indexed-seed-decision input)

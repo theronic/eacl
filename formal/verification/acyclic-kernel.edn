@@ -4,7 +4,7 @@
  :scope :direct-and-acyclic-kernel
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
-   :verified-obligations 82
+   :verified-obligations 95
    :claims
    [:deterministic-path-identity
     :reachable-dependency-closure
@@ -35,6 +35,8 @@
     :arrow-exhaustive-negative-is-complete-under-equality-contract
     :arrow-fallback-refines-complete-far-side-evaluation
     :arrow-full-candidate-checks-are-bounded-by-intermediate-count
+    :inactive-cycle-guard-eliminates-recursive-contribution
+    :inactive-cycle-guard-preserves-guarded-denotation
     :public-can-root-classification-hoist-preserves-result
     :public-generated-can-performs-one-root-classification]}
   {:source "formal/dafny/OrderedMerge.dfy"

@@ -1,0 +1,7 @@
+{:engine-arity 3
+ :continuation-ownership :client-private
+ :pages-after-first {:continuation-hit true
+                     :prefix-replay false}
+ :cache-miss {:result :same-ordered-page
+              :action :authenticated-replay}
+ :public-cursor-private-state false}

@@ -1,0 +1,207 @@
+{:schema-version 1
+ :recorded-at "2026-08-06"
+ :change :restore-v8-enumeration-performance
+
+ :root-causes
+ [{:id :recursive-route-overreach
+   :finding
+   :every-enumeration-root-entered-the-recursive-fixed-point-engine-even-when-the-verified-certificate-was-acyclic}
+  {:id :inactive-cycle-guard-work
+   :finding
+   :the-acyclic-route-still-evaluated-in-scc-arrow-paths-whose-exact-guard-relations-were-empty}
+  {:id :datascript-graph-head-query
+   :finding
+   :each-snapshot-adapter-read-the-managed-graph-head-order-through-a-general-datalog-query-including-on-private-page-cache-hits
+   :remediation
+   :read-the-single-head-order-datom-through-the-eavt-index}
+  {:id :relationship-page-replay
+   :finding
+   :datascript-and-datahike-relationship-pages-did-not-use-the-existing-client-private-exact-page-cache}
+  {:id :explorer-cache-provenance
+   :finding
+   :the-background-total-scan-overwrote-the-visible-page-cache-status-without-overwriting-the-visible-page-time}
+  {:id :explorer-stale-cursors
+   :finding
+   :seed-and-schema-mutations-retained-group-and-nested-cursor-stacks-from-the-previous-immutable-snapshot}
+  {:id :cold-count-projection-fragmentation
+   :finding
+   :enabled-subproblem-caching-split-each-bounded-count-window-into-32-item-projection-prefixes-causing-hundreds-of-extra-datascript-index-seeks
+   :remediation
+   :size-count-projections-to-the-bounded-window-plus-sentinel-without-changing-small-list-page-projections}
+  {:id :count-window-traversal-replay
+   :finding
+   :exact-count-rebuilt-the-complete-permission-path-merge-for-every-internal-window-causing-fanout-index-scans-to-scale-with-window-count-times-intermediate-count
+   :remediation
+   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}]
+
+ :formal-verification
+ {:command "bin/formal verify"
+  :modules 25
+  :proof-efforts 9806
+  :errors 0
+  :new-relationship-page-theorems
+  [PageWindow.MatchingRelationshipPageScopeReusesExactPage
+   PageWindow.RelationshipPageScopeMismatchCannotHit]
+  :inactive-recursion-authority
+  [RoutingCertificate.DecideGuardedRoute
+   RoutingCertificate.EmptyRecursiveGuardsSelectAcyclic
+   AcyclicEngine.EmptyRecursiveGuardPreservesAcyclicDenotation]
+  :count-projection-authority
+  [SchemaPlanCost.CountProjectionChunkCoversWindowAndSentinel
+   SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound
+   SchemaPlanCost.ExactCountBuildsOneMergeTraversal
+   SchemaPlanCost.CountWindowAdvanceIsBounded]}
+
+ :runtime-suites
+ {:datascript-clj
+  {:tests 183 :assertions 4641 :failures 0 :errors 0}
+  :datascript-cljs
+  {:tests 169 :assertions 4547 :failures 0 :errors 0}
+  :datahike-clj
+  {:tests 34 :assertions 488 :failures 0 :errors 0}
+  :datomic-clj
+  {:tests 240 :assertions 11204 :failures 0 :errors 0}
+  :shared-core-clj
+  {:tests 85 :assertions 666 :failures 0 :errors 0}
+  :focused-enumeration-routing
+  {:tests 9 :assertions 51 :failures 0 :errors 0}
+  :heavy-explorer-100000
+  {:count 100000
+   :elapsed-ms 258.188958
+   :warmed-median-ms 248.518833
+   :permission-paths 5
+   :backend-scans 456
+   :count-pages 7
+   :recursive-work 0}}
+
+ :matched-v7-cache-bypassed-clj
+ {:host-class :same-host-same-process-shape-harness
+  :variance-policy {:warmups 3 :samples 7 :statistic :median}
+  :user-1-forward-page-10000
+  {:v7-median-ms 1.42725
+   :v8-median-ms 0.791542
+   :v8-to-v7-ratio 0.5546
+   :maximum-ratio 2.0}
+  :owner-0001-exact-count-2000-of-10000
+  {:v7-median-ms 2.476375
+   :v8-median-ms 2.604417
+   :v8-to-v7-ratio 1.0517
+   :maximum-ratio 2.0}
+  :super-user-exact-count-50000
+  {:v7-median-ms 86.823625
+   :v8-median-ms 117.805542
+   :v8-to-v7-ratio 1.3568
+   :maximum-ratio 2.0}
+  :super-user-exact-count-50000-empty-recursive-schema
+  {:v7-nonrecursive-median-ms 86.823625
+   :v8-median-ms 111.730166
+   :v8-to-v7-ratio 1.2869
+   :maximum-ratio 2.0}}
+
+ :deterministic-work
+ {:pagination-10000
+  {:successive-pages 10
+   :items 200
+   :duplicates 0
+   :continuation-hits-after-first 9
+   :merge-advances-per-page 21
+   :recursive-work 0}
+  :owner-count-2000
+  {:count 2000
+   :backend-scans 14
+   :merge-advances 2000
+   :recursive-work 0}
+  :super-count-50000
+  {:count 50000
+   :count-pages 4
+   :backend-scans 231
+   :merge-advances 50003
+   :recursive-work 0}
+  :empty-recursive-super-count-50000
+  {:count 50000
+   :count-pages 4
+   :backend-scans 231
+   :merge-advances 50003
+   :recursive-work 0}
+  :super-count-100000
+  {:count 100000
+   :count-pages 7
+   :backend-scans 456
+   :permission-paths 5
+   :merge-advances 100006
+   :recursive-work 0}
+  :cold-user-count-12000-of-40000
+  {:count 12000
+   :count-pages 1
+   :backend-scans 59
+   :merge-advances 12000
+   :recursive-work 0
+   :elapsed-ms 30.553917}}
+
+ :explorer-browser
+ {:url "http://localhost:18091/index.html"
+  :runtime :datascript-cljs
+  :recursive-schema-10000
+  {:write-and-ui-settle-ms 2482
+   :view-count 10000
+   :admin-count 10000
+   :view-cache-hit-ms 0.4
+   :nested-page-1-cache-hit-ms 1.2
+   :hung false
+   :errors []}
+  :owner-0001-cache-disabled-10000
+  {:count 2000
+   :samples-ms [11.7 15.1 11.5 14.2 11.8 12.8 11.7]
+   :median-ms 11.8}
+  :relationship-cache-hit-10000
+  {:steady-samples-ms [2.6 1.0 1.9 1.0 2.0 1.0 2.4 0.9]
+   :status :hit}
+  :recursive-schema-50000
+  {:view-count 50000
+   :cache-disabled-warmed-samples-ms [495.3 459.4 457.6]
+   :median-ms 459.4
+   :nested-return-page-cache-hit-ms 1.0
+   :snapshot-retention-error false
+   :cursor-reset-to-page 1
+   :errors []}
+  :recursive-schema-40000-clean-build
+  {:schema-write-and-ui-settle-ms 1331
+   :cold-super-user-view-count 40000
+   :cold-super-user-view-count-ms 1029.0
+   :cold-super-user-switch-settle-ms 1212
+   :cold-super-user-admin-count-ms 309.9
+   :warm-super-user-view-count-ms 0.4
+   :cold-user-2-count 2000
+   :cold-user-2-count-ms 31.1
+   :nested-page-1-miss-ms 51.4
+   :nested-page-2-miss-ms 64.1
+   :nested-return-page-cache-hit-ms 0.9
+   :post-seed-snapshot-retention-error false
+   :post-seed-cursor-reset-to-page 1
+   :hung false
+   :errors []}
+  :recursive-schema-100000
+  {:cold-super-user-view-count 100000
+   :cold-super-user-view-count-ms 1087.7
+   :warm-super-user-view-count-ms 0.3
+   :owner-0001-count 2000
+   :owner-0001-count-ms 5.3
+   :snapshot-retention-error false
+   :hung false
+   :errors []}
+  :cljs-count-window-sweep-100000
+  {:window-2048-ms 1051.7
+   :window-8192-ms 885.3
+   :window-16384-ms 876.7
+   :window-65536-ms 918.8
+   :selected-window 16384}}
+
+ :compatibility
+ {:public-authorization-api :unchanged
+  :cursor-frame :eacl-c4-v10-unchanged
+  :new-response-telemetry [:cached? :cache-basis]
+  :telemetry-compatibility :additive
+  :approximate-counts false
+  :recursive-limit-increase false}
+
+ :status :passed}

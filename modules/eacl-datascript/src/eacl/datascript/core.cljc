@@ -5,8 +5,10 @@
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency-v3]
+            [eacl.continuation :as continuation]
             [eacl.cursor :as cursor]
             [eacl.core :as eacl :refer [IAuthorization
+                                        IDetailedAuthorization
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate]]
@@ -279,6 +281,23 @@
     (assoc value :cached? cached? :cache-basis cache-basis)
     value))
 
+(defn- continuation-query-identity
+  [query]
+  (apply
+   dissoc
+   query
+   [:first :last :after :before
+    :consistency :cache?]))
+
+(defn- continuation-context
+  [adapter opts operation query]
+  (when-not (false? (:continuation-cache-request? opts))
+    (continuation/private-context
+     (:continuation-cache-store opts)
+     adapter
+     operation
+     (continuation-query-identity query))))
+
 (defn datascript-read-relationships
   [db
    {:as opts
@@ -291,7 +310,7 @@
         (page-context
          source-adapter opts selection :read-relationships filters nil nil)
         base-filters (apply dissoc filters
-                            [:first :last :after :before :consistency])
+                            [:first :last :after :before :consistency :cache?])
         _ (relationship-filters/validate! base-filters)
         subject-id (:subject/id base-filters)
         resource-id (:resource/id base-filters)
@@ -307,14 +326,25 @@
               resource-id (assoc :resource/id resource-eid)))]
     (if (or (and subject-id (nil? subject-eid))
             (and resource-id (nil? resource-eid)))
-      relay/empty-page
-      (relay/externalize-relationship-page
-       adapter
-       cursor-opts
-       :read-relationships
-       filters
-       (impl/read-relationships
-        page-db internal-query (:decision-kernel cursor-opts))))))
+      (assoc relay/empty-page :cached? false :cache-basis nil)
+      (or
+       (relay/lookup-visited-page
+        adapter cursor-opts :read-relationships filters)
+       (relay/remember-visited-page!
+        adapter
+        cursor-opts
+        :read-relationships
+        filters
+        (assoc
+         (relay/externalize-relationship-page
+          adapter
+          cursor-opts
+          :read-relationships
+          filters
+          (impl/read-relationships
+           page-db internal-query (:decision-kernel cursor-opts)))
+         :cached? false
+         :cache-basis nil))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
@@ -430,7 +460,7 @@
     (:data relationships)
     relationships))
 
-(defn datascript-can?
+(defn datascript-check-permission
   [db {:keys [spice-object->internal] :as opts}
    subject permission resource consistency]
   (let [{selected-db :db adapter :adapter
@@ -440,18 +470,29 @@
         internal-subject (spice-object->internal selected-db subject)
         internal-resource (spice-object->internal selected-db resource)]
     (if-not (and (:id internal-subject) (:id internal-resource))
-      false
-      (:value
-       (cached-engine-result
-        adapter opts :can?
-        {:public [subject permission resource]
-         :internal
-         [internal-subject permission internal-resource]}
-        (:type internal-resource)
-        permission
-        boolean?
-        #(engine/can?
-          adapter internal-subject permission internal-resource))))))
+      {:allowed? false
+       :cached? false
+       :cache-basis nil}
+      (let [answer
+            (cached-engine-result
+             adapter opts :can?
+             {:public [subject permission resource]
+              :internal
+              [internal-subject permission internal-resource]}
+             (:type internal-resource)
+             permission
+             boolean?
+             #(engine/can?
+               adapter internal-subject permission internal-resource))]
+        {:allowed? (:value answer)
+         :cached? (:cached? answer)
+         :cache-basis (:cache-basis answer)}))))
+
+(defn datascript-can?
+  [db opts subject permission resource consistency]
+  (:allowed?
+   (datascript-check-permission
+    db opts subject permission resource consistency)))
 
 (defn datascript-lookup-resources
   [db
@@ -477,13 +518,17 @@
              answer
              (cached-engine-result
               adapter cursor-opts :lookup-resources
-              {:public (dissoc query :consistency)
-               :internal internal-query}
+              (cache/lookup-page-query-identity query internal-query)
               (:resource/type internal-query)
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
                     (map? (:page-info %)))
-              #(engine/lookup-resources adapter internal-query))
+              #(engine/lookup-resources
+                adapter
+                internal-query
+                {:continuation-cache
+                 (continuation-context
+                  adapter cursor-opts :lookup-resources query)}))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -514,11 +559,11 @@
       (let [internal-query
             (-> query
                 (assoc :subject internal-subject)
-                (dissoc :consistency))
+                (dissoc :consistency :cache?))
             answer
             (cached-engine-result
              adapter opts :count-resources
-             {:public (dissoc query :consistency)
+             {:public (dissoc query :consistency :cache?)
               :internal internal-query}
              (:resource/type internal-query)
              (:permission internal-query)
@@ -555,13 +600,17 @@
              answer
              (cached-engine-result
               adapter cursor-opts :lookup-subjects
-              {:public (dissoc query :consistency)
-               :internal internal-query}
+              (cache/lookup-page-query-identity query internal-query)
               (:type (:resource internal-query))
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
                     (map? (:page-info %)))
-              #(engine/lookup-subjects adapter internal-query))
+              #(engine/lookup-subjects
+                adapter
+                internal-query
+                {:continuation-cache
+                 (continuation-context
+                  adapter cursor-opts :lookup-subjects query)}))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -593,11 +642,11 @@
       (let [internal-query
             (-> query
                 (assoc :resource internal-resource)
-                (dissoc :consistency))
+                (dissoc :consistency :cache?))
             answer
             (cached-engine-result
              adapter opts :count-subjects
-             {:public (dissoc query :consistency)
+             {:public (dissoc query :consistency :cache?)
               :internal internal-query}
              (:type (:resource internal-query))
              (:permission internal-query)
@@ -607,11 +656,7 @@
 
 (defn- request-cache-enabled?
   [cache-option]
-  (when-not (or (nil? cache-option) (boolean? cache-option))
-    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
-                    {:type :eacl/invalid-request
-                     :key :cache?
-                     :value cache-option})))
+  (cache/validate-request-cache-option! cache-option)
   (not (false? cache-option)))
 
 (defrecord DataScriptAuthorization [conn opts]
@@ -646,9 +691,12 @@
              (write-response (:eacl.mutation/db-after result) opts))))
 
   (read-relationships [_ filters]
-    (request-cache-enabled? (:cache? filters))
-    (datascript-read-relationships (ds/db conn) opts
-                                   (dissoc filters :cache?)))
+    (datascript-read-relationships
+     (ds/db conn)
+     (assoc opts
+            :completed-cache-request?
+            (request-cache-enabled? (:cache? filters)))
+     (dissoc filters :cache?)))
   (write-relationships! [_ updates]
     (datascript-write-relationships! conn opts updates))
   (write-relationship! [_ operation subject relation resource]
@@ -685,11 +733,14 @@
                                                             (->Relationship subject relation resource))]))
 
   (lookup-resources [_ query]
-    (datascript-lookup-resources
-     (ds/db conn)
-     (assoc opts :completed-cache-request?
-            (request-cache-enabled? (:cache? query)))
-     (dissoc query :cache?)))
+    (let [cache-enabled?
+          (request-cache-enabled? (:cache? query))]
+      (datascript-lookup-resources
+       (ds/db conn)
+       (assoc opts
+              :completed-cache-request? cache-enabled?
+              :continuation-cache-request? cache-enabled?)
+       (dissoc query :cache?))))
   (count-resources [_ query]
     (datascript-count-resources
      (ds/db conn)
@@ -697,11 +748,14 @@
             (request-cache-enabled? (:cache? query)))
      (dissoc query :cache?)))
   (lookup-subjects [_ query]
-    (datascript-lookup-subjects
-     (ds/db conn)
-     (assoc opts :completed-cache-request?
-            (request-cache-enabled? (:cache? query)))
-     (dissoc query :cache?)))
+    (let [cache-enabled?
+          (request-cache-enabled? (:cache? query))]
+      (datascript-lookup-subjects
+       (ds/db conn)
+       (assoc opts
+              :completed-cache-request? cache-enabled?
+              :continuation-cache-request? cache-enabled?)
+       (dissoc query :cache?))))
   (count-subjects [_ query]
     (datascript-count-subjects
      (ds/db conn)
@@ -712,7 +766,17 @@
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
                     {:type :eacl/not-implemented
-                     :method (quote expand-permission-tree)}))))
+                     :method (quote expand-permission-tree)})))
+
+  IDetailedAuthorization
+  (-check-permission
+    [_ {:keys [subject permission resource consistency] cache? :cache?}]
+    (datascript-check-permission
+     (ds/db conn)
+     (assoc opts :completed-cache-request?
+            (request-cache-enabled? cache?))
+     subject permission resource
+     (or consistency consistency/fully-consistent))))
 
 (defn expire-cache!
   "Expires every completed answer owned by one DataScript EACL client."
@@ -726,6 +790,9 @@
    (get-in client [:opts :cursor-codec-cache]))
   (relay/clear-page-navigation-cache!
    (get-in client [:opts :page-navigation-cache]))
+  (some->
+   (get-in client [:opts :continuation-cache-store])
+   continuation/clear!)
   nil)
 
 (defn cache-stats
@@ -734,9 +801,17 @@
   (when-not (instance? DataScriptAuthorization client)
     (throw (ex-info "cache-stats requires a DataScript EACL client."
                     {:type :eacl/invalid-client})))
-  (if-let [store (get-in client [:opts :current-cache-store])]
-    (cache/current-cache-stats store)
-    {:disabled? true}))
+  (let [current-store
+        (get-in client [:opts :current-cache-store])
+        continuation-store
+        (get-in client [:opts :continuation-cache-store])]
+    (cond->
+     (if current-store
+       (cache/current-cache-stats current-store)
+       {:disabled? true})
+      continuation-store
+      (assoc :continuations
+             (continuation/stats continuation-store)))))
 
 (def ^:private known-client-opt-keys
   #{:entid->object-id
@@ -767,8 +842,10 @@
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
   - :cache - omitted creates a bounded client-private current-generation
     cache; eacl.cache/no-cache disables it; {:max-entries n} bounds it.
-    :coherence-authority :managed enables relation-stamp reuse across
-    unrelated forward transactions. Unknown authority remains exact-current.
+    DataScript defaults to :coherence-authority :managed because the EACL
+    client is assumed to own every schema and relationship mutation. Set
+    :coherence-authority :unknown when authorization-relevant writes can
+    bypass EACL; unknown authority remains exact-current.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn
@@ -856,7 +933,7 @@
                      :key :exact-snapshot-registry-size
                      :value exact-snapshot-registry-size})))
   (let [_ (journal/ensure-migrated! conn)
-        coherence-authority (or coherence-authority :unknown)
+        coherence-authority (or coherence-authority :managed)
         proof-mode (case (or proof-mode :auto)
                      :auto (if (= :managed coherence-authority)
                              :mutation
@@ -959,6 +1036,14 @@
                             eacl.cache/no-cache)
                           :current-cache-store
                           current-cache-store
+                          :continuation-cache-store
+                          (when current-cache-store
+                            (continuation/make-store
+                             {:max-entries
+                              (if (and (map? cache)
+                                       (integer? (:max-entries cache)))
+                                (:max-entries cache)
+                                2048)}))
                           :cursor-codec-cache cursor-codec-cache
                           :page-navigation-cache
                           page-navigation-cache

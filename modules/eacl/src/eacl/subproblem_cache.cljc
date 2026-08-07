@@ -277,6 +277,8 @@
        (into {}
              (map (fn [tier]
                     [tier {:entries {}
+                           :lru []
+                           :lru-head 0
                            :weight 0
                            :inflight 0
                            :clock 0}]))
@@ -285,6 +287,7 @@
              :misses 0
              :puts 0
              :evictions 0
+             :eviction-probes 0
              :oversized-rejections 0
              :inflight-rejections 0
              :invalid-results 0
@@ -347,8 +350,10 @@
            (:managed-proof-max-atoms store)
            :tiers
            (into {}
-                 (map (fn [[tier {:keys [entries weight inflight]}]]
+                 (map (fn [[tier {:keys [entries weight inflight
+                                         lru lru-head]}]]
                         [tier {:entries (count entries)
+                               :lru-records (- (count lru) lru-head)
                                :weight weight
                                :inflight inflight
                                :max-weight (get (:budgets store) tier)}]))
@@ -367,6 +372,8 @@
              (into {}
                    (map (fn [tier]
                           [tier {:entries {}
+                                 :lru []
+                                 :lru-head 0
                                  :weight 0
                                  :inflight 0
                                  :clock 0}]))
@@ -419,38 +426,68 @@
                  state))))
     @removed?))
 
+(defn- current-lru-record?
+  [entries [access key]]
+  (= access (:access (get entries key))))
+
+(defn- compact-lru
+  [tier-state]
+  (let [entries (:entries tier-state)
+        active
+        (into []
+              (filter #(current-lru-record? entries %))
+              (subvec (:lru tier-state)
+                      (:lru-head tier-state)))]
+    (assoc tier-state :lru active :lru-head 0)))
+
+(defn- maybe-compact-lru
+  [tier-state]
+  (let [record-count (count (:lru tier-state))
+        entry-count (count (:entries tier-state))
+        maximum-records (max 1024 (* 2 (max 1 entry-count)))]
+    (if (> record-count maximum-records)
+      (compact-lru tier-state)
+      tier-state)))
+
 (defn- trim-tier
   [tier-state maximum-weight protected-key]
   (loop [current tier-state
-         evictions 0]
+         evictions 0
+         probes 0]
     (if (<= (:weight current) maximum-weight)
-      [current evictions]
-      (if-let [[victim entry]
-               (reduce
-                (fn [selected [key entry :as candidate]]
-                  (if (or (= protected-key key)
-                          (not (:complete? entry))
-                          (and selected
-                               (<= (:access (val selected))
-                                   (:access entry))))
-                    selected
-                    candidate))
-                nil
-                (:entries current))]
+      [(maybe-compact-lru current) evictions probes]
+      (if-let [[victim-index victim entry victim-probes]
+               (loop [index (:lru-head current)
+                      victim-probes 0]
+                 (when (< index (count (:lru current)))
+                   (let [[access key] (nth (:lru current) index)
+                         entry (get (:entries current) key)
+                         victim-probes (inc victim-probes)]
+                     (if (and (= access (:access entry))
+                              (not= protected-key key)
+                              (:complete? entry))
+                       [index key entry victim-probes]
+                       (recur (inc index) victim-probes)))))]
         (recur
          (-> current
              (update :entries dissoc victim)
+             (assoc :lru-head (inc victim-index))
              (update :weight - (:weight entry))
              (cond->
                (not (:complete? entry))
                (update :inflight dec)))
-         (inc evictions))
-        [current evictions]))))
+         (inc evictions)
+         (+ probes victim-probes))
+        [(maybe-compact-lru
+          (assoc current :lru-head (count (:lru current))))
+         evictions
+         probes]))))
 
 (defn- finalize-entry!
   [store tier key ticket weight]
   (let [maximum-weight (get (:budgets store) tier)
         evictions (volatile! 0)
+        eviction-probes (volatile! 0)
         rejected-oversized? (volatile! false)
         retained? (volatile! false)]
     (swap! (:state store)
@@ -488,15 +525,19 @@
                              (assoc-in [:entries key :complete?] true)
                              (update :weight + delta)
                              (update :inflight dec))
-                         [trimmed n]
+                         [trimmed n probes]
                          (trim-tier updated-tier maximum-weight key)]
                      (vreset! retained? true)
                      (vreset! evictions n)
+                     (vreset! eviction-probes probes)
                      (assoc state tier trimmed)))))))
     (when @rejected-oversized?
       (swap! (:metrics store) update :oversized-rejections inc))
     (when (pos? @evictions)
       (swap! (:metrics store) update :evictions + @evictions))
+    (when (pos? @eviction-probes)
+      (swap! (:metrics store)
+             update :eviction-probes + @eviction-probes))
     @retained?))
 
 (defn- touch-entry!
@@ -508,7 +549,9 @@
                (let [tick (inc (get-in state [tier :clock]))]
                  (-> state
                      (assoc-in [tier :clock] tick)
-                     (assoc-in [tier :entries key :access] tick)))
+                     (assoc-in [tier :entries key :access] tick)
+                     (update-in [tier :lru] conj [tick key])
+                     (update tier maybe-compact-lru)))
                state))))
   nil)
 
@@ -542,7 +585,7 @@
                   (update :weight inc)
                   (update :inflight inc)
                   (assoc :clock tick))
-              [trimmed evictions]
+              [trimmed evictions eviction-probes]
               (trim-tier updated-tier maximum-weight key)
               updated (assoc state tier trimmed)]
           (if (> (:weight trimmed) maximum-weight)
@@ -554,6 +597,9 @@
                 (when (pos? evictions)
                   (swap! (:metrics store)
                          update :evictions + evictions))
+                (when (pos? eviction-probes)
+                  (swap! (:metrics store)
+                         update :eviction-probes + eviction-probes))
                 {:installed? true
                  :entry candidate})
               (recur))))))))

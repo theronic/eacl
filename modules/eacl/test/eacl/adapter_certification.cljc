@@ -459,6 +459,35 @@
                    (:objects fixture)))))
      (:relations fixture)))})
 
+(defn- certify-relation-populated!
+  [adapter fixture relations]
+  (doseq [{:keys [resource-type relation-name subject-type] :as relation}
+          (:relations fixture)]
+    (let [relation-id
+          (:relation-id (get relations (relation-key relation)))
+          expected?
+          (boolean
+           (some
+            (fn [{:keys [subject resource] stored-relation :relation}]
+              (and (= relation-name stored-relation)
+                   (= subject-type (:type subject))
+                   (= resource-type (:type resource))))
+            (:relationships fixture)))
+          actual?
+          (backend/invoke
+           adapter
+           :relation-populated?
+           subject-type
+           relation-id
+           resource-type)]
+      (demand
+       (= expected? actual?)
+       "Relation-prefix population disagreed with the materialized fixture."
+       {:relation relation
+        :expected expected?
+        :actual actual?})))
+  {:relations (count (:relations fixture))})
+
 (defn- certify-snapshot!
   [adapter relations]
   (let [snapshot-id (backend/invoke adapter :snapshot-id)
@@ -596,6 +625,16 @@
              (or @internals
                  (internal-catalog
                   adapter (:objects fixture))))))
+         (check
+          :relation-prefix-population
+          :relation-populated?
+          :iff-forward-prefix-nonempty
+          (fn []
+            (certify-relation-populated!
+             adapter
+             fixture
+             (or @relations
+                 (relation-catalog adapter fixture)))))
          (check
           :immutable-snapshot
           :select-current

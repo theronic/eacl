@@ -1,6 +1,7 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
             [eacl.core :refer [spice-object]]
+            [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
@@ -8,6 +9,16 @@
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
+(def ^:dynamic *count-window-size*
+  "Maximum exact-count results certified in one bounded work window.
+
+  Counting keeps one merged traversal across windows. This override exists for
+  deterministic work tests; it is not a public client option."
+  ;; The count loop replaces its consumed lazy tail, so the browser does not
+  ;; retain earlier windows. A shared 16k bound amortizes generated-boundary
+  ;; and vector realization overhead without changing results or logical work.
+  16384)
+(def ^:private lookup-continuation-version 2)
 
 (def ^:private projection-key-version 1)
 (def ^:private denotation-key-version 1)
@@ -20,6 +31,10 @@
   backend seek and does not retain the tail."
   32)
 
+(defn- count-projection-chunk-size
+  [page-size]
+  (max *projection-chunk-size* (inc page-size)))
+
 (def ^:dynamic *backend-work-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
@@ -28,8 +43,36 @@
   distinct prevents a cache hit from being mistaken for database work."
   nil)
 
+(def ^:dynamic *acyclic-work-stats*
+  "Optional atom populated by deterministic acyclic list/count gates.
+
+  These counters are deliberately separate from recursive traversal limits
+  and counters. A certified acyclic request must never look recursive merely
+  because it scans a large, valid authorization set."
+  nil)
+
+(def ^:dynamic *acyclic-route?* false)
+
+(def ^:dynamic *inactive-recursive-cycle-guards*
+  "In-SCC arrow prefixes proven empty in the selected snapshot.
+
+  The generated routing decision permits the acyclic evaluator only when
+  every such guard is empty. Binding the exact guard keys here erases their
+  recursive contributions from the executable path, matching
+  GuardedRecursiveDenotation in AcyclicEngine.dfy."
+  #{})
+
+(defn- add-acyclic-work!
+  [counter amount]
+  (when *acyclic-work-stats*
+    (swap! *acyclic-work-stats* update counter (fnil + 0) amount))
+  nil)
+
 (defn- record-backend-work!
   [operation]
+  (when *acyclic-route?*
+    (add-acyclic-work! :backend-scans 1)
+    (add-acyclic-work! operation 1))
   (when *backend-work-stats*
     (swap! *backend-work-stats*
            (fn [stats]
@@ -498,12 +541,20 @@
   ([snapshot]
    (make-schema-cache snapshot (schema-version snapshot)))
   ([snapshot known-schema-version]
-   {:database-id (:database-id (backend/invoke snapshot :snapshot-id))
+   {:backend-id (backend/backend-id snapshot)
+    :source-scope (backend/invoke snapshot :source-scope)
+    :database-id (:database-id (backend/invoke snapshot :snapshot-id))
     :schema-version known-schema-version
+    ;; The client-visible schema version may be a mutation journal token while
+    ;; the shared engine adapter uses the normalized schema-content proof.
+    ;; Bind generated routing certificates to the latter so proof modes cannot
+    ;; make an unchanged schema look stale.
+    :routing-schema-identity (schema-version snapshot)
     :permission-roots (atom {})
     :permission-paths (atom {})
     :traversal-permissions (atom {})
     :traversal-analysis (atom nil)
+    :recursive-cycle-guards (atom {})
     :relationship-dependencies (atom {})
     :recursive-plans (atom {})
     :direct-grant-relations (atom {})}))
@@ -553,9 +604,10 @@
   ([schema-cache]
    (some-> (:permission-roots schema-cache) (reset! {}))
    (reset! (:permission-paths schema-cache) {})
-   (reset! (:traversal-permissions schema-cache) {})
-   (some-> (:traversal-analysis schema-cache) (reset! nil))
-   (reset! (:relationship-dependencies schema-cache) {})
+  (reset! (:traversal-permissions schema-cache) {})
+  (some-> (:traversal-analysis schema-cache) (reset! nil))
+  (some-> (:recursive-cycle-guards schema-cache) (reset! {}))
+  (reset! (:relationship-dependencies schema-cache) {})
    (some-> (:recursive-plans schema-cache) (reset! {}))
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
@@ -678,6 +730,19 @@
                          (assoc % cache-key paths)))
                cache-key))))))
 
+(defn- acyclic-permission-paths
+  [db resource-type permission-name]
+  (remove
+   (fn [path]
+     (and
+      (= :arrow (:type path))
+      (contains?
+       *inactive-recursive-cycle-guards*
+       [(:target-type path)
+        (:via-relation-eid path)
+        resource-type])))
+   (get-permission-paths db resource-type permission-name)))
+
 (defn- frontier-permission-paths
   "Expands same-resource permission aliases into independently resumable paths.
 
@@ -694,7 +759,8 @@
                             (if (= :self-permission (:type path))
                               (expand (:target-permission path) visited-nodes')
                               [path]))
-                          (get-permission-paths db resource-type permission-name))))))]
+                          (acyclic-permission-paths
+                           db resource-type permission-name))))))]
     ;; `permission view = owner + admin` where `permission admin = owner`
     ;; expands to the same relation path twice: scanned twice, and both
     ;; collapsing onto one routing-path identity anyway.
@@ -1218,6 +1284,108 @@
                          (permission-query-dependencies db node)))))
            components))))
 
+(defn- calc-recursive-cycle-guards
+  "Returns the relationship prefixes that can carry a recursive SCC edge.
+
+  Same-resource permission aliases are unguarded positive unions; the acyclic
+  evaluator's visited set computes their reachable base grants exactly.
+  An arrow-permission edge can add recursive grants only when its via relation
+  has at least one tuple in the selected snapshot, so those in-SCC arrows are
+  the complete data-dependent cycle guards."
+  [db resource-type permission-name]
+  (let [root (permission-query-node resource-type permission-name)
+        nodes (sort (reachable-permission-query-nodes db root))
+        graph (permission-graph db nodes)
+        components (mapv (comp vec sort)
+                         (graph-components nodes graph))
+        component-by-node
+        (into {}
+              (mapcat
+               (fn [component]
+                 (map #(vector % component) component)))
+              components)
+        recursive-components
+        (into
+         #{}
+         (filter
+          (fn [component]
+            (or (> (count component) 1)
+                (let [node (first component)]
+                  (some #{node} (get graph node))))))
+         components)]
+    (->> nodes
+         (mapcat
+          (fn [[node-resource-type node-permission :as node]]
+            (keep
+             (fn [path]
+               (when (and (= :arrow (:type path))
+                          (:target-permission path))
+                 (let [target
+                       (permission-query-node
+                        (:target-type path)
+                        (:target-permission path))
+                       component (get component-by-node node)]
+                   (when (and (= component
+                                 (get component-by-node target))
+                              (contains? recursive-components component))
+                     {:subject-type (:target-type path)
+                      :relation-id (:via-relation-eid path)
+                      :resource-type node-resource-type}))))
+             (get-permission-paths
+              db node-resource-type node-permission))))
+         distinct
+         (sort-by pr-str)
+         vec)))
+
+(defn- recursive-cycle-guards
+  [db resource-type permission-name]
+  (if-let [cache-atom
+           (and (some? (:schema-version *schema-cache*))
+                (:recursive-cycle-guards *schema-cache*))]
+    (let [cache-key
+          (permission-paths-cache-key resource-type permission-name)
+          snapshot @cache-atom]
+      (if (contains? snapshot cache-key)
+        (get snapshot cache-key)
+        (let [guards
+              (calc-recursive-cycle-guards
+               db resource-type permission-name)]
+          (get
+           (swap! cache-atom
+                  #(if (contains? % cache-key)
+                     %
+                     (assoc % cache-key guards)))
+           cache-key))))
+    (calc-recursive-cycle-guards db resource-type permission-name)))
+
+(defn- recursive-data-active?
+  [db resource-type permission-name]
+  (boolean
+   (some
+    (fn [{:keys [subject-type relation-id resource-type]}]
+      (backend/invoke
+       db
+       :relation-populated?
+       subject-type
+       relation-id
+       resource-type))
+    (recursive-cycle-guards db resource-type permission-name))))
+
+(declare traversal-permission?)
+
+(defn- inactive-recursive-cycle-guard-keys
+  [db resource-type permission-name route]
+  (if (and (= :acyclic route)
+           (traversal-permission?
+            db resource-type permission-name))
+    (into
+     #{}
+     (map
+      (fn [{:keys [subject-type relation-id resource-type]}]
+        [subject-type relation-id resource-type]))
+     (recursive-cycle-guards db resource-type permission-name))
+    #{}))
+
 (defn- calc-traversal-analysis
   "Classifies every permission node into one shared schema-generation result.
 
@@ -1316,6 +1484,93 @@
                            %
                            (assoc % cache-key recursive?)))
                  cache-key)))))))
+
+(defn- routing-cache-error!
+  [message data]
+  (throw
+   (ex-info
+    message
+    (merge
+     {:type :eacl.routing/stale-certificate
+      :eacl/error :eacl.routing/stale-certificate}
+     data))))
+
+(defn- validate-routing-cache-binding!
+  "The generated classification is valid only for the adapter, source, and
+  normalized schema proof that produced it.
+
+  Normal clients receive their cache from `schema-cache-for!`; this check is
+  principally a fail-closed guard against integration mistakes, development
+  reloads, and externally constructed cache maps."
+  [db]
+  (when-let [cache *schema-cache*]
+    (let [expected-backend (:backend-id cache)
+          expected-source (:source-scope cache)
+          expected-schema (:routing-schema-identity cache)
+          actual-backend (backend/backend-id db)
+          actual-source (backend/invoke db :source-scope)
+          actual-schema (schema-version db)]
+      (when (or (and expected-backend
+                     (not= expected-backend actual-backend))
+                (and expected-source
+                     (not= expected-source actual-source))
+                (and (some? expected-schema)
+                     (not= expected-schema actual-schema)))
+        (routing-cache-error!
+         "Generated traversal certificate does not match the selected schema snapshot."
+         {:expected {:backend expected-backend
+                     :source expected-source
+                     :schema expected-schema}
+          :actual {:backend actual-backend
+                   :source actual-source
+                   :schema actual-schema}})))))
+
+(defn enumeration-route
+  "Returns the generated certificate's executable route for a defined root.
+
+  `:acyclic` is selected when the verified routing certificate proves either
+  that the root cannot reach a recursive permission SCC or that every
+  relationship prefix capable of carrying an in-SCC arrow is empty in the
+  selected snapshot. Undefined roots do not compile either enumerator."
+  [db resource-type permission-name]
+  (validate-routing-cache-binding! db)
+  (let [root-defined?
+        (permission-root-defined?
+         db resource-type permission-name)]
+    (if-not root-defined?
+      :undefined
+      (let [recursive?
+            (traversal-permission?
+             db resource-type permission-name)
+            recursive-data-active?
+            (and recursive?
+                 (recursive-data-active?
+                  db resource-type permission-name))
+            actual-identity
+            (schema-version-stamp db)
+            certificate-identity
+            (some->
+             (or (:routing-schema-identity *schema-cache*)
+                 (schema-version db))
+             str)
+            decision
+            (verified/decide
+             subproblem/*decision-kernel*
+             :enumeration-route
+             {:schema-identity (or actual-identity "")
+              :certificate-schema-identity
+              (or certificate-identity "")
+              :root-defined? true
+              :recursive? recursive?
+              :recursive-data-active?
+              recursive-data-active?})]
+        (if (= :accepted (:status decision))
+          (:route decision)
+          (routing-cache-error!
+           "Generated enumeration route rejected its schema binding."
+           {:reason (:reason decision)
+            :actual-schema actual-identity
+            :certificate-schema certificate-identity}))))))
 
 (defn traversal-nodes
   [db]
@@ -3309,6 +3564,700 @@
        resource-type resource-eid)
       false)))
 
+;; --- Certified acyclic enumeration -----------------------------------------
+;;
+;; The generated routing certificate distinguishes roots that can reach a
+;; recursive SCC from roots whose permission dependency graph is acyclic. The
+;; v8 authority cutover accidentally ignored that distinction and drove every
+;; list/count through the fixed-point machine. The functions below are the
+;; bounded indexed evaluator for the certified acyclic route. They compose only
+;; backend scans that are strictly ordered by internal EID, merge/deduplicate
+;; those streams, and stop at the requested page boundary.
+
+(defn- merge-eid-seqs
+  [direction seqs]
+  (case direction
+    :asc
+    (lazy-sort/lazy-fold2-merge-dedupe-sorted-by identity seqs)
+
+    :desc
+    (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc identity seqs)))
+
+(defn- path-frontier-key
+  [path]
+  ;; `path-frontier-identity` is injective over compiled path variants and
+  ;; contains only normalized schema identities and relation EIDs.
+  (pr-str (path-frontier-identity path)))
+
+(defn- lookup-edge
+  [eid]
+  {:kind :lookup-eid
+   :result-eid eid})
+
+(defn- lookup-items
+  [result-type eids]
+  (mapv
+   (fn [eid]
+     {:node (spice-object result-type eid)
+      :cursor (lookup-edge eid)})
+   eids))
+
+(defn- resume-scan-opts
+  [direction page-opts resume-eid]
+  (if resume-eid
+    {:direction direction
+     :bound-eid resume-eid
+     :inclusive-bound? false}
+    page-opts))
+
+(defn- matching-relation-sub-paths
+  [sub-paths subject-type]
+  (filter
+   #(and (= :relation (:type %))
+         (= subject-type (:subject-type %)))
+   sub-paths))
+
+(defn- arrow-via-intermediates
+  "Lazily merges one result stream per intermediate.
+
+  Cached heads are private continuation state. A missing cache merely opens
+  the ordered backend scans again at the authenticated global result bound."
+  [direction intermediate-eids result-fn head-state]
+  (let [cached (:cached head-state)
+        observed (:observed head-state)
+        note-head!
+        (fn [intermediate-eid head]
+          (when observed
+            (swap! observed assoc intermediate-eid head)))
+        pairs
+        (keep
+         (fn [intermediate-eid]
+           (if-let [head (get cached intermediate-eid)]
+             (do
+               (note-head! intermediate-eid head)
+               {:intermediate-eid intermediate-eid
+                :results
+                (cons
+                 head
+                 (lazy-seq
+                  (result-fn intermediate-eid head)))})
+             (let [results (seq (result-fn intermediate-eid nil))]
+               (when results
+                 (note-head! intermediate-eid (first results))
+                 {:intermediate-eid intermediate-eid
+                  :results results}))))
+         intermediate-eids)
+        first-pair (first pairs)
+        result-seqs (map :results pairs)]
+    {:results
+     (if (seq result-seqs)
+       (merge-eid-seqs direction result-seqs)
+       [])
+     ;; Inclusive intermediate frontier for the next page. Exhausted paths can
+     ;; be skipped without consulting the backend.
+     :frontier
+     (if first-pair
+       (:intermediate-eid first-pair)
+       :exhausted)}))
+
+(defn- valid-cursor-eid?
+  [eid]
+  (and (integer? eid)
+       (pos? eid)
+       (<= eid backend/maximum-exact-integer)))
+
+(defn- validate-lookup-eid-bound!
+  [bound]
+  (when bound
+    (when-not (= :lookup-eid (:kind bound))
+      (page-error!
+       "Lookup page cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :expected :lookup-eid
+        :actual (:kind bound)}))
+    (when-not (valid-cursor-eid? (:result-eid bound))
+      (page-error!
+       "Lookup page cursor has an invalid result boundary."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :result-eid (:result-eid bound)}))))
+
+(defn- valid-lookup-continuation?
+  [value]
+  (and
+   (map? value)
+   (= lookup-continuation-version (:version value))
+   (map? (:frontiers value))
+   (map? (:heads value))
+   (every?
+    (fn [[path-key frontier]]
+      (and
+       (string? path-key)
+       (or (= :exhausted frontier)
+           (valid-cursor-eid? frontier))))
+    (:frontiers value))
+   (every?
+    (fn [[path-key heads]]
+      (and
+       (string? path-key)
+       (map? heads)
+       (every?
+        (fn [[intermediate-eid head]]
+          (and
+           (valid-cursor-eid? intermediate-eid)
+           (valid-cursor-eid? head)))
+        heads)))
+    (:heads value))))
+
+(defn- cached-lookup-continuation
+  [continuation-cache bound]
+  (when (and bound continuation-cache)
+    (let [value
+          (when-let [get-heads (:get-heads continuation-cache)]
+            (try
+              (get-heads bound)
+              (catch #?(:clj Exception :cljs :default) _
+                nil)))
+          valid? (valid-lookup-continuation? value)
+          action
+          (verified/decide
+           subproblem/*decision-kernel*
+           :acyclic-continuation
+           {:authenticated? true
+            :schema-matches? true
+            :query-matches? true
+            :snapshot-matches? true
+            :entry-present? (some? value)
+            :entry-valid? valid?})]
+      (case action
+        :resume
+        (do
+          (add-acyclic-work! :continuation-hits 1)
+          value)
+
+        :replay
+        (do
+          (add-acyclic-work! :continuation-misses 1)
+          nil)
+
+        (routing-cache-error!
+         "Generated continuation authority rejected authenticated replay."
+         {:reason action})))))
+
+(defn- store-lookup-continuation!
+  [continuation-cache edge frontiers heads]
+  (when-let [put-heads! (:put-heads! continuation-cache)]
+    (when edge
+      (try
+        (put-heads!
+         edge
+         {:version lookup-continuation-version
+          :frontiers (or frontiers {})
+          :heads (or heads {})}
+         (+ 512
+            (* 64 (count frontiers))
+            (* 96 (reduce + 0 (map count (vals heads))))))
+        (catch #?(:clj Exception :cljs :default) _
+          false)))))
+
+(declare traverse-acyclic-forward lookup-acyclic-subject-eids)
+
+(defn- traverse-acyclic-forward-path
+  [db subject-type subject-eid path resource-type page-opts
+   intermediate-cursor-eid visited head-state]
+  (let [{:keys [direction]} (scan-opts page-opts)
+        intermediate-opts
+        {:direction direction
+         :bound-eid intermediate-cursor-eid
+         :inclusive-bound? true}]
+    (case (:type path)
+      :relation
+      {:results
+       (when (= subject-type (:subject-type path))
+         (subject->resources
+          db subject-type subject-eid (:relation-eid path)
+          resource-type page-opts))
+       :frontier nil}
+
+      :self-permission
+      {:results
+       (traverse-acyclic-forward
+        db subject-type subject-eid (:target-permission path)
+        resource-type page-opts visited)
+       :frontier nil}
+
+      :arrow
+      (let [intermediate-type (:target-type path)
+            via-relation-eid (:via-relation-eid path)]
+        (if (:target-relation path)
+          (let [intermediate-seqs
+                (->> (matching-relation-sub-paths
+                      (:sub-paths path)
+                      subject-type)
+                     (map
+                      (fn [sub-path]
+                        (subject->resources
+                         db subject-type subject-eid
+                         (:relation-eid sub-path)
+                         intermediate-type
+                         intermediate-opts)))
+                     (filter seq))
+                intermediate-eids
+                (if (seq intermediate-seqs)
+                  (merge-eid-seqs direction intermediate-seqs)
+                  [])]
+            (arrow-via-intermediates
+             direction
+             intermediate-eids
+             (fn [intermediate-eid resume-eid]
+               (subject->resources
+                db intermediate-type intermediate-eid via-relation-eid
+                resource-type
+                (resume-scan-opts direction page-opts resume-eid)))
+             head-state))
+          (let [intermediate-eids
+                (traverse-acyclic-forward
+                 db subject-type subject-eid (:target-permission path)
+                 intermediate-type intermediate-opts visited)]
+            (arrow-via-intermediates
+             direction
+             intermediate-eids
+             (fn [intermediate-eid resume-eid]
+               (subject->resources
+                db intermediate-type intermediate-eid via-relation-eid
+                resource-type
+                (resume-scan-opts direction page-opts resume-eid)))
+             head-state)))))))
+
+(defn- traverse-acyclic-forward
+  [db subject-type subject-eid permission-name resource-type page-opts visited]
+  (let [state [subject-type subject-eid permission-name resource-type]]
+    (if (contains? visited state)
+      []
+      (let [visited' (conj visited state)
+            paths
+            (acyclic-permission-paths
+             db resource-type permission-name)
+            result-seqs
+            (->> paths
+                 (map
+                  (fn [path]
+                    (:results
+                     (traverse-acyclic-forward-path
+                      db subject-type subject-eid path resource-type
+                      page-opts nil visited' nil))))
+                 (filter seq))]
+        (if (seq result-seqs)
+          (merge-eid-seqs (:direction page-opts) result-seqs)
+          [])))))
+
+(defn- traverse-acyclic-reverse-path
+  [db resource-type resource-eid path subject-type page-opts
+   intermediate-cursor-eid visited head-state]
+  (let [{:keys [direction]} (scan-opts page-opts)
+        intermediate-opts
+        {:direction direction
+         :bound-eid intermediate-cursor-eid
+         :inclusive-bound? true}]
+    (case (:type path)
+      :relation
+      {:results
+       (when (= subject-type (:subject-type path))
+         (resource->subjects
+          db resource-type resource-eid (:relation-eid path)
+          subject-type page-opts))
+       :frontier nil}
+
+      :self-permission
+      {:results
+       (lookup-acyclic-subject-eids
+        db resource-type resource-eid (:target-permission path)
+        subject-type page-opts visited)
+       :frontier nil}
+
+      :arrow
+      (let [intermediate-type (:target-type path)
+            via-relation-eid (:via-relation-eid path)
+            intermediate-eids
+            (resource->subjects
+             db resource-type resource-eid via-relation-eid
+             intermediate-type intermediate-opts)]
+        (if (:target-relation path)
+          (let [sub-paths
+                (matching-relation-sub-paths
+                 (:sub-paths path)
+                 subject-type)]
+            (arrow-via-intermediates
+             direction
+             intermediate-eids
+             (fn [intermediate-eid resume-eid]
+               (let [opts
+                     (resume-scan-opts direction page-opts resume-eid)
+                     result-seqs
+                     (->> sub-paths
+                          (map
+                           (fn [sub-path]
+                             (resource->subjects
+                              db intermediate-type intermediate-eid
+                              (:relation-eid sub-path)
+                              subject-type opts)))
+                          (filter seq))]
+                 (if (seq result-seqs)
+                   (merge-eid-seqs direction result-seqs)
+                   [])))
+             head-state))
+          (arrow-via-intermediates
+           direction
+           intermediate-eids
+           (fn [intermediate-eid resume-eid]
+             (lookup-acyclic-subject-eids
+              db intermediate-type intermediate-eid
+              (:target-permission path)
+              subject-type
+              (resume-scan-opts direction page-opts resume-eid)
+              visited))
+           head-state))))))
+
+(defn- lookup-acyclic-subject-eids
+  [db resource-type resource-eid permission-name subject-type
+   page-opts visited]
+  (let [state [resource-type resource-eid permission-name subject-type]]
+    (if (contains? visited state)
+      []
+      (let [visited' (conj visited state)
+            paths
+            (acyclic-permission-paths
+             db resource-type permission-name)
+            result-seqs
+            (->> paths
+                 (map
+                  (fn [path]
+                    (:results
+                     (traverse-acyclic-reverse-path
+                      db resource-type resource-eid path subject-type
+                      page-opts nil visited' nil))))
+                 (filter seq))]
+        (if (seq result-seqs)
+          (merge-eid-seqs (:direction page-opts) result-seqs)
+          [])))))
+
+(def ^:private forward-acyclic-direction
+  {:anchor-key :subject
+   :permission-type (fn [query] (:resource/type query))
+   :result-type (fn [query] (:resource/type query))
+   :traverse traverse-acyclic-forward-path})
+
+(def ^:private reverse-acyclic-direction
+  {:anchor-key :resource
+   :permission-type (fn [query] (:type (:resource query)))
+   :result-type (fn [query] (:subject/type query))
+   :traverse traverse-acyclic-reverse-path})
+
+(defn- acyclic-bound-authorized?
+  [db direction query result-eid]
+  ;; Revalidating a recover-current cursor is part of the certified acyclic
+  ;; route. Entering recursive-can? here made a relationship write turn a
+  ;; harmless cursor rebase into an unbounded fixed-point walk (and eventually
+  ;; a recursive safety-limit error) for super-user-sized result sets.
+  ;;
+  ;; Each indexed stream is strictly ascending. An inclusive scan beginning at
+  ;; the authenticated result EID therefore proves membership exactly when its
+  ;; first deduplicated result is that EID; no prefix enumeration is required.
+  (let [point-opts
+        {:direction :asc
+         :bound-eid result-eid
+         :inclusive-bound? true}]
+    (case (:anchor-key direction)
+      :subject
+      (let [subject (:subject query)
+            subject-eid (object-eid db (:id subject))
+            result-type (:resource/type query)]
+        (and
+         subject-eid
+         (= result-eid
+            (first
+             (traverse-acyclic-forward
+              db
+              (:type subject)
+              subject-eid
+              (:permission query)
+              result-type
+              point-opts
+              #{})))))
+
+      :resource
+      (let [resource (:resource query)
+            resource-eid (object-eid db (:id resource))]
+        (and
+         resource-eid
+         (= result-eid
+            (first
+             (lookup-acyclic-subject-eids
+              db
+              (:type resource)
+              resource-eid
+              (:permission query)
+              (:subject/type query)
+              point-opts
+              #{}))))))))
+
+(defn- rebase-acyclic-query
+  [db direction query]
+  (let [bound-field
+        (cond
+          (contains? query :after) :after
+          (contains? query :before) :before)
+        bound (get query bound-field)]
+    (if-not (true? (:rebase? bound))
+      [query false]
+      (if (acyclic-bound-authorized?
+           db direction query (:result-eid bound))
+        [(assoc
+          query
+          bound-field
+          (select-keys bound [:kind :result-eid]))
+         false]
+        [(dissoc query :after :before) true]))))
+
+(defn- lazy-merged-acyclic-lookup
+  [db direction query page-request continuation]
+  (let [{:keys [anchor-key traverse permission-type]} direction
+        anchor (get query anchor-key)
+        anchor-type (:type anchor)
+        anchor-eid (object-eid db (:id anchor))
+        permission (:permission query)
+        permission-type' (permission-type query)
+        result-type-key
+        (if (= :subject anchor-key)
+          :resource/type
+          :subject/type)
+        result-type (get query result-type-key)
+        page-opts
+        {:direction (:direction page-request)
+         :bound-eid (get-in page-request [:bound :result-eid])
+         :inclusive-bound? false}
+        paths
+        (frontier-permission-paths
+         db permission-type' permission)
+        observed-heads (atom {})
+        path-results
+        (mapv
+         (fn [path]
+           (let [path-key (path-frontier-key path)
+                 prior-frontier
+                 (get-in continuation [:frontiers path-key])
+                 path-observed (atom {})
+                 head-state
+                 {:cached (get-in continuation [:heads path-key])
+                  :observed path-observed}
+                 _ (swap! observed-heads assoc path-key path-observed)
+                 result
+                 (cond
+                   (= :exhausted prior-frontier)
+                   {:results [] :frontier :exhausted}
+
+                   anchor-eid
+                   (traverse
+                    db
+                    anchor-type
+                    anchor-eid
+                    path
+                    result-type
+                    page-opts
+                    prior-frontier
+                    #{}
+                    head-state)
+
+                   :else
+                   {:results [] :frontier nil})]
+             {:path-key path-key
+              :results (:results result)
+              :frontier (:frontier result)}))
+         paths)
+        result-seqs (filter seq (map :results path-results))]
+    (add-acyclic-work! :permission-paths (count paths))
+    {:results
+     (if (seq result-seqs)
+       (merge-eid-seqs (:direction page-request) result-seqs)
+       [])
+     :path-frontiers
+     (into
+      {}
+      (keep
+       (fn [{:keys [path-key frontier]}]
+         (when frontier
+           [path-key frontier])))
+      path-results)
+     :observed-heads observed-heads}))
+
+(defn- surviving-heads
+  [observed-heads boundary-eid]
+  (if-not boundary-eid
+    {}
+    (persistent!
+     (reduce-kv
+      (fn [result path-key path-observed]
+        (let [kept
+              (persistent!
+               (reduce-kv
+                (fn [heads intermediate-eid head]
+                  (if (> (long head) (long boundary-eid))
+                    (assoc! heads intermediate-eid head)
+                    heads))
+                (transient {})
+                @path-observed))]
+          (if (seq kept)
+            (assoc! result path-key kept)
+            result)))
+      (transient {})
+      @observed-heads))))
+
+(defn- acyclic-lookup
+  [db route query continuation-cache]
+  (let [[query restarted?] (rebase-acyclic-query db route query)
+        page-request (normalize-page-request query)
+        {page-direction :direction
+         :keys [size bound]} page-request
+        _ (validate-lookup-eid-bound! bound)
+        resumable? (= :asc page-direction)
+        continuation
+        (when (and resumable? bound)
+          (cached-lookup-continuation continuation-cache bound))
+        {:keys [results path-frontiers observed-heads]}
+        (lazy-merged-acyclic-lookup
+         db route query page-request continuation)
+        realized (vec (take (inc size) results))
+        page-decision
+        (verified/decide
+         subproblem/*decision-kernel*
+         :acyclic-page
+         {:direction page-direction
+          :realized-eids realized
+          :size size
+          :bound? (boolean bound)})
+        has-sentinel? (> (count realized) size)
+        scan-order
+        (vec (take (:take-count page-decision) realized))
+        page-eids
+        (if (:reverse? page-decision)
+          (vec (reverse scan-order))
+          scan-order)
+        page
+        (mark-recursive-restart
+         (page-response
+          {:items (lookup-items ((:result-type route) query) page-eids)
+           :has-next?
+           (:has-next? page-decision)
+           :has-previous?
+           (:has-previous? page-decision)})
+         restarted?)]
+    (add-acyclic-work! :pages 1)
+    (add-acyclic-work!
+     :merge-advances (:merge-advances page-decision))
+    (add-acyclic-work!
+     :emitted-results (:emitted-results page-decision))
+    (when-not
+     (= :accepted
+        (verified/decide
+         subproblem/*decision-kernel*
+         :acyclic-work
+         {:requested-window size
+          :merge-advances (:merge-advances page-decision)
+          :emitted-results (:emitted-results page-decision)
+          :recursive-work (:recursive-work page-decision)}))
+      (routing-cache-error!
+       "Generated acyclic page work authority rejected the page."
+       {:page-decision page-decision}))
+    (when (and resumable? has-sentinel?)
+      (store-lookup-continuation!
+       continuation-cache
+       (get-in page [:page-info :end-cursor])
+       path-frontiers
+       (surviving-heads observed-heads (peek scan-order))))
+    page))
+
+(defn- count-acyclic-pages
+  [db direction query limit]
+  ;; Exact count is one logical merge traversal. Rebuilding that traversal at
+  ;; every internal count window made fan-out scans proportional to
+  ;; `window-count * intermediate-count`; a 100k Explorer count reopened the
+  ;; same account/team/VPC streams thousands of times. Keep one lazy tail and
+  ;; consume it in bounded certified windows instead. Recur replaces the prior
+  ;; tail, so already-counted pages are not retained.
+  (binding [*projection-chunk-size*
+            (count-projection-chunk-size *count-window-size*)]
+    (loop [total 0
+           results
+           (:results
+            (lazy-merged-acyclic-lookup
+             db
+             direction
+             (dissoc query :count-limit)
+             {:direction :asc
+              :size *count-window-size*
+              :bound nil}
+             nil))]
+      (let [remaining (when limit (- limit total))
+            page-size
+            (if remaining
+              (max 1 (min *count-window-size* (inc remaining)))
+              *count-window-size*)
+            realized (vec (take (inc page-size) results))
+            has-sentinel? (> (count realized) page-size)
+            page-eids (if has-sentinel? (pop realized) realized)
+            page-count (count page-eids)
+            total' (+ total page-count)]
+        (add-acyclic-work! :count-pages 1)
+        (add-acyclic-work! :merge-advances (count realized))
+        (add-acyclic-work! :counted-results page-count)
+        (when-not
+         (= :accepted
+            (verified/decide
+             subproblem/*decision-kernel*
+             :acyclic-work
+             {:requested-window page-size
+              :merge-advances (count realized)
+              :emitted-results page-count
+              :recursive-work 0}))
+          (routing-cache-error!
+           "Generated acyclic count work authority rejected the page."
+           {:page-size page-size
+            :realized-count (count realized)
+            :page-count page-count}))
+        (when *count-stats*
+          (swap!
+           *count-stats*
+           (fn [stats]
+             (-> stats
+                 (update :pages (fnil inc 0))
+                 (update :max-page-eids (fnil max 0) page-count)))))
+        (cond
+          (and limit (> total' limit))
+          (select-keys
+           (verified/decide
+            subproblem/*decision-kernel*
+            :acyclic-count
+            {:unique-count total'
+             :more? has-sentinel?
+             :limit limit})
+           [:count :truncated?])
+
+          has-sentinel?
+          (recur
+           total'
+           ;; The sentinel is the first value of the next certified window.
+           ;; Advance only by the values counted in this window.
+           (drop page-size results))
+
+          :else
+          (select-keys
+           (verified/decide
+            subproblem/*decision-kernel*
+            :acyclic-count
+            {:unique-count total'
+             :more? false
+             :limit limit})
+           [:count :truncated?]))))))
+
 (defn lookup-resources
   "Runs generated forward pagination.
 
@@ -3319,16 +4268,35 @@
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
-         defined-root?
-         (permission-root-defined?
+         route
+         (enumeration-route
           db (:resource/type query) (:permission query))
          [query restart?]
-         (restart-unroutable-rebase defined-root? query)
+         (restart-unroutable-rebase (not= :undefined route) query)
          result
-         (if defined-root?
+         (case route
+           :recursive
            (recursive-forward-page db query cache)
+
+           :acyclic
+           (binding [*acyclic-route?* true
+                     *inactive-recursive-cycle-guards*
+                     (inactive-recursive-cycle-guard-keys
+                      db (:resource/type query) (:permission query) route)]
+             (add-acyclic-work! :routed-acyclic 1)
+             (acyclic-lookup
+              db forward-acyclic-direction query cache))
+
            (let [{:keys [bound]} (normalize-page-request query)]
-             (validate-recursive-bound! bound :forward :resource)
+             (when bound
+               (case (:kind bound)
+                 :lookup-eid (validate-lookup-eid-bound! bound)
+                 :recursive-traversal
+                 (validate-recursive-bound! bound :forward :resource)
+                 (page-error!
+                  "Lookup page cursor has the wrong kind."
+                  {:eacl/error :eacl.pagination/wrong-cursor-kind
+                   :actual (:kind bound)})))
              (page-response
               {:items []
                :has-next? false
@@ -3349,16 +4317,38 @@
                    :filter :subject/relation}))
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
-         defined-root?
-         (permission-root-defined?
+         route
+         (enumeration-route
           db (:type (:resource query)) (:permission query))
          [query restart?]
-         (restart-unroutable-rebase defined-root? query)
+         (restart-unroutable-rebase (not= :undefined route) query)
          result
-         (if defined-root?
+         (case route
+           :recursive
            (recursive-reverse-page db query cache)
+
+           :acyclic
+           (binding [*acyclic-route?* true
+                     *inactive-recursive-cycle-guards*
+                     (inactive-recursive-cycle-guard-keys
+                      db
+                      (:type (:resource query))
+                      (:permission query)
+                      route)]
+             (add-acyclic-work! :routed-acyclic 1)
+             (acyclic-lookup
+              db reverse-acyclic-direction query cache))
+
            (let [{:keys [bound]} (normalize-page-request query)]
-             (validate-recursive-bound! bound :reverse :subject)
+             (when bound
+               (case (:kind bound)
+                 :lookup-eid (validate-lookup-eid-bound! bound)
+                 :recursive-traversal
+                 (validate-recursive-bound! bound :reverse :subject)
+                 (page-error!
+                  "Lookup page cursor has the wrong kind."
+                  {:eacl/error :eacl.pagination/wrong-cursor-kind
+                   :actual (:kind bound)})))
              (page-response
               {:items []
                :has-next? false
@@ -3401,12 +4391,24 @@
   [db {:as query}]
   (reject-count-pagination-keys! "count-resources" query)
   (let [limit (query-count-limit query)
-        defined-root?
-        (permission-root-defined?
+        route
+        (enumeration-route
          db (:resource/type query) (:permission query))]
     (count-response
-     (if-not defined-root?
+     (case route
+       :undefined
        {:count 0 :truncated? false}
+
+       :acyclic
+       (binding [*acyclic-route?* true
+                 *inactive-recursive-cycle-guards*
+                 (inactive-recursive-cycle-guard-keys
+                  db (:resource/type query) (:permission query) route)]
+         (add-acyclic-work! :routed-acyclic 1)
+         (count-acyclic-pages
+          db forward-acyclic-direction query limit))
+
+       :recursive
        (let [{:keys [subject permission]} query
              subject-eid (object-eid db (:id subject))
              result-type (:resource/type query)
@@ -3417,9 +4419,8 @@
                     (lookup-forward-denotation
                      db (:type subject) subject-eid root-node result-type)]
              (count-denotation cached limit)
-             ;; The generated traversal may reuse bounded subproblems, but an
-             ;; unbounded scalar count does not materialize a full final
-             ;; denotation merely to populate the cache.
+             ;; Recursive roots retain the generated fixed-point count and its
+             ;; fail-closed safety limits.
              (select-keys
               (generated-forward-result
                db
@@ -3442,12 +4443,27 @@
                  {:eacl/error :eacl.pagination/unsupported-filter
                   :filter :subject/relation}))
   (let [limit (query-count-limit query)
-        defined-root?
-        (permission-root-defined?
+        route
+        (enumeration-route
          db (:type (:resource query)) (:permission query))]
     (count-response
-     (if-not defined-root?
+     (case route
+       :undefined
        {:count 0 :truncated? false}
+
+       :acyclic
+       (binding [*acyclic-route?* true
+                 *inactive-recursive-cycle-guards*
+                 (inactive-recursive-cycle-guard-keys
+                  db
+                  (:type (:resource query))
+                  (:permission query)
+                  route)]
+         (add-acyclic-work! :routed-acyclic 1)
+         (count-acyclic-pages
+          db reverse-acyclic-direction query limit))
+
+       :recursive
        (let [{:keys [resource permission]} query
              resource-eid (object-eid db (:id resource))
              subject-type (:subject/type query)

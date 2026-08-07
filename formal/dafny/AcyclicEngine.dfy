@@ -2275,4 +2275,427 @@ module AcyclicEngine {
         ) == 1
   {
   }
+
+  ghost predicate ReverseSequenceSpec(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    resource: Semantics.ObjectRef,
+    node: Semantics.PermissionNode,
+    result: seq<Semantics.ObjectRef>
+  ) {
+    UniqueObjects(result) &&
+    |result| <= |objects| &&
+    (forall subject ::
+       subject in result <==>
+                  subject in objects &&
+                  SemanticallyAuthorized(
+                    objects,
+                    permissions,
+                    definitions,
+                    relationships,
+                    Semantics.Grant(subject, node, resource)
+                  ))
+  }
+
+  method CountReverse(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    resource: Semantics.ObjectRef,
+    node: Semantics.PermissionNode,
+    countLimit: int
+  ) returns (count: nat, truncated: bool)
+    requires UniqueObjects(objects)
+    ensures count <= |objects|
+    ensures countLimit < 0 ==> !truncated
+    ensures 0 <= countLimit ==> count <= countLimit
+    ensures exists full ::
+              ReverseSequenceSpec(
+                objects,
+                permissions,
+                definitions,
+                relationships,
+                resource,
+                node,
+                full
+              ) &&
+              (if 0 <= countLimit && countLimit < |full|
+               then count == countLimit && truncated
+               else count == |full| && !truncated)
+  {
+    var values := AcyclicReverse(
+      objects,
+      permissions,
+      definitions,
+      relationships,
+      resource,
+      node
+    );
+    if 0 <= countLimit && countLimit < |values| {
+      count := countLimit;
+      truncated := true;
+    } else {
+      count := |values|;
+      truncated := false;
+    }
+    assert ReverseSequenceSpec(
+        objects,
+        permissions,
+        definitions,
+        relationships,
+        resource,
+        node,
+        values
+      );
+  }
+
+  method UnboundedForwardCountIsExact(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    subject: Semantics.ObjectRef,
+    node: Semantics.PermissionNode
+  )
+    requires UniqueObjects(objects)
+    ensures exists full ::
+              ForwardSequenceSpec(
+                objects,
+                permissions,
+                definitions,
+                relationships,
+                subject,
+                node,
+                full
+              )
+  {
+    var count, truncated :=
+      CountForward(
+        objects,
+        permissions,
+        definitions,
+        relationships,
+        subject,
+        node,
+        -1
+      );
+  }
+
+  method UnboundedReverseCountIsExact(
+    objects: seq<Semantics.ObjectRef>,
+    permissions: seq<Semantics.PermissionNode>,
+    definitions: seq<Semantics.RuleDefinition>,
+    relationships: seq<Semantics.Relationship>,
+    resource: Semantics.ObjectRef,
+    node: Semantics.PermissionNode
+  )
+    requires UniqueObjects(objects)
+    ensures exists full ::
+              ReverseSequenceSpec(
+                objects,
+                permissions,
+                definitions,
+                relationships,
+                resource,
+                node,
+                full
+              )
+  {
+    var count, truncated :=
+      CountReverse(
+        objects,
+        permissions,
+        definitions,
+        relationships,
+        resource,
+        node,
+        -1
+      );
+  }
+
+  function InclusiveAscendingSuffix(
+    values: seq<nat>,
+    bound: nat
+  ): seq<nat>
+    requires StrictAscendingEids(values)
+    decreases |values|
+  {
+    if |values| == 0 || bound <= values[0]
+    then values
+    else InclusiveAscendingSuffix(values[1..], bound)
+  }
+
+  lemma InclusiveAscendingBoundaryMembershipIsExact(
+    values: seq<nat>,
+    bound: nat
+  )
+    requires StrictAscendingEids(values)
+    ensures
+      (|InclusiveAscendingSuffix(values, bound)| > 0 &&
+       InclusiveAscendingSuffix(values, bound)[0] == bound)
+      <==>
+      bound in values
+    decreases |values|
+  {
+    if |values| > 0 {
+      if values[0] < bound {
+        assert bound != values[0];
+        assert bound in values <==> bound in values[1..];
+        InclusiveAscendingBoundaryMembershipIsExact(
+          values[1..],
+          bound
+        );
+      } else if bound < values[0] {
+        forall i | 0 <= i < |values|
+          ensures values[i] != bound
+        {
+          if i > 0 {
+            assert values[0] < values[i];
+          }
+        }
+      }
+    }
+  }
+
+  method AcyclicBoundaryAuthorized(
+    authorizedEids: seq<nat>,
+    bound: nat
+  ) returns (authorized: bool)
+    requires StrictAscendingEids(authorizedEids)
+    ensures authorized <==> bound in authorizedEids
+  {
+    var suffix :=
+      InclusiveAscendingSuffix(authorizedEids, bound);
+    authorized :=
+      |suffix| > 0 && suffix[0] == bound;
+    InclusiveAscendingBoundaryMembershipIsExact(
+      authorizedEids,
+      bound
+    );
+  }
+
+  datatype AcyclicDirection =
+    | AcyclicAscending
+    | AcyclicDescending
+
+  predicate StrictDescendingEids(values: seq<nat>)
+  {
+    forall i, j | 0 <= i < j < |values| ::
+      values[i] > values[j]
+  }
+
+  predicate StrictlyOrderedAcyclicEids(
+    direction: AcyclicDirection,
+    values: seq<nat>
+  )
+  {
+    if direction.AcyclicAscending?
+    then StrictAscendingEids(values)
+    else StrictDescendingEids(values)
+  }
+
+  datatype AcyclicPageWork = AcyclicPageWork(
+    mergeAdvances: nat,
+    emittedResults: nat,
+    recursiveWork: nat
+  )
+
+  ghost function GuardedRecursiveContribution(
+    cycleGuardActive: bool,
+    recursiveCandidates: set<nat>
+  ): set<nat>
+  {
+    if cycleGuardActive then recursiveCandidates else {}
+  }
+
+  ghost function GuardedRecursiveDenotation(
+    acyclicBase: set<nat>,
+    cycleGuardActive: bool,
+    recursiveCandidates: set<nat>
+  ): set<nat>
+  {
+    acyclicBase +
+    GuardedRecursiveContribution(
+      cycleGuardActive,
+      recursiveCandidates
+    )
+  }
+
+  lemma InactiveCycleGuardEliminatesRecursiveContribution(
+    acyclicBase: set<nat>,
+    recursiveCandidates: set<nat>
+  )
+    ensures GuardedRecursiveContribution(
+              false,
+              recursiveCandidates
+            ) == {}
+    ensures GuardedRecursiveDenotation(
+              acyclicBase,
+              false,
+              recursiveCandidates
+            ) == acyclicBase
+  {
+  }
+
+  datatype AcyclicPageDecision = AcyclicPageDecision(
+    takeCount: nat,
+    reverseOutput: bool,
+    hasNext: bool,
+    hasPrevious: bool,
+    work: AcyclicPageWork
+  )
+
+  method DecideAcyclicPage(
+    direction: AcyclicDirection,
+    realizedEids: seq<nat>,
+    pageSize: nat,
+    boundPresent: bool
+  ) returns (decision: AcyclicPageDecision)
+    requires pageSize > 0
+    requires |realizedEids| <= pageSize + 1
+    requires StrictlyOrderedAcyclicEids(direction, realizedEids)
+    ensures decision.takeCount ==
+            if |realizedEids| < pageSize
+            then |realizedEids|
+            else pageSize
+    ensures decision.reverseOutput ==
+            direction.AcyclicDescending?
+    ensures decision.hasNext ==
+            if direction.AcyclicAscending?
+            then |realizedEids| > pageSize
+            else boundPresent
+    ensures decision.hasPrevious ==
+            if direction.AcyclicAscending?
+            then boundPresent
+            else |realizedEids| > pageSize
+    ensures decision.work.mergeAdvances == |realizedEids|
+    ensures decision.work.emittedResults == decision.takeCount
+    ensures decision.work.mergeAdvances <= pageSize + 1
+    ensures decision.work.recursiveWork == 0
+  {
+    var takeCount :=
+      if |realizedEids| < pageSize
+      then |realizedEids|
+      else pageSize;
+    decision :=
+      AcyclicPageDecision(
+        takeCount,
+        direction.AcyclicDescending?,
+        if direction.AcyclicAscending?
+        then |realizedEids| > pageSize
+        else boundPresent,
+        if direction.AcyclicAscending?
+        then boundPresent
+        else |realizedEids| > pageSize,
+        AcyclicPageWork(
+          |realizedEids|,
+          takeCount,
+          0
+        )
+      );
+  }
+
+  datatype AcyclicContinuationAction =
+    | ResumePrivateContinuation
+    | ReplayAuthenticatedBoundary
+    | RejectContinuationContext
+
+  method DecideAcyclicContinuation(
+    authenticated: bool,
+    schemaMatches: bool,
+    queryMatches: bool,
+    snapshotMatches: bool,
+    entryPresent: bool,
+    entryValid: bool
+  ) returns (action: AcyclicContinuationAction)
+    ensures action.ResumePrivateContinuation? <==>
+            authenticated &&
+            schemaMatches &&
+            queryMatches &&
+            snapshotMatches &&
+            entryPresent &&
+            entryValid
+    ensures action.ReplayAuthenticatedBoundary? <==>
+            authenticated &&
+            schemaMatches &&
+            queryMatches &&
+            snapshotMatches &&
+            !(entryPresent && entryValid)
+    ensures action.RejectContinuationContext? <==>
+            !(authenticated &&
+              schemaMatches &&
+              queryMatches &&
+              snapshotMatches)
+  {
+    if !(authenticated &&
+         schemaMatches &&
+         queryMatches &&
+         snapshotMatches) {
+      return RejectContinuationContext;
+    }
+    if entryPresent && entryValid {
+      return ResumePrivateContinuation;
+    }
+    return ReplayAuthenticatedBoundary;
+  }
+
+  datatype AcyclicCountDecision = AcyclicCountDecision(
+    count: nat,
+    truncated: bool,
+    recursiveWork: nat
+  )
+
+  method DecideAcyclicCount(
+    uniqueCount: nat,
+    moreUniqueResults: bool,
+    limitPresent: bool,
+    countLimit: nat
+  ) returns (decision: AcyclicCountDecision)
+    ensures decision.count ==
+            if limitPresent && countLimit < uniqueCount
+            then countLimit
+            else uniqueCount
+    ensures decision.truncated ==
+            (limitPresent &&
+             (countLimit < uniqueCount ||
+              (countLimit == uniqueCount && moreUniqueResults)))
+    ensures decision.recursiveWork == 0
+  {
+    decision :=
+      AcyclicCountDecision(
+        if limitPresent && countLimit < uniqueCount
+        then countLimit
+        else uniqueCount,
+        limitPresent &&
+        (countLimit < uniqueCount ||
+         (countLimit == uniqueCount && moreUniqueResults)),
+        0
+      );
+  }
+
+  datatype AcyclicWorkDecision =
+    | AcyclicWorkAccepted
+    | AcyclicWorkRejected
+
+  method CertifyAcyclicWork(
+    requestedWindow: nat,
+    mergeAdvances: nat,
+    emittedResults: nat,
+    recursiveWork: nat
+  ) returns (decision: AcyclicWorkDecision)
+    ensures decision.AcyclicWorkAccepted? <==>
+            mergeAdvances <= requestedWindow + 1 &&
+            emittedResults <= requestedWindow &&
+            recursiveWork == 0
+  {
+    if mergeAdvances <= requestedWindow + 1 &&
+       emittedResults <= requestedWindow &&
+       recursiveWork == 0 {
+      return AcyclicWorkAccepted;
+    }
+    return AcyclicWorkRejected;
+  }
 }

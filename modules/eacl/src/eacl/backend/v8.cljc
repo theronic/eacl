@@ -5,7 +5,7 @@
   pagination, deletion, consistency selection, and exact cache proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 3)
+(def adapter-version 4)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
@@ -27,6 +27,7 @@
     :subject->resources
     :resource->subjects
     :direct-match?
+    :relation-populated?
     :all-permission-nodes
     :schema-proof
     :relation-proof})
@@ -76,6 +77,8 @@
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
+   :relation-populated?
+   #{:iff-forward-prefix-nonempty :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
    :schema-proof
@@ -444,7 +447,7 @@
            backend-id operation-key :finite-node-set value))
         value)
 
-      (:contains-anchor? :direct-match?)
+      (:contains-anchor? :direct-match? :relation-populated?)
       (do
         (when-not (boolean? value)
           (contract-violation!

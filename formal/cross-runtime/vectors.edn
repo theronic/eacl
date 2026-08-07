@@ -62,6 +62,118 @@
   {:input {:authenticated? false}
    :expected {:status :miss :reason :unauthenticated}}]
 
+ :production-acyclic-decisions
+ [{:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? true
+           :recursive? false
+           :recursive-data-active? false}
+   :expected {:status :accepted :route :acyclic}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? true
+           :recursive? true
+           :recursive-data-active? true}
+   :expected {:status :accepted :route :recursive}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? true
+           :recursive? true
+           :recursive-data-active? false}
+   :expected {:status :accepted :route :acyclic}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? false
+           :recursive? true
+           :recursive-data-active? true}
+   :expected {:status :accepted :route :undefined}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "stale-schema"
+           :root-defined? true
+           :recursive? false
+           :recursive-data-active? false}
+   :expected {:status :rejected :reason :schema-identity-mismatch}}
+  {:operation :acyclic-page
+   :input {:direction :asc
+           :realized-eids [10 20 30]
+           :size 2
+           :bound? false}
+   :expected {:take-count 2
+              :reverse? false
+              :has-next? true
+              :has-previous? false
+              :merge-advances 3
+              :emitted-results 2
+              :recursive-work 0}}
+  {:operation :acyclic-page
+   :input {:direction :desc
+           :realized-eids [30 20]
+           :size 2
+           :bound? true}
+   :expected {:take-count 2
+              :reverse? true
+              :has-next? true
+              :has-previous? false
+              :merge-advances 2
+              :emitted-results 2
+              :recursive-work 0}}
+  {:operation :acyclic-continuation
+   :input {:authenticated? true
+           :schema-matches? true
+           :query-matches? true
+           :snapshot-matches? true
+           :entry-present? true
+           :entry-valid? true}
+   :expected :resume}
+  {:operation :acyclic-continuation
+   :input {:authenticated? true
+           :schema-matches? true
+           :query-matches? true
+           :snapshot-matches? true
+           :entry-present? false
+           :entry-valid? false}
+   :expected :replay}
+  {:operation :acyclic-continuation
+   :input {:authenticated? true
+           :schema-matches? true
+           :query-matches? false
+           :snapshot-matches? true
+           :entry-present? true
+           :entry-valid? true}
+   :expected :reject}
+  {:operation :acyclic-count
+   :input {:unique-count 5 :more? false :limit nil}
+   :expected {:count 5 :truncated? false :recursive-work 0}}
+  {:operation :acyclic-count
+   :input {:unique-count 5 :more? true :limit 5}
+   :expected {:count 5 :truncated? true :recursive-work 0}}
+  {:operation :acyclic-count
+   :input {:unique-count 6 :more? false :limit 5}
+   :expected {:count 5 :truncated? true :recursive-work 0}}
+  {:operation :acyclic-work
+   :input {:requested-window 20
+           :merge-advances 21
+           :emitted-results 20
+           :recursive-work 0}
+   :expected :accepted}
+  {:operation :acyclic-work
+   :input {:requested-window 20
+           :merge-advances 22
+           :emitted-results 20
+           :recursive-work 0}
+   :expected :rejected}
+  {:operation :acyclic-work
+   :input {:requested-window 20
+           :merge-advances 20
+           :emitted-results 20
+           :recursive-work 1}
+   :expected :rejected}]
+
  :production-recursive-pages
  {:first-page [10 30]
   :continuation-page [20]}

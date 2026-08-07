@@ -19,8 +19,11 @@
 
 (deftest generated-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
+        default-client (datascript/make-client conn {})
         default-selection
-        (get-in (datascript/make-client conn {}) [:opts :decision-kernel])
+        (get-in default-client [:opts :decision-kernel])
+        unknown-client
+        (datascript/make-client conn {:coherence-authority :unknown})
         error
         (try
           (datascript/make-client conn {:engine-selection :anything})
@@ -28,6 +31,14 @@
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
+    (is (= :managed
+           (get-in default-client [:opts :coherence-authority])))
+    (is (= :mutation
+           (get-in default-client [:opts :proof-mode])))
+    (is (= :unknown
+           (get-in unknown-client [:opts :coherence-authority])))
+    (is (= :content
+           (get-in unknown-client [:opts :proof-mode])))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
@@ -171,11 +182,13 @@
 
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
-        client (datascript/make-client conn {})]
+        store  (cache/local-store)
+        client (datascript/make-client conn {:cache store})]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))
 
@@ -433,7 +446,7 @@
 (deftest datascript-large-relationship-cursor-skips-item-proof-test
   (let [relationship-count 1505
         conn (datascript/create-conn)
-        client (datascript/make-client conn {})
+        client (datascript/make-client conn {:cache cache/no-cache})
         user-ids (mapv #(str "bulk-user-" %) (range relationship-count))
         server-ids (mapv #(str "bulk-server-" %) (range relationship-count))
         object-ids (into user-ids server-ids)]
@@ -595,7 +608,7 @@
               (eacl/count-resources client (dissoc query :first))
               [:count :limit]))))))
 
-(deftest v7-3-direction-scoped-frontier-test
+(deftest v8-certified-acyclic-cursor-is-public-state-minimal-test
   (let [client (seeded-client)
         query {:subject (contract/->user "user-1")
                :permission :view
@@ -611,15 +624,18 @@
                                              :after
                                              (get-in page-2
                                                      [:page-info :end-cursor])))]
-    (testing "v8 cursors retain direction-scoped shared-engine state"
+    (testing "v8 acyclic cursors carry only the stable result boundary"
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
       (is (= 10 (:v envelope)))
-      (is (= :recursive-traversal
+      (is (= :lookup-eid
              (get-in envelope [:edge :kind])))
-      (is (= :forward
-             (get-in envelope [:edge :direction]))))
+      (is (= "server-1"
+             (get-in envelope [:edge :result-eid])))
+      (is (nil? (get-in envelope [:edge :direction])))
+      (is (nil? (get-in envelope [:edge :path-frontiers])))
+      (is (nil? (get-in envelope [:edge :heads]))))
 
     (testing "a forward cursor cannot be reused for reverse traversal"
       (is (= :query-mismatch

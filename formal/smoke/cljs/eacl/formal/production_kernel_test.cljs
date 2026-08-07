@@ -72,6 +72,14 @@
     :history-divergence
     :else :accept))
 
+(deftest generated-javascript-acyclic-boundary-cross-runtime-vectors
+  (doseq [{:keys [operation input expected]}
+          (:production-acyclic-decisions
+           (cross-runtime-vectors))]
+    (is (= expected
+           (verified/decide selection operation input))
+        (pr-str [operation input]))))
+
 (deftest generated-javascript-consistency-decisions-are-exhaustive
   (doseq [mode
           [:minimize-latency :fully-consistent
@@ -701,6 +709,9 @@
       (::backend/operations base)
       {:object-id->internal identity
        :internal-id->object identity
+       :relation-populated?
+       (fn [_subject-type relation-id _resource-type]
+         (= 2 relation-id))
        :subject->resources
        (fn [subject-type subject-eid relation-eid resource-type opts]
          (after-bound

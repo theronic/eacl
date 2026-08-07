@@ -132,9 +132,11 @@ authorization and does not support time travel.
 
 ### Managed-current tier
 
-Configure `:coherence-authority :managed` only when all authorization-affecting
-relationship writes use EACL's writers or the documented stamped transaction
-helper.
+DataScript selects `:coherence-authority :managed` by default and therefore
+assumes all authorization-affecting relationship writes use EACL's writers.
+DataScript applications that cannot make that guarantee must select
+`:coherence-authority :unknown`. Datomic and Datahike require managed authority
+to be selected explicitly.
 
 - The semantic query key contains normalized internal object IDs, operation,
   permission, result kind, and relevant configuration.
@@ -153,8 +155,9 @@ helper.
 - Custom object-ID codecs remain exact-current-only unless they supply the
   additional deterministic dependency contract.
 
-The default `:coherence-authority :unknown` is exact-current-only and remains
-sound with uninstrumented writers.
+DataScript defaults to managed authority. Datomic and Datahike default to
+`:coherence-authority :unknown`, which is exact-current-only and remains sound
+with uninstrumented writers.
 
 ### Cache operations
 
@@ -223,6 +226,42 @@ the explicit exact-snapshot consistency mode.
 
 All old cursor/cache/token candidate envelopes are intentionally incompatible
 with the final v8 formats.
+
+## Explorer enumeration performance
+
+V8 enumeration now dispatches from the verified routing certificate. Certified
+acyclic roots use the ordered indexed merge/count engine; genuinely active
+recursive roots retain the bounded fixed-point engine. Recursive permission
+syntax whose in-cycle arrow relations are empty is also executed by the
+acyclic engine. Empty recursive guards contribute no denotation and therefore
+must not consume recursive traversal limits.
+
+DataScript and Datahike relationship pages reuse an exact, bounded,
+client-private page-navigation cache after cursor authentication and immutable
+snapshot selection. Repeating a page returns additive `:cached?` and
+`:cache-basis` telemetry. A request with `:cache? false`, an exact historical
+snapshot, a changed query scope, or a different client cannot reuse the page.
+
+DataScript graph-head selection now reads the single managed head-order datom
+directly from EAVT. The previous general Datalog query was on every adapter
+construction path, including a relationship-page cache hit, and dominated
+browser hit latency as the database grew.
+
+The matched v7/cache-bypassed performance gate passes:
+
+- 10k user-1 page: v8 median 0.79ms versus v7 1.43ms.
+- 10k owner-0001 exact 2k count: v8 2.60ms versus v7 2.48ms.
+- 50k super-user exact count: v8 117.81ms versus v7 86.82ms
+  (1.36x, below the 2.0x release bound).
+- The same 50k count with the Explorer recursive schema and no parent
+  relationships takes 111.73ms, reports 50,003 merge advances, and performs
+  zero recursive work.
+
+The local CLJS Explorer acceptance run keeps repeated nested page hits around
+1–3ms, completes recursive-schema view/admin switching at 10k, and completes
+the 50k recursive-schema exact count without recursive-limit or retained
+snapshot errors. Full evidence is recorded in
+`formal/verification/explorer-v8-release.edn`.
 
 ## Correctness findings closed
 

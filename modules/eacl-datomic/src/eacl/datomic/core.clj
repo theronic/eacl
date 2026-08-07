@@ -6,7 +6,9 @@
             [eacl.cache :as shared-cache]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency-v3]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl :refer [IAuthorization
+                                        IDetailedAuthorization
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate
@@ -944,67 +946,68 @@
           cache-key #(conj prefix %)
           opaque-token (:opaque-cache-token opts)
           namespace (:cache-namespace opts)]
-      {:required? false
-       :opaque-values? true
-       :get
-       (fn [edge]
-         (some->
-          (cache/safe-entry-value
+      (continuation/validate-context!
+       {:required? false
+        :opaque-values? true
+        :get
+        (fn [edge]
+          (some->
+           (cache/safe-entry-value
+            store
+            (cache-key edge)
+            :recursive-continuation
+            #(and (map? %)
+                  (identical? opaque-token (:opaque-token %))
+                  (map? (:continuation %))))
+           :continuation))
+        :evict!
+        (fn [edge]
+          (cache/safe-evict! store (cache-key edge)))
+        :put!
+        (fn [edge continuation-value weight]
+          (cache/safe-store-entry!
            store
+           namespace
            (cache-key edge)
            :recursive-continuation
-           #(and (map? %)
-                 (identical? opaque-token (:opaque-token %))
-                 (map? (:continuation %))))
-          :continuation))
-       :evict!
-       (fn [edge]
-         (cache/safe-evict! store (cache-key edge)))
-       :put!
-       (fn [edge continuation weight]
-         (cache/safe-store-entry!
-          store
-          namespace
-          (cache-key edge)
-          :recursive-continuation
-          {:opaque-token opaque-token
-           :continuation continuation}
-          weight
-          (:lookup-cache-ttl-ms opts)))
-       :get-page
-       (fn [page-key]
-         (cache/safe-entry-value
-          store
-          (cache-key [:page page-key])
-          :recursive-page
-          internal-page?))
-       :put-page!
-       (fn [page-key page weight]
-         (cache/safe-store-entry!
-          store
-          namespace
-          (cache-key [:page page-key])
-          :recursive-page
-          page
-          weight
-          (:lookup-cache-ttl-ms opts)))
-       :get-heads
-       (fn [edge]
-         (cache/safe-entry-value
-          store
-          (cache-key [:heads edge])
-          :lookup-heads
-          map?))
-       :put-heads!
-       (fn [edge heads weight]
-         (cache/safe-store-entry!
-          store
-          namespace
-          (cache-key [:heads edge])
-          :lookup-heads
-          heads
-          weight
-          (:lookup-cache-ttl-ms opts)))})))
+           {:opaque-token opaque-token
+            :continuation continuation-value}
+           weight
+           (:lookup-cache-ttl-ms opts)))
+        :get-page
+        (fn [page-key]
+          (cache/safe-entry-value
+           store
+           (cache-key [:page page-key])
+           :recursive-page
+           internal-page?))
+        :put-page!
+        (fn [page-key page weight]
+          (cache/safe-store-entry!
+           store
+           namespace
+           (cache-key [:page page-key])
+           :recursive-page
+           page
+           weight
+           (:lookup-cache-ttl-ms opts)))
+        :get-heads
+        (fn [edge]
+          (cache/safe-entry-value
+           store
+           (cache-key [:heads edge])
+           :lookup-heads
+           map?))
+        :put-heads!
+        (fn [edge heads weight]
+          (cache/safe-store-entry!
+           store
+           namespace
+           (cache-key [:heads edge])
+           :lookup-heads
+           heads
+           weight
+           (:lookup-cache-ttl-ms opts)))}))))
 
 (def ^:private empty-page
   "Unknown objects match nothing (SpiceDB-consistent, audit D9): lookups and
@@ -1306,11 +1309,7 @@
   branch before semantic-key, dependency-stamp, provider, canonicalization, or
   cache-envelope work. Cursors still work independently."
   [opts cache-option]
-  (when-not (or (nil? cache-option) (boolean? cache-option))
-    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
-                    {:type :eacl/invalid-request
-                     :key :cache?
-                     :value cache-option})))
+  (shared-cache/validate-request-cache-option! cache-option)
   (if (false? cache-option)
     (assoc opts
            :lookup-cache-store nil
@@ -1768,7 +1767,7 @@
           (assoc (write-response db-after opts)
                  :retracted-datoms retracted))))))
 
-(defn spiceomic-can?
+(defn spiceomic-check-permission
   [conn {:keys [object->entid] :as opts}
    subject permission resource consistency-value]
   (let [{:keys [db] :as result-context}
@@ -1783,7 +1782,9 @@
          (:type resource)
          (object->entid db resource))]
     (if-not (and (:id internal-subject) (:id internal-resource))
-      false
+      {:allowed? false
+       :cached? false
+       :cache-basis nil}
       (let [query-identity
             {:public
              {:subject subject
@@ -1793,14 +1794,23 @@
              {:subject internal-subject
               :permission permission
               :resource internal-resource}}]
-        (:result
-         (cached-basic-authorization-result
-          opts result-context :can? query-identity :can?
-          boolean-result?
-          (:type resource)
-          permission
-          #(impl/can? db internal-subject permission
-                      internal-resource)))))))
+        (let [answer
+              (cached-basic-authorization-result
+               opts result-context :can? query-identity :can?
+               boolean-result?
+               (:type resource)
+               permission
+               #(impl/can? db internal-subject permission
+                           internal-resource))]
+          {:allowed? (:result answer)
+           :cached? (:cached? answer)
+           :cache-basis (:cache-basis answer)})))))
+
+(defn spiceomic-can?
+  [conn opts subject permission resource consistency-value]
+  (:allowed?
+   (spiceomic-check-permission
+    conn opts subject permission resource consistency-value)))
 
 (defn spiceomic-lookup-resources
   [conn
@@ -1863,8 +1873,8 @@
             answer
             (cached-authorization-result
              selected-opts result-context :lookup-resources
-             {:public (dissoc query :consistency :cache?)
-              :internal internal-query}
+             (shared-cache/lookup-page-query-identity
+              query internal-query)
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
@@ -1986,8 +1996,8 @@
             answer
             (cached-authorization-result
              selected-opts result-context :lookup-subjects
-             {:public (dissoc query :consistency :cache?)
-              :internal internal-query}
+             (shared-cache/lookup-page-query-identity
+              query internal-query)
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
@@ -2172,7 +2182,16 @@
   (expand-permission-tree [_ _]
     (throw (ex-info "expand-permission-tree is not implemented yet."
              {:type :eacl/not-implemented
-              :method 'expand-permission-tree}))))
+              :method 'expand-permission-tree})))
+
+  IDetailedAuthorization
+  (-check-permission
+    [_ {:keys [subject permission resource consistency] cache? :cache?}]
+    (with-client-schema-read conn schema-lock schema-state
+      (spiceomic-check-permission
+       conn (request-cache-opts opts cache?)
+       subject permission resource
+       (or consistency consistency/fully-consistent)))))
 
 (defn expire-cache!
   "Expires every completed answer owned by one Datomic EACL client.

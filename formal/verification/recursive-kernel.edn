@@ -30,7 +30,7 @@
    :retained-replay-suffix-equivalence]}
  :routing-certificate-proof
  {:source "formal/dafny/RoutingCertificate.dfy"
-  :verified-obligations 46
+  :verified-obligations 52
   :claims
   [:accepted-path-descriptors-derive-exact-ordered-edge-vector
    :relation-paths-emit-no-dependency-edge
@@ -44,7 +44,9 @@
    :accepted-traversal-vector-is-exact
    :accepted-checker-path-checks-equal-path-count
    :accepted-checker-node-checks-equal-two-times-node-count
-   :accepted-checker-edge-checks-equal-edge-count]}
+   :accepted-checker-edge-checks-equal-edge-count
+   :inactive-recursive-data-selects-acyclic-route
+   :active-recursive-data-selects-recursive-route]}
  :resource-interpretation
  {:queued-work :maximum-instantaneous-pending-set-cardinality
   :cumulative-enqueues :separate-production-request-counter

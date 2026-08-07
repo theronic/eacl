@@ -698,12 +698,14 @@ Each EACL client owns a bounded, private, multi-tier cache:
 - compiled schema paths and recursive plans are shared across queries using
   the same schema generation.
 
-The default `:coherence-authority :unknown` reuses entries only for the exact
-immutable database value on which they were computed. It is safe when
-applications also write authorization data outside EACL. Set
-`:coherence-authority :managed` only when every authorization-relevant write
-uses the EACL mutation APIs; this lets unchanged cache portions survive
-unrelated transactions. A schema change invalidates the managed generation.
+DataScript defaults to `:coherence-authority :managed`, assuming every EACL
+schema and relationship mutation uses the client APIs. Datomic and Datahike
+retain the conservative `:coherence-authority :unknown` default. Unknown
+authority reuses entries only for the exact immutable database value on which
+they were computed and is the required DataScript opt-out when authorization
+data can be written outside EACL. Managed authority lets unchanged cache
+portions survive unrelated transactions; a schema change invalidates the
+managed generation.
 
 Most applications need no cache configuration. To set a completed-answer
 capacity:
@@ -737,8 +739,39 @@ Or bypass lookup and publication for one request:
 `:cache?` is accepted by the map arity of `can?` and by
 `lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, and
 `read-relationships`. Lookups and counts expose `:cached?` and `:cache-basis`;
-`can?` returns only a Boolean. Cache data is never written to the application's
-database.
+`can?` returns only a Boolean. Call `check-permission` when the caller also
+needs provenance:
+
+```clojure
+(eacl/check-permission
+ acl
+ {:subject alice
+  :permission :view
+  :resource doc})
+;; => {:allowed? true, :cached? false, :cache-basis ...}
+```
+
+The detailed API is additive. Existing third-party `IAuthorization`
+implementations remain compatible; unless they implement the optional
+`IDetailedAuthorization` protocol, `check-permission` delegates to `can?` and
+reports an uncached decision.
+
+DataScript and Datahike keep completed answers in a client-private native
+cache. Inspect or expire that exact cache through the backend API:
+
+```clojure
+(eacl.datascript.core/cache-stats acl)
+(eacl.datascript.core/expire-cache! acl)
+```
+
+The backend-neutral `eacl.cache/local-store` still exposes additive portable
+metrics for users of that provider API. Capacity evictions are cumulative in
+`:evictions`. Explicit `evict!` calls and entries removed by `clear!` are
+cumulative in `:manual-evictions`; clearing resets occupancy but preserves
+request and validation counters. Provider implementations retain their native
+metrics shape.
+
+Cache data is never written to the application's database.
 
 Call the backend's `expire-cache!` to clear a client's in-memory cache on
 demand. For cache tiers, validity rules, eviction, concurrency, metrics,
@@ -1018,11 +1051,13 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
 - *Managed-current caching requires complete writer authority:* managed EACL
-  writes atomically update the affected relation transaction stamps. Set
-  `:coherence-authority :managed` only when every schema, relationship, caveat,
-  and future authorization-dependency writer follows that protocol. Mixed or
-  hand-written writers must use the default `:unknown` authority, which safely
-  retains only answers from the identical immutable DB generation.
+  writes atomically update the affected relation transaction stamps.
+  DataScript assumes this contract by default; mixed or hand-written
+  DataScript authorization writers must select `:coherence-authority :unknown`.
+  Datomic and Datahike select managed authority explicitly only when every
+  schema, relationship, caveat, and future authorization-dependency writer
+  follows that protocol. Unknown authority safely retains only answers from
+  the identical immutable DB generation.
 - *Deleting entities:* Datomic and Datahike entity retraction does not remove
   peer relationship tuples. Consumers should delete relationships first;
   `delete-object!` is a convenience helper, and the backend integrity

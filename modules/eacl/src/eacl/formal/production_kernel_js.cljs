@@ -170,6 +170,118 @@
         (routing-certificate-error (.-dtor_error decision))}
        work))))
 
+(defn- enumeration-route-decision
+  [{:keys [schema-identity certificate-schema-identity
+           root-defined? recursive? recursive-data-active?]}]
+  (let [routing (.-RoutingCertificate generated)
+        decision
+        (js-invoke
+         (.-__default routing)
+         "SelectEnumerationRoute"
+         (dafny-string schema-identity)
+         (dafny-string certificate-schema-identity)
+         root-defined?
+         recursive?
+         recursive-data-active?)]
+    (if (.-is_EnumerationRouteAccepted decision)
+      (let [route (.-dtor_route decision)]
+        {:status :accepted
+         :route
+         (cond
+           (.-is_UndefinedEnumerationRoute route) :undefined
+           (.-is_CertifiedAcyclicEnumerationRoute route) :acyclic
+           :else :recursive)})
+      (let [error (.-dtor_error decision)]
+        {:status :rejected
+         :reason
+         (if (.-is_MissingSchemaIdentity error)
+           :missing-schema-identity
+           :schema-identity-mismatch)}))))
+
+(defn- acyclic-direction
+  [direction]
+  (let [acyclic (.-AcyclicEngine generated)]
+    (case direction
+      :asc
+      (js-invoke
+       (.-AcyclicDirection acyclic)
+       "create_AcyclicAscending")
+
+      :desc
+      (js-invoke
+       (.-AcyclicDirection acyclic)
+       "create_AcyclicDescending"))))
+
+(defn- acyclic-page-decision
+  [{:keys [direction realized-eids size bound?]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        decision
+        (js-invoke
+         (.-__default acyclic)
+         "DecideAcyclicPage"
+         (acyclic-direction direction)
+         (dafny-sequence (map big-number realized-eids))
+         (big-number size)
+         bound?)
+        work (.-dtor_work decision)]
+    {:take-count (.toNumber (.-dtor_takeCount decision))
+     :reverse? (.-dtor_reverseOutput decision)
+     :has-next? (.-dtor_hasNext decision)
+     :has-previous? (.-dtor_hasPrevious decision)
+     :merge-advances (.toNumber (.-dtor_mergeAdvances work))
+     :emitted-results (.toNumber (.-dtor_emittedResults work))
+     :recursive-work (.toNumber (.-dtor_recursiveWork work))}))
+
+(defn- acyclic-continuation-decision
+  [{:keys [authenticated? schema-matches? query-matches?
+           snapshot-matches? entry-present? entry-valid?]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        action
+        (js-invoke
+         (.-__default acyclic)
+         "DecideAcyclicContinuation"
+         authenticated?
+         schema-matches?
+         query-matches?
+         snapshot-matches?
+         entry-present?
+         entry-valid?)]
+    (cond
+      (.-is_ResumePrivateContinuation action) :resume
+      (.-is_ReplayAuthenticatedBoundary action) :replay
+      :else :reject)))
+
+(defn- acyclic-count-decision
+  [{:keys [unique-count more? limit]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        decision
+        (js-invoke
+         (.-__default acyclic)
+         "DecideAcyclicCount"
+         (big-number unique-count)
+         more?
+         (some? limit)
+         (big-number (or limit 0)))]
+    {:count (.toNumber (.-dtor_count decision))
+     :truncated? (.-dtor_truncated decision)
+     :recursive-work (.toNumber (.-dtor_recursiveWork decision))}))
+
+(defn- acyclic-work-decision
+  [{:keys [requested-window merge-advances
+           emitted-results recursive-work]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        decision
+        (js-invoke
+         (.-__default acyclic)
+         "CertifyAcyclicWork"
+         (big-number requested-window)
+         (big-number merge-advances)
+         (big-number emitted-results)
+         (big-number recursive-work))]
+    (if (.-is_AcyclicWorkAccepted decision)
+      :accepted
+      :rejected)))
+
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]
   (js-invoke
@@ -1709,6 +1821,12 @@
       :ordered-merge-chunk (ordered-merge-chunk input)
       :recursive-routing-certificate
       (routing-certificate-decision input)
+      :enumeration-route (enumeration-route-decision input)
+      :acyclic-page (acyclic-page-decision input)
+      :acyclic-continuation
+      (acyclic-continuation-decision input)
+      :acyclic-count (acyclic-count-decision input)
+      :acyclic-work (acyclic-work-decision input)
       :indexed-scan-response (indexed-scan-decision input)
       :indexed-plan-certification (indexed-plan-decision input)
       :indexed-seed-certification (indexed-seed-decision input)
