@@ -220,7 +220,15 @@ backward navigation.
   the complete item sequence; non-exact continuation may rebase the
   authenticated physical edge against a newer selected graph.
 - Portable cursors use HMAC authenticity, not encryption. Datomic retains its
-  compact AES-GCM codec for cursor-content confidentiality.
+  compact AES-GCM codec for cursor-content confidentiality. The GCM codec
+  uses random 96-bit nonces from `SecureRandom`; per NIST SP 800-38D,
+  random-nonce GCM keys must be rotated before 2^32 encryptions. At high
+  page-token volume plan key rotation accordingly (`:page-token-keyring`
+  supports staged rotation); EACL does not count invocations for you.
+- Constructing a client without explicit token key material warns at
+  startup: defaulted keys are process-local and random, so cursors and
+  tokens do not survive restarts and are not portable across peers or
+  load-balanced nodes.
 - DataScript and Datahike relationship pages now seek from an authenticated
   physical tuple-index edge and resolve only the selected page's public IDs.
   They read at most `page-size + 1` matching internal rows instead of

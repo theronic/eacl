@@ -69,7 +69,11 @@
      permission different_target = team->other
    }")
 
-(deftest current-lookup-cursor-restarts-when-result-identity-disappears-test
+(deftest current-lookup-cursor-is-rejected-across-schema-generations-test
+  ;; Re-goldened for cursor-dependency-validity: the cursor scope commits the
+  ;; selected snapshot's schema generation, so a cursor minted under another
+  ;; generation fails scope validation with the typed error instead of
+  ;; silently restarting the walk — recovery mode included.
   (let [conn (datascript/create-conn)
         client
         (datascript/make-client
@@ -109,11 +113,19 @@
         definition document {
           relation owner: user
         }")
-      (let [recovered
-            (eacl/lookup-resources client (assoc query :after cursor))]
-        (is (empty? (:data recovered)))
-        (is (= :restarted
-               (get-in recovered [:page-info :cursor-recovery])))))))
+      (let [error
+            (try
+              (eacl/lookup-resources client (assoc query :after cursor))
+              nil
+              (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                     thrown
+                thrown))]
+        (is (some? error)
+            "a cursor from another schema generation must not resume the walk")
+        (is (= :eacl.pagination/invalid-cursor (:type (ex-data error))))
+        (is (= :query-mismatch (:reason (ex-data error))))
+        (is (empty? (:data (eacl/lookup-resources client query)))
+            "a fresh enumeration evaluates the new schema generation")))))
 
 (deftest semantic-root-denotation-key-is-cross-target-exact-test
   (testing "equal root bodies share and distinct indexed bodies stay separate"

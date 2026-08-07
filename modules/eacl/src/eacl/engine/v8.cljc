@@ -3487,8 +3487,21 @@
 (defn- cached-lookup-continuation
   [continuation-cache bound]
   (when (and bound continuation-cache)
-    (let [value
-          (when-let [get-heads (:get-heads continuation-cache)]
+    (let [get-heads (:get-heads continuation-cache)
+          ;; The continuation contract validated at construction is the
+          ;; authenticated, scope-committed store handle: its key digest
+          ;; commits the schema, query, and snapshot identities, so a store
+          ;; consultation through it is definitionally scoped to the current
+          ;; identities — an entry under a different identity is simply
+          ;; absent under this key. Compute the decision inputs from that
+          ;; contract instead of asserting them as literals.
+          contract?
+          (and (map? continuation-cache)
+               (false? (:required? continuation-cache))
+               (true? (:opaque-values? continuation-cache))
+               (fn? get-heads))
+          value
+          (when contract?
             (try
               (get-heads bound)
               (catch #?(:clj Exception :cljs :default) _
@@ -3498,10 +3511,10 @@
           (verified/decide
            subproblem/*decision-kernel*
            :acyclic-continuation
-           {:authenticated? true
-            :schema-matches? true
-            :query-matches? true
-            :snapshot-matches? true
+           {:authenticated? contract?
+            :schema-matches? contract?
+            :query-matches? contract?
+            :snapshot-matches? contract?
             :entry-present? (some? value)
             :entry-valid? valid?})]
       (case action

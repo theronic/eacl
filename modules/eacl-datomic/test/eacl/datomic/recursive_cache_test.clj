@@ -18,13 +18,15 @@
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.verified-kernel :as verified]))
 
 (def ^:private recursive-schema
   "definition user {}
    definition account {
      relation parent: account
      relation reader: user
+     relation auditor: user
      permission read = reader + parent->read
    }")
 
@@ -234,7 +236,13 @@
                (-> (collect-forward cached-client query) :data peek :id))
             "a new enumeration observes the relationship write")))))
 
-(deftest recursive-cursor-rebases-after-unrelated-basis-churn-test
+(deftest recursive-cursor-continues-after-unrelated-basis-churn-test
+  ;; Re-goldened for cursor-dependency-validity (was
+  ;; recursive-cursor-rebases-after-unrelated-basis-churn-test): continuation
+  ;; proofs are dependency-scoped — schema stamp plus the closure's relation
+  ;; stamps — so transactions touching nothing in the {reader, parent}
+  ;; closure leave the proof equal and the kernel decides :current instead of
+  ;; :rebase-current.
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -245,19 +253,37 @@
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn client 20 1)
+      @(d/transact conn [{:eacl/id "auditor-user"}])
       (let [page1 (eacl/lookup-resources client query)
             cursor (page-end-cursor page1)]
-        (doseq [n (range 20)]
+        ;; Twenty unrelated commits: bare entities plus EACL writes to the
+        ;; :auditor relation, which lies outside the query's dependency
+        ;; closure entirely.
+        (doseq [n (range 10)]
           @(d/transact conn [{:eacl/id (str "application-" n)}]))
+        (doseq [n (range 10)]
+          (eacl/create-relationship!
+           client
+           (->Relationship (spice-object :user "auditor-user")
+                           :auditor
+                           (spice-object :account (account-id n)))))
         (let [stats (atom {})
-              page2 (binding [idx/*recursive-traversal-stats* stats]
+              crossings (atom {})
+              page2 (binding [idx/*recursive-traversal-stats* stats
+                              verified/*kernel-crossing-stats* crossings]
                       (eacl/lookup-resources client (assoc query :after cursor)))]
           (is (= (mapv #(spice-object :account (account-id %))
                        (range 5 10))
                  (:data page2))
-              "rebasing recomputes current state and continues after the boundary")
-          (is (= :rebased
-                 (get-in page2 [:page-info :cursor-recovery])))
+              "the continuation resumes exclusively after the boundary")
+          (is (nil? (get-in page2 [:page-info :cursor-recovery]))
+              "unrelated churn is a continuation hit, not a recovery")
+          (is (pos? (get @crossings :cursor-continuation 0))
+              "the reuse is a verified kernel decision, not a bypass")
+          (is (zero? (stat stats :stream-fills))
+              "continuation reuse does zero backend stream work")
+          (is (zero? (stat stats :derived-grants))
+              "no fixed-point recomputation occurs")
           (is (nil? (:continuation-hits @stats)))
           (let [restart-stats (atom {})
                 restarted-page1
@@ -491,3 +517,39 @@
         (is (<= (:derived-grants cached)
                 (:derived-grants replayed))
             "denotation reuse does no more work than uncached recomputation")))))
+
+(deftest expired-page-token-reaches-the-kernel-decision-test
+  ;; cursor-dependency-validity: expiry is a computed input of the verified
+  ;; continuation decision, rejected by the kernel rather than pre-empted at
+  ;; decode. The public error is unchanged.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client
+                  conn
+                  {:page-token-key "recursive-expired"
+                   :page-token-ttl-seconds 1})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 5}]
+      (seed-recursive! conn client 10 1)
+      (let [page1 (eacl/lookup-resources client query)
+            cursor (page-end-cursor page1)
+            now-var (ns-resolve 'eacl.datomic.core 'now-seconds)
+            now-fn @now-var
+            crossings (atom {})
+            error
+            (with-redefs-fn {now-var #(+ 120 (long (now-fn)))}
+              (fn []
+                (binding [verified/*kernel-crossing-stats* crossings]
+                  (try
+                    (eacl/lookup-resources client (assoc query :after cursor))
+                    nil
+                    (catch clojure.lang.ExceptionInfo thrown
+                      thrown)))))]
+        (is (some? error) "an expired page token must not resume")
+        (is (= :eacl.pagination/expired-cursor (:type (ex-data error))))
+        (is (= :eacl.pagination/expired-cursor (:eacl/error (ex-data error))))
+        (is (= :expired (:reason (ex-data error))))
+        (is (= "Page token has expired." (ex-message error)))
+        (is (pos? (get @crossings :cursor-continuation 0))
+            "the expired token was rejected by a :cursor-continuation kernel decision")))))

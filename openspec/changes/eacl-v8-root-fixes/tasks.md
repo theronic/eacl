@@ -45,11 +45,11 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 6. Cursor dependency validity (D-4, cursor-dependency-validity)
 
-- [ ] 6.1 Replace `basis-t` continuation-proof digests with the dependency-stamp descriptor (relay `dependency-context` + Datomic cursor proof); unrelated-churn test flips from `:rebased` to continuation hit
-- [ ] 6.2 Stamp the actual schema mutation identity into page tokens; validate unconditionally on acceptance (including recovery mode); cross-generation resumption test
-- [ ] 6.3 Thread computed values into every verified continuation/authority decision (delete the literal `true`/`false` inputs); regression observing the kernel's rejection branch for an expired token
-- [ ] 6.4 Unify on the AEAD codec for portable cursors (JVM host crypto; CLJS WebCrypto/pure-JS); delete the HMAC-only path; capability sets advertise uniform `:cursor` properties
-- [ ] 6.5 Defaulted-key startup warning on all three `make-client`s; document the GCM nonce invocation bound and rotation guidance
+- [x] 6.1 Replace `basis-t` continuation-proof digests with the dependency-stamp descriptor (relay `dependency-context` + Datomic cursor proof); unrelated-churn test flips from `:rebased` to continuation hit
+- [x] 6.2 Stamp the actual schema mutation identity into page tokens; validate unconditionally on acceptance (including recovery mode); cross-generation resumption test
+- [x] 6.3 Thread computed values into every verified continuation/authority decision (delete the literal `true`/`false` inputs); regression observing the kernel's rejection branch for an expired token
+- [ ] 6.4 (DEFERRED — see design.md D-4 status note: sync CLJS GCM not responsibly implementable in this change) Unify on the AEAD codec for portable cursors (JVM host crypto; CLJS WebCrypto/pure-JS); delete the HMAC-only path; capability sets advertise uniform `:cursor` properties
+- [x] 6.5 Defaulted-key startup warning on all three `make-client`s; document the GCM nonce invocation bound and rotation guidance
 
 ## 7. Answer-cache fold-in (D-6, answer-cache-bounding) — after group 2
 

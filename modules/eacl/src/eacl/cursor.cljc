@@ -272,17 +272,42 @@
                 cache identity cursor token)
                token)))))))
 
-(defn token->cursor
-  "Authenticates and decodes a cursor. Legacy maps and `eacl1_` tokens fail."
+(defn expired-cursor-error
+  "Builds the public expired-cursor error for one deferred expiry decision.
+
+  The relay pipeline threads the computed `:expired?` boolean into the
+  verified continuation decision and throws this exact error only when the
+  kernel rejects the token, keeping the public error identical to the
+  historical decode-time throw."
+  [expired-at]
+  (ex-info "Invalid EACL cursor."
+           {:type :eacl.pagination/expired-cursor
+            :eacl/error :eacl.pagination/expired-cursor
+            :reason :expired
+            :expired-at expired-at}))
+
+(defn token->authenticated-cursor
+  "Authenticates and decodes a cursor without enforcing expiry.
+
+  Returns `{:cursor m :authenticated? true :expired? bool :expired-at n}`.
+  Authenticity and payload-shape failures still throw; the time-to-live
+  check result is returned as data so the caller can thread the computed
+  boolean into a verified continuation decision instead of deciding here."
   ([token]
-   (token->cursor token nil))
+   (token->authenticated-cursor token nil))
   ([token options]
    (if (nil? token)
      nil
      (let [cache (memoizable-cache options)
            identity (when cache (codec-identity options))]
        (or (when cache
-             (cached-cursor cache identity token))
+             ;; The codec cache holds only non-expiring tokens this client
+             ;; minted itself, so a hit is authenticated and unexpired.
+             (when-let [cursor (cached-cursor cache identity token)]
+               {:cursor cursor
+                :authenticated? true
+                :expired? false
+                :expired-at nil}))
            (let [payload
                  (try
                    (decode-compact options token)
@@ -297,12 +322,24 @@
                             (or (nil? expires-at)
                                 (integer? expires-at)))
                (cursor-error! :undecodable {}))
-             (when (and expires-at
-                        (>= (now-seconds options) expires-at))
-               (cursor-error!
-                :expired
-                {:expired-at expires-at
-                 :type :eacl.pagination/expired-cursor
-                 :eacl/error
-                 :eacl.pagination/expired-cursor}))
-             cursor))))))
+             {:cursor cursor
+              :authenticated? true
+              :expired? (boolean
+                         (and expires-at
+                              (>= (now-seconds options) expires-at)))
+              :expired-at expires-at}))))))
+
+(defn token->cursor
+  "Authenticates and decodes a cursor. Legacy maps and `eacl1_` tokens fail."
+  ([token]
+   (token->cursor token nil))
+  ([token options]
+   (when-let [decoded (token->authenticated-cursor token options)]
+     (when (:expired? decoded)
+       (cursor-error!
+        :expired
+        {:expired-at (:expired-at decoded)
+         :type :eacl.pagination/expired-cursor
+         :eacl/error
+         :eacl.pagination/expired-cursor}))
+     (:cursor decoded))))

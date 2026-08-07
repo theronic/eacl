@@ -118,11 +118,36 @@
       :relation-ids relation-ids}}))
 
 (defn- cursor-options
-  [_adapter opts selection _resource-type _permission]
-  (assoc opts
-         :cursor-consistency-mode
-         (get-in selection [:descriptor :mode])
-         :timeout-ms (:consistency-sync-timeout-ms opts)))
+  "Request options for relay cursor handling.
+
+  One shared derived-schema-cache delay serves the engine evaluation, the
+  cursor scope's schema stamp, and the cursor dependency closure, so the
+  dependency-scoped cursor contexts add no schema-proof reads beyond the
+  request's own resolution. All three delays are forced only when a cursor
+  is actually minted or resumed."
+  [adapter opts selection resource-type permission]
+  (let [schema-cache
+        (delay
+          (engine/schema-cache-for!
+           (:derived-schema-caches opts)
+           adapter))]
+    (assoc opts
+           :cursor-consistency-mode
+           (get-in selection [:descriptor :mode])
+           :timeout-ms (:consistency-sync-timeout-ms opts)
+           :request-schema-cache schema-cache
+           :cursor-schema-stamp
+           {:adapter adapter
+            :stamp (delay (:schema-version @schema-cache))}
+           :cursor-dependency-relation-ids
+           (when (and resource-type permission)
+             (delay
+               (try
+                 (binding [engine/*schema-cache* @schema-cache]
+                   (engine/permission-relationship-eids
+                    adapter resource-type permission))
+                 (catch Exception _
+                   nil)))))))
 
 (defn- page-context
   [adapter opts selection operation query resource-type permission]
@@ -196,10 +221,11 @@
   [adapter opts operation query resource-type permission
    valid-value? compute]
   (let [schema-cache
-        (delay
-          (engine/schema-cache-for!
-           (:derived-schema-caches opts)
-           adapter))
+        (or (:request-schema-cache opts)
+            (delay
+              (engine/schema-cache-for!
+               (:derived-schema-caches opts)
+               adapter)))
         evaluate
         #(binding [engine/*schema-cache* @schema-cache
                    engine/*recursive-traversal-limits*
@@ -932,7 +958,9 @@
           {current-kid (secure/normalize-key security-key)}
 
           :else
-          {:default secure/default-root-key})
+          (do
+            (secure/warn-defaulted-token-key!)
+            {:default secure/default-root-key}))
         _ (when-not (get root-keyring current-kid)
             (throw (ex-info "EACL Config Error: :security-kid is absent from :security-keyring."
                             {:type :eacl/invalid-config

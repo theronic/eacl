@@ -4,7 +4,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
-            [eacl.relay :as relay]))
+            [eacl.relay :as relay]
+            [eacl.verified-kernel :as verified]))
 
 (defn- operation-map
   [snapshot-id proof]
@@ -96,20 +97,32 @@
     :has-previous-page? false}})
 
 (deftest page-externalization-builds-one-snapshot-context-test
-  (let [snapshot (adapter 1 nil true)
-        original relay/dependency-context
-        calls (atom 0)]
-    (with-redefs [relay/dependency-context
-                  (fn [adapter]
-                    (swap! calls inc)
-                    (original adapter))]
-      (let [page
-            (relay/externalize-page
-             snapshot {} :lookup-resources lookup-query lookup-page)]
-        (is (string? (get-in page [:page-info :start-cursor])))
-        (is (string? (get-in page [:page-info :end-cursor])))
-        (is (= 1 @calls)
-            "both boundary tokens must reuse one immutable snapshot proof")))))
+  ;; Every context build reads :graph-head exactly once, so the op count is
+  ;; the context-build count — portable across CLJ and CLJS, unlike
+  ;; re-rooting a multi-arity var.
+  (let [graph-head-calls (atom 0)
+        snapshot
+        (backend/make-adapter
+         {:id :relay-test
+          :capabilities {}
+          :fingerprint {:adapter :relay-test}
+          :deterministic? true
+          :operations
+          (merge
+           (operation-map 1 nil)
+           {:graph-head
+            (fn []
+              (swap! graph-head-calls inc)
+              {:graph-anchor 1
+               :order-hint 1
+               :exact-locator 1})})})
+        page
+        (relay/externalize-page
+         snapshot {} :lookup-resources lookup-query lookup-page)]
+    (is (string? (get-in page [:page-info :start-cursor])))
+    (is (string? (get-in page [:page-info :end-cursor])))
+    (is (= 1 @graph-head-calls)
+        "both boundary tokens must reuse one immutable snapshot proof")))
 
 (deftest prepared-continuation-authenticates-token-once-test
   (let [snapshot (adapter 1 nil true)
@@ -205,6 +218,38 @@
     (is (= (-> (get-in recursive-page [:page-info :end-cursor])
                (assoc :rebase? true))
            (get-in prepared [:query :after])))))
+
+(deftest expired-cursor-reaches-the-kernel-decision-test
+  ;; cursor-dependency-validity: the TTL check result is a computed input of
+  ;; the verified continuation decision. The expired token flows TO the
+  ;; kernel and is rejected THERE, with the public error unchanged.
+  (let [snapshot (adapter 1 nil true)
+        mint-opts {:cursor-ttl-seconds 10
+                   :now-seconds 1000}
+        page
+        (relay/externalize-page
+         snapshot mint-opts :lookup-resources lookup-query lookup-page)
+        token (get-in page [:page-info :end-cursor])
+        crossings (atom {})
+        error
+        (binding [verified/*kernel-crossing-stats* crossings]
+          (try
+            (relay/prepare-page-query
+             snapshot
+             {:now-seconds 2000}
+             :lookup-resources
+             (assoc lookup-query :after token))
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                   thrown
+              thrown)))]
+    (is (some? error) "an expired portable cursor must not resume")
+    (is (= :eacl.pagination/expired-cursor (:type (ex-data error))))
+    (is (= :eacl.pagination/expired-cursor (:eacl/error (ex-data error))))
+    (is (= :expired (:reason (ex-data error))))
+    (is (= 1010 (:expired-at (ex-data error))))
+    (is (pos? (get @crossings :cursor-continuation 0))
+        "the expired token was rejected by a :cursor-continuation kernel decision")))
 
 (deftest exact-snapshot-continuation-never-rebases-test
   (let [exact (adapter 1 nil true)
