@@ -1,7 +1,9 @@
 {:schema-version 1
- :status :generated-authority-routed-and-full-suites-passed-release-gates-remain
+ :status :target-authorities-routed-and-full-suites-passed-release-gates-remain
  :sources
  ["formal/dafny/IndexedTraversal.dfy"
+  "formal/dafny/IndexedBatching.dfy"
+  "formal/dafny/IndexedBatchCompleteness.dfy"
   "formal/dafny/IndexedRefinement.dfy"
   "formal/dafny/IndexedForwardCompleteness.dfy"
   "formal/dafny/IndexedReverseCompleteness.dfy"
@@ -10,20 +12,24 @@
   "formal/dafny/RootDenotation.dfy"
   "formal/dafny/IndexedRootDenotation.dfy"]
  :verified-obligations
- {:indexed-transition-state-machine 669
-  :indexed-semantic-soundness-refinement 1811
-  :forward-least-fixed-point-completeness 1335
-  :reverse-least-fixed-point-completeness 5104
+ {:indexed-transition-state-machine 565
+  :indexed-scan-batching 20
+  :indexed-batch-completeness 12
+  :indexed-semantic-soundness-refinement 1643
+  :forward-least-fixed-point-completeness 1119
+  :reverse-least-fixed-point-completeness 4373
   :traversal-order-rendering-and-ordered-nonimplication-witness 29
   :source-plan-and-seed-certification 48
   :semantic-root-denotation-equivalence 33
   :indexed-root-denotation-compiler-bridge 137
-  :total 9166}
- :generated-targets [:java :javascript]
- :production-authoritative :release-default
+  :total 7979}
+ :generated-targets [:java :javascript-formal-oracle]
+ :production-authoritative
+ {:clj-java :generated-release-default
+  :cljs-javascript :portable-differentially-certified-release-default}
  :production-routing
  {:scan-response-validation
-  {:status :verified-authoritative-mode-routed
+  {:status :target-authoritative-mode-routed
    :operation :indexed-scan-response
    :rejects
    [:invalid-command
@@ -36,12 +42,12 @@
     :out-of-order
     :bound-violation]}
   :queue-and-grant-transitions
-  {:status :verified-authoritative-mode-routed
+  {:status :target-authoritative-mode-routed
    :permission-roots [:all-defined]
-   :state :opaque-generated-runtime-owned
+   :state :opaque-authority-runtime-owned
    :schema-indexes :compiled-once-per-schema-proof-and-root}
   :rendering
-  {:status :verified-authoritative-mode-routed
+  {:status :target-authoritative-mode-routed
    :permission-roots [:all-defined]
    :point-authorization-direction :reverse
    :operations
@@ -67,12 +73,19 @@
     :engine-consumed-values [1 1]
     :status :passed}}
   :page-continuation
-  {:status :verified-authoritative-mode-routed
+  {:status :target-authoritative-mode-routed
    :directions [:forward :reverse]
-   :state :opaque-generated-runtime-owned
+   :state :opaque-authority-runtime-owned
    :public-boundary [:ordinal :eid]
    :lookahead :retained-without-prefix-replay
    :fallback :deterministic-pinned-snapshot-replay}
+  :scan-batching
+  {:status :target-authoritative-mode-routed
+   :batch-size 64
+   :command-order :request-id-order
+   :response-fold :same-order-as-command-wave
+   :partial-fuel :yield-original-state-without-publishing-a-partial-wave
+   :crossing-law "2 * ceil(scans / 64) + 1 for independent scan streams"}
   :source-plan-and-seed-certification
   {:status :verified-modes-routed-at-schema-plan-compilation
    :operations
@@ -99,7 +112,11 @@
   :forward-and-reverse-page-continuation
   :authenticated-page-boundary
   :lookahead-carry-without-prefix-replay
-  :forward-and-backward-pages
+  :forward-page-continuation
+  :bounded-ordered-forward-scan-waves
+  :bounded-ordered-reverse-scan-waves
+  :ordered-batch-response-folding
+  :partial-fuel-wave-rollback
   :bounded-and-unbounded-counts
   :boolean-early-completion
   :typed-traversal-limits
@@ -129,6 +146,12 @@
    :reverse-bidirectional-join-coverage
    :certified-forward-scan-resumption-coverage
    :certified-reverse-scan-resumption-coverage
+   :forward-pending-ghost-view-exact
+   :reverse-pending-ghost-view-exact
+   :forward-batch-coverage-invariant
+   :reverse-batch-coverage-invariant
+   :ordered-batch-waves-preserve-request-identity
+   :batched-crossing-law
    :forward-exhaustion-is-least-fixed-point-complete
    :reverse-exhaustion-is-least-fixed-point-complete
    :identical-complete-denotations-render-identically
@@ -191,6 +214,8 @@
  {:dafny
   {:commands
    ["dafny verify formal/dafny/IndexedTraversal.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedBatching.dfy --verification-time-limit 60 --resource-limit 50000000"
+    "dafny verify formal/dafny/IndexedBatchCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
     "dafny verify formal/dafny/IndexedRefinement.dfy --verification-time-limit 60 --resource-limit 50000000"
     "dafny verify formal/dafny/IndexedForwardCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
     "dafny verify formal/dafny/IndexedReverseCompleteness.dfy --verification-time-limit 60 --resource-limit 50000000"
@@ -201,16 +226,20 @@
    :status :passed
    :measurements
    {:indexed-transition-state-machine
-    {:obligations 669
-     :transparent-recursive-spec-maximum-resource-count 161654668
-     :opaque-explicit-unfold-maximum-resource-count 10270077
-     :resource-reduction-ratio 15.740355987593862}
+    {:obligations 565
+     :maximum-resource-count 8047431}
+    :indexed-scan-batching
+    {:obligations 20
+     :maximum-resource-count 2493002}
+    :indexed-batch-completeness
+    {:obligations 12
+     :maximum-resource-count 341795}
     :indexed-semantic-soundness-refinement
-    {:obligations 1811}
+    {:obligations 1643}
     :forward-least-fixed-point-completeness
-    {:obligations 1335}
+    {:obligations 1119}
     :reverse-least-fixed-point-completeness
-    {:obligations 5104}
+    {:obligations 4373}
     :traversal-order-rendering-and-ordered-nonimplication-witness
     {:obligations 29}
     :source-plan-and-seed-certification
@@ -222,24 +251,24 @@
     {:obligations 137
      :maximum-resource-count 694159}}
    :aggregate
-   {:indexed-obligations 9166
-    :whole-formal-tree-obligations 9802
+   {:indexed-obligations 7979
+    :whole-formal-tree-obligations 8594
     :deterministic-proof-effort-resource-limit 50000000
-    :whole-tree-maximum-resource-count 33547591
+    :whole-tree-maximum-resource-count 24106086
     :machine-readable-report "target/formal/dafny-verification.json"
     :timing-recheck :passed-within-formal-job-bound}
    :qualification
    :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
  :generated-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 36
-   :assertions 10395
+   :tests 28
+   :assertions 8420
    :qualification :namespace-includes-non-indexed-production-decisions
    :status :passed}
  :generated-javascript
   {:runner "formal/smoke/cljs/run"
-   :suite-tests 58
-   :suite-assertions 10968
+   :suite-tests 45
+   :suite-assertions 9971
    :datascript-public-recursive-cache-mode-differential true
    :status :passed}
   :production-recursive-contract

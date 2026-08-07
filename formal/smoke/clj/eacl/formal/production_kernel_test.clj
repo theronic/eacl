@@ -1130,6 +1130,82 @@
    :max-advanced-datoms 100
    :max-queued-work 100})
 
+(defn- empty-scan-response
+  [command]
+  {:request-scope (:request-scope command)
+   :request-id (:request-id command)
+   :values []
+   :terminal? true
+   :fetched-values 0})
+
+(defn- batched-forward-crossing-trace
+  [selection stream-count]
+  (let [limits (assoc indexed-limits :max-queued-work (+ stream-count 64))
+        rules
+        (mapv
+         (fn [relation-eid]
+           (assoc indexed-direct-rule :relation-eid relation-eid))
+         (range 1 (inc stream-count)))
+        compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules rules
+          :seed-rules-by-subject-type {"user" rules}})
+        initialized
+        (verified/initialize-indexed
+         selection
+         :forward
+         {:compiled-plan compiled-plan
+          :request-scope 73
+          :subject-type "user"
+          :subject-eid 7
+          :root-node {:resource-type "folder" :permission "read"}
+          :result-type "folder"
+          :render {:kind :all-count}
+          :chunk-size 2
+          :limits limits})]
+    (loop [state (:state initialized)
+           crossings 0
+           waves []]
+      (let [driven
+            (verified/drive-indexed
+             selection :forward state limits 256)]
+        (case (:status driven)
+          :need-scans
+          (let [commands (:commands driven)
+                resumed
+                (verified/resume-indexed
+                 selection :forward (:state driven)
+                 (mapv empty-scan-response commands)
+                 limits)]
+            (recur (:state resumed)
+                   (+ crossings 2)
+                   (conj waves commands)))
+
+          :complete
+          {:crossings (inc crossings)
+           :waves waves
+           :result
+           (verified/read-indexed-result
+            selection :forward (:state driven))})))))
+
+(deftest generated-java-batches-independent-scan-waves
+  (let [stream-count 128
+        batch-size 64
+        {:keys [crossings waves result]}
+        (batched-forward-crossing-trace selection stream-count)]
+    (is (= [64 64] (mapv count waves)))
+    (is (= (vec (range 1 (inc stream-count)))
+           (mapv #(get-in % [:projection :relation-eid])
+                 (mapcat identity waves)))
+        "ordered response folding preserves deterministic command emission")
+    (is (<= crossings
+            (inc (* 2 (quot (+ stream-count (dec batch-size))
+                            batch-size))))
+        "crossings <= 2*ceil(streams/batch)+1")
+    (is (= {:status :count :count 0 :truncated? false}
+           (select-keys result [:status :count :truncated?])))))
+
 (deftest generated-java-all-count-retains-no-rendered-results
   (let [compiled-plan
         (verified/compile-indexed-plan

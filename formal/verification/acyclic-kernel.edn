@@ -59,13 +59,7 @@
     :production-two-stream-comparison-iterations-are-linear
     :balanced-ascending-fold-preserves-strict-order-and-complete-union
     :balanced-descending-fold-preserves-strict-order-and-complete-union]}
-  {:source "formal/dafny/Pagination.dfy"
-   :verified-obligations 16
-   :claims
-   [:exclusive-frontier
-    :inclusive-boundary-conversion
-    :exhaustion
-    :direction-reversal]}]
+  ]
  :generated-targets
  {:java
   {:status :passed

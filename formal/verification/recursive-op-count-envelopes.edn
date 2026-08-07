@@ -65,7 +65,10 @@
   {:maximum-derived-grants-factor 2 ; derived-grants <= factor * accounts
    :maximum-backend-scans-slack 50} ; scans <= accounts + slack
   :crossing-law
-  {:fuel 256}}                     ; drive <= scans + 1 + (advanced / fuel)
+  {:protocol-version 2
+   :batch-size 64
+   :constant 40
+   :fuel 256}}                     ; star: crossings <= 2*ceil(scans/B)+C+fuel yields
  :notes
  ["client-can documents the audited full-materialization behavior: a
    cache-enabled recursive point check materializes the complete forward

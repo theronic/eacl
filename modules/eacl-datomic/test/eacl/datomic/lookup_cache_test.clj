@@ -270,9 +270,9 @@
         (is (empty? (:data (eacl/lookup-resources client query)))
             "the recreated external ID resolves to a new internal cache key")))))
 
-(deftest disabled-and-failing-caches-use-the-indexed-path-test
+(deftest disabled-cache-uses-the-indexed-path-and-provider-is-rejected-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [disabled (core/make-client conn {:cache cache/no-cache})
+    (let [disabled (core/make-client conn {:cache shared-cache/no-cache})
           broken-store
           (reify cache/CacheStore
             (lookup [_ _] (throw (ex-info "unavailable" {})))
@@ -280,58 +280,19 @@
             (evict! [_ _] nil)
             (clear! [_] nil)
             (stats [_] {}))
-          failing (core/make-client
-                   conn
-                   {:cache {:store broken-store}})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}]
       (seed-direct! conn disabled)
-      (testing "both clients return the same correct data"
-        (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources disabled query)))))
-        (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources failing query)))))))))
-
-(deftest malformed-value-under-correct-cache-key-is-a-miss-test
-  (with-mem-conn [conn schema/v7-schema]
-    (let [values (atom {})
-          corrupting-store
-          (reify cache/CacheStore
-            (lookup [_ key] (get @values key))
-            (store! [_ key wrapped _weight _ttl]
-              (swap! values
-                     assoc
-                     key
-                     (assoc wrapped
-                            :eacl.cache/value
-                            {:data []
-                             :page-info {:start-cursor nil
-                                         :end-cursor nil
-                                         :has-next-page? true
-                                         :has-previous-page? false}}))
-              true)
-            (evict! [_ key] (some? (get (swap! values dissoc key) key)))
-            (clear! [_] (reset! values {}))
-            (stats [_] {:entries (count @values)}))
-          client
-          (core/make-client
-           conn
-           {:cache {:store corrupting-store}})
-          query {:subject (spice-object :user "alice")
-                 :permission :admin
-                 :resource/type :account}
-          calls (atom 0)
-          original impl/lookup-resources]
-      (seed-direct! conn client)
-      (with-redefs [impl/lookup-resources
-                    (fn [db internal-query continuation-context]
-                      (swap! calls inc)
-                      (original db internal-query continuation-context))]
-        (is (= ["a-1"]
-               (mapv :id (:data (eacl/lookup-resources client query)))))
-        (is (= ["a-1"]
-               (mapv :id (:data (eacl/lookup-resources client query)))))
-        (is (= 1 @calls)
-            "an untrusted provider cannot influence the private answer cache")))))
+      (is (= ["a-1"]
+             (mapv :id (:data (eacl/lookup-resources disabled query)))))
+      (let [error (try
+                    (core/make-client conn {:cache {:store broken-store}})
+                    nil
+                    (catch clojure.lang.ExceptionInfo ex ex))]
+        (is (some? error))
+        (is (= :unsupported-provider-store
+               (:reason (ex-data error))))))))
 
 (deftest live-counts-share-dependency-aware-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -420,11 +381,9 @@
 
 (deftest recursive-cursors-replay-across-independent-client-proofs-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          token-key "shared-store-opaque-continuation"
-          first-client (core/make-client conn {:cache {:store store
-                                                       :remember-answers false}
-                                               :page-token-key token-key})
+    (let [token-key "shared-store-opaque-continuation"
+          first-client (core/make-client conn {:cache {:remember-answers false}
+                                               :security-key token-key})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
           child (spice-object :folder "child")
@@ -443,9 +402,8 @@
       ;; :remember-answers false forces deterministic replay. The old recursive
       ;; page side cache was process-local and unauthenticated; v3 refuses to
       ;; read it until continuation state uses the proof envelope contract.
-      (let [second-client (core/make-client conn {:cache {:store store
-                                                          :remember-answers false}
-                                                  :page-token-key token-key})
+      (let [second-client (core/make-client conn {:cache {:remember-answers false}
+                                                  :security-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])
             expected-page (eacl/lookup-resources first-client
@@ -465,7 +423,7 @@
     (let [client (core/make-client
                   conn
                   {:cache {:remember-answers false}
-                   :page-token-key "private-continuation"})
+                   :security-key "private-continuation"})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
           child (spice-object :folder "child")
@@ -505,7 +463,7 @@
                {:cache {:remember-answers false
                         :max-weight 1024
                         :max-entry-weight 512}
-                :page-token-key "rejected-private-continuation"})
+                :security-key "rejected-private-continuation"})
               first-page (eacl/lookup-resources bounded-client query)
               stats (atom {})
               second-page
@@ -571,22 +529,25 @@
                  (core/make-client conn {:cache {:namespace ""}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:checkpoints :yes}})))
-    (testing "a cache adapter is accepted directly"
-      (is (some? (core/make-client
-                  conn {:cache (cache/local-store {:max-entries 8})}))))
-    (testing "whatever :cache holds must BE a cache"
-      ;; The write-only :lookup-cache-store option died with 11.1; the
-      ;; native completed-answer store is now the observable cache switch.
+    (testing "custom cache adapters are rejected because they cannot control the private stores"
+      (let [error (try
+                    (core/make-client
+                     conn {:cache (cache/local-store {:max-entries 8})})
+                    nil
+                    (catch clojure.lang.ExceptionInfo ex ex))]
+        (is (= :unsupported-provider-store (:reason (ex-data error))))))
+    (testing "the cache option configures the client's private stores"
       (let [store-of #(:current-cache-store (:opts (core/make-client conn %)))]
         (testing "nil and absent both mean the default adapter"
           (is (some? (store-of {})))
           (is (some? (store-of {:cache nil}))))
         (testing "no-cache is the only way to turn it off"
-          (is (nil? (store-of {:cache cache/no-cache})))
-          (is (nil? (store-of {:cache {:store cache/no-cache}}))))
-        (testing "an explicit adapter still enables caching"
-          (let [adapter (cache/local-store)]
-            (is (some? (store-of {:cache adapter})))))
+          (is (nil? (store-of {:cache shared-cache/no-cache}))))
+        (testing "nested or direct adapters are rejected"
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (store-of {:cache {:store cache/no-cache}})))
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (store-of {:cache (cache/local-store)}))))
         (testing "booleans are rejected rather than interpreted"
           ;; They read as a flag in a slot that holds a cache, and they left
           ;; nil ambiguous between "the default" and "none".
@@ -752,7 +713,7 @@
   ;; accepted set. This test is why that was caught: an operation-by-operation
   ;; sweep rather than a spot check on can? and lookup-resources.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "bypass-all"})
+    (let [client (core/make-client conn {:security-key "bypass-all"})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
@@ -798,7 +759,7 @@
 
 (deftest responses-report-whether-they-came-from-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "provenance"
+    (let [client (core/make-client conn {:security-key "provenance"
                                          :cache {:remember-answers true}})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
@@ -838,7 +799,7 @@
 
       (testing "and neither does a client with no cache"
         (let [plain (core/make-client conn {:cache cache/no-cache
-                                            :page-token-key "provenance"})]
+                                            :security-key "provenance"})]
           (is (false? (:cached? (eacl/lookup-resources plain query))))
           (is (false? (:cached? (eacl/count-resources plain query)))))))))
 

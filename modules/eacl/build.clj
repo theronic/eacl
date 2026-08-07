@@ -17,28 +17,24 @@
 (def jar-file (format "%s/target/%s-%s.jar" module-dir (name lib) version))
 (def generated-java-classes
   (str repository-root "/target/formal/java/classes"))
-(def generated-browser-bundle
-  (str repository-root "/target/formal/browser/EaclKernel.browser.js"))
 (def required-release-entries
-  ["deps.cljs"
-   "eacl/formal/production_kernel.clj"
-   "eacl/formal/production_kernel_js.cljs"
+  ["eacl/formal/production_kernel.clj"
+   "eacl/formal/production_kernel_cljs.cljs"
+   "eacl/engine/portable_decisions.cljc"
+   "eacl/engine/portable_indexed.cljc"
    "AcyclicEngine/__default.class"
    "IndexedTraversal/__default.class"
-   "dafny/DafnySequence.class"
-   "EaclKernel.browser.js"])
+   "dafny/DafnySequence.class"])
 
 (defn- require-generated-runtime!
   []
   (doseq [[label path]
-          [["generated JVM classes" generated-java-classes]
-           ["generated browser/CLJS runtime" generated-browser-bundle]]]
+          [["generated JVM classes" generated-java-classes]]]
     (when-not (.exists (io/file path))
       (throw
        (ex-info
         (str "Missing " label
-             "; run `bin/formal build-java` and "
-             "`bin/formal browser-bundle` before packaging cloudafrica/eacl.")
+             "; run `bin/formal build-java` before packaging cloudafrica/eacl.")
         {:artifact label
          :path path})))))
 
@@ -53,7 +49,7 @@
       (when (seq missing)
         (throw
          (ex-info
-          "Published EACL artifact is missing generated-authority runtime entries."
+          "Published EACL artifact is missing required authority runtime entries."
           {:jar jar-file
            :missing (vec missing)}))))))
 
@@ -69,9 +65,6 @@
                :target-dir class-dir})
   (b/copy-dir {:src-dirs [generated-java-classes]
                :target-dir class-dir})
-  (io/copy
-   (io/file generated-browser-bundle)
-   (io/file class-dir "EaclKernel.browser.js"))
   (let [result
         (b/jar {:class-dir class-dir
                 :jar-file jar-file})]

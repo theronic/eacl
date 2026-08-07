@@ -76,13 +76,19 @@
   (dsb/snapshot-adapter (:db @state) {}))
 
 (defn- assert-crossing-law!
-  "resume == scans; drive <= scans + 1 + fuel-yield allowance."
+  "Ordered scan-wave crossing law for the populated star fixture."
   [{:keys [drive resume stream-fills advanced]}]
-  (let [fuel (get-in envelopes [:crossing-law :fuel])]
-    (is (= resume stream-fills)
-        "every NeedScan resumes exactly once (:indexed-traversal-resume = :stream-fills)")
-    (is (<= drive (+ stream-fills 1 (quot advanced fuel)))
-        ":indexed-traversal-drive bounded by scans + 1 + fuel-yield allowance")))
+  (let [{:keys [batch-size constant fuel]}
+        (:crossing-law envelopes)
+        batches (quot (+ stream-fills (dec batch-size)) batch-size)
+        fuel-yields (quot advanced fuel)]
+    (is (<= resume stream-fills)
+        "one ordered response wave resumes one or more backend scans")
+    (is (<= drive (+ resume 1 fuel-yields))
+        ":indexed-traversal-drive bounded by response waves + completion + fuel yields")
+    (is (<= (+ drive resume)
+            (+ (* 2 batches) constant fuel-yields))
+        "star crossings <= 2*ceil(streams/batch)+recorded constant")))
 
 (deftest recursion-actually-exercised-test
   (testing "the fixture drives the genuinely recursive engine (suite self-check)"

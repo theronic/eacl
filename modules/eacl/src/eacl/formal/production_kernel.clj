@@ -11,14 +11,17 @@
    (CurrentCache CurrentCacheStage)
    (dafny DafnySequence DafnySet Tuple2 Tuple3 Tuple5 Tuple6 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
+   (IndexedBatching
+    ForwardBatchState
+    ForwardBatchStep
+    ReverseBatchState
+    ReverseBatchStep)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
-    CursorBound
     ForwardInit
     ForwardPageContinuation
     ForwardResume
     ForwardState
-    ForwardStep
     IndexedLimits
     IndexedLimitKind
     IndexedRule
@@ -33,21 +36,19 @@
     ReversePageContinuation
     ReverseResume
     ReverseState
-    ReverseStep
     ScanError
     ScanCommand
     ScanResponse)
    (OrderedMerge MergeChunk MergeDirection OptionalHead)
    (PageWindow
     ConsistencyMode
-    CursorBoundRebase
+    Direction
     ExactSelection
     NormalizedPageRequest
     Page
     PageError
     Presence
     RawPageRequest)
-   (Pagination Direction)
    (RecursiveEngine
     BooleanOutcome
     CountOutcome
@@ -1380,26 +1381,11 @@
 
 
 
-(defn- indexed-cursor-bound
-  [bound]
-  (if bound
-    (CursorBound/create_AfterCursor
-     (dafny-nat (:ordinal bound))
-     (dafny-nat (:eid bound)))
-    (CursorBound/create_NoCursorBound)))
-
 (defn- indexed-render-mode
-  [{:keys [kind size bound limit target-eid]}]
+  [{:keys [kind size limit target-eid]}]
   (case kind
     :page
-    (RenderMode/create_RenderPage
-     (dafny-nat size)
-     (indexed-cursor-bound bound))
-
-    :backward-page
-    (RenderMode/create_RenderBackwardPage
-     (dafny-nat size)
-     (indexed-cursor-bound bound))
+    (RenderMode/create_RenderPage (dafny-nat size))
 
     :count
     (RenderMode/create_RenderCount (dafny-nat limit))
@@ -1558,76 +1544,89 @@
   (let [outcome
         (case direction
           :forward
-          (IndexedTraversal.__default/DriveForwardIterative
-           state (indexed-limits limits) (dafny-fuel fuel))
+          (IndexedBatching.__default/DriveForwardScans
+           ^ForwardState state
+           (indexed-limits limits)
+           (dafny-fuel fuel)
+           (dafny-nat 64))
 
           :reverse
-          (IndexedTraversal.__default/DriveReverseIterative
-           state (indexed-limits limits) (dafny-fuel fuel)))
+          (IndexedBatching.__default/DriveReverseScans
+           ^ReverseState state
+           (indexed-limits limits)
+           (dafny-fuel fuel)
+           (dafny-nat 64)))
         prefix
         (case direction
           :forward "Forward"
           :reverse "Reverse")]
     (cond
       (case direction
-        :forward (.is_ForwardNeedScan ^ForwardStep outcome)
-        :reverse (.is_ReverseNeedScan ^ReverseStep outcome))
-      {:status :need-scan
-       :state
-       (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))
-       :command
-       (indexed-command-value
-        (case direction
-          :forward (.dtor_command ^ForwardStep outcome)
-          :reverse (.dtor_command ^ReverseStep outcome)))}
+        :forward (.is_ForwardNeedScans ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseNeedScans ^ReverseBatchStep outcome))
+      (let [commands
+            (mapv
+             indexed-command-value
+             (case direction
+               :forward (.dtor_commands ^ForwardBatchStep outcome)
+               :reverse (.dtor_commands ^ReverseBatchStep outcome)))
+            state
+            (case direction
+              :forward (.dtor_batch ^ForwardBatchStep outcome)
+              :reverse (.dtor_batch ^ReverseBatchStep outcome))]
+        (if (= 1 (count commands))
+          {:status :need-scan
+           :state state
+           :command (first commands)}
+          {:status :need-scans
+           :state state
+           :commands commands}))
 
       (case direction
-        :forward (.is_ForwardComplete ^ForwardStep outcome)
-        :reverse (.is_ReverseComplete ^ReverseStep outcome))
+        :forward (.is_ForwardBatchComplete ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchComplete ^ReverseBatchStep outcome))
       {:status :complete
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))}
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))}
 
       (case direction
-        :forward (.is_ForwardYielded ^ForwardStep outcome)
-        :reverse (.is_ReverseYielded ^ReverseStep outcome))
+        :forward (.is_ForwardBatchYielded ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchYielded ^ReverseBatchStep outcome))
       {:status :yielded
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))}
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))}
 
       (case direction
-        :forward (.is_ForwardRenderRejected ^ForwardStep outcome)
-        :reverse (.is_ReverseRenderRejected ^ReverseStep outcome))
+        :forward (.is_ForwardBatchRenderRejected ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchRenderRejected ^ReverseBatchStep outcome))
       {:status :render-rejected
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))
        :error
        (indexed-render-error
         (case direction
-          :forward (.dtor_error ^ForwardStep outcome)
-          :reverse (.dtor_error ^ReverseStep outcome)))}
+          :forward (.dtor_error ^ForwardBatchStep outcome)
+          :reverse (.dtor_error ^ReverseBatchStep outcome)))}
 
       (case direction
-        :forward (.is_ForwardStepLimitExceeded ^ForwardStep outcome)
-        :reverse (.is_ReverseStepLimitExceeded ^ReverseStep outcome))
+        :forward (.is_ForwardBatchLimitExceeded ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchLimitExceeded ^ReverseBatchStep outcome))
       {:status :limit-exceeded
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))
        :limit-kind
        (indexed-limit-kind
         (case direction
-          :forward (.dtor_kind ^ForwardStep outcome)
-          :reverse (.dtor_kind ^ReverseStep outcome)))}
+          :forward (.dtor_kind ^ForwardBatchStep outcome)
+          :reverse (.dtor_kind ^ReverseBatchStep outcome)))}
 
       :else
       (throw
@@ -1636,27 +1635,55 @@
         {:direction direction
          :variant prefix})))))
 
+(defn- indexed-response
+  [response]
+  (ScanResponse/create
+   (dafny-nat (:request-scope response))
+   (dafny-nat (:request-id response))
+   (let [values (:values response)]
+     (if (seq values)
+       (dafny-sequence values)
+       @empty-values-sequence))
+   (:terminal? response)
+   (dafny-nat (:fetched-values response))))
+
 (defn- indexed-resume
   [direction state response limits]
-  (let [response'
-        (ScanResponse/create
-         (dafny-nat (:request-scope response))
-         (dafny-nat (:request-id response))
-         (let [values (:values response)]
-           (if (seq values)
-             (dafny-sequence values)
-             @empty-values-sequence))
-         (:terminal? response)
-         (dafny-nat (:fetched-values response)))
+  (let [batch-state?
+        (case direction
+          :forward (instance? ForwardBatchState state)
+          :reverse (instance? ReverseBatchState state))
+        batch? (or batch-state? (vector? response))
+        responses (if (vector? response) response [response])
+        response'
+        (if batch?
+          (typed-sequence
+           (ScanResponse/_typeDescriptor)
+           (mapv indexed-response responses))
+          (indexed-response response))
         outcome
         (case direction
           :forward
-          (IndexedTraversal.__default/ResumeForwardScan
-           state response' (indexed-limits limits))
+          (if batch?
+            (IndexedBatching.__default/ResumeForwardScans
+             ^ForwardBatchState state
+             ^DafnySequence response'
+             (indexed-limits limits))
+            (IndexedTraversal.__default/ResumeForwardScan
+             ^ForwardState state
+             ^ScanResponse response'
+             (indexed-limits limits)))
 
           :reverse
-          (IndexedTraversal.__default/ResumeReverseScan
-           state response' (indexed-limits limits)))]
+          (if batch?
+            (IndexedBatching.__default/ResumeReverseScans
+             ^ReverseBatchState state
+             ^DafnySequence response'
+             (indexed-limits limits))
+            (IndexedTraversal.__default/ResumeReverseScan
+             ^ReverseState state
+             ^ScanResponse response'
+             (indexed-limits limits))))]
     (cond
       (case direction
         :forward (.is_ForwardScanResumed ^ForwardResume outcome)

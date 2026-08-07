@@ -1,7 +1,9 @@
 (ns eacl.formal.mutation-control-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [eacl.authorization-oracle :as oracle]
+            [eacl.engine.portable-decisions :as portable]
             [eacl.formal.generators :as generators]
             [eacl.test-support.repo :as repo]))
 
@@ -644,10 +646,10 @@
          :javascript [107520 262144]
          :browser [165055 393216]}
         rebuilt-full-kernel
-        {:java-source 1749970
-         :java-classes 1597574
-         :javascript 766357
-         :browser 845730}
+        {:java-source 2130973
+         :java-classes 1890556
+         :javascript 949688
+         :browser 591497}
         stale-gate-passed?
         (every?
          (fn [[_ [baseline maximum]]]
@@ -806,8 +808,10 @@
          "^ResourceCounters counters"
          "^ForwardInit outcome"
          "^ReverseInit outcome"
-         "^ForwardStep outcome"
-         "^ReverseStep outcome"
+         "^ForwardBatchStep outcome"
+         "^ReverseBatchStep outcome"
+         "^ForwardBatchState state"
+         "^ReverseBatchState state"
          "^ForwardResume outcome"
          "^ReverseResume outcome"
          "^PageContinuationError error"
@@ -1195,6 +1199,71 @@
          (= :recursive-limit-exceeded mutant)
          (not= correct mutant))))
 
+(defn- cljs-default-restores-generated-kernel-killed?
+  []
+  (let [orchestration
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "client"
+                    "orchestration.cljc"))
+        production
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "formal"
+                    "production_kernel_cljs.cljs"))]
+    (and (str/includes? orchestration "production-kernel-cljs")
+         (not (str/includes? orchestration
+                             "production-kernel-js :as production-kernel"))
+         (str/includes? production "portable-decision-kernel")
+         (str/includes? production "portable-indexed-kernel"))))
+
+(defn- cljs-scan-scope-check-removed-killed?
+  []
+  (= {:status :rejected :reason :mismatched-request-scope}
+     (portable/decide
+      :indexed-scan-response
+      {:command
+       {:request-scope 71
+        :request-id 0
+        :projection
+        {:kind :subject->resources
+         :subject-type "user"
+         :subject-eid 1
+         :relation-eid 2
+         :resource-type "document"
+         :bound-eid nil}
+        :chunk-size 2}
+       :response
+       {:request-scope 72
+        :request-id 0
+        :values [10]
+        :terminal? true
+        :fetched-values 1}})))
+
+(defn- cljs-lookahead-continuation-dropped-killed?
+  []
+  (let [engine
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "engine"
+                    "portable_indexed.cljc"))
+        tests
+        (slurp
+         (repo/file "formal" "smoke" "cljs" "eacl" "formal"
+                    "production_kernel_test.cljs"))]
+    (and (str/includes? engine ":continuation-state")
+         (str/includes? tests
+                        "continues-pages-from-verified-lookahead")
+         (str/includes? tests
+                        "continues-reverse-pages-from-verified-lookahead"))))
+
+(defn- cljs-generated-browser-payload-restored-killed?
+  []
+  (let [build (slurp (repo/file "modules" "eacl" "build.clj"))
+        deps (slurp (repo/file "modules" "eacl" "deps.edn"))]
+    (and (not (str/includes? build "EaclKernel.browser.js"))
+         (not (str/includes? deps "target/formal/browser"))
+         (.isFile
+          (repo/file "formal" "smoke" "cljs" "eacl" "formal"
+                     "production_kernel_js.cljs")))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1368,7 +1437,15 @@
    :acyclic-work-allows-recursive-budget
    acyclic-work-allows-recursive-budget-killed?
    :acyclic-rebase-enters-recursive-machine
-   acyclic-rebase-enters-recursive-machine-killed?})
+   acyclic-rebase-enters-recursive-machine-killed?
+   :cljs-default-restores-generated-kernel
+   cljs-default-restores-generated-kernel-killed?
+   :cljs-scan-scope-check-removed
+   cljs-scan-scope-check-removed-killed?
+   :cljs-lookahead-continuation-dropped
+   cljs-lookahead-continuation-dropped-killed?
+   :cljs-generated-browser-payload-restored
+   cljs-generated-browser-payload-restored-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

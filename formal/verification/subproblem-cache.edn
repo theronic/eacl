@@ -245,12 +245,14 @@
    :datascript {:create 14 :delete 14}}
   :suite {:tests 1 :assertions 13 :failures 0 :errors 0}}
  :claim-boundary
- {:complete-public-engine :conditional-generated-authority-composition
+ {:complete-public-engine :conditional-target-authority-composition
   :localized-managed-proof
   :atomic-relation-projections-and-certified-root-denotations
   :managed-derived-denotation-proof
   :certified-root-body-plus-complete-managed-frame
-  :generated-production-decision-kernel :generated-only
+  :production-decision-kernel
+  {:clj-java :generated-only
+   :cljs-javascript :portable-differentially-certified}
   :production-source-refinement false
   :whole-engine-resource-safety false
   :independent-review false

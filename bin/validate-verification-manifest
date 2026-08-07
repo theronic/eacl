@@ -29,7 +29,6 @@
     :direct-and-acyclic-engine
     :recursive-engine
     :ordered-merge
-    :frontier-foundation
     :pagination-and-cursor-kernel
     :cache-cursor-foundation
     :cache-decision-kernel

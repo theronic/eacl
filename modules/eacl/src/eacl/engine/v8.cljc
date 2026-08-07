@@ -2780,6 +2780,18 @@
                    (recur (:state resumed))
                    (generated-traversal-error! direction limits resumed)))
 
+               :need-scans
+               (let [responses
+                     (mapv
+                      #(execute-generated-command db plan %)
+                      (:commands outcome))
+                     resumed
+                     (verified/resume-indexed
+                      selection direction (:state outcome) responses limits)]
+                 (if (= :resumed (:status resumed))
+                   (recur (:state resumed))
+                   (generated-traversal-error! direction limits resumed)))
+
                :complete
                (let [final-state (:state outcome)
                      result

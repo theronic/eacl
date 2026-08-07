@@ -1,15 +1,18 @@
 # Trusted computing base and proof assumptions
 
-EACL's target theorem is conditional: the generated kernel refines the formal
-semantics when its validated input and adapter obligations hold. It is not a
-proof of the whole deployed system.
+EACL's target theorem is conditional: the generated JVM kernel refines the
+formal semantics when its validated input and adapter obligations hold. The
+portable ClojureScript kernel is differentially certified against that
+authority; it is not mechanically extracted from Dafny. Neither statement is
+a proof of the whole deployed system.
 
 ## Verification and compilation tools
 
 The following are trusted to implement their documented behavior:
 
 - Dafny, Boogie, and the bundled Z3 solver;
-- Dafny's Java and JavaScript compilers and the generated runtime surface;
+- Dafny's Java compiler and generated JVM runtime surface;
+- Dafny's JavaScript compiler and generated runtime as a formal oracle only;
 - EACL's deterministic generated-runtime patcher, its Clojure persistent
   set/map Java replacements, its JavaScript persistent sequence wrapper, and
   Immutable 5.1.9's HAMT implementation;
@@ -39,6 +42,22 @@ Handwritten CLJ/CLJS conversion code must:
   fail-closed error.
 
 These obligations are tested and runtime-guarded, not proved as Clojure facts.
+
+### Portable ClojureScript authority boundary
+
+`eacl.engine.portable-decisions` and `eacl.engine.portable-indexed` implement
+the production CLJS decision and traversal protocols in handwritten CLJC. CI
+compares them with the generated JavaScript oracle, generated cross-runtime
+vectors, the independent fixed-point evaluator, deterministic randomized
+graphs, the minimized counterexample regressions, and mutation controls. The
+full advanced-optimized DataScript/core suite must also exercise every required
+traversal operation through that kernel.
+
+This is strong executable refinement evidence, not a Dafny extraction or a
+host-language proof. Browser authorization is therefore advisory and must be
+re-checked by the generated JVM authority on the server. The production bundle
+gate rejects BigNumber and generated-runtime markers and enforces the recorded
+absolute performance and payload ceilings in `cljs-production.edn`.
 
 ## Backend adapter obligations
 
@@ -71,9 +90,10 @@ strongly connected component. It first proves that the indexed edge sequence
 is exactly derived from every supplied materialized-path descriptor: relation
 paths emit no edge and permission paths emit one directed edge. The generated
 checker makes exactly one path pass, two node passes, and one edge pass on
-acceptance. Production consumes only that generated traversal vector for
-stamped schema generations; the host classification is not authorization
-authority.
+acceptance. JVM production consumes only that generated traversal vector for
+stamped schema generations. CLJS production computes the same certificate
+decision through the differentially certified portable kernel; host
+orchestration still cannot substitute an unchecked classification.
 
 The theorem is conditional on the path descriptors. Clojure still obtains
 materialized permission paths from the selected adapter, maps their portable
@@ -81,7 +101,7 @@ fields to typed descriptors, and assigns stable indices. The generated
 boundary, rather than Clojure, decides which descriptors emit dependency
 edges; production constructs its graph and certificate from that same edge
 vector. Exhaustive typed-graph differentials, path-derivation and certificate
-mutations, backend certification, and generated-authority suites test the
+mutations, backend certification, and target-authority suites test the
 earlier adapter/map-to-descriptor extraction, but do not prove Clojure bytecode
 or backend truthfulness. Raw snapshots may recompute host routing metadata for
 diagnostics and pagination restrictions, but every authorization result still
@@ -207,6 +227,12 @@ and worst-case latency remain unproved unless separately named.
 The generated indexed traversal now has a narrower target-cost refinement
 gate. `IndexedTraversal.StrictlyIncreasingIffAdjacent` proves that the linear
 executable adjacent-order scan implements the pairwise mathematical contract.
+`IndexedBatching` bounds a wave at 64 request-ordered scans and folds its
+responses in the same order. `IndexedBatchCompleteness` maps every pending scan
+to the existing virtual FIFO work view and proves the generalized forward and
+reverse coverage invariants. Fuel exhaustion returns the original state before
+any partial wave becomes observable; production crossing gates separately
+enforce the resulting wave-count envelope.
 Java persistent set/map replacements and JavaScript HAMT/sequence wrappers
 have explicit persistence, structural-equality, collision, slice, concat, and
 indexing boundary tests. Adversarial scaling and fixed-heap completion gates

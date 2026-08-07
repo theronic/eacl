@@ -1,0 +1,61 @@
+{:schema-version 1
+ :runtime :cljs-portable-cljc
+ :production-default
+ "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs"
+ :generated-oracle
+ {:adapter "formal/smoke/cljs/eacl/formal/production_kernel_js.cljs"
+  :runtime "target/formal/browser/EaclKernel.browser.js"
+  :production-classpath false}
+ :performance
+ {:runner "formal/smoke/cljs/eacl/formal/indexed_traversal_benchmark.cljs"
+  :optimization :advanced
+  :reference-size 16384
+  :observed-p50-ns-per-result 8208.6410522461
+  :maximum-p50-ns-per-result 15000.0
+  :maximum-largest-to-smallest-normalized-p50-per-result-ratio 1.5
+  :observed-largest-to-smallest-normalized-p50-per-result-ratio
+  0.6162630329943262
+  :status :passed}
+ :bundle
+ {:optimization :advanced
+  :empty-runtime-bytes 97122
+  :empty-runtime-gzip-bytes 21279
+  :portable-kernel-bytes 112457
+  :portable-kernel-gzip-bytes 24688
+  :incremental-engine-bytes 15335
+  :incremental-engine-gzip-bytes 3409
+  :maximum-incremental-engine-bytes 32768
+  :maximum-incremental-engine-gzip-bytes 8192
+  :retired-generated-iife-bytes 591497
+  :retired-generated-iife-gzip-bytes 96000
+  :forbidden-production-bundle-markers
+  ["BigNumber" "EaclFormal" "production_kernel_js" "generated.runtime"]
+  :status :passed}
+ :certification
+ {:cross-runtime-and-randomized-oracle
+  {:seeds [820084 820116]
+   :tests 45
+   :assertions 9971
+   :failures 0
+   :errors 0}
+  :full-datascript-core
+  {:tests 167 :assertions 9556 :failures 0 :errors 0}
+  :injected-portable-authority
+  {:tests 165 :assertions 4554 :failures 0 :errors 0
+   :all-required-indexed-operations-observed true}
+  :mutation-registry
+  {:mutants 103 :killed 103 :survived 0}}
+ :trust-posture
+ {:browser-authorization :advisory
+  :server-recheck-required true
+  :reason
+  "The portable CLJC implementation is differentially certified rather than mechanically extracted from Dafny. Deployments must treat browser answers as advisory and re-check authorization on the server."}
+ :recorded-alternative
+ {:when :single-mechanically-generated-engine-is-required-on-all-targets
+  :mechanism :dafny-native-number-esm
+  :steps
+  ["widen {:nativeType} across traversal integer datatypes"
+   "retain the verified safe-integer host boundary"
+   "replace the Proxy rope with explicit accessors"
+   "emit tree-shakeable ESM with checked extern/property boundaries"]}
+ :status :passed}

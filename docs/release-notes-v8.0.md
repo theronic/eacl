@@ -185,14 +185,14 @@ The corresponding `cache-stats` functions report native exact/managed hits,
 misses, bypasses, stamp failures, publications, expirations, and entry counts.
 `:cache? false` bypasses caching for one request. Both global `cache/no-cache`
 and request-local bypass now branch directly to engine evaluation before
-semantic cache-key construction, dependency-stamp capture, provider calls,
-snapshot-token calculation, canonicalization, or result-envelope creation.
+semantic cache-key construction, dependency-stamp capture, snapshot-token
+calculation, canonicalization, or result-envelope creation.
 Cache-disabled callers therefore do not pay the expensive parts of the cache
 strategy.
 
-Caller-supplied portable providers are not trusted for completed native
-authorization answers. Provider corruption/failure cannot produce an allow.
-Continuation state is isolated in a separate bounded private store.
+Caller-supplied cache providers are rejected at construction because they do
+not control the native completed-answer or continuation stores. Continuation
+state remains isolated in a bounded private store.
 
 ## Cursor redesign
 
@@ -235,7 +235,7 @@ backward navigation.
   compact AES-GCM codec for cursor-content confidentiality. The GCM codec
   uses random 96-bit nonces from `SecureRandom`; per NIST SP 800-38D,
   random-nonce GCM keys must be rotated before 2^32 encryptions. At high
-  page-token volume plan key rotation accordingly (`:page-token-keyring`
+  cursor volume plan key rotation accordingly (`:security-keyring`
   supports staged rotation); EACL does not count invocations for you.
 - Constructing a client without explicit token key material warns at
   startup: defaulted keys are process-local and random, so cursors and
@@ -252,6 +252,8 @@ snapshot, stable under writes for all surviving results. It is not a
 lexical, domain, or cross-backend order (internal EIDs differ per
 backend). Relationship pages use each backend's tuple-index order; that
 order is an internal pagination contract, not a presentation-order API.
+The cursor query and navigation digests include emission-order version 2, so a
+future ordering change cannot silently resume an older traversal state.
 
 Under concurrent mutation, results granted below a keyset boundary
 between pages are not revisited and revoked results disappear — ordinary
@@ -296,6 +298,16 @@ The local CLJS Explorer acceptance run keeps repeated nested page hits around
 the 50k recursive-schema exact count without recursive-limit or retained
 snapshot errors. Full evidence is recorded in
 `formal/verification/explorer-v8-release.edn`.
+
+Recursive indexed traversal now groups independent backend requests into
+request-ordered waves of at most 64 scans. The JVM generated kernel and the
+portable ClojureScript authority fold responses in the same order; exhausting
+fuel before a complete wave yields the original state, so no partial wave is
+observable. Independent-stream regressions enforce exactly
+`2 × ceil(streams / 64) + 1` kernel crossings, while star-recursion gates allow
+only the separately counted fuel-yield constant. The generalized pending-work
+coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
+`IndexedBatching.dfy`.
 
 ## Correctness findings closed
 
@@ -419,17 +431,43 @@ The locked Dafny run completes 9,776 proof efforts across 25 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes
-every defined permission root and public authorization operation, and forced
-JVM/CLJS suites exercise that routing. Host runtimes, collection semantics,
-cryptography, FFI conversion, and backend adapter contracts remain explicitly
-trusted or empirically certified boundaries.
+every defined permission root and public authorization operation on the JVM.
+The browser uses the same public boundary with a portable CLJC authority that
+is differentially certified against generated JavaScript and the independent
+fixed-point oracle. Host runtimes, collection semantics, cryptography, FFI
+conversion, and backend adapter contracts remain explicitly trusted or
+empirically certified boundaries.
 
 The release manifest is therefore `:conditionally-verified`, not unqualified
 `:verified`. It deliberately withholds verified release status until an
 independent security/formal-methods review is recorded. Generated authority is
-the only packaged decision engine for Datomic, Datahike, and DataScript. The
-former handwritten engine remains only as a test oracle outside production
-source paths.
+the only packaged JVM decision engine. The portable CLJC engine is the only
+packaged ClojureScript decision engine; generated JavaScript is retained only
+on the formal-smoke classpath as its oracle. No runtime engine selector is
+shipped.
+
+### ClojureScript production authority
+
+The browser no longer executes the Dafny JavaScript runtime or BigNumber on
+the authorization hot path. Advanced-optimized certification passed 44 formal
+tests with 9,963 assertions, the full DataScript/core suite passed 167 tests
+with 9,556 assertions, and the injected-authority suite passed 165 tests with
+4,554 assertions while observing every required traversal operation.
+
+At the 16,384-result reference size the recorded median is 8,684 ns/result,
+below the 15,000 ns/result ceiling. The advanced portable-kernel payload adds
+15,335 raw bytes and 3,409 Java-GZIP bytes over the empty runtime, within the
+32 KiB raw / 8 KiB compressed budgets and more than an order of magnitude
+below the retired 591,497-byte generated browser IIFE. CI also rejects
+`BigNumber`, `EaclFormal`, and generated-adapter markers in the full production
+bundle.
+
+This changes the trust posture: browser authorization is advisory and must be
+re-checked on the server. The portable kernel is strongly differentially
+certified, not mechanically extracted from Dafny. If a future deployment
+requires one mechanically generated engine on every target, the recorded
+alternative is a native-number Dafny ESM build with widened `{:nativeType}`
+coverage, explicit sequence accessors, and tree-shakeable exports.
 
 ## Performance evidence
 

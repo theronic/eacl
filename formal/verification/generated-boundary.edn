@@ -1,5 +1,5 @@
 {:schema-version 1
- :status :all-defined-permission-roots-generated-authority-routed-and-suites-passed
+ :status :target-authorities-routed-and-suites-passed
  :portable-boundary eacl.verified-kernel
  :conversion-boundary
  {:report "formal/verification/conversion-boundary.edn"
@@ -8,14 +8,18 @@
   :cross-runtime-converter-presence :machine-checked
   :semantic-qualification :differential-evidence
   :conversion-code :trusted-ffi-boundary}
- :production-modes [:generated-authoritative]
+ :production-modes
+ {:clj-java :generated-authoritative
+  :cljs-javascript :portable-differentially-certified}
  :runtime-engine-selection-contract :removed
  :test-only-reference-implementations
  [:former-materialized-v8-oracle :former-indexed-oracle]
  :generated-providers
  {:clj-java eacl.formal.production-kernel/GeneratedJavaKernel
    :cljs-javascript
-  eacl.formal.production-kernel-js/GeneratedJavaScriptKernel}
+   {:production eacl.formal.production-kernel-cljs/default-selection
+    :formal-oracle
+    eacl.formal.production-kernel-js/GeneratedJavaScriptKernel}}
  :strict-input-coverage
  [:unknown-tags
   :unknown-fields
@@ -70,7 +74,9 @@
   :javascript-source-model-two-stream-fixtures 8192
   :java-source-model-balanced-fold-fixtures 100
   :javascript-source-model-balanced-fold-fixtures 50
-  :hot-production-path :generated-indexed-traversal
+  :hot-production-path
+  {:clj-java :generated-indexed-traversal
+   :cljs-javascript :portable-indexed-traversal}
   :host-source-model-location :formal-smoke-only
   :formal-source-refinement
   :exact-source-control-model-proved-host-language-correspondence-and-independent-review-remain-trusted}
@@ -176,6 +182,8 @@
    :platform-costs]}
  :indexed-transition-boundary
  {:sources ["formal/dafny/IndexedTraversal.dfy"
+            "formal/dafny/IndexedBatching.dfy"
+            "formal/dafny/IndexedBatchCompleteness.dfy"
             "formal/dafny/IndexedRefinement.dfy"
             "formal/dafny/IndexedForwardCompleteness.dfy"
             "formal/dafny/IndexedReverseCompleteness.dfy"
@@ -184,15 +192,17 @@
             "formal/dafny/RootDenotation.dfy"
             "formal/dafny/IndexedRootDenotation.dfy"]
   :verified-obligations
-  {:transition-state-machine 669
-   :semantic-soundness-refinement 1811
-   :forward-least-fixed-point-completeness 1335
-   :reverse-least-fixed-point-completeness 5104
+  {:transition-state-machine 565
+   :scan-batching 20
+   :batch-completeness 12
+   :semantic-soundness-refinement 1643
+   :forward-least-fixed-point-completeness 1119
+   :reverse-least-fixed-point-completeness 4373
    :traversal-order-rendering-and-ordered-nonimplication-witness 29
    :source-plan-and-seed-certification 48
    :semantic-root-denotation-equivalence 33
    :indexed-root-denotation-compiler-bridge 137
-   :total 9166}
+   :total 7979}
   :generated-state-shape true
   :generated-forward-transitions true
   :generated-reverse-transitions true
@@ -207,19 +217,27 @@
    IndexedTraversal.StrictlyIncreasingIffAdjacent
    :target-logical-work :linear-in-response-values}
   :generated-scan-request-scope-ownership true
+  :generated-bounded-ordered-scan-waves true
+  :generated-ordered-batch-response-folding true
+  :generated-partial-fuel-wave-rollback true
+  :generated-default-scan-batch-size 64
+  :generated-batched-crossing-law
+  "2 * ceil(scans / batch-size) + 1 for independent streams"
   :production-scan-response-routing true
   :production-plan-certification-routing
-  :generated-only-schema-plan-compilation
+  {:clj-java :generated-only-schema-plan-compilation
+   :cljs-javascript :portable-differentially-certified}
   :production-state-transition-routing
-  :generated-only-all-defined-permission-roots
-  :opaque-generated-state-between-adapter-round-trips true
+  {:clj-java :generated-only-all-defined-permission-roots
+   :cljs-javascript :portable-differentially-certified}
+  :opaque-authority-state-between-adapter-round-trips true
   :per-query-schema-rule-index-rebuild false
   :compiled-plan-soundness-refinement true
   :compiled-plan-source-refinement true
   :equal-indexed-root-bodies-have-equal-semantic-denotations true
   :least-fixed-point-soundness true
   :least-fixed-point-completeness true
-  :rendering-state-generated true
+  :rendering-state-authoritative true
   :deterministic-prefix-equivalence true
   :target-runtime-collection-refinement
   {:java
@@ -249,16 +267,16 @@
   :production-routing
   {:clj-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 36
-   :assertions 10395
+   :tests 28
+   :assertions 8420
     :leapfrog-reseek-side-and-target-trace :exact
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407}
  :cljs-javascript
    {:namespace-tests 34
-    :suite-tests 58
-    :suite-assertions 10968
+    :suite-tests 45
+    :suite-assertions 9971
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407
@@ -272,15 +290,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 36
-    :namespace-assertions 10395
+    :namespace-tests 28
+    :namespace-assertions 8420
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
     :namespace-tests 34
-    :suite-tests 58
-    :suite-assertions 10968
+    :suite-tests 45
+    :suite-assertions 9971
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}
@@ -315,7 +333,7 @@
     [:source-scope :snapshot-id :graph-anchor :order-hint]
     :client-local-exact-locator-excluded true}
    :current-cache-generated-selection true
-   :tests 9 :assertions 196 :status :passed}
+   :tests 7 :assertions 187 :status :passed}
   :cljs-public-state-trace
   {:namespace eacl.formal.production-kernel-test
    :backend :datascript

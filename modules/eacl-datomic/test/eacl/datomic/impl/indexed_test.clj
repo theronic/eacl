@@ -91,7 +91,7 @@
 
 (defn- relationship-sort-key
   [{:keys [subject relation resource]}]
-  [(:type subject) (:id subject) (:type resource) relation (:id resource)])
+  [(:type resource) relation (:type subject) (:id resource) (:id subject)])
 
 (def recursive-parent-schema-string
   "definition user {}
@@ -350,7 +350,7 @@
                                    (:data (read-relationships db {:resource/type :server
                                                                   :resource/relation :account})))))))
 
-    (testing "read-relationships returns storage order instead of sorting decoded relationships"
+    (testing "read-relationships follows the shared relationship planner order"
       (is @(d/transact *conn*
                        (concat
                         (impl/tx-relationship db
@@ -362,29 +362,15 @@
                                                             :owner
                                                             (->account :test/account1))))))
       (let [db' (d/db *conn*)
-            attr-eid (d/entid db' relationship-storage/forward-attribute)
-            relation-eids (set (d/q '[:find [?relation ...]
-                                      :in $ ?relation-name ?subject-type
-                                      :where
-                                      [?relation :eacl.relation/relation-name ?relation-name]
-                                      [?relation :eacl.relation/subject-type ?subject-type]]
-                                    db' :owner :user))
             page (read-relationships db' {:subject/type :user
                                           :resource/relation :owner
-                                          :first 20})
-            expected-storage-order (->> (d/seek-datoms db' :avet attr-eid [:user])
-                                        (take-while #(= :user (first (:v %))))
-                                        (filter #(contains? relation-eids (nth (:v %) 1)))
-                                        (map (fn [datom]
-                                               [(:e datom) (nth (:v datom) 3)]))
-                                        vec)
-            actual-order (mapv relationship-eid-pair (:data page))
-            synthetic-sorted-order (->> (:data page)
-                                        (sort-by relationship-sort-key)
-                                        (mapv relationship-eid-pair))]
-        (is (= expected-storage-order actual-order))
-        (is (not= synthetic-sorted-order actual-order))
-        (is (= :global-forward (get-in page [:page-info :start-cursor :scan])))))))
+                                          :first 20})]
+        (is (= (:data page)
+               (vec (sort-by relationship-sort-key (:data page)))))
+        (is (= :relationship-index
+               (get-in page [:page-info :start-cursor :kind])))
+        (is (= #{:kind :v :scan-index :subject-id :resource-id}
+               (set (keys (get-in page [:page-info :start-cursor])))))))))
 
 (deftest lookup-subjects-tests
   (let [db (d/db *conn*)]

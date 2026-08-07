@@ -339,7 +339,14 @@
 (defn- all-forward
   [client query page-size]
   (loop [cursor nil
-         results []]
+         results []
+         pages 0]
+    (when (>= pages 1000)
+      (throw
+       (ex-info "Enumeration page walk did not terminate."
+                {:pages pages
+                 :results (count results)
+                 :last-cursor cursor})))
     (let [page
           (eacl/lookup-resources
            client
@@ -347,7 +354,7 @@
              cursor (assoc :after cursor)))
           results' (into results (:data page))]
       (if (get-in page [:page-info :has-next-page?])
-        (recur (get-in page [:page-info :end-cursor]) results')
+        (recur (get-in page [:page-info :end-cursor]) results' (inc pages))
         results'))))
 
 (deftest explorer-enumeration-refines-point-authorization-test

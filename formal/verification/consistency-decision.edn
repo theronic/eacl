@@ -128,7 +128,9 @@
   ["modules/eacl-datomic/src/eacl/datomic/core.clj"
    "modules/eacl-datahike/src/eacl/datahike/core.clj"
    "modules/eacl-datascript/src/eacl/datascript/core.cljc"]
-  :production-modes [:generated-authoritative]
+  :production-modes
+  {:clj-java :generated-authoritative
+   :cljs-javascript :portable-differentially-certified}
   :runtime-engine-selection-contract :removed
   :captured-current-specialization
   {:selected-adapter :identical-captured-source

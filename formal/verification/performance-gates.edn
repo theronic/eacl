@@ -98,7 +98,7 @@
     :equivalence-lemma
     IndexedTraversal.StrictlyIncreasingIffAdjacent
     :changed-module-verification
-    {:verified-obligations 669
+    {:verified-obligations 565
      :errors 0}}
    :java-runtime
    {:set :clojure-persistent-hash-set
@@ -209,21 +209,21 @@
   :status :passed}
 
  :formal-pipeline
- {:scope :all-25-dafny-modules
-  :proof-efforts 9802
-  :last-observed-local-wall-seconds 1169
+ {:scope :all-26-dafny-modules
+  :proof-efforts 8594
+  :last-observed-local-wall-seconds 1001
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3727263247
+  :total-observed-resource-count 3122554152
   :maximum-observed-proof-effort
-  {:source "IndexedForwardCompleteness.dfy"
+  {:source "IndexedReverseCompleteness.dfy"
    :display-name
-   "IndexedForwardCompleteness.DirectSubjectDerivationIsSeen (correctness) (assertion batch 31)"
-   :resource-count 33547591}
+   "IndexedReverseCompleteness.ReverseResponseWorkCoversSourceFact (correctness)"
+   :resource-count 24106086}
   :recursive-driver-proof-optimization
   {:transparent-specification-maximum-resource-count 161654668
    :opaque-explicit-unfold-maximum-resource-count 10270077
@@ -716,7 +716,7 @@
    {:forward-and-reverse-page-delivered-sequence-counted true
     :all-count-delivered-sequence-retained false
     :all-count-final-denotation-publication-required false
-    :indexed-traversal-obligations 669
+    :indexed-traversal-obligations 565
     :status :passed}
    :clojure
    {:legacy-fabricated-traversal-sequence-removed true

@@ -9,7 +9,7 @@
             #?(:clj
                [eacl.formal.production-kernel]
                :cljs
-               [eacl.formal.production-kernel-js]))
+               [eacl.formal.production-kernel-cljs]))
   #?(:clj
      (:import [java.util.concurrent Semaphore])))
 
@@ -45,7 +45,7 @@
   #?(:clj
      eacl.formal.production-kernel/default-selection
      :cljs
-     eacl.formal.production-kernel-js/default-selection))
+     eacl.formal.production-kernel-cljs/default-selection))
 
 (def ^:dynamic ^:private *decision-memo* nil)
 
