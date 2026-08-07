@@ -20,7 +20,7 @@
   the v8 gate is completion itself."
  :recorded {:host-class :apple-silicon-dev
             :v7-commit "77b3986"
-            :v8-commit "post-group-4" ; groups 3+4: request context + boundary marshalling
+            :v8-commit "post-group-5" ; keyset recursion: raw pages pay closure (see note)
             :warmups 3
             :samples 7
             :statistic :median
@@ -30,42 +30,51 @@
  {:star-2k
   {:fixture {:shape :star :accounts 2000}
    :ops
-   {:can-deep {:v7-median-ms 0.066 :v8-median-ms 0.982 :ratio 14.9 ; fresh-JVM gate run (coldest scenario)
+   {:can-deep {:v7-median-ms 0.066 :v8-median-ms 2.194 :ratio 33.2 ; coldest-JIT scenario
                :status :known-regression}
-    :first-50 {:v7-median-ms 0.922 :v8-median-ms 3.327 :ratio 3.6 ; fresh-JVM gate run (coldest scenario)
+    :first-50 {:v7-median-ms 0.922 :v8-median-ms 70.744 :ratio 76.7 ; raw closure per page (keyset trade)
                :status :known-regression}
-    :exact-count {:v7-median-ms 15.918 :v8-median-ms 64.615 :ratio 4.1 ; fresh-JVM gate run (coldest scenario)
+    :exact-count {:v7-median-ms 15.918 :v8-median-ms 59.502 :ratio 3.7
                   :status :known-regression}}}
   :star-10k
   {:fixture {:shape :star :accounts 10000}
    :ops
-   {:can-deep {:v7-median-ms 0.016 :v8-median-ms 0.740 :ratio 46.3
+   {:can-deep {:v7-median-ms 0.016 :v8-median-ms 0.905 :ratio 56.6
                :status :known-regression}
-    :first-50 {:v7-median-ms 0.230 :v8-median-ms 2.539 :ratio 11.0
+    :first-50 {:v7-median-ms 0.230 :v8-median-ms 237.892 :ratio 1034.0 ; raw closure per page (keyset trade)
                :status :known-regression}
-    :exact-count {:v7-median-ms 40.366 :v8-median-ms 233.606 :ratio 5.8
+    :exact-count {:v7-median-ms 40.366 :v8-median-ms 231.149 :ratio 5.7
                   :status :known-regression}}}
   :chain-2k
   {:fixture {:shape :chain :accounts 2000}
    :ops
-   {:can-deep {:v7-median-ms 9.673 :v8-median-ms 71.010 :ratio 7.3
+   {:can-deep {:v7-median-ms 9.673 :v8-median-ms 70.325 :ratio 7.3
                :status :known-regression}
-    :first-50 {:v7-median-ms 0.212 :v8-median-ms 2.393 :ratio 11.3
+    :first-50 {:v7-median-ms 0.212 :v8-median-ms 47.049 :ratio 221.9 ; raw closure per page (keyset trade)
                :status :known-regression}
-    :exact-count {:v7-median-ms 7.769 :v8-median-ms 46.041 :ratio 5.9
+    :exact-count {:v7-median-ms 7.769 :v8-median-ms 46.081 :ratio 5.9
                   :status :known-regression}}}
   :chain-10k
   {:fixture {:shape :chain :accounts 10000}
    :ops
    {:can-deep {:v7-unsupported :stack-overflow
-               :v8-median-ms 341.053
+               :v8-median-ms 336.203
                :status :v8-completes-where-v7-cannot}
-    :first-50 {:v7-median-ms 0.209 :v8-median-ms 2.273 :ratio 10.9
+    :first-50 {:v7-median-ms 0.209 :v8-median-ms 232.133 :ratio 1110.7 ; raw closure per page (keyset trade)
                :status :known-regression}
-    :exact-count {:v7-median-ms 38.801 :v8-median-ms 222.557 :ratio 5.7
+    :exact-count {:v7-median-ms 38.801 :v8-median-ms 224.554 :ratio 5.8
                   :status :known-regression}}}}
  :notes
- [  "Recording methodology changed at post-group-4: medians now come from
+ [  "Post-group-5 keyset trade, recorded deliberately: a RAW (storeless)
+   first-50 page whose result exceeds the page now materializes the
+   sorted closure per page (probe-then-continue), trading the old
+   streaming page for correctness (no skip/dup) and total-walk cost:
+   client walks pay the closure ONCE then slice zero-scan pages, and
+   raw small-result reads (the 0tx lookup-subjects shape) keep probe
+   early-stop economics. Raw deep pagination of large recursive results
+   should attach a client - this is the documented remediation, not an
+   open bug. Counts and point checks are unchanged by group 5."
+    "Recording methodology changed at post-group-4: medians now come from
    the canonical gate test on a FRESH JVM (scenarios sequential, star-2k
    first and therefore JIT-coldest — its apparent regression vs the
    post-group-3 warm-JVM numbers is harness state, not code; the warmed
