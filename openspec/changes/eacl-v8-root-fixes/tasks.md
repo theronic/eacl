@@ -34,7 +34,7 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 
 ## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — after group 2
 
-- [ ] 5.1 Sort in the two denotation completers with permutation guard; strict-ascending `valid-recursive-denotation?`; bump the denotation key version
+- [x] 5.1 Sort in the two denotation completers with permutation guard; strict-ascending `valid-recursive-denotation?`; bump the denotation key version
 - [ ] 5.2 Extract the shared certified-keyset-page helper (realized slice → `DecideAcyclicPage` → work gate → lookup-items) from the acyclic path
 - [ ] 5.3 Implement probe-then-continue for the no-store path: bounded `RenderPage(S)` probe minting no cursors; exhausted → sort ≤S items; `has-next?` → `continue-indexed-page` to closure on the same state, sort, slice; verify the continuation window validation path accepts to-closure windows (fallback: restart materialization, waste bounded by the probe)
 - [ ] 5.4 Rewrite recursive forward/reverse pages onto resolve-denotation → rebase/validate → certified-keyset-page; binary-search membership rebase per the FORMAL-047 contract (`:rebased`/`:restarted`)

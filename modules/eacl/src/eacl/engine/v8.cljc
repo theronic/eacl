@@ -3032,13 +3032,40 @@
       :has-next? (:has-next? result)
       :has-previous? (:has-previous? result)})))
 
-(def ^:private recursive-denotation-version 2)
+(def ^:private recursive-denotation-version 3) ; v3: sorted canonical form (5.1)
+
+(defn- canonical-denotation
+  "Sorts a completed fixed-point eid vector into the canonical strictly
+  ascending form. The count assert is the permutation guard: sorting
+  must neither drop nor invent grants."
+  [items]
+  (let [sorted (vec (sort items))]
+    (assert (= (count sorted) (count items))
+            "denotation sort changed cardinality")
+    sorted))
+
+(defn- strictly-ascending-eids?
+  [value]
+  (loop [index 1
+         previous (nth value 0 nil)]
+    (if (>= index (count value))
+      true
+      (let [current (nth value index)]
+        (if (< (long previous) (long current))
+          (recur (inc index) current)
+          false)))))
 
 (defn- valid-recursive-denotation?
+  "Canonical denotation form: a vector of strictly ascending positive
+  eids. Strict ascent subsumes distinctness and is the invariant every
+  cache read re-checks (the sort itself is trusted host code guarded
+  here, at the sort site's permutation assert, and by the certified
+  per-slice ordering of DecideAcyclicPage)."
   [value]
   (and (vector? value)
-       (= (count value) (count (distinct value)))
-       (every? #(and (integer? %) (pos? %)) value)))
+       (every? #(and (integer? %) (pos? %)) value)
+       (or (empty? value)
+           (strictly-ascending-eids? value))))
 
 (defn- recursive-denotation-weight
   [value]
@@ -3100,7 +3127,7 @@
        {:eacl/error :eacl.recursive-traversal/invalid-generated-outcome
         :direction :forward
         :outcome-status :incomplete-denotation}))
-    (:items result)))
+    (canonical-denotation (:items result))))
 
 (defn- resolve-forward-denotation
   [db subject-type subject-eid root-node result-type]
@@ -3389,7 +3416,7 @@
         :direction :reverse
         :outcome-status :incomplete-denotation
         :resource-type resource-type}))
-    (:items result)))
+    (canonical-denotation (:items result))))
 
 (defn- resolve-reverse-denotation
   [db resource-type resource-eid root-node subject-type]
