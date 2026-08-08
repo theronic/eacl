@@ -66,7 +66,7 @@
                   (unchecked-byte (alength bytes))])]
             (.update digest length-prefix)
             (.update digest bytes)))]
-    (update-bytes! (.getBytes domain StandardCharsets/UTF_8))
+    (update-bytes! (.getBytes ^String domain StandardCharsets/UTF_8))
     (doseq [record records]
       (update-bytes!
        (.getBytes (pr-str record) StandardCharsets/UTF_8)))

@@ -9,6 +9,16 @@
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
+(def ^:dynamic *backend-op-stats*
+  "Optional atom counting backend adapter invocations by operation keyword.
+
+  Includes proof operations (:schema-proof, :relation-proof) and index
+  scans, plus :schema-proof-computations — the number of times the
+  per-adapter memoized proof actually executed (invocations of a
+  memoized proof are cheap; computations are the scans). Observation-
+  only: never influences dispatch or guard behavior."
+  nil)
+
 (def required-snapshot-operations
   #{:snapshot-id
     :source-scope
@@ -204,7 +214,27 @@
    ::version adapter-version
    ::id id
    ::capabilities (normalize-capabilities id capabilities)
-   ::operations operations
+   ::operations
+   ;; One immutable snapshot per adapter instance (the documented adapter
+   ;; contract, demanded by certification: repeated :schema-proof reads on
+   ;; one instance must be equal), so the zero-arity proof is computed at
+   ;; most once per instance. This collapses the audited duplicate content
+   ;; proofs — route validation, actual-identity, and certificate-identity
+   ;; all deref one delay per request instead of rescanning the schema.
+   ;; The scoped one-arity variant stays uncached.
+   (if-let [schema-proof-op (get operations :schema-proof)]
+     (let [memoized-proof
+           (delay
+             (when *backend-op-stats*
+               (swap! *backend-op-stats*
+                      update :schema-proof-computations (fnil inc 0)))
+             (schema-proof-op))]
+       (assoc operations
+              :schema-proof
+              (fn schema-proof
+                ([] @memoized-proof)
+                ([scope] (schema-proof-op scope)))))
+     operations)
    ::fingerprint
    (or fingerprint
        {:backend id :adapter-version adapter-version})
@@ -476,6 +506,8 @@
 
 (defn invoke
   [adapter operation-key & args]
+  (when *backend-op-stats*
+    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
   (let [value (apply (operation adapter operation-key) args)]
     (if (runtime-guards? adapter)
       (guard-output! adapter operation-key args value)

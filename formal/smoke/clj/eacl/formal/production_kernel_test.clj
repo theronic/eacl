@@ -22,18 +22,6 @@
   (edn/read-string
    (slurp "formal/cross-runtime/vectors.edn")))
 
-(defn- expected-cursor-rebase
-  [values bound-eid]
-  (loop [ordinal 0]
-    (if (= ordinal (count values))
-      {:status :restarted
-       :inspected-count ordinal}
-      (if (= bound-eid (nth values ordinal))
-        {:status :rebased
-         :ordinal ordinal
-         :inspected-count (inc ordinal)}
-        (recur (inc ordinal))))))
-
 (defn- expected-consistency-plan
   [{:keys [mode capability-supported? managed-authority?]}]
   (cond
@@ -828,67 +816,6 @@
              :mode :recover-current
              :cursor-graph 0
              :exact nil}))))
-  (testing "current cursor boundaries rebase by stable result identity"
-    (is (= {:status :rebased
-            :ordinal 2
-            :inspected-count 3}
-           (verified/decide
-            selection
-            :cursor-bound-rebase
-            {:values [11 17 23 29]
-             :bound-eid 23})))
-    (is (= {:status :restarted
-            :inspected-count 4}
-           (verified/decide
-            selection
-            :cursor-bound-rebase
-            {:values [11 17 23 29]
-             :bound-eid 31})))
-    (is (= {:status :rebased
-            :ordinal 1
-            :inspected-count 2}
-           (verified/decide
-            selection
-            :cursor-bound-rebase
-            {:values [0 backend/maximum-exact-integer]
-             :bound-eid backend/maximum-exact-integer})))
-    (is (= {:status :rebased
-            :ordinal 0
-            :inspected-count 1}
-           (verified/decide
-            selection
-            :cursor-bound-rebase
-            {:values [17 17]
-             :bound-eid 17})))
-    (let [values (vec (range 8200))]
-      (is (= {:status :rebased
-              :ordinal 4096
-              :inspected-count 4097}
-             (verified/decide-cursor-bound-rebase
-              selection values 4096)))
-      (is (= {:status :rebased
-              :ordinal 8199
-              :inspected-count 8200}
-             (verified/decide-cursor-bound-rebase
-              selection values 8199)))
-      (is (= {:status :restarted
-              :inspected-count 8200}
-             (verified/decide-cursor-bound-rebase
-              selection values 8201))))
-    (doseq [[size bound-eid]
-            [[0 0]
-             [1 0]
-             [4095 4094]
-             [4096 4095]
-             [4097 4096]
-             [16383 16382]
-             [16384 16383]
-             [16385 16384]
-             [32769 32770]]]
-      (let [values (vec (range size))]
-        (is (= (expected-cursor-rebase values bound-eid)
-               (verified/decide-cursor-bound-rebase
-                selection values bound-eid))))))
   (testing "cache future/sibling is rejected"
     (is (= {:status :miss :reason :future-or-sibling}
            (verified/decide
@@ -1721,7 +1648,10 @@
     (is (true? (get-in second-page
                        [:page-info :has-previous-page?])))))
 
-(deftest production-lookup-cursor-and-cache-use-generated-java-decisions
+(deftest production-lookup-cursor-uses-generated-java-decisions
+  ;; The authenticated-envelope provider path this test also exercised was
+  ;; deleted by trusted-surface-hygiene 11.1; cursor continuation remains
+  ;; the generated-decision surface under test here.
   (let [adapter (test-adapter)
         cursor-opts
         {:decision-kernel selection
@@ -1751,20 +1681,7 @@
         internal-query
         (relay/internalize-page-query
          selected cursor-opts :lookup-resources
-         (assoc query :after token))
-        store (cache/local-store)
-        calls (atom 0)
-        resolve-cache
-        #(cache/resolve!
-          adapter store :semantic-key :can?
-          {:permission-nodes #{[:document :view]}}
-          [10]
-          boolean?
-          (fn [] (swap! calls inc) true)
-          {:decision-kernel selection})]
+         (assoc query :after token))]
     (is (identical? adapter selected))
     (is (= {:kind :lookup-eid :result-eid 1}
-           (:after internal-query)))
-    (is (false? (:cached? (resolve-cache))))
-    (is (true? (:cached? (resolve-cache))))
-    (is (= 1 @calls))))
+           (:after internal-query)))))

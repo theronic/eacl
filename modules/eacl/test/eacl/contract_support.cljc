@@ -10,6 +10,38 @@
 (def ->account (partial eacl/spice-object :account))
 (def ->server (partial eacl/spice-object :server))
 
+(defrecord PortableContractStore [entries metrics]
+  cache/CacheStore
+  (lookup [_ key] (get @entries key))
+  (store! [_ key value]
+    (if (nil? value)
+      false
+      (do (swap! entries assoc key value)
+          true)))
+  (evict! [_ key]
+    (let [existed? (contains? @entries key)]
+      (swap! entries dissoc key)
+      existed?))
+  (clear! [_]
+    (reset! entries {})
+    nil)
+  (stats [_]
+    (assoc @metrics :entries (count @entries)))
+  cache/CacheTelemetry
+  (record-validation! [_ metric]
+    (swap! metrics update metric (fnil inc 0))
+    nil))
+
+(defn portable-store
+  "A minimal portable CacheStore stand-in for contract tests.
+
+  The production portable reference store was deleted with the D-6
+  answer-tier fold-in; contract suites only need an inert provider adapter
+  to prove native completed answers remain client-private and that request
+  bypass touches no provider state."
+  []
+  (->PortableContractStore (atom {}) (atom {})))
+
 (def smoke-schema
   "definition user {}
 
@@ -79,6 +111,72 @@
     (catch #?(:clj Exception :cljs :default) error
       (let [data (ex-data error)]
         (or (:eacl/error data) (:type data))))))
+
+(defn- read-relationships-error-data
+  [client filters]
+  (try
+    (eacl/read-relationships client filters)
+    nil
+    (catch #?(:clj Exception :cljs :default) error
+      (ex-data error))))
+
+(defn assert-unified-filter-validation!
+  "The unified read-relationships filter/error contract
+  (backend-unification 9.1). Value-presence anchor semantics: an anchor key
+  present with a nil value throws `:eacl.filters/missing-anchor` naming it
+  in `:nil-anchor-keys` — nil type/relation filters never widen to
+  match-everything wildcards — and pagination/unknown keys classify
+  identically on every backend. Call with a client whose schema defines the
+  smoke `:server` resource type."
+  [client]
+  (testing "nil id anchor throws instead of scanning or reading empty"
+    (let [data (read-relationships-error-data
+                client {:subject/id nil :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:subject/id] (:nil-anchor-keys data)))))
+  (testing "nil type anchor throws instead of wildcarding every relation"
+    (let [data (read-relationships-error-data
+                client {:resource/type nil :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:resource/type] (:nil-anchor-keys data)))))
+  (testing "nil relation filter throws even beside a valid anchor"
+    (let [data (read-relationships-error-data
+                client {:resource/type :server
+                        :resource/relation nil
+                        :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:resource/relation] (:nil-anchor-keys data)))))
+  (testing "nil id filter throws even beside a valid type anchor"
+    (let [data (read-relationships-error-data
+                client {:subject/type :user
+                        :subject/id nil
+                        :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:subject/id] (:nil-anchor-keys data)))))
+  (testing "an anchorless read names no nil keys but still fails closed"
+    (let [data (read-relationships-error-data client {})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [] (:nil-anchor-keys data)))))
+  (testing "v6-era pagination options classify identically on every backend"
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (read-relationships-error-data
+             client {:resource/type :server :limit 5}))))
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (read-relationships-error-data
+             client {:resource/type :server :cursor "opaque"})))))
+  (testing "unknown keys fail loudly with the shared classification"
+    (let [data (read-relationships-error-data
+                client {:resource/type :server
+                        :resouce/id "typo"
+                        :first 5})]
+      (is (= :eacl.filters/unknown-filter (:eacl/error data)))
+      (is (= [:resouce/id] (:unknown-keys data)))))
+  (testing "a valid anchored read still succeeds"
+    (is (vector?
+         (:data (eacl/read-relationships
+                 client {:resource/type :server :first 5}))))))
 
 (defn assert-seeded-contracts!
   [client]

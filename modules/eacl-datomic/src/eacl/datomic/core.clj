@@ -26,6 +26,7 @@
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
+            [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
@@ -61,7 +62,7 @@
   (quot Long/MAX_VALUE 1000))
 (def ^:private default-consistency-sync-timeout-ms 30000)
 (def ^:private maximum-token-key-id-length 128)
-(def ^:private secure-random (SecureRandom.))
+(def ^:private ^SecureRandom secure-random (SecureRandom.))
 
 (defn- now-seconds []
   (quot (System/currentTimeMillis) 1000))
@@ -261,7 +262,28 @@
                        :maximum-length maximum-page-token-length})))
           token)))))
 
-(defn decrypt-page-token
+(defn- page-token-expired-error
+  "The public expired-token error, byte-compatible with the historical
+  decode-time throw. The request path threads the computed `:expired?`
+  boolean into the verified continuation decision and throws this only when
+  the kernel rejects the token."
+  [{:cursor/keys [expired-exp expired-now]}]
+  (ex-info
+   "Page token has expired."
+   {:type :eacl.pagination/expired-cursor
+    :eacl/error :eacl.pagination/expired-cursor
+    :reason :expired
+    :exp expired-exp
+    :now expired-now}))
+
+(defn- decrypt-authenticated-page-token
+  "Authenticates and decodes a page token without enforcing expiry.
+
+  The payload carries the computed decode facts (`:cursor/authenticated?`,
+  `:cursor/expired?`) so the time-to-live check is decided by the verified
+  continuation kernel rather than pre-empted here. Authenticity and shape
+  failures still throw — an unauthenticated token has no payload to decide
+  over."
   [opts token]
   (when token
     ;; Length is checked before any decoding: the envelope is decoded before
@@ -311,16 +333,12 @@
             (invalid-page-token! :malformed))
           (when-not (= page-token-version (:v payload))
             (invalid-page-token! :unsupported-version {:version (:v payload)}))
-          (when (and (:exp payload) (<= (:exp payload) now))
-            (throw
-             (ex-info
-              "Page token has expired."
-              {:type :eacl.pagination/expired-cursor
-               :eacl/error :eacl.pagination/expired-cursor
-               :reason :expired
-               :exp (:exp payload)
-               :now now})))
-          payload))
+          (assoc payload
+                 :cursor/authenticated? true
+                 :cursor/expired?
+                 (boolean (and (:exp payload) (<= (:exp payload) now)))
+                 :cursor/expired-exp (:exp payload)
+                 :cursor/expired-now now)))
       (catch clojure.lang.ExceptionInfo e
         (throw e))
       ;; A StackOverflowError is an Error, not an Exception: before the codec
@@ -330,6 +348,17 @@
         (invalid-page-token! :malformed))
       (catch Exception _
         (invalid-page-token! :malformed)))))
+
+(defn decrypt-page-token
+  [opts token]
+  (when-let [payload (decrypt-authenticated-page-token opts token)]
+    (when (:cursor/expired? payload)
+      (throw (page-token-expired-error payload)))
+    (dissoc payload
+            :cursor/authenticated?
+            :cursor/expired?
+            :cursor/expired-exp
+            :cursor/expired-now)))
 
 (defn- valid-page-token-ttl?
   [ttl-seconds]
@@ -388,9 +417,12 @@
                     {:page/basis :live}))))
 
 (defn- decoded-page-bound
+  "Authenticated decode of one page bound with expiry deferred: the computed
+  `:cursor/expired?` boolean flows into the verified continuation decision,
+  which is where an expired token is rejected."
   [opts page-req]
   (some->> (:bound page-req)
-           (token->page-bound opts)))
+           (decrypt-authenticated-page-token opts)))
 
 (def ^:private sync-timeout-marker (Object.))
 
@@ -530,50 +562,77 @@
                          :reason reason))))
 
 (defn- validate-page-token-identity!
+  "Throws the typed pre-kernel errors for database/operation/query mismatch
+  and malformed continuation metadata, then returns the computed scope
+  conjunction. The verified continuation decision receives that computed
+  boolean and re-confirms the rejection (belt and braces)."
   [opts op query-shape decoded]
-  (when decoded
-    (when-not (= (:database-id opts) (:database-id decoded))
-      (invalid-cursor! "Page token was created for a different database."
-                       :database-mismatch {}))
-    (when-not (= op (:op decoded))
-      (invalid-cursor! "Page token was created for a different operation."
-                       :operation-mismatch
-                       {:expected op :actual (:op decoded)}))
-    (when-not (= query-shape (:query-shape decoded))
-      (invalid-cursor! "Page token does not match the current query."
-                       :query-mismatch
-                       {:expected query-shape :actual (:query-shape decoded)}))
-    (when-not (= :stable (:basis decoded))
-      (invalid-cursor! "Unsupported page token basis."
-                       :unsupported-basis {:basis (:basis decoded)}))
-    (when-not (and (integer? (:basis-t decoded))
-                   (not (neg? (:basis-t decoded))))
-      (invalid-cursor! "Page token has an invalid revision."
-                       :invalid-revision {:basis-t (:basis-t decoded)}))
-    (when-not (or (nil? (:cache-scope decoded))
-                  (vector? (:cache-scope decoded)))
-      (invalid-cursor! "Page token has an invalid snapshot scope."
-                       :invalid-cache-scope
-                       {:cache-scope (:cache-scope decoded)}))
-    (doseq [field [:source-scope
-                   :graph-head
-                   :adapter-fingerprint
-                   :identity-contract
-                   :dependency-scope-digest
-                   :proof-digest]]
-      (when-not (contains? decoded field)
-        (invalid-cursor!
-         "Page token is missing exact-snapshot continuation metadata."
-         :missing-proof-context
-         {:field field}))))
-  true)
+  (if-not decoded
+    nil
+    (let [database-match?
+          (= (:database-id opts) (:database-id decoded))
+          operation-match? (= op (:op decoded))
+          query-match? (= query-shape (:query-shape decoded))]
+      (when-not database-match?
+        (invalid-cursor! "Page token was created for a different database."
+                         :database-mismatch {}))
+      (when-not operation-match?
+        (invalid-cursor! "Page token was created for a different operation."
+                         :operation-mismatch
+                         {:expected op :actual (:op decoded)}))
+      (when-not query-match?
+        (invalid-cursor! "Page token does not match the current query."
+                         :query-mismatch
+                         {:expected query-shape
+                          :actual (:query-shape decoded)}))
+      (when-not (= :stable (:basis decoded))
+        (invalid-cursor! "Unsupported page token basis."
+                         :unsupported-basis {:basis (:basis decoded)}))
+      (when-not (and (integer? (:basis-t decoded))
+                     (not (neg? (:basis-t decoded))))
+        (invalid-cursor! "Page token has an invalid revision."
+                         :invalid-revision {:basis-t (:basis-t decoded)}))
+      (when-not (or (nil? (:cache-scope decoded))
+                    (vector? (:cache-scope decoded)))
+        (invalid-cursor! "Page token has an invalid snapshot scope."
+                         :invalid-cache-scope
+                         {:cache-scope (:cache-scope decoded)}))
+      (doseq [field [:source-scope
+                     :graph-head
+                     :adapter-fingerprint
+                     :identity-contract
+                     :dependency-scope-digest
+                     :proof-digest]]
+        (when-not (contains? decoded field)
+          (invalid-cursor!
+           "Page token is missing exact-snapshot continuation metadata."
+           :missing-proof-context
+           {:field field})))
+      (and database-match? operation-match? query-match?))))
+
+(defn- authenticate-page-bound
+  "Decodes one page bound and annotates it with the computed scope-match
+  boolean for the verified continuation decision."
+  [opts op query-shape page-req]
+  (let [decoded (decoded-page-bound opts page-req)
+        scope-matches?
+        (validate-page-token-identity! opts op query-shape decoded)]
+    (some-> decoded
+            (assoc :cursor/scope-matches? (boolean scope-matches?)))))
 
 (defn- validate-page-token-schema!
+  "Unconditional schema-generation validation on cursor acceptance.
+
+  Runs on every resumption — recovery mode included. The stamp compared is
+  the actual schema mutation identity (see `snapshot-result-context`), not a
+  `basis-t` proxy, so ordinary data churn leaves it equal and only a real
+  schema generation change rejects. Exact-snapshot reconstruction selects the
+  historical snapshot whose stamp minted the token, so pinned walks still
+  resume across later schema changes."
   [opts decoded]
   (when decoded
-    (when-not (or (:cursor-recovery opts)
-                  (= (selected-schema-version opts)
-                     (:schema-version decoded)))
+    (when-not (= (selected-schema-version opts)
+                 (:schema-version decoded))
       (throw (ex-info "Page token was created under a different EACL schema generation."
                       {:type :eacl.pagination/stale-schema
                        :expected (selected-schema-version opts)
@@ -588,9 +647,13 @@
       (and edge (= :desc (:direction page-req))) (assoc :before edge))))
 
 (defn- empty-anchor-cursor-recovery
+  "A resume whose subject/resource anchor no longer resolves cannot be a
+  benign rebase: the keyset boundary's result identity is unverifiable,
+  so report the honest restart (agent-found successor of the dead
+  :recursive-traversal special case)."
   [captured decoded]
   (if (and (= :rebased (:cursor-recovery captured))
-           (= :recursive-traversal (get-in decoded [:edge :kind])))
+           (= :lookup-eid (get-in decoded [:edge :kind])))
     :restarted
     (:cursor-recovery captured)))
 
@@ -698,8 +761,10 @@
 (def ^:private answer-cache-kinds
   "The entry kinds that hold a finished answer, as opposed to the traversal and
   pagination state EACL caches regardless. :remember-answers governs exactly
-  these four."
-  #{:can? :lookup-page :count :latest-result})
+  these three. (The vestigial :latest-result kind was deleted by
+  trusted-surface-hygiene 11.1 — nothing has minted it since the v8 cursor
+  redesign.)"
+  #{:can? :lookup-page :count})
 
 (defn- internal-page-weight
   [page]
@@ -718,18 +783,6 @@
     :lookup-eid
     (when (positive-eid? (:result-eid cursor))
       {:eid (:result-eid cursor)})
-
-    :recursive-traversal
-    (let [{:keys [engine-version direction result-kind ordinal result]} cursor]
-      (when (and (integer? engine-version)
-                 (pos? engine-version)
-                 (#{:forward :reverse} direction)
-                 (#{:resource :subject} result-kind)
-                 (integer? ordinal)
-                 (not (neg? ordinal))
-                 (keyword? (:type result))
-                 (positive-eid? (:eid result)))
-        result))
 
     nil))
 
@@ -840,7 +893,7 @@
             (sort-by first relation-stamps))})))))
 
 (defn- cached-authorization-result
-  [opts consistency-context op query-identity kind valid-result? _weight-fn compute]
+  [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [{:keys [adapter db relationship-dependencies
                 permission-dependencies basis-t completed-cache?]}
         consistency-context
@@ -889,6 +942,7 @@
                      [dependency]))))
               :managed-subproblem-scope
               (backend/invoke adapter :source-scope)
+              :answer-weight-fn weight-fn
               :remember-answer?
               (:cache-remember-answers? opts)}
              {:operation op
@@ -1025,12 +1079,15 @@
   [conn
    {:keys [object-id->entid] :as opts}
    filters]
+  ;; The unified filter contract validates the complete public query before
+  ;; page normalization or snapshot work (backend-unification 9.1), so
+  ;; misuse classifies identically on every backend.
+  (relationship-filters/validate! filters)
   (reject-live-basis! filters)
   (let [query-shape (list-query-shape :read-relationships filters)
         page-req (impl.indexed/normalize-page-request filters)
-        decoded (decoded-page-bound opts page-req)
-        _ (validate-page-token-identity!
-           opts :read-relationships query-shape decoded)
+        decoded (authenticate-page-bound
+                 opts :read-relationships query-shape page-req)
         {:keys [db basis-t schema-version cursor-context
                 cursor-recovery]}
         (capture-result-context
@@ -1230,7 +1287,11 @@
 
 (defmacro ^:private with-client-schema-write
   [schema-lock & body]
-  `(let [^Lock lock# (.writeLock ^ReentrantReadWriteLock ~schema-lock)]
+  ;; The hint rides a let-bound local: reader metadata attached directly to
+  ;; an unquoted form is dropped by syntax-quote, leaving a reflective
+  ;; field access at every expansion site.
+  `(let [rw# ~schema-lock
+         ^Lock lock# (.writeLock ^ReentrantReadWriteLock rw#)]
      (.lock lock#)
      (try
        ~@body
@@ -1270,7 +1331,8 @@
   [conn schema-lock schema-state & body]
   `(do
      (adopt-schema-generation! ~conn ~schema-state ~schema-lock)
-     (let [^Lock lock# (.readLock ^ReentrantReadWriteLock ~schema-lock)]
+     (let [rw# ~schema-lock
+           ^Lock lock# (.readLock ^ReentrantReadWriteLock rw#)]
        (.lock lock#)
        (try
          (binding [impl.indexed/*schema-cache* (deref ~schema-state)]
@@ -1312,7 +1374,6 @@
   (shared-cache/validate-request-cache-option! cache-option)
   (if (false? cache-option)
     (assoc opts
-           :lookup-cache-store nil
            :continuation-cache-store nil
            :current-cache-store nil
            :cache-remember-answers? false)
@@ -1351,20 +1412,27 @@
     (:proof-digest context)]))
 
 (defn- cursor-graph-code
-  [cursor-envelope context]
-  (if (= (get-in cursor-envelope [:graph-head :graph-anchor])
-         (get-in context [:graph-head :graph-anchor]))
-    0
-    1))
+  "Graph-anchor code in the numbering shared by one continuation decision:
+  0 = the current selection's graph, 1 = the cursor's (different) graph,
+  2 = any other graph. The kernel's exact arm compares codes, so an exact
+  selection is accepted only when it resolves the cursor's own graph."
+  [current cursor-envelope context]
+  (let [anchor (get-in context [:graph-head :graph-anchor])]
+    (cond
+      (= anchor (get-in current [:graph-head :graph-anchor])) 0
+      (= anchor (get-in cursor-envelope [:graph-head :graph-anchor])) 1
+      :else 2)))
 
 (defn- cursor-decision
   [mode current cursor-envelope exact]
   (verified/decide
    production-kernel/default-selection
    :cursor-continuation
-   {:authenticated? true
-    :scope-matches? true
-    :expired? false
+   {:authenticated?
+    (boolean (:cursor/authenticated? cursor-envelope))
+    :scope-matches?
+    (boolean (:cursor/scope-matches? cursor-envelope))
+    :expired? (boolean (:cursor/expired? cursor-envelope))
     :source (cursor-execution-identity current)
     :cursor-source
     (cursor-execution-identity cursor-envelope)
@@ -1375,12 +1443,43 @@
     (if (= :at-exact-snapshot mode)
       :exact-snapshot
       :recover-current)
-    :cursor-graph 0
+    :cursor-graph
+    (cursor-graph-code current cursor-envelope cursor-envelope)
     :exact
     (when exact
-      {:graph (cursor-graph-code cursor-envelope exact)
+      {:graph (cursor-graph-code current cursor-envelope exact)
        :source (cursor-execution-identity exact)
        :proof (cursor-continuation-proof exact)})}))
+
+(defn- dependency-cursor-context
+  "Cursor continuation context for one selected snapshot.
+
+  Permission lookups carry the dependency-stamp descriptor the managed cache
+  already computes — schema stamp plus sorted `[relation-id tx mutation-id]`
+  stamps — so a transaction touching no relation in the query's closure
+  leaves the continuation proof equal and the cursor decision at `:current`.
+  This works regardless of `:coherence-authority` (the stamps live in the
+  snapshot itself). Relationship reads, unreadable stamps, and empty
+  closures keep the exact-snapshot proof."
+  [db snapshot-adapter relation-ids]
+  (let [base (relay/dependency-context snapshot-adapter)
+        descriptor
+        (when (seq relation-ids)
+          (managed-cache-descriptor
+           db (vec (sort (distinct relation-ids)))))]
+    (if-not descriptor
+      base
+      (assoc base
+             :dependency-scope-digest
+             (secure/canonical-digest
+              "eacl/datomic/cursor-dependency-scope/v1"
+              {:mode :relation-dependencies
+               :relation-ids (vec (sort (distinct relation-ids)))})
+             :proof-digest
+             (secure/canonical-digest
+              "eacl/datomic/cursor-dependency-proof/v1"
+              {:schema-stamp (:schema-stamp descriptor)
+               :relation-stamps (:dependency-stamp descriptor)})))))
 
 (defn- snapshot-result-context
   [opts snapshot-adapter prepare decoded]
@@ -1402,7 +1501,11 @@
                      opts db permission-dependency-key))))
         cache-scope [:basis basis-t]
         cursor-context
-        (relay/dependency-context snapshot-adapter)]
+        (dependency-cursor-context
+         db snapshot-adapter
+         (some-> permission-dependencies
+                 deref
+                 :relationship-dependencies))]
     (assoc prepared
            :db db
            :adapter snapshot-adapter
@@ -1412,10 +1515,14 @@
            :cursor-context cursor-context
            :schema-cache schema-cache
            :permission-dependencies permission-dependencies
-           ;; The token is exact-revision pinned. A future schema change must
-           ;; not invalidate the old page walk; exact reconstruction supplies
-           ;; the schema that actually produced the cursor.
-           :schema-version basis-t)))
+           ;; The actual schema mutation identity of the selected snapshot —
+           ;; not a basis-t proxy — so the unconditional schema-generation
+           ;; check fires only on a real generation change. The token stays
+           ;; exact-revision pinned through :basis-t; exact reconstruction
+           ;; selects the historical snapshot whose generation minted the
+           ;; cursor, so pinned walks resume across later schema changes.
+           :schema-version
+           (some-> (impl.indexed/schema-version db) str))))
 
 (defn- cursor-snapshot-expired!
   [operation decoded]
@@ -1481,8 +1588,11 @@
               :current
               selected-context
 
+              :expired
+              (throw (page-token-expired-error decoded))
+
               :rebase-current
-              (if (#{:lookup-eid :recursive-traversal}
+              (if (#{:lookup-eid}
                    (get-in decoded [:edge :kind]))
                 (assoc
                  (snapshot-result-context
@@ -1820,9 +1930,8 @@
   (reject-live-basis! query)
   (let [query-shape (list-query-shape :lookup-resources query)
         page-req (impl.indexed/normalize-page-request query)
-        decoded (decoded-page-bound opts page-req)
-        _ (validate-page-token-identity!
-           opts :lookup-resources query-shape decoded)
+        decoded (authenticate-page-bound
+                 opts :lookup-resources query-shape page-req)
         prepare
         (fn [db decoded-bound]
           (let [internal-subject (spice-object->internal db subject)
@@ -1943,9 +2052,8 @@
   (reject-live-basis! query)
   (let [query-shape (list-query-shape :lookup-subjects query)
         page-req (impl.indexed/normalize-page-request query)
-        decoded (decoded-page-bound opts page-req)
-        _ (validate-page-token-identity!
-           opts :lookup-subjects query-shape decoded)
+        decoded (authenticate-page-bound
+                 opts :lookup-subjects query-shape page-req)
         prepare
         (fn [db decoded-bound]
           (let [internal-resource
@@ -2425,8 +2533,13 @@
       nil         the same client-private cache as omission
       cache/no-cache
                   no caching at all
-      <map>       native capacity/compatibility options; :max-entries bounds
-                  complete answers.
+      <map>       native capacity/compatibility options. Complete native
+                  answers are weight-bounded (see :subproblem-cache
+                  :answer-max-weight, default 16 MiB) with LRU eviction and
+                  oversized rejection; :max-entries remains accepted and
+                  still bounds the portable provider store and the
+                  :on-repeat sighting window, but no longer counts native
+                  answers.
 
     Pass cache/no-cache when the same permission check is essentially never
     asked twice — a batch job sweeping distinct resources, say — or when direct
@@ -2451,10 +2564,10 @@
       :max-weight, :max-entry-weight, :max-entries, :ttl-ms  capacity bounds
       :namespace         isolates entries between clients sharing an adapter
       :kind-max-weight, :two-hit-kinds, :admission-entries   per-kind tuning
-      :subproblem-cache   shared projection/denotation cache limits, including
-                          :enabled?, :projection-max-weight,
-                          :denotation-max-weight, :max-inflight, and
-                          :managed-proof-max-atoms
+      :subproblem-cache   shared projection/denotation/answer cache limits,
+                          including :enabled?, :projection-max-weight,
+                          :denotation-max-weight, :answer-max-weight,
+                          :max-inflight, and :managed-proof-max-atoms
       :checkpoints       bounded revision checkpoints
       :remember-answers  false | true (default) | :on-repeat — whether a
                          finished answer is kept so an identical later check
@@ -2638,7 +2751,9 @@
                               configured-keyring)
                              {current-kid (if page-token-key
                                             (normalize-token-key page-token-key)
-                                            (random-bytes 32))})
+                                            (do
+                                              (secure/warn-defaulted-token-key!)
+                                              (random-bytes 32)))})
         _                  (when-not (get keyring current-kid)
                              (throw (ex-info "Page token current key id is not present in keyring."
                                              {:page-token-kid current-kid
@@ -2710,18 +2825,15 @@
                                        :eacl-id-immutable-v1)})
                                 :adapter-deterministic?
                                 adapter-deterministic?}))
-                            ;; Provider and continuation stores remain separate
-                            ;; from native completed answers.
-                            :lookup-cache-store (:store cache-config)
+                            ;; Continuation state is the only provider-store
+                            ;; surface; native completed answers stay
+                            ;; client-private. (The write-only
+                            ;; :shared-cache-store/:lookup-cache-store options
+                            ;; were deleted by trusted-surface-hygiene 11.1.)
                             :continuation-cache-store
                             (:continuation-store cache-config)
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
                             :cache-namespace (:namespace cache-config)
-                            :shared-cache-store
-                            (cache/authenticated-store
-                             (:store cache-config)
-                             (:namespace cache-config)
-                             (:ttl-ms cache-config))
                             :current-cache-store
                             (when (and
                                    (:store cache-config)

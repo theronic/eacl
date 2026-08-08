@@ -6,6 +6,7 @@
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.verified-kernel :as verified]))
 
@@ -31,16 +32,64 @@
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-    (is (= :managed
-           (get-in default-client [:opts :coherence-authority])))
-    (is (= :mutation
+    (is (= :unknown
+           (get-in default-client [:opts :coherence-authority]))
+        "managed reuse is an explicit writer contract, never the default")
+    (is (= :content
            (get-in default-client [:opts :proof-mode])))
     (is (= :unknown
            (get-in unknown-client [:opts :coherence-authority])))
     (is (= :content
            (get-in unknown-client [:opts :proof-mode])))
+    (let [managed-client
+          (datascript/make-client
+           conn {:coherence-authority :managed})]
+      (is (= :managed
+             (get-in managed-client [:opts :coherence-authority])))
+      (is (= :mutation
+             (get-in managed-client [:opts :proof-mode]))))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
+
+(deftest raw-retraction-on-default-client-must-deny-test
+  ;; D-5 pinning regression (the audited stale-ALLOW): under the old
+  ;; :coherence-authority :managed default, one raw ds/transact! retraction
+  ;; left every relation stamp untouched, so the next identical check served
+  ;; the cached allow. The :unknown default reuses answers only on the exact
+  ;; immutable database value they were computed on.
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        user (eacl/spice-object :user "raw-write-user")
+        document (eacl/spice-object :document "raw-write-doc")]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation owner: user
+        permission view = owner
+      }")
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document)}])
+    (eacl/create-relationship!
+     client (eacl/->Relationship user :owner document))
+    (is (true? (eacl/can? client user :view document)))
+    (is (true? (eacl/can? client user :view document))
+        "the repeated identical check is served from the cache")
+    ;; Retract the relationship tuples OUTSIDE every EACL writer.
+    (let [db (ds/db conn)
+          retractions
+          (into []
+                (mapcat
+                 (fn [attribute]
+                   (map (fn [datom]
+                          [:db/retract (:e datom) attribute (:v datom)])
+                        (ds/datoms db :aevt attribute))))
+                [relationship-storage/forward-attribute
+                 relationship-storage/reverse-attribute])]
+      (is (seq retractions))
+      (ds/transact! conn retractions))
+    (is (false? (eacl/can? client user :view document))
+        "a raw out-of-contract retraction must deny on a default client")))
 
 (defn- reusable-denotation-hits
   [stats]
@@ -69,7 +118,11 @@
      permission different_target = team->other
    }")
 
-(deftest current-lookup-cursor-restarts-when-result-identity-disappears-test
+(deftest current-lookup-cursor-is-rejected-across-schema-generations-test
+  ;; Re-goldened for cursor-dependency-validity: the cursor scope commits the
+  ;; selected snapshot's schema generation, so a cursor minted under another
+  ;; generation fails scope validation with the typed error instead of
+  ;; silently restarting the walk — recovery mode included.
   (let [conn (datascript/create-conn)
         client
         (datascript/make-client
@@ -109,11 +162,19 @@
         definition document {
           relation owner: user
         }")
-      (let [recovered
-            (eacl/lookup-resources client (assoc query :after cursor))]
-        (is (empty? (:data recovered)))
-        (is (= :restarted
-               (get-in recovered [:page-info :cursor-recovery])))))))
+      (let [error
+            (try
+              (eacl/lookup-resources client (assoc query :after cursor))
+              nil
+              (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                     thrown
+                thrown))]
+        (is (some? error)
+            "a cursor from another schema generation must not resume the walk")
+        (is (= :eacl.pagination/invalid-cursor (:type (ex-data error))))
+        (is (= :query-mismatch (:reason (ex-data error))))
+        (is (empty? (:data (eacl/lookup-resources client query)))
+            "a fresh enumeration evaluates the new schema generation")))))
 
 (deftest semantic-root-denotation-key-is-cross-target-exact-test
   (testing "equal root bodies share and distinct indexed bodies stay separate"
@@ -182,7 +243,7 @@
 
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
-        store  (cache/local-store)
+        store  (contract/portable-store)
         client (datascript/make-client conn {:cache store})]
     (eacl/write-schema! client contract/smoke-schema)
     (seed-objects! conn)
@@ -444,9 +505,17 @@
                             (contract/->server "server-1")))))))
 
 (deftest datascript-large-relationship-cursor-skips-item-proof-test
+  ;; Pinned to the managed/mutation-proof regime: the assertion is that the
+  ;; v10 cursor design performs ZERO record-digest work per page. The
+  ;; :unknown default (D-5) selects content proofs, which pay one schema
+  ;; content digest per page - a separate, deliberate trade of the fail-safe
+  ;; default, not a cursor property.
   (let [relationship-count 1505
         conn (datascript/create-conn)
-        client (datascript/make-client conn {:cache cache/no-cache})
+        client (datascript/make-client
+                conn
+                {:cache cache/no-cache
+                 :coherence-authority :managed})
         user-ids (mapv #(str "bulk-user-" %) (range relationship-count))
         server-ids (mapv #(str "bulk-server-" %) (range relationship-count))
         object-ids (into user-ids server-ids)]
@@ -550,6 +619,9 @@
       (is (= :eacl.schema/duplicate-permission
              (:type (thrown-data #(eacl/write-schema! client schema))))))))
 
+(deftest unified-filter-validation-contract-test
+  (contract/assert-unified-filter-validation! (seeded-client)))
+
 (deftest v7-3-query-validation-test
   (let [client (seeded-client)]
     (testing "relationship reads require a known anchor and reject broadened scans"
@@ -628,7 +700,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 10 (:v envelope)))
+      (is (= 11 (:v envelope)))
       (is (= :lookup-eid
              (get-in envelope [:edge :kind])))
       (is (= "server-1"

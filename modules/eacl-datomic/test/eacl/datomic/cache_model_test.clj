@@ -69,16 +69,25 @@
       (is (false? (:cached? (eacl/lookup-resources uncached forward)))))))
 
 (deftest randomized-cache-and-mutation-differential-test
-  (doseq [seed (range 5)]
-    (testing (str "seed " seed)
+  (doseq [;; The managed tier must survive the same interleaved-write oracle
+          ;; as the fail-safe default (managed-reuse-certification 8.3):
+          ;; every write below uses an EACL writer, so managed reuse is in
+          ;; contract and any stamped stale answer is a divergence.
+          [authority-label authority-options]
+          [[:unknown {}]
+           [:managed {:coherence-authority :managed}]]
+          seed (range 5)]
+    (testing (str (name authority-label) " authority, seed " seed)
       (with-mem-conn [conn schema/v7-schema]
         (let [random (java.util.Random. seed)
               cached (core/make-client
                       conn
-                      {:cache {:max-weight (* 8 1024 1024)
-                               :max-entry-weight (* 2 1024 1024)
-                               :max-entries 2048
-                               :remember-answers true}})
+                      (merge
+                       authority-options
+                       {:cache {:max-weight (* 8 1024 1024)
+                                :max-entry-weight (* 2 1024 1024)
+                                :max-entries 2048
+                                :remember-answers true}}))
               uncached (atom (core/make-client conn {:cache cache/no-cache}))
               user-ids (mapv #(str "user-" %) (range 8))
               account-ids (mapv #(str "account-" %) (range 8))]

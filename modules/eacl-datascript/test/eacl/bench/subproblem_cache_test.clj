@@ -516,17 +516,16 @@
 (defn- render-recursive-page-batch
   [values repetitions]
   (dotimes [_ repetitions]
-    (let [page
-          (#'engine/page-from-recursive-denotation
-           :forward :resource :folder values :asc nil 20)]
-      (when-not (= 20 (count (:data page)))
+    (let [window
+          (#'engine/keyset-window values :asc nil 20)]
+      (when-not (= 21 (count window))
         (throw
-         (ex-info "Unexpected recursive denotation page."
-                  {:page page})))))
+         (ex-info "Unexpected recursive denotation window."
+                  {:window window})))))
   nil)
 
-(deftest ^:benchmark cached-recursive-page-cost-is-page-bounded
-  (testing "rendering a cached page does not materialize the full closure"
+(deftest ^:benchmark keyset-recursive-page-cost-is-page-bounded
+  (testing "slicing a keyset page does not materialize the full closure"
     (let [small-count 64
           large-count 131072
           small-values (vec (range small-count))

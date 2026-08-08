@@ -1125,19 +1125,20 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [db   (load-recursive-out-of-eid-order-db! conn)
           user (recursive-user-ref "user-1")]
-      (testing "recursive lookup-resources uses traversal order, not global eid order"
+      (testing "recursive lookup-resources returns the canonical eid-ordered denotation"
         (let [page (lookup-resources db {:subject       user
                                          :permission    :read
                                          :resource/type :account
                                          :first         10})
               eids (map :id (:data page))]
-          (is (= [(spice-object :account "root")
-                  (spice-object :account "child")
-                  (spice-object :account "grandchild")]
+          (is (= [(spice-object :account "child")
+                  (spice-object :account "grandchild")
+                  (spice-object :account "root")]
                  (paginated->spice db page)))
-          (is (not= (sort eids) eids))
-          (is (= :recursive-traversal (get-in page [:page-info :start-cursor :kind])))
-          (is (= 0 (get-in page [:page-info :start-cursor :ordinal])))))
+          (is (= (sort eids) eids))
+          (is (= :lookup-eid (get-in page [:page-info :start-cursor :kind])))
+          (is (= (first eids)
+                 (get-in page [:page-info :start-cursor :result-eid])))))
 
       (testing "recursive lookup does not call public can? while paging"
         (with-redefs [impl.indexed/can? (fn [& _]
@@ -1147,14 +1148,18 @@
                                                        :resource/type :account
                                                        :first         2})))))))
 
-      (testing "bare recursive :last rejects its implicit full-closure traversal"
-        (is (= :eacl.pagination/unsupported-recursive-last
-               (:eacl/error
-                (thrown-ex-data
-                 #(lookup-resources db {:subject       user
-                                        :permission    :read
-                                        :resource/type :account
-                                        :last          2}))))))
+      (testing "bare recursive :last serves the canonical denotation tail"
+        (let [full (lookup-resources db {:subject       user
+                                         :permission    :read
+                                         :resource/type :account
+                                         :first         10})
+              last-page (lookup-resources db {:subject       user
+                                              :permission    :read
+                                              :resource/type :account
+                                              :last          2})]
+          (is (= (take-last 2 (:data full)) (:data last-page)))
+          (is (true? (get-in last-page [:page-info :has-previous-page?])))
+          (is (false? (get-in last-page [:page-info :has-next-page?])))))
 
       (testing "wrong cursor kind is rejected by recursive lookup"
         (is (= :eacl.pagination/wrong-cursor-kind
@@ -1164,8 +1169,17 @@
                                         :permission    :read
                                         :resource/type :account
                                         :first         2
-                                        :after         {:kind :lookup-eid
-                                                        :result-eid (d/entid db [:eacl/id "root"])}}))))))
+                                        :after         {:kind :recursive-traversal
+                                                        :ordinal 0}}))))))
+
+      (testing "a keyset bound at the final result yields the empty tail"
+        (is (= []
+               (:data (lookup-resources db {:subject       user
+                                            :permission    :read
+                                            :resource/type :account
+                                            :first         2
+                                            :after         {:kind :lookup-eid
+                                                            :result-eid (d/entid db [:eacl/id "root"])}})))))
 
       (testing "recursive traversal guardrails throw typed errors"
         (binding [impl.indexed/*recursive-traversal-limits*

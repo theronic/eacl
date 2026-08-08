@@ -698,23 +698,24 @@ Each EACL client owns a bounded, private, multi-tier cache:
 - compiled schema paths and recursive plans are shared across queries using
   the same schema generation.
 
-DataScript defaults to `:coherence-authority :managed`, assuming every EACL
-schema and relationship mutation uses the client APIs. Datomic and Datahike
-retain the conservative `:coherence-authority :unknown` default. Unknown
-authority reuses entries only for the exact immutable database value on which
-they were computed and is the required DataScript opt-out when authorization
-data can be written outside EACL. Managed authority lets unchanged cache
-portions survive unrelated transactions; a schema change invalidates the
-managed generation.
+Every backend defaults to the conservative `:coherence-authority :unknown`:
+entries are reused only for the exact immutable database value on which they
+were computed, which stays correct even when authorization data is written
+outside EACL (a raw `transact!`, a fixture load, another library). Pass
+`:coherence-authority :managed` — an explicit contract that every schema and
+relationship mutation goes through EACL's client APIs — to let unchanged
+cache portions survive unrelated transactions; a schema change invalidates
+the managed generation.
 
 Most applications need no cache configuration. To set a completed-answer
-capacity:
+weight budget (answers are byte-weight bounded with least-recently-used
+eviction; default 16 MiB):
 
 ```clojure
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:cache {:max-entries 4096}}))
+   {:cache {:subproblem-cache {:answer-max-weight (* 32 1024 1024)}}}))
 ```
 
 Disable caching for a client without changing authorization semantics:
@@ -763,13 +764,6 @@ cache. Inspect or expire that exact cache through the backend API:
 (eacl.datascript.core/cache-stats acl)
 (eacl.datascript.core/expire-cache! acl)
 ```
-
-The backend-neutral `eacl.cache/local-store` still exposes additive portable
-metrics for users of that provider API. Capacity evictions are cumulative in
-`:evictions`. Explicit `evict!` calls and entries removed by `clear!` are
-cumulative in `:manual-evictions`; clearing resets occupancy but preserves
-request and validation counters. Provider implementations retain their native
-metrics shape.
 
 Cache data is never written to the application's database.
 

@@ -85,7 +85,6 @@
           "bin/summarize-dafny-verification.mjs"
           "bin/validate-verification-manifest"
           "formal/smoke/cljs/run"
-          "formal/smoke/cljs/run-cursor-rebase-benchmark"
           "formal/smoke/cljs/run-indexed-traversal-benchmark"
           "formal/smoke/cljs/run-verified-authority"
           "formal/smoke/java/run"

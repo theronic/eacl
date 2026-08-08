@@ -17,6 +17,7 @@
             [eacl.formal.differential-runner-test]
             [eacl.formal.generators-test]
             [eacl.datascript.adapter-certification-test]
+            [eacl.datascript.cache-model-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
             [eacl.datascript.enumeration-routing-test]
@@ -52,6 +53,7 @@
                'eacl.formal.differential-runner-test
                'eacl.formal.generators-test
                'eacl.datascript.adapter-certification-test
+               'eacl.datascript.cache-model-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
                'eacl.datascript.enumeration-routing-test

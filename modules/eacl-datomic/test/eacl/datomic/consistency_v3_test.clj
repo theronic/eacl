@@ -213,7 +213,8 @@
         conn
         [{:db/id (d/tempid :db.part/user)
           :db/doc "unrelated cursor churn"}])
-      (testing "an unrelated write rebases continuation to the current basis"
+      (testing "an unrelated write leaves the dependency proof equal: the
+                continuation is reused on the current basis without recovery"
         (let [page-2
               (eacl/lookup-resources
                authorization
@@ -223,8 +224,7 @@
                (:opts authorization)
                (get-in page-2 [:page-info :end-cursor]))]
           (is (= ["doc-b"] (mapv :id (:data page-2))))
-          (is (= :rebased
-                 (get-in page-2 [:page-info :cursor-recovery])))
+          (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
           (is (not= cursor-basis (:basis-t continued)))))
       (let [fresh-page-1
             (eacl/lookup-resources authorization query)
