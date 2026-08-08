@@ -3346,6 +3346,8 @@
           subject-type direction size (boolean bound')
           realized restarted?))))))
 
+(declare acyclic-bound-authorized? forward-acyclic-direction)
+
 (defn- recursive-can?
   "Evaluates one point query with the generated monotone indexed machine.
 
@@ -3424,10 +3426,28 @@
              (permission-root-defined?
               db resource-type permission))]
     (if defined-root?
-      (recursive-can?
-       db subject-type subject-eid
-       (permission-query-node resource-type permission)
-       resource-type resource-eid)
+      ;; A bound schema cache carries the generated acyclicity certificate.
+      ;; Reuse the exact indexed membership probe for those roots: sending
+      ;; overlapping acyclic streams through the recursive scan-wave machine
+      ;; can duplicate queued work before the ordered responses are folded.
+      (if (and (derived-cache-active?)
+               (not (traversal-permission?
+                     db resource-type permission)))
+        (binding [*acyclic-route?* true
+                  *inactive-recursive-cycle-guards* #{}]
+          (add-acyclic-work! :routed-acyclic 1)
+          (boolean
+           (acyclic-bound-authorized?
+            db
+            forward-acyclic-direction
+            {:subject subject
+             :permission permission
+             :resource/type resource-type}
+            resource-eid)))
+        (recursive-can?
+         db subject-type subject-eid
+         (permission-query-node resource-type permission)
+         resource-type resource-eid))
       false)))
 
 ;; --- Certified acyclic enumeration -----------------------------------------

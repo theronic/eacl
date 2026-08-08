@@ -7,7 +7,6 @@
   truth: two schema proofs and two plan compiles per raw list request;
   zero proofs per raw point check). Per-push, no wall-clock assertions."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [datomic.api :as d]
             [eacl.backend.v8 :as backend]
@@ -18,10 +17,11 @@
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as dschema]
             [eacl.engine.v8 :as engine]
+            [eacl.test-support.repo :as repo]
             [eacl.verified-kernel :as verified]))
 
 (def ^:private envelopes
-  (-> (io/file "formal/verification/recursive-op-count-envelopes.edn")
+  (-> (repo/file "formal" "verification" "recursive-op-count-envelopes.edn")
       slurp
       edn/read-string
       :work-envelopes))

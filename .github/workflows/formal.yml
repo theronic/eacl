@@ -431,6 +431,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Set up Babashka
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          bb: '1.12.213'
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

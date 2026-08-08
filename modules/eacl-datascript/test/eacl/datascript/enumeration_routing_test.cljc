@@ -357,6 +357,19 @@
         (recur (get-in page [:page-info :end-cursor]) results' (inc pages))
         results'))))
 
+(deftest certified-acyclic-point-check-stays-out-of-recursive-traversal-test
+  (let [{:keys [client]} (seed-client! small-shape)
+        server (fixture/object :server (fixture/server-id 0 0))
+        acyclic-stats (atom {})
+        recursive-stats (atom {})
+        allowed?
+        (binding [engine/*acyclic-work-stats* acyclic-stats
+                  engine/*recursive-traversal-stats* recursive-stats]
+          (eacl/can? client fixture/super-user :view server))]
+    (is allowed?)
+    (is (= 1 (:routed-acyclic @acyclic-stats)))
+    (is (empty? @recursive-stats))))
+
 (deftest explorer-enumeration-refines-point-authorization-test
   (let [{:keys [client]} (seed-client! small-shape)
         servers

@@ -8,7 +8,6 @@
   latency gates). The fixture self-check guarantees the recursive engine
   is actually exercised — an empty-recursion fixture fails the suite."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
@@ -17,10 +16,11 @@
             [eacl.datascript.backend :as dsb]
             [eacl.datascript.core :as dsc]
             [eacl.engine.v8 :as engine]
+            [eacl.test-support.repo :as repo]
             [eacl.verified-kernel :as verified]))
 
 (def ^:private envelopes
-  (-> (io/file "formal/verification/recursive-op-count-envelopes.edn")
+  (-> (repo/file "formal" "verification" "recursive-op-count-envelopes.edn")
       slurp
       edn/read-string
       :work-envelopes))

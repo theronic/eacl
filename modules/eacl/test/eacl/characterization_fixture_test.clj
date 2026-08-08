@@ -48,6 +48,29 @@
     (is (str/includes? workflow "cljs.build.api"))
     (is (not (str/includes? workflow "(cljs/-main")))))
 
+(deftest github-actions-provisions-temporal-tools-and-isolates-module-tests-test
+  (let [formal-workflow
+        (slurp (repo/file ".github" "workflows" "formal.yml"))
+        test-workflow
+        (slurp (repo/file ".github" "workflows" "test.yml"))
+        ^String temporal-job
+        (-> formal-workflow
+            (str/split #"\n  temporal-models:\n" 2)
+            second
+            (str/split #"\n  parity-corpus-and-mutations:\n" 2)
+            first)]
+    (testing "temporal mutation controls install their declared runtime"
+      (is (str/includes? temporal-job
+                         "uses: DeLaGuardo/setup-clojure@13.6.1"))
+      (is (str/includes? temporal-job "bb: '1.12.213'"))
+      (is (< (.indexOf temporal-job "Set up Babashka")
+             (.indexOf temporal-job
+                       "bin/formal apalache-mutation-control"))))
+    (testing "isolated modules exclude repository-global formal gates"
+      (is (str/includes?
+           test-workflow
+           "(?!eacl[.]formal[.]).*-test$")))))
+
 (deftest advanced-cljs-build-and-extern-surface-are-wired-test
   (let [workflow
         (slurp (repo/file ".github" "workflows" "formal.yml"))
