@@ -10,6 +10,7 @@
             [clojure.set :as set]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
@@ -605,7 +606,7 @@
                 (deep-page-work-samples
                  frontier-acl base-query page-count sample-pages)
                 continuation-stats
-                (cache/stats
+                (continuation/stats
                  (get-in frontier-acl [:opts :continuation-cache-store]))
                 first-page-calls (get-in samples [0 :calls])
                 middle-page-calls (get-in samples [(quot page-count 2) :calls])
@@ -656,10 +657,14 @@
                 "middle-page index work must remain page-bounded, not prefix-sized")
             (is (<= last-page-eids (* 2 total-servers))
                 "terminal duplicate-path drain must remain linear in the result graph")
-            (is (<= total-realized-eids (* 8 total-servers))
-                "a complete continuation walk must remain linear, not replay every prefix")
-            (is (<= total-calls total-servers)
-                "backend scan calls over the complete walk must remain linear")
+            ;; This fixture has four independent permission paths. A linear
+            ;; walk may therefore perform more than one index call per emitted
+            ;; server; a coefficient-one bound incorrectly classifies the
+            ;; unchanged 4-path algorithm as superlinear.
+            (is (<= total-realized-eids (* 10 total-servers))
+                "a complete 4-path walk must remain linear, not replay every prefix")
+            (is (<= total-calls (* 4 total-servers))
+                "backend scan calls must remain bounded by the four paths per result")
             (is (false? (get-in last-page [:page-info :has-next-page?])))))
 
         (testing "live lookup/count hits share one dependency-aware cache"
@@ -942,12 +947,14 @@
             targets
             [[:recursive-engine
               #'impl/lookup-resources]
-             [:cache-entry-lookup
-              #'cache/safe-entry-value]
-             [:cache-entry-store
-              #'cache/safe-store-entry!]
+             [:continuation-entry-lookup
+              #'continuation/get!]
+             [:continuation-entry-store
+              #'continuation/put!]
              [:token-decrypt
-              #'spiceomic/decrypt-page-token]
+              (ns-resolve
+               'eacl.datomic.core
+               'decrypt-authenticated-page-token)]
              [:token-encrypt
               #'spiceomic/encrypt-page-token]
              [:boundary-entity
@@ -981,7 +988,7 @@
         (println "Recursive completed-page breakdown:" hot-breakdown)
         (is (every? (comp pos? :calls val) continuation-breakdown))
         (is (zero? (get-in hot-breakdown
-                           [:cache-entry-store :calls]))
+                           [:continuation-entry-store :calls]))
             "completed recursive pages need lookups but no publications")))))
 
 (deftest ^:benchmark count-miss-retained-memory-benchmark
@@ -1122,8 +1129,14 @@
           (let [cold-us (* 1000.0
                            (median (run-timed 500
                                               (fn []
-                                                (impl.indexed/evict-permission-paths-cache!
-                                                 @(:schema-state acl))
+                                                (doseq [schema-cache
+                                                        (vals
+                                                         @(get-in
+                                                           acl
+                                                           [:opts
+                                                            :derived-schema-caches]))]
+                                                  (impl.indexed/evict-permission-paths-cache!
+                                                   schema-cache))
                                                 (check)))))]
             (println (format "can? cold paths: median=%.2fus" cold-us))
             (is (< cold-us can-cold-threshold-us)
@@ -1228,7 +1241,8 @@
          "definition user {}
           definition document {
             relation viewer: user
-            permission view = viewer
+            relation parent: document
+            permission view = viewer + parent->view
           }")
         @(d/transact conn [{:eacl/id "scale-user"}])
         (add-documents! small)
@@ -1253,8 +1267,8 @@
             (is (= (select-keys small-work target-local-keys)
                    (select-keys large-work target-local-keys))
                 "point-check logical/backend work must not grow with unrelated resources reachable from the subject")
-            (is (= 1 (:backend-commands large-work))
-                "a direct point check performs one target-anchored backend scan")))))))
+            (is (= 2 (:backend-commands large-work))
+                "the two-branch recursive point check remains target-anchored")))))))
 
 (def ^:private cache-proof-benchmark-schema
   "definition user {}

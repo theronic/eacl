@@ -44,7 +44,7 @@
   {:tests 165 :assertions 4554 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}
   :mutation-registry
-  {:mutants 103 :killed 103 :survived 0}}
+  {:mutants 92 :killed 92 :survived 0}}
  :trust-posture
  {:browser-authorization :advisory
   :server-recheck-required true

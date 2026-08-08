@@ -58,6 +58,11 @@ continuation traversal.
 - **WHEN** a cursor's bound execution mode is incompatible with the resumed request
 - **THEN** EACL returns a typed consistency/cursor conflict rather than changing work policy silently
 
+#### Scenario: Traversal limits change
+- **WHEN** a cursor minted under normalized limit map `L0` is resumed by a client using different normalized map `L1`
+- **THEN** EACL rejects the cursor before continuation lookup or traversal
+- **AND** does not reuse high-limit private work under a lower-limit execution contract
+
 ### Requirement: Proof-equivalent continuation is safe
 EACL SHALL continue a cursor on another snapshot only under a verified
 proof-equivalence or compatible exact-snapshot rule.

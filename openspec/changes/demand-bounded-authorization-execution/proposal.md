@@ -30,11 +30,13 @@ request mode for complete-denotation materialization.
   caching. A cache may satisfy or retain precisely requested work but may not
   enlarge a scan, fetch ahead, or continue traversal after the caller's demand
   is satisfied.
-- Bound the entire cache attempt independently of the request deadline. Cache
+- Keep cache reuse client-private, exact-keyed, and nonblocking. Cache
   eligibility MUST NOT issue backend commands that cache-disabled execution
-  would not issue, and typed lookups MUST reject oversized or over-budget
-  reads/decodes as misses. An unavailable, invalid, or stale candidate therefore
-  cannot turn a bounded authorization into an unbounded proof-lifting exercise.
+  would not issue; it preserves a configured evaluation reserve, enforces
+  native store weights at publication, and bounds CAS publication attempts.
+  Caller-supplied providers are rejected. An unavailable, invalid, or stale
+  local entry therefore cannot turn a bounded authorization into an unbounded
+  proof-lifting exercise.
 - Remove caller-waiting cache coordination from ordinary authorization. Demand
   misses do not join a broader computation or wait for a cache-only semaphore;
   concurrent misses may compute independently and race bounded, best-effort
@@ -63,6 +65,15 @@ request mode for complete-denotation materialization.
 - Replace the prior isolated latency claims with deterministic work-trace,
   concurrency, mutation-race, timeout, cache-parity, and cross-runtime release
   gates at broad-principal scales.
+- Make prospective external certification depend on implementation-conformant
+  formal models: every claimed theorem maps bidirectionally to shipped control
+  flow or a mechanized refinement boundary, and any model/code/evidence drift
+  fails the release gate.
+- Simplify the shipped architecture while making these changes: one normalized
+  request pipeline and one generated demand evaluator serve cache hits, misses,
+  and bypasses; superseded denotation, coordination, registry, and locking paths
+  are deleted. Structural complexity and deterministic work MUST ratchet down or
+  remain flat, and checked latency/throughput gates prevent performance regressions.
 
 ## Capabilities
 
@@ -84,6 +95,13 @@ request mode for complete-denotation materialization.
 - `datascript-current-basis-consistency`: Current-only DataScript selection,
   causal freshness, cache proof lifting, removal of historical snapshot
   retention, and stale-cursor behavior.
+- `formal-implementation-conformance`: Bidirectional claim/model/code
+  traceability, mechanized implementation refinement, fail-closed drift
+  detection, explicit trusted boundaries, and reproducible certification
+  evidence.
+- `implementation-simplicity-and-performance`: A single semantic execution
+  pipeline, deletion of superseded stateful machinery, structural-complexity
+  budgets, and deterministic plus measured non-regression gates.
 
 ### Modified Capabilities
 
@@ -102,12 +120,18 @@ does not alter its workspace/module contract.
   recursive `:last`, DataScript exact-snapshot, timeout-error, cursor, and cache
   provenance contracts. `:cache?` returns to being only a reuse/publication
   control.
-- Cache provider contract: finite client-configured lookup time, encoded-byte,
-  decoded-weight, and local-attempt bounds; typed artifact metadata must be
-  inspectable without retrieving an unbounded value.
+- Cache contract: bounded client-private stores, a finite evaluation reserve,
+  and bounded local publication attempts. Caller-
+  supplied provider stores are rejected because no shipped authorization path
+  consumes them.
 - Verification: generated evaluator/order theorems, cache-on/off trace
   refinement, deadline state, lifecycle races, writer interleavings, CLJ/CLJS
-  parity, mutation controls, and performance gates.
+  parity, implementation/model conformance, mutation controls, reproducible
+  certification evidence, and performance gates.
+- Architecture: remove duplicate cache/no-cache evaluators, caller-waiting cache
+  coordination, cache-owned traversal, DataScript history retention, and EACL
+  read locks; check a source-closure inventory of remaining semantic entry
+  points and mutable coordinators.
 - Documentation and consumers: cache and consistency guides, v8 release notes,
   migration notes, explorer/demo guidance, and the analysis report at
   `docs/reports/2026-08-08-recursive-point-check-denotation-cache-implications.md`.

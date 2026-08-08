@@ -36,12 +36,12 @@
 
  :formal-verification
  {:command "bin/formal verify"
-  :modules 25
-  :proof-efforts 9806
+  :modules 27
+  :proof-efforts 8586
   :errors 0
-  :new-relationship-page-theorems
-  [PageWindow.MatchingRelationshipPageScopeReusesExactPage
-   PageWindow.RelationshipPageScopeMismatchCannotHit]
+  :retained-exact-page-theorems
+  [PageWindow.MatchingAuthorizationPageScopeReusesExactPage
+   PageWindow.AuthorizationPageScopeMismatchCannotHit]
   :inactive-recursion-authority
   [RoutingCertificate.DecideGuardedRoute
    RoutingCertificate.EmptyRecursiveGuardsSelectAcyclic

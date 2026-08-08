@@ -518,8 +518,6 @@
                 :denotation (:denotation-max-weight expected)
                 :answer (:answer-max-weight expected)}
                (:budgets store)))
-        (is (= (:max-inflight expected)
-               (:max-inflight store)))
         (is (= (:managed-proof-max-atoms expected)
                (:managed-proof-max-atoms store)))
         (is (= :passed

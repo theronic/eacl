@@ -1,5 +1,5 @@
 {:schema-version 1
- :status :target-authorities-routed-and-full-suites-passed-release-gates-remain
+ :status :recursive-target-authorities-routed-and-full-suites-passed-release-gates-remain
  :sources
  ["formal/dafny/IndexedTraversal.dfy"
   "formal/dafny/IndexedBatching.dfy"
@@ -25,8 +25,10 @@
   :total 7979}
  :generated-targets [:java :javascript-formal-oracle]
  :production-authoritative
- {:clj-java :generated-release-default
-  :cljs-javascript :portable-differentially-certified-release-default}
+ {:scope :recursive-permission-roots-only
+  :clj-java :generated-release-default
+  :cljs-javascript :portable-differentially-certified-release-default
+  :acyclic-reference "formal/verification/acyclic-kernel.edn"}
  :production-routing
  {:scan-response-validation
   {:status :target-authoritative-mode-routed
@@ -43,12 +45,12 @@
     :bound-violation]}
   :queue-and-grant-transitions
   {:status :target-authoritative-mode-routed
-   :permission-roots [:all-defined]
+   :permission-roots [:recursive]
    :state :opaque-authority-runtime-owned
    :schema-indexes :compiled-once-per-schema-proof-and-root}
   :rendering
   {:status :target-authoritative-mode-routed
-   :permission-roots [:all-defined]
+   :permission-roots [:recursive]
    :point-authorization-direction :reverse
    :operations
    [:can?
@@ -59,7 +61,9 @@
   :point-authorization
   {:counterexample :EACL-FORMAL-055
    :anchor :concrete-resource
-   :direction :reverse
+   :recursive-direction :generated-reverse
+   :acyclic-path
+   :host-inclusive-exact-eid-bound-source-specialization-not-indexed-traversal
    :positive-result :boolean-renderer-stops-at-requested-subject
    :negative-result :returned-only-after-reverse-exhaustion
    :semantic-basis
@@ -74,6 +78,7 @@
     :status :passed}}
   :page-continuation
   {:status :target-authoritative-mode-routed
+   :permission-roots [:recursive]
    :directions [:forward :reverse]
    :state :opaque-authority-runtime-owned
    :public-boundary [:ordinal :eid]
@@ -209,7 +214,7 @@
   :role :historical-technique-source-only
   :assurance :none
   :lesson
-   :cache-weight-flight-ownership-actual-callbacks-waiters-and-host-resources-are-distinct}
+   :cache-weight-request-computation-publication-attempts-and-host-resources-are-distinct}
  :evidence
  {:dafny
   {:commands
@@ -252,7 +257,7 @@
      :maximum-resource-count 694159}}
    :aggregate
    {:indexed-obligations 7979
-    :whole-formal-tree-obligations 8594
+    :whole-formal-tree-obligations 8586
     :deterministic-proof-effort-resource-limit 50000000
     :whole-tree-maximum-resource-count 24106086
     :machine-readable-report "target/formal/dafny-verification.json"

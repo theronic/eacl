@@ -138,7 +138,10 @@
           result
           (binding [engine/*acyclic-work-stats* acyclic
                     engine/*recursive-traversal-stats* recursive]
-            (eacl/count-resources client query))]
-      (is (= 72 (:count result)))
+            (eacl/count-resources
+             client
+             (assoc query :count-limit 1)))]
+      (is (= {:count 1 :limit 1 :truncated? true}
+             (select-keys result [:count :limit :truncated?])))
       (is (empty? @acyclic))
       (is (pos? (:advanced-stream-datoms @recursive 0))))))

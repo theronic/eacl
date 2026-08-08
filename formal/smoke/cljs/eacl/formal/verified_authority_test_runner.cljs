@@ -17,6 +17,7 @@
    [eacl.datascript.mutation-test]
    [eacl.datascript.storage-test]
    [eacl.engine.relationships-test]
+   [eacl.execution-test]
    [eacl.formal.cache-strategy-adversarial-test]
    [eacl.formal.differential-runner-test]
    [eacl.formal.generators-test]
@@ -127,6 +128,7 @@
      'eacl.causal-model-test
      'eacl.consistency-test
      'eacl.engine.relationships-test
+     'eacl.execution-test
      'eacl.mutation-test
      'eacl.relationships.endpoint-pair-test
      'eacl.relay-test

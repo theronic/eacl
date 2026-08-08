@@ -13,6 +13,9 @@
               Depth N, frontier 1. owner-mid owns the midpoint node for
               shallow/deep point-check splits.
   - :mixed  — one root, `chains` chains hanging off it. Frontier and depth.
+  - :cycle  — one owned root in a directed parent cycle.
+  - :diamond — one owned root with two paths converging on one leaf.
+  - :mutual — alternating `view`/`edit` permission recursion over a chain.
   - :broad-union — a 0tx `read_account`-style union (owner + reader +
               legal_entity->view + parent->read_account) over a star, with
               two recursive permissions and a non-recursive arrow branch.
@@ -48,6 +51,17 @@
      permission read_account = administer + reader + legal_entity->view + parent->read_account
    }")
 
+(def mutual-schema
+  "definition user {}
+
+   definition account {
+     relation owner: user
+     relation editor: user
+     relation parent: account
+     permission view = owner + parent->edit
+     permission edit = editor + parent->view
+   }")
+
 (defn- zero-pad
   [width value]
   (let [value (str value)]
@@ -78,7 +92,7 @@
 (defmulti relationships
   "Deterministic relationship seq for a shape config.
 
-  Config: {:shape :star|:chain|:mixed|:broad-union
+  Config: {:shape :star|:chain|:mixed|:cycle|:diamond|:mutual|:broad-union
            :accounts N
            :chains C}   ; :mixed only"
   :shape)
@@ -112,6 +126,27 @@
                 (range start (+ start (dec per-chain)))))))
       (range chains)))))
 
+(defmethod relationships :cycle
+  [{:keys [accounts]}]
+  (concat
+   [(eacl/->Relationship user-1 :owner (account 0))]
+   (map #(parent-edge % (inc %)) (range 0 (dec accounts)))
+   [(parent-edge (dec accounts) 0)]))
+
+(defmethod relationships :diamond
+  [_]
+  [(eacl/->Relationship user-1 :owner (account 0))
+   (parent-edge 0 1)
+   (parent-edge 0 2)
+   (parent-edge 1 3)
+   (parent-edge 2 3)])
+
+(defmethod relationships :mutual
+  [{:keys [accounts]}]
+  (concat
+   [(eacl/->Relationship user-1 :owner (account 0))]
+   (map #(parent-edge % (inc %)) (range 0 (dec accounts)))))
+
 (defmethod relationships :broad-union
   [{:keys [accounts]}]
   (concat
@@ -123,13 +158,17 @@
 
 (defn schema-for
   [{:keys [shape]}]
-  (if (= :broad-union shape) broad-union-schema schema))
+  (case shape
+    :broad-union broad-union-schema
+    :mutual mutual-schema
+    schema))
 
 (defn account-count
   "Total accounts a shape actually seeds (mixed rounds down to full chains)."
   [{:keys [shape accounts chains] :or {chains 10}}]
-  (if (= :mixed shape)
-    (inc (* chains (quot (dec accounts) chains)))
+  (case shape
+    :mixed (inc (* chains (quot (dec accounts) chains)))
+    :diamond 4
     accounts))
 
 (defn objects
@@ -177,6 +216,7 @@
         mid (quot accounts 2)]
     (cond
       (= subject stranger) 0
+      (and (= :mutual shape) (= subject user-1)) (quot (inc total) 2)
       (= subject user-1) total
       (and (= :chain shape) (= subject owner-mid)) (- total mid)
       (and (= :broad-union shape) (= subject reader-1)) total
@@ -194,3 +234,50 @@
 (defn count-query
   [config subject]
   (dissoc (resource-query config subject) :first))
+
+(def operation-count-cases
+  "Small deterministic cases used by demand/cache trace gates.
+
+  `:target-index` names the concrete point resource. Expected point results are
+  part of the fixture so every backend runs the same positive/negative corpus."
+  [{:case :shallow-positive
+    :config {:shape :chain :accounts 9}
+    :subject user-1
+    :target-index 0
+    :expected-allowed? true}
+   {:case :deep-positive
+    :config {:shape :chain :accounts 9}
+    :subject user-1
+    :target-index 8
+    :expected-allowed? true}
+   {:case :negative
+    :config {:shape :chain :accounts 9}
+    :subject stranger
+    :target-index 8
+    :expected-allowed? false}
+   {:case :cyclic
+    :config {:shape :cycle :accounts 7}
+    :subject user-1
+    :target-index 6
+    :expected-allowed? true}
+   {:case :diamond
+    :config {:shape :diamond :accounts 4}
+    :subject user-1
+    :target-index 3
+    :expected-allowed? true}
+   {:case :mutual-recursion
+    :config {:shape :mutual :accounts 9}
+    :subject user-1
+    :target-index 8
+    :expected-allowed? true}
+   {:case :broad-union
+    :config {:shape :broad-union :accounts 9}
+    :subject reader-1
+    :target-index 8
+    :expected-allowed? true}])
+
+(defn operation-count-query
+  [{:keys [config subject target-index]}]
+  {:subject subject
+   :permission (view-permission config)
+   :resource (object :account (account-id target-index))})

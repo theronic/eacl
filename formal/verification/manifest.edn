@@ -7,14 +7,23 @@
  :semantics-version 1
  :source-digests {}
  :generated-artifact-digests {}
+ :external-certification
+ {:status :unsigned
+  :procedure "formal/verification/external-certifier-procedure.md"}
  :theorems
- {:semantic-foundation
+ {:normalized-execution-contract
+  {:status :passed
+   :verified-obligations 13
+   :source "formal/dafny/ExecutionContract.dfy"
+   :report "formal/verification/execution-contract.edn"
+   :claim :proof-only-host-control-model-cross-checked-against-production}
+  :semantic-foundation
   {:status :passed
    :verified-obligations 21
    :source "formal/dafny/Semantics.dfy"}
   :cache-cursor-foundation
   {:status :passed
-   :verified-obligations 26
+   :verified-obligations 24
    :source "formal/dafny/TemporalSafety.dfy"}
   :strict-wire-format
   {:status :passed
@@ -58,7 +67,7 @@
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 27
+   :verified-obligations 34
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
@@ -86,7 +95,9 @@
    :verified-obligations 17
    :source "formal/dafny/CacheKernel.dfy"
    :report "formal/verification/cache-kernel.edn"
-   :integration-status :production-routing-passed}
+   :classification :proof-only-generated-boundary
+   :integration-status :no-live-production-consumer
+   :production-assurance-contribution :none}
   :current-generation-cache
   {:status :passed
    :verified-obligations 30
@@ -97,7 +108,7 @@
    :claim :conditional-current-cache-refinement}
   :subproblem-cache
   {:status :passed
-   :verified-obligations 99
+   :verified-obligations 73
    :source "formal/dafny/SubproblemCache.dfy"
    :report "formal/verification/subproblem-cache.edn"
    :integration-status
@@ -120,17 +131,17 @@
     "formal/dafny/IndexedRootDenotation.dfy"]
    :report "formal/verification/indexed-traversal.edn"
    :integration-status
-   :all-defined-permission-roots-target-authority-passed
+   :recursive-permission-roots-target-authority-routed
    :claim
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8594
+   :verified-obligations 8586
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
-   :all-defined-permission-roots-and-public-operations-target-authority-routed
+   :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
    :claim
-   :conditional-composition-of-generated-authority-decisions-under-documented-tcb
+   :conditional-composition-of-generated-recursive-authority-acyclic-decisions-and-source-specializations-under-documented-tcb
    :qualification
    :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries}}
  :adapter-certification
@@ -289,8 +300,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 103
-  :registered 103}
+  :killed 92
+  :registered 92}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -300,8 +311,17 @@
  {:status :target-authorities-routing-passed
   :report "formal/verification/generated-boundary.edn"
   :complete-public-routing true}
+ :proof-only-exclusions
+ [{:source "formal/dafny/CacheKernel.dfy"
+   :operation :cache-validation
+   :reason :no-live-production-consumer
+   :production-assurance-contribution :none}]
  :release-gate
  {:verified-status-allowed? false
   :decision :refused
   :unmet-required-obligations
-  [:independent-security-formal-review]}}
+  [:mechanized-host-control-source-refinement
+   :mechanized-clj-cache-transition-source-refinement
+   :mechanized-cljs-production-authority-refinement
+   :mechanized-backend-adapter-conversion-refinement
+   :independent-security-formal-review]}}

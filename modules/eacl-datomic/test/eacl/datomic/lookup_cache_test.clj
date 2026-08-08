@@ -66,10 +66,12 @@
                                          :cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
-                         :resource/type :account}
+                         :resource/type :account
+                         :evaluation :complete-denotation}
           reverse-query {:resource (spice-object :account "a-1")
                          :permission :admin
-                         :subject/type :user}
+                         :subject/type :user
+                         :evaluation :complete-denotation}
           forward-calls (atom 0)
           reverse-calls (atom 0)
           original-forward impl/lookup-resources
@@ -100,7 +102,8 @@
                                          :cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
-                 :resource/type :account}
+                 :resource/type :account
+                 :evaluation :complete-denotation}
           calls (atom 0)
           original impl/lookup-resources
           second-rel (->Relationship (spice-object :user "alice")
@@ -176,7 +179,8 @@
           account-rel (->Relationship account :account server)
           query {:subject alice
                  :permission :view
-                 :resource/type :server}
+                 :resource/type :server
+                 :evaluation :complete-denotation}
           calls (atom 0)
           original impl/lookup-resources]
       (eacl/write-schema! client arrow-schema)
@@ -300,10 +304,12 @@
                                          :cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
-                         :resource/type :account}
+                         :resource/type :account
+                         :evaluation :complete-denotation}
           reverse-query {:resource (spice-object :account "a-1")
                          :permission :admin
-                         :subject/type :user}
+                         :subject/type :user
+                         :evaluation :complete-denotation}
           forward-calls (atom 0)
           reverse-calls (atom 0)
           original-forward impl/count-resources
@@ -431,7 +437,8 @@
           query {:subject alice
                  :permission :read
                  :resource/type :folder
-                 :first 1}]
+                 :first 1
+                 :evaluation :complete-denotation}]
       (eacl/write-schema! client recursive-schema)
       @(d/transact conn [{:eacl/id "alice"}
                          {:eacl/id "root"}

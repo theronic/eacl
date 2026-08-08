@@ -2,6 +2,15 @@
 
 Date: 2026-08-07
 
+Supersession note (2026-08-08): the cursor-rebase/restart conclusions and
+measurements below describe an intermediate v8 candidate, not the final
+contract. Final production behavior is equal-proof continuation on current,
+verified exact-snapshot fallback on immutable history-capable backends, or a
+typed stale/conflict error. DataScript is current-basis-only. No current model,
+production branch, or active performance gate authorizes cursor rebase or
+restart. The current release claim is governed by the generated-boundary,
+pagination-kernel, execution-contract, and assurance-matrix ledgers.
+
 ## Executive decision
 
 EACL v8 has one production authorization authority per target: the generated
@@ -113,8 +122,9 @@ abstract snapshot-oracle contract:
     logical counters.
 
 TLA+/Apalache models additionally search cache, cursor, exact-selection,
-retention, branch/history, provider-failure, tampering, publication, and
-continuation races. Bounded model checking is bug-finding evidence. The
+retention, branch/history, abstract local-read/proof failure, tampering,
+publication, and continuation races. They do not model a shipped external
+cache provider, because v8 rejects one. Bounded model checking is bug-finding evidence. The
 unbounded safety claims come from the corresponding Dafny transition
 predicates and preservation lemmas.
 
@@ -181,7 +191,7 @@ highest-value findings.
 | Finding | Class | What failed | Fix and value |
 | --- | --- | --- | --- |
 | 001–013 | cache/cursor/temporal correctness | Early proof/cache and cursor designs admitted incomplete dependency, ancestry, scope, publication, or continuation assumptions. | Minimized traces drove current-cache, authenticated cursor, temporal-safety, and fail-closed designs. |
-| 014–018 | concurrency/refinement | Recursive single-flight could join itself, escape active-count limits, cross cache lifecycles, mutate before generated admission, or observe an unrepresented flight. | Unified lifecycle-qualified flight identity, context-aware slots, lock-linearized selection/completion, and generated pre-mutation authority. |
+| 014–018 | superseded cache coordination | Recursive single-flight could join itself, cross cache lifecycles, and couple callers to another request's latency or failure. | v8 deletes flight state and cache semaphores: misses compute independently, lifecycle replacement detaches generations atomically, and bounded CAS publication either retains a compatible winner or discards the candidate. |
 | 019–020 | result correctness | Descending merge dropped the maximum EID; generic merge dropped a legal first `nil` key. | Explicit presence bits plus exhaustive CLJ/CLJS source-control fixtures and mutants. |
 | 021 | cross-backend configuration | Datomic rejected/failed to forward shared subproblem-cache configuration. | One validated shared cache configuration path. |
 | 022–027 | error/limit/boundary correctness | Generated errors lost fields, stale-cursor shapes diverged, materialized resource counters were substituted for query-local limits, and signed EIDs crossed a natural-number model. | Exact public typed errors, dimensionally correct counters, generated indexed resource authority, and nonnegative exact-integer adapter guards. |
@@ -190,7 +200,7 @@ highest-value findings.
 | 040–044 | source-model fidelity | Formal merge/leapfrog/arrow/path-fold models omitted source control state, exact seek traces, empty-arrow fast exit, path materialization, or callback order. | Source-shaped Dafny models, exact CLJ/CLJS traces, exhaustive small domains, adapter composition, and production empty-arrow fast exit. |
 | 045 | target-runtime complexity | Dafny's abstract immutable Java/JS collections and pairwise ordering validator created quadratic target costs despite correct logical counters. | Persistent target collections, sequence views, and adjacent-order validation. A 15,000-result reverse page improved from about 5.7 seconds to 2.78 ms on the recorded JVM fixture; JS scaling became approximately linear over 1,024–16,384 results. |
 | 046 | cache usefulness | Completed-answer keys and root names prevented cross-query reuse of equal subgraphs. | Rule-body denotation identity plus proved equal-body/equal-fixed-point theorems. Across 80 roots sharing a depth-48 chain, layered p50 was 0.181959 ms versus 0.684250 ms and performed zero backend operations. |
-| 047–050 | continuation/performance harness | Cursor recovery reused stale frontiers; backward replay was not page-size bounded; routing/rebase gates measured JIT/compiler history; warm `can?` used an unstable single batch. | Rebase-or-restart law, bounded opaque continuation store, fresh bounded JVM gates, valid scaling domains, and stable multi-batch warmup. |
+| 047–050 | continuation/performance harness (historical candidate) | Cursor recovery reused stale frontiers; backward replay was not page-size bounded; routing/rebase gates measured JIT/compiler history; warm `can?` used an unstable single batch. | The final contract removed rebase/restart; retained fixes are bounded opaque continuation state, exact-snapshot fallback or stale rejection, isolated JVM gates for current operations, valid scaling domains, and stable multi-batch warmup. |
 | 051 | hot-path performance | Public `can?` classified a permission root twice. | Reused classification; recorded paired p50 improved 508.292 µs to 483.625 µs and later heavy-suite warm aggregate was 431.8545 µs. |
 | 052–054 | public consistency correctness | `false` consistency could default instead of reject; token maps accepted unknown fields; connectionless DataScript falsely advertised `fully-consistent`. | Raw input forwarding, exact descriptor shape, and truthful capability advertisement. |
 | 055 | asymptotic authorization performance | Point `can?` searched forward from a broad subject, making one-resource checks grow with unrelated subject fanout. | Resource-anchored reverse generated traversal. The recorded local median fell from about 453 µs to 150 µs; deterministic work remains one command/one value at 16 and 1,040 unrelated resources. |
@@ -212,24 +222,24 @@ The final pre-audit run on 2026-08-06 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 25 modules, 9,795 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 27 modules, 8,586 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
 | Generated Java runtime bridges | 47 tests, 15,628 assertions, 0 failures/errors |
-| Generated-only JVM public/backend suite | 509 tests, 34,773 assertions, 0 failures/errors across Datomic, Datahike, and DataScript |
+| Generated-authority-injected JVM public/backend suite | 504 tests, 39,188 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
 | Generated-only DataScript CLJS suite | 155 tests, 4,419 assertions, 0 failures/errors |
 | Portable CLJS formal/oracle suite | 44 tests, 9,963 assertions, 0 failures/errors under `:advanced` |
-| Portable CLJS full DataScript/core suite | 167 tests, 9,556 assertions, 0 failures/errors under `:advanced` |
-| Portable CLJS injected-authority suite | 165 tests, 4,554 assertions, all required traversal operations observed |
+| Portable CLJS full DataScript/core suite | 169 tests, 9,652 assertions, 0 failures/errors under `:advanced` |
+| Portable CLJS injected-authority suite | 167 tests, 4,650 assertions, all required portable operations observed |
 | Portable CLJS performance/payload | 8,684 ns/result at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
 | Heavy generated-only backend/performance suite | 17 tests, 4,062 assertions, 0 failures/errors |
-| Minimized counterexample replay | 61 tests / 18,207 assertions on the full formal-smoke classpath, 0 failures/errors; the exact ordinary CI classpath additionally runs 44 tests / 2,966 assertions |
-| Mutation control | 1 test, 230 assertions, 0 failures/errors; every registered mutant killed |
+| Minimized counterexample replay | 55 tests / 18,280 assertions on the full formal-smoke classpath, 0 failures/errors |
+| Mutation control | 2 tests, 211 assertions, 0 failures/errors; every registered mutant killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
 | Generated artifact size | browser bundle 591,497 bytes; Java classes/runtime 1,890,556 bytes; Java source 2,130,973 bytes; JavaScript/runtime 949,688 bytes; every re-anchored ceiling passed |
 
 The JVM suite observed generated decision calls for all required operations on
-all three adapters (338 injected Datomic clients, 66 Datahike, 87 DataScript).
-The latest portable CLJS suite observed 73 injected DataScript clients. These
+all three adapters (361 injected Datomic clients, 71 Datahike, 119 DataScript).
+The latest portable CLJS suite observed 75 injected DataScript clients. These
 counters prevent a green suite that accidentally bypasses the selected
 authority.
 
@@ -251,7 +261,7 @@ performance mistakes conspicuous:
 - Cache usefulness comes from reusable subproblems and denotations, not merely
   completed answers. Equal rule bodies can share fixed-point results across
   different permission names without weakening semantic identity.
-- Cache-disabled calls branch before cache-key, proof, token, provider, and
+- Cache-disabled calls branch before cache-key, proof, token, local lookup, and
   envelope work. “Disabled” therefore means no hidden proof tax.
 - Generated target artifacts require their own complexity audit. A Dafny
   theorem over sequences or sets does not establish the complexity of the
@@ -289,15 +299,19 @@ measured host properties.
 
 Recommended:
 
-> EACL v8 uses a Dafny-generated authorization kernel on the JVM and a
-> differentially certified portable kernel in ClojureScript. Its
+> EACL v8 uses a Dafny-generated recursive authorization kernel and generated
+> decision components on the JVM, with documented host source specializations
+> for certified acyclic roots; ClojureScript uses a differentially certified
+> portable recursive kernel with the same source-specialized acyclic path. Its
 > backend-neutral ReBAC semantics, recursive traversal, pagination, cursor,
 > consistency, and cache decision laws are mechanically verified under
 > documented assumptions; browser answers remain advisory and require a
 > server re-check. Sixty-two minimized correctness, assurance-harness, and
 > performance defects were found and fixed during the verification program.
 > Datomic, Datahike, and DataScript are covered by shared adapter and
-> public-contract suites. Independent audit is pending.
+> public-contract suites. Mechanized host-control, cache-transition, portable
+> CLJS-authority, and adapter-conversion source refinements remain open;
+> independent audit is also pending.
 
 Do not say:
 
@@ -325,5 +339,6 @@ The external reviewer should:
 7. record reviewed commit, toolchain digests, findings, and any narrowed claim
    in the verification manifest.
 
-Until that record exists, release automation must continue to withhold the
-unqualified `:verified` status.
+Until the named mechanized source refinements and that review record exist,
+release automation must continue to withhold the unqualified `:verified`
+status.

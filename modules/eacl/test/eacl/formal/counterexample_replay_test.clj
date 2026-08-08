@@ -24,7 +24,7 @@
     :EACL-FORMAL-009
     eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters
     :EACL-FORMAL-010
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
     :EACL-FORMAL-011
     eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results
     :EACL-FORMAL-012
@@ -90,15 +90,15 @@
     :EACL-FORMAL-042
     eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-043
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
     :EACL-FORMAL-044
-    eacl.datomic.recursive-cache-test/recursive-cursor-rebases-after-relevant-write-test
+    eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
     :EACL-FORMAL-045
     eacl.formal.java-round-trip-test/generated-java-persistent-collection-boundary
     :EACL-FORMAL-046
     eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies
     :EACL-FORMAL-047
-    eacl.datascript.contract-test/current-lookup-cursor-restarts-when-result-identity-disappears-test
+    eacl.datascript.keyset-recursion-test/order-perturbing-write-rejects-current-only-cursor-test
     :EACL-FORMAL-048
     eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
     :EACL-FORMAL-049
@@ -114,7 +114,7 @@
     :EACL-FORMAL-054
     eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test
     :EACL-FORMAL-055
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
     :EACL-FORMAL-056
     eacl.datascript.impl-test/read-relationships-query-matrix-test
     :EACL-FORMAL-057
@@ -206,8 +206,8 @@
     (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
                       page-source))
         "the generated RawPageRequest smoke must use only current v8 fields")
-    (is (= {:first-page [10 20]
-            :continuation-page [30]}
+    (is (= {:first-page [10 30]
+            :continuation-page [20]}
            (:production-recursive-pages vectors)))
     (is (re-find
          #":production-recursive-pages \(cross-runtime-vectors\)"

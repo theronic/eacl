@@ -41,7 +41,6 @@
     ScanResponse)
    (OrderedMerge MergeChunk MergeDirection OptionalHead)
    (PageWindow
-    ConsistencyMode
     Direction
     ExactSelection
     NormalizedPageRequest
@@ -725,7 +724,6 @@
            cursor-source
            current-proof
            cursor-proof
-           mode
            cursor-graph
            exact]}]
   (let [decision
@@ -737,14 +735,10 @@
          (dafny-string cursor-source)
          (dafny-string current-proof)
          (dafny-string cursor-proof)
-         (if (= :exact-snapshot mode)
-           (ConsistencyMode/create_ExactSnapshotMode)
-           (ConsistencyMode/create_RecoverCurrent))
          (dafny-nat cursor-graph)
          (exact-selection exact))]
     (cond
       (.is_UseCurrent decision) :current
-      (.is_RebaseCurrent decision) :rebase-current
       (.is_UseExact decision) :exact
       (.is_InvalidAuthentication (.dtor_reason decision))
       :invalid-authentication
@@ -938,24 +932,21 @@
     :lookup
     (let [action
           (SubproblemCache.__default/DecideLookup
-           (:recursive-self? input)
            (candidate-state (:candidate input)))]
       (cond
-        (.is_BypassRecursiveSelf action) :bypass-recursive-self
-        (.is_StartComputation action) :start-computation
-        (.is_JoinComputation action) :join-computation
+        (.is_StartIndependentComputation action)
+        :start-independent-computation
         :else :use-completed-value))
 
     :admission
     (let [action
           (SubproblemCache.__default/DecideAdmission
            (:candidate-present? input)
-           (dafny-nat (:represented-candidates input))
-           (dafny-nat (:maximum-candidates input)))]
-      (cond
-        (.is_JoinExisting action) :join-existing
-        (.is_AdmitComputation action) :admit-computation
-        :else :compute-without-admission))
+           (dafny-nat (:attempted-publications input))
+           (dafny-nat (:maximum-attempts input)))]
+      (if (.is_AttemptPublication action)
+        :attempt-publication
+        :skip-publication))
 
     :publication
     (let [action

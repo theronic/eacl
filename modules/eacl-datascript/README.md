@@ -15,16 +15,17 @@ Responsibilities:
 - two-datom endpoint-pair relationship storage and guarded EAVT/AVET traversal
 - explicit offline dangling-half detection in `eacl.datascript.integrity`
 - current immutable-snapshot selection and object/reference conversion
-- proof-equivalent authenticated Relay cursors with optional exact fallback
+- proof-equivalent authenticated Relay cursors on the selected current DB
 - database-visible mutation identities plus schema/relation content proofs
 - portable authenticated completed-answer caching
 - DataScript contract tests and adapter-specific edge cases
 
 DataScript supports serialized connection-head `:fully-consistent`, local
-`:minimize-latency`, and managed causal at-least selection. Exact selection is
-advertised only when `:exact-snapshot-registry-size` configures a bounded
-immutable-DB registry. It does not claim an external replication mechanism.
-Unsupported configuration/mode combinations fail before authorization.
+`:minimize-latency`, and managed causal at-least selection. It intentionally
+does not advertise `:at-exact-snapshot` or retain historical DB values;
+`:exact-snapshot-registry-size` is removed and rejected. Unsupported exact
+requests fail before cache access or authorization traversal. DataScript does
+not claim an external replication mechanism.
 DataScript clients assume by default that every EACL schema and relationship
 mutation uses the client APIs, selecting managed mutation proofs and
 relation-stamp reuse. Applications that write authorization-relevant datoms

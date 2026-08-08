@@ -303,7 +303,6 @@
 
 (deftest subproblem-cache-transition-boundary-is-strict
   (let [input {:decision :lookup
-               :recursive-self? false
                :candidate :missing}
         decide
         (fn [input result]
@@ -311,12 +310,12 @@
            {:kernel (->FunctionKernel (fn [_ _] result))}
            :subproblem-cache-decision
            input))]
-    (is (= :start-computation
-           (decide input :start-computation)))
+    (is (= :start-independent-computation
+           (decide input :start-independent-computation)))
     (is (thrown?
          #?(:clj clojure.lang.ExceptionInfo
             :cljs cljs.core.ExceptionInfo)
-         (decide input :bypass-recursive-self)))
+         (decide input :use-completed-value)))
     (is (thrown?
          #?(:clj clojure.lang.ExceptionInfo
             :cljs cljs.core.ExceptionInfo)

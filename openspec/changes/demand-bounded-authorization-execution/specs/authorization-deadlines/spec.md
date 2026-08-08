@@ -2,7 +2,7 @@
 
 ### Requirement: One monotonic deadline covers the request
 EACL SHALL convert the effective execution timeout into one absolute monotonic
-deadline at the outer public boundary. Consistency selection, cache/provider
+deadline at the outer public boundary. Consistency selection, client-private cache
 access, schema and plan resolution, proof work, traversal, backend commands,
 rendering, externalization, and optional publication MUST consume that same
 deadline rather than starting independent relative timeouts.
@@ -44,8 +44,8 @@ bounded backend command and generated quantum.
 ### Requirement: Deadline overrun is stated honestly
 EACL SHALL document that the maximum implementation-controlled overrun is one
 already-running bounded backend command plus runtime scheduling delay. EACL
-MUST NOT claim hard cancellation of GC, OS scheduling, foreign code, network
-providers, or backend operations whose adapters do not support interruption.
+MUST NOT claim hard cancellation of GC, OS scheduling, foreign code, or backend
+operations whose adapters do not support interruption.
 
 #### Scenario: Uninterruptible adapter
 - **WHEN** an adapter command ignores interruption and returns after the deadline

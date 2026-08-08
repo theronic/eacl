@@ -215,9 +215,9 @@ inside a trusted canonicalization or cryptographic primitive.
 
 Lore's historical resource analyser is not in the TCB and contributes no
 correctness or resource theorem. EACL adopts only its useful accounting
-discipline: admission weight, represented candidates, registered flights,
-actually running computations, waiting callers, backend operations, logical
-work, retained heap, and elapsed time are different dimensions and cannot
+discipline: admission weight, represented completed candidates, request-owned
+computations, bounded publication attempts, backend operations, logical work,
+retained heap, and elapsed time are different dimensions and cannot
 substitute for one another. Dafny proves bounds only for explicitly modeled
 logical counters. Source instrumentation checks the corresponding Clojure
 calls for named paths. JVM/JavaScript wall time and allocation are measured by

@@ -34,6 +34,13 @@ cache-disabled execution.
 - **THEN** they either return the same value or fail at the same semantic work boundary
 - **AND** cache availability alone cannot cause a complete-denotation limit failure
 
+#### Scenario: Traversal limits survive backend facades
+- **WHEN** a client configures a partial traversal-limit override
+- **THEN** EACL normalizes it to one complete positive limit map before the first request
+- **AND** the identical normalized map enters the immutable execution contract, cache identity, and generated traversal initialization
+- **AND** no backend compatibility facade may replace it with defaults or another caller's limits
+- **AND** a controlled strict-limit request fails at the modeled generated-work boundary on every backend
+
 ### Requirement: Demand is the default execution mode
 Absent an explicit `:evaluation` request control, EACL SHALL normalize every
 authorization operation to `:evaluation :demand`. Demand mode SHALL compute only
@@ -72,6 +79,12 @@ and consistency contract. EACL MUST NOT expose a separate prewarm API.
 - **WHEN** a caller requests `:evaluation :complete-denotation` for a recursive point or page operation
 - **THEN** EACL may exhaust and retain the complete compatible denotation before returning
 - **AND** reports that complete-denotation evaluation was selected
+
+#### Scenario: Complete recursive order
+- **WHEN** explicit completion materializes a recursive denotation whose generated logical order is not numeric EID order
+- **THEN** EACL retains the unique sequence in generated logical order without sorting it
+- **AND** point membership remains correct for every position in that sequence
+- **AND** complete and demand evaluation produce the same public page sequence and Boolean values
 
 #### Scenario: Complete evaluation of a bounded count
 - **WHEN** a count with `:count-limit L` explicitly requests complete-denotation evaluation
@@ -132,15 +145,19 @@ searches MUST NOT be accepted as completed authorization answers.
 - **AND** it is not represented as an exact complete denotation
 
 ### Requirement: Execution provenance is explicit
-Detailed public responses and cache statistics SHALL distinguish selected
-evaluation mode from cache lookup and publication outcomes. `:cache?` SHALL
-mean only cache reuse/publication permission.
+Detailed point responses SHALL expose the selected evaluation mode separately
+from `:cached?` and `:cache-basis`. Count and page cache/cursor identities SHALL
+bind the normalized evaluation mode even though their public response does not
+repeat the caller-supplied mode. Cache statistics SHALL distinguish lookup and
+publication outcomes. `:cache?` SHALL mean only cache reuse/publication
+permission.
 
 #### Scenario: Cold cache-enabled demand request
 - **WHEN** a demand request misses and computes its answer
-- **THEN** provenance reports a cache miss, demand evaluation, and the actual publication outcome separately
+- **THEN** the response is not labeled a hit
+- **AND** point detail reports demand evaluation while cache statistics retain the lookup/publication outcomes
 
 #### Scenario: Cache bypass
 - **WHEN** `:cache? false` is supplied
-- **THEN** provenance reports bypass
+- **THEN** the response is not labeled a hit and cache statistics record no lookup or publication for that request
 - **AND** EACL performs no cache key, lookup, proof-lifting, admission, publication, or cache-coordination work

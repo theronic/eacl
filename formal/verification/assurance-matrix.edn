@@ -4,14 +4,14 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 55
+  :source-files 56
   :public-roots 63
-  :reachable-definitions 1424
+  :reachable-definitions 1414
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
-   :clj-invoke-sites 56
-   :cljs-invoke-sites 56
+   :clj-invoke-sites 52
+   :cljs-invoke-sites 52
    :literal-operation-keys 21
    :status :static-operation-key-closure-established
    :assurance :not-adapter-semantic-proof}
@@ -24,17 +24,26 @@
    :class :semantic-foundation
    :consumer [:generated-authorization-decisions :indexed-refinement]}
   {:source "formal/dafny/AcyclicEngine.dfy"
-   :class :generated-production
-   :consumer [:can? :lookup :count]}
+   :class :generated-decisions-and-source-specializations
+   :consumer ['eacl.engine.v8/enumeration-route
+              'eacl.engine.v8/acyclic-lookup
+              'eacl.engine.v8/count-acyclic-pages
+              'eacl.engine.v8/acyclic-bound-authorized?]}
   {:source "formal/dafny/CacheKernel.dfy"
-   :class :generated-production
-   :consumer ['eacl.cache]}
+   :class :proof-only-generated-boundary
+   :consumer []
+   :reason :no-live-production-call-site-for-cache-validation}
   {:source "formal/dafny/ConsistencyDecision.dfy"
    :class :generated-production
    :consumer ['eacl.consistency]}
   {:source "formal/dafny/CurrentCache.dfy"
    :class :generated-production
    :consumer ['eacl.cache/current-generation-decision]}
+  {:source "formal/dafny/ExecutionContract.dfy"
+   :class :proof-only-host-control-model
+   :consumer ['eacl.execution/normalize
+              'eacl.execution/check!
+              'eacl.engine.v8/run-generated-traversal]}
   {:source "formal/dafny/CursorCost.dfy"
    :class :spec-only-cost-model
    :consumer ["formal/verification/performance-gates.edn"]}
@@ -104,7 +113,35 @@
    :class :formal-smoke-only
    :consumer ["formal/smoke/js/round_trip.mjs"]}]
  :operations
- [{:operation :can?
+ [{:operation :execution-contract
+   :entry-points ['eacl.execution/normalize
+                  'eacl.engine.v8/run-generated-traversal]
+   :theorems
+   [:deadline-dominates-quantum-and-adapter-boundaries
+    :demand-page-stops-at-n-plus-one
+    :bounded-count-stops-at-l-plus-one
+    :complete-evaluation-ignores-demand-sentinels
+    :positive-point-demand-stops-when-target-derived
+    :every-execution-boundary-forwards-identical-traversal-limits]
+   :dafny ["formal/dafny/ExecutionContract.dfy"
+           "formal/dafny/IndexedTraversal.dfy"]
+   :adapter-obligations
+   [:monotonic-clock
+    :immutable-normalized-request
+    :normalized-traversal-limit-transport-through-every-backend-facade
+    :adapter-command-boundary-check]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   {:demand-transition :generated-indexed-traversal
+    :deadline-composition :host-control-model-cross-checked}
+   :remaining
+   [:mechanized-host-control-source-refinement
+    :trusted-monotonic-clock-platform-contract
+    :independent-review]
+   :ci [:generated-production-kernel
+        :execution-contract
+        :deadline-fake-clock]}
+  {:operation :can?
    :entry-points ['eacl.core/can?]
    :theorems [:authorization-membership-iff
               :permission-path-materialization-refines-raw-typed-definitions
@@ -131,11 +168,14 @@
                          :schema-completeness :direct-scan-equivalence]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   {:clj-java :generated-only-all-defined-permission-roots
-    :cljs-javascript :portable-differentially-certified}
+   {:recursive-clj-java :generated-indexed-authority
+    :recursive-cljs :portable-differentially-certified-authority
+    :acyclic-clj-cljs
+    :generated-decisions-with-digest-locked-source-specializations}
    :point-check-routing
-   {:direction :reverse
-    :anchor :concrete-resource
+   {:anchor :concrete-resource
+    :recursive :generated-reverse-boolean-renderer
+    :acyclic :inclusive-exact-eid-bound-source-specialization
     :counterexample :EACL-FORMAL-055
     :target-local-logical-work-gate :passed}
    :remaining
@@ -173,8 +213,10 @@
                          :permission-node-completeness]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   {:clj-java :generated-only-all-defined-permission-roots
-    :cljs-javascript :portable-differentially-certified}
+   {:recursive-clj-java :generated-indexed-authority
+    :recursive-cljs :portable-differentially-certified-authority
+    :acyclic-clj-cljs
+    :generated-decisions-with-digest-locked-source-specializations}
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -198,8 +240,10 @@
                          :schema-completeness :ordered-complete-scans]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   {:clj-java :generated-only-all-defined-permission-roots
-    :cljs-javascript :portable-differentially-certified}
+   {:recursive-clj-java :generated-indexed-authority
+    :recursive-cljs :portable-differentially-certified-authority
+    :acyclic-clj-cljs
+    :generated-decisions-with-digest-locked-source-specializations}
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -249,14 +293,13 @@
               :single-permitted-graph
               :current-continuation-requires-equal-proof
               :exact-continuation-requires-authenticated-exact-proof
-              :recover-current-never-requires-retained-history
-              :rebased-continuation-requires-authenticated-same-scope]
+              :changed-proof-never-continues-on-current
+              :changed-proof-without-exact-snapshot-is-rejected]
    :dafny ["formal/dafny/PageWindow.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :exact-selection
                          :source-fingerprint
-                         :strict-ascending-unique-complete-current-denotation
-                         :host-keyset-rebase-membership-correctness]
+                         :complete-dependency-and-order-proof]
    :runtime-targets [:clj-java :cljs-javascript]
    :ci [:generated-production-kernel
         :cross-runtime-vectors
@@ -318,7 +361,10 @@
         :counterexample-replay]}
   {:operation :indexed-traversal-transition
    :entry-points ['eacl.engine.v8/recursive-forward-page
-                  'eacl.engine.v8/recursive-reverse-page]
+                  'eacl.engine.v8/recursive-reverse-page
+                  'eacl.engine.v8/recursive-can?
+                  'eacl.engine.v8/complete-generated-forward-denotation
+                  'eacl.engine.v8/complete-generated-reverse-denotation]
    :theorems
    [:malformed-indexed-scan-response-rejected
     :lifecycle-local-request-identity
@@ -366,8 +412,9 @@
     :compiled-plan-refinement]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   {:clj-java :generated-only-all-defined-permission-roots
-    :cljs-javascript :portable-differentially-certified}
+   {:clj-java :generated-only-recursive-permission-roots
+    :cljs-javascript
+    :portable-differentially-certified-recursive-permission-roots}
    :remaining
    [:production-adapter-source-refinement
     :independent-review]
@@ -391,12 +438,11 @@
               :partial-recursive-publication-rejection
               :subproblem-weight-bound
               :subproblem-represented-candidate-bound
-              :subproblem-global-actual-callback-bound
-              :recursive-bypass-reuses-only-owner-context
-              :distinct-context-recursive-bypass-acquires-slot
-              :linearized-lifecycle-entry-and-flight-selection
-              :generated-lookup-action-precedes-flight-mutation
-              :registered-unrepresented-flight-is-computing]
+              :incomplete-candidate-computes-independently
+              :request-owned-miss-computation
+              :bounded-best-effort-publication
+              :compatible-publication-winner-retained
+              :linearized-lifecycle-lookup-and-publication-selection]
    :dafny ["formal/dafny/CacheKernel.dfy"
            "formal/dafny/CurrentCache.dfy"
            "formal/dafny/RootDenotation.dfy"
@@ -408,7 +454,7 @@
                          :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering
                          :source-fingerprint
-                         :host-execution-context-accounting]
+                         :request-owned-computation-accounting]
    :runtime-targets [:clj-java :cljs-javascript]
    :ci [:generated-production-kernel
         :authoritative-rejection-regression

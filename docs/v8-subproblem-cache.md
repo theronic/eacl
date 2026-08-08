@@ -78,11 +78,10 @@ framing proof remains open and is tracked in the assurance matrix.
 
 ## Bounds and hit costs
 
-The projection and denotation tiers have isolated weighted budgets. Admission
-reserves weight continuously, evicts only performance state, rejects oversized
-values, and limits distinct in-flight computations globally. Identical
-concurrent misses use single flight; recursive self-resolution bypasses its own
-candidate instead of waiting.
+The projection and denotation tiers have isolated weighted budgets. Publication
+evicts only performance state and rejects oversized values. Identical misses
+compute independently and race bounded best-effort publication; no caller
+waits for another cache computation.
 
 Completed private entries are structurally validated and weighed once.
 Subsequent hits perform constant-count lookup/recency maintenance and do not
@@ -99,8 +98,7 @@ Configuration:
   {:enabled? true
    :projection-max-weight (* 8 1024 1024)
    :denotation-max-weight (* 8 1024 1024)
-   :answer-max-weight (* 16 1024 1024)
-   :max-inflight 256}}}
+   :answer-max-weight (* 16 1024 1024)}}}
 ```
 
 The weights are deterministic admission units approximating retained key/value
@@ -113,7 +111,7 @@ maximum-size page cannot displace every retained answer.
 `cache-stats` exposes exact and managed completed-answer counts plus
 `:subproblems` and `:managed-subproblems`. Relevant counters include
 projection, denotation, and answer hits, managed projection hits, proof
-reads/hits/failures, single-flight waits, admission/oversize rejection,
+reads/hits/failures, publication races/contention, admission/oversize rejection,
 eviction, fetched projection values, and avoided backend operations.
 
 ## Performance gate
@@ -145,7 +143,8 @@ completed-answer hits or cache-free evaluation.
 
 `formal/dafny/SubproblemCache.dfy` proves conditional key separation,
 projection slicing, exact-hit refinement, relation-stamp framing, complete-hit
-callback bounds, weighted/in-flight bounds, lifecycle rejection, and
+callback bounds, weighted-retention and bounded-publication-attempt bounds,
+lifecycle rejection, and
 partial-recursive-publication rejection. The TLA+ models explore expiry,
 eviction, failure, concurrent publication, relation/schema changes, unrelated
 generation changes, and source switches; bounded depth 8 and inductive

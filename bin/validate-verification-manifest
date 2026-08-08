@@ -1,7 +1,9 @@
 #!/usr/bin/env bb
 
 (require '[clojure.edn :as edn]
-         '[clojure.java.io :as io])
+         '[cheshire.core :as json]
+         '[clojure.java.io :as io]
+         '[clojure.string :as str])
 
 (def repo-root
   (.getCanonicalFile
@@ -22,16 +24,28 @@
   (or (System/getenv "EACL_VERIFICATION_MANIFEST")
       "formal/verification/manifest.edn"))
 
+(def dafny-report-path
+  (or (System/getenv "EACL_DAFNY_VERIFICATION_REPORT")
+      "target/formal/dafny-verification.json"))
+
 (def required-theorems
-  #{:semantic-foundation
+  #{:normalized-execution-contract
+    :semantic-foundation
+    :cache-cursor-foundation
     :strict-wire-format
     :abstract-snapshot-oracle
     :direct-and-acyclic-engine
-    :recursive-engine
     :ordered-merge
+    :recursive-engine
+    :recursive-routing-certificate
     :pagination-and-cursor-kernel
-    :cache-cursor-foundation
+    :cursor-codec-cost-model
+    :recursive-engine-cost-model
+    :snapshot-consistency-decision
     :cache-decision-kernel
+    :current-generation-cache
+    :subproblem-cache
+    :indexed-recursive-public-engine
     :complete-public-engine})
 
 (defn fail!
@@ -43,6 +57,14 @@
 
 (let [manifest
       (read-edn manifest-path)
+      dafny-report
+      (json/parse-string (slurp (repo-file dafny-report-path)) true)
+      dafny-counts
+      (into {}
+            (map (juxt :source :proofEfforts))
+            (:modules dafny-report))
+      aggregate-dafny-count
+      (get-in dafny-report [:aggregate :proofEfforts])
       report
       (read-edn
        (get-in manifest [:adapter-certification :report]))
@@ -65,6 +87,21 @@
         (map #(vector :adapter-certification %) missing-certifications)))
       verified?
       (= :verified (:assurance-status manifest))
+      externally-certified?
+      (= :externally-certified (:assurance-status manifest))
+      external-certification (:external-certification manifest)
+      valid-external-signoff?
+      (and (= :signed (:status external-certification))
+           (every?
+            #(and (string? %) (not (str/blank? %)))
+            ((juxt :reviewer :organization :reviewed-at :scope)
+             external-certification))
+           (boolean
+            (re-matches #"[0-9a-f]{40}"
+                        (:source-commit external-certification "")))
+           (boolean
+            (re-matches #"[0-9a-f]{64}"
+                        (:bundle-sha256 external-certification ""))))
       allowed?
       (true?
        (get-in manifest
@@ -80,6 +117,37 @@
         (remove (fn [[_ theorem]]
                   (= :passed (:status theorem))))
         (:theorems manifest)))
+      theorem-count-mismatches
+      (into
+       {}
+       (keep
+        (fn [[claim theorem]]
+          (let [sources
+                (cond
+                  (string? (:source theorem)) [(:source theorem)]
+                  (sequential? (:sources theorem)) (:sources theorem)
+                  :else nil)
+                source-counts
+                (when (seq sources)
+                  (mapv
+                   #(get dafny-counts (.getName (io/file %)))
+                   sources))
+                actual
+                (cond
+                  (and (seq source-counts) (every? integer? source-counts))
+                  (reduce + source-counts)
+
+                  (= claim :complete-public-engine)
+                  aggregate-dafny-count
+
+                  :else nil)]
+            (when (and (integer? actual)
+                       (not= actual (:verified-obligations theorem)))
+              [claim
+               {:recorded (:verified-obligations theorem)
+                :actual actual
+                :sources sources}]))))
+       (:theorems manifest))
       generated-digests
       (:generated-artifact-digests manifest)
       missing-generated
@@ -111,6 +179,15 @@
     (fail!
      "Verification manifest refuses :verified: required obligations are unmet."
      {:unmet-required-obligations unmet}))
+  (when (and externally-certified?
+             (or (seq unmet)
+                 (not allowed?)
+                 (not valid-external-signoff?)))
+    (fail!
+     "Verification manifest refuses :externally-certified without closed gates and independent bound sign-off."
+     {:unmet-required-obligations unmet
+      :verified-status-allowed? allowed?
+      :external-certification external-certification}))
   (when (and verified? (not allowed?))
     (fail!
      "Verification manifest refuses :verified: the release gate is closed."
@@ -119,6 +196,11 @@
     (fail!
      "Verification status is withheld: theorem results are incomplete."
      {:incomplete-theorems incomplete-theorems}))
+  (when (seq theorem-count-mismatches)
+    (fail!
+     "Verification manifest theorem counts do not match the exact Dafny report."
+     {:dafny-report dafny-report-path
+      :theorem-count-mismatches theorem-count-mismatches}))
   (when (seq missing-generated)
     (fail!
      "Verification status is withheld: generated targets are missing."

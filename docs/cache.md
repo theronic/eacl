@@ -46,7 +46,7 @@ Caching does not alter the result:
 | Layer | Reuse scope | Purpose |
 | --- | --- | --- |
 | Exact completed answer | Identical semantic operation on the same immutable database value | Skips the complete authorization computation |
-| Managed completed answer | Identical semantic operation with the same schema and complete relation-dependency stamp | Survives unrelated forward transactions |
+| Managed completed answer | Explicit `:complete-denotation` operation with the same schema and complete relation-dependency stamp | Survives unrelated forward transactions |
 | Exact relationship projection | Compatible traversals of the same relation/index portion on the same immutable database value | Shares bounded adjacency chunks and direct-membership probes |
 | Managed relationship projection | Compatible traversals with the same relation mutation identity and schema | Shares unchanged graph portions across unrelated transactions |
 | Completed denotation | Compatible operations on the same immutable database value | Reuses completed acyclic results and recursive least-fixed-point results |
@@ -114,12 +114,18 @@ identity and mutation value are both retained where the backend can fork or
 replace history, so equal numeric revisions from different histories do not
 become interchangeable.
 
-For a completed answer, the compiled permission supplies its complete relation
+For an explicit `:evaluation :complete-denotation` answer, the compiled permission supplies its complete relation
 dependency set. EACL reads the dependency evidence from the same selected
 database value and derives the managed dependency stamp. A write to any
 relevant relation changes the key. An unrelated write leaves it unchanged. A
 schema change installs a new managed generation and discards managed answers
 and plans from the preceding schema generation.
+
+Demand-mode answers and traversal fragments remain bound to their exact
+selected immutable database value. EACL does not perform extra dependency work
+to promote a bounded point, count, or page into a cross-basis artifact. After
+an unrelated write, such an entry is a miss and the new request performs only
+the traversal it asked for.
 
 Proof acquisition is bounded. The managed projection cache reads at most one
 relation proof for each distinct relation dependency in a new exact
@@ -147,8 +153,8 @@ dependency closures, strongly connected components, reverse reachability, and
 recursive traversal plans are compiled once per schema generation and reused
 by every compatible operation in the client.
 
-Completed acyclic and recursive denotations can be reused by compatible
-operations on the exact same immutable snapshot, and — under
+Explicitly completed acyclic and recursive denotations can be reused by
+compatible operations on the exact same immutable snapshot, and — under
 `:coherence-authority :managed` — across unrelated forward transactions: the
 compiled permission supplies the complete relation dependency closure (plan
 compilation fails if a compiled rule could reference a relation outside it),
@@ -174,8 +180,9 @@ answers byte-unbounded.
 
 Each tier tracks recency. When publication would exceed the tier's weight
 budget, it evicts the least recently accessed completed entries until the
-tier fits. The entry currently being published and in-flight entries are
-protected from eviction. A projection or denotation heavier than its complete
+tier fits. The candidate currently being published is protected from its own
+eviction pass. There are no registered in-flight cache computations. A
+projection or denotation heavier than its complete
 tier budget is rejected instead of displacing the tier; a completed answer
 heavier than one quarter of the answer budget is likewise rejected and
 counted under `:oversized-rejections`, so a single maximum-size page cannot
@@ -192,6 +199,15 @@ subset. Datomic keeps completed answers and continuation state in
 client-private bounded stores. Custom provider adapters are rejected because
 they do not control either live store.
 
+The request-level cache control surface is deliberately small. Client option
+`:cache-attempt` accepts only positive `:evaluation-reserve-ms` (default `10`)
+and `:maximum-atomic-attempts` (default `4`). The reserve skips cache work when
+too little request deadline remains; the attempt bound limits best-effort CAS
+publication. Encoded-byte, decoded-weight, candidate-count, provider, and
+cache-stage-time options are rejected because no shipped v8 path could enforce
+them honestly. Store-level native weight budgets remain separate cache
+configuration.
+
 Time-to-live is optional and is not the correctness mechanism. Exact snapshot
 identity and managed mutation stamps determine validity. Capacity eviction
 normally gives better retention than discarding a still-hot valid entry merely
@@ -199,20 +215,16 @@ because it is old.
 
 ## Concurrency
 
-Identical concurrent subproblem misses use single flight: one caller computes
-the value and compatible callers await the same candidate. A recursive
-computation that encounters its own in-flight key bypasses that candidate
-instead of waiting on itself.
-
-`:max-inflight` bounds actively executing top-level subproblem computations
-across the client's cache lifecycle. JVM callers wait on a fair semaphore when
-the bound is saturated. In-flight tracking is separate from evictable entries,
-so clearing or replacing a generation cannot manufacture execution capacity.
+Identical concurrent misses compute independently. No authorization request
+waits for another request's cache work, inherits its failure, or acquires an
+EACL cache semaphore. Completed values race a bounded best-effort atomic
+publication; a compatible existing value wins, while a losing request returns
+the value it computed and remains a cache miss in telemetry.
 
 Publication checks that the candidate still belongs to the active lifecycle,
 is complete, validates structurally, and fits the relevant budget. A late
-result from an expired lifecycle can publish only into the now-unreachable old
-store.
+result from an expired lifecycle is rejected by lifecycle detachment and
+cannot enter the new generation.
 
 ## Configuration
 
@@ -242,7 +254,6 @@ Advanced bounds:
    :projection-max-weight (* 8 1024 1024)
    :denotation-max-weight (* 8 1024 1024)
    :answer-max-weight (* 16 1024 1024)
-   :max-inflight 256
    :managed-proof-max-atoms 256}}}
 ```
 
@@ -286,15 +297,15 @@ Measure the permissions and graph shapes your application actually uses.
 
 Each backend exposes `cache-stats`. The top-level counters include exact and
 managed hits, misses, bypasses, stamp failures, puts, expirations, live entry
-counts, admission counts, and active computation counts.
+counts, and admission counts.
 
 The nested subproblem metrics include:
 
 - projection, denotation, and completed-answer hits;
 - managed projection, denotation, and completed-answer hits;
 - managed proof reads, hits, failures, and overflows;
-- single-flight waits and recursive self-bypasses;
-- admission, oversized-entry, in-flight, and invalid-result rejections;
+- publication races, bounded CAS contention, and lifecycle detachment;
+- admission, oversized-entry, invalid-result, lifecycle-detachment, and bounded-publication rejections;
 - evictions;
 - fetched projection values; and
 - avoided backend operations.
@@ -328,14 +339,16 @@ an operational cache-control API, not a v8 rollback or migration mechanism.
 
 Cursor navigation and recursive continuation are separate bounded performance
 stores. Their entries are scoped to an authenticated operation, normalized
-query, backend/source identity, and snapshot context. Missing continuation
-state restarts or replays according to the selected consistency mode; it does
-not return an authorization answer from an unrelated query.
+query, execution contract, backend/source identity, snapshot proof, and cursor
+position. Missing continuation state deterministically replays the
+authenticated prefix on the same selected immutable snapshot; it never
+restarts the public walk.
 
 Explicit `at-exact-snapshot`, historical replay, filtered databases,
 prospective databases, and other arbitrary database values bypass completed
-answers. Ordinary cursor continuation can re-evaluate against the selected
-current snapshot when retained state is unavailable.
+answers. Current cursor continuation requires an equal dependency/order proof.
+A changed proof requires verified exact historical reconstruction or fails
+closed; DataScript never reconstructs history.
 
 ## Performance and correctness gates
 
@@ -360,7 +373,7 @@ Performance gates cover:
 - cache-free overhead;
 - retained-entry-count scaling;
 - recursive closure-size scaling; and
-- configured retained-weight and in-flight limits.
+- configured retained-weight and bounded publication-attempt limits.
 
 See [formal verification](formal-verification.md) for the complete assurance
 boundary and [the layered subproblem benchmark](v8-subproblem-cache.md) for the

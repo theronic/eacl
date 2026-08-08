@@ -384,7 +384,7 @@
       (is (false? (get-in page-2
                           [:page-info :has-next-page?])))
       (unrelated-write!)
-      (let [lifted (eacl/lookup-resources cached all-query)
+      (let [selected (eacl/lookup-resources cached all-query)
             fresh (eacl/lookup-resources uncached all-query)]
         (is (= :passed
                (:status
@@ -394,9 +394,10 @@
                   :values
                   [[:formal-semantics
                     ["document-1" "document-2"]]
-                   [:public-cache-enabled (ids lifted)]
+                   [:public-cache-enabled (ids selected)]
                    [:public-cache-disabled (ids fresh)]]}))))
-        (is (true? (:cached? lifted))))
+        (is (false? (:cached? selected))
+            "demand artifacts stay exact-basis; cross-basis proof lifting is reserved for explicit complete denotations"))
       (assert-public-authorization!
        label
        cached
@@ -440,8 +441,7 @@
           common
           {:coherence-authority :managed
            :security-key
-           "01234567890123456789012345678901"
-           :exact-snapshot-registry-size 16}
+           "01234567890123456789012345678901"}
           selection (counting-decision-kernel calls)
           cached
           (make-client-with-kernel
@@ -540,9 +540,10 @@
               :db/doc "unrelated"}]))
          calls)))))
 
-(deftest generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+(deftest generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
   (let [conn (datascript/create-conn)
         calls (atom {})
+        point-work (atom {})
         client
         (make-client-with-kernel
          datascript/make-client
@@ -604,8 +605,9 @@
           reverse-initializations-before-can
           (get @calls [:indexed-traversal-initialize :reverse] 0)
           can-result
-          (eacl/can?
-           client user :view (peek documents))
+          (binding [engine/*acyclic-work-stats* point-work]
+            (eacl/can?
+             client user :view (peek documents)))
           after-can (indexed-call-count calls)
           forward-initializations-after-can
           (get @calls [:indexed-traversal-initialize :forward] 0)
@@ -622,17 +624,21 @@
       (is (= forward-initializations-before-can
              forward-initializations-after-can)
           "point authorization must not enumerate resources from the subject")
-      (is (< reverse-initializations-before-can
+      (is (= reverse-initializations-before-can
              reverse-initializations-after-can)
-          "point authorization must use generated reverse traversal from its concrete resource")
+          "certified acyclic point authorization must not enter the recursive indexed machine")
       (is (zero? after-first-page)
           "certified acyclic pages must not enter the recursive indexed machine")
       (is (zero? after-second-page)
           "continuing an acyclic page must stay outside recursive traversal")
       (is (zero? after-count)
           "certified acyclic counts must stay outside recursive traversal")
-      (is (< after-count after-can)
-          "point authorization still uses generated reverse indexed traversal")
+      (is (= after-count after-can)
+          "the source-specialized bound probe stays outside recursive traversal")
+      (is (= 1 (:routed-acyclic @point-work))
+          "point authorization is classified once as an acyclic source specialization")
+      (is (pos? (:backend-scans @point-work 0))
+          "the point check executes a concrete bound probe")
       (is (pos? (get @calls :enumeration-route 0))
           "every enumeration must execute generated route authority")
       (is (<= 2 (get @calls :acyclic-page 0))
@@ -641,10 +647,10 @@
           "count must execute generated exact-count authority")
       (is (pos? (get @calls :acyclic-work 0))
           "acyclic list/count work must execute its generated budget authority")
-      (is (pos? (get @calls :indexed-traversal-compile 0)))
-      (is (pos? (get @calls :indexed-traversal-initialize 0)))
-      (is (pos? (get @calls :indexed-traversal-drive 0)))
-      (is (pos? (get @calls :indexed-traversal-read 0))))))
+      (is (zero? (get @calls :indexed-traversal-compile 0)))
+      (is (zero? (get @calls :indexed-traversal-initialize 0)))
+      (is (zero? (get @calls :indexed-traversal-drive 0)))
+      (is (zero? (get @calls :indexed-traversal-read 0))))))
 
 (deftest generated-can-reuses-the-public-root-classification
   (let [conn (datascript/create-conn)
@@ -936,21 +942,21 @@
             (datascript-backend/snapshot-adapter
              (ds/db conn)
              (:opts client))
-            current-ids
-            (mapv :id
-                  (:data
-                   (engine/lookup-resources
-                    changed-adapter
-                    (assoc query :first 10))))
-            resumed
-            (engine/lookup-resources
-             changed-adapter
-             (assoc query :after bound))]
+            resumed-error
+            (try
+              (engine/lookup-resources
+               changed-adapter
+               (assoc query :after bound))
+              nil
+              (catch Exception exception
+                exception))]
         (is (= [(:result-eid bound)]
                (mapv :id (:data page))))
-        (is (= (filterv #(> % (:result-eid bound)) current-ids)
-               (mapv :id (:data resumed)))
-            "a raw keyset bound resumes exclusively after its eid on the current graph")))
+        (is (= :eacl.pagination/stale-cursor
+               (:eacl/error (ex-data resumed-error)))
+            "current-only continuation rejects a disappeared authenticated boundary")
+        (is (= (select-keys bound [:ordinal :result-eid])
+               (select-keys (ex-data resumed-error) [:ordinal :result-eid])))))
     (let [render-rejected
           (try
             (#'engine/generated-traversal-error!

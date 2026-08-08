@@ -269,6 +269,97 @@ module PageWindow {
     )
   }
 
+  datatype LogicalBoundary<T(==)> =
+    | NoLogicalBoundary
+    | LogicalBoundary(ordinal: nat, value: T)
+
+  datatype CompletedLogicalPageDecision<T> =
+    | CompletedLogicalPage(page: Page<T>)
+    | StaleLogicalBoundary
+
+  predicate LogicalBoundaryMatches<T(==)>(
+    values: seq<T>,
+    bound: LogicalBoundary<T>
+  ) {
+    bound.NoLogicalBoundary? ||
+    (bound.ordinal < |values| && values[bound.ordinal] == bound.value)
+  }
+
+  function LogicalBoundaryPresence<T(==)>(
+    bound: LogicalBoundary<T>
+  ): Presence<nat> {
+    if bound.NoLogicalBoundary?
+    then Absent
+    else PresentValue(bound.ordinal)
+  }
+
+  function DecideCompletedLogicalPage<T(==)>(
+    values: seq<T>,
+    direction: Direction,
+    size: nat,
+    bound: LogicalBoundary<T>
+  ): CompletedLogicalPageDecision<T>
+    requires 0 < size
+  {
+    if !LogicalBoundaryMatches(values, bound) then
+      StaleLogicalBoundary
+    else
+      CompletedLogicalPage(
+        PageValues(
+          values,
+          direction,
+          size,
+          LogicalBoundaryPresence(bound)
+        )
+      )
+  }
+
+  lemma AcceptedCompletedLogicalPageIsExactLogicalSlice<T>(
+    values: seq<T>,
+    direction: Direction,
+    size: nat,
+    bound: LogicalBoundary<T>
+  )
+    requires 0 < size
+    requires LogicalBoundaryMatches(values, bound)
+    ensures DecideCompletedLogicalPage(
+              values,
+              direction,
+              size,
+              bound
+            ).CompletedLogicalPage?
+    ensures DecideCompletedLogicalPage(
+              values,
+              direction,
+              size,
+              bound
+            ).page ==
+            PageValues(
+              values,
+              direction,
+              size,
+              LogicalBoundaryPresence(bound)
+            )
+  {
+  }
+
+  lemma MismatchedLogicalBoundaryIsStale<T>(
+    values: seq<T>,
+    direction: Direction,
+    size: nat,
+    bound: LogicalBoundary<T>
+  )
+    requires 0 < size
+    requires !LogicalBoundaryMatches(values, bound)
+    ensures DecideCompletedLogicalPage(
+              values,
+              direction,
+              size,
+              bound
+            ).StaleLogicalBoundary?
+  {
+  }
+
   ghost predicate Unique<T>(values: seq<T>) {
     forall left, right | 0 <= left < right < |values| ::
       values[left] != values[right]
@@ -351,10 +442,6 @@ module PageWindow {
   {
   }
 
-  datatype ConsistencyMode =
-    | RecoverCurrent
-    | ExactSnapshotMode
-
   datatype ExactSelection =
     | ExactUnavailable
     | ExactSnapshot(
@@ -373,66 +460,77 @@ module PageWindow {
 
   datatype ContinuationDecision =
     | UseCurrent
-    | RebaseCurrent
     | UseExact(graph: TemporalSafety.Graph)
     | Reject(reason: ContinuationRejectReason)
 
-  datatype RetainedRelationshipPageDecision<T> =
-    | RelationshipPageCacheMiss
-    | RelationshipPageCacheHit(page: Page<T>)
+  datatype RetainedAuthorizationPageDecision<T> =
+    | AuthorizationPageCacheMiss
+    | AuthorizationPageCacheHit(page: Page<T>)
 
-  function DecideRetainedRelationshipPage<T>(
+  function DecideRetainedAuthorizationPage<T>(
     cacheEnabled: bool,
     sameClient: bool,
     sameGeneration: bool,
     sameOperation: bool,
     sameQuery: bool,
+    samePageRequest: bool,
+    sameOrderingAbi: bool,
     retained: Page<T>
-  ): RetainedRelationshipPageDecision<T> {
+  ): RetainedAuthorizationPageDecision<T> {
     if cacheEnabled &&
        sameClient &&
        sameGeneration &&
        sameOperation &&
-       sameQuery
-    then RelationshipPageCacheHit(retained)
-    else RelationshipPageCacheMiss
+       sameQuery &&
+       samePageRequest &&
+       sameOrderingAbi
+    then AuthorizationPageCacheHit(retained)
+    else AuthorizationPageCacheMiss
   }
 
-  lemma MatchingRelationshipPageScopeReusesExactPage<T>(
+  lemma MatchingAuthorizationPageScopeReusesExactPage<T>(
     retained: Page<T>
   )
-    ensures DecideRetainedRelationshipPage(
+    ensures DecideRetainedAuthorizationPage(
+              true,
+              true,
               true,
               true,
               true,
               true,
               true,
               retained
-            ) == RelationshipPageCacheHit(retained)
+            ) == AuthorizationPageCacheHit(retained)
   {
   }
 
-  lemma RelationshipPageScopeMismatchCannotHit<T>(
+  lemma AuthorizationPageScopeMismatchCannotHit<T>(
     cacheEnabled: bool,
     sameClient: bool,
     sameGeneration: bool,
     sameOperation: bool,
     sameQuery: bool,
+    samePageRequest: bool,
+    sameOrderingAbi: bool,
     retained: Page<T>
   )
     requires !cacheEnabled ||
              !sameClient ||
              !sameGeneration ||
              !sameOperation ||
-             !sameQuery
-    ensures DecideRetainedRelationshipPage(
+             !sameQuery ||
+             !samePageRequest ||
+             !sameOrderingAbi
+    ensures DecideRetainedAuthorizationPage(
               cacheEnabled,
               sameClient,
               sameGeneration,
               sameOperation,
               sameQuery,
+              samePageRequest,
+              sameOrderingAbi,
               retained
-            ).RelationshipPageCacheMiss?
+            ).AuthorizationPageCacheMiss?
   {
   }
 
@@ -444,7 +542,6 @@ module PageWindow {
     cursorSourceIdentity: string,
     currentProof: string,
     cursorProof: string,
-    mode: ConsistencyMode,
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection
   ): ContinuationDecision {
@@ -458,8 +555,6 @@ module PageWindow {
         Reject(CursorExpired)
       else if currentProof == cursorProof then
         UseCurrent
-      else if mode.RecoverCurrent? then
-        RebaseCurrent
       else
         match exact
         case ExactUnavailable =>
@@ -482,7 +577,6 @@ module PageWindow {
     cursorSourceIdentity: string,
     currentProof: string,
     cursorProof: string,
-    mode: ConsistencyMode,
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection
   )
@@ -494,7 +588,6 @@ module PageWindow {
               cursorSourceIdentity,
               currentProof,
               cursorProof,
-              mode,
               cursorGraph,
               exact
             ).UseCurrent? ==>
@@ -514,7 +607,6 @@ module PageWindow {
     cursorSourceIdentity: string,
     currentProof: string,
     cursorProof: string,
-    mode: ConsistencyMode,
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection
   )
@@ -526,7 +618,6 @@ module PageWindow {
               cursorSourceIdentity,
               currentProof,
               cursorProof,
-              mode,
               cursorGraph,
               exact
             ).UseExact? ==>
@@ -535,7 +626,6 @@ module PageWindow {
               !expired &&
               sourceIdentity == cursorSourceIdentity &&
               currentProof != cursorProof &&
-              mode.ExactSnapshotMode? &&
               exact.ExactSnapshot? &&
               exact.graph == cursorGraph &&
               exact.sourceIdentity == cursorSourceIdentity &&
@@ -543,7 +633,7 @@ module PageWindow {
   {
   }
 
-  lemma RecoverCurrentNeverRequiresRetainedHistory(
+  lemma ChangedProofNeverContinuesOnCurrent(
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection,
     currentProof: string,
@@ -558,41 +648,29 @@ module PageWindow {
               "source",
               currentProof,
               cursorProof,
-              RecoverCurrent,
               cursorGraph,
               exact
-            ) == RebaseCurrent
+            ) != UseCurrent
   {
   }
 
-  lemma RebasedContinuationRequiresAuthenticatedSameScope(
-    authenticated: bool,
-    scopeMatches: bool,
-    expired: bool,
-    sourceIdentity: string,
-    cursorSourceIdentity: string,
+  lemma ChangedProofWithoutExactSnapshotIsRejected(
     currentProof: string,
     cursorProof: string,
-    cursorGraph: TemporalSafety.Graph,
-    exact: ExactSelection
+    cursorGraph: TemporalSafety.Graph
   )
+    requires currentProof != cursorProof
     ensures DecideContinuation(
-              authenticated,
-              scopeMatches,
-              expired,
-              sourceIdentity,
-              cursorSourceIdentity,
+              true,
+              true,
+              false,
+              "source",
+              "source",
               currentProof,
               cursorProof,
-              RecoverCurrent,
               cursorGraph,
-              exact
-            ).RebaseCurrent? ==>
-              authenticated &&
-              scopeMatches &&
-              !expired &&
-              sourceIdentity == cursorSourceIdentity &&
-              currentProof != cursorProof
+              ExactUnavailable
+            ) == Reject(SnapshotUnavailable)
   {
   }
 

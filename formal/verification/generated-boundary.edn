@@ -35,9 +35,9 @@
   :consistency-selection-plan
   :consistency-post-selection-validation
   :lookup-cursor-continuation
-  :lookup-cursor-current-identity-rebase
+  :lookup-cursor-changed-proof-rejection
+  :lookup-cursor-exact-fallback
   :relationship-cursor-continuation
-  :cache-validation
   :current-cache-selection
   :recursive-routing-certificate
   :indexed-scan-response-validation
@@ -50,6 +50,8 @@
   :indexed-page-rendering
   :indexed-boolean-rendering
   :indexed-count-rendering]
+ :proof-only-generated-decisions
+ [:cache-validation]
  :materialized-reference-decisions
  [:can?
   :lookup-resources
@@ -228,8 +230,11 @@
   {:clj-java :generated-only-schema-plan-compilation
    :cljs-javascript :portable-differentially-certified}
   :production-state-transition-routing
-  {:clj-java :generated-only-all-defined-permission-roots
-   :cljs-javascript :portable-differentially-certified}
+  {:clj-java :generated-only-recursive-permission-roots
+   :cljs-javascript
+   :portable-differentially-certified-recursive-permission-roots
+   :acyclic-roots
+   :host-source-specializations-with-generated-route-page-count-and-work-decisions}
   :opaque-authority-state-between-adapter-round-trips true
   :per-query-schema-rule-index-rebuild false
   :compiled-plan-soundness-refinement true

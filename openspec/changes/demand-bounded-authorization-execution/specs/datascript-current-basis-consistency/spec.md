@@ -71,7 +71,7 @@ answer observationally equivalent on `S`.
 #### Scenario: Older proof-equivalent candidate
 - **WHEN** candidate `C` predates an at-least floor but selected `S` contains the floor and all complete dependency proofs match
 - **THEN** EACL may return the candidate as an answer validated on `S`
-- **AND** preserves separate `computed-at C` and `validated-at S` provenance
+- **AND** `:cache-basis` remains `C` while validation is performed against request-local selected `S`
 
 #### Scenario: Relevant raw write under unknown authority
 - **WHEN** a raw DataScript transaction changes relevant authorization content without mutation stamps

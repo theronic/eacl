@@ -89,7 +89,7 @@
           :tx-delete-object #'impl/tx-delete-object
           :affected-relation-ids #'impl/affected-relation-ids
           :read-relationships #'impl/read-relationships}
-   :extra-client-opt-keys #{:exact-snapshot-registry-size}})
+   :extra-client-opt-keys #{}})
 
 (defn datascript-read-relationships
   [db opts filters]
@@ -163,8 +163,9 @@
     let unchanged cache portions survive unrelated transactions.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides.
-  - :exact-snapshot-registry-size - DataScript extension: bounds the opaque
-    exact-snapshot identity registry used by at-exact-snapshot reads."
+
+  DataScript is current-basis-only across requests. It does not retain old DB
+  values and rejects :at-exact-snapshot before cache access."
   [conn config-opts]
   (orchestration/make-client api conn config-opts))
 

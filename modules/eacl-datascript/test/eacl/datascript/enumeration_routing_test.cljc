@@ -41,6 +41,14 @@
             engine/*recursive-traversal-stats* (atom {})]
     (eacl/lookup-resources client query)))
 
+(defn- error-data [f]
+  (try
+    (f)
+    nil
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
+        error
+      (ex-data error))))
+
 (deftest certified-acyclic-enumeration-is-exact-and-recursive-limit-isolated-test
   (let [{:keys [client]}
         (seed-client!
@@ -152,7 +160,7 @@
       (is (= #{:kind :result-eid}
              (set (keys (:edge decoded))))))))
 
-(deftest acyclic-current-cursor-rebase-never-enters-recursive-traversal-test
+(deftest acyclic-relevant-write-rejects-current-only-cursor-test
   (let [{:keys [conn client]}
         (seed-client!
          small-shape
@@ -171,18 +179,11 @@
             fixture/super-user
             :shared_admin
             added-server))
-        acyclic-stats (atom {})
-        recursive-stats (atom {})
-        second-page
-        (binding [engine/*acyclic-work-stats* acyclic-stats
-                  engine/*recursive-traversal-stats* recursive-stats]
-          (eacl/lookup-resources client (assoc query :after cursor)))]
-    (is (= 17 (count (:data second-page))))
-    (is (= :rebased
-           (get-in second-page [:page-info :cursor-recovery])))
-    (is (pos? (:backend-scans @acyclic-stats)))
-    (is (empty? @recursive-stats)
-        "acyclic cursor membership must use the bounded indexed route")))
+        data
+        (error-data
+         #(eacl/lookup-resources client (assoc query :after cursor)))]
+    (is (= :eacl.pagination/stale-cursor (:type data)))
+    (is (= :dependency-proof-changed (:reason data)))))
 
 (deftest recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
   (let [{baseline-client :client}

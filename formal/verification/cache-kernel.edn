@@ -1,6 +1,7 @@
 {:schema-version 1
  :semantics-version 1
- :status :proof-and-generated-tests-passed
+ :status :proof-only-generated-boundary-passed
+ :classification :proof-only-no-live-production-consumer
  :proof
  {:source "formal/dafny/CacheKernel.dfy"
   :verified-obligations 17
@@ -13,13 +14,13 @@
    :proof-mismatch
    :no-proof-bypass
    :unauthenticated-rejection
-   :provider-failure-miss
+   :abstract-read-failure-miss
    :accepted-value-equals-recomputation-under-proof-contract
    :telemetry-is-separate-from-authorization
    :compare-and-set-race-preserves-chosen-value]}
  :current-generation-proof
  {:source "formal/dafny/CurrentCache.dfy"
-  :verified-obligations 28
+  :verified-obligations 30
   :claims
   [:cache-eligibility-does-not-select-engine-authority
    :generated-current-cache-stage-selection
@@ -54,7 +55,7 @@
   :tests 85
   :assertions 5705
   :status :passed}
- :production-authority-routing
+ :generated-boundary-routing
  {:clj-java
   {:namespace eacl.formal.production-kernel-test
    :status :passed}
@@ -65,7 +66,9 @@
   {:namespace eacl.cache-test
    :status :passed}
   :claim
-  :cache-and-current-generation-selection-cannot-return-a-hit-after-authority-rejection}
+  :generated-cache-validation-decision-rejects-invalid-inputs
+  :production-consumer nil
+  :production-assurance-contribution :none}
  :formal-spec-findings
  [{:id :EACL-FORMAL-SPEC-001
    :classification :specification-bug
@@ -87,4 +90,5 @@
   :tests 1
   :assertions 105
   :status :passed}
- :remaining []}
+ :remaining
+ [:live-production-consumer-or-removal-of-the-unused-generated-operation]}

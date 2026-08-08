@@ -45,6 +45,22 @@
                    :runtime #{#?(:clj :clj :cljs :cljs)}}
     :operations (operation-map)}))
 
+(defn- generation-adapter [generation]
+  (backend/make-adapter
+   {:id :test
+    :capabilities {:consistency #{:fully-consistent}
+                   :snapshots #{:current}
+                   :cursor #{:forward :reverse}
+                   :transactions #{}
+                   :cache-proofs #{:schema :relations :snapshot-bound}
+                   :runtime #{#?(:clj :clj :cljs :cljs)}}
+    :operations
+    (assoc (operation-map)
+           :schema-proof (fn
+                           ([] generation)
+                           ([_] generation))
+           :source-scope (constantly {:source-id :one}))}))
+
 (defn- error-data [f]
   (try
     (f)
@@ -108,6 +124,17 @@
               (error-data
                #(backend/invoke adapter :delete-object-tx 1))
               [:type :capability :requested]))))))
+
+(deftest schema-generation-registry-is-bounded-test
+  (let [registry (atom {})]
+    (doseq [generation (range 100)]
+      (let [cache
+            (engine/schema-cache-for!
+             registry (generation-adapter generation))]
+        (is (= generation (:schema-version cache)))))
+    (is (= 64 (count @registry)))
+    (is (every? #(= :one (get-in % [3 :source-id]))
+                (keys @registry)))))
 
 (deftest invalid-v8-adapter-test
   (is (= :eacl/invalid-backend-adapter
@@ -597,7 +624,7 @@
       (fn [_subject-type _subject-eid _relation-eid _resource-type resource-eid]
         (even? resource-eid))})}))
 
-(deftest exact-projection-prefix-cache-test
+(deftest direct-projections-never-use-cache-owned-chunking-test
   (let [adapter (projection-test-adapter)
         store (subproblem/store)
         work (atom {})]
@@ -610,32 +637,32 @@
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
         (is (= 1 (:subject->resources-scans @work)))
-        (is (= 32 (:fetched-projection-values
+        (is (= 0 (:fetched-projection-values
                    (subproblem/stats store)))))
-      (testing "a distinct consumer reuses the prefix without a backend call"
+      (testing "a distinct consumer issues the same exact adapter request"
         (is (= (vec (range 1 21))
                (vec
                 (take 20
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
-        (is (= 1 (:subject->resources-scans @work)))
-        (is (= 1 (:projection-hits (subproblem/stats store))))
-        (is (= 1 (:avoided-backend-operations
+        (is (= 2 (:subject->resources-scans @work)))
+        (is (= 0 (:projection-hits (subproblem/stats store))))
+        (is (= 0 (:avoided-backend-operations
                   (subproblem/stats store)))))
-      (testing "consuming beyond the retained prefix resumes exclusively"
+      (testing "host demand does not create or widen cache chunks"
         (is (= (vec (range 1 41))
                (vec
                 (take 40
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
-        (is (= 2 (:subject->resources-scans @work)))
-        (testing "the lazily demanded successor chunk is retained too"
+        (is (= 3 (:subject->resources-scans @work)))
+        (testing "a repeated demand remains one direct adapter invocation"
           (is (= (vec (range 1 41))
                  (vec
                   (take 40
                         (engine/subject->resources
                          adapter :user 1 10 :document nil)))))
-          (is (= 2 (:subject->resources-scans @work)))))
+          (is (= 4 (:subject->resources-scans @work)))))
       (testing "inclusive and exclusive bounds are distinct semantic keys"
         (is (= [40 41 42]
                (vec
@@ -674,7 +701,7 @@
                    adapter :user 1 10 :document
                    {:direction :asc
                     :bound-eid 99}))))
-          (is (= before (:subject->resources-scans @work))))
+          (is (= (inc before) (:subject->resources-scans @work))))
         (is (= []
                (vec
                 (engine/subject->resources
@@ -688,8 +715,8 @@
                    adapter :user 1 10 :document
                    {:direction :asc
                     :bound-eid 100}))))
-          (is (= before (:subject->resources-scans @work)))))
-      (testing "direct positive and negative probes are shared"
+          (is (= (inc before) (:subject->resources-scans @work)))))
+      (testing "completed exact Boolean probes are reusable"
         (is (= [true]
                (engine/direct-match-datoms-in-relationship-index
                 adapter :user 1 10 :document 2)))
@@ -779,5 +806,8 @@
                      (vec
                       (engine/resource->subjects
                        adapter :document seed 10 :user opts))))
-              (is (= before @calls)
-                  "the fully demanded generated trace is retained"))))))))
+              (is (= (-> before
+                         (update :forward inc)
+                         (update :reverse inc))
+                     @calls)
+                  "direct projection helpers do not retain host-owned scan chunks"))))))))

@@ -180,23 +180,24 @@ authorization scope.
 A cursor walk follows its requested consistency contract:
 
 1. decode and authenticate the cursor before it influences traversal;
-2. continue on the identical current snapshot when still selected;
-3. for a non-exact mode, re-evaluate the resume hint on the selected current
-   snapshot and annotate the page as `:rebased`;
-4. restart graph-specific recursive state and annotate the page as
-   `:restarted`;
-5. only for `at-exact-snapshot`, reconstruct the requested exact snapshot or
-   return the typed retention error.
+2. continue on current only when its complete dependency and ordering proof
+   equals the cursor proof;
+3. after a changed proof, reconstruct the cursor's authenticated exact
+   snapshot on history-capable backends;
+4. reject when exact reconstruction is unavailable or violates a newer
+   freshness floor;
+5. validate ordinal and result identity before continuation; never drop the
+   bound or restart page one.
 
-EACL does not recalculate whole-graph or whole-result content proofs on every
-page. Recovery never treats proof equivalence as authorization: it runs the
-query again on one immutable selected graph. This removes both the
-snapshot-retention availability failure for ordinary reads and the dominant
-proof cost observed in the earlier v8 candidate.
+EACL does not recalculate a whole-result content proof on every page. The
+dependency/order proof is scoped to the semantic query. Proof equality permits
+current continuation without history; proof inequality never permits current
+continuation.
 
 Recursive continuation state is an optional performance optimization.
-Continuation-store eviction replays on an explicit exact snapshot or restarts
-on the selected current graph, according to the request consistency mode.
+Continuation-store eviction deterministically replays the authenticated prefix
+on the already-selected immutable snapshot. It never selects another graph or
+changes the public walk.
 
 ## Operational invariants
 

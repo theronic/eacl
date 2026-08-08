@@ -14,7 +14,6 @@
   [authorization-inputs
    traversal-limits
    page-presence
-   indexed-cursor-bound
    indexed-render-mode]
   :adapter-callbacks
   [indexed-projection

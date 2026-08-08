@@ -417,10 +417,9 @@
           (pr-str {:n n :request request})))))
 
 (defn- generated-continuation-decision
-  [{:keys [current-proof cursor-proof mode exact expired?]
+  [{:keys [current-proof cursor-proof exact expired?]
     :or {current-proof "proof"
          cursor-proof "proof"
-         mode :exact-snapshot
          expired? false}}]
   (let [page-window (.-PageWindow generated)
         exact-selection
@@ -434,14 +433,7 @@
           (js-invoke
            (.-ExactSelection page-window)
            "create_ExactUnavailable"))
-        consistency-mode
-        (if (= :exact-snapshot mode)
-          (js-invoke
-           (.-ConsistencyMode page-window)
-           "create_ExactSnapshotMode")
-          (js-invoke
-           (.-ConsistencyMode page-window)
-           "create_RecoverCurrent"))]
+        ]
     (js-invoke
      (.-__default page-window)
      "DecideContinuation"
@@ -452,7 +444,6 @@
      (dafny-string "source")
      (dafny-string current-proof)
      (dafny-string cursor-proof)
-     consistency-mode
      (big-number 7)
      exact-selection)))
 
@@ -468,10 +459,10 @@
                   :source "source"
                   :proof "proof"}}))))
   (is (true?
-       (.-is_RebaseCurrent
-        (generated-continuation-decision
-         {:current-proof "changed"
-          :mode :recover-current}))))
+       (.-is_SnapshotUnavailable
+        (.-dtor_reason
+         (generated-continuation-decision
+          {:current-proof "changed"})))))
   (is (true?
        (.-is_CursorExpired
         (.-dtor_reason
@@ -585,7 +576,6 @@
   [decision]
   (cond
     (.-is_UseCurrent decision) :current
-    (.-is_RebaseCurrent decision) :rebase-current
     (.-is_UseExact decision) :exact
     (.-is_CursorConflict (.-dtor_reason decision)) :conflict
     (.-is_CursorExpired (.-dtor_reason decision)) :expired

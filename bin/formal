@@ -273,6 +273,7 @@ case "$command" in
       bb "$repo_root/bin/generate-verification-manifest"
     EACL_REPO_ROOT="$repo_root" \
       EACL_VERIFICATION_MANIFEST="$output_root/verification-manifest.edn" \
+      EACL_DAFNY_VERIFICATION_REPORT="$output_root/dafny-verification.json" \
       exec "$repo_root/bin/validate-verification-manifest"
     ;;
   tla-typecheck)

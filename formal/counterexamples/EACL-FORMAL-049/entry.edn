@@ -11,9 +11,9 @@
  :root-cause
  "The cursor-rebase scaling fixture compared successful single-chunk decisions with multi-chunk tail decisions. Multi-chunk success necessarily includes intermediate generated :restarted chunk results, so the endpoint ratio mixed two operation shapes instead of measuring one asymptotic domain. Running the JVM gate after a ClojureScript compiler build made the smallest single-chunk allocation unusually low and exposed the invalid comparison as a deterministic false positive."
  :fix
- "Measure JVM and JavaScript scaling over a fourfold size range wholly within each runtime's multi-chunk domain, fail the gate when a supplied fixture violates that domain, restart a fresh heap-bounded JVM before the JVM cursor gate, and print the complete observation before throwing. Preserve every latency, allocation, heap-delta, logical-work, and one-million-identity ceiling."
+ "The intermediate harness was corrected to compare one multi-chunk operation shape. The final v8 contract subsequently removed cursor rebase/restart from production and the active release gates; the observation is retained as explicitly historical evidence and cannot support a current implementation or certification claim."
  :closing-evidence
  ["eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"
-  "eacl.formal.cursor-rebase-benchmark/run-gate!"
-  ".github/workflows/formal.yml/Restart heap-bounded nREPL for cursor resource gate"
-  "formal/verification/performance-gates.edn"]}
+  "formal/verification/performance-gates.edn/historical-retired-cursor-rebase"
+  "formal/dafny/PageWindow.dfy/ChangedProofNeverContinuesOnCurrent"
+  "eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test"]}

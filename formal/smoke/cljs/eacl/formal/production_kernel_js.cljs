@@ -640,18 +640,9 @@
            cursor-source
            current-proof
            cursor-proof
-           mode
            cursor-graph
            exact]}]
   (let [page-window (.-PageWindow generated)
-        consistency-mode
-        (if (= :exact-snapshot mode)
-          (js-invoke
-           (.-ConsistencyMode page-window)
-           "create_ExactSnapshotMode")
-          (js-invoke
-           (.-ConsistencyMode page-window)
-           "create_RecoverCurrent"))
         decision
         (js-invoke
          (.-__default page-window)
@@ -663,12 +654,10 @@
          (dafny-string cursor-source)
          (dafny-string current-proof)
          (dafny-string cursor-proof)
-         consistency-mode
          (big-number cursor-graph)
          (exact-selection exact))]
     (cond
       (.-is_UseCurrent decision) :current
-      (.-is_RebaseCurrent decision) :rebase-current
       (.-is_UseExact decision) :exact
       (.-is_InvalidAuthentication (.-dtor_reason decision))
       :invalid-authentication
@@ -922,13 +911,10 @@
             (js-invoke
              (.-__default subproblem)
              "DecideLookup"
-             (:recursive-self? input)
              (candidate-state subproblem (:candidate input)))]
-        (cond
-          (.-is_BypassRecursiveSelf action) :bypass-recursive-self
-          (.-is_StartComputation action) :start-computation
-          (.-is_JoinComputation action) :join-computation
-          :else :use-completed-value))
+        (if (.-is_StartIndependentComputation action)
+          :start-independent-computation
+          :use-completed-value))
 
       :admission
       (let [action
@@ -936,12 +922,11 @@
              (.-__default subproblem)
              "DecideAdmission"
              (:candidate-present? input)
-             (big-number (:represented-candidates input))
-             (big-number (:maximum-candidates input)))]
-        (cond
-          (.-is_JoinExisting action) :join-existing
-          (.-is_AdmitComputation action) :admit-computation
-          :else :compute-without-admission))
+             (big-number (:attempted-publications input))
+             (big-number (:maximum-attempts input)))]
+        (if (.-is_AttemptPublication action)
+          :attempt-publication
+          :skip-publication))
 
       :publication
       (let [action

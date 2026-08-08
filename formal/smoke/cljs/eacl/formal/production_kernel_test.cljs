@@ -853,7 +853,7 @@
            :size 20
            :bound? false
            :realized-count 21})))
-  (is (= :rebase-current
+  (is (= :snapshot-unavailable
          (verified/decide
           selection
           :cursor-continuation
@@ -864,7 +864,6 @@
            :cursor-source "source"
            :current-proof "new"
            :cursor-proof "old"
-           :mode :recover-current
            :cursor-graph 0
            :exact nil})))
   (is (= {:status :miss :reason :future-or-sibling}
@@ -907,16 +906,15 @@
           selection
           :subproblem-cache-decision
           {:decision :lookup
-           :recursive-self? false
            :candidate :complete})))
-  (is (= :compute-without-admission
+  (is (= :skip-publication
          (verified/decide
           selection
           :subproblem-cache-decision
           {:decision :admission
            :candidate-present? false
-           :represented-candidates 8
-           :maximum-candidates 8})))
+           :attempted-publications 8
+           :maximum-attempts 8})))
   (is (= :drop-publication
          (verified/decide
           selection

@@ -194,6 +194,13 @@ Caller-supplied cache providers are rejected at construction because they do
 not control the native completed-answer or continuation stores. Continuation
 state remains isolated in a bounded private store.
 
+`:cache-attempt` now names only controls the live private-cache path consumes:
+`:evaluation-reserve-ms` (default `10`) and
+`:maximum-atomic-attempts` (default `4`). Decorative stage-timeout,
+encoded-byte, decoded-weight, and candidate-count controls are rejected. Native
+per-tier/per-entry weights remain construction-time cache limits, while the
+single request `:timeout-ms` remains the end-to-end deadline.
+
 ## Cursor redesign
 
 Portable cursor payloads are v10 inside the compact `eacl_c4_` authenticated
@@ -203,34 +210,31 @@ identity, graph anchor, and exact snapshot locator. Relay window size and
 direction remain caller-controlled so the same boundary supports forward and
 backward navigation.
 
-- Both enumeration routes — acyclic and recursive — emit one cursor kind:
-  a keyset boundary on the internal result EID. Recursive enumeration
-  presents the canonical strictly-ascending EID order of its completed
-  denotation; the previous ordinal cursors over worklist derivation order
-  no longer exist, and cursors survive a schema edit that re-routes a
-  permission between the acyclic and recursive engines.
-- Continuation on the same current immutable snapshot is direct. For a
-  recursive walk, the first page resolves (and, with the subproblem cache,
-  publishes) the complete sorted denotation; every later page is a
-  logarithmic slice with zero backend work.
-- For non-exact modes after a write, the keyset boundary is re-validated by
-  membership in the freshly evaluated denotation. A surviving boundary
-  resumes exclusively after the same EID — surviving results are never
-  skipped or duplicated, because an entity's EID cannot move in the order.
-  A revoked or deleted boundary drops the bound, restarts in the requested
-  page direction, and reports `:cursor-recovery :restarted`.
-- Raw (cache-free) recursive first pages keep streaming early-stop
-  economics while the result fits the page; a larger result materializes
-  its closure once (probe-then-continue on the same verified machine
-  state, no replay) — the irreducible price of sorted first pages. A
-  denotation beyond `:max-derived-grants` fails with the typed
-  recursive-limit error on every raw page; attach the subproblem store,
-  raise the limit, or use `:count-limit` for bounded counts.
-- `at-exact-snapshot` retains exact continuation and returns a typed
-  snapshot-expired failure if that explicit snapshot is unavailable.
-- Relationship cursors bind their selected graph anchor rather than hashing
-  the complete item sequence; non-exact continuation may rebase the
-  authenticated physical edge against a newer selected graph.
+- Recursive pages use a versioned logical boundary containing traversal,
+  ordinal, and result identity. The order ABI is the generated evaluator's
+  deterministic emission order; page size, adapter chunking, scan-wave size,
+  cache hits, and runtime do not define it.
+- Default `:evaluation :demand` computes only the requested recursive page
+  plus one lookahead result. A private continuation may retain exactly the
+  already-demanded machine state. If it is absent or evicted, EACL replays the
+  authenticated prefix on the same selected immutable snapshot and then
+  demands only the next page plus lookahead.
+- `:evaluation :complete-denotation` is the only public opt-in to exhaustive
+  recursive page computation. Completed pages use the identical generated
+  logical order and validate both cursor ordinal and result identity before
+  slicing; a mismatch is stale, never a restart.
+- Current continuation is permitted only when the complete dependency and
+  ordering proof equals the cursor proof. After a relevant proof change,
+  Datomic and Datahike may reconstruct the authenticated exact snapshot;
+  DataScript, which is current-basis-only, returns a typed stale-cursor error.
+  A newer `at-least-as-fresh` floor that excludes the cursor snapshot returns
+  a typed cursor-consistency conflict.
+- Continuation-store eviction, a deleted boundary, a schema change, and a
+  relevant relationship change never silently switch the walk to current or
+  restart page one.
+- Relationship cursors follow the same graph rule: equal proof may continue
+  on current; changed proof requires verified exact reconstruction or fails
+  closed.
 - Portable cursors use HMAC authenticity, not encryption. Datomic retains its
   compact AES-GCM codec for cursor-content confidentiality. The GCM codec
   uses random 96-bit nonces from `SecureRandom`; per NIST SP 800-38D,
@@ -246,12 +250,10 @@ backward navigation.
   They read at most `page-size + 1` matching internal rows instead of
   materializing and sorting every match before every page.
 
-Permission enumeration presents ascending internal-EID order on both
-routes: one deterministic sequence for a fixed query on the selected
-snapshot, stable under writes for all surviving results. It is not a
-lexical, domain, or cross-backend order (internal EIDs differ per
-backend). Relationship pages use each backend's tuple-index order; that
-order is an internal pagination contract, not a presentation-order API.
+Permission enumeration presents one deterministic sequence for a fixed query
+on the selected snapshot. Recursive order is the versioned generated logical
+order; acyclic and relationship pages use their certified index order. None is
+a lexical, domain, or cross-backend presentation order.
 The cursor query and navigation digests include emission-order version 2, so a
 future ordering change cannot silently resume an older traversal state.
 
@@ -272,11 +274,12 @@ syntax whose in-cycle arrow relations are empty is also executed by the
 acyclic engine. Empty recursive guards contribute no denotation and therefore
 must not consume recursive traversal limits.
 
-DataScript and Datahike relationship pages reuse an exact, bounded,
-client-private page-navigation cache after cursor authentication and immutable
-snapshot selection. Repeating a page returns additive `:cached?` and
-`:cache-basis` telemetry. A request with `:cache? false`, an exact historical
-snapshot, a changed query scope, or a different client cannot reuse the page.
+Relationship pages and recursive authorization pages reuse exact, bounded,
+client-private page artifacts after cursor authentication and immutable
+snapshot selection. Recursive traversal state remains opaque and private;
+generated restoration validates it before use. A request with `:cache? false`,
+a changed query/snapshot proof or ordering ABI, or a different client cannot
+reuse the artifact.
 
 DataScript graph-head selection now reads the single managed head-order datom
 directly from EAVT. The previous general Datalog query was on every adapter
@@ -345,27 +348,24 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
   certification. Dafny proves the equal-body denotation law; JVM/CLJS
   regressions reject relation and target-node collisions.
 - **Ordinary lookup cursors falsely reported rebasing
-  (EACL-FORMAL-047).** The streaming path reused old per-path frontiers and
-  reported `:rebased` without establishing that the cursor's result identity
-  survived the current permission change. Generic and Datomic adapters now
-  request stable-identity rebasing for `:lookup-eid`; the engine discards old
-  frontiers, point-checks current membership, and restarts when the identity is
-  absent.
+  (EACL-FORMAL-047, superseded by the v8 final cursor contract).** The earlier
+  correction still allowed a walk to switch to a changed current proof. The
+  final contract deletes rebase/restart entirely: equal proof continues on
+  current, a changed proof requires verified exact reconstruction, and an
+  unavailable exact snapshot fails closed.
 - **The routing resource gate measured JVM history (EACL-FORMAL-048).** Its
   first measured size could still be in HotSpot tiered compilation, and the
   gate ran after two ClojureScript compiler builds. Routing is now measured
   first in a fresh 1 GiB JVM after 40 warmups, with 11 samples per size and the
   full observation printed on failure. The exact `P + 2V + E` logical check
   and every allocation/latency ceiling are unchanged.
-- **The cursor resource gate compared different operation shapes
-  (EACL-FORMAL-049).** Its smallest successful cases fit in one generated
-  adapter chunk, while its largest case included intermediate
-  `:restarted`-chunk results. The normalized endpoint ratio could therefore
-  report a constant-factor chunk transition as super-linear growth. JVM and
-  JavaScript gates now span fourfold sizes wholly inside their multi-chunk
-  domains, reject invalid fixtures, and isolate the JVM gate from compiler
-  history. No ceiling was relaxed, and the one-million-identity recovery gate
-  remains in force.
+- **The cursor-rebase resource gate compared different operation shapes
+  (EACL-FORMAL-049; historical).** That benchmark correctly exposed a defect
+  in the former rebase implementation and its harness, but the final v8 cursor
+  contract deletes rebase/restart altogether. The old measurements remain
+  labeled historical evidence; they are not an active production or release
+  claim. Current continuation gates cover equal-proof current continuation,
+  verified exact-snapshot fallback, and typed stale rejection.
 - **The warm permission gate could not distinguish a transitional batch from
   sustained latency (EACL-FORMAL-050).** Its 2,000-call warmup and single
   measured batch made one observation decide the release gate. The gate now

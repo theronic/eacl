@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 27
+  :verified-obligations 34
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -17,10 +17,12 @@
    :backward-page-is-exact-preceding-window
    :current-continuation-requires-equal-proof
    :exact-continuation-requires-authenticated-exact-proof
-   :recover-current-never-requires-retained-history
-   :rebased-continuation-requires-authenticated-same-scope
-   :matching-relationship-page-scope-reuses-exact-page
-   :relationship-page-scope-mismatch-cannot-hit
+   :changed-proof-never-continues-on-current
+   :changed-proof-without-exact-snapshot-is-rejected
+   :completed-logical-page-is-exact-slice
+   :mismatched-logical-boundary-is-stale
+   :matching-authorization-page-scope-reuses-exact-page
+   :authorization-page-scope-mismatch-cannot-hit
    :relationship-keyset-page-decision-exact
    :relationship-page-from-normalized-request-exact]}
  :shipped-consumers
@@ -28,7 +30,11 @@
   [eacl.engine.v8/normalize-page-request
    eacl.engine.relationships/normalized-page]
   :keyset-page-decision eacl.engine.relationships/execute-page
-  :continuation-decision eacl.relay/continuation-decision}
+  :continuation-decision eacl.relay/continuation-decision
+  :completed-logical-page eacl.engine.v8/complete-logical-page
+  :retained-exact-page
+  [eacl.relay/lookup-visited-page
+   eacl.engine.v8/cached-recursive-page]}
  :generated-targets
  {:java
   {:status :passed
@@ -69,28 +75,30 @@
    :status :portable-production-and-generated-oracle-passed}
   :coverage
   [:lookup-cursor-current-proof
-   :lookup-cursor-current-identity-rebase
+   :lookup-cursor-changed-proof-rejection
+   :lookup-cursor-exact-fallback
    :relationship-cursor-current-proof
    :relationship-page-window
    :relationship-keyset-page-window
    :strict-generated-result-validation]}
- :host-current-recovery-boundary
- {:operation :keyset-membership-rebase
-  :source eacl.engine.v8/keyset-rebase
+ :host-completed-logical-page-boundary
+ {:operation :completed-logical-page
+  :source eacl.engine.v8/complete-logical-page
   :input
-  {:values :strict-ascending-unique-current-complete-denotation-eids
-   :bound-eid :authenticated-query-scoped-result-eid}
+  {:values :generated-logical-order-complete-denotation-eids
+   :bound [:authenticated-logical-ordinal
+           :authenticated-external-result-identity]}
   :result
-  [:after-matching-eid :restarted]
+  [:exact-exclusive-page :stale-logical-boundary]
   :logical-work
-  {:membership :binary-search
-   :upper-bound "ceil(log2(N + 1)) comparisons"
+  {:boundary-validation :constant-index-and-identity-check
+   :slice "at most requested page size"
    :heap-and-latency :host-regression-gates-not-dafny-claims}
   :production-authority
-  {:clj-java :host-keyset-rebase-after-generated-continuation-decision
-   :cljs-javascript :host-keyset-rebase-after-portable-certified-continuation-decision
+  {:model PageWindow/DecideCompletedLogicalPage
+   :clj-java :host-control-flow-over-generated-logical-denotation
+   :cljs-javascript :same-portable-host-control-flow
    :runtime-engine-selector :absent}
   :qualification
-  :host-algorithm-over-a-certified-denotation-not-a-pagewindow-theorem
-  :counterexample :EACL-FORMAL-047}
- :remaining []}
+  :proof-model-matches-host-branch-without-mechanized-source-refinement}
+ :remaining [:host-control-source-refinement :independent-review]}

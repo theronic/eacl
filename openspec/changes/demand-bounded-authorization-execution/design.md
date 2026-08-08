@@ -48,6 +48,8 @@ registry decisions in earlier unarchived changes.
   answers or hybrid cursor walks.
 - Provide generated/formal and executable evidence for correctness, work
   bounds, ordering, deadlines, and concurrency behavior.
+- Make every externally presented formal claim demonstrably conform to the
+  shipped EACL implementation and reproducible by an independent certifier.
 
 **Non-Goals:**
 
@@ -55,12 +57,12 @@ registry decisions in earlier unarchived changes.
   post-response traversal.
 - No promise that a response includes commits occurring after snapshot
   selection.
-- No hard wall-clock theorem across GC, OS scheduling, uninterruptible backend
-  calls, or external providers.
+- No hard wall-clock theorem across GC, OS scheduling, or uninterruptible
+  backend calls.
 - No cache-specific admission queue that delays authorization.
-- No guarantee that runtimes, backend connections, or third-party cache
-  providers contain no internal synchronization; the guarantee is that EACL
-  authorization does not wait for another EACL request's cache or schema work.
+- No guarantee that runtimes or backend connections contain no internal
+  synchronization; the guarantee is that EACL authorization does not wait for
+  another EACL request's cache or schema work.
 - No portable partial fixed-point result that can be mistaken for an
   authorization answer.
 - No DataScript reconstruction of an older DB value after the request that
@@ -135,6 +137,15 @@ Resource limits apply to actual generated work identically with cache enabled
 or disabled. Cache hits may remove commands; a cold miss may not create a
 different command or failure envelope.
 
+Traversal limits are transported, not rediscovered. Client construction
+normalizes every partial override into one complete positive map. The public
+execution contract captures that exact map; completed-answer and denotation
+keys bind it; and every backend facade binds the same map into generated
+initialization. A compatibility facade that rebinds an engine dynamic to its
+own defaults is a correctness defect, because it silently changes both the
+formal input and the caller's failure envelope. Strict-limit cross-backend
+tests and the implementation-conformance ledger guard this boundary.
+
 ### 3. Adopt a cache trace refinement law
 
 For the same selected snapshot, normalized semantic query, execution contract,
@@ -147,12 +158,12 @@ cache-enabled semantic response trace is the matching response subsequence
 cold cache miss command/response trace == cache-disabled trace
 ```
 
-Cache bookkeeping, key construction, provider access, candidate decoding, and
-local lookup are outside the semantic command trace but receive separate
-deterministic bounds. Cache eligibility or proof lifting is not allowed to issue
+Cache bookkeeping, key construction, and exact-key local lookup are outside the
+semantic command trace but receive separate deterministic bounds. Cache
+eligibility or proof lifting is not allowed to issue
 a semantic/backend command that cache-disabled execution would not issue. If a
 complete dependency proof is not already available from snapshot selection,
-normal schema/plan work, the demand trace, or bounded cache metadata, the
+normal schema/plan work, the demand trace, or the exact local entry, the
 candidate is a miss rather than a reason to scan the selected snapshot.
 
 A cache-enabled request MUST NOT:
@@ -165,15 +176,15 @@ A cache-enabled request MUST NOT:
 - charge semantic resource counters for commands removed by a hit; or
 - publish work not already validated as part of the request.
 
-Each client normalizes a cache-attempt envelope with finite stage time, encoded
-bytes, decoded weight, entry count, and local/CAS attempt limits. Its stage
-deadline is the earlier of the request deadline and the cache-stage deadline.
-The normalized stage budget leaves a positive documented evaluation reserve;
-when the remaining request budget cannot provide both, EACL skips cache access.
-Providers expose typed metadata before EACL retrieves an artifact whose size is
-not intrinsically bounded. Exceeding any envelope skips that candidate or cache
-stage and continues with cache-disabled evaluation on the already selected
-snapshot. A cache attempt cannot consume the request's entire execution budget.
+Each client normalizes the cache controls the shipped implementation actually
+uses: a positive evaluation reserve and a bounded number of local CAS
+publication attempts. When the remaining request budget
+cannot preserve the reserve, EACL skips cache access. Per-tier and per-entry
+weight ceilings belong to construction-time configuration of the client-private
+stores, not to a fictitious remote decode envelope. Caller-supplied provider
+stores are rejected at construction because no live authorization path consumes
+them. There is therefore no provider cancellation, streaming decode, compressed
+artifact, or candidate-search behavior in the v8 certification target.
 
 This is stronger and more testable than a wall-clock claim. Cache lookup has
 nonzero overhead, so literal “never one nanosecond slower” is impossible; EACL
@@ -187,14 +198,12 @@ command `C`; the cache key includes the complete command and adapter/snapshot
 identity; a hit returns the previously validated response `R`; a miss invokes
 the backend with exactly `C` and may retain exactly `R`.
 
-Artifact indexes are typed and carry authenticated encoded-size and
-decoded-weight claims. EACL independently enforces streaming encoded-byte and
-incremental decoded-weight caps; a false header, oversized stream, compression
-bomb, or noncanonical artifact is corruption and becomes a bounded miss.
-Selection prefers the smallest artifact capable of answering the operation. A
-remote/provider point lookup cannot fetch or decode an unbounded complete
-denotation merely because that denotation contains the answer; it may use a
-separately bounded Boolean artifact, a bounded command response, or miss.
+Artifact indexes are typed, exact-keyed, and client-private. Their host-weight
+estimate is validated before bounded local publication; per-tier and per-entry
+ceilings reject oversized values. Lookup retrieves one already resident native
+entry and never streams, decodes, decompresses, or searches a remote candidate
+set. The engine uses only an artifact type that is sufficient for the operation
+or treats lookup as a miss.
 
 Permitted artifacts are explicitly typed:
 
@@ -211,11 +220,11 @@ An incomplete traversal, interrupted negative search, partial SCC, fetched
 prefix, or timeout is never published as a completed Boolean or denotation.
 Continuation state cannot answer another semantic query.
 
-Publication is part of the cache-attempt envelope. It cannot synchronously
-serialize, compress, hash, evict, or walk more data than the request already
-materialized inside the encoded-byte, decoded-weight, local-work, and deadline
-bounds. If canonical publication cannot finish inside those bounds, EACL skips
-it and returns the completed public result.
+Publication never performs semantic work beyond the result already demanded by
+the request. It validates the native value and weight, performs bounded local
+eviction bookkeeping, and makes at most the configured number of CAS attempts.
+Capacity, lifecycle, validation, or contention rejection skips publication and
+returns the completed public result.
 
 ### 5. Authorization never waits for cache work
 
@@ -230,13 +239,12 @@ Cache lookup and publication use bounded, failure-isolated coordination:
   backend work;
 - generation installation is an atomic pointer/CAS operation;
 - publication makes at most a configured bounded number of local CAS attempts;
-- contention, eviction, capacity rejection, or provider failure skips
+- contention, eviction, capacity rejection, or local cache failure skips
   publication and does not delay or fail authorization;
 - lifecycle expiry swaps an atomic generation pointer, so late publication can
   reach only a detached generation;
-- no EACL traversal, proof, decode, or publication continues after its owning
-  request stops; an already-running foreign provider primitive has the same
-  honest cancellation boundary as an already-running backend command.
+- no EACL traversal, proof, or publication continues after its owning request
+  stops.
 
 If deployments require overload protection, it is a request admission control
 applied before cache selection and identically to `:cache? true` and false. It
@@ -272,8 +280,10 @@ bounded and observable. A changed ordering ABI rejects the cursor.
 
 Sorting the complete denotation by internal EID is rejected as the default
 because no result can be safely emitted until closure proves a smaller EID will
-not be discovered. Complete sorted output remains available only as explicit
-complete work where an API requires it.
+not be discovered. Explicit completion preserves the identical generated
+logical order used by demand evaluation; it does not introduce a second sorted
+order. Completed cursor slicing validates both logical ordinal and result
+identity before returning an exact exclusive page.
 
 ### 7. One immutable snapshot replaces schema read locks
 
@@ -326,7 +336,7 @@ Every layer receives remaining budget rather than starting a new relative
 timeout. EACL checks the deadline:
 
 - before and after consistency selection;
-- before cache/provider operations;
+- before client-private cache operations;
 - before and after schema/plan/proof work;
 - before every generated fuel quantum;
 - before and after every backend command;
@@ -361,8 +371,9 @@ commands solely to rescue the candidate; proof lifting uses only proofs already
 available inside the cache-attempt envelope and ordinary cache-free request
 work. `:cache?` never grants a stale-data exception.
 `:at-least-as-fresh T` selects `S` containing `T`; an older candidate may serve
-only after proof lifting to `S`, and telemetry retains both `computed-at` and
-`validated-at`.
+only after proof lifting to `S`. The response's `:cache-basis` remains `C`
+(where the answer was computed); request-local validation uses selected `S`
+without relabeling the old answer as if it had been computed there.
 
 ### 11. DataScript is current-basis-only across requests
 
@@ -386,18 +397,19 @@ never silently restarts and never uses cached pages from the old proof.
 
 ### 12. Observability reports independent decisions
 
-Public detailed responses preserve `:cached?` and `:cache-basis` and add stable
-provenance for the actual evaluation mode and selected snapshot. Internal stats
+Public detailed responses preserve `:cached?` and `:cache-basis`; detailed point
+responses also expose the normalized evaluation mode. Count and page requests
+bind that mode into their exact cache identity and cursor rather than adding a
+redundant response field. Internal stats implemented by the shipped cache
 separately count:
 
-- exact hit, managed/proof-lifted hit, miss, bypass, and provider failure;
-- evaluator direction and `:demand` versus `:complete-denotation`;
-- exact commands executed, cache-avoided commands, and fetched values;
-- natural versus explicitly requested denotation completion;
-- publication admitted, rejected, raced, detached, skipped-after-deadline;
-- replayed cursor work and continuation hits;
-- deadline stage and bounded overrun; and
-- optimistic writer conflicts/retries.
+- exact and managed/proof-lifted hits, misses, bypasses, and local failures;
+- exact backend commands avoided and projection values fetched;
+- publication success, rejection, race, contention, detachment, and oversize;
+- continuation/page-store hits, misses, puts, evictions, rejection, and errors;
+- generated traversal work when the caller binds the existing traversal stats
+  seam; and
+- deadline stage and bounded consumed-work fields in typed deadline errors.
 
 A cold miss is never labeled a cache hit merely because another in-flight
 request produced its value. With no join behavior, this ambiguity disappears.
@@ -432,6 +444,74 @@ Formal documentation must continue to distinguish proved semantic/work
 properties from unproved JVM heap, CPU, GC, backend latency, and wall-clock
 behavior.
 
+### 14. Certification claims are implementation-conformant and fail closed
+
+The formal assurance stack is not permitted to prove a convenient algorithm
+that merely resembles production. Every public claim receives one stable claim
+identifier and a bidirectional evidence row containing:
+
+```text
+OpenSpec requirement/scenario
+  <-> public operation and production source/control boundary
+  <-> exact formal inputs, assumptions, transition relation, and theorem
+  <-> generated artifact or mechanized refinement bridge
+  <-> executable conformance, negative-control, and cross-runtime evidence
+  <-> source/tool/evidence digests in the release manifest
+```
+
+A production target satisfies a theorem only when it executes the verified
+artifact or a mechanized refinement establishes that the shipped implementation
+implements the modeled transition relation under the theorem's preconditions.
+Differential, property, mutation, and exhaustive-small-domain tests are required
+drift detectors, but are not mislabeled as a proof of source refinement.
+Proof-only models remain useful, but their assurance class and absent production
+authority are explicit and cannot satisfy a production certification row.
+
+The conformance gate compares production entry points, modeled fields and
+branches, generated/portable target artifacts, source closure, theorem
+preconditions, trusted adapters, error mappings, work counters, and public
+claim text. An added/removed/renamed branch, input, error, limit, or state
+transition fails closed until both sides and their evidence row are reviewed.
+No stale digest can bless a changed implementation.
+
+The certification bundle pins Dafny, solver, JVM, Clojure/CLJS, JavaScript
+runtime, target compiler, generated-runtime patches, and verification scripts;
+records commands, hashes, proof results, mutation controls, residual
+assumptions, and exclusions; and rebuilds from a clean checkout. Independent
+reviewers can therefore reproduce the exact artifact and see the honest claim
+boundary without relying on a developer workstation cache.
+
+### 15. Simplification is a checked architectural property
+
+The replacement architecture has one normalized public request contract, one
+immutable-snapshot selection, one generated demand evaluator, and typed cache
+substitution at the exact command/artifact boundary. Cache-enabled and
+cache-disabled operations do not own separate semantic implementations. This is
+also the strongest construction for cache trace refinement: the miss path is
+literally the bypass path after a bounded failed lookup.
+
+Deletion is part of the design, not cleanup deferred indefinitely. Complete-
+denotation-on-default point/count paths, cache-owned projection widening,
+single-flight joins, cache computation semaphores, EACL schema read locks,
+DataScript DB-value registries, and temporary differential switches are removed
+after their replacements pass. Migration compatibility may parse and reject an
+old input; it may not preserve an old semantic engine.
+
+A source-derived structural inventory counts semantic entry paths, answer-
+affecting branches, mutable coordinators, locks/semaphores, background work,
+artifact kinds, and generated/host semantic forks. These categories are more
+meaningful than line count: moving a state machine into fewer dense lines is not
+simplification. Every category ratchets down or stays flat unless a reviewed
+replacement row ties a necessary addition to deletion of an equal-or-larger
+superseded mechanism.
+
+Performance has two independent gates. Deterministic logical-work metrics must
+not regress for the checked corpus, even if timing noise makes a candidate look
+faster. Reproducible latency, throughput, allocation, and retained-memory
+benchmarks then enforce absolute and relative thresholds with environment and
+variance disclosure. Neither evidence class impersonates the other, and both
+are bound to the exact candidate artifact in the certification ledger.
+
 ## Risks / Trade-offs
 
 - **[Point-then-page workloads lose accidental warming]** → Callers that know
@@ -440,9 +520,10 @@ behavior.
 - **[Concurrent cold misses duplicate work]** → Apply uniform request admission,
   deadlines, bounded cache publication, and duplicate-work metrics. Do not turn
   duplicate CPU into unbounded waiter latency.
-- **[Incremental order differs from sorted internal EIDs]** → Version the order
-  ABI, reject old cursors, publish migration notes, and prove invariance across
-  all physical execution parameters.
+- **[Generated logical order is not numeric EID order]** → Version the order
+  ABI, validate completed artifacts as unique logical sequences rather than
+  sorted vectors, use order-independent membership, reject old cursors, and
+  prove invariance across all physical execution parameters.
 - **[Cursor replay can be expensive after continuation eviction]** → Bound replay
   by the request deadline/limits, retain only demanded continuation state, and
   report replay work. Never complete the denotation merely to avoid replay.
@@ -457,14 +538,26 @@ behavior.
   supported without overstating it.
 - **[Proof validation itself can dominate a small request]** → Include proof
   material only when it is also ordinary cache-free work; cache-only validation
-  has zero backend-command authority. Enforce independent cache-stage
-  time/byte/decoded-weight bounds and treat unproved candidates as misses.
-- **[A remote or compressed hit is larger than the requested answer]** → Inspect
-  typed size metadata first, prefer the smallest sufficient artifact, and reject
-  retrieval or decode beyond the operation's cache-attempt envelope.
+  has zero backend-command authority. Preserve evaluation headroom and treat
+  unproved local entries as misses.
+- **[A future external provider broadens the trusted boundary]** → Keep provider
+  stores rejected in v8. A later provider design requires a separate spec,
+  streaming bounds, cancellation semantics, threat model, and mechanized
+  implementation mapping before it can enter certified scope.
 - **[Late publication crosses lifecycle/schema changes]** → Key by immutable
   generation and detach through atomic pointer replacement; late old work remains
   unreachable.
+- **[A correct proof targets a stale or simplified implementation]** → Require
+  stable bidirectional claim rows, mechanized refinement or generated production
+  authority, source/branch drift gates, negative controls, and clean-room
+  reproducibility. Qualification replaces any unsupported certification claim.
+- **[A rewrite adds abstraction layers while deleting visible code]** → Gate
+  semantic paths, branches, mutable coordinators, background tasks, and
+  generated/host forks from a source-derived inventory; line count is only
+  descriptive.
+- **[Noisy benchmarks reject an equal implementation]** → Pin warmup, sample,
+  environment, variance, confidence, and rerun rules; keep deterministic work
+  counters as the primary non-regression evidence.
 
 ## Migration Plan
 
@@ -486,8 +579,9 @@ behavior.
 8. Remove DataScript exact capability, handles, registry, and client option;
    enforce proof-equivalent current continuation.
 9. Run the complete differential, performance, mutation, concurrency, timeout,
-   CLJS advanced, and formal gates; update the assurance manifest with the exact
-   supported claim boundary.
+   CLJS advanced, implementation-conformance, and formal gates; produce the
+   reproducible certification bundle and update the assurance manifest with the
+   exact supported claim boundary.
 10. Update release notes and consumer examples, remove the temporary old path,
     and ship as a deliberate v8 breaking contract.
 

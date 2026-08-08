@@ -93,16 +93,41 @@
       mutation/graph-head-order-attr
       :db/current-tx])))
 
+(defn- cas-conflict?
+  [error]
+  (loop [cause error]
+    (cond
+      (nil? cause) false
+      (= :transact/cas (:error (ex-data cause))) true
+      :else
+      (recur #?(:clj (.getCause ^Throwable cause)
+                :cljs (.-cause cause))))))
+
+(defn- concurrent-write!
+  [calculation-db observed-db cause]
+  (throw
+   (ex-info
+    "EACL mutation was calculated from a stale DataScript graph head."
+    {:type :eacl.mutation/concurrent-write
+     :eacl/error :eacl.mutation/concurrent-write
+     :backend :datascript
+     :expected-head (:head-id (graph-state calculation-db))
+     :observed-head (:head-id (graph-state observed-db))
+     :retryable? true}
+    cause)))
+
 (defn transact!
   "Submits a logical mutation exactly once for one caller-supplied mutation id."
-  [conn {:keys [mutation-id canonical-data tx-data] :as mutation-options}]
+  [conn {:keys [mutation-id canonical-data tx-data calculation-db]
+         :as mutation-options}]
   (ensure-migrated! conn)
-  (let [db (ds/db conn)]
-    (if-let [stored (mutation-entity db mutation-id)]
+  (let [submission-db (ds/db conn)
+        calculation-db (or calculation-db submission-db)]
+    (if-let [stored (mutation-entity submission-db mutation-id)]
       (if (mutation/mutation-data-matches?
            stored mutation-id canonical-data)
-        {:db-before db
-         :db-after db
+        {:db-before submission-db
+         :db-after submission-db
          :tx-data []
          :mutation-id mutation-id
          :idempotent-recovery? true}
@@ -114,13 +139,15 @@
               (ds/transact!
                conn
                (into (vec tx-data)
-                     (mutation-transaction-data db mutation-options)))
+                     (mutation-transaction-data
+                      calculation-db mutation-options)))
               (catch #?(:clj Throwable :cljs :default) error
-                (if-let [stored (mutation-entity (ds/db conn) mutation-id)]
+                (let [observed-db (ds/db conn)]
+                  (if-let [stored (mutation-entity observed-db mutation-id)]
                   (if (mutation/mutation-data-matches?
                        stored mutation-id canonical-data)
-                    {:db-before db
-                     :db-after (ds/db conn)
+                    {:db-before submission-db
+                     :db-after observed-db
                      :tx-data []
                      :mutation-id mutation-id
                      :idempotent-recovery? true}
@@ -130,7 +157,10 @@
                       {:type :eacl.mutation/id-reused
                        :mutation-id mutation-id}
                       error)))
-                  (throw error))))]
+                    (if (cas-conflict? error)
+                      (concurrent-write!
+                       calculation-db observed-db error)
+                      (throw error))))))]
         (assoc report :mutation-id mutation-id)))))
 
 (defn prune-expired!

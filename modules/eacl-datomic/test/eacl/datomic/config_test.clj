@@ -106,7 +106,6 @@
           {:enabled? false
            :projection-max-weight 17
            :denotation-max-weight 19
-           :max-inflight 2
            :managed-proof-max-atoms 3}
           client
           (eacl.datomic.core/make-client
@@ -117,16 +116,12 @@
           current-store
           (get-in client [:opts :current-cache-store])]
       (is (= subproblem-config
-             (:subproblem-options current-store)))
-      (is (= 2
-             (get-in
-              (eacl.cache/current-cache-stats current-store)
-              [:max-subproblem-computations]))))
+             (:subproblem-options current-store))))
     (doseq [subproblem-config
             [{:enabled? :yes}
              {:projection-max-weight 0}
              {:denotation-max-weight 0}
-             {:max-inflight 0}
+             {:max-inflight 1}
              {:managed-proof-max-atoms 0}]]
       (is (= :eacl/invalid-config
              (try
@@ -137,3 +132,26 @@
                (catch clojure.lang.ExceptionInfo error
                  (:type (ex-data error)))))
           (pr-str subproblem-config)))))
+
+(deftest execution-and-cache-attempt-config-is-strict-test
+  (with-mem-conn [conn schema/v7-schema]
+    (doseq [[options key]
+            [[{:execution-timeout-ms 0} :execution-timeout-ms]
+             [{:execution-timeout-ms "30"} :execution-timeout-ms]
+             [{:cache-attempt {:evaluation-reserve-ms 0}} :cache-attempt]
+             [{:cache-attempt {:unknown-limit 1}} :cache-attempt]]]
+      (let [data
+            (try
+              (core/make-client conn options)
+              nil
+              (catch clojure.lang.ExceptionInfo error
+                (ex-data error)))]
+        (is (= :eacl/invalid-config (:type data)) (pr-str options))
+        (is (= key (:key data)) (pr-str options))))
+    (let [client
+          (core/make-client
+           conn
+           {:execution-timeout-ms 1234
+            :cache-attempt {:evaluation-reserve-ms 7}})]
+      (is (= 1234 (get-in client [:opts :execution-timeout-ms])))
+      (is (= 7 (get-in client [:opts :cache-attempt :evaluation-reserve-ms]))))))

@@ -298,10 +298,8 @@
                         [:subproblems :projection-hits]))))))
 
 #?(:clj
-   (deftest generation-expiry-does-not-reset-computation-capacity-test
-     (let [store
-           (cache/current-cache
-            {:subproblem-cache {:max-inflight 1}})
+   (deftest generation-expiry-detaches-old-publication-without-blocking-test
+     (let [store (cache/current-cache)
            context
            (fn [snapshot order]
              {:snapshot snapshot
@@ -311,6 +309,7 @@
            old-started (promise)
            release-old (promise)
            new-started (promise)
+           new-snapshot (snapshot-object)
            old-work
            (future
              (cache/resolve-current!
@@ -328,7 +327,7 @@
            new-work
            (future
              (cache/resolve-current!
-              store (context (snapshot-object) 2) :new :decision keyword?
+              store (context new-snapshot 2) :new :decision keyword?
               (fn []
                 (:value
                  (subproblem/resolve-bound!
@@ -336,16 +335,15 @@
                   (fn []
                     (deliver new-started true)
                     :new))))))]
-       (Thread/sleep 20)
-       (is (not (realized? new-started)))
-       (is (= 1 (:active-subproblem-computations
-                 (cache/current-cache-stats store))))
+       (is (= true (deref new-started 1000 ::timed-out)))
+       (is (= :new (:value @new-work)))
        (deliver release-old true)
        (is (= :old (:value @old-work)))
-       @new-started
-       (is (= :new (:value @new-work)))
-       (is (= 0 (:active-subproblem-computations
-                 (cache/current-cache-stats store)))))))
+       (is (= :new
+              (:value
+               (cache/resolve-current!
+                store (context new-snapshot 2)
+                :new :decision keyword? (constantly :wrong))))))))
 
 (deftest cache-disabled-request-bypasses-subproblem-store-test
   (let [store (cache/current-cache)
@@ -459,7 +457,7 @@
         "explicit expiry also resets admission history")
     (is (= 0 (:exact-entries (cache/current-cache-stats store))))))
 
-(deftest authenticated-page-query-identity-ignores-cursor-transport-test
+(deftest authenticated-page-query-identity-ignores-signed-transport-test
   (let [base-public
         {:subject {:type :user :id "user"}
          :permission :view
@@ -480,10 +478,9 @@
          (assoc base-public
                 :after "signed-snapshot-b"
                 :cache? true)
-         (assoc base-internal
-                :after (assoc boundary :rebase? true)))]
+         (assoc base-internal :after boundary))]
     (is (= original recovered)
-        "snapshot transport and recovery instructions are not semantics")
+        "signed transport bytes are not page semantics")
     (is (not=
          original
          (cache/lookup-page-query-identity

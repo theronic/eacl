@@ -798,11 +798,10 @@
              :cursor-source "source"
              :current-proof "new"
              :cursor-proof "old"
-             :mode :exact-snapshot
              :cursor-graph 0
              :exact nil}))))
-  (testing "recoverable cursor proof mismatch rebases to current"
-    (is (= :rebase-current
+  (testing "changed cursor proof requires exact fallback"
+    (is (= :snapshot-unavailable
            (verified/decide
             selection
             :cursor-continuation
@@ -813,7 +812,6 @@
              :cursor-source "source"
              :current-proof "new"
              :cursor-proof "old"
-             :mode :recover-current
              :cursor-graph 0
              :exact nil}))))
   (testing "cache future/sibling is rejected"
@@ -841,16 +839,15 @@
           selection
           :subproblem-cache-decision
           {:decision :lookup
-           :recursive-self? false
            :candidate :complete})))
-  (is (= :compute-without-admission
+  (is (= :skip-publication
          (verified/decide
           selection
-          :subproblem-cache-decision
+           :subproblem-cache-decision
           {:decision :admission
            :candidate-present? false
-           :represented-candidates 8
-           :maximum-candidates 8})))
+           :attempted-publications 8
+           :maximum-attempts 8})))
   (is (= :drop-publication
          (verified/decide
           selection
@@ -1561,8 +1558,7 @@
 
 (deftest production-subproblem-store-uses-generated-java-decisions
   (let [store (subproblem/store {:projection-max-weight 1024
-                                 :denotation-max-weight 1024
-                                 :max-inflight 1})
+                                 :denotation-max-weight 1024})
         computes (atom 0)]
     (binding [subproblem/*decision-kernel* selection]
       (is (= 7
