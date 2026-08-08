@@ -1,5 +1,5 @@
 (ns eacl.formal.verified-authority-test-runner
-  "Runs the complete CLJS/DataScript suite with generated authority injected
+  "Runs the complete CLJS/DataScript suite with portable authority injected
   into every client that did not explicitly select an engine."
   (:require
    [cljs.nodejs :as nodejs]
@@ -20,7 +20,7 @@
    [eacl.formal.cache-strategy-adversarial-test]
    [eacl.formal.differential-runner-test]
    [eacl.formal.generators-test]
-   [eacl.formal.production-kernel-js :as production]
+   [eacl.formal.production-kernel-cljs :as production]
    [eacl.mutation-test]
    [eacl.relationships.endpoint-pair-test]
    [eacl.relay-test]
@@ -34,7 +34,7 @@
 (def calls (atom {}))
 (def injected-clients (atom 0))
 
-(def required-generated-authority-operations
+(def required-portable-authority-operations
   #{:recursive-routing-certificate
     :enumeration-route
     :acyclic-page
@@ -78,15 +78,15 @@
 
 (def selection
   {:kernel
-   (->CountingKernel production/generated-javascript-kernel)})
+   (->CountingKernel production/portable-cljs-kernel)})
 
 (def original-make-client datascript/make-client)
 
 (defn- injecting-make-client
   [connection options]
   (swap! injected-clients inc)
-  ;; Production exposes no kernel selector. The formal runner replaces the
-  ;; released generated default only for the synchronous constructor call.
+  ;; Production exposes no kernel selector. The formal runner wraps the
+  ;; released portable default only for the synchronous constructor call.
   (with-redefs [production/default-selection selection]
     (original-make-client connection (or options {}))))
 
@@ -95,7 +95,7 @@
   (let [missing-required-operations
         (filterv
          #(zero? (get @calls % 0))
-         required-generated-authority-operations)
+         required-portable-authority-operations)
         authority-failures
         (+ (if (pos? @injected-clients) 0 1)
            (if (pos? (reduce + 0 (vals @calls))) 0 1)
@@ -110,8 +110,8 @@
           "failures=" (:fail summary 0)
           " errors=" (:error summary 0)
           " injected-clients=" @injected-clients
-          " generated-calls=" (pr-str @calls)
-          " missing-required-generated-operations="
+          " portable-calls=" (pr-str @calls)
+          " missing-required-portable-operations="
           (pr-str missing-required-operations)
           " authority-gate-failures=" authority-failures))
     (js/process.exit failures)))

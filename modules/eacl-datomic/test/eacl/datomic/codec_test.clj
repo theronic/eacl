@@ -80,11 +80,12 @@
                  :result-kind :resource
                  :ordinal 7
                  :result {:type :folder :eid 17592186045424}}
-                {:kind :relationship
-                 :scan :subject-forward
-                 :e 17592186045424
-                 :v [:user 17592186045000 :account 17592186045111]}]]
-    (let [payload {:v 6
+                {:kind :relationship-index
+                 :v 1
+                 :scan-index 0
+                 :subject-id 17592186045424
+                 :resource-id 17592186045111}]]
+    (let [payload {:v 7
                    :op :lookup-resources
                    :database-id "6a6cb18c-adeb-4141-b16f-454e87fdb975"
                    :query-shape "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZmdoaWprbG0"
@@ -99,7 +100,7 @@
 (deftest nil-schema-version-survives-test
   ;; A cursor minted on an unstamped database carries an explicit nil, which
   ;; must not decode as an absent key — validation compares the two.
-  (let [payload {:v 6 :schema-version nil :cache-scope nil}
+  (let [payload {:v 7 :schema-version nil :cache-scope nil}
         decoded (round-trip payload)]
     (is (= payload decoded))
     (is (contains? decoded :schema-version))

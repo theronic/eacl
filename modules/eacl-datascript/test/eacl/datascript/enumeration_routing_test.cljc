@@ -339,7 +339,14 @@
 (defn- all-forward
   [client query page-size]
   (loop [cursor nil
-         results []]
+         results []
+         pages 0]
+    (when (>= pages 1000)
+      (throw
+       (ex-info "Enumeration page walk did not terminate."
+                {:pages pages
+                 :results (count results)
+                 :last-cursor cursor})))
     (let [page
           (eacl/lookup-resources
            client
@@ -347,8 +354,21 @@
              cursor (assoc :after cursor)))
           results' (into results (:data page))]
       (if (get-in page [:page-info :has-next-page?])
-        (recur (get-in page [:page-info :end-cursor]) results')
+        (recur (get-in page [:page-info :end-cursor]) results' (inc pages))
         results'))))
+
+(deftest certified-acyclic-point-check-stays-out-of-recursive-traversal-test
+  (let [{:keys [client]} (seed-client! small-shape)
+        server (fixture/object :server (fixture/server-id 0 0))
+        acyclic-stats (atom {})
+        recursive-stats (atom {})
+        allowed?
+        (binding [engine/*acyclic-work-stats* acyclic-stats
+                  engine/*recursive-traversal-stats* recursive-stats]
+          (eacl/can? client fixture/super-user :view server))]
+    (is allowed?)
+    (is (= 1 (:routed-acyclic @acyclic-stats)))
+    (is (empty? @recursive-stats))))
 
 (deftest explorer-enumeration-refines-point-authorization-test
   (let [{:keys [client]} (seed-client! small-shape)

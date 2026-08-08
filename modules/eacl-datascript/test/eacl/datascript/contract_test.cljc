@@ -18,7 +18,7 @@
                                 :eacl/id id})
                              contract/smoke-objects)))
 
-(deftest generated-authority-is-the-only-production-engine-test
+(deftest one-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
         default-selection

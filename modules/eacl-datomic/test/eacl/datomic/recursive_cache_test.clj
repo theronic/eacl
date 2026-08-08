@@ -294,18 +294,16 @@
                 "the completed page is lifted by unchanged relation stamps")
             (is (zero? (get @restart-stats :derived-grants 0)))))))))
 
-(deftest recursive-denotations-are-isolated-by-cache-namespace-test
+(deftest recursive-denotations-are-client-private-across-namespaces-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          token-key "recursive-namespace-isolation"
+    (let [token-key "recursive-namespace-isolation"
           client-a
           (core/make-client
            conn
-           {:page-token-key token-key
+           {:security-key token-key
             ;; asserts on engine work, so the answer cache must not
             ;; short-circuit the engine before it can slice the denotation
-            :cache {:store store
-                    :namespace :tenant-a
+            :cache {:namespace :tenant-a
                     :remember-answers false}})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
@@ -315,9 +313,8 @@
       (let [client-b
             (core/make-client
              conn
-             {:page-token-key token-key
-              :cache {:store store
-                      :namespace :tenant-b
+             {:security-key token-key
+              :cache {:namespace :tenant-b
                       :remember-answers false}})
             a-stats (atom {})
             page-a
@@ -332,8 +329,6 @@
             "tenant A resolves its own denotation")
         (is (pos? (stat first-b-stats :derived-grants))
             "tenant B cannot reuse tenant A's denotation and pays its own closure")
-        (is (zero? (cache/clear-namespace! store :tenant-a))
-            "no recursive denotation state is retained in the shared namespaced store")
         (let [second-b-stats (atom {})
               page-b-again
               (binding [idx/*recursive-traversal-stats* second-b-stats]
@@ -345,12 +340,11 @@
 
 (deftest reverse-continuation-side-state-is-not-retained-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          client
+    (let [client
           (core/make-client
            conn
-           {:page-token-key "reverse-rule-weight"
-            :cache {:store store}})
+           {:security-key "reverse-rule-weight"})
+          store (get-in client [:opts :continuation-cache-store])
           query {:resource (spice-object :account (account-id 2))
                  :permission :read
                  :subject/type :user
@@ -413,8 +407,7 @@
           first-client
           (core/make-client
            conn
-           {:cache {:store (cache/local-store)}
-            :page-token-key token-key})
+           {:security-key token-key})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -423,8 +416,7 @@
       (let [second-client
             (core/make-client
              conn
-             {:cache {:store (cache/local-store)}
-              :page-token-key token-key})
+             {:security-key token-key})
             page1 (eacl/lookup-resources first-client query)
             stats (atom {})
             page2
@@ -439,12 +431,11 @@
 
 (deftest recursive-continuation-does-not-retain-opaque-runtime-values-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          client
+    (let [client
           (core/make-client
            conn
-           {:cache {:store store}
-            :page-token-key "recursive-bounded-streams"})
+           {:security-key "recursive-bounded-streams"})
+          store (get-in client [:opts :continuation-cache-store])
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account

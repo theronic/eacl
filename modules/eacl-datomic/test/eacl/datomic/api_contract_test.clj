@@ -113,6 +113,32 @@
         (is (zero? @seeks)
             "an empty relation-definition set proves the result is empty")))))
 
+(deftest relationship-pages-use-the-shared-index-edge-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [{:keys [db]} (seed-acyclic! conn 3)
+          query {:resource/type :account :first 1}
+          page-1 (impl/read-relationships db query)
+          edge (get-in page-1 [:page-info :end-cursor])
+          page-2 (impl/read-relationships db (assoc query :after edge))]
+      (is (= {:kind :relationship-index
+              :v 1
+              :scan-index 0}
+             (select-keys edge [:kind :v :scan-index])))
+      (is (= #{:kind :v :scan-index :subject-id :resource-id}
+             (set (keys edge))))
+      (is (= 1 (count (:data page-2))))
+      (testing "the superseded Datomic-private edge is rejected"
+        (is (= :eacl.pagination/invalid-cursor
+               (:eacl/error
+                (ex-data-of
+                 #(impl/read-relationships
+                   db
+                   (assoc query
+                          :after {:kind :relationship
+                                  :scan :global-forward
+                                  :e 1
+                                  :v [:user 1 :account 1]}))))))))))
+
 ;; --- page cursors ------------------------------------------------------------
 
 (deftest nil-page-cursors-are-rejected-test

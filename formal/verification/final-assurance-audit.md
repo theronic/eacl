@@ -1,24 +1,28 @@
 # EACL v8 formal-assurance audit
 
-Date: 2026-08-06
+Date: 2026-08-07
 
 ## Executive decision
 
-EACL v8 has one production authorization engine: the generated indexed
-Java/JavaScript kernel. The handwritten v7/v8 traversal engines, shadow
-routing, and runtime rollback selector are absent from production source
-paths. The former indexed engine and six-function SPI remain only under
-`formal/smoke/` as independent test oracles; redundant handwritten v8
-authorization code was deleted. Persisted relationship storage migration is
-the only retained upgrade mechanism.
+EACL v8 has one production authorization authority per target: the generated
+indexed Java kernel on the JVM and the portable CLJC kernel on ClojureScript.
+The latter is differentially certified against the generated JavaScript
+oracle, the independent fixed-point oracle, cross-runtime vectors, randomized
+fixtures, counterexamples, and mutations. Shadow routing and the runtime
+rollback selector are absent from production source paths. The older indexed
+engine and six-function SPI remain only under `formal/smoke/` as independent
+test oracles. Persisted relationship storage migration is the only retained
+upgrade mechanism.
 
 The defensible assurance claim is:
 
 > EACL v8's backend-neutral authorization kernel is conditionally formally
 > verified against its named least-fixed-point ReBAC semantics, and the
-> generated kernel is the production decision authority on Datomic, Datahike,
-> and DataScript. The claim depends on explicitly documented adapter, FFI,
-> runtime, cryptographic, identity, and resource-limit assumptions.
+> generated kernel is the production decision authority on the JVM. The
+> portable ClojureScript authority is differentially certified against it and
+> is advisory pending a server re-check. The claim depends on explicitly
+> documented adapter, FFI, runtime, cryptographic, identity, and resource-limit
+> assumptions.
 
 The release is not entitled to the unqualified claim “the entire EACL system
 is formally verified.” The Clojure/ClojureScript orchestration, storage
@@ -30,7 +34,9 @@ adapter certification, mutation controls, and runtime resource gates.
 The manifest must remain `:conditionally-verified` until an independent
 security/formal-methods reviewer audits the theorem statements, trusted
 boundary, axioms, FFI conversions, temporal invariants, and release manifest.
-That external review is the sole unfinished OpenSpec task.
+That external review remains an unfinished release-assurance obligation. The
+Dafny dead-model cleanup and triggered wave-batching engineering are complete;
+they do not narrow the independent-review requirement.
 
 ## What changed in the v8 cutover
 
@@ -38,11 +44,11 @@ That external review is the sole unfinished OpenSpec task.
   six-function backend SPI.
 - Removed shadow execution and every runtime engine-selection/rollback mode.
   Backend clients reject `:engine-selection`; production installs one internal
-  generated `:decision-kernel`.
+  target-specific internal `:decision-kernel`.
 - Moved the former indexed engine, six-function SPI, and lazy merge
-  implementation to formal smoke sources, so normal library consumers neither
-  package nor load them. Deleted the redundant handwritten v8 authorization
-  branches rather than retaining a second implementation.
+  implementation to formal smoke sources. The new production CLJC kernel is a
+  focused implementation of the current decision and indexed-traversal
+  protocols; it does not restore the removed engine-selection surface.
 - Removed pre-release and deprecated API contracts that complicated source and
   proof boundaries: `:limit`/`:cursor` list pagination, the
   `:entity->object-id` alias, the `:page-token-keys` alias, migration rollback
@@ -54,7 +60,7 @@ That external review is the sole unfinished OpenSpec task.
 - Centralized the persisted forward and reverse tuple attribute identities in
   `eacl.relationships.storage`. Datomic, Datahike, DataScript, schema code, and
   migration code now reuse those values.
-- Replaced obsolete v7-versus-v8 runtime performance gates with generated-only
+- Replaced obsolete v7-versus-v8 runtime performance gates with authoritative
   absolute, deterministic-work, scaling, allocation, and retained-live-heap
   gates. Historical before/after measurements remain evidence, not executable
   engine modes.
@@ -81,23 +87,27 @@ abstract snapshot-oracle contract:
    the same authorization relation;
 6. generated forward/reverse worklists are sound, complete, duplicate-free,
    terminating within configured limits, and fail closed on limit exhaustion;
-7. typed SCC routing and the proof-carrying routing certificate classify
+7. pending scans are exposed as bounded, request-ordered waves; responses fold
+   in that same order; partial-fuel exits publish no partial wave; and the
+   independent-stream crossing count is `2 × ceil(scans / batch-size) + 1`;
+8. typed SCC routing and the proof-carrying routing certificate classify
    recursive roots and their transitive ancestors;
-8. ordered merge, pagination windows, cursor bounds, and continuation/replay
-   laws preserve complete result sequences without omission or duplication;
-9. cursor decisions reject cross-query, cross-operation, cross-result, scope,
+9. ordered merge, pagination windows, keyset page decisions, and
+   continuation/replay laws preserve complete result sequences without
+   omission or duplication;
+10. cursor decisions reject cross-query, cross-operation, cross-result, scope,
    tampering, expiry, and incompatible-history use before the cursor can
    influence authorization;
-10. exact/current cache admission, complete managed dependency frames,
+11. exact/current cache admission, complete managed dependency frames,
     subproblem projection/denotation reuse, lifecycle isolation, and
     validation telemetry cannot turn a rejected or stale candidate into an
     authorization result;
-11. public consistency normalization and finite selection decisions implement
+12. public consistency normalization and finite selection decisions implement
     exactly `minimize-latency`, `fully-consistent`,
     `at-least-as-fresh`, and `at-exact-snapshot`;
-12. strict boundary datatypes reject unknown variants, malformed fields,
+13. strict boundary datatypes reject unknown variants, malformed fields,
     unsafe integers, and oversized values; and
-13. named logical resource counters and cost recurrences establish the
+14. named logical resource counters and cost recurrences establish the
     reviewed Big-O properties. Host time, allocation, retained heap, backend
     seek cost, and RSS are measured separately rather than inferred from
     logical counters.
@@ -115,19 +125,22 @@ refinement proof.
 
 What closes the gap:
 
-- Production calls generated Dafny Java/JavaScript for authorization state,
-  routing certification, pagination, cursor, consistency, cache, scan
-  validation, and rendering decisions. The host cannot select the former
-  handwritten engine.
-- Generated state is opaque across adapter round trips. Clojure supplies
-  validated scan responses; it does not recreate traversal transitions.
+- JVM production calls generated Dafny Java for authorization state, routing
+  certification, pagination, cursor, consistency, cache, scan validation, and
+  rendering decisions. ClojureScript production calls the portable CLJC
+  implementation through the same protocols. The host cannot select another
+  engine.
+- Authority state is opaque across adapter round trips. Host orchestration
+  supplies validated ordered response waves and cannot replace traversal
+  transitions or publish a partial wave.
 - Strict converters validate every generated input and output family.
 - Source-closure and backend-dispatch ledgers inventory all named public roots,
   reachable definitions, and literal adapter operations so an unclassified
   host branch cannot silently disappear from the assurance map.
-- The materialized semantic evaluator, retained former engines, generated
-  Java and JavaScript, CLJ and CLJS public APIs, three adapters, generated
-  campaigns, and minimized counterexamples are compared on coherent fixtures.
+- The materialized semantic evaluator, retained former engine, generated Java
+  and JavaScript, portable CLJC kernel, CLJ and CLJS public APIs, three
+  adapters, generated campaigns, and minimized counterexamples are compared on
+  coherent fixtures.
 - Adapter certification checks finite order, uniqueness, bound behavior,
   direct-match equivalence, schema coverage, identity round trips, snapshot
   facts, and proof-change coverage.
@@ -139,6 +152,7 @@ What remains trusted:
 - Clojure and ClojureScript language/runtime semantics;
 - handwritten conversion code and callback wiring;
 - Dafny's generated Java/JavaScript compilers and patched target collections;
+- the handwritten portable CLJC decision and traversal implementation;
 - Datomic, Datahike, and DataScript implementation truthfulness outside tested
   fixtures;
 - cryptographic primitive implementations, key management, clocks, entropy,
@@ -148,11 +162,12 @@ What remains trusted:
 - configured traversal, cache, token, and continuation limits; and
 - application policy intent.
 
-Therefore, saying “the Clojure implementation was proved equivalent to Dafny”
-would be false. The accurate statement is that production semantic decisions
-are generated from Dafny, while the remaining host and adapter boundary is
-strictly inventoried, validated, differentially exercised, and still part of
-the trusted computing base. Independent source-refinement review remains
+Therefore, saying “the ClojureScript implementation was proved equivalent to
+Dafny” would be false. The accurate statement is that JVM semantic decisions
+are generated from Dafny, while the portable CLJS authority and remaining host
+and adapter boundary are strictly inventoried, validated, differentially
+exercised, and still part of the trusted computing base. Independent
+source-refinement review remains
 valuable precisely at this boundary.
 
 ## Bugs and regressions found
@@ -202,16 +217,21 @@ The final pre-audit run on 2026-08-06 produced the following evidence:
 | Generated Java runtime bridges | 47 tests, 15,628 assertions, 0 failures/errors |
 | Generated-only JVM public/backend suite | 509 tests, 34,773 assertions, 0 failures/errors across Datomic, Datahike, and DataScript |
 | Generated-only DataScript CLJS suite | 155 tests, 4,419 assertions, 0 failures/errors |
+| Portable CLJS formal/oracle suite | 44 tests, 9,963 assertions, 0 failures/errors under `:advanced` |
+| Portable CLJS full DataScript/core suite | 167 tests, 9,556 assertions, 0 failures/errors under `:advanced` |
+| Portable CLJS injected-authority suite | 165 tests, 4,554 assertions, all required traversal operations observed |
+| Portable CLJS performance/payload | 8,684 ns/result at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
 | Heavy generated-only backend/performance suite | 17 tests, 4,062 assertions, 0 failures/errors |
 | Minimized counterexample replay | 61 tests / 18,207 assertions on the full formal-smoke classpath, 0 failures/errors; the exact ordinary CI classpath additionally runs 44 tests / 2,966 assertions |
 | Mutation control | 1 test, 230 assertions, 0 failures/errors; every registered mutant killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
-| Generated artifact size | browser bundle 578,108 bytes; Java classes/runtime 1,840,181 bytes; Java source 2,079,857 bytes; JavaScript/runtime 924,530 bytes; every ceiling passed |
+| Generated artifact size | browser bundle 591,497 bytes; Java classes/runtime 1,890,556 bytes; Java source 2,130,973 bytes; JavaScript/runtime 949,688 bytes; every re-anchored ceiling passed |
 
 The JVM suite observed generated decision calls for all required operations on
 all three adapters (338 injected Datomic clients, 66 Datahike, 87 DataScript).
-The CLJS suite observed 56 injected DataScript clients. These counters prevent
-a green suite that accidentally bypasses the generated authority.
+The latest portable CLJS suite observed 73 injected DataScript clients. These
+counters prevent a green suite that accidentally bypasses the selected
+authority.
 
 ## Performance conclusions
 
@@ -258,7 +278,7 @@ measured host properties.
 - Cryptographic security of the chosen primitives or operational key custody.
 - Peak RSS, GC pause maxima, CPU time, backend billing, network latency, or
   worst-case wall time.
-- Browser engines other than the recorded generated-JavaScript targets.
+- Browser engines other than the recorded Node/V8 ClojureScript target.
 - Correctness of custom codecs without the declared deterministic contract.
 - Policy intent, data hygiene outside EACL APIs, or ghost tuples created by
   direct endpoint retraction.
@@ -269,12 +289,14 @@ measured host properties.
 
 Recommended:
 
-> EACL v8 uses a Dafny-generated authorization kernel in production. Its
+> EACL v8 uses a Dafny-generated authorization kernel on the JVM and a
+> differentially certified portable kernel in ClojureScript. Its
 > backend-neutral ReBAC semantics, recursive traversal, pagination, cursor,
 > consistency, and cache decision laws are mechanically verified under
-> documented assumptions. Fifty-nine minimized correctness, assurance-harness,
-> and performance defects were found and fixed during the verification
-> program. Datomic, Datahike, and DataScript are covered by shared adapter and
+> documented assumptions; browser answers remain advisory and require a
+> server re-check. Sixty-two minimized correctness, assurance-harness, and
+> performance defects were found and fixed during the verification program.
+> Datomic, Datahike, and DataScript are covered by shared adapter and
 > public-contract suites. Independent audit is pending.
 
 Do not say:
@@ -293,9 +315,10 @@ The external reviewer should:
    preconditions and production call path;
 2. challenge snapshot-oracle, adapter, identity, cryptographic, and limit
    assumptions;
-3. review strict Java/JavaScript converters and generated collection patches;
+3. review strict Java/JavaScript converters, generated collection patches,
+   and the portable CLJC authority;
 4. replay proofs, TLA+/Apalache checks, counterexamples, mutants, adapter
-   certification, CLJ/CLJS suites, and generated-only performance gates;
+   certification, CLJ/CLJS suites, and target-authority performance gates;
 5. inspect source-closure exclusions and test-only/production classpaths;
 6. attempt adversarial backend responses, malformed storage, history
    divergence, cache races, and cursor confusion; and

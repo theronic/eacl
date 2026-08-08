@@ -3,7 +3,7 @@
   (:require [clojure.test :as t :refer [deftest testing is]]
             [eacl.core :as eacl]
             [datomic.api :as d]
-            [eacl.datomic.core]
+            [eacl.datomic.core :as core]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.fixtures :as fixtures :refer [->user ->server]]
             [eacl.datomic.datomic-helpers :as helpers :refer [with-mem-conn]]))
@@ -23,7 +23,7 @@
         (let [client
               (eacl.datomic.core/make-client
                conn
-               {:object-id->ident
+               {:object-id->lookup-ref
                 (fn [obj-id] [:db/ident obj-id])})]
 
           ; todo: also test read/write-relationships, and count-resources.
@@ -51,17 +51,54 @@
                                                                :permission   :view
                                                                :subject/type :user}))))))))))
 
-(deftest page-token-ttl-is-validated-at-the-client-boundary-test
+(deftest cursor-ttl-is-validated-at-the-client-boundary-test
   (with-mem-conn [conn schema/v7-schema]
     (doseq [value [nil "300" 0 -1 (inc (quot Long/MAX_VALUE 1000))]]
       (let [data (try
-                   (eacl.datomic.core/make-client
-                    conn {:page-token-ttl-seconds value})
+                   (core/make-client conn {:cursor-ttl-seconds value})
                    nil
                    (catch clojure.lang.ExceptionInfo e
                      (ex-data e)))]
         (is (= :eacl/invalid-config (:type data)) (pr-str value))
-        (is (= :page-token-ttl-seconds (:key data)) (pr-str value))))))
+        (is (= :cursor-ttl-seconds (:key data)) (pr-str value))))))
+
+(deftest uniform-construction-option-family-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [lookup-ref (fn [object-id] [:eacl/id object-id])
+          client (core/make-client
+                  conn
+                  {:object-id->lookup-ref lookup-ref
+                   :security-keyring {:shared "shared-secret"}
+                   :security-kid :shared
+                   :cursor-ttl-seconds 123})
+          opts (:opts client)]
+      (is (identical? lookup-ref (:object-id->ident opts)))
+      (is (= :shared (:page-token-current-kid opts)))
+      (is (= 123 (:page-token-ttl-seconds opts))))
+
+    (testing "canonical and legacy aliases cannot be mixed"
+      (let [data (try
+                   (core/make-client
+                    conn
+                    {:security-key "canonical"
+                     :page-token-key "legacy"})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e
+                     (ex-data e)))]
+        (is (= :eacl/invalid-config (:type data)))
+        (is (= #{:security-key :page-token-key}
+               (set (:conflicting-keys data))))))
+
+    (testing "unknown-option ex-data matches the shared orchestrator"
+      (let [data (try
+                   (core/make-client conn {:not-an-option true})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e
+                     (ex-data e)))]
+        (is (= :eacl/invalid-config (:type data)))
+        (is (= [:not-an-option] (:unknown-keys data)))
+        (is (contains? (:known-keys data) :security-key))
+        (is (contains? (:known-keys data) :cursor-ttl-seconds))))))
 
 (deftest shared-subproblem-cache-config-is-forwarded-and-validated-test
   (with-mem-conn [conn schema/v7-schema]

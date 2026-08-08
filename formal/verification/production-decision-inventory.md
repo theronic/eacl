@@ -13,7 +13,7 @@ reused.
 | Recursive rule compilation and worklists | `compile-recursive-rules`, recursive forward/reverse traversal functions | recursive `can?`, forward/reverse lookup, count |
 | Recursive work limits | `normalize-recursive-traversal-limits`, `increment-counter`, `enqueue-work` | all recursive operations; limit errors must abort the whole result |
 | Recursive continuation and page reuse | `cached-continuation`, `store-continuation!`, `cached-recursive-request-page`, `cached-recursive-previous-page`, `store-recursive-page!` | recursive lookup/count pagination |
-| Page-bound validation, current-answer identity rebase, and window assembly | cursor-bound validators, generated `PageWindow.RebaseCursorBound`, and page constructors in `eacl.engine.v8` | lookup/count page data, order, flags, start/end cursors, rebound vs restarted recovery |
+| Page-bound validation, current-answer identity rebase, and window assembly | generated/portable continuation decisions, host `eacl.engine.v8/keyset-rebase` over certified denotations, and page constructors in `eacl.engine.v8` | lookup/count page data, order, flags, start/end cursors, rebound vs restarted recovery |
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
 | Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
@@ -134,10 +134,10 @@ does not imply a global, lexical, domain, or cross-backend order.
 ## Machine-enforced source closure
 
 `public-source-closure.json` is generated from both CLJ and CLJS analysis of
-53 shared and backend EACL source files. It currently closes the
-cross-namespace call graph from 62 engine, relationship-pagination, relay,
-cursor, cache, subproblem-cache, consistency, causal-token, generated-provider,
-and named Datomic/Datahike/DataScript roots over 1,505 definitions.
+51 shared and backend EACL source files. It currently closes the
+cross-namespace call graph from 63 engine, relationship-pagination, relay,
+cursor, cache, subproblem-cache, consistency, causal-token, authority-provider,
+and named Datomic/Datahike/DataScript roots over 1,424 definitions.
 Unattributed clj-kondo usages inside exact `defrecord` spans are assigned to
 their containing protocol implementation, so those public client and generated
 kernel methods are included. CI checks the exact

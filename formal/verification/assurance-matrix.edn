@@ -4,9 +4,9 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 53
-  :public-roots 62
-  :reachable-definitions 1505
+  :source-files 55
+  :public-roots 63
+  :reachable-definitions 1424
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -16,9 +16,93 @@
    :status :static-operation-key-closure-established
    :assurance :not-adapter-semantic-proof}
   :assurance :static-call-closure-not-source-refinement
-  :remaining
+ :remaining
   [:adapter-operation-source-refinement-or-explicit-trust-classification
    :per-definition-theorem-or-trusted-boundary-classification]}
+ :dafny-model-map
+ [{:source "formal/dafny/Semantics.dfy"
+   :class :semantic-foundation
+   :consumer [:generated-authorization-decisions :indexed-refinement]}
+  {:source "formal/dafny/AcyclicEngine.dfy"
+   :class :generated-production
+   :consumer [:can? :lookup :count]}
+  {:source "formal/dafny/CacheKernel.dfy"
+   :class :generated-production
+   :consumer ['eacl.cache]}
+  {:source "formal/dafny/ConsistencyDecision.dfy"
+   :class :generated-production
+   :consumer ['eacl.consistency]}
+  {:source "formal/dafny/CurrentCache.dfy"
+   :class :generated-production
+   :consumer ['eacl.cache/current-generation-decision]}
+  {:source "formal/dafny/CursorCost.dfy"
+   :class :spec-only-cost-model
+   :consumer ["formal/verification/performance-gates.edn"]}
+  {:source "formal/dafny/EaclKernel.dfy"
+   :class :formal-smoke-only
+   :consumer ["formal/smoke/js/round_trip.mjs"]}
+  {:source "formal/dafny/IndexedTraversal.dfy"
+   :class :generated-production
+   :consumer ['eacl.engine.v8/run-generated-traversal]}
+  {:source "formal/dafny/IndexedBatching.dfy"
+   :class :generated-production
+   :consumer ['eacl.formal.production-kernel/indexed-drive
+              'eacl.formal.production-kernel/indexed-resume]}
+  {:source "formal/dafny/IndexedBatchCompleteness.dfy"
+   :class :proof-only-production-assurance
+   :consumer ["formal/dafny/IndexedBatching.dfy"]}
+  {:source "formal/dafny/IndexedCertification.dfy"
+   :class :generated-production
+   :consumer ['eacl.engine.v8/compile-recursive-plan]}
+  {:source "formal/dafny/IndexedForwardCompleteness.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.engine.v8/run-generated-traversal]}
+  {:source "formal/dafny/IndexedRefinement.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.engine.v8/run-generated-traversal]}
+  {:source "formal/dafny/IndexedRendering.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.engine.v8/continue-probe-to-closure]}
+  {:source "formal/dafny/IndexedReverseCompleteness.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.engine.v8/run-generated-traversal]}
+  {:source "formal/dafny/IndexedRootDenotation.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.engine.v8/complete-generated-forward-denotation
+              'eacl.engine.v8/complete-generated-reverse-denotation]}
+  {:source "formal/dafny/OrderedMerge.dfy"
+   :class :generated-decision-and-source-specialization
+   :consumer ['eacl.lazy-merge-sort]}
+  {:source "formal/dafny/PageWindow.dfy"
+   :class :generated-production
+   :consumer ['eacl.engine.v8/normalize-page-request
+              'eacl.engine.relationships/normalized-page
+              'eacl.engine.relationships/execute-page
+              'eacl.relay]}
+  {:source "formal/dafny/RecursiveEngine.dfy"
+   :class :generated-production
+   :consumer ['eacl.engine.v8]}
+  {:source "formal/dafny/RootDenotation.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.subproblem-cache]}
+  {:source "formal/dafny/RoutingCertificate.dfy"
+   :class :generated-production
+   :consumer ['eacl.engine.v8/enumeration-route]}
+  {:source "formal/dafny/SchemaPlanCost.dfy"
+   :class :spec-only-cost-model
+   :consumer ["formal/verification/performance-gates.edn"]}
+  {:source "formal/dafny/SnapshotOracle.dfy"
+   :class :spec-only-interface-contract
+   :consumer ['eacl.consistency]}
+  {:source "formal/dafny/SubproblemCache.dfy"
+   :class :generated-production
+   :consumer ['eacl.subproblem-cache]}
+  {:source "formal/dafny/TemporalSafety.dfy"
+   :class :semantic-foundation
+   :consumer ['eacl.cache 'eacl.relay]}
+  {:source "formal/dafny/WireFormat.dfy"
+   :class :formal-smoke-only
+   :consumer ["formal/smoke/js/round_trip.mjs"]}]
  :operations
  [{:operation :can?
    :entry-points ['eacl.core/can?]
@@ -47,7 +131,8 @@
                          :schema-completeness :direct-scan-equivalence]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :generated-only-all-defined-permission-roots
+   {:clj-java :generated-only-all-defined-permission-roots
+    :cljs-javascript :portable-differentially-certified}
    :point-check-routing
    {:direction :reverse
     :anchor :concrete-resource
@@ -73,13 +158,13 @@
               :production-merge-control-refines-canonical-merge
               :production-balanced-fold-preserves-order-and-complete-union
               :production-two-stream-merge-comparisons-are-linear
-              :page-walk-complete
+              :relationship-keyset-page-decision-exact
               :limit-fails-closed
               :bounded-page-stream-prefetch
               :one-recursive-plan-compilation-per-root-generation]
    :dafny ["formal/dafny/AcyclicEngine.dfy"
            "formal/dafny/OrderedMerge.dfy"
-           "formal/dafny/Pagination.dfy"
+           "formal/dafny/PageWindow.dfy"
            "formal/dafny/RecursiveEngine.dfy"
            "formal/dafny/RoutingCertificate.dfy"
            "formal/dafny/SchemaPlanCost.dfy"]
@@ -88,7 +173,8 @@
                          :permission-node-completeness]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :generated-only-all-defined-permission-roots
+   {:clj-java :generated-only-all-defined-permission-roots
+    :cljs-javascript :portable-differentially-certified}
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -112,7 +198,8 @@
                          :schema-completeness :ordered-complete-scans]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :generated-only-all-defined-permission-roots
+   {:clj-java :generated-only-all-defined-permission-roots
+    :cljs-javascript :portable-differentially-certified}
    :remaining
    [:acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review
     :acyclic-optimized-leapfrog-clojure-language-refinement-and-independent-review
@@ -144,7 +231,9 @@
     :at-least-anchor-completeness
     :exact-locator-and-graph-anchor-identity]
    :runtime-targets [:clj-java :cljs-javascript]
-   :production-authoritative :generated-only
+   :production-authoritative
+   {:clj-java :generated-only
+    :cljs-javascript :portable-differentially-certified}
    :remaining
    [:backend-selection-source-refinement
     :authenticated-token-decoder-refinement
@@ -156,16 +245,18 @@
     :mutation-control]}
   {:operation :lookup-cursor-continuation
    :entry-points ['eacl.relay]
-   :theorems [:cursor-scope-before-influence :page-walk-complete
+   :theorems [:cursor-scope-before-influence
               :single-permitted-graph
-              :current-recovery-rebases-by-stable-result-identity
-              :current-recovery-restarts-only-when-result-identity-is-absent
-              :current-recovery-identity-search-is-linear]
+              :current-continuation-requires-equal-proof
+              :exact-continuation-requires-authenticated-exact-proof
+              :recover-current-never-requires-retained-history
+              :rebased-continuation-requires-authenticated-same-scope]
    :dafny ["formal/dafny/PageWindow.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :exact-selection
                          :source-fingerprint
-                         :unique-complete-current-denotation]
+                         :strict-ascending-unique-complete-current-denotation
+                         :host-keyset-rebase-membership-correctness]
    :runtime-targets [:clj-java :cljs-javascript]
    :ci [:generated-production-kernel
         :cross-runtime-vectors
@@ -174,7 +265,6 @@
    :entry-points ['eacl.engine.relationships/execute-page
                   'eacl.relay/externalize-relationship-page]
    :theorems [:relationship-keyset-page-decision-exact
-              :page-walk-complete
               :single-permitted-graph
               :matching-relationship-page-scope-reuses-exact-page
               :relationship-page-scope-mismatch-cannot-hit]
@@ -209,7 +299,9 @@
     :full-resource-type-and-permission-node-identity]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :generated-accepted-certificate-result-for-stamped-schema-generations
+   {:clj-java
+    :generated-accepted-certificate-result-for-stamped-schema-generations
+    :cljs-javascript :portable-differentially-certified}
    :resource-claim
    {:generated-checker :exact-p-plus-2v-plus-e-logical-checks
     :host-construction
@@ -241,6 +333,10 @@
     :reverse-transition-semantic-soundness
     :forward-least-fixed-point-completeness
     :reverse-least-fixed-point-completeness
+    :bounded-ordered-scan-waves
+    :partial-wave-fuel-yields-without-publication
+    :pending-scan-ghost-view-is-exact
+    :batched-crossing-law
     :deterministic-render-prefix-independent-of-chunk-boundary
     :identical-complete-denotations-render-identically
     :page-continuation-authenticates-ordinal-and-eid
@@ -254,6 +350,8 @@
     :unique-grant-bound
     :dimensionally-separated-resource-counters]
    :dafny ["formal/dafny/IndexedTraversal.dfy"
+           "formal/dafny/IndexedBatching.dfy"
+           "formal/dafny/IndexedBatchCompleteness.dfy"
            "formal/dafny/IndexedRefinement.dfy"
            "formal/dafny/IndexedForwardCompleteness.dfy"
            "formal/dafny/IndexedReverseCompleteness.dfy"
@@ -268,7 +366,8 @@
     :compiled-plan-refinement]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
-   :generated-only-all-defined-permission-roots
+   {:clj-java :generated-only-all-defined-permission-roots
+    :cljs-javascript :portable-differentially-certified}
    :remaining
    [:production-adapter-source-refinement
     :independent-review]

@@ -680,7 +680,7 @@
     (is (= 1 @calls)
         "generated can? must not repeat the public permission-root lookup")))
 
-(deftest generated-current-cursor-restarts-when-permission-root-is-removed
+(deftest generated-current-cursor-rejects-removed-permission-generation
   (let [conn (datascript/create-conn)
         calls (atom {})
         client
@@ -724,13 +724,18 @@
         definition document {
           relation owner: user
         }")
-      (let [recovered
-            (eacl/lookup-resources
-             client
-             (assoc query :after cursor))]
-        (is (empty? (:data recovered)))
-        (is (= :restarted
-               (get-in recovered [:page-info :cursor-recovery])))))))
+      (let [error
+            (try
+              (eacl/lookup-resources client (assoc query :after cursor))
+              nil
+              (catch clojure.lang.ExceptionInfo thrown
+                thrown))]
+        (is (some? error))
+        (is (= :eacl.pagination/invalid-cursor
+               (:type (ex-data error))))
+        (is (= :query-mismatch (:reason (ex-data error))))
+        (is (empty? (:data (eacl/lookup-resources client query)))
+            "a fresh enumeration evaluates the replacement schema")))))
 
 (defn- assert-recursive-generated!
   [client limited-clients]

@@ -44,7 +44,7 @@
             #?(:clj
                [eacl.formal.production-kernel :as production-kernel]
                :cljs
-               [eacl.formal.production-kernel-js :as production-kernel])
+               [eacl.formal.production-kernel-cljs :as production-kernel])
             [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]

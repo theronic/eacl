@@ -992,34 +992,13 @@
             (* (:num-accounts retention-config)
                (:servers-per-acct retention-config))
             _ (seed-multipath! conn retention-config)
-            rejecting-store
-            (cache/local-store {:max-weight 256
-                                :max-entry-weight 256
-                                :max-entries 8})
-            provider-calls (atom 0)
-            failing-store
-            (reify cache/CacheStore
-              (lookup [_ _]
-                (swap! provider-calls inc)
-                (throw (ex-info "provider unavailable" {})))
-              (store! [_ _ _ _ _]
-                (swap! provider-calls inc)
-                (throw (ex-info "provider unavailable" {})))
-              (evict! [_ _] false)
-              (clear! [_] nil)
-              (stats [_] {}))
             clients
-            [[:disabled (spiceomic/make-client conn {:cache cache/no-cache})]
+            [[:disabled (spiceomic/make-client conn {:cache shared-cache/no-cache})]
              [:admission-rejected
               (spiceomic/make-client
                conn
-               {:cache {:store rejecting-store
-                        :remember-answers true}})]
-             [:provider-failure
-              (spiceomic/make-client
-               conn
-               {:cache {:store failing-store
-                        :remember-answers true}})]]
+               {:cache {:remember-answers true
+                        :subproblem-cache {:answer-max-weight 1}}})]]
             query {:subject (->user "super-user")
                    :permission :view
                    :resource/type :server}]
@@ -1068,10 +1047,8 @@
                 (is (= 2 (:pages @legacy-stats)))
                 (is (<= (:max-page-eids @legacy-stats) 16384)
                     "legacy count misses never retain the full 20,000-result head")))))
-        (is (zero? (:entries (cache/stats rejecting-store)))
-            "a rejected count answer leaves no retained cache entry")
-        (is (zero? @provider-calls)
-            "private completed answers never consult an untrusted provider")))))
+        (is (= #{:disabled :admission-rejected}
+               (set (map first clients))))))))
 
 ;; --- Permission-check hot path ----------------------------------------------
 ;;
@@ -1289,22 +1266,17 @@
 (deftest ^:benchmark cache-proof-strategy-churn-benchmark
   (testing "mutation/content proofs, global invalidation, and no-cache"
     (with-mem-conn [conn schema/v7-schema]
-      (let [mutation-store (cache/local-store)
-            content-store (cache/local-store)
-            global-store (cache/local-store)
-            common {:page-token-key "cache-proof-benchmark"
+      (let [common {:security-key "cache-proof-benchmark"
                     :zed-token-key "cache-proof-benchmark-zed"}
             managed
-            (fn [store]
+            (fn [cache-option]
               (spiceomic/make-client
                conn
                (assoc common
                       :coherence-authority :managed
                       :proof-mode :mutation
-                      :cache (if store
-                               {:store store :remember-answers true}
-                               cache/no-cache))))
-            mutation-client (managed mutation-store)
+                      :cache cache-option)))
+            mutation-client (managed {:remember-answers true})
             writer mutation-client
             content-client
             (spiceomic/make-client
@@ -1312,10 +1284,9 @@
              (assoc common
                     :coherence-authority :unknown
                     :proof-mode :content
-                    :cache {:store content-store
-                            :remember-answers true}))
-            global-client (managed global-store)
-            no-cache-client (managed nil)
+                    :cache {:remember-answers true}))
+            global-client (managed {:remember-answers true})
+            no-cache-client (managed shared-cache/no-cache)
             user (->user "benchmark-user")
             account (->account "benchmark-account")
             relationship (Relationship user :owner account)
@@ -1326,13 +1297,14 @@
             strategies
             [[:mutation-proof mutation-client nil]
              [:content-proof content-client nil]
-             [:global-invalidation global-client global-store]
+             [:global-invalidation global-client
+              #(spiceomic/expire-cache! global-client)]
              [:no-cache no-cache-client nil]]
             iterations 12
             measure
-            (fn [client store expected]
-              (when store
-                (cache/clear! store))
+            (fn [client clear-cache! expected]
+              (when clear-cache!
+                (clear-cache!))
               (let [start (System/nanoTime)
                     value (eacl/can? client user :admin account)
                     elapsed (/ (double (- (System/nanoTime) start)) 1000.0)]
@@ -1341,7 +1313,7 @@
             unrelated
             (into
              {}
-             (for [[label client clear-store] strategies]
+             (for [[label client clear-cache!] strategies]
                (do
                  (eacl/can? client user :admin account)
                  [label
@@ -1355,11 +1327,11 @@
                                 (name label)
                                 "-"
                                 i)}])
-                       (measure client clear-store true))))])))
+                       (measure client clear-cache! true))))])))
             relevant
             (into
              {}
-             (for [[label client clear-store] strategies]
+             (for [[label client clear-cache!] strategies]
                (do
                  (eacl/can? client user :admin account)
                  [label
@@ -1369,7 +1341,7 @@
                        (if grant?
                          (eacl/create-relationship! writer relationship)
                          (eacl/delete-relationship! writer relationship))
-                       (measure client clear-store grant?))))])))]
+                       (measure client clear-cache! grant?))))])))]
         (prn {:benchmark :cache-proof-strategy-churn
               :unit :microseconds-per-read
               :iterations iterations

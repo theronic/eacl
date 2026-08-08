@@ -67,6 +67,15 @@
   remain part of the authenticated semantic scope."
   #{:first :last :after :before :cache?})
 
+(def cursor-emission-order-version
+  "Version of the traversal emission order committed by Relay cursor digests.
+
+  Version 2 activates bounded, ordered scan waves. The batched protocol is
+  extensionally equivalent to the sequential protocol, but pinning the
+  protocol order here prevents a cursor minted by a different emission
+  schedule from being accepted accidentally."
+  2)
+
 (defn- normalized-cursor-query
   [query]
   (-> (apply dissoc query cursor-transport-keys)
@@ -105,8 +114,9 @@
   mode included."
   [adapter opts operation query]
   (secure/canonical-digest
-   "eacl/cursor/query-scope/v6"
-   [operation
+   "eacl/cursor/query-scope/v7"
+   [cursor-emission-order-version
+    operation
     {:schema-stamp (request-schema-stamp adapter opts)}
     (scoped-query-form query)]))
 
@@ -119,8 +129,9 @@
   validation authority."
   [operation query]
   (secure/canonical-digest
-   "eacl/cursor/query-scope/v5"
-   [operation
+   "eacl/cursor/query-scope/v6"
+   [cursor-emission-order-version
+    operation
     (scoped-query-form query)]))
 
 (defn- page-generation

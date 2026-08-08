@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 36
+  :verified-obligations 27
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -14,31 +14,33 @@
    :page-size-independent-sequence
    :page-uniqueness
    :complete-forward-walk
-   :current-proof-continuation
-   :authenticated-current-recovery
-   :current-recovery-rebases-by-stable-result-identity
-   :current-recovery-restarts-only-when-result-identity-is-absent
-   :current-recovery-identity-search-is-linear
-   :recovery-does-not-require-retained-history
-   :authenticated-exact-fallback
-   :history-divergence-rejection
-   :exact-snapshot-unavailable-rejection
-   :expiry-rejection
-   :relationship-offset-page-exact
+   :backward-page-is-exact-preceding-window
+   :current-continuation-requires-equal-proof
+   :exact-continuation-requires-authenticated-exact-proof
+   :recover-current-never-requires-retained-history
+   :rebased-continuation-requires-authenticated-same-scope
+   :matching-relationship-page-scope-reuses-exact-page
+   :relationship-page-scope-mismatch-cannot-hit
    :relationship-keyset-page-decision-exact
-   :relationship-exact-snapshot-proof
-   :no-linear-result-proof-per-page]}
+   :relationship-page-from-normalized-request-exact]}
+ :shipped-consumers
+ {:request-normalization
+  [eacl.engine.v8/normalize-page-request
+   eacl.engine.relationships/normalized-page]
+  :keyset-page-decision eacl.engine.relationships/execute-page
+  :continuation-decision eacl.relay/continuation-decision}
  :generated-targets
  {:java
   {:status :passed
-   :tests 10
-   :assertions 7013
+   :tests 2
+   :assertions 6754
    :failures 0
    :errors 0}
   :javascript
   {:status :passed
-   :tests 5
-   :assertions 557
+   :suite-tests 45
+   :suite-assertions 9971
+   :qualification :full-formal-cljs-suite-includes-page-window-boundaries
    :failures 0
    :errors 0}}
  :production-regression
@@ -54,7 +56,7 @@
   {:tests 90
    :assertions 1309
    :status :passed}}
- :production-generated-routing
+ :production-authority-routing
  {:clj-java
   {:namespace eacl.formal.production-kernel-test
    :tests 4
@@ -64,7 +66,7 @@
   {:namespace eacl.formal.production-kernel-test
    :tests 4
    :assertions 19
-   :status :passed}
+   :status :portable-production-and-generated-oracle-passed}
   :coverage
   [:lookup-cursor-current-proof
    :lookup-cursor-current-identity-rebase
@@ -72,21 +74,23 @@
    :relationship-page-window
    :relationship-keyset-page-window
    :strict-generated-result-validation]}
- :current-recovery-boundary
- {:operation :cursor-bound-rebase
+ :host-current-recovery-boundary
+ {:operation :keyset-membership-rebase
+  :source eacl.engine.v8/keyset-rebase
   :input
-  {:values :unique-current-complete-denotation-eids
+  {:values :strict-ascending-unique-current-complete-denotation-eids
    :bound-eid :authenticated-query-scoped-result-eid}
   :result
-  [:rebased-current-ordinal :restarted]
+  [:after-matching-eid :restarted]
   :logical-work
-  {:success "ordinal + 1 inspected identities"
-   :absence "N inspected identities"
-   :upper-bound "N"
+  {:membership :binary-search
+   :upper-bound "ceil(log2(N + 1)) comparisons"
    :heap-and-latency :host-regression-gates-not-dafny-claims}
   :production-authority
-  {:clj-java :generated
-   :cljs-javascript :generated
+  {:clj-java :host-keyset-rebase-after-generated-continuation-decision
+   :cljs-javascript :host-keyset-rebase-after-portable-certified-continuation-decision
    :runtime-engine-selector :absent}
-  :counterexample :EACL-FORMAL-044}
+  :qualification
+  :host-algorithm-over-a-certified-denotation-not-a-pagewindow-theorem
+  :counterexample :EACL-FORMAL-047}
  :remaining []}

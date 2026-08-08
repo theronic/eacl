@@ -68,9 +68,9 @@
     :EACL-FORMAL-031
     eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
     :EACL-FORMAL-032
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-033
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-034
     eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
     :EACL-FORMAL-035
@@ -86,9 +86,9 @@
     :EACL-FORMAL-040
     eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model
     :EACL-FORMAL-041
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-042
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-043
     eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
     :EACL-FORMAL-044

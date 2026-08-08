@@ -628,6 +628,30 @@
    :killed-by
    {:model :single-flight-join-is-current-and-incomplete
     :test :apalache-counterexample}}
+  {:id :cljs-default-restores-generated-kernel
+   :mechanism :route-the-cljs-production-default-back-through-generated-javascript
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :cljs-production-default-is-portable-cljc
+    :test :cljs-default-restores-generated-kernel-control}}
+  {:id :cljs-scan-scope-check-removed
+   :mechanism :accept-a-scan-response-from-another-request-scope
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :scan-response-scope-and-request-identity-match
+    :test :cljs-scan-scope-check-removed-control}}
+  {:id :cljs-lookahead-continuation-dropped
+   :mechanism :discard-the-persistent-page-end-state-before-consuming-lookahead
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :page-continuation-resumes-at-the-retained-page-end-state
+    :test :cljs-forward-and-reverse-lookahead-continuation-controls}}
+  {:id :cljs-generated-browser-payload-restored
+   :mechanism :ship-the-bignumber-generated-browser-iife-in-the-production-module
+   :control {:kind :clojure}
+   :killed-by
+   {:invariant :generated-browser-oracle-is-formal-classpath-only
+    :test :cljs-generated-browser-payload-restored-control}}
   {:id :managed-proof-bypass
    :mechanism :reuse-managed-projection-with-mismatched-relation-proof
    :control

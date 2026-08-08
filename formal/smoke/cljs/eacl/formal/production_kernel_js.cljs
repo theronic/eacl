@@ -1,5 +1,5 @@
 (ns eacl.formal.production-kernel-js
-  "Released generated-JavaScript implementation of EACL's decision SPI."
+  "Formal-only generated-JavaScript oracle for EACL's decision SPI."
   (:require
    [eacl.formal.generated-runtime]
    [eacl.verified-kernel :as verified]))
@@ -599,13 +599,12 @@
 (defn- keyset-page-decision
   [{:keys [direction size bound? realized-count]}]
   (let [page-window (.-PageWindow generated)
-        pagination (.-Pagination generated)
         direction-value
         (if (= :asc direction)
           (js-invoke
-           (.-Direction pagination) "create_Ascending")
+           (.-Direction page-window) "create_Ascending")
           (js-invoke
-           (.-Direction pagination) "create_Descending"))
+           (.-Direction page-window) "create_Descending"))
         decision
         (js-invoke
          (.-__default page-window)
@@ -1452,20 +1451,8 @@
        (indexed-plan-rejection-reason (.-dtor_error decision))})))
 
 
-(defn- indexed-cursor-bound
-  [bound]
-  (let [cursor-bound
-        (.-CursorBound (.-IndexedTraversal generated))]
-    (if bound
-      (js-invoke
-       cursor-bound
-       "create_AfterCursor"
-       (big-number (:ordinal bound))
-       (big-number (:eid bound)))
-      (js-invoke cursor-bound "create_NoCursorBound"))))
-
 (defn- indexed-render-mode
-  [{:keys [kind size bound limit target-eid]}]
+  [{:keys [kind size limit target-eid]}]
   (let [render-mode
         (.-RenderMode (.-IndexedTraversal generated))]
     (case kind
@@ -1473,15 +1460,7 @@
       (js-invoke
        render-mode
        "create_RenderPage"
-       (big-number size)
-       (indexed-cursor-bound bound))
-
-      :backward-page
-      (js-invoke
-       render-mode
-       "create_RenderBackwardPage"
-       (big-number size)
-       (indexed-cursor-bound bound))
+       (big-number size))
 
       :count
       (js-invoke
@@ -1646,50 +1625,56 @@
 (defn- indexed-drive
   [direction state limits fuel]
   (let [indexed (.-IndexedTraversal generated)
+        batching (.-IndexedBatching generated)
         outcome
         (case direction
           :forward
           (js-invoke
-           (.-__default indexed)
-           "DriveForwardIterative"
-           state (indexed-limits limits) (dafny-fuel fuel))
+           (.-__default batching)
+           "DriveForwardScans"
+           state (indexed-limits limits) (dafny-fuel fuel) (big-number 64))
 
           :reverse
           (js-invoke
-           (.-__default indexed)
-           "DriveReverseIterative"
-           state (indexed-limits limits) (dafny-fuel fuel)))]
+           (.-__default batching)
+           "DriveReverseScans"
+           state (indexed-limits limits) (dafny-fuel fuel) (big-number 64)))]
     (cond
       (case direction
-        :forward (.-is_ForwardNeedScan outcome)
-        :reverse (.-is_ReverseNeedScan outcome))
-      {:status :need-scan
-       :state (.-dtor_state outcome)
-       :command
-       (indexed-command-value (.-dtor_command outcome))}
+        :forward (.-is_ForwardNeedScans outcome)
+        :reverse (.-is_ReverseNeedScans outcome))
+      (let [commands (mapv indexed-command-value (.-dtor_commands outcome))
+            state (.-dtor_batch outcome)]
+        (if (= 1 (count commands))
+          {:status :need-scan
+           :state state
+           :command (first commands)}
+          {:status :need-scans
+           :state state
+           :commands commands}))
 
       (case direction
-        :forward (.-is_ForwardComplete outcome)
-        :reverse (.-is_ReverseComplete outcome))
+        :forward (.-is_ForwardBatchComplete outcome)
+        :reverse (.-is_ReverseBatchComplete outcome))
       {:status :complete
        :state (.-dtor_state outcome)}
 
       (case direction
-        :forward (.-is_ForwardYielded outcome)
-        :reverse (.-is_ReverseYielded outcome))
+        :forward (.-is_ForwardBatchYielded outcome)
+        :reverse (.-is_ReverseBatchYielded outcome))
       {:status :yielded
        :state (.-dtor_state outcome)}
 
       (case direction
-        :forward (.-is_ForwardRenderRejected outcome)
-        :reverse (.-is_ReverseRenderRejected outcome))
+        :forward (.-is_ForwardBatchRenderRejected outcome)
+        :reverse (.-is_ReverseBatchRenderRejected outcome))
       {:status :render-rejected
        :state (.-dtor_state outcome)
        :error (indexed-render-error (.-dtor_error outcome))}
 
       (case direction
-        :forward (.-is_ForwardStepLimitExceeded outcome)
-        :reverse (.-is_ReverseStepLimitExceeded outcome))
+        :forward (.-is_ForwardBatchLimitExceeded outcome)
+        :reverse (.-is_ReverseBatchLimitExceeded outcome))
       {:status :limit-exceeded
        :state (.-dtor_state outcome)
        :limit-kind
@@ -1701,34 +1686,57 @@
         "Generated indexed drive returned an internal-only step variant."
         {:direction direction})))))
 
+(defn- indexed-response
+  [indexed response]
+  (js-invoke
+   (.-ScanResponse indexed)
+   "create_ScanResponse"
+   (big-number (:request-scope response))
+   (big-number (:request-id response))
+   (let [values (:values response)]
+     (if (seq values)
+       (dafny-sequence (map big-number values))
+       @empty-values-sequence))
+   (:terminal? response)
+   (big-number (:fetched-values response))))
+
 (defn- indexed-resume
   [direction state response limits]
   (let [indexed (.-IndexedTraversal generated)
+        batching (.-IndexedBatching generated)
+        batch-state?
+        (case direction
+          :forward (instance? (.-ForwardBatchState batching) state)
+          :reverse (instance? (.-ReverseBatchState batching) state))
+        batch? (or batch-state? (vector? response))
+        responses (if (vector? response) response [response])
         response'
-        (js-invoke
-         (.-ScanResponse indexed)
-         "create_ScanResponse"
-         (big-number (:request-scope response))
-         (big-number (:request-id response))
-         (let [values (:values response)]
-           (if (seq values)
-             (dafny-sequence (map big-number values))
-             @empty-values-sequence))
-         (:terminal? response)
-         (big-number (:fetched-values response)))
+        (if batch?
+          (dafny-sequence (map #(indexed-response indexed %) responses))
+          (indexed-response indexed response))
         outcome
         (case direction
           :forward
-          (js-invoke
-           (.-__default indexed)
-           "ResumeForwardScan"
-           state response' (indexed-limits limits))
+          (if batch?
+            (js-invoke
+             (.-__default batching)
+             "ResumeForwardScans"
+             state response' (indexed-limits limits))
+            (js-invoke
+             (.-__default indexed)
+             "ResumeForwardScan"
+             state response' (indexed-limits limits)))
 
           :reverse
-          (js-invoke
-           (.-__default indexed)
-           "ResumeReverseScan"
-           state response' (indexed-limits limits)))]
+          (if batch?
+            (js-invoke
+             (.-__default batching)
+             "ResumeReverseScans"
+             state response' (indexed-limits limits))
+            (js-invoke
+             (.-__default indexed)
+             "ResumeReverseScan"
+             state response' (indexed-limits limits))))]
     (cond
       (case direction
         :forward (.-is_ForwardScanResumed outcome)

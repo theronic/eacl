@@ -2,7 +2,7 @@
 
 EACL's cache is a bounded, client-private optimization over one immutable
 database value. The database and the cache-free evaluator remain authoritative:
-a cache miss, rejected entry, provider failure, or eviction recomputes the
+a cache miss, rejected entry, or eviction recomputes the
 operation and cannot turn a deny into an allow.
 
 ## Contents
@@ -188,9 +188,9 @@ tracked in a first-in-first-out window of `:max-entries` distinct first
 sightings (default 1024): the oldest first sightings are forgotten as new
 keys arrive, so a key seen twice in close succession is admitted at any
 keyspace size and the retained sighting set cannot converge to a fixed key
-subset. Datomic's optional portable compatibility store keeps its own
-weighted least-recently-used capacity, but portable provider values are not
-an authority for native completed authorization answers.
+subset. Datomic keeps completed answers and continuation state in
+client-private bounded stores. Custom provider adapters are rejected because
+they do not control either live store.
 
 Time-to-live is optional and is not the correctness mechanism. Exact snapshot
 identity and managed mutation stamps determine validity. Capacity eviction
@@ -247,8 +247,8 @@ Advanced bounds:
 ```
 
 Completed answers are bounded by `:answer-max-weight` (default 16 MiB).
-`:max-entries` sizes the on-repeat sighting window and, on Datomic, the
-portable provider store; it does not bound native completed answers.
+`:max-entries` sizes the on-repeat sighting window; it does not bound native
+completed answers.
 
 For completed-answer second-sighting admission, Datomic accepts
 `{:cache {:remember-answers :on-repeat}}`; Datahike and DataScript accept
@@ -342,7 +342,7 @@ current snapshot when retained state is unavailable.
 The cache-free path is the behavioral oracle. Differential tests compare
 cache-enabled and cache-disabled operations across Datomic, Datahike, and
 DataScript, including relevant and unrelated writes, recursive graphs,
-pagination, malformed evidence, provider failure, eviction, and concurrent
+pagination, malformed evidence, eviction, and concurrent
 publication.
 
 The generated decision kernel checks cache lookup, admission, publication,

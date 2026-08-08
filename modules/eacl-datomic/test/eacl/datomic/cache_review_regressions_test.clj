@@ -30,9 +30,9 @@
 (defn- live-client
   "A client that retains results. This used to need an explicit coordinator
   plus :live-results? true; it is now just :remember-answers."
-  [conn context]
+  [conn]
   (core/make-client conn {:page-token-key token-key
-                          :cache (assoc context :remember-answers true)}))
+                          :cache {:remember-answers true}}))
 
 (defn- seed-direct!
   [conn boot n-accounts]
@@ -339,9 +339,7 @@
   ;; Non-exact cursor validation recovers on the current snapshot and may
   ;; publish only after re-evaluation there.
   (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          context {:store store}
-          acl (live-client conn context)
+    (let [acl (live-client conn)
           _ (seed-direct! conn acl 9)
           query {:subject (spice-object :user "alice")
                  :permission :admin

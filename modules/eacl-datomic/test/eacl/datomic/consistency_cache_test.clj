@@ -776,41 +776,25 @@
             (is (= future-t
                    (:requested-order-hint (ex-data e))))))))))
 
-(deftest exact-request-bypasses-completed-provider-test
+(deftest exact-request-bypasses-completed-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [delegate (cache/local-store)
-          fail? (atom false)
-          store
-          (reify
-            cache/CacheStore
-            (lookup [_ k]
-              (if @fail?
-                (throw (ex-info "provider unavailable" {}))
-                (cache/lookup delegate k)))
-            (store! [_ k value weight ttl]
-              (cache/store! delegate k value weight ttl))
-            (evict! [_ k] (cache/evict! delegate k))
-            (clear! [_] (cache/clear! delegate))
-            (stats [_] (cache/stats delegate))
-
-            cache/CacheProvider
-            (capabilities [_] (cache/capabilities delegate))
-            (clear-namespace! [_ namespace]
-              (cache/clear-namespace! delegate namespace))
-            (record-provider-error! [_ operation kind]
-              (cache/record-provider-error! delegate operation kind)))
-          client (core/make-client
+    (let [client (core/make-client
                   conn
                   {:coherence-authority :managed
-                   :cache {:store store
-                           :remember-answers true}})
+                   :cache {:remember-answers true}})
           {token :zed/token} (seed! conn client)
           alice (spice-object :user "alice")
-          account (spice-object :account "acct")]
+          account (spice-object :account "acct")
+          demand {:subject alice
+                  :permission :admin
+                  :resource account}]
       (is (true? (eacl/can? client alice :admin account)))
-      (reset! fail? true)
-      (is (true?
-           (eacl/can? client alice :admin account
-                      (consistency/at-exact-snapshot token))))
-      (is (zero? (:provider-errors (cache/stats delegate)))
-          "exact selection does not consult the completed-answer provider"))))
+      (let [result
+            (eacl/check-permission
+             client
+             (assoc demand
+                    :consistency
+                    (consistency/at-exact-snapshot token)))]
+        (is (true? (:allowed? result)))
+        (is (false? (:cached? result))
+            "exact selection bypasses the completed-answer cache")))))

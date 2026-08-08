@@ -1,22 +1,26 @@
 (ns eacl.formal.indexed-traversal-benchmark
-  "Target-runtime scaling probe for the generated indexed traversal.
+  "Target-runtime scaling and absolute-latency probe for the CLJS production
+  indexed traversal.
 
   This measures the complete CLJS boundary from one ordered backend response
-  through generated fixed-point drive and public result conversion. It is
+  through portable fixed-point drive and public result conversion. It is
   deliberately independent of database seek cost."
   (:refer-clojure :exclude [run!])
   (:require
-   [eacl.formal.production-kernel-js :as production]
+   [eacl.formal.production-kernel-cljs :as production]
    [eacl.verified-kernel :as verified]))
 
 (def ^:private selection
-  {:kernel production/generated-javascript-kernel})
+  production/default-selection)
 
 (def ^:private direct-rule
   {:kind :relation
    :head {:resource-type "folder" :permission "read"}
    :relation-eid 1
    :subject-type "user"})
+
+(def ^:private reference-size 16384)
+(def ^:private maximum-reference-p50-ns-per-result 15000.0)
 
 (defn- percentile
   [values proportion]
@@ -85,7 +89,7 @@
           (= size (get-in result [:counters :emitted-results])))
       (throw
        (ex-info
-        "Generated indexed traversal benchmark changed semantics."
+        "Portable CLJS indexed traversal benchmark changed semantics."
         {:size size
          :completed-status (:status completed)
          :result-status (:status result)
@@ -126,16 +130,32 @@
          normalized-ratio
          (/ (:p50-ns-per-result largest)
             (:p50-ns-per-result smallest))
-         maximum-normalized-ratio 1.5]
-     {:runtime :cljs-generated-javascript
+         maximum-normalized-ratio 1.5
+         reference
+         (some #(when (= reference-size (:size %)) %) measurements)
+         _
+         (when-not reference
+           (throw
+            (ex-info
+             "CLJS benchmark sizes omit the recorded absolute reference size."
+             {:reference-size reference-size
+              :sizes sizes})))
+         reference-ns-per-result (:p50-ns-per-result reference)]
+     {:runtime :cljs-portable-cljc
       :fixture :one-direct-relation-complete-denotation
       :measurements measurements
       :required
       {:maximum-largest-to-smallest-normalized-p50-per-result-ratio
-       maximum-normalized-ratio}
+       maximum-normalized-ratio
+       :reference-size reference-size
+       :maximum-reference-p50-ns-per-result
+       maximum-reference-p50-ns-per-result}
       :normalized-p50-per-result-ratio normalized-ratio
+      :reference-p50-ns-per-result reference-ns-per-result
       :status
-      (if (<= normalized-ratio maximum-normalized-ratio)
+      (if (and (<= normalized-ratio maximum-normalized-ratio)
+               (<= reference-ns-per-result
+                   maximum-reference-p50-ns-per-result))
         :passed
         :failed)
       :qualification
@@ -162,7 +182,7 @@
       (when (= :failed (:status result))
         (throw
          (ex-info
-          "Generated JavaScript indexed traversal scaling regressed."
+          "Portable CLJS indexed traversal performance regressed."
           result))))))
 
 (set! *main-cli-fn* -main)

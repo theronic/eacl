@@ -60,11 +60,13 @@ meaning of current recovery is specified separately in
 `formal/dafny/PageWindow.dfy`: after selecting the current graph, an
 authenticated recursive cursor is rebound by its stable result EID to the
 current complete denotation, or the same scoped query restarts when that EID is
-absent. `PageWindow.RebaseCursorBound` is compiled to Java and JavaScript and
-is invoked by production verified authority; the Clojure/CLJS boundary rejects
-a duplicate denotation or a generated ordinal/restart that contradicts the
-validated input. This separation prevents the TLA+ graph-selection abstraction
-from being misrepresented as a proof of item-level cursor positioning.
+absent. Production performs that membership decision in
+`eacl.engine.v8/keyset-rebase` over a certified, strictly ascending unique
+denotation after the generated/portable continuation decision has selected the
+permitted graph. The host binary-search implementation and denotation boundary
+are regression-gated trusted refinements, not `PageWindow` theorems. This
+separation prevents the TLA+ graph-selection abstraction from being
+misrepresented as a proof of item-level cursor positioning.
 
 ## Reproduction
 
