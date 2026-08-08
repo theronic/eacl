@@ -125,7 +125,9 @@ jobs:
                               \"modules/eacl-datomic/test\"
                               \"modules/eacl-datascript/test\"
                               \"modules/eacl-datahike/test\"]
-                       :excludes [:benchmark]})]
+                       ;; Bundle gates run only after formal.yml has built the
+                       ;; advanced-optimized comparison artifacts.
+                       :excludes [:benchmark :formal-artifact]})]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"nREPL test suite failed\" result)))
                  result))"

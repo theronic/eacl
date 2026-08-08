@@ -19,7 +19,8 @@
       (.write gzip (Files/readAllBytes (.toPath file))))
     (.size out)))
 
-(deftest production-cljs-bundle-is-native-small-and-oracle-free-test
+(deftest ^:formal-artifact
+  production-cljs-bundle-is-native-small-and-oracle-free-test
   (let [{:keys [bundle generated-oracle]} (edn/read-string (slurp ledger-path))
         empty-bundle (repo/file "target" "formal" "cljs-empty-bundle.js")
         kernel-bundle
