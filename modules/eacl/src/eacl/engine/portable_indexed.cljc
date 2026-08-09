@@ -29,17 +29,18 @@
 (defn- add-counter
   ([state key] (add-counter state key 1))
   ([state key amount]
-   (update-in state [:counters key] + amount)))
+   (assoc state :counters (update (:counters state) key + amount))))
 
 (defn- enqueue
   [state work]
   (let [queue (conj (:queue state) work)
-        depth (count queue)]
-    (-> state
-        (assoc :queue queue)
-        (add-counter :cumulative-enqueues)
-        (assoc-in [:counters :current-queue-depth] depth)
-        (update-in [:counters :maximum-queue-depth] max depth))))
+        depth (count queue)
+        counters
+        (-> (:counters state)
+            (update :cumulative-enqueues inc)
+            (assoc :current-queue-depth depth)
+            (update :maximum-queue-depth max depth))]
+    (assoc state :queue queue :counters counters)))
 
 (defn- enqueue-all
   [state works]
@@ -48,10 +49,10 @@
 (defn- dequeue
   [state]
   (let [work (peek (:queue state))
-        queue (pop (:queue state))]
-    [work (-> state
-              (assoc :queue queue)
-              (assoc-in [:counters :current-queue-depth] (count queue)))]))
+        queue (pop (:queue state))
+        counters
+        (assoc (:counters state) :current-queue-depth (count queue))]
+    [work (assoc state :queue queue :counters counters)]))
 
 (defn- subject-resources
   [subject-type subject-eid relation-eid resource-type]
@@ -116,18 +117,16 @@
 
 (defn- limit-kind
   [state limits]
-  (cond
-    (> (get-in state [:counters :unique-grants])
-       (:max-derived-grants limits))
-    :derived-grants
+  (let [counters (:counters state)]
+    (cond
+      (> (:unique-grants counters) (:max-derived-grants limits))
+      :derived-grants
 
-    (> (get-in state [:counters :engine-consumed-values])
-       (:max-advanced-datoms limits))
-    :advanced-datoms
+      (> (:engine-consumed-values counters) (:max-advanced-datoms limits))
+      :advanced-datoms
 
-    (> (get-in state [:counters :current-queue-depth])
-       (:max-queued-work limits))
-    :queued-work))
+      (> (:current-queue-depth counters) (:max-queued-work limits))
+      :queued-work)))
 
 (defn- retained-units
   [state]
@@ -351,8 +350,9 @@
       :page
       (cond
         (< (count (:items render-state)) (:size render))
-        (let [state (update-in state [:render-state :items] conj eid)]
-          (if (= (count (get-in state [:render-state :items])) (:size render))
+        (let [items (conj (:items render-state) eid)
+              state (assoc state :render-state (assoc render-state :items items))]
+          (if (= (count items) (:size render))
             (assoc state :continuation-state
                    (-> state
                        (assoc :continuation-state nil)
@@ -366,11 +366,15 @@
 
 (defn- emit
   [state eid]
-  (-> state
-      (update :emitted conj eid)
-      (add-counter :emitted-results)
-      (add-counter :render-advances)
-      (record-emission eid)))
+  (let [counters
+        (-> (:counters state)
+            (update :emitted-results inc)
+            (update :render-advances inc))]
+    (record-emission
+     (assoc state
+            :emitted (conj (:emitted state) eid)
+            :counters counters)
+     eid)))
 
 (defn- process-forward-grant
   [state {:keys [node resource-eid] :as grant}]
@@ -378,12 +382,19 @@
     (if (contains? (:seen-grants state) grant-key)
       state
       (let [rules (get (:consumers state) node [])
-            state (-> state
-                      (update :seen-grants conj grant-key)
-                      (add-counter :unique-grants)
-                      (add-counter :rule-applications (count rules))
-                      (add-counter :consumer-grant-joins (count rules))
-                      (enqueue-all (mapcat #(forward-consumer-work grant %) rules)))]
+            rule-count (count rules)
+            counters
+            (-> (:counters state)
+                (update :unique-grants inc)
+                (update :rule-applications + rule-count)
+                (update :consumer-grant-joins + rule-count))
+            state
+            (-> state
+                (assoc
+                 :seen-grants (conj (:seen-grants state) grant-key)
+                 :counters counters)
+                (enqueue-all
+                 (mapcat #(forward-consumer-work grant %) rules)))]
         (if (and (= node (:root-node state))
                  (not (contains? (:emitted state) resource-eid)))
           (emit state resource-eid)
@@ -478,13 +489,19 @@
     (if (contains? (:seen-grants state) grant-key)
       state
       (let [consumers (get (:consumers state) goal-key [])
-            state (-> state
-                      (update :seen-grants conj grant-key)
-                      (update-in [:grants-by-goal goal-key] (fnil conj []) grant)
-                      (add-counter :unique-grants)
-                      (add-counter :consumer-grant-joins (count consumers))
-                      (enqueue-all (mapcat #(reverse-consumer-work % grant)
-                                           consumers)))]
+            counters
+            (-> (:counters state)
+                (update :unique-grants inc)
+                (update :consumer-grant-joins + (count consumers)))
+            state
+            (-> state
+                (assoc
+                 :seen-grants (conj (:seen-grants state) grant-key)
+                 :grants-by-goal
+                 (update (:grants-by-goal state) goal-key (fnil conj []) grant)
+                 :counters counters)
+                (enqueue-all (mapcat #(reverse-consumer-work % grant)
+                                     consumers)))]
         (if (and (= node (:root-node state))
                  (= resource-eid (:root-resource-eid state))
                  (= subject-type (:result-type state))

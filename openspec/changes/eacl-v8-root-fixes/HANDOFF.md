@@ -1,5 +1,14 @@
 # eacl-v8-root-fixes — session handoff
 
+> **Historical checkpoint, not release evidence.** The later
+> `demand-bounded-authorization-execution` change supersedes this handoff's
+> single-flight, sorted-recursive-keyset, implicit completion, DataScript
+> history, and authorization-lock assumptions. Counts, digests, performance
+> observations, and commands below describe an intermediate worktree. Current
+> normative behavior lives in the later change's specs; current certification
+> evidence lives in `formal/verification/manifest.edn` and
+> `formal/verification/final-assurance-audit.md`.
+
 Checkpoint for a fresh session with none of the prior context. Read this,
 then `proposal.md` → `design.md` → `tasks.md` → `specs/**`. Progress:
 **54/54 primary tasks and all triggered follow-ons are complete.** Groups

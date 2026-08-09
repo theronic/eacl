@@ -11,9 +11,9 @@
  :root-cause
  "Verified-authoritative dispatch selected the generated indexed state machine only for roots classified as recursive-SCC-dependent. Acyclic roots still used the handwritten optimized Clojure/ClojureScript engine, while the Dafny AcyclicForward/AcyclicReverse functions projected the semantic relation rather than refining that complete host algorithm. The mode therefore could not support a complete generated-authority claim."
  :fix
- "Route every permission root through generated indexed traversal in verified-authoritative mode, run the generated alternate for every valid acyclic root in shadow mode, retain the optimized acyclic host path only for legacy and shadow-primary execution, normalize algorithm-private cursor representations to their result EID during cross-algorithm shadow comparison, and compare logical resource counters only when both sides run the same traversal algorithm."
+ "Withdraw the false all-root generated-authority claim. Recursive roots execute the generated indexed traversal; certified acyclic roots execute the faster source-specialized host engine with generated routing, page, count, and work decisions plus explicit source-specialization evidence. Keep those assurance classes disjoint in the manifest and regression corpus."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages"
-  "eacl.formal.state-trace-differential-test/acyclic-shadow-compares-generated-authority-and-legacy-stays-host-only"
-  "formal/dafny/IndexedTraversal.dfy"
-  "formal/dafny/IndexedRefinement.dfy"]}
+ ["eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"
+  "formal/verification/acyclic-kernel.edn"
+  "formal/verification/source-specializations.edn"
+  "formal/verification/indexed-traversal.edn"]}

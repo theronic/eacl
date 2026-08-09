@@ -15,22 +15,23 @@ Responsibilities:
 - two-datom endpoint-pair relationship storage and guarded EAVT/AVET traversal
 - explicit offline dangling-half detection in `eacl.datascript.integrity`
 - current immutable-snapshot selection and object/reference conversion
-- proof-equivalent authenticated Relay cursors with optional exact fallback
+- proof-equivalent authenticated Relay cursors on the selected current DB
 - database-visible mutation identities plus schema/relation content proofs
 - portable authenticated completed-answer caching
 - DataScript contract tests and adapter-specific edge cases
 
 DataScript supports serialized connection-head `:fully-consistent`, local
-`:minimize-latency`, and managed causal at-least selection. Exact selection is
-advertised only when `:exact-snapshot-registry-size` configures a bounded
-immutable-DB registry. It does not claim an external replication mechanism.
-Unsupported configuration/mode combinations fail before authorization.
-DataScript clients assume by default that every EACL schema and relationship
-mutation uses the client APIs, selecting managed mutation proofs and
-relation-stamp reuse. Applications that write authorization-relevant datoms
-directly must opt out with `{:coherence-authority :unknown}`; domain-object
-transactions that do not alter EACL schema or relationships do not require an
-opt-out.
+`:minimize-latency`, and managed causal at-least selection. It intentionally
+does not advertise `:at-exact-snapshot` or retain historical DB values;
+`:exact-snapshot-registry-size` is removed and rejected. Unsupported exact
+requests fail before cache access or authorization traversal. DataScript does
+not claim an external replication mechanism.
+DataScript defaults to `{:coherence-authority :unknown}`, so cache reuse is
+limited to the exact current immutable DB value and remains sound when callers
+write authorization-relevant datoms directly. Applications may explicitly opt
+in to `{:coherence-authority :managed}` only when every EACL schema and
+relationship mutation uses the EACL APIs. That writer contract permits
+relation-stamp reuse across unrelated forward transactions.
 The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
 `:last`/`:before`; see the
 [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

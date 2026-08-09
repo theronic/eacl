@@ -59,13 +59,12 @@
 
 (defn- continuation-decision
   [{:keys [authenticated? scope-matches? expired? source cursor-source
-           current-proof cursor-proof mode cursor-graph exact]}]
+           current-proof cursor-proof cursor-graph exact]}]
   (cond
     (not authenticated?) :invalid-authentication
     (or (not scope-matches?) (not= source cursor-source)) :scope-mismatch
     expired? :expired
     (= current-proof cursor-proof) :current
-    (= :recover-current mode) :rebase-current
     (nil? exact) :snapshot-unavailable
     (or (not= (:graph exact) cursor-graph)
         (not= (:source exact) cursor-source)
@@ -130,18 +129,14 @@
   [{:keys [decision] :as input}]
   (case decision
     :lookup
-    (cond
-      (:recursive-self? input) :bypass-recursive-self
-      (= :missing (:candidate input)) :start-computation
-      (= :computing (:candidate input)) :join-computation
-      (= :complete (:candidate input)) :use-completed-value
-      :else :start-computation)
+    (if (= :complete (:candidate input))
+      :use-completed-value
+      :start-independent-computation)
     :admission
-    (cond
-      (:candidate-present? input) :join-existing
-      (< (:represented-candidates input) (:maximum-candidates input))
-      :admit-computation
-      :else :compute-without-admission)
+    (if (and (not (:candidate-present? input))
+             (< (:attempted-publications input) (:maximum-attempts input)))
+      :attempt-publication
+      :skip-publication)
     :publication
     (if (and (:ticket-current? input)
              (:complete? input)

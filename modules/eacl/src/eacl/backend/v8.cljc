@@ -19,6 +19,21 @@
   only: never influences dispatch or guard behavior."
   nil)
 
+(def ^:dynamic *invoke-observer*
+  "Optional CLJ/CLJS test observer called immediately before and after one
+  synchronous adapter invocation. It is observation-only and provides the
+  deterministic bounded-blocking seam used by deadline certification tests."
+  nil)
+
+(defn- observe-invocation!
+  [phase adapter operation-key]
+  (when *invoke-observer*
+    (*invoke-observer*
+     {:phase phase
+      :backend (:id adapter)
+      :operation operation-key}))
+  nil)
+
 (def required-snapshot-operations
   #{:snapshot-id
     :source-scope
@@ -508,7 +523,13 @@
   [adapter operation-key & args]
   (when *backend-op-stats*
     (swap! *backend-op-stats* update operation-key (fnil inc 0)))
-  (let [value (apply (operation adapter operation-key) args)]
-    (if (runtime-guards? adapter)
-      (guard-output! adapter operation-key args value)
-      value)))
+  (observe-invocation! :before adapter operation-key)
+  (try
+    (let [value (apply (operation adapter operation-key) args)]
+      (observe-invocation! :after adapter operation-key)
+      (if (runtime-guards? adapter)
+        (guard-output! adapter operation-key args value)
+        value))
+    (catch #?(:clj Throwable :cljs :default) error
+      (observe-invocation! :failed adapter operation-key)
+      (throw error))))

@@ -1,11 +1,17 @@
 include "RecursiveEngine.dfy"
+include "IndexedRootDenotation.dfy"
 
 module SubproblemCache {
   import Semantics
   import AcyclicEngine
   import RecursiveEngine
+  import IndexedRootDenotation
 
   datatype Direction = Ascending | Descending
+
+  datatype DenotationPublicOrder =
+    | CertifiedAcyclicEidOrder
+    | FixedPointLogicalOrder
 
   datatype ProjectionKey = ProjectionKey(
     version: nat,
@@ -125,13 +131,16 @@ module SubproblemCache {
 
   datatype RecursiveDenotationKey = RecursiveDenotationKey(
     version: nat,
+    operation: string,
     recursiveVersion: nat,
     direction: Direction,
-    rootComponent: seq<Semantics.PermissionNode>,
-    root: Semantics.PermissionNode,
+    identityVersion: nat,
+    rootResourceType: string,
+    rootBodies: set<IndexedRootDenotation.IndexedRuleBody>,
     anchorType: string,
     anchorId: int,
     resultType: string,
+    publicOrder: DenotationPublicOrder,
     maxDerivedGrants: nat,
     maxAdvancedDatoms: nat,
     maxQueuedWork: nat
@@ -143,13 +152,16 @@ module SubproblemCache {
   )
     requires left == right
     ensures left.version == right.version
+    ensures left.operation == right.operation
     ensures left.recursiveVersion == right.recursiveVersion
     ensures left.direction == right.direction
-    ensures left.rootComponent == right.rootComponent
-    ensures left.root == right.root
+    ensures left.identityVersion == right.identityVersion
+    ensures left.rootResourceType == right.rootResourceType
+    ensures left.rootBodies == right.rootBodies
     ensures left.anchorType == right.anchorType
     ensures left.anchorId == right.anchorId
     ensures left.resultType == right.resultType
+    ensures left.publicOrder == right.publicOrder
     ensures left.maxDerivedGrants == right.maxDerivedGrants
     ensures left.maxAdvancedDatoms == right.maxAdvancedDatoms
     ensures left.maxQueuedWork == right.maxQueuedWork
@@ -230,59 +242,10 @@ module SubproblemCache {
   {
   }
 
-  function RecursiveSelfLookup(
-    resolving: set<ExactCacheAddress>,
-    lifecycle: nat,
-    tier: string,
-    semanticKey: ExactSemanticKey
-  ): bool {
-    ExactCacheAddress(lifecycle, tier, semanticKey) in resolving
-  }
-
-  lemma LifecycleQualifiedRecursiveSelfIsDetected(
-    resolving: set<ExactCacheAddress>,
-    lifecycle: nat,
-    tier: string,
-    semanticKey: ExactSemanticKey
-  )
-    requires ExactCacheAddress(
-               lifecycle,
-               tier,
-               semanticKey
-             ) in resolving
-    ensures RecursiveSelfLookup(
-              resolving,
-              lifecycle,
-              tier,
-              semanticKey
-            )
-  {
-  }
-
-  lemma DifferentLifecycleIsNotRecursiveSelf(
-    activeLifecycle: nat,
-    otherLifecycle: nat,
-    tier: string,
-    semanticKey: ExactSemanticKey
-  )
-    requires activeLifecycle != otherLifecycle
-    ensures !RecursiveSelfLookup(
-              {ExactCacheAddress(
-                 activeLifecycle,
-                 tier,
-                 semanticKey
-               )},
-              otherLifecycle,
-              tier,
-              semanticKey
-            )
-  {
-  }
-
   datatype ExactAddressSelection = ExactAddressSelection(
     capturedLifecycle: nat,
-    recursiveAddress: ExactCacheAddress,
-    flightAddress: ExactCacheAddress
+    lookupAddress: ExactCacheAddress,
+    publicationAddress: ExactCacheAddress
   )
 
   function LinearizedExactAddressSelection(
@@ -297,8 +260,8 @@ module SubproblemCache {
   predicate ExactAddressSelectionConsistent(
     selection: ExactAddressSelection
   ) {
-    selection.recursiveAddress == selection.flightAddress &&
-    selection.recursiveAddress.generation ==
+    selection.lookupAddress == selection.publicationAddress &&
+    selection.lookupAddress.generation ==
     selection.capturedLifecycle
   }
 
@@ -318,19 +281,19 @@ module SubproblemCache {
   }
 
   lemma SplitLifecycleSelectionCannotBeConsistent(
-    recursiveLifecycle: nat,
-    flightLifecycle: nat,
+    lookupLifecycle: nat,
+    publicationLifecycle: nat,
     tier: string,
     semanticKey: ExactSemanticKey
   )
-    requires recursiveLifecycle != flightLifecycle
+    requires lookupLifecycle != publicationLifecycle
     ensures ExactCacheAddress(
-              recursiveLifecycle,
+              lookupLifecycle,
               tier,
               semanticKey
             ) !=
             ExactCacheAddress(
-              flightLifecycle,
+              publicationLifecycle,
               tier,
               semanticKey
             )
@@ -704,94 +667,42 @@ module SubproblemCache {
     | CandidateFailed
 
   datatype LookupAction =
-    | BypassRecursiveSelf
-    | StartComputation
-    | JoinComputation
+    | StartIndependentComputation
     | UseCompletedValue
 
   function DecideLookup(
-    recursiveSelf: bool,
     candidate: CandidateState
   ): LookupAction {
-    if recursiveSelf then
-      BypassRecursiveSelf
-    else
-      match candidate
-      case CandidateMissing => StartComputation
-      case CandidateComputing => JoinComputation
-      case CandidateComplete => UseCompletedValue
-      case CandidateFailed => StartComputation
+    match candidate
+    case CandidateMissing => StartIndependentComputation
+    case CandidateComputing => StartIndependentComputation
+    case CandidateComplete => UseCompletedValue
+    case CandidateFailed => StartIndependentComputation
   }
 
-  function LifecycleStableCandidate(
-    represented: CandidateState,
-    registeredFlight: bool
-  ): CandidateState {
-    if represented.CandidateComplete? then
-      CandidateComplete
-    else if registeredFlight || represented.CandidateComputing? then
-      CandidateComputing
-    else
-      CandidateMissing
-  }
-
-  lemma RegisteredUnrepresentedFlightIsJoined(
-    recursiveSelf: bool
-  )
-    requires !recursiveSelf
-    ensures DecideLookup(
-              recursiveSelf,
-              LifecycleStableCandidate(
-                CandidateMissing,
-                true
-              )
-            ).JoinComputation?
-  {
-  }
-
-  lemma MissingEntryAndFlightStartsComputation(
-    recursiveSelf: bool
-  )
-    requires !recursiveSelf
-    ensures DecideLookup(
-              recursiveSelf,
-              LifecycleStableCandidate(
-                CandidateMissing,
-                false
-              )
-            ).StartComputation?
-  {
-  }
-
-  function FlightInstallationsForLookup(action: LookupAction): nat {
-    if action.StartComputation? then 1 else 0
-  }
-
-  lemma RecursiveBypassDecisionPrecedesAndSuppressesFlightInstallation(
+  lemma IncompleteOrMissingCandidatesComputeIndependently(
     candidate: CandidateState
   )
-    ensures FlightInstallationsForLookup(
-              DecideLookup(true, candidate)
-            ) == 0
+    requires !candidate.CandidateComplete?
+    ensures DecideLookup(candidate).StartIndependentComputation?
   {
   }
 
   datatype AdmissionAction =
-    | JoinExisting
-    | AdmitComputation
-    | ComputeWithoutAdmission
+    | AttemptPublication
+    | SkipPublication
 
   function DecideAdmission(
     candidatePresent: bool,
-    representedCandidates: nat,
-    maximumCandidates: nat
+    attemptedPublications: nat,
+    maximumAttempts: nat
   ): AdmissionAction {
     if candidatePresent then
-      JoinExisting
-    else if representedCandidates < maximumCandidates then
-      AdmitComputation
+      SkipPublication
+    else if attemptedPublications < maximumAttempts then
+      AttemptPublication
     else
-      ComputeWithoutAdmission
+      SkipPublication
   }
 
   datatype PublicationAction =
@@ -816,29 +727,25 @@ module SubproblemCache {
   }
 
   lemma CompletedCandidatesAreTheOnlyLookupHits(
-    recursiveSelf: bool,
     candidate: CandidateState
   )
-    ensures DecideLookup(
-              recursiveSelf,
-              candidate
-            ).UseCompletedValue? ==>
-              !recursiveSelf && candidate.CandidateComplete?
+    ensures DecideLookup(candidate).UseCompletedValue? ==>
+              candidate.CandidateComplete?
   {
   }
 
-  lemma AdmissionRespectsInflightLimit(
+  lemma PublicationAttemptRespectsBoundAndWinner(
     candidatePresent: bool,
-    representedCandidates: nat,
-    maximumCandidates: nat
+    attemptedPublications: nat,
+    maximumAttempts: nat
   )
     ensures DecideAdmission(
               candidatePresent,
-              representedCandidates,
-              maximumCandidates
-            ).AdmitComputation? ==>
+              attemptedPublications,
+              maximumAttempts
+            ).AttemptPublication? ==>
               !candidatePresent &&
-              representedCandidates < maximumCandidates
+              attemptedPublications < maximumAttempts
   {
   }
 
@@ -1368,250 +1275,31 @@ module SubproblemCache {
     }
   }
 
-  datatype FlightState =
-    | NoFlight
-    | ComputingFlight
-    | CompletedFlight
-    | FailedFlight
+  datatype RequestComputationState =
+    | RequestNotStarted
+    | RequestComputing
+    | RequestComplete
+    | RequestFailed
 
-  function ComputationsForExactKey(state: FlightState): nat {
-    if state.ComputingFlight? then 1 else 0
-  }
-
-  lemma ExactKeyHasAtMostOneComputation(state: FlightState)
-    ensures ComputationsForExactKey(state) <= 1
-  {
-  }
-
-  predicate EvictionEligible(state: FlightState) {
-    state.CompletedFlight?
-  }
-
-  lemma RunningFlightsAreNotEvictionEligible(state: FlightState)
-    requires state.ComputingFlight?
-    ensures !EvictionEligible(state)
-  {
-  }
-
-  datatype ComputationAccounting = ComputationAccounting(
-    representedActive: nat,
-    detachedActive: nat,
-    unadmittedActive: nat,
-    maximum: nat
-  )
-
-  function ActualComputations(
-    accounting: ComputationAccounting
+  function ComputationsOwnedByRequest(
+    state: RequestComputationState
   ): nat {
-    accounting.representedActive +
-    accounting.detachedActive +
-    accounting.unadmittedActive
+    if state.RequestComputing? then 1 else 0
   }
 
-  predicate CoordinatorInvariant(
-    accounting: ComputationAccounting
-  ) {
-    0 < accounting.maximum &&
-    ActualComputations(accounting) <= accounting.maximum
-  }
-
-  predicate ComputationSlotAvailable(
-    accounting: ComputationAccounting
-  ) {
-    ActualComputations(accounting) < accounting.maximum
-  }
-
-  datatype RecursiveBypassSlotAction =
-    | ReuseOwnedSlot
-    | AcquireDistinctContextSlot
-
-  function DecideRecursiveBypassSlot(
-    recordedOwnerContext: nat,
-    currentContext: nat
-  ): RecursiveBypassSlotAction {
-    if recordedOwnerContext == currentContext then
-      ReuseOwnedSlot
-    else
-      AcquireDistinctContextSlot
-  }
-
-  function StartRepresentedComputation(
-    accounting: ComputationAccounting
-  ): ComputationAccounting
-    requires CoordinatorInvariant(accounting)
-    requires ComputationSlotAvailable(accounting)
-  {
-    ComputationAccounting(
-      accounting.representedActive + 1,
-      accounting.detachedActive,
-      accounting.unadmittedActive,
-      accounting.maximum
-    )
-  }
-
-  function StartUnadmittedComputation(
-    accounting: ComputationAccounting
-  ): ComputationAccounting
-    requires CoordinatorInvariant(accounting)
-    requires ComputationSlotAvailable(accounting)
-  {
-    ComputationAccounting(
-      accounting.representedActive,
-      accounting.detachedActive,
-      accounting.unadmittedActive + 1,
-      accounting.maximum
-    )
-  }
-
-  function StartRecursiveBypassComputation(
-    accounting: ComputationAccounting,
-    recordedOwnerContext: nat,
-    currentContext: nat
-  ): ComputationAccounting
-    requires CoordinatorInvariant(accounting)
-    requires recordedOwnerContext == currentContext ||
-             ComputationSlotAvailable(accounting)
-  {
-    if DecideRecursiveBypassSlot(
-         recordedOwnerContext,
-         currentContext
-       ).ReuseOwnedSlot?
-    then
-      accounting
-    else
-      StartUnadmittedComputation(accounting)
-  }
-
-  function DetachRepresentedComputation(
-    accounting: ComputationAccounting
-  ): ComputationAccounting
-    requires 0 < accounting.representedActive
-  {
-    ComputationAccounting(
-      accounting.representedActive - 1,
-      accounting.detachedActive + 1,
-      accounting.unadmittedActive,
-      accounting.maximum
-    )
-  }
-
-  function FinishDetachedComputation(
-    accounting: ComputationAccounting
-  ): ComputationAccounting
-    requires 0 < accounting.detachedActive
-  {
-    ComputationAccounting(
-      accounting.representedActive,
-      accounting.detachedActive - 1,
-      accounting.unadmittedActive,
-      accounting.maximum
-    )
-  }
-
-  function FinishUnadmittedComputation(
-    accounting: ComputationAccounting
-  ): ComputationAccounting
-    requires 0 < accounting.unadmittedActive
-  {
-    ComputationAccounting(
-      accounting.representedActive,
-      accounting.detachedActive,
-      accounting.unadmittedActive - 1,
-      accounting.maximum
-    )
-  }
-
-  lemma RepresentedStartPreservesActualComputationBound(
-    accounting: ComputationAccounting
+  lemma OneRequestOwnsAtMostOneCacheMissComputation(
+    state: RequestComputationState
   )
-    requires CoordinatorInvariant(accounting)
-    requires ComputationSlotAvailable(accounting)
-    ensures CoordinatorInvariant(
-              StartRepresentedComputation(accounting)
-            )
+    ensures ComputationsOwnedByRequest(state) <= 1
   {
   }
 
-  lemma UnadmittedStartPreservesActualComputationBound(
-    accounting: ComputationAccounting
+  lemma ConcurrentRequestsHaveIndependentComputationState(
+    left: RequestComputationState,
+    right: RequestComputationState
   )
-    requires CoordinatorInvariant(accounting)
-    requires ComputationSlotAvailable(accounting)
-    ensures CoordinatorInvariant(
-              StartUnadmittedComputation(accounting)
-            )
-  {
-  }
-
-  lemma RecursiveBypassReusesOnlyItsOwnerContext(
-    accounting: ComputationAccounting,
-    recordedOwnerContext: nat,
-    currentContext: nat
-  )
-    requires CoordinatorInvariant(accounting)
-    requires recordedOwnerContext == currentContext ||
-             ComputationSlotAvailable(accounting)
-    ensures
-      ActualComputations(
-        StartRecursiveBypassComputation(
-          accounting,
-          recordedOwnerContext,
-          currentContext
-        )
-      ) ==
-      ActualComputations(accounting) +
-      (if recordedOwnerContext == currentContext then 0 else 1)
-  {
-  }
-
-  lemma RecursiveBypassPreservesActualComputationBound(
-    accounting: ComputationAccounting,
-    recordedOwnerContext: nat,
-    currentContext: nat
-  )
-    requires CoordinatorInvariant(accounting)
-    requires recordedOwnerContext == currentContext ||
-             ComputationSlotAvailable(accounting)
-    ensures CoordinatorInvariant(
-              StartRecursiveBypassComputation(
-                accounting,
-                recordedOwnerContext,
-                currentContext
-              )
-            )
-  {
-  }
-
-  lemma LifecycleDetachmentPreservesActualComputationCount(
-    accounting: ComputationAccounting
-  )
-    requires 0 < accounting.representedActive
-    ensures ActualComputations(
-              DetachRepresentedComputation(accounting)
-            ) ==
-            ActualComputations(accounting)
-  {
-  }
-
-  lemma DetachedCompletionPreservesActualComputationBound(
-    accounting: ComputationAccounting
-  )
-    requires CoordinatorInvariant(accounting)
-    requires 0 < accounting.detachedActive
-    ensures CoordinatorInvariant(
-              FinishDetachedComputation(accounting)
-            )
-  {
-  }
-
-  lemma UnadmittedCompletionPreservesActualComputationBound(
-    accounting: ComputationAccounting
-  )
-    requires CoordinatorInvariant(accounting)
-    requires 0 < accounting.unadmittedActive
-    ensures CoordinatorInvariant(
-              FinishUnadmittedComputation(accounting)
-            )
+    ensures ComputationsOwnedByRequest(left) +
+            ComputationsOwnedByRequest(right) <= 2
   {
   }
 

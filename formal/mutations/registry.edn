@@ -79,12 +79,6 @@
    :killed-by
    {:proof :indexed-response-requires-pending-traversal-scope
     :test :generated-indexed-scan-response-boundary}}
-  {:id :lookup-self-scope-omits-lifecycle
-   :mechanism :check-recursive-lookup-ownership-with-tier-and-key-only
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :resolve-and-lookup-use-identical-lifecycle-qualified-key
-    :test :recursive-lookup-of-own-flight-is-a-miss}}
   {:id :ordered-merge-wrong-comparator
    :mechanism :take-the-larger-head-in-an-ascending-merge
    :control {:kind :clojure}
@@ -240,30 +234,6 @@
    :killed-by
    {:proof :no-last-never-suppresses
     :test :generic-merge-retains-nil-key}}
-  {:id :inherited-self-bypass-skips-computation-slot
-   :mechanism :invoke-child-thread-recursive-compute-without-a-permit
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :only-the-current-execution-context-reuses-a-computation-permit
-    :test :inherited-same-key-self-bypass-acquires-a-child-slot}}
-  {:id :split-lifecycle-read-between-self-check-and-flight-selection
-   :mechanism :capture-recursive-address-before-clear-and-flight-address-after-clear
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :linearized-resolution-selection-uses-one-lifecycle
-    :test :lifecycle-selection-is-linearized-before-recursive-binding}}
-  {:id :lookup-decision-after-flight-installation
-   :mechanism :install-a-flight-before-honoring-the-authoritative-lookup-action
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :recursive-bypass-decision-suppresses-flight-installation
-    :test :authoritative-lookup-action-precedes-storage-mutation}}
-  {:id :unrepresented-flight-ignored-by-lookup
-   :mechanism :derive-missing-from-tier-entries-while-an-unadmitted-flight-is-registered
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :registered-unrepresented-flight-is-joined
-    :test :cache-unadmitted-fallbacks-still-share-one-flight}}
   {:id :projection-key-omits-inclusive-bound
    :mechanism :remove-inclusive-bound-from-the-projection-semantic-key
    :control {:kind :clojure}
@@ -294,24 +264,18 @@
    :killed-by
    {:proof :retained-publication-is-current-complete-valid-and-bounded
     :test :admission-and-publication-keep-weight-continuously-bounded}}
-  {:id :exception-poisons-flight
-   :mechanism :retain-the-owning-flight-after-its-compute-callback-throws
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :failed-computations-remove-their-own-ticket
-    :test :failures-and-invalid-values-are-never-admitted}}
-  {:id :flight-removal-outside-selection-lock
-   :mechanism :remove-a-flight-while-lifecycle-stable-selection-holds-the-store-lock
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :flight-installation-selection-and-removal-share-one-linearization-lock
-    :test :flight-removal-serializes-with-lifecycle-selection}}
   {:id :datomic-subproblem-config-dropped
    :mechanism :construct-the-shared-current-cache-without-the-user-supplied-subproblem-limits
    :control {:kind :clojure}
    :killed-by
    {:invariant :all-backends-forward-one-shared-subproblem-cache-configuration
     :test :shared-subproblem-cache-config-is-forwarded-and-validated}}
+  {:id :datomic-facade-restores-default-traversal-limits
+   :mechanism :rebind-the-generated-engine-to-facade-defaults-after-the-public-boundary-selected-caller-limits
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :every-execution-boundary-forwards-identical-traversal-limits
+    :test :recursive-traversal-limits-are-configurable}}
   {:id :shadow-typed-error-omits-limit
    :mechanism :compare-only-keyword-valued-error-data-and-drop-the-configured-numeric-limit
    :control {:kind :clojure}
@@ -528,6 +492,12 @@
    :killed-by
    {:proof :inactive-cycle-guard-eliminates-recursive-contribution
     :test :recursive-schema-with-empty-cycle-guards-stays-page-bounded}}
+  {:id :completed-acyclic-artifact-keeps-fixed-point-order
+   :mechanism :cache-fixed-point-discovery-order-as-certified-acyclic-public-order
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :completed-artifact-contract-binds-certified-public-order
+    :test :complete-acyclic-denotation-preserves-demand-order}}
   {:id :active-recursive-data-forces-acyclic
    :mechanism :ignore-a-populated-cycle-guard-and-enter-the-acyclic-engine
    :control {:kind :clojure}
@@ -552,12 +522,6 @@
    :killed-by
    {:proof :certified-acyclic-work-has-zero-recursive-work
     :test :acyclic-recursive-counter-and-limit-isolation}}
-  {:id :acyclic-rebase-enters-recursive-machine
-   :mechanism :revalidate-an-acyclic-cursor-bound-with-the-recursive-fixed-point-engine
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :inclusive-acyclic-boundary-membership-is-exact
-    :test :acyclic-current-cursor-rebase-never-enters-recursive-traversal}}
   {:id :partial-denotation-hit
    :mechanism :allow-partial-denotation-as-cache-hit
    :control
@@ -568,35 +532,15 @@
    :killed-by
    {:model :partial-recursive-denotation-never-hits
     :test :apalache-counterexample}}
-  {:id :stale-generation-hit
-   :mechanism :ignore-selected-generation-on-cache-hit
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredStaleHit.cfg"
-    :length 5}
-   :killed-by
-   {:model :hit-is-complete-and-current
-    :test :apalache-counterexample}}
-  {:id :duplicate-flight-start
-   :mechanism :start-a-second-callback-for-one-flight-address
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredDuplicateStart.cfg"
-    :length 3}
-   :killed-by
-   {:model :exact-flight-address-has-at-most-one-callback
-    :test :apalache-counterexample}}
   {:id :late-orphan-publication
    :mechanism :publish-an-expired-lifecycle-callback
    :control
    {:kind :apalache
     :model "formal/tla/EaclTieredSubproblemCache.tla"
     :config "formal/tla/mutations/EaclTieredOrphanPublication.cfg"
-    :length 4}
+   :length 4}
    :killed-by
-   {:model :late-completion-cannot-publish
+   {:model :late-publication-cannot-reach-active-generation
     :test :apalache-counterexample}}
   {:id :coupled-tier-budgets
    :mechanism :borrow-denotation-capacity-for-projection-admission
@@ -604,29 +548,9 @@
    {:kind :apalache
     :model "formal/tla/EaclTieredSubproblemCache.tla"
     :config "formal/tla/mutations/EaclTieredCoupledBudgets.cfg"
-    :length 2}
+    :length 4}
    :killed-by
    {:model :separate-tier-weight-bounds
-    :test :apalache-counterexample}}
-  {:id :incomplete-flight-eviction
-   :mechanism :evict-incomplete-candidate-and-drop-flight-owner
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredIncompleteEviction.cfg"
-    :length 3}
-   :killed-by
-   {:model :incomplete-candidates-keep-flight-ownership
-    :test :apalache-counterexample}}
-  {:id :obsolete-lifecycle-flight-join
-   :mechanism :join-same-tier-key-flight-from-an-expired-lifecycle
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredObsoleteFlightJoin.cfg"
-    :length 3}
-   :killed-by
-   {:model :single-flight-join-is-current-and-incomplete
     :test :apalache-counterexample}}
   {:id :cljs-default-restores-generated-kernel
    :mechanism :route-the-cljs-production-default-back-through-generated-javascript
@@ -652,6 +576,20 @@
    :killed-by
    {:invariant :generated-browser-oracle-is-formal-classpath-only
     :test :cljs-generated-browser-payload-restored-control}}
+  {:id :content-cursor-restores-relationship-proof-scan
+   :mechanism
+   :select-dependency-content-proof-instead-of-exact-snapshot-for-default-cursor
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :content-cursor-minting-does-no-relation-proof-scan
+    :test :content-proof-cursors-use-current-basis-without-relation-scan-test}}
+  {:id :pure-permission-alias-keeps-duplicate-frontier
+   :mechanism
+   :deduplicate-arrow-frontiers-before-canonicalizing-an-exact-pure-alias
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :canonical-frontier-deduplication-cannot-add-traversal-streams
+    :test :pure-permission-aliases-share-one-acyclic-frontier-test}}
   {:id :managed-proof-bypass
    :mechanism :reuse-managed-projection-with-mismatched-relation-proof
    :control

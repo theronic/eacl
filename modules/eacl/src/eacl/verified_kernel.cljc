@@ -204,14 +204,12 @@
         expected
         #{:authenticated? :scope-matches? :expired?
           :source :cursor-source :current-proof :cursor-proof
-          :mode :cursor-graph :exact}]
+          :cursor-graph :exact}]
     (exact-keys! operation :input input expected)
     (doseq [field [:authenticated? :scope-matches? :expired?]]
       (require-value! operation field boolean? (get input field)))
     (doseq [field [:source :cursor-source :current-proof :cursor-proof]]
       (require-value! operation field bounded-string? (get input field)))
-    (require-value!
-     operation :mode #{:recover-current :exact-snapshot} (:mode input))
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
@@ -327,9 +325,7 @@
          operation
          :input
          input
-         #{:decision :recursive-self? :candidate})
-        (require-value!
-         operation :recursive-self? boolean? (:recursive-self? input))
+         #{:decision :candidate})
         (require-value!
          operation
          :candidate
@@ -343,13 +339,13 @@
          :input
          input
          #{:decision :candidate-present?
-           :represented-candidates :maximum-candidates})
+           :attempted-publications :maximum-attempts})
         (require-value!
          operation
          :candidate-present?
          boolean?
          (:candidate-present? input))
-        (doseq [field [:represented-candidates :maximum-candidates]]
+        (doseq [field [:attempted-publications :maximum-attempts]]
           (require-value!
            operation field safe-natural? (get input field))))
 
@@ -1750,7 +1746,6 @@
 
 (def continuation-decisions
   #{:current
-    :rebase-current
     :exact
     :invalid-authentication
     :scope-mismatch
@@ -1876,13 +1871,10 @@
        {:operation operation :result result}))))
 
 (def subproblem-cache-actions
-  #{:bypass-recursive-self
-    :start-computation
-    :join-computation
+  #{:start-independent-computation
     :use-completed-value
-    :join-existing
-    :admit-computation
-    :compute-without-admission
+    :attempt-publication
+    :skip-publication
     :retain-publication
     :drop-publication})
 
@@ -1898,19 +1890,16 @@
   [{:keys [decision] :as input}]
   (case decision
     :lookup
-    (cond
-      (:recursive-self? input) :bypass-recursive-self
-      (= :missing (:candidate input)) :start-computation
-      (= :computing (:candidate input)) :join-computation
-      (= :complete (:candidate input)) :use-completed-value
-      :else :start-computation)
+    (if (= :complete (:candidate input))
+      :use-completed-value
+      :start-independent-computation)
 
     :admission
-    (cond
-      (:candidate-present? input) :join-existing
-      (< (:represented-candidates input)
-         (:maximum-candidates input)) :admit-computation
-      :else :compute-without-admission)
+    (if (and (not (:candidate-present? input))
+             (< (:attempted-publications input)
+                (:maximum-attempts input)))
+      :attempt-publication
+      :skip-publication)
 
     :publication
     (if (and (:ticket-current? input)

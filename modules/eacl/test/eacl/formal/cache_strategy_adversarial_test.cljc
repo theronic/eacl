@@ -232,25 +232,22 @@
           :expected (authorization-at-version (:head state))})
         state))))
 
-(defn- single-flight-step
-  [versioned? state command]
+(defn- independent-computation-step
+  [join-mutant? state command]
   (case command
     :start
     (let [version (:head state)
-          key (race-key versioned? version)]
-      (if (contains? (:flights state) key)
-        (update-in state [:flights key :waiters] conj version)
-        (assoc-in
-         state
-         [:flights key]
-         {:computed-version version
-          :waiters [version]})))
+          job {:computed-version version
+               :waiters [version]}]
+      (if (and join-mutant? (seq (:jobs state)))
+        (update-in state [:jobs 0 :waiters] conj version)
+        (update state :jobs conj job)))
 
     :write
     (update state :head inc)
 
     :complete
-    (if-let [[key flight] (first (:flights state))]
+    (if-let [job (first (:jobs state))]
       (-> state
           (update
            :observations
@@ -259,11 +256,11 @@
             (fn [waiter-version]
               {:actual
                (authorization-at-version
-                (:computed-version flight))
+                (:computed-version job))
                :expected
                (authorization-at-version waiter-version)})
-            (:waiters flight)))
-          (update :flights dissoc key))
+            (:waiters job)))
+          (update :jobs #(vec (rest %))))
       state)))
 
 (defn- stale-observation?
@@ -319,7 +316,7 @@
           [:stable (:query base)]))
         "a stable-key invalidation mutant republishes the stale denial")))
 
-(deftest publication-and-single-flight-traces-exhaustive-test
+(deftest publication-and-independent-computation-traces-exhaustive-test
   (let [cache-traces
         (command-traces
          [:start :write :publish :invalidate :lookup]
@@ -340,32 +337,32 @@
            initial-cache
            %)
          cache-traces)
-        flight-traces
+        computation-traces
         (command-traces [:start :write :complete] 5)
-        initial-flight
-        {:head 0 :flights {} :observations []}
-        correct-flight-states
+        initial-computation
+        {:head 0 :jobs [] :observations []}
+        independent-states
         (map
          #(reduce
-           (partial single-flight-step true)
-           initial-flight
+           (partial independent-computation-step false)
+           initial-computation
            %)
-         flight-traces)
-        mutant-flight-states
+         computation-traces)
+        join-mutant-states
         (map
          #(reduce
-           (partial single-flight-step false)
-           initial-flight
+           (partial independent-computation-step true)
+           initial-computation
            %)
-         flight-traces)]
+         computation-traces)]
     (is (not-any? stale-observation? correct-cache-states)
         "full versioned keys survive every bounded publication trace")
     (is (some stale-observation? mutant-cache-states)
         "stable-key publication retains a bounded stale trace")
-    (is (not-any? stale-observation? correct-flight-states)
-        "single-flight keyed by the full version cannot mix requests")
-    (is (some stale-observation? mutant-flight-states)
-        "query-only single-flight retains a bounded stale trace")))
+    (is (not-any? stale-observation? independent-states)
+        "each request-owned miss computes against its own selected version")
+    (is (some stale-observation? join-mutant-states)
+        "reintroducing a computation join couples a newer request to stale work")))
 
 (deftest every-managed-frame-component-is-semantic-test
   (let [namespace

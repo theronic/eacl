@@ -2,7 +2,6 @@
   (:import
    (dafny DafnySequence TypeDescriptor)
    (PageWindow
-    ConsistencyMode
     ExactSelection
     Presence
     RawPageRequest)))
@@ -83,7 +82,6 @@
            cursor-source
            current-proof
            cursor-proof
-           mode
            cursor-graph
            exact]}]
   (let [exact-selection
@@ -102,14 +100,10 @@
          (dafny-string cursor-source)
          (dafny-string current-proof)
          (dafny-string cursor-proof)
-         (if (= :exact-snapshot mode)
-           (ConsistencyMode/create_ExactSnapshotMode)
-           (ConsistencyMode/create_RecoverCurrent))
          (biginteger cursor-graph)
          exact-selection)]
     (cond
       (.is_UseCurrent decision) :current
-      (.is_RebaseCurrent decision) :rebase-current
       (.is_UseExact decision) :exact
       (.is_CursorConflict (.dtor_reason decision)) :conflict
       (.is_CursorExpired (.dtor_reason decision)) :expired

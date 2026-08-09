@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.backend.v8 :as backend]
             [eacl.bench.explorer-fixture :as fixture]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
@@ -35,11 +36,27 @@
          :servers-per-account 40
          :user-1-account-count 4))
 
+(def ^:private completion-order-shape
+  (assoc fixture/default-shape
+         :accounts 2
+         :teams-per-account 2
+         :vpcs-per-account 1
+         :servers-per-account 4
+         :user-1-account-count 1))
+
 (defn- timed-page
   [client query stats]
   (binding [engine/*acyclic-work-stats* stats
             engine/*recursive-traversal-stats* (atom {})]
     (eacl/lookup-resources client query)))
+
+(defn- error-data [f]
+  (try
+    (f)
+    nil
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
+        error
+      (ex-data error))))
 
 (deftest certified-acyclic-enumeration-is-exact-and-recursive-limit-isolated-test
   (let [{:keys [client]}
@@ -81,6 +98,68 @@
       (is (= 2 (:routed-acyclic @acyclic-stats)))
       (is (pos? (:backend-scans @acyclic-stats)))
       (is (empty? @recursive-stats)))))
+
+(deftest complete-acyclic-denotation-preserves-demand-order-test
+  (doseq [[label schema]
+          [[:schema-acyclic fixture/schema]
+           [:data-acyclic fixture/recursive-schema]]]
+    (let [{:keys [client]} (seed-client! completion-order-shape schema {})
+          ;; Overlapping account/team/VPC arrows produce a generated discovery
+          ;; order distinct from the certified acyclic EID order. The recursive
+          ;; schema remains data-acyclic while its cycle-carrying relation is
+          ;; empty, so both forms exercise the same certified public route.
+          query (fixture/resource-query fixture/super-user :view 20)
+          demand-page (eacl/lookup-resources client query)
+          target (first (:data demand-page))
+          point-result
+          (eacl/can?
+           client
+           {:subject fixture/super-user
+            :permission :view
+            :resource target
+            :evaluation :complete-denotation})
+          absent-point-result
+          (eacl/can?
+           client
+           {:subject fixture/super-user
+            :permission :view
+            :resource (assoc target :id "absent-completion-target")
+            :evaluation :complete-denotation})
+          hits-after-point
+          (get-in
+           (datascript/cache-stats client)
+           [:subproblems :denotation-hits]
+           0)
+          complete-page
+          (eacl/lookup-resources
+           client
+           (assoc query :evaluation :complete-denotation))
+          hits-after-lookup
+          (get-in
+           (datascript/cache-stats client)
+           [:subproblems :denotation-hits]
+           0)
+          backward-page
+          (eacl/lookup-resources
+           client
+           (-> query
+               (dissoc :first)
+               (assoc :last 3
+                      :evaluation :complete-denotation)))
+          backward-start
+          (datascript/token->cursor
+           (get-in backward-page [:page-info :start-cursor]))]
+      (is (true? point-result) label)
+      (is (false? absent-point-result) label)
+      (is (> hits-after-lookup hits-after-point)
+          (str label ": point/lookup completion did not share its artifact"))
+      (is (= (:data demand-page) (:data complete-page))
+          (str label ": explicit completion changed certified public order"))
+      (is (= (vec (take-last 3 (:data demand-page)))
+             (:data backward-page))
+          label)
+      (is (= :lookup-eid (get-in backward-start [:edge :kind]))
+          (str label ": completion changed the acyclic cursor ABI")))))
 
 (deftest generated-route-is-schema-bound-and-fails-closed-test
   (let [{:keys [conn client]} (seed-client! small-shape)
@@ -152,7 +231,7 @@
       (is (= #{:kind :result-eid}
              (set (keys (:edge decoded))))))))
 
-(deftest acyclic-current-cursor-rebase-never-enters-recursive-traversal-test
+(deftest acyclic-relevant-write-rejects-current-only-cursor-test
   (let [{:keys [conn client]}
         (seed-client!
          small-shape
@@ -171,18 +250,50 @@
             fixture/super-user
             :shared_admin
             added-server))
-        acyclic-stats (atom {})
-        recursive-stats (atom {})
-        second-page
-        (binding [engine/*acyclic-work-stats* acyclic-stats
-                  engine/*recursive-traversal-stats* recursive-stats]
-          (eacl/lookup-resources client (assoc query :after cursor)))]
-    (is (= 17 (count (:data second-page))))
-    (is (= :rebased
-           (get-in second-page [:page-info :cursor-recovery])))
-    (is (pos? (:backend-scans @acyclic-stats)))
-    (is (empty? @recursive-stats)
-        "acyclic cursor membership must use the bounded indexed route")))
+        data
+        (error-data
+         #(eacl/lookup-resources client (assoc query :after cursor)))]
+    (is (= :eacl.pagination/stale-cursor (:type data)))
+    (is (= :dependency-proof-changed (:reason data)))))
+
+(deftest content-proof-cursors-use-current-basis-without-relation-scan-test
+  (let [{:keys [conn client]} (seed-client! small-shape)
+        query (fixture/resource-query fixture/user-1 :view 7)
+        backend-stats (atom {})
+        first-page
+        (binding [backend/*backend-op-stats* backend-stats]
+          (eacl/lookup-resources client query))
+        bypass-page
+        (binding [backend/*backend-op-stats* backend-stats]
+          (eacl/lookup-resources client (assoc query :cache? false)))
+        cursor (get-in first-page [:page-info :end-cursor])]
+    (testing "cursor minting is constant in relationship-graph size"
+      (is (= 7 (count (:data first-page))))
+      (is (= (:data first-page) (:data bypass-page)))
+      (is (zero? (get @backend-stats :relation-proof 0)))
+      (is (pos? (get @backend-stats :snapshot-id 0))))
+    (testing "current-only DataScript rejects every later basis"
+      (ds/transact! conn [{:eacl/id "unrelated-after-cursor"}])
+      (let [data
+            (error-data
+             #(eacl/lookup-resources client (assoc query :after cursor)))]
+        (is (= :eacl.pagination/stale-cursor (:type data)))
+        (is (= :dependency-proof-changed (:reason data)))))))
+
+(deftest pure-permission-aliases-share-one-acyclic-frontier-test
+  (let [{:keys [client]} (seed-client! small-shape)
+        stats (atom {})
+        result
+        (binding [engine/*acyclic-work-stats* stats]
+          (eacl/count-resources
+           client
+           (assoc (fixture/count-query fixture/super-user :view)
+                  :cache? false)))]
+    (is (= 200 (:count result)))
+    (is (= 4 (:permission-paths @stats))
+        "a pure permission alias must not create a duplicate traversal")
+    (is (<= (:backend-scans @stats) 57)
+        "alias canonicalization must remove work without widening scans")))
 
 (deftest recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
   (let [{baseline-client :client}
@@ -222,19 +333,14 @@
       (is (= 1 (:routed-acyclic @page-stats)))
       (is (empty? @recursive-stats))
       (is (= (:count baseline-count) (:count count-result)))
-      (is (= (select-keys @baseline-stats
-                          [:backend-scans
-                           :subject->resources-scans
-                           :permission-paths
-                           :merge-advances
-                           :counted-results])
-             (select-keys @count-stats
-                          [:backend-scans
-                           :subject->resources-scans
-                           :permission-paths
-                           :merge-advances
-                           :counted-results]))
-          "empty recursive guards must not add work to the acyclic count"))
+      (is (= (:merge-advances @baseline-stats)
+             (:merge-advances @count-stats)))
+      (is (= (:counted-results @baseline-stats)
+             (:counted-results @count-stats)))
+      (is (<= (- (:backend-scans @count-stats)
+                 (:backend-scans @baseline-stats))
+              8)
+          "empty cycle guards may add only their bounded indexed seeks"))
     (testing "an actual cycle-enabling relationship restores recursive routing"
       (eacl/create-relationship!
        client

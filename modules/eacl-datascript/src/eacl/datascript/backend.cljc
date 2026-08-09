@@ -13,8 +13,7 @@
 (def capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
-                  :at-least-as-fresh
-                  :at-exact-snapshot}
+                  :at-least-as-fresh}
    :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :graph-head :anchor-membership :order-hint}
    :cursor #{:forward :reverse :opaque}
@@ -175,61 +174,14 @@
     (when (every? (comp some? second) proof)
       proof)))
 
-(defn remember-snapshot!
-  [registry limit db]
-  (when registry
-    (let [selected-handle (volatile! nil)]
-      (swap! registry
-             (fn [{:keys [order snapshots identities]}]
-               (if-let [handle
-                        (some (fn [[known-db known-handle]]
-                                (when (identical? known-db db)
-                                  known-handle))
-                              identities)]
-                 (do
-                   (vreset! selected-handle handle)
-                   {:order order
-                    :snapshots snapshots
-                    :identities identities})
-                 (let [handle (str (random-uuid))
-                       _ (vreset! selected-handle handle)
-                       order' (conj (vec order) handle)
-                       snapshots' (assoc snapshots handle db)
-                       ;; Current snapshots dominate traffic. Keep the newest
-                       ;; immutable identity first so the ordinary path is
-                       ;; constant-time even though the portable CLJ/CLJS
-                       ;; registry uses identity pairs rather than equality
-                       ;; keys.
-                       identities' (into [[db handle]] identities)
-                       overflow (- (count order') limit)
-                       evicted (when (pos? overflow)
-                                 (set (take overflow order')))]
-                   {:order (if (pos? overflow)
-                             (vec (drop overflow order'))
-                             order')
-                    :snapshots (apply dissoc snapshots' evicted)
-                    :identities
-                    (if (seq evicted)
-                      (into []
-                            (remove (comp evicted second))
-                            identities')
-                      identities')}))))
-      @selected-handle)))
-
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable DataScript db value."
   [db {:keys [object-id->entid entid->object-id conn
-              coherence-authority proof-mode exact-registry]
+              coherence-authority proof-mode]
        :or {proof-mode :content}
        :as opts}]
   (let [graph-state
-        (delay (journal/graph-state db))
-        exact-handle
-        (when exact-registry
-          (remember-snapshot!
-           exact-registry
-           (:exact-registry-limit opts)
-           db))]
+        (delay (journal/graph-state db))]
     (backend/make-adapter
      {:id :datascript
       :fingerprint (:adapter-fingerprint opts)
@@ -240,13 +192,10 @@
       :capabilities
       (cond-> capabilities
         (not= :managed coherence-authority)
-        (update :consistency disj :at-least-as-fresh :at-exact-snapshot)
+        (update :consistency disj :at-least-as-fresh)
 
         (nil? conn)
-        (update :consistency disj :fully-consistent)
-
-        (nil? exact-registry)
-        (update :consistency disj :at-exact-snapshot))
+        (update :consistency disj :fully-consistent))
       :state {:db db}
       :operations
       {:snapshot-id
@@ -263,7 +212,7 @@
        (fn []
          {:graph-anchor (:head-id @graph-state)
           :order-hint (:max-tx db)
-          :exact-locator exact-handle})
+          :exact-locator nil})
 
        :contains-anchor?
        (fn [anchor]
@@ -273,11 +222,11 @@
 
        :select-current
        (fn []
-         (snapshot-adapter (if conn (ds/db conn) db) opts))
+         (snapshot-adapter db opts))
 
        :select-authoritative
        (fn [_timeout-ms]
-         (snapshot-adapter (if conn (ds/db conn) db) opts))
+         (snapshot-adapter db opts))
 
        :select-at-least
        (fn [token-data timeout-ms]
@@ -286,16 +235,10 @@
           opts))
 
        :exact-locator
-       (fn []
-         exact-handle)
+       (constantly nil)
 
        :select-exact
-       (fn [token-data _timeout-ms]
-         (some-> exact-registry
-                 deref
-                 :snapshots
-                 (get (:exact-locator token-data))
-                 (snapshot-adapter opts)))
+       (fn [_token-data _timeout-ms] nil)
 
        :object-id->internal
        (fn [object-id]

@@ -44,12 +44,13 @@ no verified-release claim existed.
   decision or client-visible recovery marker, producing unexplained omissions
   or new items.
 - **Correction:** every cursor is authenticated to its complete semantic query
-  before its resume state can influence traversal. Non-exact recovery
-  re-evaluates against one selected current graph; it never treats proof
-  equivalence as sufficient authorization. Exact mode remains graph-pinned.
-- **Migration:** ordinary continuation reports `:rebased` or `:restarted`
-  instead of failing when history is unavailable. Consumers requiring a stable
-  walk must request `at-exact-snapshot`.
+  before its resume state can influence traversal. Current continuation
+  requires an equal complete dependency/order proof. A changed proof requires
+  verified exact-snapshot reconstruction and never selects current.
+- **Migration:** rebase/restart recovery markers are removed. A changed proof
+  returns an exact historical page on history-capable backends, or a typed
+  stale-cursor/snapshot-expired/consistency-conflict error. DataScript is
+  current-basis-only and therefore fails a relevant changed-proof continuation.
 
 ## EACL-FORMAL-005 — inconsistent cursor expiry boundary
 

@@ -99,9 +99,10 @@ and relationship.
   scope for Datomic, DataScript CLJ/CLJS, and Datahike.
 - Cache differential, recursive-cache, consistency-cache, and
   cache-review-regression suites compare enabled and disabled behavior.
-- Generated `CacheKernel` decision fixtures cover exact, causal, future,
-  sibling, incomplete-scope, no-proof, unauthenticated, provider-failure, and
-  mismatch decisions.
+- Proof-only generated `CacheKernel` fixtures cover exact, causal, future,
+  sibling, incomplete-scope, no-proof, unauthenticated, abstract read-failure,
+  and mismatch decisions. No live production call site consumes that legacy
+  `:cache-validation` operation; it contributes no production assurance.
 
 **Residual trust.** Digest collision resistance and the truthfulness and
 completeness of adapter proof providers remain explicit assumptions. Structural

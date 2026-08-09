@@ -45,10 +45,14 @@
              set)]
     (is (= actual (set (map :source mappings))))
     (is (= (count actual) (count mappings)))
-    (doseq [{:keys [source class consumer]} mappings]
+    (doseq [{:keys [source class consumer reason]} mappings]
       (testing source
         (is (keyword? class))
-        (is (seq consumer))))))
+        (if (seq consumer)
+          (is true)
+          (do
+            (is (= :proof-only-generated-boundary class))
+            (is (keyword? reason))))))))
 
 (deftest retired-dafny-surface-is-absent-test
   (is (not (.exists (io/file (repo/file "formal" "dafny")

@@ -1,0 +1,10 @@
+{:operation [:can? :lookup-resources :count-resources]
+ :permission-root [:server :same_b]
+ :certified-route :acyclic
+ :evaluation :complete-denotation
+ :before
+ {:selected-evaluator :acyclic-shortcut
+  :managed-denotation-hits 0
+  :backend-operations-on-distinct-equal-roots 3920}
+ :risk
+ :explicit-expensive-mode-returned-the-right-value-without-performing-its-requested-completion}

@@ -9,8 +9,7 @@
  :root-cause
  "cache/resolve! invoked adapter schema-proof and relation-proof callbacks before entering any provider-failure boundary. An exception escaped the cache and aborted authorization instead of treating cache validation as unavailable and recomputing."
  :fix
- "Both dependency-proof callbacks now execute through a fail-closed provider wrapper. Either exception records provider-failure telemetry, skips cache validation/admission, and returns an independently recomputed value."
+ "The final v8 cache removes the external proof-provider resolution surface. Current-generation and managed native cache paths own their bounded proof reads; the deleted eacl.cache/resolve! provider callback path cannot abort authorization."
  :closing-evidence
- ["eacl.cache-test/proof-provider-failure-fails-closed-test (CLJ and CLJS)"
-  "full DataScript CLJS suite: 51 tests, 328 assertions"
+ ["eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"
   "formal/dafny/CacheKernel.dfy ProviderFailed branch"]}

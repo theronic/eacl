@@ -13,23 +13,23 @@ they are not an executable refinement of every host callback and lazy-stream
 interaction. The old dispatch therefore made complete generated authority
 false even when every existing differential passed.
 
-Verified-authoritative mode now sends every valid permission root through the
-generated indexed state machine. Shadow mode retains the optimized acyclic
-path as primary but executes generated indexed authority as the alternate.
-Legacy mode remains host-only for rollback and performance comparison.
+The correction is to stop making that false claim. Recursive roots execute the
+generated indexed state machine. Certified acyclic roots execute the optimized
+host engine, while generated authority decides route classification, page
+windows, counts, and work acceptance. The ordered merge, bound probe, path
+materialization, leapfrog intersection, and outer path fold are explicitly
+classified as digest-locked source specializations. They are not mislabeled as
+generated production code.
 
-The two algorithms intentionally encode a page position differently: legacy
-uses a lookup EID and indexed traversal carries an ordinal plus EID. A
-cross-algorithm shadow comparison therefore compares ordered public data, page
-flags, and normalized cursor EID positions. Exact internal continuation state
-and logical work counters remain compared when both sides run the indexed
-algorithm; cross-algorithm performance is enforced by separate resource gates.
+This distinction matters for certification: the recursive generated artifact
+and the acyclic source-specialization evidence have different trusted
+boundaries and different remaining obligations. A passing differential is not
+allowed to erase that difference.
 
 Reproduce through nREPL by running:
 
 ```clojure
 (require 'eacl.formal.state-trace-differential-test :reload)
 (clojure.test/test-vars
- [#'eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
-  #'eacl.formal.state-trace-differential-test/acyclic-shadow-compares-generated-authority-and-legacy-stays-host-only])
+ [#'eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality])
 ```

@@ -10,6 +10,6 @@ flight retained its immutable delay even if the registry entry disappeared.
 It did invalidate the stronger proof/refinement statement that the complete
 lookup state was observed at one linearization point.
 
-Completion removal now acquires the store lock. The regression holds that lock
-while a callback returns and proves the registered flight remains observable
-until selection releases the lock, after which completion removes it.
+The final v8 simplification removes both registered flights and the selection
+lock. Completion only attempts bounded publication against the lifecycle it
+captured; a cleared lifecycle rejects that publication without blocking.

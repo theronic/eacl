@@ -10,9 +10,7 @@ used the new lifecycle. A same-key recursive call therefore did not recognize
 the owning computation. It joined the new-lifecycle flight, which was its own
 unresolved delay, and waited forever.
 
-The corrected implementation linearizes lifecycle capture, recursive-self
-detection, entry lookup, and flight selection under the same store lock.
-Read-only lookup uses the same lifecycle-and-entry selection discipline.
-The regression holds the store monitor, starts a resolver, clears re-entrantly,
-and then releases selection; the recursive result must complete instead of
-self-waiting.
+The final v8 simplification has no flight selection and no store monitor.
+Independent work captures one opaque lifecycle; `clear!` replaces it, and
+bounded compare-and-set publication from the detached lifecycle is rejected.
+The old split flight identity and self-wait interleaving no longer exist.

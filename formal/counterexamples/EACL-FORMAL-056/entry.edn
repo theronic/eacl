@@ -14,5 +14,4 @@
  "Resolve the generated selection once at execute-page entry and pass that same non-nil selection to both generated pagination decisions. Keep public and direct implementation matrix regressions."
  :closing-evidence
  ["eacl.datascript.impl-test/read-relationships-query-matrix-test"
-  "eacl.datahike.storage-test/relationship-read-filter-matrix-test"
-  "eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages"]}
+  "eacl.datahike.storage-test/relationship-read-filter-matrix-test"]}

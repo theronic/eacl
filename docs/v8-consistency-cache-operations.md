@@ -14,7 +14,7 @@ private optimization owned by one EACL client and one connection.
 | omitted / `:minimize-latency` | current DB visible to this Peer | current connection DB | current connection DB | enabled |
 | `:fully-consistent` | bounded zero-argument `d/sync`, then selected DB | backend head barrier when supported | serialized live connection head | enabled on the selected current DB |
 | `:at-least-as-fresh` | targeted `d/sync conn t`, then anchor validation | waits/selects a descendant containing the token anchor | selects a known descendant containing the token anchor | enabled only if the selected DB is current |
-| `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | bounded exact-snapshot registry | bypassed |
+| `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | unsupported; rejected before cache access | bypassed |
 
 The default is `:minimize-latency`. EACL does not call `d/sync` and does not call
 `d/as-of` on the normal path. A consumer that requires the Peer to observe
@@ -42,11 +42,15 @@ Each client owns a bounded native cache with two tiers:
    The key contains the schema generation and the maximum last-change
    transaction over the permission's complete relation dependency set.
 
-Both tiers cache complete semantic answers only: Booleans, complete internal
-result sequences/sets, and complete counts. Public IDs and response metadata
-are rendered from the selected DB after lookup. Partial traversal failures,
-provider failures, tokens, cursors, and page-local fragments are not admitted
-as complete answers.
+The answer tiers retain completed public operation results. The traversal
+cache may additionally retain exact generated-command responses and private
+continuations produced before the request's stopping boundary. Demand mode
+never widens a scan or continues traversal to warm a broader artifact.
+Completed acyclic or recursive denotations are retained only when traversal
+naturally exhausts or the caller explicitly requests
+`:evaluation :complete-denotation`. Public IDs and response metadata are
+rendered from the selected DB after lookup. Failed or timed-out work is never
+admitted as a completed answer or denial.
 
 The cache never changes authorization semantics. Disable it globally:
 
@@ -180,23 +184,28 @@ authorization scope.
 A cursor walk follows its requested consistency contract:
 
 1. decode and authenticate the cursor before it influences traversal;
-2. continue on the identical current snapshot when still selected;
-3. for a non-exact mode, re-evaluate the resume hint on the selected current
-   snapshot and annotate the page as `:rebased`;
-4. restart graph-specific recursive state and annotate the page as
-   `:restarted`;
-5. only for `at-exact-snapshot`, reconstruct the requested exact snapshot or
-   return the typed retention error.
+2. continue on current only when its complete dependency and ordering proof
+   equals the cursor proof;
+3. after a changed proof, reconstruct the cursor's authenticated exact
+   snapshot on history-capable backends;
+4. reject when exact reconstruction is unavailable or violates a newer
+   freshness floor;
+5. validate ordinal and result identity before continuation; never drop the
+   bound or restart page one.
 
-EACL does not recalculate whole-graph or whole-result content proofs on every
-page. Recovery never treats proof equivalence as authorization: it runs the
-query again on one immutable selected graph. This removes both the
-snapshot-retention availability failure for ordinary reads and the dominant
-proof cost observed in the earlier v8 candidate.
+EACL does not recalculate a whole-result content proof on every page. The
+dependency/order proof is scoped to the semantic query. Proof equality permits
+current continuation without history; proof inequality never permits current
+continuation.
 
 Recursive continuation state is an optional performance optimization.
-Continuation-store eviction replays on an explicit exact snapshot or restarts
-on the selected current graph, according to the request consistency mode.
+Continuation-store eviction deterministically replays the authenticated prefix
+on the already-selected immutable snapshot. It never selects another graph or
+changes the public walk.
+
+DataScript has no EACL time-travel path. It continues only on a
+proof-equivalent current DB and returns the typed stale/unsupported error when
+that is impossible; it never retains an old DB in a hidden registry.
 
 ## Operational invariants
 

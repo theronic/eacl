@@ -11,16 +11,17 @@ depend on the core module.
 | Module | Runtime | Consistency and snapshots | Cursors | Completed answers |
 | --- | --- | --- | --- | --- |
 | `eacl-datomic` | Clojure/JVM | local Peer DB by default; explicit sync barrier, causal floor, and exact `d/as-of` | encrypted; current recovery or explicit exact continuation | private exact-current plus optional managed relation stamps |
-| `eacl-datascript` | Clojure and ClojureScript | serialized local DB; optional bounded exact registry | compact authenticated cursor; current recovery or explicit exact continuation | private immutable-DB generation plus optional managed stamps |
+| `eacl-datascript` | Clojure and ClojureScript | one current immutable DB per request; no EACL history registry or exact selection | compact authenticated cursor; proof-equivalent current continuation only | private immutable-DB generation plus optional managed stamps |
 | `eacl-datahike` | Clojure/JVM | local connection DB; explicit head barrier and retained exact selection | compact authenticated cursor; current recovery or explicit exact continuation | private immutable-DB generation plus optional managed stamps |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | supplied by an adapter | shared private current-cache implementation |
 
-Capabilities are configuration-specific. DataScript exact reads require
-`:exact-snapshot-registry-size`; Datahike exact reads require retained
-commit/temporal history. Ordinary calls use the current local snapshot and do
-not perform historical selection. Non-exact cursors recover by re-evaluating
-on the selected current snapshot. Only `at-exact-snapshot` requires retained
-history.
+Capabilities are configuration-specific. DataScript does not support exact
+reads and rejects the removed `:exact-snapshot-registry-size` option. Datahike
+exact reads require retained commit/temporal history. Ordinary calls use one
+selected immutable snapshot and do not perform historical selection.
+DataScript cursors may continue only on a proof-equivalent current DB; they do
+not silently restart after a relevant change. Only backends advertising
+`at-exact-snapshot` may use retained history.
 
 See [the consistency and cache operations guide](v8-consistency-cache-operations.md)
 for authority, retention, token, cursor, cache, and failure-diagnostic rules.

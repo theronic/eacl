@@ -1,5 +1,5 @@
 {:schema-version 1
- :recorded-at "2026-08-06"
+ :recorded-at "2026-08-08"
  :change :restore-v8-enumeration-performance
 
  :root-causes
@@ -32,16 +32,33 @@
    :finding
    :exact-count-rebuilt-the-complete-permission-path-merge-for-every-internal-window-causing-fanout-index-scans-to-scale-with-window-count-times-intermediate-count
    :remediation
-   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}]
+   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}
+  {:id :content-cursor-proof-scan
+   :counterexample :EACL-FORMAL-064
+   :finding
+   :default-datascript-content-proof-cursor-minting-scanned-the-complete-relationship-dependency-content-even-for-cache-bypassed-small-pages
+   :remediation
+   :bind-default-cursors-to-exact-current-basis-and-reserve-bounded-dependency-stamps-for-explicit-managed-mutation-mode}
+  {:id :pure-permission-alias-frontier-duplication
+   :counterexample :EACL-FORMAL-065
+   :finding
+   :raw-arrow-target-permission-names-created-two-traversal-streams-for-one-exact-pure-alias-denotation
+   :remediation
+   :cycle-guarded-exact-single-self-permission-canonicalization-before-first-occurrence-frontier-deduplication}
+  {:id :cross-host-matched-v7-latency-comparison
+   :finding
+   :a-macos-arm64-jdk24-same-host-baseline-was-enforced-on-linux-x86-64-jdk21-ci-especially-distorting-sub-six-millisecond-scenarios
+   :remediation
+   :exact-host-and-jvm-class-qualification-with-explicit-not-applicable-results-and-portable-correctness-work-gates-retained}]
 
  :formal-verification
  {:command "bin/formal verify"
-  :modules 25
-  :proof-efforts 9806
+  :modules 27
+  :proof-efforts 8616
   :errors 0
-  :new-relationship-page-theorems
-  [PageWindow.MatchingRelationshipPageScopeReusesExactPage
-   PageWindow.RelationshipPageScopeMismatchCannotHit]
+  :retained-exact-page-theorems
+  [PageWindow.MatchingAuthorizationPageScopeReusesExactPage
+   PageWindow.AuthorizationPageScopeMismatchCannotHit]
   :inactive-recursion-authority
   [RoutingCertificate.DecideGuardedRoute
    RoutingCertificate.EmptyRecursiveGuardsSelectAcyclic
@@ -50,7 +67,15 @@
   [SchemaPlanCost.CountProjectionChunkCoversWindowAndSentinel
    SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound
    SchemaPlanCost.ExactCountBuildsOneMergeTraversal
-   SchemaPlanCost.CountWindowAdvanceIsBounded]}
+   SchemaPlanCost.CountWindowAdvanceIsBounded]
+  :cursor-proof-authority
+  [PageWindow.ContentCursorMintingDoesNoRelationProofScan
+   PageWindow.OnlyManagedMutationModeRequestsDependencyProof
+   PageWindow.DataScriptChangedBasisCannotYieldCursorPage]
+  :pure-alias-authority
+  [SchemaPlanCost.CanonicalPermissionAliasPreservesDenotation
+   SchemaPlanCost.CanonicalFrontierDeduplicationCannotAddTraversalStreams
+   SchemaPlanCost.CanonicalFrontierSequenceIsUniqueAndKeepsFirstPath]}
 
  :runtime-suites
  {:datascript-clj
@@ -63,40 +88,85 @@
   {:tests 240 :assertions 11204 :failures 0 :errors 0}
   :shared-core-clj
   {:tests 85 :assertions 666 :failures 0 :errors 0}
-  :focused-enumeration-routing
-  {:tests 9 :assertions 51 :failures 0 :errors 0}
+ :focused-enumeration-routing
+  {:tests 13 :assertions 75 :failures 0 :errors 0}
+  :heavy-explorer-suite
+  {:tests 6 :assertions 87 :failures 0 :errors 0}
   :heavy-explorer-100000
   {:count 100000
-   :elapsed-ms 258.188958
-   :warmed-median-ms 248.518833
-   :permission-paths 5
-   :backend-scans 456
+   :elapsed-ms 153.7155
+   :warmed-median-ms 149.267
+   :permission-paths 4
+   :backend-scans 462
    :count-pages 7
    :recursive-work 0}}
 
  :matched-v7-cache-bypassed-clj
- {:host-class :same-host-same-process-shape-harness
+ {:host-class {:os :macos
+               :arch :arm64
+               :os-version "26.5.1"
+               :cpu-model "Apple M3 Pro"
+               :logical-processors 12
+               :total-memory-bytes 19327352832
+               :max-heap-bytes 4831838208
+               :jdk "24.0.1"
+               :vm-name "OpenJDK 64-Bit Server VM"
+               :vm-vendor "Eclipse Adoptium"
+               :runtime :datascript-clj
+               :measurement :warmed-median}
+  :qualification :exact-host-and-jvm-class
+  :mismatched-host-policy :not-applicable-never-passed
   :variance-policy {:warmups 3 :samples 7 :statistic :median}
   :user-1-forward-page-10000
-  {:v7-median-ms 1.42725
-   :v8-median-ms 0.791542
-   :v8-to-v7-ratio 0.5546
+  {:v7-median-ms 2.923375
+   :v8-samples-ms
+   [1.487875 1.493542 1.073417 1.030417 1.047167 1.104375 1.0225]
+   :v8-median-ms 1.073417
+   :v8-to-v7-ratio 0.3671841621413606
    :maximum-ratio 2.0}
   :owner-0001-exact-count-2000-of-10000
-  {:v7-median-ms 2.476375
-   :v8-median-ms 2.604417
-   :v8-to-v7-ratio 1.0517
+  {:v7-median-ms 1.6295
+   :v8-samples-ms
+   [1.929333 2.18025 1.915458 1.916708 1.904666 2.115083 2.069042]
+   :v8-median-ms 1.929333
+   :v8-to-v7-ratio 1.1840030684258975
    :maximum-ratio 2.0}
   :super-user-exact-count-50000
-  {:v7-median-ms 86.823625
-   :v8-median-ms 117.805542
-   :v8-to-v7-ratio 1.3568
+  {:v7-median-ms 73.016792
+   :v8-samples-ms
+   [69.401416 69.092542 74.362 73.459416 67.967417 69.867583 73.427334]
+   :v8-median-ms 69.867583
+   :v8-to-v7-ratio 0.9568700717500709
    :maximum-ratio 2.0}
   :super-user-exact-count-50000-empty-recursive-schema
-  {:v7-nonrecursive-median-ms 86.823625
-   :v8-median-ms 111.730166
-   :v8-to-v7-ratio 1.2869
+  {:v7-nonrecursive-median-ms 73.016792
+   :v8-samples-ms
+   [102.294458 88.813708 86.83925 90.534834 87.206375 90.366333 97.304875]
+   :v8-median-ms 90.366333
+   :v8-to-v7-ratio 1.2376102883292928
+   :maximum-ratio 2.0}
+  :super-user-exact-count-100000
+  {:v7-median-ms 155.008042
+   :v8-samples-ms
+   [145.260291 158.489583 145.527041 151.186167 144.928458 158.165375 149.267]
+   :v8-median-ms 149.267
+   :v8-to-v7-ratio 0.9629629409808299
    :maximum-ratio 2.0}}
+
+ :cross-host-ci-observation
+ {:run 31300416898
+  :reported-environment {:runner-image :ubuntu-22.04
+                         :arch :x86-64
+                         :jdk "21.0.11"
+                         :runtime :datascript-clj
+                         :measurement :warmed-median}
+  :latency-gate :not-applicable
+  :observed-ms {:user-1-forward-page 3.758435
+                :owner-0001-exact-count 5.53214
+                :super-user-exact-count-50000 127.508101
+                :super-user-exact-count-100000 256.150414}
+  :portable-gates {:correctness :passed
+                   :deterministic-work :passed}}
 
  :deterministic-work
  {:pagination-10000
@@ -108,35 +178,42 @@
    :recursive-work 0}
   :owner-count-2000
   {:count 2000
-   :backend-scans 14
+   :backend-scans 18
    :merge-advances 2000
    :recursive-work 0}
   :super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 231
+   :backend-scans 237
    :merge-advances 50003
    :recursive-work 0}
   :empty-recursive-super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 231
+   :backend-scans 265
    :merge-advances 50003
    :recursive-work 0}
   :super-count-100000
   {:count 100000
    :count-pages 7
-   :backend-scans 456
-   :permission-paths 5
+   :backend-scans 462
+   :permission-paths 4
    :merge-advances 100006
    :recursive-work 0}
   :cold-user-count-12000-of-40000
   {:count 12000
    :count-pages 1
-   :backend-scans 59
+   :backend-scans 71
    :merge-advances 12000
    :recursive-work 0
-   :elapsed-ms 30.553917}}
+   :elapsed-ms 68.182709}
+  :content-proof-page-10000
+  {:page-size 20
+   :cache? false
+   :relation-proof-commands 0
+   :first-page-backend-scans 45
+   :continued-page-backend-scans 24
+   :warmed-median-ms 1.073417}}
 
  :explorer-browser
  {:url "http://localhost:18091/index.html"

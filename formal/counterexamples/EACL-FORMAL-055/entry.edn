@@ -11,9 +11,9 @@
  :root-cause
  "Generated-authoritative can? always initialized the forward indexed traversal from the subject. A point query is anchored by one resource, but forward evaluation can enumerate every resource reachable from a broad subject before finding that target. Making generated authority the release default therefore changed a target-local authorization check into work proportional to subject fanout."
  :fix
- "Initialize the already-verified reverse indexed traversal from the concrete resource and use its Boolean renderer to stop when the requested subject is emitted or to exhaust the target-local reverse search before returning false. Add a direction regression and a 16-versus-1,040 reachable-resource logical/backend-work gate."
+ "Anchor every point check at the concrete target. Recursive roots initialize the verified reverse indexed traversal and use its Boolean renderer. Certified acyclic roots use the exact inclusive bound-probe source specialization instead of entering the recursive state machine. Add direction/classification regressions and a 16-versus-1,040 reachable-resource logical/backend-work gate."
  :closing-evidence
- ["eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages"
+ ["eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"
   "eacl.bench.pagination-test/permission-check-benchmark"
   "IndexedReverseCompleteness.ExhaustedReverseTraversalRefinesLeastFixedPoint"
   "IndexedTraversal.ReadRenderResult"]}
