@@ -1057,6 +1057,15 @@
          (= :recursive mutant)
          (not= correct mutant))))
 
+(defn- completed-acyclic-artifact-keeps-fixed-point-order-killed?
+  []
+  (let [fixed-point-discovery [30 10 20]
+        correct (vec (sort fixed-point-discovery))
+        mutant (vec fixed-point-discovery)]
+    (and (= [10 20 30] correct)
+         (= [30 10 20] mutant)
+         (not= correct mutant))))
+
 (defn- active-recursive-data-forces-acyclic-killed?
   []
   (let [recursive? true
@@ -1322,6 +1331,8 @@
    enumeration-route-forces-recursive-killed?
    :inactive-recursive-data-forces-fixed-point
    inactive-recursive-data-forces-fixed-point-killed?
+   :completed-acyclic-artifact-keeps-fixed-point-order
+   completed-acyclic-artifact-keeps-fixed-point-order-killed?
    :active-recursive-data-forces-acyclic
    active-recursive-data-forces-acyclic-killed?
    :acyclic-merge-emits-overlap-twice

@@ -130,7 +130,7 @@
     :EACL-FORMAL-062
     eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
     :EACL-FORMAL-063
-    eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test})
+    eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test})
 
 (defn- read-edn
   [path]

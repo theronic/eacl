@@ -35,6 +35,14 @@
          :servers-per-account 40
          :user-1-account-count 4))
 
+(def ^:private completion-order-shape
+  (assoc fixture/default-shape
+         :accounts 2
+         :teams-per-account 2
+         :vpcs-per-account 1
+         :servers-per-account 4
+         :user-1-account-count 1))
+
 (defn- timed-page
   [client query stats]
   (binding [engine/*acyclic-work-stats* stats
@@ -89,6 +97,68 @@
       (is (= 2 (:routed-acyclic @acyclic-stats)))
       (is (pos? (:backend-scans @acyclic-stats)))
       (is (empty? @recursive-stats)))))
+
+(deftest complete-acyclic-denotation-preserves-demand-order-test
+  (doseq [[label schema]
+          [[:schema-acyclic fixture/schema]
+           [:data-acyclic fixture/recursive-schema]]]
+    (let [{:keys [client]} (seed-client! completion-order-shape schema {})
+          ;; Overlapping account/team/VPC arrows produce a generated discovery
+          ;; order distinct from the certified acyclic EID order. The recursive
+          ;; schema remains data-acyclic while its cycle-carrying relation is
+          ;; empty, so both forms exercise the same certified public route.
+          query (fixture/resource-query fixture/super-user :view 20)
+          demand-page (eacl/lookup-resources client query)
+          target (first (:data demand-page))
+          point-result
+          (eacl/can?
+           client
+           {:subject fixture/super-user
+            :permission :view
+            :resource target
+            :evaluation :complete-denotation})
+          absent-point-result
+          (eacl/can?
+           client
+           {:subject fixture/super-user
+            :permission :view
+            :resource (assoc target :id "absent-completion-target")
+            :evaluation :complete-denotation})
+          hits-after-point
+          (get-in
+           (datascript/cache-stats client)
+           [:subproblems :denotation-hits]
+           0)
+          complete-page
+          (eacl/lookup-resources
+           client
+           (assoc query :evaluation :complete-denotation))
+          hits-after-lookup
+          (get-in
+           (datascript/cache-stats client)
+           [:subproblems :denotation-hits]
+           0)
+          backward-page
+          (eacl/lookup-resources
+           client
+           (-> query
+               (dissoc :first)
+               (assoc :last 3
+                      :evaluation :complete-denotation)))
+          backward-start
+          (datascript/token->cursor
+           (get-in backward-page [:page-info :start-cursor]))]
+      (is (true? point-result) label)
+      (is (false? absent-point-result) label)
+      (is (> hits-after-lookup hits-after-point)
+          (str label ": point/lookup completion did not share its artifact"))
+      (is (= (:data demand-page) (:data complete-page))
+          (str label ": explicit completion changed certified public order"))
+      (is (= (vec (take-last 3 (:data demand-page)))
+             (:data backward-page))
+          label)
+      (is (= :lookup-eid (get-in backward-start [:edge :kind]))
+          (str label ": completion changed the acyclic cursor ABI")))))
 
 (deftest generated-route-is-schema-bound-and-fails-closed-test
   (let [{:keys [conn client]} (seed-client! small-shape)

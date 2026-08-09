@@ -49,6 +49,12 @@ MUST NOT be presented as certification of production behavior.
   root certified as acyclic
 - **THEN** the execution-contract model and production route selector both
   choose the fixed-point evaluator for point, lookup, and count operations
+- **AND** the model and production renderer preserve the certified acyclic
+  public EID order even though the selected evaluator changed
+- **AND** both model and implementation bind public order and artifact version
+  in the completed-denotation cache contract, require strictly increasing
+  positive EIDs at acyclic artifact admission, and read only immutable entries
+  marked validated by atomic publication
 - **AND** the demand-mode acyclic specialization is not allowed to make the
   explicit completion control decorative
 - **AND** cross-operation complete-denotation reuse is executable evidence for

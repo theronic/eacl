@@ -136,8 +136,8 @@ overrides the certified acyclic shortcut:
 - one managed completed-denotation hit crossed the unrelated graph revision
   and 79 distinct roots reused it in the selected exact generation;
 - the new exact generation performed one bounded dependency-proof read;
-- five-run median p50 latency was 0.176 ms versus 3.653 ms, with paired
-  ratios from 0.036 to 0.053;
+- five-run median p50 latency was 0.140 ms versus 3.419 ms, with paired
+  ratios from 0.039 to 0.044;
 - completed-answer hot-hit ratio was 1.002;
 - `:cache? false` ratio was 1.003;
 - a 2,048× recursive closure-size increase changed cached page-render p50 by

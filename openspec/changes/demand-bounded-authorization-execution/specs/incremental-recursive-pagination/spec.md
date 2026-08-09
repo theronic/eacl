@@ -1,5 +1,36 @@
 ## ADDED Requirements
 
+### Requirement: The certified route fixes public order and cursor ABI
+For one selected immutable snapshot, EACL SHALL derive the public result order
+and cursor kind from the certified demand route, not from evaluation mode or
+cache state. Certified acyclic enumeration SHALL use strictly ascending
+positive internal EIDs with `:lookup-eid` boundaries. Recursive enumeration
+SHALL use the versioned generated logical order with `:recursive-logical`
+boundaries that bind both ordinal and external result identity. Explicit
+completion MAY change the evaluator used to obtain closure but MUST NOT change
+that route's public order or cursor ABI.
+
+This requirement and the remaining requirements in this capability replace
+the conflicting sorted-recursive-keyset, one-cursor-kind, implicit-completion,
+and route-change-continuation requirements in the earlier active
+`eacl-v8-root-fixes` change. Those superseded requirements MUST NOT be treated
+as part of the EACL v8 release or certification contract.
+
+#### Scenario: Complete evaluation of an acyclic root
+- **WHEN** explicit completion routes a certified acyclic root through the fixed-point evaluator
+- **THEN** EACL canonicalizes the completed artifact once to strictly ascending EID order before publication
+- **AND** pages retain `:lookup-eid` cursors identical to demand-mode acyclic pages
+
+#### Scenario: Complete evaluation of a recursive root
+- **WHEN** explicit completion exhausts a recursive root
+- **THEN** EACL preserves the generated logical result sequence without numeric sorting
+- **AND** pages retain `:recursive-logical` cursors identical to demand-mode recursive pages
+
+#### Scenario: Certified route changes
+- **WHEN** schema, data-sensitive routing evidence, or an ordering ABI change selects a different public route for a continuation
+- **THEN** EACL accepts the cursor only if its authenticated proof establishes the identical public order and boundary interpretation
+- **AND** otherwise returns a typed stale-cursor or consistency-conflict error before traversal
+
 ### Requirement: Recursive order is a deterministic logical ABI
 The recursive evaluator SHALL emit one total deterministic logical result order
 with a complete tie-breaker. The sequence MUST be independent of backend chunk

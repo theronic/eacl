@@ -87,6 +87,11 @@ and consistency contract. EACL MUST NOT expose a separate prewarm API.
   `:evaluation :complete-denotation`
 - **THEN** point, lookup, and count operations select the generated fixed-point
   completion route rather than the demand-only acyclic shortcut
+- **AND** lookup results are rendered in the same certified EID order and with
+  the same keyset cursor ABI as demand evaluation
+- **AND** the completed-artifact cache key binds that certified public order,
+  publication fails closed unless an acyclic artifact is strictly ascending,
+  and lookup accepts only an atomically published validated entry
 - **AND** the completed artifact may be reused across compatible operations and
   proof-equivalent managed generations
 - **AND** omitting this route override is an implementation/spec conformance

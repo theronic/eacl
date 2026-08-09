@@ -15,6 +15,11 @@ zero managed denotation hits, and no latency improvement.
 
 The corrected shared route selector keeps acyclic point/page/count shortcuts
 demand-only. Explicit completion selects the generated fixed-point evaluator
-for every defined root. The execution-contract model proves that route law,
-and CLJ/CLJS contract tests require actual acyclic-denotation hits plus
-zero-backend-work reuse across point, count, and lookup operations.
+for every defined root, then canonicalizes a completed acyclic denotation once
+to the certified route's public EID order. The execution-contract model proves
+both route and public-order laws. CLJ/CLJS contract tests require identical
+demand/complete ordering and cursor ABI for schema- and data-acyclic roots.
+Artifact keys bind the selected public order; publication validates strict
+ascending EIDs once, and immutable hits require the atomic validated marker.
+The same suite requires actual acyclic-denotation hits and zero-backend-work
+reuse across point, count, and lookup operations.

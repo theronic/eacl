@@ -1,11 +1,17 @@
 include "RecursiveEngine.dfy"
+include "IndexedRootDenotation.dfy"
 
 module SubproblemCache {
   import Semantics
   import AcyclicEngine
   import RecursiveEngine
+  import IndexedRootDenotation
 
   datatype Direction = Ascending | Descending
+
+  datatype DenotationPublicOrder =
+    | CertifiedAcyclicEidOrder
+    | FixedPointLogicalOrder
 
   datatype ProjectionKey = ProjectionKey(
     version: nat,
@@ -125,13 +131,16 @@ module SubproblemCache {
 
   datatype RecursiveDenotationKey = RecursiveDenotationKey(
     version: nat,
+    operation: string,
     recursiveVersion: nat,
     direction: Direction,
-    rootComponent: seq<Semantics.PermissionNode>,
-    root: Semantics.PermissionNode,
+    identityVersion: nat,
+    rootResourceType: string,
+    rootBodies: set<IndexedRootDenotation.IndexedRuleBody>,
     anchorType: string,
     anchorId: int,
     resultType: string,
+    publicOrder: DenotationPublicOrder,
     maxDerivedGrants: nat,
     maxAdvancedDatoms: nat,
     maxQueuedWork: nat
@@ -143,13 +152,16 @@ module SubproblemCache {
   )
     requires left == right
     ensures left.version == right.version
+    ensures left.operation == right.operation
     ensures left.recursiveVersion == right.recursiveVersion
     ensures left.direction == right.direction
-    ensures left.rootComponent == right.rootComponent
-    ensures left.root == right.root
+    ensures left.identityVersion == right.identityVersion
+    ensures left.rootResourceType == right.rootResourceType
+    ensures left.rootBodies == right.rootBodies
     ensures left.anchorType == right.anchorType
     ensures left.anchorId == right.anchorId
     ensures left.resultType == right.resultType
+    ensures left.publicOrder == right.publicOrder
     ensures left.maxDerivedGrants == right.maxDerivedGrants
     ensures left.maxAdvancedDatoms == right.maxAdvancedDatoms
     ensures left.maxQueuedWork == right.maxQueuedWork

@@ -126,6 +126,7 @@
 - [ ] 12.14 Add targeted negative controls that mutate one production branch, model transition, adapter conversion, generated artifact, and claim row and prove every mismatch closes the certification gate.
 - [ ] 12.15 Produce a clean-checkout certification bundle with pinned toolchain/runtime/solver versions, reproducible commands, source/generated/evidence hashes, proof logs, residual assumptions, exclusions, and an independently verifiable bundle digest.
 - [x] 12.16 Add the external-certifier review procedure and require independent sign-off evidence before the manifest can move from conditionally verified to an externally certified status.
+- [x] 12.17 Align explicit completion's formal route, public-order, artifact-version, cache-key, admission, and immutable-hit contracts with production; add a controlled acyclic-order mutant and CLJ/CLJS schema-acyclic plus data-acyclic regressions.
 
 ## 13. Simplify the Architecture Without Regressing Performance
 
@@ -135,3 +136,4 @@
 - [x] 13.4 Add checked deterministic non-regression baselines for executed commands, fetched/consumed values, generated transitions, allocation proxies, and retained logical units across the operation/shape corpus.
 - [x] 13.5 Add pinned measured gates for latency, throughput, allocation, and retained memory with raw samples, environment/variance disclosure, absolute ceilings, baseline ratios, and a deterministic rerun protocol.
 - [ ] 13.6 Bind the structural and performance evidence to the exact production artifact and source-closure digest in the implementation-conformance ledger and reproducible certification bundle.
+- [x] 13.7 Reuse the canonical completed acyclic vector for binary-search point membership while preserving linear equality membership for recursive logical-order artifacts.

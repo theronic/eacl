@@ -18,15 +18,15 @@
  :current-worktree
  {:source-closure "formal/verification/public-source-closure.json"
   :source-closure-sha256
-  "3a2cae4edaa0a9b26657567943bdaa52625b8d4a8659317969622cc1a4106eb9"
+  "5e711e73d07fcc2061db9d8adde2a34d883f725d171aa7523e4b956396c2e164"
   :public-roots 63
   :source-files 56
-  :reachable-definitions 1415
+  :reachable-definitions 1419
   :definitions-by-source
   {"modules/eacl/src/eacl/subproblem_cache.cljc" 49
    "modules/eacl-datomic/src/eacl/datomic/cache.clj" 4
    "modules/eacl-datomic/src/eacl/datomic/core.clj" 123
-   "modules/eacl/src/eacl/engine/v8.cljc" 225
+   "modules/eacl/src/eacl/engine/v8.cljc" 229
    "modules/eacl/src/eacl/execution.cljc" 21}
   :forbidden-coordination-source-occurrences 0
   :datomic-schema-state-source-occurrences 0
@@ -34,11 +34,11 @@
  :delta
  {:public-roots 0
   :source-files 1
-  :reachable-definitions -9
+  :reachable-definitions -5
   :subproblem-cache-definitions -18
   :datomic-cache-definitions -31
   :datomic-core-definitions -5
-  :shared-engine-definitions 16
+  :shared-engine-definitions 20
   :normalized-execution-contract-definitions 21
   :forbidden-coordination-source-occurrences -22
   :datomic-schema-state-source-occurrences -38

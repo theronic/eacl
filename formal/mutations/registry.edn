@@ -492,6 +492,12 @@
    :killed-by
    {:proof :inactive-cycle-guard-eliminates-recursive-contribution
     :test :recursive-schema-with-empty-cycle-guards-stays-page-bounded}}
+  {:id :completed-acyclic-artifact-keeps-fixed-point-order
+   :mechanism :cache-fixed-point-discovery-order-as-certified-acyclic-public-order
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :completed-artifact-contract-binds-certified-public-order
+    :test :complete-acyclic-denotation-preserves-demand-order}}
   {:id :active-recursive-data-forces-acyclic
    :mechanism :ignore-a-populated-cycle-guard-and-enter-the-acyclic-engine
    :control {:kind :clojure}

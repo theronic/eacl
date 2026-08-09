@@ -3,6 +3,6 @@
  :entries 63
  :status :passed
  :tests 67
- :assertions 18431
+ :assertions 18429
  :missing-var-in-available-namespace-policy :fail
  :command "EACL_NREPL_PORT=<formal-smoke-port> bin/formal counterexample-replay"}

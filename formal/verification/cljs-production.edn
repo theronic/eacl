@@ -36,10 +36,10 @@
      :clean-output-directories true}
     :empty-runtime-bytes 97122
     :empty-runtime-gzip-bytes 21279
-    :portable-kernel-bytes 112457
-    :portable-kernel-gzip-bytes 24688
-    :incremental-engine-bytes 15335
-    :incremental-engine-gzip-bytes 3409}
+    :portable-kernel-bytes 112447
+    :portable-kernel-gzip-bytes 24691
+    :incremental-engine-bytes 15325
+    :incremental-engine-gzip-bytes 3412}
    {:environment
     {:source :github-actions-run-31285905988
      :os :ubuntu-22.04.5
@@ -72,12 +72,12 @@
    :failures 0
    :errors 0}
   :full-datascript-core
-  {:tests 167 :assertions 9556 :failures 0 :errors 0}
+  {:tests 172 :assertions 9673 :failures 0 :errors 0}
   :injected-portable-authority
-  {:tests 169 :assertions 4659 :failures 0 :errors 0
+  {:tests 170 :assertions 4671 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}
   :mutation-registry
-  {:mutants 92 :killed 92 :survived 0}}
+  {:mutants 93 :killed 93 :survived 0}}
  :trust-posture
  {:browser-authorization :advisory
   :server-recheck-required true

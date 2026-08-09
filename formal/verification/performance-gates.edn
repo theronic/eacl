@@ -135,11 +135,11 @@
     :status :passed}
    :cross-target-correctness
    {:cljs-generated-smoke
-    {:tests 58 :assertions 10968 :failures 0 :errors 0}
+    {:tests 45 :assertions 9971 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 169 :assertions 4659 :failures 0 :errors 0}
+    {:tests 170 :assertions 4671 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 509 :assertions 34773 :failures 0 :errors 0}}
+    {:tests 519 :assertions 39362 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -195,18 +195,18 @@
    :completed-answer-final-hits 0
    :layered-final-hits 0}
   :completed-answer-only
-  {:five-run-median-p50-ms 3.6525
+  {:five-run-median-p50-ms 3.4185
    :executed-backend-operations 5120}
   :layered
-  {:five-run-median-p50-ms 0.175583
+  {:five-run-median-p50-ms 0.140375
    :executed-backend-operations 0
    :denotation-hits 158
    :managed-denotation-hits 1
    :acyclic-denotation-hits 79
    :managed-proof-reads 1}
-  :five-run-median-paired-p50-ratio 0.048072005475701576
+  :five-run-median-paired-p50-ratio 0.041063331870703525
   :paired-p50-ratio-range
-  [0.03596662826823053 0.0530171463356894]
+  [0.03914322618740082 0.043954153669253454]
   :maximum-allowed-ratio 0.75
   :qualification
   :explicit-completion-only-equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
@@ -214,7 +214,7 @@
 
  :formal-pipeline
  {:scope :all-27-dafny-modules
-  :proof-efforts 8589
+  :proof-efforts 8596
   :last-observed-local-wall-seconds 1001
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -222,7 +222,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3122812706
+  :total-observed-resource-count 3122941608
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -735,7 +735,7 @@
    :generated-java
    {:tests 36 :assertions 10395 :status :passed}
    :generated-javascript
-   {:tests 58 :assertions 10968 :status :passed}
+   {:tests 45 :assertions 9971 :status :passed}
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy
@@ -969,12 +969,12 @@
     :selected-evaluator-route :generated-fixed-point
     :baseline-backend-operations 5120
     :layered-backend-operations 0
-    :completed-answer-only-five-run-median-p50-ms 3.6525
-    :layered-subproblem-five-run-median-p50-ms 0.175583
+    :completed-answer-only-five-run-median-p50-ms 3.4185
+    :layered-subproblem-five-run-median-p50-ms 0.140375
     :paired-p50-latency-ratio-range
-    [0.03596662826823053 0.0530171463356894]
-    :median-paired-p50-latency-ratio 0.048072005475701576
-    :p50-latency-ratio 0.048072005475701576
+    [0.03914322618740082 0.043954153669253454]
+    :median-paired-p50-latency-ratio 0.041063331870703525
+    :p50-latency-ratio 0.041063331870703525
     :managed-denotation-hits 1
     :acyclic-denotation-hits 79
     :new-generation-proof-reads 1

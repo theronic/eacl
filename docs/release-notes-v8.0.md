@@ -401,9 +401,11 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
   `:evaluation :complete-denotation`, so no reusable completed denotation was
   produced. One shared route selector now keeps the acyclic shortcut
   demand-only and sends explicit completion through the generated fixed-point
-  evaluator for every defined root. The minimized regression requires
-  cross-operation reuse with zero backend work; the execution-contract model
-  proves the same route law.
+  evaluator for every defined root. Completed acyclic denotations are
+  canonicalized once to the demand route's EID order and retain the acyclic
+  keyset cursor ABI. The minimized regressions require invariant public order,
+  cross-operation reuse, and zero backend work; the execution-contract model
+  proves the route and order laws.
 - **Token consistency descriptors admitted unknown fields
   (EACL-FORMAL-053).** The shared descriptor checked the required mode and
   token values but accepted additional fields, contradicting the formal
@@ -441,7 +443,7 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 9,776 proof efforts across 25 source-project
+The locked Dafny run completes 8,596 proof efforts across 27 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes
@@ -463,15 +465,15 @@ shipped.
 ### ClojureScript production authority
 
 The browser no longer executes the Dafny JavaScript runtime or BigNumber on
-the authorization hot path. Advanced-optimized certification passed 44 formal
-tests with 9,963 assertions, the full DataScript/core suite passed 167 tests
-with 9,556 assertions, and the current injected-authority suite passed 169
-tests with 4,659 assertions while observing every required traversal
+the authorization hot path. Certification passed 45 formal/oracle tests with
+9,971 assertions, the full advanced DataScript/core suite passed 172 tests
+with 9,673 assertions, and the current injected-authority suite passed 170
+tests with 4,671 assertions while observing every required traversal
 operation.
 
 At the 16,384-result reference size the recorded median is 8,684 ns/result,
 below the 15,000 ns/result ceiling. The advanced portable-kernel payload adds
-15,335 raw bytes and 3,409 Java-GZIP bytes over the empty runtime, within the
+15,325 raw bytes and 3,412 Java-GZIP bytes over the empty runtime, within the
 32 KiB raw / 8 KiB compressed budgets and more than an order of magnitude
 below the retired 591,497-byte generated browser IIFE. CI also rejects
 `BigNumber`, `EaclFormal`, and generated-adapter markers in the full production
@@ -505,8 +507,8 @@ the latest fixed-heap run:
 - 4,000-node recursive walk: 134.09 ms with cached continuation versus
   3,141.52 ms replaying prefixes;
 - explicit-completion distinct-query shared-subgraph five-run median p50:
-  0.176 ms versus 3.653 ms for completed-answer-only caching, with zero
-  backend operations on the reused path and paired ratios from 0.036 to 0.053.
+  0.140 ms versus 3.419 ms for completed-answer-only caching, with zero
+  backend operations on the reused path and paired ratios from 0.039 to 0.044.
   This is opt-in `:complete-denotation` evidence; ordinary demand requests
   never traverse farther to warm this artifact.
 

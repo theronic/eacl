@@ -182,7 +182,7 @@ valuable precisely at this boundary.
 
 ## Bugs and regressions found
 
-The retained corpus contains 59 minimized findings, all marked fixed. Each
+The retained corpus contains 63 minimized findings, all marked fixed. Each
 entry under `formal/counterexamples/EACL-FORMAL-NNN/` records its witness,
 impact, affected backends/version, root cause, fix, and closing evidence. The
 complete corpus is the exact bug ledger; the table below calls out the
@@ -208,6 +208,7 @@ highest-value findings.
 | 057 | assurance-harness correctness | The CLJ-to-generated-Java page-window bridge still called a removed six-field datatype constructor after deprecated pagination inputs were removed. | Align the bridge with the four-field v8 datatype and keep deprecated-input rejection at the public host boundary; all 47 generated-runtime bridge tests now load and pass. |
 | 058 | assurance-workflow availability | Ordinary parity CI eagerly loaded a former engine namespace after it moved to the formal-only classpath; the broader local classpath masked the failure. | Remove eager formal-oracle loads, resolve closing regressions lazily, and test the entrypoint source against all retained former-engine namespaces. |
 | 059 | assurance-harness correctness | A clean generated-JavaScript rebuild exposed obsolete six-field page-request test arguments and a CLJS recursive-page expectation that disagreed with the equivalent JVM fixture. Cached local generated artifacts had masked both. | Align the direct JS bridge with the current four-field datatype, keep removed API rejection at the host boundary, make JVM/JS consume one shared recursive-page vector, and retain a clean-build source regression. |
+| 060–063 | routing, continuation, and execution-contract fidelity | Production either routed all enumeration recursively, dropped DataScript/Datahike private continuation state, treated inactive recursive syntax as active recursion, or ignored explicit completion on acyclic roots. The last defect also exposed a completed-artifact ordering/cache-key mismatch. | Route from the generated certificate plus snapshot-local cycle guards, wire bounded private continuation through shared core, override every defined root to fixed-point evaluation only for explicit completion, preserve the certified public order/cursor ABI, bind that order in version-5 artifact keys, and kill the regressions in CLJ/CLJS plus model/source mutation controls. |
 
 These findings also expose defects in the verification program itself. Findings
 024–025, 028–034, 040–045, 048–050, and 056–059 are especially important: they
@@ -218,28 +219,27 @@ repair the model, add a minimized witness, and create a fail-closed gate.
 
 ## Final local verification run
 
-The final pre-audit run on 2026-08-06 produced the following evidence:
+The final pre-audit run on 2026-08-08 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 27 modules, 8,589 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 27 modules, 8,596 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
-| Generated Java runtime bridges | 47 tests, 15,628 assertions, 0 failures/errors |
-| Generated-authority-injected JVM public/backend suite | 504 tests, 39,188 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
-| Generated-authority-injected DataScript CLJS suite | 169 tests, 4,659 assertions, 0 failures/errors; 75 client constructions injected and every required portable authority operation observed |
-| Portable CLJS formal/oracle suite | 44 tests, 9,963 assertions, 0 failures/errors under `:advanced` |
-| Portable CLJS full DataScript/core suite | 169 tests, 9,652 assertions, 0 failures/errors under `:advanced` |
-| Portable CLJS injected-authority suite | 167 tests, 4,650 assertions, all required portable operations observed |
-| Portable CLJS performance/payload | 8,684 ns/result at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
+| Generated Java runtime bridges | 51 tests, 16,176 assertions, 0 failures/errors |
+| Generated-authority-injected JVM public/backend suite | 519 tests, 39,362 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
+| Portable-authority-injected DataScript CLJS suite | 170 tests, 4,671 assertions, 0 failures/errors; 77 client constructions injected and every required portable authority operation observed |
+| Portable CLJS formal/oracle suite | 45 tests, 9,971 assertions, 0 failures/errors |
+| Portable CLJS full DataScript/core suite | 172 tests, 9,673 assertions, 0 failures/errors under `:advanced` |
+| Portable CLJS performance/payload | 8,684 ns/result at 16,384 (15,000 ceiling); 15,325 raw / 3,412 compressed incremental bytes |
 | Heavy generated-only backend/performance suite | 17 tests, 4,058 assertions, 0 failures/errors |
-| Minimized counterexample replay | 67 tests / 18,431 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
-| Mutation control | 2 tests, 211 assertions, 0 failures/errors; every registered mutant killed |
+| Minimized counterexample replay | 67 tests / 18,429 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
+| Mutation control | 2 tests, 213 assertions, 0 failures/errors; all 93 registered mutants killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
-| Generated artifact size | browser bundle 591,497 bytes; Java classes/runtime 1,890,556 bytes; Java source 2,130,973 bytes; JavaScript/runtime 949,688 bytes; every re-anchored ceiling passed |
+| Generated artifact size | browser bundle 592,279 bytes; Java classes/runtime 1,907,070 bytes; Java source 2,142,584 bytes; JavaScript/runtime 953,503 bytes; every ceiling passed |
 
 The JVM suite observed generated decision calls for all required operations on
-all three adapters (361 injected Datomic clients, 71 Datahike, 119 DataScript).
-The latest portable CLJS suite observed 75 injected DataScript clients. These
+all three adapters (366 injected Datomic clients, 71 Datahike, 123 DataScript).
+The latest portable CLJS suite observed 77 injected DataScript clients. These
 counters prevent a green suite that accidentally bypasses the selected
 authority.
 

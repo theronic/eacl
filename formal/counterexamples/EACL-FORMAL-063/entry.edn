@@ -15,5 +15,8 @@
  :closing-evidence
  ["ExecutionContract.CompleteEvaluationUsesFixedPointForEveryDefinedRoot"
   "ExecutionContract.DemandPreservesCertifiedEvaluatorRoute"
+  "ExecutionContract.AcyclicCompletionPreservesCertifiedPublicOrder"
+  "eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test"
+  "formal/mutations/registry.edn :completed-acyclic-artifact-keeps-fixed-point-order"
   "eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test"
   "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"]}

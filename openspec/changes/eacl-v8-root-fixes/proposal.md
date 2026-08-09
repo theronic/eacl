@@ -37,7 +37,11 @@ Correctness first, then speed, then simplicity — this change delivers all thre
 
 ### New Capabilities
 - `single-flight-coordination`: wedge-free deduplicated subproblem computation — no deadlock under any thread count, bounded concurrent execution, honest hit/join metrics.
-- `keyset-recursive-pagination`: recursive enumeration emits internal-eid keyset order with `:lookup-eid` cursors; no skip or duplication of surviving results across pages; O(log n) membership; counts publish denotations; route-change-tolerant cursors.
+- `keyset-recursive-pagination`: superseded on the EACL v8 release stack by
+  `demand-bounded-authorization-execution`: acyclic enumeration uses EID
+  keysets, recursive enumeration uses generated logical order and
+  `:recursive-logical` cursors, completion is explicit, and relevant route/order
+  changes reject continuation unless exact or proof-equivalent recovery applies.
 - `cursor-dependency-validity`: cursor continuation proofs scoped to the query's relation dependency stamps; unconditional schema-generation validation; one AEAD token codec; defaulted-key startup warning.
 - `raw-request-context`: raw API calls perform at most one schema proof and one plan compile+certify per request, and no cache-key work against absent stores; nothing outlives the request or crosses snapshots.
 - `kernel-boundary-efficiency`: reduced and amortized FFI crossings for generated traversals, with logical-work gates enforcing the crossing law.

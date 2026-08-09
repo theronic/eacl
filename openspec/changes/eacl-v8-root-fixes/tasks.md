@@ -37,7 +37,13 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 - [x] 4.3 Remove the host per-value response walk in favor of the certified kernel validator, JVM and CLJS in lockstep; document the boundary-contract change
 - [x] 4.4 Tighten the crossing-cost envelope and rerun the populated-recursion latency scenarios; record the new truth
 
-## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — after group 2
+## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — superseded by demand-bounded authorization
+
+> These completed tasks record the intermediate sorted-keyset implementation.
+> The later `demand-bounded-authorization-execution` change replaces it with
+> route-specific public order, incremental recursive cursors, and explicit
+> completion. They are historical implementation evidence, not current release
+> requirements.
 
 - [x] 5.1 Sort in the two denotation completers with permutation guard; strict-ascending `valid-recursive-denotation?`; bump the denotation key version
 - [x] 5.2 Extract the shared certified-keyset-page helper (realized slice → `DecideAcyclicPage` → work gate → lookup-items) from the acyclic path

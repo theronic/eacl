@@ -3,6 +3,11 @@
   :post-demand-warming false}
  :complete-denotation
  {:defined-acyclic-root-selected-evaluator :generated-fixed-point
+  :public-order :certified-acyclic-eid-order
+  :cursor-kind :lookup-eid
+  :cache-key-binds-public-order true
+  :cache-admission-requires-strictly-increasing-positive-eids true
+  :cache-hit-requires-validated-publication true
   :point-count-lookup-share-compatible-completed-denotation true
   :managed-cross-generation-reuse :complete-proof-required}
  :undefined-root-selected-evaluator :undefined}

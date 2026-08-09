@@ -13,6 +13,16 @@ module ExecutionContract {
     | AcyclicShortcutEvaluator
     | FixedPointEvaluator
 
+  datatype PublicResultOrder =
+    | NoPublicOrder
+    | CertifiedAcyclicEidOrder
+    | FixedPointLogicalOrder
+
+  datatype CompletedArtifactContract = CompletedArtifactContract(
+    version: nat,
+    publicOrder: PublicResultOrder
+  )
+
   function SelectedEvaluatorRoute(
     evaluation: EvaluationMode,
     certifiedRoute: CertifiedEvaluatorRoute
@@ -22,6 +32,53 @@ module ExecutionContract {
        certifiedRoute.AcyclicShortcutEvaluator?
     then FixedPointEvaluator
     else certifiedRoute
+  }
+
+  function SelectedPublicResultOrder(
+    evaluation: EvaluationMode,
+    certifiedRoute: CertifiedEvaluatorRoute
+  ): PublicResultOrder
+  {
+    if certifiedRoute.UndefinedEvaluator?
+    then NoPublicOrder
+    else if certifiedRoute.AcyclicShortcutEvaluator?
+      then CertifiedAcyclicEidOrder
+      else FixedPointLogicalOrder
+  }
+
+  function CompletedArtifactContractFor(
+    certifiedRoute: CertifiedEvaluatorRoute
+  ): CompletedArtifactContract
+    requires !certifiedRoute.UndefinedEvaluator?
+  {
+    CompletedArtifactContract(
+      5,
+      SelectedPublicResultOrder(CompleteDenotation, certifiedRoute)
+    )
+  }
+
+  predicate StrictlyIncreasingPositiveEids(values: seq<nat>)
+  {
+    (forall i :: 0 <= i < |values| ==> values[i] > 0) &&
+    (forall i, j :: 0 <= i < j < |values| ==> values[i] < values[j])
+  }
+
+  predicate UniquePositiveLogicalEids(values: seq<nat>)
+  {
+    (forall i :: 0 <= i < |values| ==> values[i] > 0) &&
+    (forall i, j :: 0 <= i < j < |values| ==> values[i] != values[j])
+  }
+
+  predicate ValidCompletedArtifact(
+    contract: CompletedArtifactContract,
+    values: seq<nat>
+  )
+  {
+    contract.version == 5 &&
+    if contract.publicOrder.CertifiedAcyclicEidOrder?
+    then StrictlyIncreasingPositiveEids(values)
+    else contract.publicOrder.FixedPointLogicalOrder? &&
+         UniquePositiveLogicalEids(values)
   }
 
   lemma DemandPreservesCertifiedEvaluatorRoute(
@@ -49,6 +106,40 @@ module ExecutionContract {
               evaluation,
               UndefinedEvaluator
             ).UndefinedEvaluator?
+  {
+  }
+
+  lemma AcyclicCompletionPreservesCertifiedPublicOrder()
+    ensures SelectedEvaluatorRoute(
+              CompleteDenotation,
+              AcyclicShortcutEvaluator
+            ).FixedPointEvaluator?
+    ensures SelectedPublicResultOrder(
+              CompleteDenotation,
+              AcyclicShortcutEvaluator
+            ).CertifiedAcyclicEidOrder?
+    ensures SelectedPublicResultOrder(
+              Demand,
+              AcyclicShortcutEvaluator
+            ) == SelectedPublicResultOrder(
+                   CompleteDenotation,
+                   AcyclicShortcutEvaluator
+                 )
+    ensures CompletedArtifactContractFor(
+              AcyclicShortcutEvaluator
+            ).version == 5
+    ensures CompletedArtifactContractFor(
+              AcyclicShortcutEvaluator
+            ).publicOrder.CertifiedAcyclicEidOrder?
+  {
+  }
+
+  lemma ValidAcyclicCompletedArtifactIsStrictlyOrdered(values: seq<nat>)
+    requires ValidCompletedArtifact(
+               CompletedArtifactContractFor(AcyclicShortcutEvaluator),
+               values
+             )
+    ensures StrictlyIncreasingPositiveEids(values)
   {
   }
 

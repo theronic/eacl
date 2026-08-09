@@ -2955,20 +2955,47 @@
       (:max-queued-work *recursive-traversal-limits*)}}
     continuation)))
 
-(def ^:private recursive-denotation-version 4) ; v4: generated logical order
+(def ^:private recursive-denotation-version 5) ; v5: route-stable public order
 
-(defn- valid-recursive-denotation?
-  "Completed generated denotation: a vector of unique positive EIDs in the
-  versioned logical emission order. Every cache read rechecks the artifact;
-  sorting would violate the public recursive cursor ABI."
-  [value]
-  (and (vector? value)
-       (every? #(and (integer? %) (pos? %)) value)
-       (= (count value) (count (set value)))))
+(defn- completed-denotation-public-order
+  [certified-route]
+  (case certified-route
+    :acyclic :certified-acyclic-eid-order
+    :recursive :fixed-point-logical-order
+    (routing-cache-error!
+     "A completed denotation requires a defined certified route."
+     {:certified-route certified-route})))
+
+(defn- valid-completed-denotation?
+  "Validates the immutable order-bearing artifact before cache publication."
+  [public-order value]
+  (and
+   (vector? value)
+   (every? #(and (integer? %) (pos? %)) value)
+   (= (count value) (count (set value)))
+   (case public-order
+     :certified-acyclic-eid-order
+     (or (< (count value) 2)
+         (every? true? (map < value (rest value))))
+
+     :fixed-point-logical-order true
+     false)))
 
 (defn- recursive-denotation-weight
   [value]
   (+ 256 (* 24 (count value))))
+
+(defn- canonicalize-completed-denotation
+  "Preserves the public order of the root's certified demand route.
+
+  Recursive roots expose generated logical order. Certified acyclic roots
+  expose ascending EID order in both demand and complete evaluation, even
+  though completion itself is produced by the generated fixed-point machine."
+  [public-order values]
+  (let [values (vec values)]
+    (if (= :certified-acyclic-eid-order public-order)
+      (vec (sort values))
+      values)))
 
 (defn- permission-denotation-identity
   "Certified indexed identity of one permission root's incoming rule bodies.
@@ -2983,7 +3010,7 @@
   (:root-denotation-identity (recursive-plan db root-node)))
 
 (defn- recursive-denotation-key
-  [db direction root-node anchor-type anchor-eid result-type]
+  [db direction root-node anchor-type anchor-eid result-type public-order]
   (inc-shape-stat! :denotation-key-builds)
   [denotation-key-version
    :permission-fixed-point
@@ -2993,6 +3020,7 @@
    anchor-type
    anchor-eid
    result-type
+   public-order
    *recursive-traversal-limits*])
 
 (defn- recursive-denotation-dependencies
@@ -3001,13 +3029,13 @@
   (permission-relationship-eids db (first root-node) (second root-node)))
 
 (defn- record-permission-denotation-hit!
-  [db root-node]
-  (if (traversal-permission? db (first root-node) (second root-node))
-    (subproblem/record-recursive-component-hit!)
-    (subproblem/record-acyclic-denotation-hit!)))
+  [public-order]
+  (if (= :certified-acyclic-eid-order public-order)
+    (subproblem/record-acyclic-denotation-hit!)
+    (subproblem/record-recursive-component-hit!)))
 
 (defn- complete-generated-forward-denotation
-  [db subject-type subject-eid root-node result-type]
+  [db subject-type subject-eid root-node result-type public-order]
   (let [result
         (generated-forward-result
          db
@@ -3025,10 +3053,10 @@
        {:eacl/error :eacl.recursive-traversal/invalid-generated-outcome
         :direction :forward
         :outcome-status :incomplete-denotation}))
-    (vec (:items result))))
+    (canonicalize-completed-denotation public-order (:items result))))
 
 (defn- resolve-forward-denotation
-  [db subject-type subject-eid root-node result-type]
+  [db subject-type subject-eid root-node result-type public-order]
   (if-not subproblem/*store*
     ;; No store: key construction would compile and certify the plan and
     ;; walk the dependency closure purely to build keys no cache can use
@@ -3036,35 +3064,37 @@
     ;; with a nil store computes uncached, and the :cached? gate meant
     ;; the hit recorder never fired on this branch.
     (complete-generated-forward-denotation
-     db subject-type subject-eid root-node result-type)
+     db subject-type subject-eid root-node result-type public-order)
     (let [key
           (recursive-denotation-key
-           db :forward root-node subject-type subject-eid result-type)
+           db :forward root-node subject-type subject-eid result-type
+           public-order)
           resolved
           (subproblem/resolve-layered-bound!
            :denotation
            key
-           {:valid? valid-recursive-denotation?
+           {:valid? #(valid-completed-denotation? public-order %)
             :weight-fn recursive-denotation-weight}
            (recursive-denotation-dependencies db root-node)
            #(complete-generated-forward-denotation
-             db subject-type subject-eid root-node result-type))]
+             db subject-type subject-eid root-node result-type public-order))]
       (when (:cached? resolved)
-        (record-permission-denotation-hit! db root-node))
+        (record-permission-denotation-hit! public-order))
       (:value resolved))))
 
 (defn- lookup-forward-denotation
-  [db subject-type subject-eid root-node result-type]
+  [db subject-type subject-eid root-node result-type public-order]
   (when subproblem/*store*
     (when-let [resolved
                (subproblem/lookup-layered-bound!
                 :denotation
                 (recursive-denotation-key
-                 db :forward root-node subject-type subject-eid result-type)
-                {:valid? valid-recursive-denotation?
+                 db :forward root-node subject-type subject-eid result-type
+                 public-order)
+                {:valid? #(valid-completed-denotation? public-order %)
                  :weight-fn recursive-denotation-weight}
                 (recursive-denotation-dependencies db root-node))]
-      (record-permission-denotation-hit! db root-node)
+      (record-permission-denotation-hit! public-order)
       (:value resolved))))
 
 (declare valid-cursor-eid?)
@@ -3157,11 +3187,88 @@
        {:eacl/error :eacl.pagination/invalid-cursor
         :result-eid (:result-eid bound)}))))
 
-(defn- denotation-member?
-  "Membership in the generated logical denotation. Order is deliberately not
-  numerical, so binary search would be unsound."
-  [values eid]
-  (boolean (some #(= eid %) values)))
+(defn- sorted-eid-bound-index
+  "Binary-searches a strictly ascending completed acyclic denotation.
+
+  `after-bound?` selects the first EID strictly greater than the boundary;
+  otherwise this returns the first EID greater than or equal to it."
+  [values bound-eid after-bound?]
+  (loop [low 0
+         high (count values)]
+    (if (< low high)
+      (let [middle (quot (+ low high) 2)
+            middle-eid (nth values middle)
+            before-result?
+            (if after-bound?
+              (<= middle-eid bound-eid)
+              (< middle-eid bound-eid))]
+        (if before-result?
+          (recur (inc middle) high)
+          (recur low middle)))
+      low)))
+
+(defn- complete-acyclic-page
+  "Slices a fixed-point-completed acyclic denotation without changing the
+  acyclic route's public EID order or cursor ABI."
+  [values result-type direction size bound]
+  (validate-lookup-eid-bound! bound)
+  (let [values (vec values)
+        value-count (count values)
+        bound-eid (:result-eid bound)
+        realized
+        (case direction
+          :asc
+          (let [start
+                (if bound
+                  (sorted-eid-bound-index values bound-eid true)
+                  0)]
+            (subvec values
+                    start
+                    (min value-count (+ start size 1))))
+
+          :desc
+          (let [end
+                (if bound
+                  (sorted-eid-bound-index values bound-eid false)
+                  value-count)
+                start (max 0 (- end (inc size)))]
+            (vec (reverse (subvec values start end)))))
+        page-decision
+        (verified/decide
+         subproblem/*decision-kernel*
+         :acyclic-page
+         {:direction direction
+          :realized-eids realized
+          :size size
+          :bound? (boolean bound)})
+        scan-order
+        (vec (take (:take-count page-decision) realized))
+        page-eids
+        (if (:reverse? page-decision)
+          (vec (reverse scan-order))
+          scan-order)]
+    (page-response
+     {:items (lookup-items result-type page-eids)
+      :has-next? (:has-next? page-decision)
+      :has-previous? (:has-previous? page-decision)})))
+
+(defn- completed-denotation-member?
+  "Uses the artifact's certified public order without imposing one order on
+  every route. Acyclic completion is sorted and supports binary search;
+  recursive completion preserves generated logical order and uses equality."
+  [public-order values target-eid]
+  (case public-order
+    :certified-acyclic-eid-order
+    (and
+     (integer? target-eid)
+     (let [index (sorted-eid-bound-index values target-eid false)]
+       (and (< index (count values))
+            (= target-eid (nth values index)))))
+
+    :fixed-point-logical-order
+    (boolean (some #(= target-eid %) values))
+
+    false))
 
 (defn- continue-probe-to-closure
   "Extends a bounded probe's machine state to the complete fixed point
@@ -3558,16 +3665,18 @@
             (let [values
                   (if subproblem/*store*
                     (or (lookup-forward-denotation
-                         db subject-type subject-eid root-node result-type)
+                         db subject-type subject-eid root-node result-type
+                         :fixed-point-logical-order)
                         (resolve-forward-denotation
-                         db subject-type subject-eid root-node result-type))
+                         db subject-type subject-eid root-node result-type
+                         :fixed-point-logical-order))
                     (probe-then-continue-forward
                      db subject-type subject-eid root-node result-type size))]
               (complete-logical-page
                values :forward result-type direction size bound))))))))
 
 (defn- complete-generated-reverse-denotation
-  [db resource-type resource-eid root-node subject-type]
+  [db resource-type resource-eid root-node subject-type public-order]
   (let [result
         (generated-reverse-result
          db
@@ -3586,42 +3695,45 @@
         :direction :reverse
         :outcome-status :incomplete-denotation
         :resource-type resource-type}))
-    (vec (:items result))))
+    (canonicalize-completed-denotation public-order (:items result))))
 
 (defn- resolve-reverse-denotation
-  [db resource-type resource-eid root-node subject-type]
+  [db resource-type resource-eid root-node subject-type public-order]
   (if-not subproblem/*store*
     ;; Mirror of resolve-forward-denotation's nil-store fast path.
     (complete-generated-reverse-denotation
-     db resource-type resource-eid root-node subject-type)
+     db resource-type resource-eid root-node subject-type public-order)
     (let [key
           (recursive-denotation-key
-           db :reverse root-node resource-type resource-eid subject-type)
+           db :reverse root-node resource-type resource-eid subject-type
+           public-order)
           resolved
           (subproblem/resolve-layered-bound!
            :denotation
            key
-           {:valid? valid-recursive-denotation?
+           {:valid? #(valid-completed-denotation? public-order %)
             :weight-fn recursive-denotation-weight}
            (recursive-denotation-dependencies db root-node)
            #(complete-generated-reverse-denotation
-             db resource-type resource-eid root-node subject-type))]
+             db resource-type resource-eid root-node subject-type
+             public-order))]
       (when (:cached? resolved)
-        (record-permission-denotation-hit! db root-node))
+        (record-permission-denotation-hit! public-order))
       (:value resolved))))
 
 (defn- lookup-reverse-denotation
-  [db resource-type resource-eid root-node subject-type]
+  [db resource-type resource-eid root-node subject-type public-order]
   (when subproblem/*store*
     (when-let [resolved
                (subproblem/lookup-layered-bound!
                 :denotation
                 (recursive-denotation-key
-                 db :reverse root-node resource-type resource-eid subject-type)
-                {:valid? valid-recursive-denotation?
+                 db :reverse root-node resource-type resource-eid subject-type
+                 public-order)
+                {:valid? #(valid-completed-denotation? public-order %)
                  :weight-fn recursive-denotation-weight}
                 (recursive-denotation-dependencies db root-node))]
-      (record-permission-denotation-hit! db root-node)
+      (record-permission-denotation-hit! public-order)
       (:value resolved))))
 
 (defn- recursive-reverse-page
@@ -3664,9 +3776,11 @@
             (let [values
                   (if subproblem/*store*
                     (or (lookup-reverse-denotation
-                         db resource-type resource-eid root-node subject-type)
+                         db resource-type resource-eid root-node subject-type
+                         :fixed-point-logical-order)
                         (resolve-reverse-denotation
-                         db resource-type resource-eid root-node subject-type))
+                         db resource-type resource-eid root-node subject-type
+                         :fixed-point-logical-order))
                     (probe-then-continue-reverse
                      db resource-type resource-eid root-node subject-type size))]
               (complete-logical-page
@@ -3679,11 +3793,13 @@
 
   Demand mode is target-anchored regardless of cache state. Explicit complete
   mode exhausts a compatible forward denotation before membership testing."
-  [db subject-type subject-eid root-node resource-type resource-eid]
+  [db subject-type subject-eid root-node resource-type resource-eid
+   public-order]
   (if (= :complete-denotation *evaluation-mode*)
-    (denotation-member?
+    (completed-denotation-member?
+     public-order
      (resolve-forward-denotation
-      db subject-type subject-eid root-node resource-type)
+      db subject-type subject-eid root-node resource-type public-order)
      resource-eid)
     (let [plan (recursive-plan db root-node)
           reverse-result
@@ -3750,16 +3866,18 @@
              (permission-root-defined?
               db resource-type permission))]
     (if defined-root?
-      (let [route
-            (evaluation-route
-             ;; A bound schema cache carries the generated acyclicity
-             ;; certificate. Without that binding, use the generated
-             ;; fixed-point authority for the point check.
-             (if (and (derived-cache-active?)
-                      (not (traversal-permission?
-                            db resource-type permission)))
-               :acyclic
-               :recursive))]
+      (let [certified-route
+            (if (= :complete-denotation *evaluation-mode*)
+              (enumeration-route db resource-type permission)
+              ;; A bound schema cache carries the generated acyclicity
+              ;; certificate. Without that binding, use the generated
+              ;; fixed-point authority for the demand point check.
+              (if (and (derived-cache-active?)
+                       (not (traversal-permission?
+                             db resource-type permission)))
+                :acyclic
+                :recursive))
+            route (evaluation-route certified-route)]
         (case route
           :acyclic
           (binding [*acyclic-route?* true
@@ -3778,7 +3896,8 @@
           (recursive-can?
            db subject-type subject-eid
            (permission-query-node resource-type permission)
-           resource-type resource-eid)))
+           resource-type resource-eid
+           (completed-denotation-public-order certified-route))))
       false)))
 
 ;; --- Certified acyclic enumeration -----------------------------------------
@@ -4443,19 +4562,38 @@
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
-         route
-         (evaluation-route
-          (enumeration-route
-           db (:resource/type query) (:permission query)))]
+         certified-route
+         (enumeration-route
+          db (:resource/type query) (:permission query))
+         route (evaluation-route certified-route)]
      (case route
        :recursive
-       (recursive-forward-page db query cache)
+       (if (= :acyclic certified-route)
+         (let [{:keys [direction size bound]}
+               (normalize-page-request query)
+               {:keys [subject permission]} query
+               subject-type (:type subject)
+               subject-eid (object-eid db (:id subject))
+               result-type (:resource/type query)
+               root-node (permission-query-node result-type permission)
+               values
+               (if subject-eid
+                 (resolve-forward-denotation
+                  db subject-type subject-eid root-node result-type
+                  (completed-denotation-public-order certified-route))
+                 [])]
+           (complete-acyclic-page
+            values result-type direction size bound))
+         (recursive-forward-page db query cache))
 
        :acyclic
        (binding [*acyclic-route?* true
                  *inactive-recursive-cycle-guards*
                  (inactive-recursive-cycle-guard-keys
-                  db (:resource/type query) (:permission query) route)]
+                  db
+                  (:resource/type query)
+                  (:permission query)
+                  certified-route)]
          (add-acyclic-work! :routed-acyclic 1)
          (acyclic-lookup
           db forward-acyclic-direction query cache))
@@ -4487,13 +4625,30 @@
                    :filter :subject/relation}))
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
-         route
-         (evaluation-route
-          (enumeration-route
-           db (:type (:resource query)) (:permission query)))]
+         certified-route
+         (enumeration-route
+          db (:type (:resource query)) (:permission query))
+         route (evaluation-route certified-route)]
      (case route
        :recursive
-       (recursive-reverse-page db query cache)
+       (if (= :acyclic certified-route)
+         (let [{:keys [direction size bound]}
+               (normalize-page-request query)
+               {:keys [resource permission]} query
+               resource-type (:type resource)
+               resource-eid (object-eid db (:id resource))
+               subject-type (:subject/type query)
+               root-node
+               (permission-query-node resource-type permission)
+               values
+               (if resource-eid
+                 (resolve-reverse-denotation
+                  db resource-type resource-eid root-node subject-type
+                  (completed-denotation-public-order certified-route))
+                 [])]
+           (complete-acyclic-page
+            values subject-type direction size bound))
+         (recursive-reverse-page db query cache))
 
        :acyclic
        (binding [*acyclic-route?* true
@@ -4502,7 +4657,7 @@
                   db
                   (:type (:resource query))
                   (:permission query)
-                  route)]
+                  certified-route)]
          (add-acyclic-work! :routed-acyclic 1)
          (acyclic-lookup
           db reverse-acyclic-direction query cache))
@@ -4556,10 +4711,10 @@
   [db {:as query}]
   (reject-count-pagination-keys! "count-resources" query)
   (let [limit (query-count-limit query)
-        route
-        (evaluation-route
-         (enumeration-route
-          db (:resource/type query) (:permission query)))]
+        certified-route
+        (enumeration-route
+         db (:resource/type query) (:permission query))
+        route (evaluation-route certified-route)]
     (count-response
      (case route
        :undefined
@@ -4584,7 +4739,8 @@
            (if (= :complete-denotation *evaluation-mode*)
              (count-denotation
               (resolve-forward-denotation
-               db (:type subject) subject-eid root-node result-type)
+               db (:type subject) subject-eid root-node result-type
+               (completed-denotation-public-order certified-route))
               limit)
              ;; Cache-free counts keep the bounded generated renders so
              ;; :count-limit truncation still stops the machine early.
@@ -4610,10 +4766,10 @@
                  {:eacl/error :eacl.pagination/unsupported-filter
                   :filter :subject/relation}))
   (let [limit (query-count-limit query)
-        route
-        (evaluation-route
-         (enumeration-route
-          db (:type (:resource query)) (:permission query)))]
+        certified-route
+        (enumeration-route
+         db (:type (:resource query)) (:permission query))
+        route (evaluation-route certified-route)]
     (count-response
      (case route
        :undefined
@@ -4641,7 +4797,8 @@
            (if (= :complete-denotation *evaluation-mode*)
              (count-denotation
               (resolve-reverse-denotation
-               db (:type resource) resource-eid root-node subject-type)
+               db (:type resource) resource-eid root-node subject-type
+               (completed-denotation-public-order certified-route))
               limit)
              (select-keys
               (generated-reverse-result
