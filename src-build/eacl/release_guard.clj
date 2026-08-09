@@ -2,10 +2,6 @@
   "Credential-free GitHub ref, version, and exact-check-run release guards."
   (:require [clojure.string :as string]))
 
-(def exceptional-ref
-  "refs/heads/codex/v8-demand-bounded-authorization")
-(def exceptional-version "8.0.0-SNAPSHOT")
-
 (def required-checks
   #{"generated-runtime"
     "test"
@@ -51,25 +47,6 @@
        context))
     (assert-branch-head! context)
     version))
-
-(defn exception-version
-  [{:keys [event-name ref ref-type supplied-version] :as context}]
-  (when-not (= "workflow_dispatch" event-name)
-    (reject! "The initial snapshot exception requires manual dispatch."
-             :eacl.release/invalid-event context))
-  (when-not (= "branch" ref-type)
-    (reject! "The snapshot exception requires a branch ref."
-             :eacl.release/invalid-ref-type context))
-  (when-not (= exceptional-ref ref)
-    (reject! "The snapshot exception is restricted to one exact branch."
-             :eacl.release/invalid-exception-ref context))
-  (when-not (= exceptional-version supplied-version)
-    (reject!
-     "The snapshot exception accepts only 8.0.0-SNAPSHOT."
-     :eacl.release/invalid-exception-version
-     context))
-  (assert-branch-head! context)
-  exceptional-version)
 
 (defn evaluate-checks
   "Return :ready or :pending; reject ambiguity, wrong SHA, or bad conclusions."
@@ -120,9 +97,7 @@
    :ref-type (System/getenv "GITHUB_REF_TYPE")
    :sha (System/getenv "GITHUB_SHA")
    :branch-sha (System/getenv "EACL_BRANCH_SHA")
-   :supplied-version
-   (or (System/getenv "INPUT_VERSION")
-       (System/getenv "EACL_VERSION"))})
+   :supplied-version (System/getenv "EACL_VERSION")})
 
 (defn- read-check-runs
   [path]
@@ -133,7 +108,6 @@
   [& [operation argument final-argument]]
   (case operation
     "ordinary" (println (ordinary-version (environment-context)))
-    "exception" (println (exception-version (environment-context)))
     "checks"
     (println
      (name

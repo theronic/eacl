@@ -24,22 +24,6 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (guard/ordinary-version context)))))
 
-(deftest snapshot-exception-is-exact
-  (let [context
-        {:event-name "workflow_dispatch"
-         :ref guard/exceptional-ref
-         :ref-type "branch"
-         :sha "snapshot-sha"
-         :branch-sha "snapshot-sha"
-         :supplied-version "8.0.0-SNAPSHOT"}]
-    (is (= "8.0.0-SNAPSHOT" (guard/exception-version context)))
-    (doseq [changed [(assoc context :supplied-version "8.0-SNAPSHOT")
-                     (assoc context :ref "refs/heads/main")
-                     (assoc context :event-name "push")
-                     (assoc context :branch-sha "different")]]
-      (is (thrown? clojure.lang.ExceptionInfo
-                   (guard/exception-version changed))))))
-
 (defn- successful-checks
   [sha]
   (mapv

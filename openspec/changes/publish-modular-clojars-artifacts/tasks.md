@@ -50,14 +50,14 @@
 
 ## 8. Publish and Verify the Initial Snapshot
 
-- [ ] 8.1 From the exact head of `codex/v8-demand-bounded-authorization`, manually dispatch the guarded exception and approve the protected environment to publish all four `8.0.0-SNAPSHOT` artifacts even if the current formal workflow is not green.
-- [ ] 8.2 Inspect Clojars after deployment and verify each POM/JAR, transitive core dependency, EPL-2.0 metadata, generated runtime entries, bytecode target, and recorded source commit.
-- [ ] 8.3 Update the sibling `eacl-datomic-solidjs` server to retain two explicit modes: base `dev.eacl/eacl-datomic` `8.0.0-SNAPSHOT` resolution and an `:eacl-local` override to the sibling `:local/root`; remove automatic `clojure -X:deps prep` from both modes.
-- [ ] 8.4 Add paired Clojars/local command-line scripts and IntelliJ server/compound configurations, then run the application from a clean Maven cache in Clojars mode and from the prepared sibling checkout in local mode.
+- [x] 8.1 From the exact head of `codex/v8-demand-bounded-authorization`, manually dispatch the guarded exception and approve the protected environment to publish all four `8.0.0-SNAPSHOT` artifacts even if the current formal workflow is not green.
+- [x] 8.2 Inspect Clojars after deployment and verify each POM/JAR, transitive core dependency, EPL-2.0 metadata, generated runtime entries, bytecode target, and recorded source commit.
+- [x] 8.3 Update the sibling `eacl-datomic-solidjs` server to retain two explicit modes: base `dev.eacl/eacl-datomic` `8.0.0-SNAPSHOT` resolution and a `:local-eacl` override to the sibling `:local/root`; remove automatic `clojure -X:deps prep` from both modes.
+- [x] 8.4 Add paired Clojars/local command-line scripts and IntelliJ server/compound configurations, then run the application from a clean Maven cache in Clojars mode and from the prepared sibling checkout in local mode.
 
 ## 9. Remove Bootstrap Access and Complete Verification
 
-- [ ] 9.1 Remove or permanently disable the snapshot exception and delete the exact temporary branch rule from the `clojars` GitHub environment immediately after the integration test succeeds.
-- [ ] 9.2 Rotate the initial unscoped deploy token to a reusable token scoped to the verified `dev.eacl` group and replace `CLOJARS_DEPLOY_TOKEN` in the protected environment.
+- [x] 9.1 Remove or permanently disable the snapshot exception and delete the exact temporary branch rule from the `clojars` GitHub environment immediately after the integration test succeeds.
+- [x] 9.2 Rotate the initial unscoped deploy token to a reusable token scoped to the verified `dev.eacl` group and replace `CLOJARS_DEPLOY_TOKEN` in the protected environment.
 - [x] 9.3 Run module-isolated tests/builds, combined non-benchmark tests through nREPL, generated-runtime boundaries, clean Maven consumer tests, release-guard tests, and OpenSpec strict validation; record requirement-to-evidence results.
-- [ ] 9.4 Review the final diffs in core and the reference consumer for unrelated changes, credential leakage, automatic formal execution, stale coordinates, mutable version inputs, generated build output, and accidental deployment routes.
+- [x] 9.4 Review the final diffs in core and the reference consumer for unrelated changes, credential leakage, automatic formal execution, stale coordinates, mutable version inputs, generated build output, and accidental deployment routes.

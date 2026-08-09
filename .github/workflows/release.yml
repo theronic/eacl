@@ -4,13 +4,6 @@ on:
   push:
     branches:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Exact exceptional snapshot version
-        required: true
-        type: string
-        default: 8.0.0-SNAPSHOT
 
 permissions:
   contents: read
@@ -43,20 +36,13 @@ jobs:
 
       - name: Derive and guard release version
         id: guard
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
         run: |
           branch_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
           test -n "$branch_sha"
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            version="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
-          else
-            version="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard exception)"
-          fi
+          version="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   required_checks:
-    if: github.event_name == 'push'
     needs: provenance
     runs-on: ubuntu-latest
     timeout-minutes: 95
@@ -101,8 +87,7 @@ jobs:
     if: >-
       always() &&
       needs.provenance.result == 'success' &&
-      (needs.required_checks.result == 'success' ||
-       needs.required_checks.result == 'skipped')
+      needs.required_checks.result == 'success'
     needs:
       - provenance
       - required_checks
@@ -133,16 +118,10 @@ jobs:
           node-version: '22'
 
       - name: Repeat release provenance guard
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
         run: |
           branch_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
           test -n "$branch_sha"
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            actual="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
-          else
-            actual="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard exception)"
-          fi
+          actual="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
           test "$actual" = "${{ needs.provenance.outputs.version }}"
 
       - name: Cache checksum-locked formal tools and JavaScript dependencies

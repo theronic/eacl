@@ -92,7 +92,8 @@ caller already handles for expiry.
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > The current version is the EACL 8.0 release candidate.
-> The first Clojars build will be `8.0.0-SNAPSHOT`; until all four artifacts are visible on Clojars, use one of the source dependency forms below.
+> The four `8.0.0-SNAPSHOT` artifacts are available from Clojars under the
+> verified `dev.eacl` group.
 
 ## Modules
 
@@ -1168,36 +1169,28 @@ never publish. The gate accepts only the explicit Tests and Formal verification
 checks for the exact release commit and rechecks provenance in the protected
 deployment job.
 
-The one bootstrap exception is deliberately narrower: a manual dispatch from
-the exact head of `codex/v8-demand-bounded-authorization` may publish only
-`8.0.0-SNAPSHOT`. It bypasses only the ordinary green-check condition. Remove
-the exception and its environment branch rule as soon as the reference
-consumer succeeds.
+The initial `8.0.0-SNAPSHOT` integration release was published from commit
+`381bfe07ec2de097a654ed7ea5c3127dce90b9a1`. Its one-time manual-dispatch path
+has been removed; only the ordinary green `vMAJOR.MINOR.PATCH` path remains.
 
-Before the first deployment:
+Repository publication configuration:
 
 - Keep the apex `eacl.dev` TXT record `clojars theronic` in authoritative DNS.
   It verifies the reverse-domain Maven group `dev.eacl`; Clojars user
   `theronic` has administrator and all-project deploy access to that group.
-- In the GitHub `clojars` environment, allow selected branches `v*` and,
-  temporarily, exact branch `codex/v8-demand-bounded-authorization`. Remove
-  `main` and every tag rule. Add a required reviewer and disable administrator
-  bypass when the repository plan supports those controls.
+- In the GitHub `clojars` environment, allow only selected branch pattern
+  `v*`, with no `main`, arbitrary-branch, or tag rule. Keep the required
+  reviewer and keep administrator bypass disabled.
 - Set `CLOJARS_USERNAME` to the Clojars username `theronic`, not the sign-in
-  email. Set `CLOJARS_DEPLOY_TOKEN` initially to a reusable, unscoped deploy
-  token because the four projects do not yet exist. No additional
-  long-lived GitHub secret is required; the workflow's built-in token has only
-  read access.
-- After the bootstrap release, replace the initial token with a reusable token
-  scoped to the verified `dev.eacl` group.
+  email. Set `CLOJARS_DEPLOY_TOKEN` to a reusable token scoped to
+  `dev.eacl/*`. No additional long-lived GitHub secret is required; the
+  workflow's built-in token has only read access.
 
 All four artifacts are built, audited, clean-installed, and smoke-tested before
 the first upload; deployment is serialized in core, Datomic, Datahike,
-DataScript order. If validation fails, nothing is uploaded. If a snapshot
-upload partially succeeds, inspect Clojars, retain the same version and source
-commit, rerun all local validation, and retry only under the same guarded
-provenance. Never overwrite a partial immutable release: correct it with a new
-patch version.
+DataScript order. If validation fails, nothing is uploaded. Never overwrite a
+partial immutable release: inspect Clojars, correct the problem, and publish a
+new patch version from a new guarded `vMAJOR.MINOR.PATCH` branch.
 
 ## How to Run All Tests
 
