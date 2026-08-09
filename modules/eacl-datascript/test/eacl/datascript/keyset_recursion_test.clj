@@ -1,9 +1,10 @@
 (ns eacl.datascript.keyset-recursion-test
   "Current-basis recursive cursor regression suite.
 
-  DataScript never reconstructs history. Proof-equivalent current snapshots
-  may continue, while relevant writes, revoked boundaries, and route changes
-  reject the cursor rather than creating a hybrid walk."
+  DataScript never reconstructs history. Default cursors bind the exact current
+  basis. Explicit managed mutation-stamp cursors may continue on a
+  proof-equivalent current snapshot, while relevant writes, revoked boundaries,
+  and route changes reject the cursor rather than creating a hybrid walk."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
@@ -13,14 +14,16 @@
 
 (def ^:private config {:shape :star :accounts 60})
 
-(defn- seed! []
-  (let [conn (dsc/create-conn)
-        client (dsc/make-client conn {})]
-    (eacl/write-schema! client (rf/schema-for config))
-    (ds/transact! conn (vec (rf/object-transactions config)))
-    (doseq [batch (rf/relationship-batches config)]
-      (eacl/create-relationships! client (vec batch)))
-    {:conn conn :client client}))
+(defn- seed!
+  ([] (seed! {}))
+  ([client-opts]
+   (let [conn (dsc/create-conn)
+         client (dsc/make-client conn client-opts)]
+     (eacl/write-schema! client (rf/schema-for config))
+     (ds/transact! conn (vec (rf/object-transactions config)))
+     (doseq [batch (rf/relationship-batches config)]
+       (eacl/create-relationships! client (vec batch)))
+     {:conn conn :client client})))
 
 (defn- page-ids [page]
   (mapv :id (:data page)))
@@ -69,8 +72,9 @@
     (assert-stale-proof!
      (error-data #(lookup client {:after (end-cursor page-1)})))))
 
-(deftest proof-equivalent-write-with-surviving-boundary-continues-test
-  (let [{:keys [client]} (seed!)
+(deftest managed-proof-equivalent-write-with-surviving-boundary-continues-test
+  (let [{:keys [client]}
+        (seed! {:coherence-authority :managed})
         page-1 (lookup client)
         _ (eacl/create-relationships!
            client
