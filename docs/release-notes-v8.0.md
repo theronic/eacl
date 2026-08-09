@@ -471,13 +471,22 @@ with 9,673 assertions, and the current injected-authority suite passed 170
 tests with 4,671 assertions while observing every required traversal
 operation.
 
-At the 16,384-result reference size the recorded median is 8,684 ns/result,
+At the 16,384-result reference size the recorded three-process median is
+5,335 ns/result,
 below the 15,000 ns/result ceiling. The advanced portable-kernel payload adds
-15,325 raw bytes and 3,412 Java-GZIP bytes over the empty runtime, within the
+15,335 raw bytes and 3,409 Java-GZIP bytes over the empty runtime, within the
 32 KiB raw / 8 KiB compressed budgets and more than an order of magnitude
 below the retired 591,497-byte generated browser IIFE. CI also rejects
 `BigNumber`, `EaclFormal`, and generated-adapter markers in the full production
 bundle.
+
+The final CI pass exposed a 15,068.85 ns/result run—0.46% beyond the absolute
+ceiling. The ceiling was not relaxed. Portable traversal now replaces its
+nested counter map once per logical queue/grant update instead of repeatedly
+rewriting the same persistent state path. On matched fresh local Node
+processes, the three-process median improved from 6,848 to 5,335 ns/result
+(ratio 0.779) with identical logical counters and full generated-oracle,
+DataScript, and injected-authority parity.
 
 This changes the trust posture: browser authorization is advisory and must be
 re-checked on the server. The portable kernel is strongly differentially

@@ -183,6 +183,35 @@
   :fixed-heap-host-latency-plus-explicit-backend-work-not-a-worst-case-wall-time-or-live-heap-theorem
   :status :passed}
 
+ :portable-cljs-counter-state-cutover
+ {:runtime {:node "22.23.1" :optimization :advanced}
+  :fixture :one-direct-relation-complete-denotation
+  :reference-size 16384
+  :source "modules/eacl/src/eacl/engine/portable_indexed.cljc"
+  :mechanism
+  :single-persistent-counter-map-replacement-per-logical-state-update
+  :unchanged
+  [:logical-counter-values
+   :queue-order
+   :grant-order
+   :stopping-rules
+   :public-results]
+  :before-fresh-process-p50-samples-ns-per-result
+  [6848.34545898437 6854.543029785158 6816.004455566404]
+  :after-fresh-process-p50-samples-ns-per-result
+  [5335.207641601558 5281.517028808594 5537.040710449221]
+  :before-three-process-median-p50-ns-per-result 6848.34545898437
+  :after-three-process-median-p50-ns-per-result 5335.207641601558
+  :median-ratio 0.7790506004048436
+  :absolute-ceiling-ns-per-result 15000.0
+  :semantic-parity
+  {:formal-oracle-cljs {:tests 45 :assertions 9971}
+   :full-datascript-cljs {:tests 172 :assertions 9673}
+   :injected-authority-cljs {:tests 170 :assertions 4671}}
+  :qualification
+  :host-runtime-measurement-with-deterministic-semantic-counters-unchanged
+  :status :passed}
+
  :explicit-completion-shared-subgraph-cache-benchmark
  {:backend :datascript
   :fixture

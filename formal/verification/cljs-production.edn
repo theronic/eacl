@@ -10,11 +10,16 @@
  {:runner "formal/smoke/cljs/eacl/formal/indexed_traversal_benchmark.cljs"
   :optimization :advanced
   :reference-size 16384
-  :observed-p50-ns-per-result 8208.6410522461
+  :observation-method :median-of-three-fresh-node-processes
+  :observed-reference-p50-samples-ns-per-result
+  [5335.207641601558 5281.517028808594 5537.040710449221]
+  :observed-p50-ns-per-result 5335.207641601558
   :maximum-p50-ns-per-result 15000.0
   :maximum-largest-to-smallest-normalized-p50-per-result-ratio 1.5
+  :observed-normalized-ratio-samples
+  [0.807352378313475 0.8040945847978802 0.8340738374124281]
   :observed-largest-to-smallest-normalized-p50-per-result-ratio
-  0.6162630329943262
+  0.807352378313475
   :status :passed}
  :bundle
  {:optimization :advanced
@@ -36,10 +41,10 @@
      :clean-output-directories true}
     :empty-runtime-bytes 97122
     :empty-runtime-gzip-bytes 21279
-    :portable-kernel-bytes 112447
-    :portable-kernel-gzip-bytes 24691
-    :incremental-engine-bytes 15325
-    :incremental-engine-gzip-bytes 3412}
+    :portable-kernel-bytes 112457
+    :portable-kernel-gzip-bytes 24688
+    :incremental-engine-bytes 15335
+    :incremental-engine-gzip-bytes 3409}
    {:environment
     {:source :github-actions-run-31285905988
      :os :ubuntu-22.04.5

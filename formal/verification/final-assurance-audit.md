@@ -230,9 +230,9 @@ The final pre-audit run on 2026-08-08 produced the following evidence:
 | Portable-authority-injected DataScript CLJS suite | 170 tests, 4,671 assertions, 0 failures/errors; 77 client constructions injected and every required portable authority operation observed |
 | Portable CLJS formal/oracle suite | 45 tests, 9,971 assertions, 0 failures/errors |
 | Portable CLJS full DataScript/core suite | 172 tests, 9,673 assertions, 0 failures/errors under `:advanced` |
-| Portable CLJS performance/payload | 8,684 ns/result at 16,384 (15,000 ceiling); 15,325 raw / 3,412 compressed incremental bytes |
+| Portable CLJS performance/payload | 5,335 ns/result three-process median at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
 | Heavy generated-only backend/performance suite | 17 tests, 4,058 assertions, 0 failures/errors |
-| Minimized counterexample replay | 67 tests / 18,429 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
+| Minimized counterexample replay | 67 tests / 18,431 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
 | Mutation control | 2 tests, 213 assertions, 0 failures/errors; all 93 registered mutants killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
 | Generated artifact size | browser bundle 592,279 bytes; Java classes/runtime 1,907,070 bytes; Java source 2,142,584 bytes; JavaScript/runtime 953,503 bytes; every ceiling passed |

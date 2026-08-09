@@ -137,3 +137,4 @@
 - [x] 13.5 Add pinned measured gates for latency, throughput, allocation, and retained memory with raw samples, environment/variance disclosure, absolute ceilings, baseline ratios, and a deterministic rerun protocol.
 - [ ] 13.6 Bind the structural and performance evidence to the exact production artifact and source-closure digest in the implementation-conformance ledger and reproducible certification bundle.
 - [x] 13.7 Reuse the canonical completed acyclic vector for binary-search point membership while preserving linear equality membership for recursive logical-order artifacts.
+- [x] 13.8 Batch portable indexed-engine queue, grant, emission, and counter mutations into one persistent counter-map replacement per logical update; retain the 15,000 ns/result ceiling and prove unchanged logical counters, traversal order, stopping rules, and public results through the generated-oracle, full DataScript, and injected-authority CLJS suites.
