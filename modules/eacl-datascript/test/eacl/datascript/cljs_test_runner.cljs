@@ -3,6 +3,7 @@
             [cljs.test :as t]
             [eacl.backend.v8-test]
             [eacl.cache-test]
+            [eacl.core-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
@@ -16,8 +17,10 @@
             [eacl.formal.differential-runner-test]
             [eacl.formal.generators-test]
             [eacl.datascript.adapter-certification-test]
+            [eacl.datascript.cache-model-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
+            [eacl.datascript.enumeration-routing-test]
             [eacl.datascript.impl-test]
             [eacl.datascript.mutation-test]
             [eacl.datascript.storage-test]))
@@ -36,6 +39,7 @@
 (defn -main []
   (t/run-tests 'eacl.backend.v8-test
                'eacl.cache-test
+               'eacl.core-test
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test
@@ -49,8 +53,10 @@
                'eacl.formal.differential-runner-test
                'eacl.formal.generators-test
                'eacl.datascript.adapter-certification-test
+               'eacl.datascript.cache-model-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
+               'eacl.datascript.enumeration-routing-test
                'eacl.datascript.impl-test
                'eacl.datascript.mutation-test
                'eacl.datascript.storage-test))

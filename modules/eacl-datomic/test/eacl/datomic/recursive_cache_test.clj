@@ -1,4 +1,15 @@
 (ns eacl.datomic.recursive-cache-test
+  "Recursive pagination over KEYSET cursors on the canonical sorted denotation.
+
+  The first store-bound page resolves and publishes the complete sorted
+  denotation (subproblem :denotation tier). Every later page in the same
+  validity scope is a binary-search slice of that vector: zero backend work
+  (:stream-fills 0, :derived-grants 0 in *recursive-traversal-stats*). Page
+  cursors are {:kind :lookup-eid :result-eid <eid>}, the same kind as the
+  acyclic route, and enumeration order is ascending internal eid. The old
+  per-cursor continuation store, recursive page cache and ordinal rebase are
+  gone; their counters (:continuation-hits, :continuation-misses,
+  :recursive-page-hits) never fire on this route."
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
@@ -7,13 +18,15 @@
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.verified-kernel :as verified]))
 
 (def ^:private recursive-schema
   "definition user {}
    definition account {
      relation parent: account
      relation reader: user
+     relation auditor: user
      permission read = reader + parent->read
    }")
 
@@ -50,6 +63,9 @@
 (defn- page-start-cursor [page]
   (get-in page [:page-info :start-cursor]))
 
+(defn- stat [stats k]
+  (get @stats k 0))
+
 (defn- collect-forward
   [client query]
   (loop [after nil
@@ -78,7 +94,7 @@
         (recur (page-end-cursor page) data')
         data'))))
 
-(deftest forward-recursive-pagination-resumes-retries-and-replays-misses-test
+(deftest forward-recursive-pagination-resumes-retries-and-recomputes-misses-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-forward-cache"
           cached-client (core/make-client conn {:page-token-key token-key})
@@ -90,7 +106,9 @@
       (let [disabled-client (core/make-client conn {:page-token-key token-key
                                                     :cache cache/no-cache})
             alternate-client (core/make-client conn {:page-token-key token-key})
-            page1 (eacl/lookup-resources cached-client query)
+            page1-stats (atom {})
+            page1 (binding [idx/*recursive-traversal-stats* page1-stats]
+                    (eacl/lookup-resources cached-client query))
             cursor (page-end-cursor page1)
             replay-page1 (eacl/lookup-resources disabled-client query)
             hit-stats (atom {})
@@ -124,23 +142,30 @@
                (mapv :id (:data hit-page2))))
         (is (= (:data hit-page2) (:data miss-page2)))
         (is (= (:data hit-page2) (:data alternate-page2))
-            "an alternate cache replays the authenticated historical snapshot")
+            "a keyset cursor is portable: an alternate cache serves the same page")
         (is (= (:data hit-page2) (:data retry-page2))
-            "a cursor retry returns its immutable cached page")
+            "a cursor retry returns the same page")
         (is (= (:data page1) (:data previous-page)))
-        (is (= 1 (:continuation-hits @hit-stats))
-            "the originating client resumes its private proof-bound continuation")
-        (is (nil? (:continuation-hits @miss-stats)))
-        (is (= 1 (:continuation-misses @alternate-stats)))
+        (is (<= 30 (stat page1-stats :derived-grants))
+            "the first store-bound page resolves the complete denotation")
+        (is (zero? (stat hit-stats :stream-fills))
+            "a later page is a binary-search slice of the published denotation")
+        (is (zero? (stat hit-stats :derived-grants))
+            "denotation reuse re-derives nothing")
+        (is (pos? (stat miss-stats :derived-grants))
+            "a client without the denotation cache pays the closure again")
+        (is (pos? (stat alternate-stats :derived-grants))
+            "an alternate cache resolves its own denotation instead of trusting foreign state")
         (is (true? (:cached? retry-page2))
-            "a retry reuses the originating client's completed current page")
-        (is (nil? (:recursive-page-hits @retry-stats))
-            "a completed-page hit does not re-enter recursive traversal")
-        (is (= 1 (:recursive-page-hits @previous-stats))
-            "back navigation may reuse the same private proof-bound page")
-        (is (<= (:derived-grants @hit-stats)
-                (:derived-grants @miss-stats))
-            "private continuation reuse does no more traversal than replay")))))
+            "a retry reuses the originating client's completed answer")
+        (is (zero? (stat retry-stats :stream-fills))
+            "an answer hit does not re-enter recursive traversal")
+        (is (zero? (stat previous-stats :stream-fills))
+            "back navigation slices the same denotation with zero backend work")
+        (is (zero? (stat previous-stats :derived-grants)))
+        (is (pos? (get-in (core/cache-stats cached-client)
+                          [:subproblems :denotation-hits]))
+            "later pages register as denotation-tier hits")))))
 
 (deftest reverse-recursive-pagination-resumes-test
   (with-mem-conn [conn schema/v7-schema]
@@ -161,11 +186,13 @@
         (is (empty? (set/intersection
                      (set (map :id (:data page1)))
                      (set (map :id (:data page2))))))
-        (is (= 1 (:continuation-hits @stats)))
+        (is (zero? (stat stats :stream-fills))
+            "the reverse route also slices its published denotation")
+        (is (zero? (stat stats :derived-grants)))
         (let [all-subjects (collect-reverse client query)]
           (is (= 130 (count all-subjects)))
           (is (= 130 (count (set (map :id all-subjects))))
-              "reverse scans resume correctly across 64-EID chunks"))))))
+              "reverse scans resume correctly across page boundaries"))))))
 
 (deftest recursive-cursor-rebases-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
@@ -202,14 +229,20 @@
                   (eacl/lookup-resources replay-client
                                          (assoc query :after cursor))]]]
           (is (= expected (:data recovered))
-              "recover-current resumes after the authenticated result identity")
+              "a surviving denotation member resumes exclusively after itself")
           (is (= :rebased
                  (get-in recovered [:page-info :cursor-recovery]))))
         (is (= "new-live-account"
                (-> (collect-forward cached-client query) :data peek :id))
             "a new enumeration observes the relationship write")))))
 
-(deftest recursive-cursor-rebases-after-unrelated-basis-churn-test
+(deftest recursive-cursor-continues-after-unrelated-basis-churn-test
+  ;; Re-goldened for cursor-dependency-validity (was
+  ;; recursive-cursor-rebases-after-unrelated-basis-churn-test): continuation
+  ;; proofs are dependency-scoped — schema stamp plus the closure's relation
+  ;; stamps — so transactions touching nothing in the {reader, parent}
+  ;; closure leave the proof equal and the kernel decides :current instead of
+  ;; :rebase-current.
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -220,19 +253,37 @@
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn client 20 1)
+      @(d/transact conn [{:eacl/id "auditor-user"}])
       (let [page1 (eacl/lookup-resources client query)
             cursor (page-end-cursor page1)]
-        (doseq [n (range 20)]
+        ;; Twenty unrelated commits: bare entities plus EACL writes to the
+        ;; :auditor relation, which lies outside the query's dependency
+        ;; closure entirely.
+        (doseq [n (range 10)]
           @(d/transact conn [{:eacl/id (str "application-" n)}]))
+        (doseq [n (range 10)]
+          (eacl/create-relationship!
+           client
+           (->Relationship (spice-object :user "auditor-user")
+                           :auditor
+                           (spice-object :account (account-id n)))))
         (let [stats (atom {})
-              page2 (binding [idx/*recursive-traversal-stats* stats]
+              crossings (atom {})
+              page2 (binding [idx/*recursive-traversal-stats* stats
+                              verified/*kernel-crossing-stats* crossings]
                       (eacl/lookup-resources client (assoc query :after cursor)))]
           (is (= (mapv #(spice-object :account (account-id %))
                        (range 5 10))
                  (:data page2))
-              "rebasing recomputes current state and continues after the boundary")
-          (is (= :rebased
-                 (get-in page2 [:page-info :cursor-recovery])))
+              "the continuation resumes exclusively after the boundary")
+          (is (nil? (get-in page2 [:page-info :cursor-recovery]))
+              "unrelated churn is a continuation hit, not a recovery")
+          (is (pos? (get @crossings :cursor-continuation 0))
+              "the reuse is a verified kernel decision, not a bypass")
+          (is (zero? (stat stats :stream-fills))
+              "continuation reuse does zero backend stream work")
+          (is (zero? (stat stats :derived-grants))
+              "no fixed-point recomputation occurs")
           (is (nil? (:continuation-hits @stats)))
           (let [restart-stats (atom {})
                 restarted-page1
@@ -243,7 +294,7 @@
                 "the completed page is lifted by unchanged relation stamps")
             (is (zero? (get @restart-stats :derived-grants 0)))))))))
 
-(deftest recursive-pages-are-isolated-by-cache-namespace-test
+(deftest recursive-denotations-are-isolated-by-cache-namespace-test
   (with-mem-conn [conn schema/v7-schema]
     (let [store (cache/local-store)
           token-key "recursive-namespace-isolation"
@@ -251,8 +302,8 @@
           (core/make-client
            conn
            {:page-token-key token-key
-            ;; asserts on recursive-page-hits, so the answer cache must not
-            ;; short-circuit the engine before it records them
+            ;; asserts on engine work, so the answer cache must not
+            ;; short-circuit the engine before it can slice the denotation
             :cache {:store store
                     :namespace :tenant-a
                     :remember-answers false}})
@@ -268,23 +319,29 @@
               :cache {:store store
                       :namespace :tenant-b
                       :remember-answers false}})
-            page-a (eacl/lookup-resources client-a query)
+            a-stats (atom {})
+            page-a
+            (binding [idx/*recursive-traversal-stats* a-stats]
+              (eacl/lookup-resources client-a query))
             first-b-stats (atom {})
             page-b
             (binding [idx/*recursive-traversal-stats* first-b-stats]
               (eacl/lookup-resources client-b query))]
         (is (= (:data page-a) (:data page-b)))
-        (is (nil? (:recursive-page-hits @first-b-stats))
-            "tenant B cannot read tenant A's completed recursive page")
+        (is (pos? (stat a-stats :derived-grants))
+            "tenant A resolves its own denotation")
+        (is (pos? (stat first-b-stats :derived-grants))
+            "tenant B cannot reuse tenant A's denotation and pays its own closure")
         (is (zero? (cache/clear-namespace! store :tenant-a))
-            "no unauthenticated recursive page was retained")
+            "no recursive denotation state is retained in the shared namespaced store")
         (let [second-b-stats (atom {})
               page-b-again
               (binding [idx/*recursive-traversal-stats* second-b-stats]
                 (eacl/lookup-resources client-b query))]
           (is (= (:data page-b) (:data page-b-again)))
-          (is (= 1 (:recursive-page-hits @second-b-stats))
-              "tenant B reuses only its own client-private page"))))))
+          (is (zero? (stat second-b-stats :stream-fills))
+              "tenant B slices only its own client-private denotation")
+          (is (zero? (stat second-b-stats :derived-grants))))))))
 
 (deftest reverse-continuation-side-state-is-not-retained-test
   (with-mem-conn [conn schema/v7-schema]
@@ -299,25 +356,16 @@
                  :subject/type :user
                  :first 1}]
       (seed-recursive! conn client 3 3)
-      (eacl/lookup-subjects client query)
-      (let [continuation
-            (->> (.values ^java.util.LinkedHashMap (:entries store))
-                 (keep (fn [entry]
-                         (when (= :recursive-continuation
-                                  (get-in entry [:value :eacl.cache/kind]))
-                           (get-in entry
-                                   [:value :eacl.cache/value :continuation]))))
-                 first)
-            state (:state continuation)
-            retained-rule-count
-            (reduce + 0 (map count (vals (:rules-by-node state))))
-            weight #'idx/continuation-weight]
-        (is (nil? continuation))
-        (is (zero? retained-rule-count))
-        (is (nil? (:rule-count state)))
-        (is (= (weight state)
-               (weight (assoc state :rule-count 0)))
-            "no reverse rule graph reached the unauthenticated provider")))))
+      (let [page1 (eacl/lookup-subjects client query)
+            page2 (eacl/lookup-subjects
+                   client (assoc query :after (page-end-cursor page1)))
+            kinds (->> (.values ^java.util.LinkedHashMap (:entries store))
+                       (keep #(get-in % [:value :eacl.cache/kind]))
+                       set)]
+        (is (= 1 (count (:data page1))))
+        (is (= 1 (count (:data page2))))
+        (is (not (contains? kinds :recursive-continuation))
+            "the keyset route stores no per-cursor continuation state at all")))))
 
 (deftest recursive-cursor-recovers-when-its-boundary-object-is-gone-live-test
   (with-mem-conn [conn schema/v7-schema]
@@ -330,17 +378,36 @@
       (seed-recursive! conn client 10 1)
       (let [page1 (eacl/lookup-resources client query)
             cursor (page-end-cursor page1)
+            boundary-eid (d/entid (d/db conn) [:eacl/id (account-id 4)])
             subject-eid (d/entid (d/db conn) [:eacl/id (user-id 0)])]
-        (eacl/delete-object! client subject)
-        @(d/transact conn [[:db.fn/retractEntity subject-eid]])
-        (let [recovered
-              (eacl/lookup-resources client (assoc query :after cursor))]
-          (is (empty? (:data recovered))
-              "ordinary continuation re-evaluates authorization on the live graph")
-          (is (= :restarted
-                 (get-in recovered [:page-info :cursor-recovery]))))))))
+        (is (= (mapv account-id (range 0 5))
+               (mapv :id (:data page1))))
+        (testing "a revoked boundary drops the bound and restarts honestly"
+          (eacl/delete-object! client (spice-object :account (account-id 4)))
+          @(d/transact conn [[:db.fn/retractEntity boundary-eid]])
+          (let [recovered (eacl/lookup-resources client (assoc query :after cursor))
+                fresh-page1 (eacl/lookup-resources client query)]
+            ;; deleting account-4 also breaks the parent chain, so the live
+            ;; denotation is exactly accounts 0-3
+            (is (= (mapv account-id (range 0 4))
+                   (mapv :id (:data recovered)))
+                "a non-member boundary restarts with page-1 content")
+            (is (= (:data fresh-page1) (:data recovered)))
+            (is (= :restarted
+                   (get-in recovered [:page-info :cursor-recovery])))))
+        (testing "a deleted subject authorizes nothing on the live graph"
+          (eacl/delete-object! client subject)
+          @(d/transact conn [[:db.fn/retractEntity subject-eid]])
+          (let [recovered (eacl/lookup-resources client (assoc query :after cursor))]
+            (is (empty? (:data recovered)))
+            ;; the cursor still names the retracted account-4 boundary, so
+            ;; relay edge internalization drops the bound and reports an
+            ;; honest :restarted before the unknown-subject short-circuit
+            ;; returns the empty live answer
+            (is (= :restarted
+                   (get-in recovered [:page-info :cursor-recovery])))))))))
 
-(deftest alternate-cache-replays-a-cursor-when-the-relationship-proof-matches-test
+(deftest alternate-cache-resolves-its-own-denotation-for-a-foreign-cursor-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-shared-proof"
           first-client
@@ -367,9 +434,8 @@
                (assoc query :after (page-end-cursor page1))))]
         (is (= (mapv account-id (range 5 10))
                (mapv :id (:data page2))))
-        (is (= 1 (:continuation-misses @stats)))
-        (is (> (:derived-grants @stats) 5)
-            "an alternate cache recomputes the prefix instead of changing snapshots")))))
+        (is (> (stat stats :derived-grants) 5)
+            "an alternate cache resolves the complete denotation once instead of trusting foreign state")))))
 
 (deftest recursive-continuation-does-not-retain-opaque-runtime-values-test
   (with-mem-conn [conn schema/v7-schema]
@@ -400,47 +466,38 @@
                               [:value :eacl.cache/value :continuation])))
                   entries)
             db-class (class (d/db conn))
-            retained-values (mapcat #(tree-seq coll? seq %) continuations)
-            streams (->> continuations
-                         (mapcat #(seq (get-in % [:state :queue])))
-                         (filter #(= :stream (:kind %))))]
+            retained-values (mapcat #(tree-seq coll? seq %) continuations)]
         (is (empty? continuations))
-        (is (empty? streams))
-        (is (every? vector? (map :eids streams)))
-        (is (every? #(<= (count (:eids %)) 64) streams))
         (is (not-any? #(instance? db-class %) retained-values))
         (is (not-any? #(instance? clojure.lang.LazySeq %) retained-values)))
       (let [walk (collect-forward client query)]
         (is (= 200 (count (:data walk))))
         (is (= 200 (count (set (map :id (:data walk)))))
-            "forward scans resume correctly across 64-EID chunks")))))
+            "forward scans resume correctly across page boundaries")))))
 
-(deftest rejected-continuation-safely-replays-while-proof-matches-test
+(deftest uncached-client-safely-serves-a-borrowed-cursor-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-rejected-cache"
-          client (core/make-client
-                  conn
-                  {:page-token-key token-key
-                   :cache {:max-weight 4096
-                           :max-entry-weight 1
-                           :max-entries 4}})
+          client (core/make-client conn {:page-token-key token-key})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
                  :first 3}]
       (seed-recursive! conn client 12 1)
-      (let [page1 (eacl/lookup-resources client query)
+      (let [fresh-client (core/make-client conn {:page-token-key token-key
+                                                 :cache cache/no-cache})
+            page1 (eacl/lookup-resources client query)
             stats (atom {})
             page2
             (binding [idx/*recursive-traversal-stats* stats]
               (eacl/lookup-resources
-               client
+               fresh-client
                (assoc query :after (page-end-cursor page1))))]
         (is (= (mapv account-id (range 3 6))
-               (mapv :id (:data page2))))
-        (is (= 1 (:continuation-misses @stats)))
-        (is (> (:derived-grants @stats) 3)
-            "the safe fallback replays the proven traversal prefix")))))
+               (mapv :id (:data page2)))
+            "a client with no denotation cache serves the same page from the same cursor")
+        (is (> (stat stats :derived-grants) 3)
+            "it re-resolves the denotation instead of trusting any cached state")))))
 
 (deftest complete-recursive-enumeration-is-equal-with-or-without-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -459,4 +516,40 @@
         (is (= 80 (count (:data cached))))
         (is (<= (:derived-grants cached)
                 (:derived-grants replayed))
-            "private continuation reuse does no more work than safe replay")))))
+            "denotation reuse does no more work than uncached recomputation")))))
+
+(deftest expired-page-token-reaches-the-kernel-decision-test
+  ;; cursor-dependency-validity: expiry is a computed input of the verified
+  ;; continuation decision, rejected by the kernel rather than pre-empted at
+  ;; decode. The public error is unchanged.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client
+                  conn
+                  {:page-token-key "recursive-expired"
+                   :page-token-ttl-seconds 1})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 5}]
+      (seed-recursive! conn client 10 1)
+      (let [page1 (eacl/lookup-resources client query)
+            cursor (page-end-cursor page1)
+            now-var (ns-resolve 'eacl.datomic.core 'now-seconds)
+            now-fn @now-var
+            crossings (atom {})
+            error
+            (with-redefs-fn {now-var #(+ 120 (long (now-fn)))}
+              (fn []
+                (binding [verified/*kernel-crossing-stats* crossings]
+                  (try
+                    (eacl/lookup-resources client (assoc query :after cursor))
+                    nil
+                    (catch clojure.lang.ExceptionInfo thrown
+                      thrown)))))]
+        (is (some? error) "an expired page token must not resume")
+        (is (= :eacl.pagination/expired-cursor (:type (ex-data error))))
+        (is (= :eacl.pagination/expired-cursor (:eacl/error (ex-data error))))
+        (is (= :expired (:reason (ex-data error))))
+        (is (= "Page token has expired." (ex-message error)))
+        (is (pos? (get @crossings :cursor-continuation 0))
+            "the expired token was rejected by a :cursor-continuation kernel decision")))))

@@ -1,107 +1,8 @@
 (ns eacl.cache-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
-            [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
-            [eacl.subproblem-cache :as subproblem]
-            [eacl.verified-kernel :as verified]))
-
-(defn- adapter
-  [proofs]
-  (backend/make-adapter
-   {:id :cache-test
-    :capabilities
-    {:consistency #{:fully-consistent}
-     :snapshots #{:current}
-     :cursor #{:forward}
-     :transactions #{}
-     :cache-proofs #{:schema :relations :snapshot-bound}
-     :runtime #{:clj}}
-    :operations
-    (merge
-     (into {}
-           (map (fn [operation]
-                  [operation (fn [& _] nil)]))
-           backend/required-snapshot-operations)
-     {:snapshot-id #(select-keys @proofs [:basis])
-      :source-scope
-      (fn [] {:source-id (:source @proofs) :branch nil})
-      :graph-head
-      (fn [] {:graph-anchor (:head @proofs)
-              :order-hint (:basis @proofs)
-              :exact-locator (:basis @proofs)})
-      :contains-anchor?
-      (fn [anchor] (contains? (:anchors @proofs) anchor))
-      :order-hint (fn [] (:basis @proofs))
-      :exact-locator (fn [] (:basis @proofs))
-      :schema-proof
-      (fn
-        ([] (if (:proof-provider-failure? @proofs)
-              (throw (ex-info "schema proof unavailable" {}))
-              (when-not (:proof-unavailable? @proofs)
-                (:schema @proofs))))
-        ([{:keys [permission-nodes]}]
-         (if (:proof-provider-failure? @proofs)
-           (throw (ex-info "schema proof unavailable" {}))
-           (when-not (:proof-unavailable? @proofs)
-             (select-keys (:schema @proofs) permission-nodes)))))
-      :relation-proof
-      (fn [relation-ids]
-        (if (:relation-proof-provider-failure? @proofs)
-          (throw (ex-info "relationship proof unavailable" {}))
-          (when-not (:proof-unavailable? @proofs)
-            (select-keys (:relations @proofs) relation-ids))))})}))
-
-(defrecord ThrowingStore []
-  cache/CacheStore
-  (lookup [_ _] (throw (ex-info "unavailable" {})))
-  (store! [_ _ _] (throw (ex-info "unavailable" {})))
-  (evict! [_ _] (throw (ex-info "unavailable" {})))
-  (clear! [_] (throw (ex-info "unavailable" {})))
-  (stats [_] (throw (ex-info "unavailable" {}))))
-
-(defrecord ForgingStore [value]
-  cache/CacheStore
-  (lookup [_ _] value)
-  (store! [_ _ _] true)
-  (evict! [_ _] false)
-  (clear! [_] nil)
-  (stats [_] {}))
-
-(defrecord RacingStore [entries replaced?]
-  cache/CacheStore
-  (lookup [_ key] (get @entries key))
-  (store! [_ key value]
-    (swap! entries assoc key value)
-    true)
-  (evict! [_ key]
-    (swap! entries dissoc key)
-    true)
-  (clear! [_]
-    (reset! entries {})
-    nil)
-  (stats [_] {:entries (count @entries)})
-  cache/CacheTelemetry
-  (record-validation! [_ _] nil)
-  cache/CacheValidationUpdate
-  (store-validation! [_ key _expected _replacement]
-    ;; Simulate another validator replacing the provider value after this
-    ;; request's lookup but before its authenticated telemetry CAS.
-    (reset! replaced? true)
-    (swap! entries assoc key "concurrent-replacement")
-    false))
-
-(defrecord RejectingKernel []
-  verified/DecisionKernel
-  (-decide [_ operation _input]
-    (case operation
-      :cache-validation
-      {:status :miss :reason :proof-mismatch}
-
-      :cursor-continuation
-      :scope-mismatch
-
-      {:status :invalid :reason :rejected})))
+            [eacl.subproblem-cache :as subproblem]))
 
 (defn- snapshot-object
   []
@@ -558,323 +459,152 @@
         "explicit expiry also resets admission history")
     (is (= 0 (:exact-entries (cache/current-cache-stats store))))))
 
-(deftest exact-proof-validation-test
-  (let [proofs (atom {:basis 1
-                      :source "source"
-                      :head "head-1"
-                      :anchors #{"head-1"}
-                      :schema {:document :schema-1
-                               :unrelated :schema-a}
-                      :relations {10 :relation-1
-                                  20 :unrelated-1}})
-        snapshot (adapter proofs)
-        store (cache/local-store)
-        calls (atom 0)
-        compute #(do (swap! calls inc) {:answer true})
-        resolve #(cache/resolve!
-                  snapshot store :key :can?
-                  {:permission-nodes #{:document}}
-                  [10]
-                  (fn [value] (= #{:answer} (set (keys value))))
-                  compute)]
-    (testing "matching proofs reuse the value"
-      (is (false? (:cached? (resolve))))
-      (is (true? (:cached? (resolve))))
-      (is (= 1 @calls)))
+(deftest authenticated-page-query-identity-ignores-cursor-transport-test
+  (let [base-public
+        {:subject {:type :user :id "user"}
+         :permission :view
+         :resource/type :document
+         :first 20}
+        base-internal
+        {:subject {:type :user :id 1}
+         :permission :view
+         :resource/type :document
+         :first 20}
+        boundary {:kind :lookup-eid :resource 42}
+        original
+        (cache/lookup-page-query-identity
+         (assoc base-public :after "signed-snapshot-a")
+         (assoc base-internal :after boundary))
+        recovered
+        (cache/lookup-page-query-identity
+         (assoc base-public
+                :after "signed-snapshot-b"
+                :cache? true)
+         (assoc base-internal
+                :after (assoc boundary :rebase? true)))]
+    (is (= original recovered)
+        "snapshot transport and recovery instructions are not semantics")
+    (is (not=
+         original
+         (cache/lookup-page-query-identity
+          (assoc base-public :after "signed-snapshot-c")
+          (assoc base-internal
+                 :after (assoc boundary :resource 43))))
+        "the authenticated internal boundary still distinguishes pages")
+    (is (not=
+         original
+         (cache/lookup-page-query-identity
+          (assoc base-public :after "signed-snapshot-d" :first 50)
+          (assoc base-internal :after boundary :first 50)))
+        "page size remains semantic")))
 
-    (testing "unrelated relation changes retain the entry"
-      (swap! proofs assoc-in [:relations 20] :unrelated-2)
-      (swap! proofs assoc
-             :basis 2
-             :head "head-2"
-             :anchors #{"head-1" "head-2"})
-      (is (true? (:cached? (resolve))))
-      (is (= 1 @calls)))
-
-    (testing "unrelated schema changes retain the entry"
-      (swap! proofs assoc-in [:schema :unrelated] :schema-b)
-      (is (true? (:cached? (resolve))))
-      (is (= 1 @calls)))
-
-    (testing "relevant relation and schema changes invalidate"
-      (swap! proofs assoc-in [:relations 10] :relation-2)
-      (is (false? (:cached? (resolve))))
-      (swap! proofs assoc-in [:schema :document] :schema-2)
-      (is (false? (:cached? (resolve))))
-      (is (= 3 @calls)))))
-
-(deftest authoritative-kernel-rejection-cannot-return-cache-entry-test
-  (let [proofs (atom {:basis 1
-                      :source "source"
-                      :head "head-1"
-                      :anchors #{"head-1"}
-                      :schema {:document :schema-1}
-                      :relations {10 :relation-1}})
-        snapshot (adapter proofs)
-        store (cache/local-store)
-        calls (atom 0)
+(deftest completed-answer-hot-key-survives-churn-test
+  ;; R6 regression scenario "hot key survives churn": the deleted
+  ;; completed-answer map evicted in hash-iteration order, so a repeatedly
+  ;; accessed key was as likely to die as any cold key. The weighted
+  ;; :answer tier evicts least-recently-used.
+  (let [store (cache/current-cache
+               {:subproblem-cache {:answer-max-weight 4096}})
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1
+                 ;; Fixed per-answer weight: the tier retains 8 answers.
+                 :answer-weight-fn (constantly 512)}
         resolve
-        #(cache/resolve!
-          snapshot store :key :can?
-          {:permission-nodes #{:document}}
-          [10] boolean?
-          (fn [] (swap! calls inc) true)
-          {:decision-kernel
-           {:kernel (->RejectingKernel)}})]
-    (is (false? (:cached? (resolve))))
-    (is (false? (:cached? (resolve))))
-    (is (= 2 @calls))))
+        (fn [key]
+          (cache/resolve-current!
+           store context key :decision boolean? (constantly true)))]
+    (resolve :hot)
+    (dotimes [i 64]
+      (resolve [:cold i])
+      (is (true? (:cached? (resolve :hot)))
+          "the repeatedly accessed answer stays resident through churn"))
+    (let [tier (get-in (cache/current-cache-stats store)
+                       [:subproblems :tiers :answer])]
+      (is (<= (:weight tier) 4096)
+          "retained answer weight never exceeds the configured budget")
+      (is (false? (:cached? (resolve [:cold 0])))
+          "cold keys evicted; only the hot answer and the newest survive"))))
 
-(deftest forward-only-proof-lifting-test
-  (let [proofs
-        (atom {:basis 1
-               :source "source"
-               :head "computed"
-               :anchors #{"computed"}
-               :schema {:document :schema}
-               :relations {10 :relation}})
-        snapshot (adapter proofs)
-        store (cache/local-store)
-        calls (atom 0)
+(deftest completed-answer-byte-budget-and-oversized-rejection-test
+  ;; R6 regression scenario "page-heavy workload stays within budget": the
+  ;; deleted answer map was entry-bounded only (weight fn accepted and
+  ;; ignored), measured at 95.5 MB retained. The :answer tier is
+  ;; weight-bounded with a budget/4 per-entry ceiling.
+  (let [store (cache/current-cache
+               {:subproblem-cache {:answer-max-weight 8192}})
+        snapshot (snapshot-object)
+        page (fn [n] {:data (vec (range n))})
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
         resolve
-        #(cache/resolve!
-          snapshot store :key :can?
-          {:permission-nodes #{:document}}
-          [10] boolean?
-          (fn [] (swap! calls inc) true))]
-    (is (false? (:cached? (resolve))))
-    (swap! proofs assoc
-           :basis 2
-           :head "descendant"
-           :anchors #{"computed" "descendant"})
-    (is (true? (:cached? (resolve))))
-    (swap! proofs assoc
-           :basis 2
-           :head "sibling"
-           :anchors #{"sibling"})
-    (is (false? (:cached? (resolve))))
-    (is (= 2 @calls))
-    (is (= 1 (:causal-proof-lift (cache/stats store))))
-    (is (= 1 (:future-history-rejection
-              (cache/stats store))))))
+        (fn [key value]
+          (cache/resolve-current!
+           store context key :lookup-resources map?
+           (fn [] value)))]
+    ;; Saturate with page answers under the default row-count weight
+    ;; (512 + 128/row: 1792 each, so at most four fit).
+    (dotimes [i 32]
+      (resolve [:page i] (page 10)))
+    (let [tier (get-in (cache/current-cache-stats store)
+                       [:subproblems :tiers :answer])]
+      (is (pos? (:entries tier)))
+      (is (<= (:weight tier) 8192)
+          "retained answer weight stays within the configured budget"))
+    ;; One answer heavier than budget/4 is rejected at publication and
+    ;; recomputed on the next request instead of retained unbounded.
+    (resolve :oversized (page 100))
+    (is (pos? (get-in (cache/current-cache-stats store)
+                      [:subproblems :oversized-rejections])))
+    (is (false? (:cached? (resolve :oversized (page 100))))
+        "an oversized answer is never served from cache")))
 
-(deftest corrupt-and-unavailable-store-fail-closed-test
-  (let [proofs (atom {:basis 1
-                      :source "source"
-                      :head "head"
-                      :anchors #{"head"}
-                      :schema {:document :schema}
-                      :relations {10 :relation}})
-        snapshot (adapter proofs)
-        corrupt-store (cache/local-store)
-        _ (cache/store! corrupt-store :key {:answer :unvalidated})
-        computed (atom 0)
-        compute #(do (swap! computed inc) false)]
-    (testing "a malformed value is a miss"
-      (let [answer
-            (cache/resolve!
-             snapshot (->ForgingStore "eacl_ce3_forged")
-             :key :can?
-             {:permission-nodes #{:document}}
-             [10] boolean? compute)]
-        (is (false? (:value answer)))
-        (is (false? (:cached? answer)))))
-
-    (testing "provider read and write failures fall back to computation"
-      (let [answer
-            (cache/resolve!
-             snapshot (->ThrowingStore)
-             :key :can?
-             {:permission-nodes #{:document}}
-             [10] boolean? compute)]
-        (is (false? (:value answer)))
-        (is (false? (:cached? answer)))))
-
-    (is (= 2 @computed))))
-
-(deftest proof-provider-failure-fails-closed-test
-  (doseq [failure-key
-          [:proof-provider-failure?
-           :relation-proof-provider-failure?]]
-    (testing (name failure-key)
-      (let [proofs (atom {:basis 1
-                          :source "source"
-                          :head "head"
-                          :anchors #{"head"}
-                          :schema {:document :schema}
-                          :relations {10 :relation}
-                          failure-key true})
-            store (cache/local-store)
-            computed (atom 0)
-            answer
-            (cache/resolve!
-             (adapter proofs)
-             store
-             :key :can?
-             {:permission-nodes #{:document}}
-             [10]
-             boolean?
-             #(do (swap! computed inc) false))]
-        (is (= {:value false :cached? false}
-               (select-keys answer [:value :cached?])))
-        (is (= 1 @computed))
-        (is (= 1 (:provider-failure (cache/stats store))))))))
-
-(deftest cache-scope-and-proof-availability-test
-  (let [store (cache/local-store)
-        first-proof
-        (atom {:basis 1
-               :source "first"
-               :head "first-head"
-               :anchors #{"first-head"}
-               :schema {:document :schema}
-               :relations {10 :relation}})
-        second-proof
-        (atom {:basis 1
-               :source "second"
-               :head "second-head"
-               :anchors #{"second-head"}
-               :schema {:document :schema}
-               :relations {10 :relation}})
-        calls (atom 0)
-        compute #(do (swap! calls inc) true)
+(deftest repeat-admission-survives-large-keyspace-churn-test
+  ;; R6 regression scenario "repeat admission at scale": the deleted
+  ;; admissions map evicted its hash-trie-order minimum, freezing into a
+  ;; fixed hash-lucky sighting set (measured 2.3% admit at 50x keyspace).
+  ;; The first-in-first-out sighting window forgets oldest first sightings,
+  ;; so admission tracks access recency at any keyspace size.
+  (let [window 64
+        store (cache/current-cache
+               {:max-entries window
+                :admit-on-repeat? true})
+        snapshot (snapshot-object)
+        context {:snapshot snapshot
+                 :snapshot-order 1
+                 :same-snapshot? identical?
+                 :cache-basis 1}
         resolve
-        (fn [snapshot]
-          (cache/resolve!
-           snapshot store :same-query :can?
-           {:permission-nodes #{:document}}
-           [10] boolean? compute))]
-    (is (false? (:cached? (resolve (adapter first-proof)))))
-    (is (false? (:cached? (resolve (adapter second-proof)))))
-    (is (= 2 @calls)
-        "equal content in another source cannot reuse the entry")
-    (swap! first-proof assoc :proof-unavailable? true)
-    (is (false? (:cached? (resolve (adapter first-proof)))))
-    (is (= 1 (:no-proof-bypass (cache/stats store))))
-    (testing "an empty relationship dependency scope always bypasses"
-      (swap! first-proof dissoc :proof-unavailable?)
-      (is (false?
-           (:cached?
-            (cache/resolve!
-             (adapter first-proof)
-             store :same-query :can?
-             {:permission-nodes #{:document}}
-             [] boolean? compute))))
-      (is (= 2 (:no-proof-bypass (cache/stats store)))))))
-
-(deftest structural-proof-revocation-schema-and-restore-test
-  (let [proofs (atom {:basis 1
-                      :source "source"
-                      :head "original"
-                      :anchors #{"original"}
-                      :schema {:document {:view :schema-v1}
-                               :unrelated {:view :other-v1}}
-                      :relations {10 #{[:user "u1" :document "d1"]}
-                                  20 #{[:user "u2" :other "o1"]}}})
-        authorization (atom true)
-        store (cache/local-store)
-        calls (atom 0)
-        resolve
-        #(cache/resolve!
-          (adapter proofs) store :structural :can?
-          {:permission-nodes #{:document}}
-          [10] boolean?
-          (fn []
-            (swap! calls inc)
-            @authorization))]
-    (is (= {:value true :cached? false}
-           (select-keys (resolve) [:value :cached?])))
-    (testing "unrelated writes on a descendant preserve structural proofs"
-      (swap! proofs assoc
-             :basis 2
-             :head "descendant"
-             :anchors #{"original" "descendant"})
-      (swap! proofs assoc-in
-             [:relations 20] #{[:user "u3" :other "o1"]})
-      (swap! proofs assoc-in
-             [:schema :unrelated] {:view :other-v2})
-      (is (true? (:cached? (resolve))))
-      (is (= 1 @calls)))
-    (testing "a relevant revocation changes proof and forces recomputation"
-      (reset! authorization false)
-      (swap! proofs assoc-in [:relations 10] #{})
-      (is (= {:value false :cached? false}
-             (select-keys (resolve) [:value :cached?])))
-      (is (= 2 @calls)))
-    (testing "a relevant schema change also forces recomputation"
-      (reset! authorization true)
-      (swap! proofs assoc-in [:schema :document] {:view :schema-v2})
-      (is (= {:value true :cached? false}
-             (select-keys (resolve) [:value :cached?])))
-      (is (= 3 @calls)))
-    (testing "restore changes are validated structurally before later reuse"
-      (swap! proofs assoc
-             :basis 1
-             :head "original"
-             :anchors #{"original"})
-      (swap! proofs assoc-in
-             [:relations 10] #{[:user "u1" :document "d1"]})
-      (swap! proofs assoc-in
-             [:schema :document] {:view :schema-v1})
-      (is (false? (:cached? (resolve))))
-      (is (= 4 @calls))
-      (is (true? (:cached? (resolve))))
-      (is (= 4 @calls)))
-    (testing "equal content on a sibling branch cannot reverse-lift"
-      (swap! proofs assoc
-             :basis 3
-             :head "sibling"
-             :anchors #{"sibling"})
-      (is (false? (:cached? (resolve))))
-      (is (= 5 @calls)))))
-
-(deftest dishonest-proof-collision-exposes-named-assumption-test
-  (let [proofs (atom {:basis 1
-                      :source "source"
-                      :head "head-1"
-                      :anchors #{"head-1"}
-                      :schema {:document :dishonest-constant}
-                      :relations {10 :dishonest-constant}})
-        actual (atom true)
-        store (cache/local-store)
-        resolve
-        #(cache/resolve!
-          (adapter proofs) store :collision-double :can?
-          {:permission-nodes #{:document}}
-          [10] boolean? (fn [] @actual))]
-    (is (true? (:value (resolve))))
-    (reset! actual false)
-    (swap! proofs assoc
-           :basis 2
-           :head "head-2"
-           :anchors #{"head-1" "head-2"})
-    (let [answer (resolve)]
-      (is (true? (:cached? answer)))
-      (is (true? (:value answer))
-          "a dishonest/colliding complete-proof provider is an explicit axiom violation"))))
-
-(deftest concurrent-validation-replacement-is-telemetry-only-test
-  (let [proofs (atom {:basis 1
-                      :source "source"
-                      :head "head"
-                      :anchors #{"head"}
-                      :schema {:document :schema}
-                      :relations {10 :relation}})
-        entries (atom {})
-        replaced? (atom false)
-        store (->RacingStore entries replaced?)
-        calls (atom 0)
-        resolve
-        #(cache/resolve!
-          (adapter proofs) store :race :can?
-          {:permission-nodes #{:document}}
-          [10] boolean?
-          (fn [] (swap! calls inc) true))]
-    (is (false? (:cached? (resolve))))
-    (is (true? (:cached? (resolve))))
-    (is (true? @replaced?))
-    (is (= 1 @calls)
-        "the already authenticated provider value remains valid for this request")
-    (is (false? (:cached? (resolve)))
-        "the concurrent unvalidated replacement is never returned")
-    (is (= 2 @calls))))
+        (fn [key]
+          (cache/resolve-current!
+           store context key :decision boolean? (constantly true)))]
+    ;; Churn 50x the window in distinct single-sighting keys.
+    (dotimes [i (* 50 window)]
+      (resolve [:cold i]))
+    ;; A key then seen twice in close succession is admitted.
+    (resolve :fresh)
+    (resolve :fresh)
+    (is (true? (:cached? (resolve :fresh)))
+        "a second sighting within the window admits the answer")
+    ;; A second sighting within window-many distinct first sightings still
+    ;; admits; one spaced past the window is forgotten and starts over.
+    (resolve :spaced)
+    (dotimes [i (dec window)]
+      (resolve [:filler i]))
+    (resolve :spaced)
+    (is (true? (:cached? (resolve :spaced)))
+        "the sighting window spans max-entries distinct first sightings")
+    (resolve :forgotten)
+    (dotimes [i (inc window)]
+      (resolve [:beyond i]))
+    ;; Had the first sighting survived the window, this call would admit
+    ;; and store, making the next call a cache hit. It restarts instead.
+    (resolve :forgotten)
+    (is (false? (:cached? (resolve :forgotten)))
+        "a sighting spaced past the window restarts admission")
+    (is (<= (:admission-entries (cache/current-cache-stats store)) window)
+        "sighting state stays bounded by the window at 50x keyspace")))

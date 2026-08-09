@@ -539,37 +539,8 @@
          (safe-record-provider-error! store :admission kind))
        false))))
 
-(defn authenticated-store
-  "Adapts the legacy weighted provider API to the shared authenticated v3
-  cache contract. The outer legacy wrapper is only capacity metadata; the
-  value it contains is a signed shared-cache envelope, so an externally
-  writable provider cannot influence authorization by forging either layer.
-
-  Preserve the shared key's semantic :kind in the outer capacity wrapper.
-  Authentication changes the value representation, not the entry's admission
-  class; collapsing every value to :authenticated-v3 would silently disable
-  per-kind budgets and two-hit policies."
-  [store namespace ttl-ms]
-  (if (or (nil? store) (no-cache? store))
-    shared/no-cache
-    (let [entry-kind
-          (fn [k]
-            (let [kind (:kind k)]
-              (if (keyword? kind) kind :authenticated-v3)))]
-      (reify
-        shared/CacheStore
-        (lookup [_ k]
-          (safe-entry-value store k (entry-kind k) string?))
-        (store! [_ k value]
-          (safe-store-entry!
-           store namespace k (entry-kind k) value
-           (+ 256 (* 2 (count value)))
-           ttl-ms))
-        (evict! [_ k]
-          (safe-evict! store k))
-        (clear! [_]
-          (if (contains? (safe-capabilities store) :namespaced-clear)
-            (clear-namespace! store namespace)
-            (clear! store)))
-        (stats [_]
-          (stats store))))))
+;; The authenticated-store adapter that wrapped a provider store in signed
+;; shared-cache envelopes was deleted by trusted-surface-hygiene 11.1: its
+;; only consumer was the write-only :shared-cache-store client option that
+;; nothing ever read. Native completed answers are client-private; provider
+;; stores serve continuation state through the safe-* helpers above.

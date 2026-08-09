@@ -166,6 +166,89 @@
         (is (true? (:cached? historical-2)))
         (is (= (:bypasses before) (:bypasses after)))))))
 
+(deftest unrelated-write-preserves-authenticated-page-cache-identity-test
+  (let [conn (datascript/create-conn)
+        authorization
+        (managed-client conn {:exact-snapshot-registry-size 16})
+        document-ids ["doc-a" "doc-b" "doc-c"]
+        documents (mapv #(eacl/spice-object :document %) document-ids)
+        _ (eacl/write-schema! authorization schema)
+        _ (ds/transact! conn
+                        (mapv (fn [id] {:eacl/id id})
+                              (into ["user"] document-ids)))
+        _ (eacl/create-relationships!
+           authorization
+           (mapv #(eacl/->Relationship user :reader %) documents))
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 1}
+        original-page-1 (eacl/lookup-resources authorization query)
+        original-page-2-query
+        (assoc query
+               :after
+               (get-in original-page-1 [:page-info :end-cursor]))
+        original-page-2
+        (eacl/lookup-resources authorization original-page-2-query)]
+    (is (= [(second documents)] (:data original-page-2)))
+    (is (false? (:cached? original-page-2)))
+    (ds/transact! conn [{:eacl/id "unrelated-page-cache-write"}])
+    (let [recovered-page-2
+          (eacl/lookup-resources authorization original-page-2-query)
+          fresh-page-1
+          (eacl/lookup-resources authorization query)
+          fresh-page-2-query
+          (assoc query
+                 :after
+                 (get-in fresh-page-1 [:page-info :end-cursor]))
+          fresh-page-2
+          (eacl/lookup-resources authorization fresh-page-2-query)]
+      (testing "an unrelated write leaves the dependency proof equal: the
+                continuation is reused without recovery"
+        (is (= [(second documents)] (:data recovered-page-2)))
+        (is (nil? (get-in recovered-page-2
+                          [:page-info :cursor-recovery])))
+        (is (true? (:cached? recovered-page-2))))
+      (testing "a newly signed cursor for the same boundary also reuses it"
+        (is (not=
+             (:after original-page-2-query)
+             (:after fresh-page-2-query)))
+        (is (= [(second documents)] (:data fresh-page-2)))
+        (is (true? (:cached? fresh-page-2)))))))
+
+(deftest repeated-relationship-page-uses-client-private-navigation-cache-test
+  (let [conn (datascript/create-conn)
+        client (managed-client conn {})
+        _ (seed! conn client)
+        document-2 (eacl/spice-object :document "document-2")
+        relationship-2 (eacl/->Relationship user :reader document-2)
+        _ (ds/transact! conn [{:eacl/id "document-2"}])
+        _ (eacl/create-relationships!
+           client [relationship relationship-2])
+        query {:subject/type :user
+               :subject/id "user"
+               :resource/type :document
+               :resource/relation :reader
+               :first 1}
+        first-page (eacl/read-relationships client query)
+        next-query
+        (assoc query :after (get-in first-page [:page-info :end-cursor]))
+        second-page (eacl/read-relationships client next-query)
+        repeated-first-page (eacl/read-relationships client query)
+        repeated-second-page (eacl/read-relationships client next-query)
+        bypassed-page
+        (eacl/read-relationships client (assoc query :cache? false))]
+    (is (= #{relationship relationship-2}
+           (set (concat (:data first-page) (:data second-page)))))
+    (is (false? (:cached? first-page)))
+    (is (false? (:cached? second-page)))
+    (is (= (:data first-page) (:data repeated-first-page)))
+    (is (= (:data second-page) (:data repeated-second-page)))
+    (is (true? (:cached? repeated-first-page)))
+    (is (true? (:cached? repeated-second-page)))
+    (is (= (:data first-page) (:data bypassed-page)))
+    (is (false? (:cached? bypassed-page)))))
+
 (deftest per-request-cache-bypass-covers-public-read-shapes-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})
@@ -424,11 +507,10 @@
 
 (deftest exact-registry-eviction-and-cache-lifting-test
   (let [conn (datascript/create-conn)
-        store (cache/local-store)
         authorization
         (managed-client
          conn
-         {:cache store
+         {:cache {}
           :exact-snapshot-registry-size 1})
         _ (seed! conn authorization)
         token

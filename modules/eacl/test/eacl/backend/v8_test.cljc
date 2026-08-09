@@ -65,21 +65,7 @@
         #?(:clj
            (ns-resolve 'eacl.engine.v8 'restore-generated-continuation)
            :cljs
-           engine/restore-generated-continuation)
-        cached
-        #?(:clj
-           (ns-resolve 'eacl.engine.v8 'cached-generated-continuation)
-           :cljs
-           engine/cached-generated-continuation)
-        engine-version
-        #?(:clj
-           (var-get
-            (ns-resolve 'eacl.engine.v8 'recursive-engine-version))
-           :cljs
-           engine/recursive-engine-version)
-        bound {:ordinal 19
-               :result {:type :node
-                        :eid 100}}]
+           engine/restore-generated-continuation)]
     (is (= {:status :rejected
             :reason :unusable-cached-state}
            (restore
@@ -88,24 +74,8 @@
             {:state :opaque-state-from-an-incompatible-generated-runtime}
             {:size 20
              :bound
-             {:ordinal 19
+             {:kind :lookup-eid
               :result-eid 100}})))
-    (is (nil?
-         (cached
-          {:get
-           (constantly
-            {:engine-version engine-version
-             :implementation :generated-indexed
-             :direction :forward
-             :result-kind :resource
-             :bound bound
-             :state :opaque
-             :counters {:backend-commands "not-a-natural"}
-             :retained-logical-units 1})}
-          bound
-          :forward
-          :resource))
-        "malformed counter envelopes are discarded before opaque restoration")
     (is (empty? @calls)
         "the indexed continuation method, not DecisionKernel, owns restore")))
 
@@ -297,7 +267,7 @@
          [{:permission-id 1
            :resource-type :node
            :permission-name :read
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :read}]
          [:node :view]
@@ -318,21 +288,21 @@
          [{:permission-id 5
            :resource-type :node
            :permission-name :cycle-a
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :cycle-b}]
          [:node :cycle-b]
          [{:permission-id 6
            :resource-type :node
            :permission-name :cycle-b
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :cycle-a}]
          [:node :cycle-view]
          [{:permission-id 7
            :resource-type :node
            :permission-name :cycle-view
-           :source-relation-name :self
+           :source-relation-name :parent
            :target-type :permission
            :target-name :cycle-a}]}
         operations
@@ -352,13 +322,23 @@
                  []))
           :relation-defs
           (fn [resource-type relation-name]
-            (if (= [:node :editor]
-                   [resource-type relation-name])
+            (case [resource-type relation-name]
+              [:node :editor]
               [{:relation-id 4
                 :resource-type :node
                 :relation-name :editor
                 :subject-type :user}]
+
+              [:node :parent]
+              [{:relation-id 8
+                :resource-type :node
+                :relation-name :parent
+                :subject-type :node}]
+
               []))
+          :relation-populated?
+          (fn [_subject-type relation-id _resource-type]
+            (= 8 relation-id))
           :all-permission-nodes
           (fn [] (set (keys permission-defs)))})
         adapter

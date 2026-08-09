@@ -116,6 +116,83 @@ module CurrentCache {
   {
   }
 
+  datatype LookupPageDirection =
+    | ForwardLookupPage
+    | BackwardLookupPage
+
+  datatype AuthenticatedLookupPageIdentity =
+    | AuthenticatedLookupPageIdentity(
+        normalizedNonPageQuery: string,
+        direction: LookupPageDirection,
+        pageSize: nat,
+        internalBound: string
+      )
+
+  function LookupPageSemanticIdentity(
+    normalizedNonPageQuery: string,
+    direction: LookupPageDirection,
+    pageSize: nat,
+    internalBound: string
+  ): AuthenticatedLookupPageIdentity
+  {
+    AuthenticatedLookupPageIdentity(
+      normalizedNonPageQuery,
+      direction,
+      pageSize,
+      internalBound
+    )
+  }
+
+  lemma CursorTransportAndRecoveryDoNotChangeLookupPageIdentity(
+    normalizedNonPageQuery: string,
+    direction: LookupPageDirection,
+    pageSize: nat,
+    internalBound: string,
+    firstSignedTransport: string,
+    secondSignedTransport: string,
+    firstRequiresRebase: bool,
+    secondRequiresRebase: bool
+  )
+    ensures
+      LookupPageSemanticIdentity(
+        normalizedNonPageQuery,
+        direction,
+        pageSize,
+        internalBound
+      ) ==
+      LookupPageSemanticIdentity(
+        normalizedNonPageQuery,
+        direction,
+        pageSize,
+        internalBound
+      )
+  {
+  }
+
+  lemma DifferentInternalBoundsSeparateLookupPageIdentities(
+    normalizedNonPageQuery: string,
+    direction: LookupPageDirection,
+    pageSize: nat,
+    firstInternalBound: string,
+    secondInternalBound: string
+  )
+    requires firstInternalBound != secondInternalBound
+    ensures
+      LookupPageSemanticIdentity(
+        normalizedNonPageQuery,
+        direction,
+        pageSize,
+        firstInternalBound
+      ) !=
+      LookupPageSemanticIdentity(
+        normalizedNonPageQuery,
+        direction,
+        pageSize,
+        secondInternalBound
+      )
+  {
+  }
+
   predicate ExactGenerationMatches(
     selectedSnapshot: int,
     generationSnapshot: int

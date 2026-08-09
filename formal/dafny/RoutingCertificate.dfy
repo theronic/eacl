@@ -1569,4 +1569,105 @@ module RoutingCertificate {
         )
       );
   }
+
+  datatype EnumerationRoute =
+    | UndefinedEnumerationRoute
+    | CertifiedAcyclicEnumerationRoute
+    | CertifiedRecursiveEnumerationRoute
+
+  datatype EnumerationRouteError =
+    | MissingSchemaIdentity
+    | SchemaIdentityMismatch
+
+  datatype EnumerationRouteDecision =
+    | EnumerationRouteAccepted(route: EnumerationRoute)
+    | EnumerationRouteRejected(error: EnumerationRouteError)
+
+  method SelectEnumerationRoute(
+    normalizedSchemaIdentity: string,
+    certificateSchemaIdentity: string,
+    rootDefined: bool,
+    reachesRecursiveComponent: bool,
+    recursiveDataActive: bool
+  ) returns (decision: EnumerationRouteDecision)
+    ensures decision.EnumerationRouteAccepted? <==>
+            normalizedSchemaIdentity != "" &&
+            normalizedSchemaIdentity == certificateSchemaIdentity
+    ensures decision.EnumerationRouteAccepted? ==>
+              decision.route ==
+              (if !rootDefined
+               then UndefinedEnumerationRoute
+               else if reachesRecursiveComponent && recursiveDataActive
+                 then CertifiedRecursiveEnumerationRoute
+                 else CertifiedAcyclicEnumerationRoute)
+    ensures decision.EnumerationRouteRejected? ==>
+              (decision.error.MissingSchemaIdentity? <==>
+               (normalizedSchemaIdentity == "" ||
+                certificateSchemaIdentity == "")) &&
+              (decision.error.SchemaIdentityMismatch? <==>
+               normalizedSchemaIdentity != "" &&
+               certificateSchemaIdentity != "" &&
+               normalizedSchemaIdentity != certificateSchemaIdentity)
+  {
+    if normalizedSchemaIdentity == "" ||
+       certificateSchemaIdentity == "" {
+      return EnumerationRouteRejected(MissingSchemaIdentity);
+    }
+    if normalizedSchemaIdentity != certificateSchemaIdentity {
+      return EnumerationRouteRejected(SchemaIdentityMismatch);
+    }
+    if !rootDefined {
+      return EnumerationRouteAccepted(UndefinedEnumerationRoute);
+    }
+    if reachesRecursiveComponent && recursiveDataActive {
+      return EnumerationRouteAccepted(
+          CertifiedRecursiveEnumerationRoute
+        );
+    }
+    return EnumerationRouteAccepted(CertifiedAcyclicEnumerationRoute);
+  }
+
+  lemma InactiveRecursiveDataSelectsAcyclicRoute(
+    reachesRecursiveComponent: bool,
+    recursiveDataActive: bool
+  )
+    requires reachesRecursiveComponent
+    requires !recursiveDataActive
+    ensures !(reachesRecursiveComponent && recursiveDataActive)
+  {
+  }
+
+  lemma ActiveRecursiveDataSelectsRecursiveRoute(
+    reachesRecursiveComponent: bool,
+    recursiveDataActive: bool
+  )
+    requires reachesRecursiveComponent
+    requires recursiveDataActive
+    ensures reachesRecursiveComponent && recursiveDataActive
+  {
+  }
+
+  lemma AcceptedBoundRouteUsesExactCertificateClassification(
+    nodeCount: nat,
+    edges: seq<IndexedDependencyEdge>,
+    certificate: RoutingProof,
+    node: nat,
+    normalizedSchemaIdentity: string
+  )
+    requires normalizedSchemaIdentity != ""
+    requires ValidRoutingCertificate(nodeCount, edges, certificate)
+    requires node < nodeCount
+    ensures certificate.traversal[node] <==>
+            IndexedDependsOnRecursiveComponent(
+              nodeCount,
+              edges,
+              node
+            )
+  {
+    AcceptedRoutingCertificateIsExact(
+      nodeCount,
+      edges,
+      certificate
+    );
+  }
 }

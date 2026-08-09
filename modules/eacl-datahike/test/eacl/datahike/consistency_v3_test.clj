@@ -147,6 +147,41 @@
         (is (true? (:cached? historical-2)))
         (is (= (:bypasses before) (:bypasses after)))))))
 
+(deftest repeated-relationship-page-uses-client-private-navigation-cache-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        _ (seed! conn authorization)
+        document-2 (eacl/spice-object :document "document-2")
+        relationship-2 (eacl/->Relationship user :reader document-2)
+        _ (d/transact conn [{:eacl/id "document-2"}])
+        _ (eacl/create-relationships!
+           authorization [relationship relationship-2])
+        query {:subject/type :user
+               :subject/id "user"
+               :resource/type :document
+               :resource/relation :reader
+               :first 1}
+        first-page (eacl/read-relationships authorization query)
+        next-query
+        (assoc query :after (get-in first-page [:page-info :end-cursor]))
+        second-page (eacl/read-relationships authorization next-query)
+        repeated-first-page
+        (eacl/read-relationships authorization query)
+        repeated-second-page
+        (eacl/read-relationships authorization next-query)
+        bypassed-page
+        (eacl/read-relationships authorization (assoc query :cache? false))]
+    (is (= #{relationship relationship-2}
+           (set (concat (:data first-page) (:data second-page)))))
+    (is (false? (:cached? first-page)))
+    (is (false? (:cached? second-page)))
+    (is (= (:data first-page) (:data repeated-first-page)))
+    (is (= (:data second-page) (:data repeated-second-page)))
+    (is (true? (:cached? repeated-first-page)))
+    (is (true? (:cached? repeated-second-page)))
+    (is (= (:data first-page) (:data bypassed-page)))
+    (is (false? (:cached? bypassed-page)))))
+
 (deftest per-request-cache-bypass-covers-public-read-shapes-test
   (let [conn (datahike/create-conn)
         authorization (client conn)

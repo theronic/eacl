@@ -18,11 +18,13 @@
     eacl.datahike.backend-test
     eacl.datahike.consistency-v3-test
     eacl.datahike.contract-test
+    eacl.datahike.enumeration-routing-test
     eacl.datahike.mutation-test
     eacl.datahike.storage-test
     eacl.datascript.adapter-certification-test
     eacl.datascript.consistency-v3-test
     eacl.datascript.contract-test
+    eacl.datascript.enumeration-routing-test
     eacl.datascript.impl-test
     eacl.datascript.mutation-test
     eacl.datascript.storage-test
@@ -83,7 +85,11 @@
 
 (def required-generated-authority-operations
   #{:recursive-routing-certificate
-    :cursor-bound-rebase
+    :enumeration-route
+    :acyclic-page
+    :acyclic-continuation
+    :acyclic-count
+    :acyclic-work
     :indexed-traversal-compile
     :indexed-traversal-initialize
     :indexed-traversal-drive

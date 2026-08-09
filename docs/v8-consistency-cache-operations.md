@@ -79,18 +79,20 @@ uses a separate bounded private store.
 
 ## Exact-current versus managed-current
 
-The default `:coherence-authority :unknown` enables exact-current reuse only.
-It is sound with out-of-band writers because a changed immutable DB generation
-cannot hit the previous generation.
+Every backend defaults to `:coherence-authority :unknown`. Unknown authority
+enables exact-current reuse only. It is sound with out-of-band writers because
+a changed immutable DB generation cannot hit the previous generation. Managed
+reuse is never a silent default: one raw backend transaction outside EACL's
+writers would otherwise leave every relation stamp untouched and let a stamped
+entry outlive the data it was computed from.
 
-Use managed reuse only under this explicit contract:
+Opt in to managed reuse only under this explicit contract:
 
 ```clojure
 (def acl
   (datomic/make-client
     conn
-    {:coherence-authority :managed
-     :cache {:max-entries 4096}}))
+    {:coherence-authority :managed}))
 ```
 
 `managed` means every relationship mutation that can affect EACL uses an EACL
@@ -107,16 +109,18 @@ well as the public EACL writers. Datahike and DataScript use the transaction
 component of the current relation mutation datom.
 
 For a dependency set `D`, EACL validates that every dependency has a stamp and
-computes:
+builds the complete sorted per-relation stamp vector:
 
 ```text
-dependency-stamp = max(last-change-t(relation)) for relation in D
+dependency-stamp = sort-by relation [[relation last-change-t mutation-id] ...]
+                   for relation in D
 ```
 
 Under ordinary forward transactions, changing any relevant relation writes a
-strictly newer transaction and therefore raises this maximum. An unrelated
-relation write leaves it unchanged. The normalized internal query fixes `D`,
-so equal maxima from different dependency sets cannot collide.
+strictly newer stamp component and therefore changes the vector. An unrelated
+relation write leaves it unchanged. The complete vector (not a folded maximum)
+is the key component, so distinct histories and distinct dependency sets
+cannot collide.
 
 An actual schema change changes the schema generation and expires all managed
 answers and compiled plans. EACL intentionally does not attempt partial cache

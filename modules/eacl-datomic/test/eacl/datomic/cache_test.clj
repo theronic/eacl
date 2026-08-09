@@ -175,24 +175,9 @@
     (is (= 1 (get-in (cache/stats store) [:entries-by-kind :can?])))
     (is (pos? (get-in (cache/stats store) [:by-kind :can? :rejections])))))
 
-(deftest authenticated-store-preserves-logical-kind-test
-  (let [provider
-        (cache/local-store
-         {:max-weight 100000
-          :max-entry-weight 10000
-          :max-entries 20
-          :kind-max-weight {:can? 8000}
-          :two-hit-kinds #{:can?}})
-        store (cache/authenticated-store provider :test nil)
-        key {:kind :can?
-             :semantic-key [:permission-check "alice" :view "document-1"]}]
-    (is (false? (shared-cache/store! store key "signed-envelope"))
-        "the first sighting must obey :can? two-hit admission")
-    (is (true? (shared-cache/store! store key "signed-envelope"))
-        "the second sighting is admitted")
-    (is (= "signed-envelope" (shared-cache/lookup store key)))
-    (is (= 1 (get-in (cache/stats provider)
-                     [:entries-by-kind :can?])))))
+;; EACL-FORMAL-003's authenticated-store kind-preservation pin moved to
+;; eacl.datomic.trusted-surface-audit-test: the adapter it covered was
+;; deleted by trusted-surface-hygiene 11.1, so absence is now the guarantee.
 
 (deftest namespaced-clear-never-clears-other-consumers-test
   (let [store (cache/local-store)]

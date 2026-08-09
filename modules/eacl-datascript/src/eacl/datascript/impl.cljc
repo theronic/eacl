@@ -4,6 +4,7 @@
             [eacl.datascript.db :as ddb]
             [eacl.engine.relationships :as relationship-engine]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
@@ -329,47 +330,13 @@
       ;; both halves so an out-of-band half pair is repairable.
       (retract-relationship-txes resolved))))
 
-(def ^:private known-relationship-filter-keys
-  #{:subject/type :subject/id
-    :resource/type :resource/id :resource/relation
-    :first :last :after :before
-    :limit :cursor :consistency})
-
-(def ^:private relationship-anchor-keys
-  #{:subject/type :subject/id
-    :resource/type :resource/id :resource/relation})
-
-(defn validate-relationship-filters!
-  [filters]
-  (doseq [[unsupported-key hint]
-          [[:resource/id-prefix "Filter on :resource/id, or filter external ids client-side."]
-           [:subject/relation "EACL does not support subject-relation filters."]]]
-    (when (contains? filters unsupported-key)
-      (throw (ex-info (str (pr-str unsupported-key)
-                           " is not supported by read-relationships. "
-                           hint)
-               {:eacl/error :eacl.pagination/unsupported-filter
-                :filter unsupported-key}))))
-  (when-let [unknown-keys
-             (seq (remove known-relationship-filter-keys (keys filters)))]
-    (throw (ex-info (str "read-relationships was passed unknown filter key(s): "
-                         (pr-str (vec unknown-keys))
-                         ". Known keys: "
-                         (pr-str (vec (sort known-relationship-filter-keys)))
-                         ".")
-             {:eacl/error :eacl.filters/unknown-filter
-              :unknown-keys (vec unknown-keys)})))
-  (when-not (some #(contains? filters %) relationship-anchor-keys)
-    (throw (ex-info (str "read-relationships requires at least one anchor filter of "
-                         (pr-str (vec (sort relationship-anchor-keys)))
-                         ". An unfiltered read would scan the entire relationship index.")
-             {:eacl/error :eacl.filters/missing-anchor}))))
-
 (defn read-relationships
   ([db filters]
    (read-relationships db filters nil))
   ([db filters decision-kernel]
-  (validate-relationship-filters! filters)
+  ;; The unified filter contract shared by every backend
+  ;; (backend-unification 9.1).
+  (relationship-filters/validate! filters)
   (let [subject-id'  (when (contains? filters :subject/id)
                        (internal-id db (:subject/id filters)))
         resource-id' (when (contains? filters :resource/id)

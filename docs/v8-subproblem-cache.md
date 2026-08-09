@@ -63,12 +63,18 @@ are retained as useful negative results. Direct membership probes use the same
 relation-stamped mechanism.
 
 Acyclic denotations and completed recursive least-fixed-point result vectors
-are currently exact-generation-only. Recursive state is publishable only after
-the worklist completes; visited-set fragments and partial page walks are never
-shared. Forward/reverse lookup, count, `can?`, and cursor rendering can reuse a
-completed compatible denotation on that exact snapshot. Cross-revision reuse
-of derived denotations remains disabled until their complete dependency-proof
-union has a bounded implementation and proof.
+are publishable only after the worklist completes; visited-set fragments and
+partial page walks are never shared. Forward/reverse lookup, count, `can?`,
+and cursor rendering can reuse a completed compatible denotation on the exact
+snapshot, and under `:coherence-authority :managed` a completed denotation is
+additionally reusable across unrelated forward transactions: its managed key
+commits to the schema stamp and the complete sorted per-relation stamp vector
+of the permission's dependency closure, and plan compilation fails if a
+compiled rule could reference a relation outside that closure. This is the
+same relation-stamp framing completed answers and projections use — one
+generation-layering implementation, differentially tested against the
+cache-free oracle under interleaved writes. Its dedicated machine-checked
+framing proof remains open and is tracked in the assurance matrix.
 
 ## Bounds and hit costs
 
@@ -93,17 +99,22 @@ Configuration:
   {:enabled? true
    :projection-max-weight (* 8 1024 1024)
    :denotation-max-weight (* 8 1024 1024)
+   :answer-max-weight (* 16 1024 1024)
    :max-inflight 256}}}
 ```
 
 The weights are deterministic admission units approximating retained key/value
-size, not a portable JVM/JavaScript heap-byte measurement.
+size, not a portable JVM/JavaScript heap-byte measurement. Completed answers
+are the store's third weighted tier: bounded by `:answer-max-weight`, evicted
+least-recently-used, and capped at one quarter of the budget per entry with
+oversized rejection, so answers can never grow byte-unbounded and one
+maximum-size page cannot displace every retained answer.
 
 `cache-stats` exposes exact and managed completed-answer counts plus
-`:subproblems` and `:managed-subproblems`. Relevant counters include projection
-and denotation hits, managed projection hits, proof reads/hits/failures,
-single-flight waits, admission/oversize rejection, eviction, fetched
-projection values, and avoided backend operations.
+`:subproblems` and `:managed-subproblems`. Relevant counters include
+projection, denotation, and answer hits, managed projection hits, proof
+reads/hits/failures, single-flight waits, admission/oversize rejection,
+eviction, fetched projection values, and avoided backend operations.
 
 ## Performance gate
 

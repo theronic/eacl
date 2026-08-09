@@ -1,0 +1,6 @@
+{:selected-route :acyclic
+ :count 50000
+ :truncated? false
+ :recursive-counters {}
+ :recursive-limit-error false
+ :generated-schema-binding :accepted}

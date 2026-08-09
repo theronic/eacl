@@ -197,7 +197,7 @@ The final pre-audit run on 2026-08-06 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 25 modules, 9,776 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 25 modules, 9,795 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
 | Generated Java runtime bridges | 47 tests, 15,628 assertions, 0 failures/errors |
 | Generated-only JVM public/backend suite | 509 tests, 34,773 assertions, 0 failures/errors across Datomic, Datahike, and DataScript |

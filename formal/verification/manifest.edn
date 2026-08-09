@@ -27,7 +27,7 @@
    :claim :conditional-interface-contract}
   :direct-and-acyclic-engine
   {:status :passed
-   :verified-obligations 82
+   :verified-obligations 95
    :source "formal/dafny/AcyclicEngine.dfy"
    :report "formal/verification/acyclic-kernel.edn"}
   :ordered-merge
@@ -50,7 +50,7 @@
    :routing-resource-refinement :not-claimed}
   :recursive-routing-certificate
   {:status :passed
-   :verified-obligations 46
+   :verified-obligations 52
    :source "formal/dafny/RoutingCertificate.dfy"
    :integration-status
    :generated-authority-for-stamped-schema-generations-on-all-three-backends
@@ -63,7 +63,7 @@
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 36
+   :verified-obligations 38
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
@@ -74,7 +74,7 @@
    :claim :conditional-operation-count-bound}
   :recursive-engine-cost-model
   {:status :passed
-   :verified-obligations 29
+   :verified-obligations 34
    :source "formal/dafny/SchemaPlanCost.dfy"
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
@@ -128,7 +128,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9776
+   :verified-obligations 9802
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :all-defined-permission-roots-and-public-operations-generated-authority-routed
@@ -174,7 +174,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-059
+ {:latest :EACL-FORMAL-062
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -233,11 +233,14 @@
           :EACL-FORMAL-056
           :EACL-FORMAL-057
           :EACL-FORMAL-058
-          :EACL-FORMAL-059]}
+          :EACL-FORMAL-059
+          :EACL-FORMAL-060
+          :EACL-FORMAL-061
+          :EACL-FORMAL-062]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 59}
+  :entries 62}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -262,6 +265,8 @@
  {:status :passed
    :gate-enforcement :passed
    :report "formal/verification/performance-gates.edn"
+   :explorer-v8-release-report
+   "formal/verification/explorer-v8-release.edn"
    :current-generation-cache-heavy-suite :passed
    :generated-authority-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed

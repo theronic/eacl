@@ -2,12 +2,45 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [clojure.string :as str]
             [eacl.authorization-oracle :as oracle]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]))
 
 (def ->user (partial eacl/spice-object :user))
 (def ->platform (partial eacl/spice-object :platform))
 (def ->account (partial eacl/spice-object :account))
 (def ->server (partial eacl/spice-object :server))
+
+(defrecord PortableContractStore [entries metrics]
+  cache/CacheStore
+  (lookup [_ key] (get @entries key))
+  (store! [_ key value]
+    (if (nil? value)
+      false
+      (do (swap! entries assoc key value)
+          true)))
+  (evict! [_ key]
+    (let [existed? (contains? @entries key)]
+      (swap! entries dissoc key)
+      existed?))
+  (clear! [_]
+    (reset! entries {})
+    nil)
+  (stats [_]
+    (assoc @metrics :entries (count @entries)))
+  cache/CacheTelemetry
+  (record-validation! [_ metric]
+    (swap! metrics update metric (fnil inc 0))
+    nil))
+
+(defn portable-store
+  "A minimal portable CacheStore stand-in for contract tests.
+
+  The production portable reference store was deleted with the D-6
+  answer-tier fold-in; contract suites only need an inert provider adapter
+  to prove native completed answers remain client-private and that request
+  bypass touches no provider state."
+  []
+  (->PortableContractStore (atom {}) (atom {})))
 
 (def smoke-schema
   "definition user {}
@@ -78,6 +111,72 @@
     (catch #?(:clj Exception :cljs :default) error
       (let [data (ex-data error)]
         (or (:eacl/error data) (:type data))))))
+
+(defn- read-relationships-error-data
+  [client filters]
+  (try
+    (eacl/read-relationships client filters)
+    nil
+    (catch #?(:clj Exception :cljs :default) error
+      (ex-data error))))
+
+(defn assert-unified-filter-validation!
+  "The unified read-relationships filter/error contract
+  (backend-unification 9.1). Value-presence anchor semantics: an anchor key
+  present with a nil value throws `:eacl.filters/missing-anchor` naming it
+  in `:nil-anchor-keys` — nil type/relation filters never widen to
+  match-everything wildcards — and pagination/unknown keys classify
+  identically on every backend. Call with a client whose schema defines the
+  smoke `:server` resource type."
+  [client]
+  (testing "nil id anchor throws instead of scanning or reading empty"
+    (let [data (read-relationships-error-data
+                client {:subject/id nil :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:subject/id] (:nil-anchor-keys data)))))
+  (testing "nil type anchor throws instead of wildcarding every relation"
+    (let [data (read-relationships-error-data
+                client {:resource/type nil :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:resource/type] (:nil-anchor-keys data)))))
+  (testing "nil relation filter throws even beside a valid anchor"
+    (let [data (read-relationships-error-data
+                client {:resource/type :server
+                        :resource/relation nil
+                        :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:resource/relation] (:nil-anchor-keys data)))))
+  (testing "nil id filter throws even beside a valid type anchor"
+    (let [data (read-relationships-error-data
+                client {:subject/type :user
+                        :subject/id nil
+                        :first 5})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [:subject/id] (:nil-anchor-keys data)))))
+  (testing "an anchorless read names no nil keys but still fails closed"
+    (let [data (read-relationships-error-data client {})]
+      (is (= :eacl.filters/missing-anchor (:eacl/error data)))
+      (is (= [] (:nil-anchor-keys data)))))
+  (testing "v6-era pagination options classify identically on every backend"
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (read-relationships-error-data
+             client {:resource/type :server :limit 5}))))
+    (is (= :eacl.pagination/unsupported-filter
+           (:eacl/error
+            (read-relationships-error-data
+             client {:resource/type :server :cursor "opaque"})))))
+  (testing "unknown keys fail loudly with the shared classification"
+    (let [data (read-relationships-error-data
+                client {:resource/type :server
+                        :resouce/id "typo"
+                        :first 5})]
+      (is (= :eacl.filters/unknown-filter (:eacl/error data)))
+      (is (= [:resouce/id] (:unknown-keys data)))))
+  (testing "a valid anchored read still succeeds"
+    (is (vector?
+         (:data (eacl/read-relationships
+                 client {:resource/type :server :first 5}))))))
 
 (defn assert-seeded-contracts!
   [client]
@@ -639,3 +738,131 @@
         (is (= :eacl/invalid-request
                (error-category #(call {:cache? :invalid})))
             (str label " rejects a non-boolean :cache?"))))))
+
+(defn assert-v8-request-cache-controls!
+  [client store]
+  (let [resource-query
+        {:subject (->user "user-1")
+         :permission :view
+         :resource/type :server
+         :first 1}
+        subject-query
+        {:resource (->server "server-1")
+         :permission :reboot
+         :subject/type :user
+         :first 1}
+        relationship-query
+        {:subject/type :account
+         :subject/id "account-1"
+         :resource/type :server
+         :resource/relation :account
+         :first 1}
+        demand
+        {:subject (->user "user-1")
+         :permission :reboot
+         :resource (->server "server-1")}]
+    (cache/clear! store)
+
+    (testing "request bypass neither reads nor writes and retained entries remain reusable"
+      (let [miss (eacl/lookup-resources
+                  client (assoc resource-query :cache? true))
+            hit (eacl/lookup-resources client resource-query)
+            before-bypass (cache/stats store)
+            bypass (eacl/lookup-resources
+                    client (assoc resource-query :cache? false))
+            after-bypass (cache/stats store)
+            retained-hit
+            (eacl/lookup-resources
+             client (assoc resource-query :cache? true))]
+        (is (false? (:cached? miss)))
+        (is (true? (:cached? hit)))
+        (is (false? (:cached? bypass)))
+        (is (= before-bypass after-bypass))
+        (is (true? (:cached? retained-hit)))
+        (is (= (:data miss) (:data bypass) (:data retained-hit)))))
+
+    (testing "cache execution control is excluded from cursor identity"
+      (let [first-page
+            (eacl/lookup-resources
+             client (assoc resource-query :cache? true))
+            second-page
+            (eacl/lookup-resources
+             client
+             (assoc resource-query
+                    :cache? false
+                    :after (get-in first-page
+                                   [:page-info :end-cursor])))]
+        (is (= [(->server "server-2")] (:data second-page)))))
+
+    (testing "relationship reads expose miss, hit, bypass, and retained reuse"
+      (cache/clear! store)
+      (let [miss
+            (eacl/read-relationships
+             client (assoc relationship-query :cache? true))
+            hit
+            (eacl/read-relationships client relationship-query)
+            before-bypass (cache/stats store)
+            bypass
+            (eacl/read-relationships
+             client (assoc relationship-query :cache? false))
+            after-bypass (cache/stats store)
+            retained-hit
+            (eacl/read-relationships
+             client (assoc relationship-query :cache? true))]
+        (is (false? (:cached? miss)))
+        (is (true? (:cached? hit)))
+        (is (false? (:cached? bypass)))
+        (is (= before-bypass after-bypass))
+        (is (true? (:cached? retained-hit)))
+        (is (= (:data miss) (:data bypass) (:data retained-hit)))))
+
+    (testing "detailed permission checks expose miss, hit, and bypass provenance"
+      (cache/clear! store)
+      (let [miss (eacl/check-permission client demand)
+            hit (eacl/check-permission client (assoc demand :cache? true))
+            before-bypass (cache/stats store)
+            bypass
+            (eacl/check-permission client (assoc demand :cache? false))
+            after-bypass (cache/stats store)]
+        (is (= true (:allowed? miss) (:allowed? hit) (:allowed? bypass)))
+        (is (false? (:cached? miss)))
+        (is (true? (:cached? hit)))
+        (is (false? (:cached? bypass)))
+        (is (= before-bypass after-bypass))
+        (is (boolean? (eacl/can? client demand)))))
+
+    (testing "all cache-aware request maps reject non-Boolean :cache?"
+      (doseq [[operation call]
+              [[:can
+                #(eacl/can? client (assoc demand :cache? :invalid))]
+               [:check-permission
+                #(eacl/check-permission
+                  client (assoc demand :cache? :invalid))]
+               [:lookup-resources
+                #(eacl/lookup-resources
+                  client (assoc resource-query :cache? :invalid))]
+               [:count-resources
+                #(eacl/count-resources
+                  client
+                  (assoc (dissoc resource-query :first)
+                         :cache? :invalid))]
+               [:lookup-subjects
+                #(eacl/lookup-subjects
+                  client (assoc subject-query :cache? :invalid))]
+               [:count-subjects
+                #(eacl/count-subjects
+                  client
+                  (assoc (dissoc subject-query :first)
+                         :cache? :invalid))]
+               [:read-relationships
+                #(eacl/read-relationships
+                  client (assoc relationship-query :cache? :invalid))]]]
+        (is (= :eacl/invalid-request (error-category call))
+            (str operation " should reject an invalid :cache?"))
+        (is (= :cache?
+               (try
+                 (call)
+                 nil
+                 (catch #?(:clj Exception :cljs :default) error
+                   (:key (ex-data error)))))
+            (str operation " should identify :cache?"))))))

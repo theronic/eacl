@@ -487,6 +487,7 @@
          :subject->resources scan
          :resource->subjects reverse-scan
          :direct-match? direct-match?
+         :relation-populated? (fn [& _] false)
          :all-permission-nodes
          (constantly (:permission-nodes fixture))
          :schema-proof (fn ([] :schema-1) ([_] :schema-1))

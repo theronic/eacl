@@ -1,29 +1,13 @@
 (ns eacl.cache
-  "Backend-neutral private current-generation caching and authenticated
-  provider-entry validation."
-  (:require [eacl.backend.v8 :as backend]
-            [eacl.secure-format :as secure]
-            [eacl.subproblem-cache :as subproblem]
+  "Backend-neutral private current-generation caching.
+
+  The portable CacheStore protocol family remains the provider/continuation
+  adapter surface; the unreachable authenticated-envelope completed-cache
+  path that once lived here was deleted by trusted-surface-hygiene 11.1
+  (native completed answers are client-private and never flow through
+  portable providers)."
+  (:require [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
-
-(def cache-entry-version 3)
-(def portable-value-version 1)
-(def cache-entry-prefix "eacl_ce3_")
-(def cache-entry-domain "eacl/cache-entry/envelope/v3")
-(def cache-entry-keys
-  #{:version :portable-version :key :kind :computed-at :validated-at
-    :dependency-scope :proof :value})
-
-(def validation-metric-keys
-  [:exact-hit
-   :causal-proof-lift
-   :content-proof
-   :mutation-proof
-   :proof-mismatch
-   :future-history-rejection
-   :unauthenticated-entry
-   :no-proof-bypass
-   :provider-failure])
 
 (defprotocol CacheStore
   (lookup [store key])
@@ -58,9 +42,45 @@
   [store]
   (instance? NoCache store))
 
-(defrecord ExactGeneration [snapshot order entries subproblems])
+(defn validate-request-cache-option!
+  "Validates the per-request `:cache?` execution control."
+  [cache-option]
+  (when-not (or (nil? cache-option) (boolean? cache-option))
+    (throw (ex-info "EACL Error: per-request :cache? must be true or false."
+                    {:type :eacl/invalid-request
+                     :key :cache?
+                     :value cache-option})))
+  cache-option)
+
+(defn lookup-page-query-identity
+  "Builds the semantic cache identity for an authenticated lookup page.
+
+  Public cursors are signed transport envelopes whose snapshot metadata can
+  change when the same logical boundary is recovered on a newer current
+  snapshot. The authenticated internal boundary is the semantic position.
+  `:rebase?` is likewise an execution instruction, not part of that position.
+
+  Call only after the public cursor has been authenticated and internalized."
+  [public-query internal-query]
+  (let [semantic-bound
+        (fn [bound]
+          (if (map? bound)
+            (dissoc bound :rebase?)
+            bound))]
+    {:public
+     (dissoc public-query
+             :consistency :cache? :after :before)
+     :internal
+     (cond-> (dissoc internal-query :consistency :cache?)
+       (contains? internal-query :after)
+       (update :after semantic-bound)
+
+       (contains? internal-query :before)
+       (update :before semantic-bound))}))
+
+(defrecord ExactGeneration [snapshot order subproblems])
 (defrecord ManagedGeneration
-  [schema-stamp installed-order entries subproblems])
+  [schema-stamp installed-order subproblems])
 (defrecord CacheLifecycle [exact managed])
 (defrecord CurrentGenerationCache [lifecycle metrics max-entries admissions
                                    admit-on-repeat? subproblem-options
@@ -70,12 +90,101 @@
   []
   (->CacheLifecycle (atom nil) (atom nil)))
 
+(def ^:private empty-answer-sightings
+  {:tick 0
+   :queue #?(:clj clojure.lang.PersistentQueue/EMPTY
+             :cljs (.-EMPTY cljs.core/PersistentQueue))
+   :seen {}})
+
+(defn- sighting-transition
+  "One `:on-repeat` admission step over a first-in-first-out sighting window.
+
+  Returns `[admit? next-state]`. A key already in the window demonstrates
+  reuse and is admitted (its sighting is consumed). A new key records a
+  first sighting; when the window exceeds `capacity`, the OLDEST first
+  sightings are forgotten — recency-honest by construction, so the retained
+  sighting set can never converge to a fixed hash-lucky subset. A key seen
+  twice within `capacity` distinct first sightings is therefore always
+  admitted."
+  [{:keys [tick queue seen] :as state} entry-key capacity]
+  (if (contains? seen entry-key)
+    [true (assoc state :seen (dissoc seen entry-key))]
+    (let [tick (inc tick)
+          queue (conj queue [tick entry-key])
+          seen (assoc seen entry-key tick)
+          [queue seen]
+          (loop [queue queue
+                 seen seen]
+            (if (<= (count seen) capacity)
+              [queue seen]
+              (let [[record-tick record-key] (peek queue)
+                    queue (pop queue)]
+                (if (= record-tick (get seen record-key))
+                  (recur queue (dissoc seen record-key))
+                  (recur queue seen)))))
+          queue
+          ;; Consumed and superseded records are skipped rather than removed
+          ;; above; compact when they dominate so the queue stays
+          ;; proportional to the live window.
+          (if (> (count queue) (max 64 (* 2 (count seen))))
+            (into (:queue empty-answer-sightings)
+                  (filter (fn [[record-tick record-key]]
+                            (= record-tick (get seen record-key))))
+                  queue)
+            queue)]
+      [false {:tick tick :queue queue :seen seen}])))
+
+(defn- admit-answer?
+  [store entry-key]
+  (if-not (:admit-on-repeat? store)
+    true
+    (let [admitted? (volatile! false)]
+      (swap! (:admissions store)
+             (fn [state]
+               (let [[admit? next-state]
+                     (sighting-transition
+                      state entry-key (:max-entries store))]
+                 (vreset! admitted? admit?)
+                 next-state)))
+      @admitted?)))
+
+(defn- default-answer-weight
+  "Conservative retained-size estimate for one completed answer.
+
+  Mirrors the page-weight family the Datomic backend supplies explicitly:
+  paged results weigh in by row count; scalar decisions and counts pay a
+  flat floor. Callers with better knowledge pass `:answer-weight-fn`."
+  [value]
+  (let [data (when (map? value) (:data value))]
+    (if (counted? data)
+      (+ 512 (* 128 (count data)))
+      512)))
+
+(defn- answer-entry-options
+  "Store options validating and weighing `{:value v :cache-basis b}` wrappers."
+  [valid-value? answer-weight-fn]
+  (let [weight-fn (or answer-weight-fn default-answer-weight)]
+    {:valid? (fn [entry]
+               (and (map? entry)
+                    (contains? entry :value)
+                    (boolean (valid-value? (:value entry)))))
+     :weight-fn (fn [entry]
+                  (weight-fn (:value entry)))}))
+
 (defn current-cache
   "Creates the private, client-owned completed-answer cache.
 
   Exact entries belong to one immutable selected DB value. Managed entries
   survive unrelated forward transactions under an explicit backend stamp
-  contract. Neither tier is a portable provider or a historical cache."
+  contract. Neither tier is a portable provider or a historical cache.
+
+  Completed answers are stored in the `:answer` tier of the lifecycle's
+  weighted subproblem stores: byte-weight bounded (`:subproblem-cache
+  {:answer-max-weight n}`, default 16 MiB), least-recently-used eviction,
+  and a per-entry ceiling of one quarter of the budget with oversized
+  rejection. `:max-entries` no longer bounds stored answers — the weight
+  budget does — but remains accepted: it sizes the `:admit-on-repeat?`
+  second-sighting window (default 1024), its historical admission role."
   ([]
    (current-cache {}))
   ([{:keys [max-entries admit-on-repeat? subproblem-cache]
@@ -116,7 +225,7 @@
              :puts 0
              :expirations 0})
       max-entries
-      (atom {})
+      (atom empty-answer-sightings)
       admit-on-repeat?
       subproblem-cache
       coordinator))))
@@ -157,27 +266,31 @@
                      :cache store})))
   (let [lifecycle @(:lifecycle store)
         exact @(:exact lifecycle)
-        managed @(:managed lifecycle)]
+        managed @(:managed lifecycle)
+        exact-stats
+        (when-let [subproblems (:subproblems exact)]
+          (subproblem/stats subproblems))
+        managed-stats
+        (when-let [subproblems (:subproblems managed)]
+          (subproblem/stats subproblems))]
     (assoc @(:metrics store)
            :exact-entries
-           (if exact (count @(:entries exact)) 0)
+           (get-in exact-stats [:tiers :answer :entries] 0)
            :managed-entries
-           (if managed (count @(:entries managed)) 0)
+           (get-in managed-stats [:tiers :answer :entries] 0)
            :active-subproblem-computations
            @(:active (:subproblem-coordinator store))
            :max-subproblem-computations
            (:maximum (:subproblem-coordinator store))
            :admission-entries
-           (count @(:admissions store))
+           (count (:seen @(:admissions store)))
            :subproblems
-           (if (and exact (:subproblems exact))
-             (subproblem/stats (:subproblems exact))
-             (subproblem/stats
-              (subproblem/store
-               (dissoc (:subproblem-options store) :enabled?))))
+           (or exact-stats
+               (subproblem/stats
+                (subproblem/store
+                 (dissoc (:subproblem-options store) :enabled?))))
            :managed-subproblems
-           (when (and managed (:subproblems managed))
-             (subproblem/stats (:subproblems managed))))))
+           managed-stats)))
 
 (defn record-current-bypass!
   "Records that a configured native cache was deliberately skipped without
@@ -202,57 +315,17 @@
                     {:type :eacl/invalid-config
                      :cache store})))
   (reset! (:lifecycle store) (new-lifecycle))
-  (reset! (:admissions store) {})
+  (reset! (:admissions store) empty-answer-sightings)
   (swap! (:metrics store) update :expirations inc)
   nil)
 
-(defn- bounded-assoc
-  [entries key value max-entries]
-  (let [updated (assoc entries key value)]
-    (if (<= (count updated) max-entries)
-      updated
-      (let [victim
-            (first
-             (remove #(= key %) (keys updated)))]
-        (if victim
-          (dissoc updated victim)
-          updated)))))
-
-(defn- admit-entry?
-  [store entry-key]
-  (if-not (:admit-on-repeat? store)
-    true
-    (let [repeated? (volatile! false)]
-      (swap! (:admissions store)
-             (fn [admissions]
-               (if (contains? admissions entry-key)
-                 (do
-                   (vreset! repeated? true)
-                   admissions)
-                 (bounded-assoc
-                  admissions entry-key true (:max-entries store)))))
-      @repeated?)))
-
-(defn- put-entry!
-  [store entries key value]
-  (swap! entries bounded-assoc key value (:max-entries store))
-  (swap! (:metrics store) update :puts inc)
-  nil)
-
-(defn- valid-current-entry
-  [entries key valid-value?]
-  (when-let [[_ entry] (find @entries key)]
-    (try
-      (if (valid-value? (:value entry))
-        entry
-        (do
-          (swap! entries dissoc key)
-          nil))
-      (catch #?(:clj Exception :cljs :default) _
-        (swap! entries dissoc key)
-        nil))))
-
 (defn- install-exact-generation!
+  "Installs (or reuses) the exact generation for one selected snapshot.
+
+  The generation's weighted subproblem store is created unconditionally: it
+  now also carries the completed-answer `:answer` tier, so `:subproblem-cache
+  {:enabled? false}` disables traversal-subproblem bindings without disabling
+  completed-answer storage."
   [exact snapshot order same-snapshot? subproblem-options coordinator]
   (loop []
     (let [current @exact]
@@ -265,11 +338,10 @@
             (< (:order current) order))
         (let [created
               (->ExactGeneration
-               snapshot order (atom {})
-               (when (get subproblem-options :enabled? true)
-                 (subproblem/store
-                  (assoc (dissoc subproblem-options :enabled?)
-                         :computation-coordinator coordinator))))]
+               snapshot order
+               (subproblem/store
+                (assoc (dissoc subproblem-options :enabled?)
+                       :computation-coordinator coordinator)))]
           (if (compare-and-set! exact current created)
             {:generation created :active? true}
             (recur)))
@@ -293,11 +365,9 @@
               (->ManagedGeneration
                schema-stamp
                order
-               (atom {})
-               (when (get subproblem-options :enabled? true)
-                 (subproblem/store
-                  (assoc (dissoc subproblem-options :enabled?)
-                         :computation-coordinator coordinator))))]
+               (subproblem/store
+                (assoc (dissoc subproblem-options :enabled?)
+                       :computation-coordinator coordinator)))]
           (if (compare-and-set! managed current created)
             created
             (recur)))
@@ -351,14 +421,22 @@
   for exact, historical, and arbitrary-db evaluation. An optional
   `:managed-key-fn` is invoked only after an exact miss and must return numeric
   `:schema-stamp` and `:dependency-stamp` values extracted from that same
-  immutable snapshot.
+  immutable snapshot. An optional `:answer-weight-fn` estimates the retained
+  size of one completed answer value for the weighted `:answer` tier;
+  omitted, a conservative page-size default applies.
+
+  Completed answers live in the `:answer` tier of the lifecycle's exact and
+  managed subproblem stores: weight-bounded, least-recently-used, oversized
+  rejecting, and single-flighted. Exact keying is the semantic key plus kind
+  on the selected generation's store; managed keying adds the dependency
+  stamp on the schema-generation store.
 
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
            managed-descriptor-key-fn managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
-           decision-kernel remember-answer?]
+           decision-kernel remember-answer? answer-weight-fn]
     :or {same-snapshot? =
          cacheable? true
          remember-answer? true}}
@@ -420,24 +498,28 @@
              :cached? false
              :cache-tier nil
              :cache-basis nil})
-          (let [entry
+          (let [answer-store (:subproblems generation)
+                answer-options
+                (answer-entry-options valid-value? answer-weight-fn)
+                exact-entry
                 (when remember-answer?
-                  (valid-current-entry
-                   (:entries generation) entry-key valid-value?))
+                  (:value
+                   (subproblem/lookup!
+                    answer-store :answer entry-key answer-options)))
                 exact-action
                 (current-cache-action
-                 decision-kernel :exact-entry (some? entry))]
+                 decision-kernel :exact-entry (some? exact-entry))]
             (if (= :use-exact-entry exact-action)
             (do
               (swap! (:metrics store) update :exact-hits inc)
-              {:value (:value entry)
+              {:value (:value exact-entry)
                :cached? true
                :cache-tier :exact-current
-               :cache-basis (:cache-basis entry)
-               :subproblem-store (:subproblems generation)})
+               :cache-basis (:cache-basis exact-entry)
+               :subproblem-store answer-store})
             (let [{:keys [schema-stamp dependency-stamp]}
                   (managed-descriptor
-                   store (:subproblems generation)
+                   store answer-store
                    managed-descriptor-key-fn managed-key-fn)
                   managed-generation
                   (when (some? schema-stamp)
@@ -446,442 +528,96 @@
                      schema-stamp snapshot-order
                      (:subproblem-options store)
                      (:subproblem-coordinator store)))
+                  managed-store (:subproblems managed-generation)
                   managed-entry-key
                   (when managed-generation
                     [semantic-key kind dependency-stamp])
                   managed-entry
                   (when (and remember-answer? managed-entry-key)
-                    (valid-current-entry
-                     (:entries managed-generation)
-                     managed-entry-key
-                     valid-value?))
+                    (:value
+                     (subproblem/lookup!
+                      managed-store :answer managed-entry-key
+                      answer-options)))
                   managed-action
                   (current-cache-action
                    decision-kernel :managed-entry (some? managed-entry))]
               (if (= :use-managed-entry managed-action)
                 (do
-                  (put-entry!
-                   store (:entries generation) entry-key managed-entry)
+                  ;; Promote the still-valid managed answer into the selected
+                  ;; exact generation so the next identical request hits
+                  ;; without dependency-stamp extraction.
+                  (subproblem/resolve!
+                   answer-store :answer entry-key answer-options
+                   (fn [] managed-entry))
+                  (swap! (:metrics store) update :puts inc)
                   (swap! (:metrics store) update :managed-hits inc)
                   {:value (:value managed-entry)
                    :cached? true
                    :cache-tier :managed-current
                    :cache-basis (:cache-basis managed-entry)
-                   :subproblem-store (:subproblems generation)})
-                (let [value
-                      (binding [subproblem/*store*
-                                (:subproblems generation)
-                                subproblem/*managed-store*
-                                (:subproblems managed-generation)
-                                subproblem/*managed-key-fn*
-                                managed-subproblem-key-fn
-                                subproblem/*managed-scope*
-                                managed-subproblem-scope
-                                subproblem/*decision-kernel*
-                                (or decision-kernel
-                                    subproblem/*decision-kernel*)]
-                        (subproblem/with-decision-memo compute))
-                      entry {:value value
-                             :cache-basis cache-basis}
-                      admit?
-                      (and remember-answer?
-                           (admit-entry? store entry-key))]
-                  (when admit?
-                    (put-entry!
-                     store (:entries generation) entry-key entry)
-                    (when managed-entry-key
-                      (put-entry!
-                       store
-                       (:entries managed-generation)
-                       managed-entry-key
-                       entry)))
-                  (swap! (:metrics store)
-                         update
-                         (if remember-answer? :misses :bypasses)
-                         inc)
-                  {:value value
-                   :cached? false
-                   :cache-tier nil
-                   :cache-basis cache-basis
-                   :subproblem-store
-                   (:subproblems generation)}))))))))))
+                   :subproblem-store answer-store})
+                (let [subproblems-enabled?
+                      (get (:subproblem-options store) :enabled? true)
+                      compute-entry
+                      (fn []
+                        {:value
+                         (binding [subproblem/*store*
+                                   (when subproblems-enabled?
+                                     answer-store)
+                                   subproblem/*managed-store*
+                                   (when subproblems-enabled?
+                                     managed-store)
+                                   subproblem/*managed-key-fn*
+                                   managed-subproblem-key-fn
+                                   subproblem/*managed-scope*
+                                   managed-subproblem-scope
+                                   subproblem/*decision-kernel*
+                                   (or decision-kernel
+                                       subproblem/*decision-kernel*)]
+                           (subproblem/with-decision-memo compute))
+                         :cache-basis cache-basis})
+                      layered-compute
+                      (fn []
+                        (if managed-entry-key
+                          (:value
+                           (subproblem/resolve!
+                            managed-store :answer managed-entry-key
+                            answer-options compute-entry))
+                          (compute-entry)))]
+                  (if (and remember-answer?
+                           (admit-answer? store entry-key))
+                    (let [resolved
+                          (subproblem/resolve!
+                           answer-store :answer entry-key
+                           answer-options layered-compute)
+                          entry (:value resolved)]
+                      (if (:cached? resolved)
+                        ;; A concurrent identical request published or
+                        ;; single-flighted this answer first; serve it as the
+                        ;; exact hit it is.
+                        (do
+                          (swap! (:metrics store) update :exact-hits inc)
+                          {:value (:value entry)
+                           :cached? true
+                           :cache-tier :exact-current
+                           :cache-basis (:cache-basis entry)
+                           :subproblem-store answer-store})
+                        (do
+                          (swap! (:metrics store) update :misses inc)
+                          (swap! (:metrics store) update :puts inc)
+                          {:value (:value entry)
+                           :cached? false
+                           :cache-tier nil
+                           :cache-basis (:cache-basis entry)
+                           :subproblem-store answer-store})))
+                    (let [entry (compute-entry)]
+                      (swap! (:metrics store)
+                             update
+                             (if remember-answer? :misses :bypasses)
+                             inc)
+                      {:value (:value entry)
+                       :cached? false
+                       :cache-tier nil
+                       :cache-basis cache-basis
+                       :subproblem-store answer-store}))))))))))))
 
-(defrecord LocalStore [entries metrics max-entries]
-  CacheStore
-  (lookup [_ key]
-    (let [value (get @entries key)]
-      (swap! metrics update (if (some? value) :hits :misses) inc)
-      value))
-  (store! [_ key value]
-    (if (nil? value)
-      false
-      (do
-        (swap! entries
-               (fn [current]
-                 (let [updated (assoc current key value)]
-                   (if (<= (count updated) max-entries)
-                     updated
-                     ;; Portable reference implementation: deterministic
-                     ;; bounded admission, not a claim of LRU ordering.
-                     (dissoc updated (first (keys updated)))))))
-        (swap! metrics update :puts inc)
-        true)))
-  (evict! [_ key]
-    (let [present? (contains? @entries key)]
-      (swap! entries dissoc key)
-      present?))
-  (clear! [_]
-    (reset! entries {})
-    nil)
-  (stats [_]
-    (assoc @metrics :entries (count @entries)))
-  CacheTelemetry
-  (record-validation! [_ metric]
-    (swap! metrics update metric (fnil inc 0))
-    nil)
-  CacheValidationUpdate
-  (store-validation! [_ key expected-entry replacement-entry]
-    (let [updated? (atom false)]
-      (swap! entries
-             (fn [current]
-               (if (= expected-entry (get current key))
-                 (do
-                   (reset! updated? true)
-                   (assoc current key replacement-entry))
-                 current)))
-      @updated?)))
-
-(defn local-store
-  ([]
-   (local-store {}))
-  ([{:keys [max-entries]
-     :or {max-entries 1024}}]
-   (when-not (and (integer? max-entries) (pos? max-entries))
-     (throw (ex-info "Portable cache :max-entries must be positive."
-                     {:type :eacl/invalid-config
-                      :max-entries max-entries})))
-   (->LocalStore (atom {})
-                 (atom
-                  (merge {:hits 0 :misses 0 :puts 0 :errors 0}
-                         (zipmap validation-metric-keys
-                                 (repeat 0))))
-                 max-entries)))
-
-(defn cache-store
-  "Normalizes a client cache option. nil selects the bounded local reference
-  store, a map configures it, and a CacheStore is used as supplied."
-  [value]
-  (cond
-    (nil? value) (local-store)
-    (satisfies? CacheStore value) value
-    (map? value) (local-store value)
-    :else
-    (throw (ex-info "Expected a portable EACL CacheStore or cache config map."
-                    {:type :eacl/invalid-config
-                     :cache value}))))
-
-(defn- selected-point
-  [adapter]
-  {:source-scope
-   {:backend (backend/backend-id adapter)
-    :scope (backend/invoke adapter :source-scope)}
-   :graph-head (backend/invoke adapter :graph-head)
-   :snapshot-id (backend/invoke adapter :snapshot-id)})
-
-(defn- complete-key
-  [adapter key kind]
-  {:cache-version cache-entry-version
-   :adapter-version backend/adapter-version
-   :source-scope
-   {:backend (backend/backend-id adapter)
-    :scope (backend/invoke adapter :source-scope)}
-   :kind kind
-   :adapter-fingerprint (backend/fingerprint adapter)
-   :identity-contract (backend/identity-contract adapter)
-   :semantic-key key})
-
-(defn- encode-entry
-  [format-options payload]
-  (secure/encode-authenticated
-   (merge (dissoc format-options :decision-kernel)
-          {:domain cache-entry-domain
-           :prefix cache-entry-prefix})
-   payload))
-
-(defn- cache-entry
-  [format-options key kind computation-point schema-scope relation-ids
-   schema-proof relation-proof value]
-  (encode-entry
-   format-options
-   {:version cache-entry-version
-    :portable-version portable-value-version
-    :key key
-    :kind kind
-    :computed-at computation-point
-    :validated-at computation-point
-    :dependency-scope {:schema schema-scope
-                       :relations (vec (sort relation-ids))}
-    :proof {:schema schema-proof
-            :relations relation-proof}
-    :value value}))
-
-(defn- boundary-digest
-  [domain value]
-  (secure/canonical-digest domain value))
-
-(defn- decoded-entry
-  [format-options entry]
-  (try
-    {:status :decoded
-     :entry
-     (secure/decode-authenticated
-      (merge (dissoc format-options :decision-kernel)
-             {:domain cache-entry-domain
-              :prefix cache-entry-prefix
-              :payload-keys cache-entry-keys})
-      entry)}
-    (catch #?(:clj Exception :cljs :default) _
-      {:status :unauthenticated-entry})))
-
-(defn- cache-result
-  [decision decoded]
-  (if (= :hit (:status decision))
-    {:status (:provenance decision)
-     :entry decoded}
-    {:status
-     (case (:reason decision)
-       :future-or-sibling :future-history-rejection
-       :proof-mismatch :proof-mismatch
-       :no-proof-bypass :no-proof-bypass
-       :provider-failure :provider-failure
-       :missing nil
-       :unauthenticated-entry)}))
-
-(defn- valid-entry?
-  [adapter format-options entry key kind schema-scope relation-ids
-   schema-proof relation-proof valid-value? selected-point]
-  (let [{decode-status :status decoded :entry}
-        (decoded-entry format-options entry)]
-    (if-not (= :decoded decode-status)
-      {:status :unauthenticated-entry}
-      (let [expected-dependency-scope
-            {:schema schema-scope
-             :relations (vec (sort relation-ids))}
-            authenticated?
-            (and (= cache-entry-version (:version decoded))
-                 (= portable-value-version (:portable-version decoded))
-                 (= kind (:kind decoded))
-                 (valid-value? (:value decoded)))
-            key-matches?
-            (and authenticated?
-                 (= (secure/canonicalize
-                     [key expected-dependency-scope])
-                    (secure/canonicalize
-                     [(:key decoded)
-                      (:dependency-scope decoded)])))
-            source-matches?
-            (and authenticated?
-                 (= (secure/canonicalize
-                     (:source-scope selected-point))
-                    (secure/canonicalize
-                     (get-in decoded
-                             [:computed-at :source-scope]))))
-            selected-anchor
-            (get-in selected-point [:graph-head :graph-anchor])
-            candidate-anchor
-            (get-in decoded
-                    [:computed-at :graph-head :graph-anchor])
-            exact? (= selected-anchor candidate-anchor)
-            contains?
-            (and authenticated?
-                 key-matches?
-                 source-matches?
-                 (backend/invoke
-                  adapter :contains-anchor? candidate-anchor))
-            expected-key
-            (boundary-digest
-             "eacl/cache/kernel-key/v1"
-             [key expected-dependency-scope])
-            candidate-key
-            (boundary-digest
-             "eacl/cache/kernel-key/v1"
-             [(:key decoded) (:dependency-scope decoded)])
-            expected-source
-            (boundary-digest
-             "eacl/cache/kernel-source/v1"
-             (:source-scope selected-point))
-            candidate-source
-            (boundary-digest
-             "eacl/cache/kernel-source/v1"
-             (get-in decoded [:computed-at :source-scope]))
-            selected-proof
-            (boundary-digest
-             "eacl/cache/kernel-proof/v1"
-             {:schema schema-proof
-              :relations relation-proof})
-            candidate-proof
-            (boundary-digest
-             "eacl/cache/kernel-proof/v1"
-             (:proof decoded))
-            candidate-graph
-            (cond exact? 0 contains? 1 :else 2)
-            input
-            {:deterministic? (backend/deterministic? adapter)
-             :dependency-scope-nonempty?
-             (boolean (seq relation-ids))
-             :expected-key expected-key
-             :expected-source expected-source
-             :selected-graph 0
-             :ancestors (if (and contains? (not exact?)) #{1} #{})
-             :selected-proof selected-proof
-             :entry
-             {:status :candidate
-              :authenticated? (boolean authenticated?)
-              :key candidate-key
-              :source candidate-source
-              :graph candidate-graph
-              :proof candidate-proof}}
-            decision
-            (verified/decide
-             (or (:decision-kernel format-options)
-                 subproblem/*decision-kernel*)
-             :cache-validation
-             input)]
-        (cache-result decision decoded)))))
-
-(defn- safe-store-call
-  [fallback f]
-  (try
-    (f)
-    (catch #?(:clj Exception :cljs :default) _
-      fallback)))
-
-(defn- note!
-  [store metric]
-  (when (satisfies? CacheTelemetry store)
-    (record-validation! store metric)))
-
-(defn- proof-metric
-  [schema-proof relation-proof]
-  (if (and (string? schema-proof)
-           (or (empty? relation-proof)
-               (every? (fn [[_ value]]
-                         (string? value))
-                       relation-proof)))
-    :mutation-proof
-    :content-proof))
-
-(defn- dependency-proofs
-  [adapter schema-scope relation-ids]
-  (let [provider-error #?(:clj (Object.) :cljs (js-obj))
-        schema-proof
-        (safe-store-call
-         provider-error
-         #(backend/invoke adapter :schema-proof schema-scope))
-        relation-proof
-        (if (identical? provider-error schema-proof)
-          provider-error
-          (safe-store-call
-           provider-error
-           #(backend/invoke adapter :relation-proof relation-ids)))]
-    (if (or (identical? provider-error schema-proof)
-            (identical? provider-error relation-proof))
-      {:status :provider-failure}
-      {:status :available
-       :schema-proof schema-proof
-       :relation-proof relation-proof})))
-
-(defn resolve!
-  "Returns {:value value :cached? boolean :cache-basis snapshot-id}.
-
-  Proofs are read from the same immutable adapter used for authorization.
-  Store failure, malformed entries, and proof mismatch are misses; no cached
-  value is returned before its opaque schema and relation proofs compare
-  exactly."
-  ([adapter store key kind schema-scope relation-ids valid-value? compute]
-   (resolve! adapter store key kind schema-scope relation-ids
-             valid-value? compute {}))
-  ([adapter store key kind schema-scope relation-ids valid-value? compute
-    format-options]
-   (if (no-cache? store)
-     {:value (compute)
-      :cached? false
-      :cache-basis nil}
-     (let [{:keys [status schema-proof relation-proof]}
-           (dependency-proofs adapter schema-scope relation-ids)]
-       (if (= :provider-failure status)
-         (do
-           (note! store :provider-failure)
-           {:value (compute)
-            :cached? false
-            :cache-basis nil})
-         (let [point (selected-point adapter)
-               full-key (complete-key adapter key kind)]
-           (if (or (not (backend/deterministic? adapter))
-                   (nil? schema-proof)
-                   (nil? relation-proof)
-                   (empty? relation-ids))
-             (do
-               (note! store :no-proof-bypass)
-               {:value (compute)
-                :cached? false
-                :cache-basis (:snapshot-id point)})
-             (let [provider-error #?(:clj (Object.) :cljs (js-obj))
-                   stored-entry
-                   (safe-store-call provider-error #(lookup store full-key))
-                   _ (when (identical? provider-error stored-entry)
-                       (note! store :provider-failure))
-                   {:keys [status entry]}
-                   (if (or (identical? provider-error stored-entry)
-                           (nil? stored-entry))
-                     {:status nil}
-                     (valid-entry?
-                      adapter format-options stored-entry full-key kind
-                      schema-scope relation-ids
-                      schema-proof relation-proof valid-value? point))]
-               (when status
-                 (note! store status))
-               (if entry
-                 (do
-                   (note! store (proof-metric schema-proof relation-proof))
-                   ;; `validated-at` is authenticated telemetry only. Every hit
-                   ;; above still re-read the selected snapshot's proof and
-                   ;; causal anchor; this update never acts as a lease.
-                   (let [replacement
-                         (encode-entry
-                          format-options
-                          (assoc entry :validated-at point))]
-                     (safe-store-call
-                      false
-                      #(if (satisfies? CacheValidationUpdate store)
-                         (store-validation!
-                          store full-key
-                          ;; The authenticated provider value read above is
-                          ;; the CAS expectation. A later validator cannot be
-                          ;; overwritten by this request after it wins the
-                          ;; race.
-                          stored-entry
-                          replacement)
-                         (store! store full-key replacement))))
-                   {:value (:value entry)
-                    :cached? true
-                    :cache-basis
-                    (get-in entry [:computed-at :snapshot-id])
-                    :cache-computed-at (:computed-at entry)
-                    :cache-validated-at point})
-                 (let [value (compute)
-                       stored?
-                       (safe-store-call
-                        provider-error
-                        #(store! store full-key
-                                 (cache-entry
-                                  format-options full-key kind point
-                                  schema-scope relation-ids
-                                  schema-proof relation-proof value)))]
-                   (when (identical? provider-error stored?)
-                     (note! store :provider-failure))
-                   {:value value
-                    :cached? false
-                    :cache-basis (:snapshot-id point)
-                    :cache-computed-at point
-                    :cache-validated-at point}))))))))))

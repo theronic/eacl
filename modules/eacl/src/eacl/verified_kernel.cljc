@@ -7,11 +7,23 @@
   candidate that an authoritative kernel rejected."
   (:require [eacl.backend.v8 :as backend]))
 
+(def ^:dynamic *kernel-crossing-stats*
+  "Optional atom counting generated-kernel invocations by operation keyword.
+
+  Covers both pure decisions (invoke-kernel) and opaque indexed-traversal
+  crossings (invoke-indexed-kernel). Observation-only: counters never
+  influence control flow; unbound means zero overhead beyond one branch."
+  nil)
+
+(defn- record-kernel-crossing!
+  [operation]
+  (when *kernel-crossing-stats*
+    (swap! *kernel-crossing-stats* update operation (fnil inc 0))))
+
 (def operations
   #{:relationship-page
     :relationship-keyset-page
     :cursor-continuation
-    :cursor-bound-rebase
     :consistency-plan
     :consistency-validation
     :cache-validation
@@ -20,25 +32,18 @@
     :ordered-merge-step
     :ordered-merge-chunk
     :recursive-routing-certificate
+    :enumeration-route
+    :acyclic-page
+    :acyclic-continuation
+    :acyclic-count
+    :acyclic-work
     :indexed-scan-response
     :indexed-plan-certification
     :indexed-seed-certification
     :authorization-evaluation})
 
 (def ^:private maximum-boundary-items 1000000)
-(def ^:private cursor-rebase-chunk-items
-  #?(:clj 4096
-     :cljs 16384))
 (def ^:private maximum-boundary-string-length 65536)
-
-(defn cursor-rebase-chunk-limit
-  "Returns the host-specific maximum identities sent through one generated
-  cursor-rebase adapter call.
-
-  Resource gates consume this value directly so their scaling domain cannot
-  drift from the production chunk orchestration."
-  []
-  cursor-rebase-chunk-items)
 
 (defprotocol DecisionKernel
   (-decide [kernel operation input]
@@ -210,46 +215,6 @@
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
-    input))
-
-(defn- validate-cursor-bound-rebase-input!
-  [input]
-  (let [operation :cursor-bound-rebase
-        _ (exact-keys!
-           operation :input input #{:values :bound-eid})
-        values
-        (require-value!
-         operation
-         :values
-         #(and (vector? %)
-               (<= (count %) cursor-rebase-chunk-items))
-         (:values input))]
-    #?(:clj
-       (let [^clojure.lang.IPersistentVector values values
-             element-count (long (count values))]
-         (loop [index (long 0)]
-           (when (< index element-count)
-             (let [value (.nth values (int index))]
-               (when-not (safe-natural? value)
-                 (boundary-error!
-                  "Generated-kernel boundary value has an invalid representation."
-                  {:operation operation
-                   :field [:values index]
-                   :value-type (str (type value))}))
-               (recur (unchecked-inc index))))))
-       :cljs
-       (loop [index 0]
-         (when (< index (count values))
-           (let [value (nth values index)]
-             (when-not (safe-natural? value)
-               (boundary-error!
-                "Generated-kernel boundary value has an invalid representation."
-                {:operation operation
-                 :field [:values index]
-                 :value-type (str (type value))}))
-             (recur (inc index))))))
-    (require-value!
-     operation :bound-eid safe-natural? (:bound-eid input))
     input))
 
 (def ^:private consistency-modes
@@ -447,6 +412,7 @@
 (declare bounded-vector!)
 (declare indexed-scan-rejection-reasons)
 (declare validate-indexed-state!)
+(declare strictly-ordered-values?)
 
 (def ^:private routing-certificate-natural-fields
   #{:component-root
@@ -566,6 +532,100 @@
        [:certificate :traversal index]
        boolean?
        value))
+    input))
+
+(defn- validate-enumeration-route-input!
+  [input]
+  (let [operation :enumeration-route]
+    (exact-keys!
+     operation
+     :input
+     input
+     #{:schema-identity :certificate-schema-identity
+       :root-defined? :recursive? :recursive-data-active?})
+    (doseq [field [:schema-identity :certificate-schema-identity]]
+      (require-value!
+       operation field bounded-string? (get input field)))
+    (doseq [field
+            [:root-defined? :recursive? :recursive-data-active?]]
+      (require-value! operation field boolean? (get input field)))
+    input))
+
+(defn- validate-acyclic-page-input!
+  [input]
+  (let [operation :acyclic-page
+        _ (exact-keys!
+           operation
+           :input
+           input
+           #{:direction :realized-eids :size :bound?})
+        direction
+        (require-value!
+         operation :direction #{:asc :desc} (:direction input))
+        values
+        (bounded-vector!
+         operation :realized-eids (:realized-eids input))
+        size
+        (require-value! operation :size safe-natural? (:size input))]
+    (when (zero? size)
+      (boundary-error!
+       "Generated acyclic page size must be positive."
+       {:operation operation :size size}))
+    (when (> (count values) (inc size))
+      (boundary-error!
+       "Generated acyclic page exceeds bounded lookahead."
+       {:operation operation
+        :size size
+        :realized-count (count values)}))
+    (doseq [[index value] (map-indexed vector values)]
+      (require-value!
+       operation [:realized-eids index] safe-natural? value))
+    (when-not (strictly-ordered-values? direction values)
+      (boundary-error!
+       "Generated acyclic page input must be strictly ordered."
+       {:operation operation :direction direction}))
+    (require-value! operation :bound? boolean? (:bound? input))
+    input))
+
+(defn- validate-acyclic-continuation-input!
+  [input]
+  (let [operation :acyclic-continuation
+        fields
+        #{:authenticated? :schema-matches? :query-matches?
+          :snapshot-matches? :entry-present? :entry-valid?}]
+    (exact-keys! operation :input input fields)
+    (doseq [field fields]
+      (require-value! operation field boolean? (get input field)))
+    input))
+
+(defn- validate-acyclic-count-input!
+  [input]
+  (let [operation :acyclic-count]
+    (exact-keys!
+     operation :input input
+     #{:unique-count :more? :limit})
+    (require-value!
+     operation :unique-count safe-natural? (:unique-count input))
+    (require-value! operation :more? boolean? (:more? input))
+    (require-value!
+     operation
+     :limit
+     #(or (nil? %) (safe-natural? %))
+     (:limit input))
+    input))
+
+(defn- validate-acyclic-work-input!
+  [input]
+  (let [operation :acyclic-work]
+    (exact-keys!
+     operation :input input
+     #{:requested-window :merge-advances
+       :emitted-results :recursive-work})
+    (doseq [field
+            [:requested-window :merge-advances
+             :emitted-results :recursive-work]]
+      (require-value!
+       operation field safe-natural? (get input field)))
     input))
 
 (defn- strictly-ordered-values?
@@ -1092,13 +1152,13 @@
      operation :request-scope safe-natural? (:request-scope response))
     (require-value!
      operation :request-id safe-natural? (:request-id response))
-    (doseq [[index value]
-            (map-indexed
-             vector
-             (bounded-vector!
-              operation :values (:values response)))]
-      (require-value!
-       operation [:values index] safe-natural? value))
+    ;; Deliberate boundary-contract change (eacl-v8-root-fixes 4.3): the
+    ;; per-value safe-natural? walk duplicated the certified kernel
+    ;; validator — ValidateScanResponse walks every value inside the
+    ;; generated runtime and fails closed with :scan-rejected on any
+    ;; malformed element. The host keeps O(1) shape checks per response
+    ;; on both JVM and CLJS.
+    (bounded-vector! operation :values (:values response))
     (require-value!
      operation :terminal? boolean? (:terminal? response))
     (require-value!
@@ -1592,8 +1652,6 @@
     :relationship-page (validate-page-input! input)
     :relationship-keyset-page (validate-keyset-page-input! input)
     :cursor-continuation (validate-continuation-input! input)
-    :cursor-bound-rebase
-    (validate-cursor-bound-rebase-input! input)
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
@@ -1605,6 +1663,16 @@
     :ordered-merge-chunk (validate-ordered-merge-chunk-input! input)
     :recursive-routing-certificate
     (validate-routing-certificate-input! input)
+    :enumeration-route
+    (validate-enumeration-route-input! input)
+    :acyclic-page
+    (validate-acyclic-page-input! input)
+    :acyclic-continuation
+    (validate-acyclic-continuation-input! input)
+    :acyclic-count
+    (validate-acyclic-count-input! input)
+    :acyclic-work
+    (validate-acyclic-work-input! input)
     :indexed-scan-response (validate-indexed-scan-input! input)
     :indexed-plan-certification (validate-indexed-plan-input! input)
     :indexed-seed-certification (validate-indexed-seed-input! input)
@@ -1681,40 +1749,6 @@
   [result]
   (require-value!
    :cursor-continuation :result continuation-decisions result))
-
-(defn- validate-cursor-bound-rebase-result!
-  [result]
-  (let [operation :cursor-bound-rebase]
-    (when-not (map? result)
-      (boundary-error!
-       "Generated cursor rebase result must be a map."
-       {:operation operation :result result}))
-    (case (:status result)
-      :rebased
-      (do
-        (exact-keys!
-         operation :result result
-         #{:status :ordinal :inspected-count})
-        (doseq [field [:ordinal :inspected-count]]
-          (require-value!
-           operation field safe-natural? (get result field)))
-        result)
-
-      :restarted
-      (do
-        (exact-keys!
-         operation :result result
-         #{:status :inspected-count})
-        (require-value!
-         operation
-         :inspected-count
-         safe-natural?
-         (:inspected-count result))
-        result)
-
-      (boundary-error!
-       "Generated cursor rebase result has an unknown variant."
-       {:operation operation :result result}))))
 
 (def consistency-plan-decisions
   #{:select-current
@@ -1925,6 +1959,77 @@
       :use-managed-entry
       :compute-current-value)))
 
+(defn- expected-enumeration-route
+  [{:keys [schema-identity certificate-schema-identity
+           root-defined? recursive? recursive-data-active?]}]
+  (cond
+    (or (empty? schema-identity)
+        (empty? certificate-schema-identity))
+    {:status :rejected :reason :missing-schema-identity}
+
+    (not= schema-identity certificate-schema-identity)
+    {:status :rejected :reason :schema-identity-mismatch}
+
+    :else
+    {:status :accepted
+     :route
+     (cond
+       (not root-defined?) :undefined
+       (and recursive? recursive-data-active?) :recursive
+       :else :acyclic)}))
+
+(defn- expected-acyclic-page
+  [{:keys [direction realized-eids size bound?]}]
+  (let [realized-count (count realized-eids)
+        take-count (min size realized-count)
+        sentinel? (> realized-count size)]
+    {:take-count take-count
+     :reverse? (= :desc direction)
+     :has-next? (if (= :asc direction) sentinel? bound?)
+     :has-previous? (if (= :asc direction) bound? sentinel?)
+     :merge-advances realized-count
+     :emitted-results take-count
+     :recursive-work 0}))
+
+(defn- expected-acyclic-continuation
+  [{:keys [authenticated? schema-matches? query-matches?
+           snapshot-matches? entry-present? entry-valid?]}]
+  (cond
+    (not (and authenticated?
+              schema-matches?
+              query-matches?
+              snapshot-matches?))
+    :reject
+
+    (and entry-present? entry-valid?)
+    :resume
+
+    :else
+    :replay))
+
+(defn- expected-acyclic-count
+  [{:keys [unique-count more? limit]}]
+  (let [limited? (some? limit)]
+    {:count
+     (if (and limited? (< limit unique-count))
+       limit
+       unique-count)
+     :truncated?
+     (boolean
+      (and limited?
+           (or (< limit unique-count)
+               (and (= limit unique-count) more?))))
+     :recursive-work 0}))
+
+(defn- expected-acyclic-work
+  [{:keys [requested-window merge-advances
+           emitted-results recursive-work]}]
+  (if (and (<= merge-advances (inc requested-window))
+           (<= emitted-results requested-window)
+           (zero? recursive-work))
+    :accepted
+    :rejected))
+
 (def indexed-scan-rejection-reasons
   #{:invalid-command
     :mismatched-request-scope
@@ -2049,6 +2154,86 @@
        safe-natural?
        (get result field)))
     result))
+
+(defn- validate-enumeration-route-result!
+  [result]
+  (let [operation :enumeration-route]
+    (when-not (map? result)
+      (boundary-error!
+       "Generated enumeration route result must be a map."
+       {:operation operation :result result}))
+    (case (:status result)
+      :accepted
+      (do
+        (exact-keys!
+         operation :result result #{:status :route})
+        (require-value!
+         operation
+         :route
+         #{:undefined :acyclic :recursive}
+         (:route result)))
+
+      :rejected
+      (do
+        (exact-keys!
+         operation :result result #{:status :reason})
+        (require-value!
+         operation
+         :reason
+         #{:missing-schema-identity :schema-identity-mismatch}
+         (:reason result)))
+
+      (boundary-error!
+       "Generated enumeration route has an unknown variant."
+       {:operation operation :result result}))
+    result))
+
+(defn- validate-acyclic-page-result!
+  [result]
+  (let [operation :acyclic-page]
+    (exact-keys!
+     operation
+     :result
+     result
+     #{:take-count :reverse? :has-next? :has-previous?
+       :merge-advances :emitted-results :recursive-work})
+    (doseq [field
+            [:take-count :merge-advances
+             :emitted-results :recursive-work]]
+      (require-value!
+       operation field safe-natural? (get result field)))
+    (doseq [field [:reverse? :has-next? :has-previous?]]
+      (require-value! operation field boolean? (get result field)))
+    result))
+
+(defn- validate-acyclic-continuation-result!
+  [result]
+  (require-value!
+   :acyclic-continuation
+   :result
+   #{:resume :replay :reject}
+   result))
+
+(defn- validate-acyclic-count-result!
+  [result]
+  (let [operation :acyclic-count]
+    (exact-keys!
+     operation :result result
+     #{:count :truncated? :recursive-work})
+    (doseq [field [:count :recursive-work]]
+      (require-value!
+       operation field safe-natural? (get result field)))
+    (require-value!
+     operation :truncated? boolean? (:truncated? result))
+    result))
+
+(defn- validate-acyclic-work-result!
+  [result]
+  (require-value!
+   :acyclic-work
+   :result
+   #{:accepted :rejected}
+   result))
 
 (defn- validate-indexed-plan-result!
   [operation result]
@@ -2177,8 +2362,6 @@
     :relationship-page (validate-page-result! result)
     :relationship-keyset-page (validate-keyset-page-result! result)
     :cursor-continuation (validate-continuation-result! result)
-    :cursor-bound-rebase
-    (validate-cursor-bound-rebase-result! result)
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
@@ -2191,6 +2374,16 @@
     :ordered-merge-chunk (validate-ordered-merge-chunk-result! result)
     :recursive-routing-certificate
     (validate-routing-certificate-result! result)
+    :enumeration-route
+    (validate-enumeration-route-result! result)
+    :acyclic-page
+    (validate-acyclic-page-result! result)
+    :acyclic-continuation
+    (validate-acyclic-continuation-result! result)
+    :acyclic-count
+    (validate-acyclic-count-result! result)
+    :acyclic-work
+    (validate-acyclic-work-result! result)
     :indexed-scan-response (validate-indexed-scan-result! result)
     :indexed-plan-certification
     (validate-indexed-plan-result! operation result)
@@ -2229,6 +2422,7 @@
 (defn- invoke-kernel
   [kernel operation input]
   (validate-input! operation input)
+  (record-kernel-crossing! operation)
   (try
     (let [result
           (validate-result! operation (-decide kernel operation input))]
@@ -2250,34 +2444,7 @@
          {:operation operation
           :size (:size input)
           :take-count (:take-count result)}))
-      (when (= :cursor-bound-rebase operation)
-        (let [values (:values input)
-              bound-eid (:bound-eid input)]
-          (case (:status result)
-            :rebased
-            (let [ordinal (:ordinal result)]
-              (when (or (>= ordinal (count values))
-                        (not= bound-eid (nth values ordinal nil))
-                        (not= (inc ordinal)
-                              (:inspected-count result)))
-                (boundary-error!
-                 "Generated cursor rebase contradicts its validated input."
-                 {:operation operation
-                  :status :rebased
-                  :value-count (count values)
-                  :ordinal ordinal
-                  :inspected-count (:inspected-count result)})))
-
-            :restarted
-            (when (or (some #{bound-eid} values)
-                      (not= (count values)
-                            (:inspected-count result)))
-              (boundary-error!
-               "Generated cursor restart contradicts its validated input."
-               {:operation operation
-                :status :restarted
-                :value-count (count values)
-                :inspected-count (:inspected-count result)})))))
+      
       (when (and (= :consistency-plan operation)
                  (not= result (expected-consistency-plan input)))
         (boundary-error!
@@ -2341,6 +2508,32 @@
               :result-path-checks (:path-checks result)
               :result-node-checks (:node-checks result)
               :result-edge-checks (:edge-checks result)}))))
+      (when (and (= :enumeration-route operation)
+                 (not= result (expected-enumeration-route input)))
+        (boundary-error!
+         "Generated enumeration route contradicts its schema binding."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-page operation)
+                 (not= result (expected-acyclic-page input)))
+        (boundary-error!
+         "Generated acyclic page contradicts its ordered input."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-continuation operation)
+                 (not= result
+                       (expected-acyclic-continuation input)))
+        (boundary-error!
+         "Generated acyclic continuation contradicts its authenticated context."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-count operation)
+                 (not= result (expected-acyclic-count input)))
+        (boundary-error!
+         "Generated acyclic count contradicts its unique input cardinality."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-work operation)
+                 (not= result (expected-acyclic-work input)))
+        (boundary-error!
+         "Generated acyclic work decision contradicts its bounded counters."
+         {:operation operation :input input :result result}))
       (when (= :ordered-merge-chunk operation)
         (let [left-consumed (:left-consumed result)
               right-consumed (:right-consumed result)
@@ -2401,6 +2594,7 @@
 
 (defn- invoke-indexed-kernel
   [operation invoke validate-result]
+  (record-kernel-crossing! operation)
   (try
     (validate-result (invoke))
     (catch #?(:clj Exception :cljs :default) error
@@ -2508,50 +2702,3 @@
   (let [{:keys [kernel]} (normalize-selection selection)]
     (invoke-kernel kernel operation input)))
 
-(defn decide-cursor-bound-rebase
-  "Rebinds one authenticated stable result identity to its current ordinal.
-
-  The host denotation is not artificially capped: only each generated
-  invocation is capped at `cursor-rebase-chunk-items`. This keeps the
-  Java/JavaScript adapter representation bounded without turning a large but
-  recoverable current page into an error, and it preserves the first-match/
-  restart semantics proved by `RebaseCursorBoundChunked`.
-
-  The shared CLJC chunk orchestration remains handwritten trusted-boundary
-  code. Every chunk decision is generated-authoritative, and differential
-  tests compare this whole-sequence result with an independent direct scan."
-  [selection values bound-eid]
-  (require-value!
-   :cursor-bound-rebase
-   :values
-   vector?
-   values)
-  (require-value!
-   :cursor-bound-rebase
-   :bound-eid
-   safe-natural?
-   bound-eid)
-  (let [selection (normalize-selection selection)
-        value-count (count values)]
-    (loop [offset 0]
-      (if (= offset value-count)
-        {:status :restarted
-         :inspected-count value-count}
-        (let [end (min value-count
-                       (+ offset cursor-rebase-chunk-items))
-              chunk (subvec values offset end)
-              decision
-              (decide
-               selection
-               :cursor-bound-rebase
-               {:values chunk
-                :bound-eid bound-eid})]
-          (case (:status decision)
-            :rebased
-            {:status :rebased
-             :ordinal (+ offset (:ordinal decision))
-             :inspected-count
-             (+ offset (:inspected-count decision))}
-
-            :restarted
-            (recur end)))))))

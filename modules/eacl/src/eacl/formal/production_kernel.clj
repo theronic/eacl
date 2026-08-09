@@ -57,6 +57,9 @@
     TraversalLimits
     WorkCounters)
    (RoutingCertificate
+    EnumerationRoute
+    EnumerationRouteDecision
+    EnumerationRouteError
     IndexedDependencyEdge
     IndexedRoutingPath
     RoutingDerivationCounters
@@ -65,6 +68,12 @@
     RoutingProof)
    (SubproblemCache CandidateState)
    (AcyclicEngine
+    AcyclicContinuationAction
+    AcyclicCountDecision
+    AcyclicDirection
+    AcyclicPageDecision
+    AcyclicPageWork
+    AcyclicWorkDecision
     MaterializedRelationPath
     RawPermissionDefinition
     RawRelationDefinition
@@ -129,6 +138,53 @@
 (defn- typed-sequence
   [descriptor values]
   (DafnySequence/fromList descriptor values))
+
+(def ^:private fuel-memo (volatile! nil))
+
+(defn- dafny-fuel
+  [fuel]
+  (let [cached @fuel-memo]
+    (if (and cached (= (first cached) fuel))
+      (second cached)
+      (let [built (dafny-nat fuel)]
+        (vreset! fuel-memo [fuel built])
+        built))))
+
+(def ^:private unicode-memo
+  "Bounded intern table for type-name decodes keyed by the raw
+  DafnySequence (the patched runtime implements equals/hashCode).
+  Scan commands carry a handful of distinct type names but previously
+  decoded UTF-32 strings per command."
+  (atom {}))
+
+(defn- dafny-unicode-interned
+  [^DafnySequence value]
+  (or (get @unicode-memo value)
+      (let [decoded (.verbatimString value)]
+        (swap! unicode-memo
+               (fn [memo]
+                 (if (or (contains? memo value)
+                         (>= (count memo) 64))
+                   memo
+                   (assoc memo value decoded))))
+        decoded)))
+
+(def ^:private empty-values-sequence
+  "Interned empty scan-response payload: ~98% of populated-recursion
+  scan responses realize zero datoms (audited emptiness probes). Sound
+  under the collection shims' contract that generated code mutates only
+  freshly constructed wrappers — pinned by a regression asserting the
+  interned instance stays empty after traversals."
+  (delay (dafny-sequence [])))
+
+(def ^:private limits-memo
+  "Single-slot identity memo: traversal limits are one map value per
+  request (usually the engine's default), yet the sequential protocol
+  re-marshalled three BigIntegers on EVERY drive and EVERY resume —
+  2x crossings avoidable allocations per traversal (audited). Volatile
+  race is harmless: last write wins, both objects are equivalent pure
+  values."
+  (volatile! nil))
 
 (defn- object->dafny
   [{:keys [type id]}]
@@ -260,6 +316,99 @@
         :reason
         (routing-certificate-error (.dtor_error decision))}
        work))))
+
+(defn- enumeration-route-decision
+  [{:keys [schema-identity certificate-schema-identity
+           root-defined? recursive? recursive-data-active?]}]
+  (let [^EnumerationRouteDecision decision
+        (RoutingCertificate.__default/SelectEnumerationRoute
+         (dafny-string schema-identity)
+         (dafny-string certificate-schema-identity)
+         root-defined?
+         recursive?
+         recursive-data-active?)]
+    (if (.is_EnumerationRouteAccepted decision)
+      (let [^EnumerationRoute route (.dtor_route decision)]
+        {:status :accepted
+         :route
+         (cond
+           (.is_UndefinedEnumerationRoute route) :undefined
+           (.is_CertifiedAcyclicEnumerationRoute route) :acyclic
+           :else :recursive)})
+      (let [^EnumerationRouteError error (.dtor_error decision)]
+        {:status :rejected
+         :reason
+         (if (.is_MissingSchemaIdentity error)
+           :missing-schema-identity
+           :schema-identity-mismatch)}))))
+
+(defn- acyclic-direction
+  [direction]
+  (case direction
+    :asc
+    (AcyclicDirection/create_AcyclicAscending)
+
+    :desc
+    (AcyclicDirection/create_AcyclicDescending)))
+
+(defn- acyclic-page-decision
+  [{:keys [direction realized-eids size bound?]}]
+  (let [^AcyclicPageDecision decision
+        (AcyclicEngine.__default/DecideAcyclicPage
+         (acyclic-direction direction)
+         (dafny-sequence realized-eids)
+         (dafny-nat size)
+         bound?)
+        ^AcyclicPageWork work (.dtor_work decision)]
+    {:take-count (dafny-long (.dtor_takeCount decision))
+     :reverse? (.dtor_reverseOutput decision)
+     :has-next? (.dtor_hasNext decision)
+     :has-previous? (.dtor_hasPrevious decision)
+     :merge-advances (dafny-long (.dtor_mergeAdvances work))
+     :emitted-results (dafny-long (.dtor_emittedResults work))
+     :recursive-work (dafny-long (.dtor_recursiveWork work))}))
+
+(defn- acyclic-continuation-decision
+  [{:keys [authenticated? schema-matches? query-matches?
+           snapshot-matches? entry-present? entry-valid?]}]
+  (let [^AcyclicContinuationAction action
+        (AcyclicEngine.__default/DecideAcyclicContinuation
+         authenticated?
+         schema-matches?
+         query-matches?
+         snapshot-matches?
+         entry-present?
+         entry-valid?)]
+    (cond
+      (.is_ResumePrivateContinuation action) :resume
+      (.is_ReplayAuthenticatedBoundary action) :replay
+      :else :reject)))
+
+(defn- acyclic-count-decision
+  [{:keys [unique-count more? limit]}]
+  (let [^AcyclicCountDecision decision
+        (AcyclicEngine.__default/DecideAcyclicCount
+         (dafny-nat unique-count)
+         more?
+         (some? limit)
+         (dafny-nat (or limit 0)))]
+    {:count (dafny-long (.dtor_count decision))
+     :truncated? (.dtor_truncated decision)
+     :recursive-work
+     (dafny-long (.dtor_recursiveWork decision))}))
+
+(defn- acyclic-work-decision
+  [{:keys [requested-window merge-advances
+           emitted-results recursive-work]}]
+  (let [^AcyclicWorkDecision decision
+        (AcyclicEngine.__default/CertifyAcyclicWork
+         (dafny-nat requested-window)
+         (dafny-nat merge-advances)
+         (dafny-nat emitted-results)
+         (dafny-nat recursive-work))]
+    (if (.is_AcyclicWorkAccepted decision)
+      :accepted
+      :rejected)))
 
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]
@@ -604,21 +753,6 @@
       (.is_SnapshotUnavailable (.dtor_reason decision))
       :snapshot-unavailable
       :else :history-divergence)))
-
-(defn- cursor-bound-rebase-decision
-  [{:keys [values bound-eid]}]
-  (let [^CursorBoundRebase decision
-        (PageWindow.__default/RebaseCursorBound
-         (dafny-long-array values)
-         (long bound-eid))]
-    (if (.is_CursorBoundRebased decision)
-      {:status :rebased
-       :ordinal (dafny-long (.dtor_ordinal decision))
-       :inspected-count
-       (dafny-long (.dtor_inspectedCount decision))}
-      {:status :restarted
-       :inspected-count
-       (dafny-long (.dtor_inspectedCount decision))})))
 
 (defn- snapshot-consistency-mode
   [mode]
@@ -1120,7 +1254,10 @@
         (ScanResponse/create
          (dafny-nat (:request-scope response))
          (dafny-nat (:request-id response))
-         (dafny-sequence (:values response))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence values)
+             @empty-values-sequence))
          (:terminal? response)
          (dafny-nat (:fetched-values response)))
         decision
@@ -1229,11 +1366,19 @@
        (indexed-plan-rejection-reason (.dtor_error decision))})))
 
 (defn- indexed-limits
-  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}]
-  (IndexedLimits/create
-   (dafny-nat max-derived-grants)
-   (dafny-nat max-advanced-datoms)
-   (dafny-nat max-queued-work)))
+  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]
+    :as limits}]
+  (let [cached @limits-memo]
+    (if (and cached (identical? (first cached) limits))
+      (second cached)
+      (let [built (IndexedLimits/create
+                   (dafny-nat max-derived-grants)
+                   (dafny-nat max-advanced-datoms)
+                   (dafny-nat max-queued-work))]
+        (vreset! limits-memo [limits built])
+        built))))
+
+
 
 (defn- indexed-cursor-bound
   [bound]
@@ -1292,16 +1437,16 @@
   [^Projection projection]
   (if (.is_SubjectToResources projection)
     {:kind :subject->resources
-     :subject-type (dafny-unicode (.dtor_subjectType projection))
+     :subject-type (dafny-unicode-interned (.dtor_subjectType projection))
      :subject-eid (dafny-long (.dtor_subjectEid projection))
      :relation-eid (dafny-long (.dtor_relationEid projection))
-     :resource-type (dafny-unicode (.dtor_resourceType projection))
+     :resource-type (dafny-unicode-interned (.dtor_resourceType projection))
      :bound-eid (indexed-bound-value (.dtor_bound projection))}
     {:kind :resource->subjects
-     :resource-type (dafny-unicode (.dtor_resourceType projection))
+     :resource-type (dafny-unicode-interned (.dtor_resourceType projection))
      :resource-eid (dafny-long (.dtor_resourceEid projection))
      :relation-eid (dafny-long (.dtor_relationEid projection))
-     :subject-type (dafny-unicode (.dtor_subjectType projection))
+     :subject-type (dafny-unicode-interned (.dtor_subjectType projection))
      :bound-eid (indexed-bound-value (.dtor_bound projection))}))
 
 (defn- indexed-command-value
@@ -1414,11 +1559,11 @@
         (case direction
           :forward
           (IndexedTraversal.__default/DriveForwardIterative
-           state (indexed-limits limits) (dafny-nat fuel))
+           state (indexed-limits limits) (dafny-fuel fuel))
 
           :reverse
           (IndexedTraversal.__default/DriveReverseIterative
-           state (indexed-limits limits) (dafny-nat fuel)))
+           state (indexed-limits limits) (dafny-fuel fuel)))
         prefix
         (case direction
           :forward "Forward"
@@ -1497,7 +1642,10 @@
         (ScanResponse/create
          (dafny-nat (:request-scope response))
          (dafny-nat (:request-id response))
-         (dafny-sequence (:values response))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence values)
+             @empty-values-sequence))
          (:terminal? response)
          (dafny-nat (:fetched-values response)))
         outcome
@@ -1633,7 +1781,6 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
-      :cursor-bound-rebase (cursor-bound-rebase-decision input)
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
@@ -1645,6 +1792,12 @@
       :ordered-merge-chunk (ordered-merge-chunk input)
       :recursive-routing-certificate
       (routing-certificate-decision input)
+      :enumeration-route (enumeration-route-decision input)
+      :acyclic-page (acyclic-page-decision input)
+      :acyclic-continuation
+      (acyclic-continuation-decision input)
+      :acyclic-count (acyclic-count-decision input)
+      :acyclic-work (acyclic-work-decision input)
       :indexed-scan-response (indexed-scan-decision input)
       :indexed-plan-certification (indexed-plan-decision input)
       :indexed-seed-certification (indexed-seed-decision input)

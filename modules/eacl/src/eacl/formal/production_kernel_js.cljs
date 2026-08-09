@@ -24,6 +24,43 @@
    (.-Seq (.-_dafny generated))
    (into-array values)))
 
+(def ^:private limits-memo
+  ;; Single-slot identity memo mirroring the JVM adapter: limits are one
+  ;; map value per request; the sequential protocol re-marshalled three
+  ;; BigNumbers on every drive and resume.
+  (volatile! nil))
+
+(defn- indexed-limits
+  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]
+    :as limits}]
+  (let [cached @limits-memo]
+    (if (and cached (identical? (first cached) limits))
+      (second cached)
+      (let [built (js-invoke
+                   (.-IndexedLimits (.-IndexedTraversal generated))
+                   "create_IndexedLimits"
+                   (big-number max-derived-grants)
+                   (big-number max-advanced-datoms)
+                   (big-number max-queued-work))]
+        (vreset! limits-memo [limits built])
+        built))))
+
+(def ^:private fuel-memo (volatile! nil))
+
+(defn- dafny-fuel
+  [fuel]
+  (let [cached @fuel-memo]
+    (if (and cached (= (first cached) fuel))
+      (second cached)
+      (let [built (big-number fuel)]
+        (vreset! fuel-memo [fuel built])
+        built))))
+
+(def ^:private empty-values-sequence
+  ;; Interned empty scan-response payload (JVM mirror): ~98% of
+  ;; populated-recursion scan responses are emptiness probes.
+  (delay (dafny-sequence [])))
+
 (defn- object->dafny
   [{:keys [type id]}]
   (js-invoke
@@ -169,6 +206,118 @@
         :reason
         (routing-certificate-error (.-dtor_error decision))}
        work))))
+
+(defn- enumeration-route-decision
+  [{:keys [schema-identity certificate-schema-identity
+           root-defined? recursive? recursive-data-active?]}]
+  (let [routing (.-RoutingCertificate generated)
+        decision
+        (js-invoke
+         (.-__default routing)
+         "SelectEnumerationRoute"
+         (dafny-string schema-identity)
+         (dafny-string certificate-schema-identity)
+         root-defined?
+         recursive?
+         recursive-data-active?)]
+    (if (.-is_EnumerationRouteAccepted decision)
+      (let [route (.-dtor_route decision)]
+        {:status :accepted
+         :route
+         (cond
+           (.-is_UndefinedEnumerationRoute route) :undefined
+           (.-is_CertifiedAcyclicEnumerationRoute route) :acyclic
+           :else :recursive)})
+      (let [error (.-dtor_error decision)]
+        {:status :rejected
+         :reason
+         (if (.-is_MissingSchemaIdentity error)
+           :missing-schema-identity
+           :schema-identity-mismatch)}))))
+
+(defn- acyclic-direction
+  [direction]
+  (let [acyclic (.-AcyclicEngine generated)]
+    (case direction
+      :asc
+      (js-invoke
+       (.-AcyclicDirection acyclic)
+       "create_AcyclicAscending")
+
+      :desc
+      (js-invoke
+       (.-AcyclicDirection acyclic)
+       "create_AcyclicDescending"))))
+
+(defn- acyclic-page-decision
+  [{:keys [direction realized-eids size bound?]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        decision
+        (js-invoke
+         (.-__default acyclic)
+         "DecideAcyclicPage"
+         (acyclic-direction direction)
+         (dafny-sequence (map big-number realized-eids))
+         (big-number size)
+         bound?)
+        work (.-dtor_work decision)]
+    {:take-count (.toNumber (.-dtor_takeCount decision))
+     :reverse? (.-dtor_reverseOutput decision)
+     :has-next? (.-dtor_hasNext decision)
+     :has-previous? (.-dtor_hasPrevious decision)
+     :merge-advances (.toNumber (.-dtor_mergeAdvances work))
+     :emitted-results (.toNumber (.-dtor_emittedResults work))
+     :recursive-work (.toNumber (.-dtor_recursiveWork work))}))
+
+(defn- acyclic-continuation-decision
+  [{:keys [authenticated? schema-matches? query-matches?
+           snapshot-matches? entry-present? entry-valid?]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        action
+        (js-invoke
+         (.-__default acyclic)
+         "DecideAcyclicContinuation"
+         authenticated?
+         schema-matches?
+         query-matches?
+         snapshot-matches?
+         entry-present?
+         entry-valid?)]
+    (cond
+      (.-is_ResumePrivateContinuation action) :resume
+      (.-is_ReplayAuthenticatedBoundary action) :replay
+      :else :reject)))
+
+(defn- acyclic-count-decision
+  [{:keys [unique-count more? limit]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        decision
+        (js-invoke
+         (.-__default acyclic)
+         "DecideAcyclicCount"
+         (big-number unique-count)
+         more?
+         (some? limit)
+         (big-number (or limit 0)))]
+    {:count (.toNumber (.-dtor_count decision))
+     :truncated? (.-dtor_truncated decision)
+     :recursive-work (.toNumber (.-dtor_recursiveWork decision))}))
+
+(defn- acyclic-work-decision
+  [{:keys [requested-window merge-advances
+           emitted-results recursive-work]}]
+  (let [acyclic (.-AcyclicEngine generated)
+        decision
+        (js-invoke
+         (.-__default acyclic)
+         "CertifyAcyclicWork"
+         (big-number requested-window)
+         (big-number merge-advances)
+         (big-number emitted-results)
+         (big-number recursive-work))]
+    (if (.-is_AcyclicWorkAccepted decision)
+      :accepted
+      :rejected)))
 
 (defn- relation-node
   [{:keys [resource-type relation subject-type]}]
@@ -530,23 +679,6 @@
       (.-is_SnapshotUnavailable (.-dtor_reason decision))
       :snapshot-unavailable
       :else :history-divergence)))
-
-(defn- cursor-bound-rebase-decision
-  [{:keys [values bound-eid]}]
-  (let [decision
-        (js-invoke
-         (.-__default (.-PageWindow generated))
-         "RebaseCursorBound"
-         (into-array values)
-         bound-eid)]
-    (if (.-is_CursorBoundRebased decision)
-      {:status :rebased
-       :ordinal (.toNumber (.-dtor_ordinal decision))
-       :inspected-count
-       (.toNumber (.-dtor_inspectedCount decision))}
-      {:status :restarted
-       :inspected-count
-       (.toNumber (.-dtor_inspectedCount decision))})))
 
 (defn- snapshot-consistency-mode
   [consistency mode]
@@ -1196,7 +1328,10 @@
          "create_ScanResponse"
          (big-number (:request-scope response))
          (big-number (:request-id response))
-         (dafny-sequence (map big-number (:values response)))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence (map big-number values))
+             @empty-values-sequence))
          (:terminal? response)
          (big-number (:fetched-values response)))
         decision
@@ -1316,14 +1451,6 @@
        :reason
        (indexed-plan-rejection-reason (.-dtor_error decision))})))
 
-(defn- indexed-limits
-  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}]
-  (js-invoke
-   (.-IndexedLimits (.-IndexedTraversal generated))
-   "create_IndexedLimits"
-   (big-number max-derived-grants)
-   (big-number max-advanced-datoms)
-   (big-number max-queued-work)))
 
 (defn- indexed-cursor-bound
   [bound]
@@ -1393,7 +1520,6 @@
 (defn- dafny-string-value
   [value]
   (.toVerbatimString value false))
-
 (defn- indexed-projection-value
   [projection]
   (if (.-is_SubjectToResources projection)
@@ -1526,13 +1652,13 @@
           (js-invoke
            (.-__default indexed)
            "DriveForwardIterative"
-           state (indexed-limits limits) (big-number fuel))
+           state (indexed-limits limits) (dafny-fuel fuel))
 
           :reverse
           (js-invoke
            (.-__default indexed)
            "DriveReverseIterative"
-           state (indexed-limits limits) (big-number fuel)))]
+           state (indexed-limits limits) (dafny-fuel fuel)))]
     (cond
       (case direction
         :forward (.-is_ForwardNeedScan outcome)
@@ -1584,7 +1710,10 @@
          "create_ScanResponse"
          (big-number (:request-scope response))
          (big-number (:request-id response))
-         (dafny-sequence (map big-number (:values response)))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence (map big-number values))
+             @empty-values-sequence))
          (:terminal? response)
          (big-number (:fetched-values response)))
         outcome
@@ -1697,7 +1826,6 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
-      :cursor-bound-rebase (cursor-bound-rebase-decision input)
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
@@ -1709,6 +1837,12 @@
       :ordered-merge-chunk (ordered-merge-chunk input)
       :recursive-routing-certificate
       (routing-certificate-decision input)
+      :enumeration-route (enumeration-route-decision input)
+      :acyclic-page (acyclic-page-decision input)
+      :acyclic-continuation
+      (acyclic-continuation-decision input)
+      :acyclic-count (acyclic-count-decision input)
+      :acyclic-work (acyclic-work-decision input)
       :indexed-scan-response (indexed-scan-decision input)
       :indexed-plan-certification (indexed-plan-decision input)
       :indexed-seed-certification (indexed-seed-decision input)

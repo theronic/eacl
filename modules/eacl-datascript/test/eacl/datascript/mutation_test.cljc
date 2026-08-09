@@ -27,6 +27,20 @@
    [:eacl/id
     (model/->relation-id :folder relation-name :user)]))
 
+(deftest graph-state-uses-the-direct-head-order-index-test
+  (let [conn (schema/create-conn)
+        _ (journal/ensure-migrated! conn)
+        db (ds/db conn)
+        expected (journal/graph-state db)]
+    (with-redefs [ds/q
+                  (fn [& _]
+                    (throw
+                     (ex-info
+                      "graph-state must not compile a general query"
+                      {})))]
+      (is (= expected (journal/graph-state db)))
+      (is (= (:max-tx db) (:head-order expected))))))
+
 (deftest managed-writes-publish-one-committed-mutation-test
   (let [conn (schema/create-conn)
         client (datascript/make-client

@@ -63,14 +63,11 @@
   ([db]
    (make-schema-cache db (schema-version db)))
   ([db known-schema-version]
-   {:database-id (str (.id ^datomic.Database db))
-    :schema-version known-schema-version
-    :permission-paths (atom {})
-    :traversal-permissions (atom {})
-    :traversal-analysis (atom nil)
-    :relationship-dependencies (atom {})
-    :recursive-plans (atom {})
-    :direct-grant-relations (atom {})}))
+   (assoc
+    (engine/make-schema-cache
+     (backend/snapshot-adapter db)
+     known-schema-version)
+    :database-id (str (.id ^datomic.Database db)))))
 
 (defn evict-permission-paths-cache!
   ([]

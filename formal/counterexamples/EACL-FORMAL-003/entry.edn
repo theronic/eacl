@@ -9,7 +9,7 @@
  :root-cause
  "The Datomic authenticated-store adapter labeled every signed shared-cache envelope :authenticated-v3 in the weighted provider. This erased the semantic cache kind, bypassing configured per-kind capacity and two-hit admission policies."
  :fix
- "authenticated-store now passes the semantic kind from the authenticated shared key to the weighted provider, with :authenticated-v3 only as a compatibility fallback."
+ "authenticated-store first passed the semantic kind through to the weighted provider (with :authenticated-v3 only as a compatibility fallback); trusted-surface-hygiene 11.1 then deleted the adapter outright — its only consumer was the write-only :shared-cache-store option nothing read — so the defective surface no longer exists to regress."
  :closing-evidence
- ["eacl.datomic.cache-test/authenticated-store-preserves-logical-kind-test"
+ ["eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"
   "eacl.bench.pagination-test/permission-check-benchmark"]}

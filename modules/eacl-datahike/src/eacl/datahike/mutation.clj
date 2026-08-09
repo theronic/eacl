@@ -72,7 +72,7 @@
       (or
        (graph-state (d/db conn))
        (when (< (System/nanoTime) deadline)
-         (Thread/sleep migration-visibility-poll-ms)
+         (Thread/sleep (long migration-visibility-poll-ms))
          (recur))))))
 
 (defn ensure-migrated!

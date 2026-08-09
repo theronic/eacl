@@ -90,6 +90,13 @@ jobs:
           key: cljdeps-${{ runner.os }}-${{ hashFiles('deps.edn', 'modules/*/deps.edn') }}
           restore-keys: cljdeps-${{ runner.os }}-
 
+      - name: Reflection warnings gate
+        # trusted-surface-hygiene 11.2: core + backend production namespaces
+        # compile with *warn-on-reflection*; any warning fails the build.
+        run: |
+          chmod +x bin/reflection-gate
+          bin/reflection-gate target/reflection-gate.log
+
       - name: Start test nREPL
         # ^:benchmark load tests (modules/eacl-datomic/test/eacl/bench/) are
         # excluded per AGENTS.md; run them explicitly through nREPL when

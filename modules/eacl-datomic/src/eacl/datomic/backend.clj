@@ -66,7 +66,7 @@
                   (unchecked-byte (alength bytes))])]
             (.update digest length-prefix)
             (.update digest bytes)))]
-    (update-bytes! (.getBytes domain StandardCharsets/UTF_8))
+    (update-bytes! (.getBytes ^String domain StandardCharsets/UTF_8))
     (doseq [record records]
       (update-bytes!
        (.getBytes (pr-str record) StandardCharsets/UTF_8)))
@@ -373,6 +373,11 @@
         (fn [subject-type subject-id relation-id resource-type resource-id]
           (ddb/direct-match?
            db subject-type subject-id relation-id resource-type resource-id))
+
+        :relation-populated?
+        (fn [subject-type relation-id resource-type]
+          (ddb/relation-populated?
+           db subject-type relation-id resource-type))
 
         :all-permission-nodes
         (fn []

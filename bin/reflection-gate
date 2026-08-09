@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Reflection gate (trusted-surface-hygiene 11.2): compiles the core and
+# backend production namespaces with *warn-on-reflection* enabled and fails
+# on any reflection warning. Interop in authorization hot paths must be
+# type-hinted, not discovered reflectively per call.
+set -uo pipefail
+
+log="${1:-target/reflection-gate.log}"
+mkdir -p "$(dirname "$log")"
+
+clojure -M:dev -e "
+(set! *warn-on-reflection* true)
+(binding [*warn-on-reflection* true]
+  (require 'eacl.core 'eacl.cache 'eacl.subproblem-cache 'eacl.relay
+           'eacl.cursor 'eacl.continuation 'eacl.engine.v8
+           'eacl.verified-kernel 'eacl.secure-format 'eacl.causal-token
+           'eacl.consistency 'eacl.mutation 'eacl.client.orchestration
+           'eacl.relationships.filters 'eacl.relationships.storage
+           'eacl.relationships.endpoint-pair 'eacl.engine.relationships
+           'eacl.backend.v8
+           'eacl.datascript.core 'eacl.datascript.impl
+           'eacl.datascript.backend
+           'eacl.datahike.core 'eacl.datahike.impl 'eacl.datahike.backend
+           'eacl.datomic.core 'eacl.datomic.impl 'eacl.datomic.backend
+           'eacl.datomic.cache 'eacl.datomic.consistency
+           :reload-all))
+(println :reflection-gate-compiled)" >"$log" 2>&1
+compile_status=$?
+
+if [ $compile_status -ne 0 ]; then
+  echo "reflection gate: compilation failed" >&2
+  cat "$log" >&2
+  exit $compile_status
+fi
+
+if grep -n "Reflection warning" "$log" >&2; then
+  echo "reflection gate: reflection warnings are errors (hint the call sites)" >&2
+  exit 1
+fi
+
+echo "reflection gate: clean"

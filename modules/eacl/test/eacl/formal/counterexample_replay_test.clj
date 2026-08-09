@@ -10,7 +10,7 @@
     :EACL-FORMAL-002
     eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test
     :EACL-FORMAL-003
-    eacl.datomic.cache-test/authenticated-store-preserves-logical-kind-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-004
     eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test
     :EACL-FORMAL-005
@@ -122,7 +122,13 @@
     :EACL-FORMAL-058
     eacl.formal.counterexample-replay-test/replay-entrypoint-does-not-eagerly-load-formal-only-oracles-test
     :EACL-FORMAL-059
-    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test})
+    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
+    :EACL-FORMAL-060
+    eacl.datascript.enumeration-routing-test/certified-acyclic-enumeration-is-exact-and-recursive-limit-isolated-test
+    :EACL-FORMAL-061
+    eacl.datascript.enumeration-routing-test/adapter-neutral-continuation-hit-miss-and-isolation-test
+    :EACL-FORMAL-062
+    eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test})
 
 (defn- read-edn
   [path]
@@ -200,8 +206,8 @@
     (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
                       page-source))
         "the generated RawPageRequest smoke must use only current v8 fields")
-    (is (= {:first-page [10 30]
-            :continuation-page [20]}
+    (is (= {:first-page [10 20]
+            :continuation-page [30]}
            (:production-recursive-pages vectors)))
     (is (re-find
          #":production-recursive-pages \(cross-runtime-vectors\)"
@@ -243,8 +249,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-059 (:latest revision)))
-    (is (= 59 (count entries)))))
+    (is (= :EACL-FORMAL-062 (:latest revision)))
+    (is (= 62 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

@@ -138,6 +138,41 @@
             (subproblem/lookup!
              store :projection :third {}))))))
 
+(deftest indexed-lru-eviction-probes-only-the-oldest-eligible-entry-test
+  (let [capacity 256
+        store (subproblem/store {:projection-max-weight capacity})]
+    (doseq [key (range capacity)]
+      (subproblem/resolve!
+       store :projection key {} (constantly key)))
+    (let [before (subproblem/stats store)]
+      (subproblem/resolve!
+       store :projection capacity {} (constantly capacity))
+      (let [after (subproblem/stats store)]
+        (is (= 1 (- (:evictions after) (:evictions before))))
+        (is (= 1 (- (:eviction-probes after)
+                    (:eviction-probes before)))
+            "a full tier indexes the oldest eligible entry instead of scanning every entry")
+        (is (= capacity
+               (get-in after [:tiers :projection :entries])))
+        (is (nil? (subproblem/lookup!
+                   store :projection 0 {})))
+        (is (= capacity
+               (:value
+                (subproblem/lookup!
+                 store :projection capacity {}))))))))
+
+(deftest lru-access-log-compacts-after-repeated-hits-test
+  (let [store (subproblem/store {:projection-max-weight 1})]
+    (subproblem/resolve!
+     store :projection :hot {} (constantly :hot))
+    (dotimes [_ 1200]
+      (subproblem/lookup! store :projection :hot {}))
+    (let [stats (subproblem/stats store)]
+      (is (= 1 (get-in stats [:tiers :projection :entries])))
+      (is (<= (get-in stats [:tiers :projection :lru-records])
+              1024)
+          "amortized constant-time touches retain a bounded access log"))))
+
 (deftest complete-private-entry-is-structurally-validated-once-test
   (let [store (subproblem/store)
         validations (atom 0)
@@ -598,7 +633,7 @@
        (deliver go true)
        @started
        (loop [attempt 0]
-         (when (and (< (:hits (subproblem/stats store)) 11)
+         (when (and (< (:single-flight-waits (subproblem/stats store)) 11)
                     (< attempt 1000))
            (Thread/sleep 1)
            (recur (inc attempt))))
@@ -606,7 +641,10 @@
        (is (= (vec (repeat 12 42)) (mapv deref workers)))
        (is (= 1 @calls))
        (is (= 1 (:misses (subproblem/stats store))))
-       (is (= 11 (:hits (subproblem/stats store))))
+       ;; Honest metrics: joins on an unrealized flight are waits, not
+       ;; hits — hits count only lookups served from realized state.
+       (is (= 11 (:single-flight-waits (subproblem/stats store))))
+       (is (= 0 (:hits (subproblem/stats store))))
        (is (= 0 (:inflight (subproblem/stats store))))
        (is (= 1 (get-in (subproblem/stats store)
                         [:tiers :projection :weight]))))))

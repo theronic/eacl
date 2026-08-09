@@ -210,7 +210,7 @@
 
  :formal-pipeline
  {:scope :all-25-dafny-modules
-  :proof-efforts 9776
+  :proof-efforts 9802
   :last-observed-local-wall-seconds 1169
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -218,7 +218,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3726574445
+  :total-observed-resource-count 3727263247
   :maximum-observed-proof-effort
   {:source "IndexedForwardCompleteness.dfy"
    :display-name
@@ -1281,6 +1281,8 @@
   :default-subproblem-cache
   {:projection-max-weight 4194304
    :denotation-max-weight 4194304
+   :answer-max-weight 16777216 ; D-6 answer tier (7.1): completed answers
+                               ; joined the weighted store
    :max-inflight 256
    :managed-proof-max-atoms 256}
   :recursive-4000-result-gc-stabilized-delta-bytes

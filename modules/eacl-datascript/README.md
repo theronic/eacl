@@ -25,6 +25,12 @@ DataScript supports serialized connection-head `:fully-consistent`, local
 advertised only when `:exact-snapshot-registry-size` configures a bounded
 immutable-DB registry. It does not claim an external replication mechanism.
 Unsupported configuration/mode combinations fail before authorization.
+DataScript clients assume by default that every EACL schema and relationship
+mutation uses the client APIs, selecting managed mutation proofs and
+relation-stamp reuse. Applications that write authorization-relevant datoms
+directly must opt out with `{:coherence-authority :unknown}`; domain-object
+transactions that do not alter EACL schema or relationships do not require an
+opt-out.
 The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
 `:last`/`:before`; see the
 [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

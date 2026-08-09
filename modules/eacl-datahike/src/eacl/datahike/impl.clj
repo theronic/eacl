@@ -5,6 +5,7 @@
             [eacl.datahike.schema :as schema]
             [eacl.engine.relationships :as relationship-engine]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
@@ -327,6 +328,10 @@
   ([db filters]
    (read-relationships db filters nil))
   ([db filters decision-kernel]
+  ;; The unified filter contract shared by every backend
+  ;; (backend-unification 9.1); the raw Datahike path previously performed
+  ;; no filter validation at all.
+  (relationship-filters/validate! filters)
   (let [subject-id'  (when (contains? filters :subject/id)
                        (internal-id db (:subject/id filters)))
         resource-id' (when (contains? filters :resource/id)

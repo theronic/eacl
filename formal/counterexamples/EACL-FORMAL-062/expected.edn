@@ -1,0 +1,7 @@
+{:empty-cycle-guards
+ {:selected-route :acyclic
+  :recursive-counters {}
+  :recursive-limit-error false}
+ :populated-cycle-guard
+ {:selected-route :recursive}
+ :snapshot-binding :exact}

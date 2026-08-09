@@ -504,30 +504,6 @@
    :killed-by
    {:proof :unsupported-exact-plan-is-exact-snapshot-unavailable
     :test :production-plan-observations-refine-the-complete-formal-matrix}}
-  {:id :cursor-rebase-wrong-ordinal
-   :mechanism :return-an-ordinal-that-does-not-index-the-authenticated-bound-result
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :cursor-bound-rebase-indexes-the-requested-result-identity
-    :test :cursor-bound-rebase-boundary-enforces-identity-and-cost}}
-  {:id :cursor-rebase-false-restart
-   :mechanism :restart-a-current-snapshot-page-although-the-bound-result-is-still-present
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :cursor-bound-restart-implies-result-identity-is-absent
-    :test :cursor-bound-rebase-boundary-enforces-identity-and-cost}}
-  {:id :cursor-rebase-skips-middle-chunk
-   :mechanism :advance-the-host-orchestrator-over-an-uninspected-middle-chunk
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :chunked-cursor-rebase-inspects-every-prior-identity
-    :test :cursor-bound-rebase-chunk-orchestration-matches-first-identity}}
-  {:id :cursor-rebase-drops-global-offset
-   :mechanism :return-a-chunk-local-ordinal-as-a-global-result-ordinal
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :chunked-cursor-rebase-reconstructs-the-global-first-ordinal
-    :test :cursor-bound-rebase-chunk-orchestration-matches-first-identity}}
   {:id :indexed-scan-validator-restores-pairwise-runtime
    :mechanism :evaluate-the-pairwise-quantified-ordering-contract-in-generated-runtime
    :control {:kind :clojure}
@@ -540,6 +516,48 @@
    :killed-by
    {:invariant :generated-target-runtime-uses-reviewed-persistent-representations
     :test :runtime-patch-sources-and-scaling-gates}}
+  {:id :enumeration-route-forces-recursive
+   :mechanism :dispatch-a-certified-acyclic-root-through-the-recursive-engine
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :enumeration-route-is-the-certificate-classification
+    :test :generated-route-and-recursive-counter-isolation}}
+  {:id :inactive-recursive-data-forces-fixed-point
+   :mechanism :ignore-empty-cycle-guards-and-enter-the-recursive-fixed-point-engine
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :inactive-cycle-guard-eliminates-recursive-contribution
+    :test :recursive-schema-with-empty-cycle-guards-stays-page-bounded}}
+  {:id :active-recursive-data-forces-acyclic
+   :mechanism :ignore-a-populated-cycle-guard-and-enter-the-acyclic-engine
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :active-recursive-data-selects-the-recursive-route
+    :test :populated-cycle-guard-restores-recursive-routing}}
+  {:id :acyclic-merge-emits-overlap-twice
+   :mechanism :emit-equal-heads-from-two-authorized-index-streams
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :acyclic-enumeration-is-ordered-and-duplicate-free
+    :test :explorer-overlapping-path-denotational-differential}}
+  {:id :acyclic-continuation-context-disconnected
+   :mechanism :drop-the-client-private-continuation-context-at-a-backend-entry-point
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :continuation-resume-equals-authenticated-deterministic-replay
+    :test :backend-adjacent-page-continuation-hit-and-work-bound}}
+  {:id :acyclic-work-allows-recursive-budget
+   :mechanism :accept-acyclic-work-although-recursive-fixed-point-work-is-positive
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :certified-acyclic-work-has-zero-recursive-work
+    :test :acyclic-recursive-counter-and-limit-isolation}}
+  {:id :acyclic-rebase-enters-recursive-machine
+   :mechanism :revalidate-an-acyclic-cursor-bound-with-the-recursive-fixed-point-engine
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :inclusive-acyclic-boundary-membership-is-exact
+    :test :acyclic-current-cursor-rebase-never-enters-recursive-traversal}}
   {:id :partial-denotation-hit
    :mechanism :allow-partial-denotation-as-cache-hit
    :control

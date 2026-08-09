@@ -9,12 +9,14 @@
     (let [family-id (get entity mutation/graph-family-id-attr)
           head-id (get entity mutation/graph-head-id-attr)
           order
-          (ds/q '[:find ?order .
-                  :in $ ?graph-id
-                  :where
-                  [?graph :eacl/id ?graph-id]
-                  [?graph :eacl.graph/head-order ?order]]
-                db mutation/graph-entity-id)]
+          (some->
+           (first
+            (ds/datoms
+             db
+             :eavt
+             (:db/id entity)
+             mutation/graph-head-order-attr))
+           :v)]
       (when (and family-id head-id)
         {:family-id family-id
          :head-id head-id

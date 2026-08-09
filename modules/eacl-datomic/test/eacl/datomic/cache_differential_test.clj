@@ -18,7 +18,8 @@
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]))
 
 (def ^:private token-key "cache-differential-test-key")
 
@@ -331,18 +332,37 @@
           query {:subject (spice-object :user "alice")
                  :permission :view
                  :resource/type :doc}
-          stats (atom {})]
-      (binding [idx/*recursive-traversal-stats* stats]
-        (let [page-1 (eacl/lookup-resources acl (assoc query :first 3))
-              _ (is (get-in page-1 [:page-info :has-next-page?]))
-              cursor (get-in page-1 [:page-info :end-cursor])
-              page-2 (eacl/lookup-resources acl (assoc query :first 3 :after cursor))]
-          (is (= 1 (:continuation-hits @stats 0))
-              "generated authority resumes its proof-keyed opaque state")
-          (is (= (mapv :id (:data (eacl/lookup-resources
-                                   oracle (assoc query :first 3 :after cursor))))
-                 (mapv :id (:data page-2)))
-              "cursor replay still agrees with an uncached client")))
+          page-1 (eacl/lookup-resources acl (assoc query :first 3))
+          _ (is (get-in page-1 [:page-info :has-next-page?]))
+          cursor-1 (get-in page-1 [:page-info :end-cursor])
+          page-2-stats (atom {})
+          page-2
+          (binding [engine/*acyclic-work-stats* page-2-stats]
+            (eacl/lookup-resources
+             acl (assoc query :first 3 :after cursor-1)))
+          cursor-2 (get-in page-2 [:page-info :end-cursor])
+          page-3-stats (atom {})
+          page-3
+          (binding [engine/*acyclic-work-stats* page-3-stats]
+            (eacl/lookup-resources
+             acl (assoc query :first 3 :after cursor-2)))]
+      (is (= 1 (:continuation-hits @page-2-stats 0))
+          "generated authority resumes its proof-keyed opaque state")
+      (is (= 1 (:continuation-hits @page-3-stats 0))
+          "later pages continue from private state")
+      (is (<= (:backend-scans @page-3-stats)
+              (+ 2 (:backend-scans @page-2-stats)))
+          "continuation work does not grow with page ordinal")
+      (is (= (mapv :id (:data (eacl/lookup-resources
+                               oracle
+                               (assoc query :first 3 :after cursor-1))))
+             (mapv :id (:data page-2)))
+          "cursor replay still agrees with an uncached client")
+      (is (= (mapv :id (:data (eacl/lookup-resources
+                               oracle
+                               (assoc query :first 3 :after cursor-2))))
+             (mapv :id (:data page-3)))
+          "later replay agrees with the continuation")
 
       (testing "a walk with the continuation matches one without it"
         (is (= (walk-forward oracle query 3)
