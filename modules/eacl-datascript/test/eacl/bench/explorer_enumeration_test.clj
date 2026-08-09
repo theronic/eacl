@@ -207,6 +207,8 @@
   ([shape]
    (seed! shape fixture/schema))
   ([shape schema]
+   (seed! shape schema fixture/relationship-batches))
+  ([shape schema relationship-batches]
    (let [conn (datascript/create-conn)
          client
          (datascript/make-client
@@ -214,7 +216,7 @@
           {:cache {:remember-answers false}})]
      (eacl/write-schema! client schema)
      (ds/transact! conn (vec (fixture/object-transactions shape)))
-     (doseq [batch (fixture/relationship-batches shape)]
+     (doseq [batch (relationship-batches shape)]
        (eacl/create-relationships! client batch))
      {:conn conn :client client})))
 
@@ -341,6 +343,25 @@
         query (fixture/count-query fixture/user-1 :view)]
     (observe #(eacl/count-resources client query))))
 
+(defn run-populated-recursive!
+  []
+  (let [shape fixture/populated-recursive-shape
+        {:keys [client]}
+        (seed! shape
+               fixture/recursive-schema
+               fixture/populated-recursive-relationship-batches)
+        query {:subject fixture/user-1
+               :permission :view
+               :resource/type :account}]
+    {:bounded-count
+     (observe #(eacl/count-resources client (assoc query :count-limit 25)))
+     :exact-count
+     (observe #(eacl/count-resources client (assoc query :count-limit 200)))
+     :first-page
+     (observe #(eacl/lookup-resources
+                client
+                (assoc query :first 20)))}))
+
 (deftest ^:benchmark explorer-10000-correctness-work-and-latency-gate
   (let [{:keys [page-reports owner-count super-count
                 latency-measurements latency-ms]}
@@ -411,6 +432,39 @@
                :latency-measurement (:latency-measurement report)
                :latency-gate latency-gate
                :work (:acyclic report)}))))
+
+(deftest ^:benchmark explorer-populated-recursive-subaccounts
+  (let [{:keys [bounded-count exact-count first-page]}
+    (run-populated-recursive!)]
+    (testing "sub-account traversal is demand-bounded"
+      (is (= 25 (get-in bounded-count [:value :count])))
+      (is (true? (get-in bounded-count [:value :truncated?])))
+      (is (= 60 (get-in exact-count [:value :count])))
+      (is (false? (get-in exact-count [:value :truncated?])))
+      (is (= 20 (count (get-in first-page [:value :data])))))
+    (testing "bounded demand stops recursive work after its sentinel"
+      (is (<= (get-in bounded-count [:recursive :emitted-results]) 26))
+      (is (<= (get-in first-page [:recursive :emitted-results]) 21))
+      (is (< (get-in bounded-count
+                     [:recursive :generated-dimensional-counters
+                      :backend-commands])
+             (get-in exact-count
+                     [:recursive :generated-dimensional-counters
+                      :backend-commands])))
+      (is (< (get-in bounded-count
+                     [:recursive :generated-retained-logical-units])
+             (get-in exact-count
+                     [:recursive :generated-retained-logical-units]))))
+    (testing "populated recursive facts route through the recursive engine"
+      (is (seq (:recursive bounded-count)))
+      (is (seq (:recursive exact-count)))
+      (is (seq (:recursive first-page))))
+    (println "EACL Explorer populated-recursive report"
+             (pr-str
+              {:shape fixture/populated-recursive-shape
+               :bounded-count (:recursive bounded-count)
+               :exact-count (:recursive exact-count)
+               :first-page (:recursive first-page)}))))
 
 (deftest ^:benchmark ^:acceptance
   explorer-40000-cold-user-count-amortizes-projection-seeks

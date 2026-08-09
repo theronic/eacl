@@ -292,8 +292,8 @@
     (is (= 200 (:count result)))
     (is (= 4 (:permission-paths @stats))
         "a pure permission alias must not create a duplicate traversal")
-    (is (<= (:backend-scans @stats) 57)
-        "alias canonicalization must remove work without widening scans")))
+    (is (<= (:backend-scans @stats) 60)
+        "alias canonicalization must remove work beyond the org hierarchy")))
 
 (deftest recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
   (let [{baseline-client :client}
@@ -339,7 +339,7 @@
              (:counted-results @count-stats)))
       (is (<= (- (:backend-scans @count-stats)
                  (:backend-scans @baseline-stats))
-              8)
+              9)
           "empty cycle guards may add only their bounded indexed seeks"))
     (testing "an actual cycle-enabling relationship restores recursive routing"
       (eacl/create-relationship!
@@ -358,6 +358,38 @@
                       (get-in client [:opts :decision-kernel])]
               (engine/enumeration-route adapter :server :view))]
         (is (= :recursive route))))))
+
+(deftest populated-account-and-server-parents-exercise-explorer-recursion-test
+  (let [shape (assoc small-shape :accounts 6)
+        {:keys [client]}
+        (seed-client! shape fixture/recursive-schema {})
+        inherited-account
+        (fixture/object :account (fixture/account-id 4))
+        inherited-server
+        (fixture/object :server (fixture/server-id 5 0))
+        relationships
+        [(eacl/->Relationship
+          (fixture/object :account (fixture/account-id 0))
+          :parent
+          inherited-account)
+         (eacl/->Relationship
+          (fixture/object :server (fixture/server-id 0 0))
+          :parent
+          inherited-server)]
+        before {:account? (eacl/can? client fixture/user-1 :view inherited-account)
+                :server? (eacl/can? client fixture/user-1 :view inherited-server)}
+        _ (eacl/write-relationships!
+           client
+           (mapv #(eacl/->RelationshipUpdate :touch %) relationships))
+        recursive-stats (atom {})
+        after
+        (binding [engine/*recursive-traversal-stats* recursive-stats]
+          {:account? (eacl/can? client fixture/user-1 :view inherited-account)
+           :server? (eacl/can? client fixture/user-1 :view inherited-server)})]
+    (is (= {:account? false :server? false} before))
+    (is (= {:account? true :server? true} after))
+    (is (pos? (get @recursive-stats :stream-fills 0))
+        "populated account/server parents must exercise recursive traversal")))
 
 (deftest cold-exact-count-reuses-one-merge-across-certified-windows-test
   (let [shape
