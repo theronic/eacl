@@ -376,6 +376,23 @@
 (defonce default-root-key
   (random-bytes 32))
 
+(defonce ^:private warned-defaulted-token-key? (atom false))
+
+(defn warn-defaulted-token-key!
+  "One-time startup warning when a client is constructed without explicit
+  token key material: defaulted keys are process-local and random, so
+  cursors and tokens do not survive restarts and are not portable across
+  peers or load-balanced nodes (page 2 on another node fails with a
+  typed invalid-cursor error). Supply :security-key/:security-keyring
+  (portable clients) or :page-token-key/:page-token-keyring (Datomic)."
+  []
+  (when (compare-and-set! warned-defaulted-token-key? false true)
+    #?(:clj (binding [*out* *err*]
+              (println
+               "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring)."))
+       :cljs (js/console.warn
+              "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring)."))))
+
 (defn normalize-key
   [key]
   (let [bytes

@@ -203,11 +203,11 @@
                  (get-in fresh-page-1 [:page-info :end-cursor]))
           fresh-page-2
           (eacl/lookup-resources authorization fresh-page-2-query)]
-      (testing "cursor recovery reuses the same managed answer"
+      (testing "an unrelated write leaves the dependency proof equal: the
+                continuation is reused without recovery"
         (is (= [(second documents)] (:data recovered-page-2)))
-        (is (= :rebased
-               (get-in recovered-page-2
-                       [:page-info :cursor-recovery])))
+        (is (nil? (get-in recovered-page-2
+                          [:page-info :cursor-recovery])))
         (is (true? (:cached? recovered-page-2))))
       (testing "a newly signed cursor for the same boundary also reuses it"
         (is (not=
@@ -507,11 +507,10 @@
 
 (deftest exact-registry-eviction-and-cache-lifting-test
   (let [conn (datascript/create-conn)
-        store (cache/local-store)
         authorization
         (managed-client
          conn
-         {:cache store
+         {:cache {}
           :exact-snapshot-registry-size 1})
         _ (seed! conn authorization)
         token

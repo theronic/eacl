@@ -10,7 +10,7 @@
     :EACL-FORMAL-002
     eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test
     :EACL-FORMAL-003
-    eacl.datomic.cache-test/authenticated-store-preserves-logical-kind-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-004
     eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test
     :EACL-FORMAL-005
@@ -206,8 +206,8 @@
     (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
                       page-source))
         "the generated RawPageRequest smoke must use only current v8 fields")
-    (is (= {:first-page [10 30]
-            :continuation-page [20]}
+    (is (= {:first-page [10 20]
+            :continuation-page [30]}
            (:production-recursive-pages vectors)))
     (is (re-find
          #":production-recursive-pages \(cross-runtime-vectors\)"

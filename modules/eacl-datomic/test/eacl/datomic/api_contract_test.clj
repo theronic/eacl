@@ -336,10 +336,14 @@
           leaf  (d/entid db [:eacl/id "f-0"])
           query {:subject (spice-object :user u) :permission :read :resource/type :folder}]
 
-      (testing "bare :last rejects the implicit full recursive traversal"
-        (is (= :eacl.pagination/unsupported-recursive-last
-               (:eacl/error
-                (ex-data-of #(idx/lookup-resources db (assoc query :last 2)))))))
+      (testing "bare :last serves the tail of the canonical recursive denotation"
+        (let [full      (:data (idx/lookup-resources db (assoc query :first 100)))
+              last-page (idx/lookup-resources db (assoc query :last 2))]
+          (is (= (take-last 2 full) (:data last-page)))
+          (is (true? (get-in last-page [:page-info :has-previous-page?])))
+          (is (false? (get-in last-page [:page-info :has-next-page?])))
+          (is (= :lookup-eid
+                 (get-in last-page [:page-info :start-cursor :kind])))))
 
       (testing "count-subjects agrees with lookup-subjects on a recursive permission"
         (doseq [[label resource] [["root" root] ["leaf" leaf]]]

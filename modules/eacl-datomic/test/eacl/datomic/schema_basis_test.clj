@@ -106,7 +106,12 @@
             (is (true? (eacl/can? acl viewer :admin account)))
             (is (= 2 @path-calcs))))))))
 
-(deftest page-token-recovers-on-the-current-schema-generation-test
+(deftest page-token-across-schema-generations-is-rejected-test
+  ;; Re-goldened for cursor-dependency-validity (was
+  ;; page-token-recovers-on-the-current-schema-generation-test): the schema
+  ;; check validates the actual schema mutation identity on every acceptance
+  ;; — the :cursor-recovery bypass is gone, so the previously-dead check now
+  ;; fires with the typed error instead of silently restarting the walk.
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a-1"} {:eacl/id "a-2"}])
@@ -126,12 +131,18 @@
           cursor (get-in page1 [:page-info :end-cursor])]
       (is (some? cursor))
       (eacl/write-schema! acl schema-viewer-only)
-      (let [recovered
-            (eacl/lookup-resources acl (assoc query :after cursor))]
-        (is (empty? (:data recovered))
-            "ordinary continuation re-evaluates permission definitions on the current schema")
-        (is (= :restarted
-               (get-in recovered [:page-info :cursor-recovery]))))
+      (let [error
+            (try
+              (eacl/lookup-resources acl (assoc query :after cursor))
+              nil
+              (catch clojure.lang.ExceptionInfo thrown
+                thrown))]
+        (is (some? error)
+            "a cursor from another schema generation must not resume — recovery mode included")
+        (is (= :eacl.pagination/stale-schema (:type (ex-data error))))
+        (is (not= (:expected (ex-data error))
+                  (:actual (ex-data error)))
+            "the stamp is the schema mutation identity, so the generations differ"))
       (is (empty? (:data (eacl/lookup-resources acl query)))
           "a new enumeration uses the new schema generation"))))
 

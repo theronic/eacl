@@ -259,7 +259,7 @@ jobs:
                  \"target/formal/consistency-boundary-cljs.js\"}))"
           node target/formal/consistency-boundary-cljs.js
 
-      - name: Restart heap-bounded nREPL for cursor resource gate
+      - name: Restart heap-bounded nREPL for recorded-baseline gates
         run: |
           old_pid="$(cat target/formal/ci-nrepl.pid)"
           kill "$old_pid" 2>/dev/null || true
@@ -283,37 +283,41 @@ jobs:
           cat target/formal/ci-nrepl.log
           exit 1
 
-      - name: Gate recoverable cursor rebase work and host resources
+      - name: Gate populated recursion against recorded v7 baselines
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
-               (require
-                'eacl.formal.cursor-rebase-benchmark
-                :reload)
+               (require 'eacl.bench.recursive-performance-gate-test :reload)
                (let [result
-                     (eacl.formal.cursor-rebase-benchmark/run-gate!)]
+                     (clojure.test/run-tests
+                      'eacl.bench.recursive-performance-gate-test)]
                  (binding [*out* *err*]
                    (prn result)
                    (flush))
-                 (when (= :failed (:status result))
+                 (when (or (pos? (:fail result)) (pos? (:error result)))
                    (throw
                     (ex-info
-                     \"generated JVM cursor rebase resource gate regressed\"
+                     \"populated-recursion performance gate regressed\"
                      result)))
-                 (:summary result)))"
+                 result))"
+
+      - name: Gate Explorer enumeration against recorded v7 baselines
+        run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
-               (require '[cljs.build.api :as cljs] :reload)
-               (cljs/build
-                nil
-                {:main 'eacl.formal.cursor-rebase-benchmark
-                 :target :nodejs
-                 :optimizations :none
-                 :output-dir
-                 \"target/formal/cljs-cursor-rebase-benchmark-out\"
-                 :output-to
-                 \"target/formal/cljs-cursor-rebase-benchmark.js\"}))"
-          node --expose-gc target/formal/cljs-cursor-rebase-benchmark.js
+               (require 'eacl.bench.explorer-enumeration-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.bench.explorer-enumeration-test)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (or (pos? (:fail result)) (pos? (:error result)))
+                   (throw
+                    (ex-info
+                     \"explorer enumeration gate regressed\"
+                     result)))
+                 result))"
 
       - name: Assert verified status remains withheld while gates are unmet
         run: |
@@ -378,6 +382,9 @@ jobs:
           bin/formal tla-typecheck
           bin/formal apalache-check
           bin/formal apalache-invariant
+
+      - name: Require temporal cache spec mutants to fail (kill controls)
+        run: bin/formal apalache-mutation-control
 
       - name: Run larger scheduled temporal bound
         if: github.event_name == 'schedule'

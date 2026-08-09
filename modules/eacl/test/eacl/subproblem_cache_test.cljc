@@ -633,7 +633,7 @@
        (deliver go true)
        @started
        (loop [attempt 0]
-         (when (and (< (:hits (subproblem/stats store)) 11)
+         (when (and (< (:single-flight-waits (subproblem/stats store)) 11)
                     (< attempt 1000))
            (Thread/sleep 1)
            (recur (inc attempt))))
@@ -641,7 +641,10 @@
        (is (= (vec (repeat 12 42)) (mapv deref workers)))
        (is (= 1 @calls))
        (is (= 1 (:misses (subproblem/stats store))))
-       (is (= 11 (:hits (subproblem/stats store))))
+       ;; Honest metrics: joins on an unrealized flight are waits, not
+       ;; hits — hits count only lookups served from realized state.
+       (is (= 11 (:single-flight-waits (subproblem/stats store))))
+       (is (= 0 (:hits (subproblem/stats store))))
        (is (= 0 (:inflight (subproblem/stats store))))
        (is (= 1 (get-in (subproblem/stats store)
                         [:tiers :projection :weight]))))))

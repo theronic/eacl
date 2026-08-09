@@ -1071,53 +1071,6 @@
     (and (= :exact-snapshot-unavailable correct)
          (= :unsupported-head-barrier mutant))))
 
-(defn- cursor-rebase-wrong-ordinal-killed?
-  []
-  (let [values [11 17 23 29]
-        bound-eid 23
-        correct-ordinal 2
-        mutant-ordinal 1]
-    (and (= bound-eid (nth values correct-ordinal))
-         (not= bound-eid (nth values mutant-ordinal)))))
-
-(defn- cursor-rebase-false-restart-killed?
-  []
-  (let [values [11 17 23 29]
-        bound-eid 23
-        correct (if (some #{bound-eid} values) :rebased :restarted)
-        mutant :restarted]
-    (and (= :rebased correct)
-         (not= correct mutant))))
-
-(defn- cursor-rebase-skips-middle-chunk-killed?
-  []
-  (let [chunk-size 4096
-        values (vec (range (+ (* 2 chunk-size) 1)))
-        bound-eid chunk-size
-        correct (first (keep-indexed
-                        #(when (= bound-eid %2) %1)
-                        values))
-        mutant-values
-        (into
-         (subvec values 0 chunk-size)
-         (subvec values (* 2 chunk-size)))
-        mutant (first (keep-indexed
-                       #(when (= bound-eid %2) %1)
-                       mutant-values))]
-    (and (= chunk-size correct)
-         (nil? mutant))))
-
-(defn- cursor-rebase-drops-global-offset-killed?
-  []
-  (let [chunk-size 4096
-        values (vec (range (inc chunk-size)))
-        bound-eid chunk-size
-        local-ordinal 0
-        correct-ordinal (+ chunk-size local-ordinal)
-        mutant-ordinal local-ordinal]
-    (and (= bound-eid (nth values correct-ordinal))
-         (not= bound-eid (nth values mutant-ordinal)))))
-
 (defn- indexed-scan-validator-restores-pairwise-runtime-killed?
   []
   (let [source
@@ -1398,14 +1351,6 @@
    consistency-exact-anchor-ignored-killed?
    :consistency-unsupported-exact-becomes-generic
    consistency-unsupported-exact-becomes-generic-killed?
-   :cursor-rebase-wrong-ordinal
-   cursor-rebase-wrong-ordinal-killed?
-   :cursor-rebase-false-restart
-   cursor-rebase-false-restart-killed?
-   :cursor-rebase-skips-middle-chunk
-   cursor-rebase-skips-middle-chunk-killed?
-   :cursor-rebase-drops-global-offset
-   cursor-rebase-drops-global-offset-killed?
    :indexed-scan-validator-restores-pairwise-runtime
    indexed-scan-validator-restores-pairwise-runtime-killed?
    :generated-target-collections-restore-quadratic
@@ -1460,3 +1405,25 @@
       (is (= killed (count registered-clojure)))
       (is (<= required-score score))
       (is (= 1 score)))))
+
+(deftest ledger-matches-registry-test
+  ;; The recorded mutation-control ledger must track the registry: a
+  ;; registered mutant that the ledger does not count is a silently
+  ;; dormant control (the 103-vs-96 drift found in the v8 audit).
+  (let [{:keys [mutants]} (registry)
+        clojure-mutants
+        (filterv #(not= :apalache (get-in % [:control :kind])) mutants)
+        apalache-mutants
+        (filterv #(= :apalache (get-in % [:control :kind])) mutants)
+        ledger (edn/read-string
+                (slurp (repo/file "formal" "verification"
+                                  "mutation-control.edn")))]
+    (testing "totals"
+      (is (= (count mutants) (:mutants ledger)))
+      (is (= (:mutants ledger) (:killed ledger)))
+      (is (zero? (:survived ledger))))
+    (testing "per-control-kind counts"
+      (is (= (count clojure-mutants)
+             (get-in ledger [:controls :clojure :mutants])))
+      (is (= (count apalache-mutants)
+             (get-in ledger [:controls :apalache :mutants]))))))

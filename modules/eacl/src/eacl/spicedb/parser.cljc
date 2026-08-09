@@ -239,10 +239,10 @@
   (let [full-schema (str "definition temp { permission test = " expr-str " }")
         parsed      (spicedb-parser full-schema)]
     (if (insta/failure? parsed)
-      (do
-        (println "Failed to parse expression:" expr-str)
-        (println "Error:" (insta/get-failure parsed))
-        nil)
+      ;; Library fn: return nil for the caller to handle rather than
+      ;; writing to stdout (the failure detail is available via
+      ;; insta/get-failure on a re-parse if a caller wants it).
+      nil
       ;; Path: schema -> definition -> definition-body -> permission -> permission-expr
       (get-in parsed [1 2 1 2]))))
 

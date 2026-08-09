@@ -175,8 +175,8 @@
    :expected :rejected}]
 
  :production-recursive-pages
- {:first-page [10 30]
-  :continuation-page [20]}
+ {:first-page [10 20]
+  :continuation-page [30]}
 
  :round-trips
  [{:tag "eacl.round-trip/v1" :values [0 7 42] :limit 3

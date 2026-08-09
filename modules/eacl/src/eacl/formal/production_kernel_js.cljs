@@ -24,6 +24,43 @@
    (.-Seq (.-_dafny generated))
    (into-array values)))
 
+(def ^:private limits-memo
+  ;; Single-slot identity memo mirroring the JVM adapter: limits are one
+  ;; map value per request; the sequential protocol re-marshalled three
+  ;; BigNumbers on every drive and resume.
+  (volatile! nil))
+
+(defn- indexed-limits
+  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]
+    :as limits}]
+  (let [cached @limits-memo]
+    (if (and cached (identical? (first cached) limits))
+      (second cached)
+      (let [built (js-invoke
+                   (.-IndexedLimits (.-IndexedTraversal generated))
+                   "create_IndexedLimits"
+                   (big-number max-derived-grants)
+                   (big-number max-advanced-datoms)
+                   (big-number max-queued-work))]
+        (vreset! limits-memo [limits built])
+        built))))
+
+(def ^:private fuel-memo (volatile! nil))
+
+(defn- dafny-fuel
+  [fuel]
+  (let [cached @fuel-memo]
+    (if (and cached (= (first cached) fuel))
+      (second cached)
+      (let [built (big-number fuel)]
+        (vreset! fuel-memo [fuel built])
+        built))))
+
+(def ^:private empty-values-sequence
+  ;; Interned empty scan-response payload (JVM mirror): ~98% of
+  ;; populated-recursion scan responses are emptiness probes.
+  (delay (dafny-sequence [])))
+
 (defn- object->dafny
   [{:keys [type id]}]
   (js-invoke
@@ -642,23 +679,6 @@
       (.-is_SnapshotUnavailable (.-dtor_reason decision))
       :snapshot-unavailable
       :else :history-divergence)))
-
-(defn- cursor-bound-rebase-decision
-  [{:keys [values bound-eid]}]
-  (let [decision
-        (js-invoke
-         (.-__default (.-PageWindow generated))
-         "RebaseCursorBound"
-         (into-array values)
-         bound-eid)]
-    (if (.-is_CursorBoundRebased decision)
-      {:status :rebased
-       :ordinal (.toNumber (.-dtor_ordinal decision))
-       :inspected-count
-       (.toNumber (.-dtor_inspectedCount decision))}
-      {:status :restarted
-       :inspected-count
-       (.toNumber (.-dtor_inspectedCount decision))})))
 
 (defn- snapshot-consistency-mode
   [consistency mode]
@@ -1308,7 +1328,10 @@
          "create_ScanResponse"
          (big-number (:request-scope response))
          (big-number (:request-id response))
-         (dafny-sequence (map big-number (:values response)))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence (map big-number values))
+             @empty-values-sequence))
          (:terminal? response)
          (big-number (:fetched-values response)))
         decision
@@ -1428,14 +1451,6 @@
        :reason
        (indexed-plan-rejection-reason (.-dtor_error decision))})))
 
-(defn- indexed-limits
-  [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}]
-  (js-invoke
-   (.-IndexedLimits (.-IndexedTraversal generated))
-   "create_IndexedLimits"
-   (big-number max-derived-grants)
-   (big-number max-advanced-datoms)
-   (big-number max-queued-work)))
 
 (defn- indexed-cursor-bound
   [bound]
@@ -1505,7 +1520,6 @@
 (defn- dafny-string-value
   [value]
   (.toVerbatimString value false))
-
 (defn- indexed-projection-value
   [projection]
   (if (.-is_SubjectToResources projection)
@@ -1638,13 +1652,13 @@
           (js-invoke
            (.-__default indexed)
            "DriveForwardIterative"
-           state (indexed-limits limits) (big-number fuel))
+           state (indexed-limits limits) (dafny-fuel fuel))
 
           :reverse
           (js-invoke
            (.-__default indexed)
            "DriveReverseIterative"
-           state (indexed-limits limits) (big-number fuel)))]
+           state (indexed-limits limits) (dafny-fuel fuel)))]
     (cond
       (case direction
         :forward (.-is_ForwardNeedScan outcome)
@@ -1696,7 +1710,10 @@
          "create_ScanResponse"
          (big-number (:request-scope response))
          (big-number (:request-id response))
-         (dafny-sequence (map big-number (:values response)))
+         (let [values (:values response)]
+           (if (seq values)
+             (dafny-sequence (map big-number values))
+             @empty-values-sequence))
          (:terminal? response)
          (big-number (:fetched-values response)))
         outcome
@@ -1809,7 +1826,6 @@
       :relationship-page (page-decision input)
       :relationship-keyset-page (keyset-page-decision input)
       :cursor-continuation (continuation-decision input)
-      :cursor-bound-rebase (cursor-bound-rebase-decision input)
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)

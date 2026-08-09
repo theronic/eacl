@@ -65,21 +65,7 @@
         #?(:clj
            (ns-resolve 'eacl.engine.v8 'restore-generated-continuation)
            :cljs
-           engine/restore-generated-continuation)
-        cached
-        #?(:clj
-           (ns-resolve 'eacl.engine.v8 'cached-generated-continuation)
-           :cljs
-           engine/cached-generated-continuation)
-        engine-version
-        #?(:clj
-           (var-get
-            (ns-resolve 'eacl.engine.v8 'recursive-engine-version))
-           :cljs
-           engine/recursive-engine-version)
-        bound {:ordinal 19
-               :result {:type :node
-                        :eid 100}}]
+           engine/restore-generated-continuation)]
     (is (= {:status :rejected
             :reason :unusable-cached-state}
            (restore
@@ -88,24 +74,8 @@
             {:state :opaque-state-from-an-incompatible-generated-runtime}
             {:size 20
              :bound
-             {:ordinal 19
+             {:kind :lookup-eid
               :result-eid 100}})))
-    (is (nil?
-         (cached
-          {:get
-           (constantly
-            {:engine-version engine-version
-             :implementation :generated-indexed
-             :direction :forward
-             :result-kind :resource
-             :bound bound
-             :state :opaque
-             :counters {:backend-commands "not-a-natural"}
-             :retained-logical-units 1})}
-          bound
-          :forward
-          :resource))
-        "malformed counter envelopes are discarded before opaque restoration")
     (is (empty? @calls)
         "the indexed continuation method, not DecisionKernel, owns restore")))
 

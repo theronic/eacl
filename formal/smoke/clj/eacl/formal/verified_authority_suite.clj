@@ -90,7 +90,6 @@
     :acyclic-continuation
     :acyclic-count
     :acyclic-work
-    :cursor-bound-rebase
     :indexed-traversal-compile
     :indexed-traversal-initialize
     :indexed-traversal-drive

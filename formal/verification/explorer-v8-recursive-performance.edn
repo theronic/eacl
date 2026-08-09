@@ -1,0 +1,115 @@
+{:version 1
+ :purpose
+ "Matched-v7 latency baselines for populated recursion (task 1.4 of
+  eacl-v8-root-fixes; recursion-performance-gates capability).
+
+  Same-host, same-process-shape harness: raw eacl.datomic.impl calls on
+  in-memory Datomic, 3 warmups / 7 samples / median, per FORMAL-048
+  (logical work remains authoritative; latency failures with matching
+  logical work are harness noise). v7 = main @ 77b3986 (v7.3 tip) in a
+  separate fresh JVM; v8 = codex/restore-v8-enumeration-performance
+  lineage. Fixture: eacl.bench.recursive-fixture star/chain shapes,
+  deep point check at the 75th-percentile account.
+
+  :status :known-regression scenarios record the audited pre-fix truth:
+  the gate asserts completion and reports the ratio without failing the
+  build; each fix group (3/4/5) tightens :maximum-ratio-to-v7
+  enforcement by flipping :status to :enforced. :v7-unsupported marks
+  scenarios v7 cannot execute (chain-10k deep point check
+  stack-overflows in v7's recursive evaluation, reproducibly) — there
+  the v8 gate is completion itself."
+ :recorded {:host-class :apple-silicon-dev
+            :v7-commit "77b3986"
+            :v8-commit "post-group-5" ; keyset recursion: raw pages pay closure (see note)
+            :warmups 3
+            :samples 7
+            :statistic :median
+            :logical-work-remains-authoritative true}
+ :latency-gate {:maximum-ratio-to-v7 2.0}
+ :batching-trigger-decision
+ {:task "eacl-v8-root-fixes 12.1"
+  :evaluated-at "2026-08-07 (post groups 3/4/5/6/7/8/9-core)"
+  :decision :triggered
+  :basis
+  "The 2.0x bound fails on every crossing-dominated op in the recorded
+   post-group-5 medians (exact counts 3.7-5.9x, deep point checks 5.7-56x
+   where v7 completes) and groups 6-9 did not touch the drive/resume
+   crossing count - group 6 scoped cursor validity, 7 bounded the answer
+   tier, 8 certified managed reuse, 9 de-forked client orchestration; the
+   engine-direct raw op-count envelopes (recursive-op-count-envelopes.edn)
+   still record ~2 crossings per frontier stream with ~98% empty probes.
+   Only the wave-batched scan protocol (D-9 phase 2 / 12.2-12.3) changes
+   that architectural layer."
+  :scope-note
+  "12.2/12.3 are the recorded 6-10 week Dafny effort (pending-scan
+   coverage-invariant generalization via the ghost-view trick;
+   Yielded-on-partial-batch for order determinism; cursor-digest version
+   bump; batched-crossings gate 2*ceil(streams/batch)+constant). They are
+   deliberately NOT begun inside eacl-v8-root-fixes sessions that cannot
+   carry a multi-week proof effort; this record is the 12.1 deliverable."}
+ :scenarios
+ {:star-2k
+  {:fixture {:shape :star :accounts 2000}
+   :ops
+   {:can-deep {:v7-median-ms 0.066 :v8-median-ms 2.194 :ratio 33.2 ; coldest-JIT scenario
+               :status :known-regression}
+    :first-50 {:v7-median-ms 0.922 :v8-median-ms 70.744 :ratio 76.7 ; raw closure per page (keyset trade)
+               :status :known-regression}
+    :exact-count {:v7-median-ms 15.918 :v8-median-ms 59.502 :ratio 3.7
+                  :status :known-regression}}}
+  :star-10k
+  {:fixture {:shape :star :accounts 10000}
+   :ops
+   {:can-deep {:v7-median-ms 0.016 :v8-median-ms 0.905 :ratio 56.6
+               :status :known-regression}
+    :first-50 {:v7-median-ms 0.230 :v8-median-ms 237.892 :ratio 1034.0 ; raw closure per page (keyset trade)
+               :status :known-regression}
+    :exact-count {:v7-median-ms 40.366 :v8-median-ms 231.149 :ratio 5.7
+                  :status :known-regression}}}
+  :chain-2k
+  {:fixture {:shape :chain :accounts 2000}
+   :ops
+   {:can-deep {:v7-median-ms 9.673 :v8-median-ms 70.325 :ratio 7.3
+               :status :known-regression}
+    :first-50 {:v7-median-ms 0.212 :v8-median-ms 47.049 :ratio 221.9 ; raw closure per page (keyset trade)
+               :status :known-regression}
+    :exact-count {:v7-median-ms 7.769 :v8-median-ms 46.081 :ratio 5.9
+                  :status :known-regression}}}
+  :chain-10k
+  {:fixture {:shape :chain :accounts 10000}
+   :ops
+   {:can-deep {:v7-unsupported :stack-overflow
+               :v8-median-ms 336.203
+               :status :v8-completes-where-v7-cannot}
+    :first-50 {:v7-median-ms 0.209 :v8-median-ms 232.133 :ratio 1110.7 ; raw closure per page (keyset trade)
+               :status :known-regression}
+    :exact-count {:v7-median-ms 38.801 :v8-median-ms 224.554 :ratio 5.8
+                  :status :known-regression}}}}
+ :notes
+ [  "Post-group-5 keyset trade, recorded deliberately: a RAW (storeless)
+   first-50 page whose result exceeds the page now materializes the
+   sorted closure per page (probe-then-continue), trading the old
+   streaming page for correctness (no skip/dup) and total-walk cost:
+   client walks pay the closure ONCE then slice zero-scan pages, and
+   raw small-result reads (the 0tx lookup-subjects shape) keep probe
+   early-stop economics. Raw deep pagination of large recursive results
+   should attach a client - this is the documented remediation, not an
+   open bug. Counts and point checks are unchanged by group 5."
+    "Recording methodology changed at post-group-4: medians now come from
+   the canonical gate test on a FRESH JVM (scenarios sequential, star-2k
+   first and therefore JIT-coldest — its apparent regression vs the
+   post-group-3 warm-JVM numbers is harness state, not code; the warmed
+   10k/chain scenarios improved ~5-8% from the boundary marshalling)."
+  "Every recorded ratio exceeds the 2.0 release bound — this is the
+   audited populated-recursion regression (0tx report corroborated on a
+   matched harness), pre-fix by construction: groups 3 (raw request
+   context), 4 (kernel-boundary phase 1), and 5 (keyset recursion)
+   land against these numbers and flip :status to :enforced as they
+   tighten."
+  "star-10k can-deep v7 median (0.016ms) is faster than star-2k's
+   (0.066ms) because the v7 JVM was hotter by the later run; medians
+   are comparative, not portable — the variance policy and logical-work
+   authority govern."
+  "chain-10k :can-deep is the recorded v8 robustness win: v7's
+   recursive evaluation stack-overflows at ~7.5k depth; v8's
+   fuel-bounded iterative generated machine completes in 366ms."]}

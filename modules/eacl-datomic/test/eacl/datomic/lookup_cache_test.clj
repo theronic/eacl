@@ -460,7 +460,7 @@
         (is (nil? (:recursive-page-hits @stats))
             "no unauthenticated recursive page is reused across clients")))))
 
-(deftest recursive-cursors-resume-private-continuations-within-client-test
+(deftest recursive-cursors-resume-from-the-client-private-denotation-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -495,9 +495,10 @@
                       (get-in first-page [:page-info :end-cursor]))))]
         (is (= ["root"] (mapv :id (:data first-page))))
         (is (= ["child"] (mapv :id (:data second-page))))
-        (is (= 1 (:continuation-hits @stats)))
-        (is (nil? (:continuation-misses @stats))))
-      (testing "rejected private-cache admission deterministically replays"
+        (is (zero? (get @stats :stream-fills 0))
+            "a later page slices the client-private denotation with zero backend work")
+        (is (zero? (get @stats :derived-grants 0))))
+      (testing "a bounded shared cache does not disturb denotation reuse"
         (let [bounded-client
               (core/make-client
                conn
@@ -515,8 +516,8 @@
                         :after
                         (get-in first-page [:page-info :end-cursor]))))]
           (is (= ["child"] (mapv :id (:data second-page))))
-          (is (nil? (:continuation-hits @stats)))
-          (is (= 1 (:continuation-misses @stats))))))))
+          (is (zero? (get @stats :stream-fills 0)))
+          (is (zero? (get @stats :derived-grants 0))))))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]
@@ -574,16 +575,18 @@
       (is (some? (core/make-client
                   conn {:cache (cache/local-store {:max-entries 8})}))))
     (testing "whatever :cache holds must BE a cache"
-      (let [store-of #(:lookup-cache-store (:opts (core/make-client conn %)))]
+      ;; The write-only :lookup-cache-store option died with 11.1; the
+      ;; native completed-answer store is now the observable cache switch.
+      (let [store-of #(:current-cache-store (:opts (core/make-client conn %)))]
         (testing "nil and absent both mean the default adapter"
           (is (some? (store-of {})))
           (is (some? (store-of {:cache nil}))))
         (testing "no-cache is the only way to turn it off"
           (is (nil? (store-of {:cache cache/no-cache})))
           (is (nil? (store-of {:cache {:store cache/no-cache}}))))
-        (testing "an explicit adapter is used as given"
+        (testing "an explicit adapter still enables caching"
           (let [adapter (cache/local-store)]
-            (is (identical? adapter (store-of {:cache adapter})))))
+            (is (some? (store-of {:cache adapter})))))
         (testing "booleans are rejected rather than interpreted"
           ;; They read as a flag in a slot that holds a cache, and they left
           ;; nil ambiguous between "the default" and "none".
@@ -753,8 +756,9 @@
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
-          store (get-in client [:opts :lookup-cache-store])
-          puts #(:puts (cache/stats store))
+          ;; Native answer publications are the live put stream since the
+          ;; provider answer path died with 11.1.
+          puts #(:puts (core/cache-stats client))
           calls [[:can? #(eacl/can? client (assoc % :subject alice
                                                  :permission :admin
                                                  :resource account))]

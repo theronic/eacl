@@ -92,10 +92,10 @@ externalized through a different snapshot.
 
 ## Managed coherence
 
-DataScript defaults to `:coherence-authority :managed`; Datomic and Datahike
-default to `:coherence-authority :unknown`. Unknown authority enables exact
-reuse only and is the required DataScript opt-out if any
-authorization-relevant relationship or schema write can bypass EACL.
+Every backend defaults to `:coherence-authority :unknown`. Unknown authority
+enables exact reuse only, which stays correct when authorization-relevant
+relationship or schema writes bypass EACL. Managed reuse is an explicit,
+audited opt-in on every backend.
 
 `:coherence-authority :managed` is an explicit writer contract:
 
@@ -148,31 +148,49 @@ recursive traversal plans are compiled once per schema generation and reused
 by every compatible operation in the client.
 
 Completed acyclic and recursive denotations can be reused by compatible
-operations on the exact same immutable snapshot. They are not carried across
-revisions because that would require a bounded proof covering every derived
-dependency.
+operations on the exact same immutable snapshot, and — under
+`:coherence-authority :managed` — across unrelated forward transactions: the
+compiled permission supplies the complete relation dependency closure (plan
+compilation fails if a compiled rule could reference a relation outside it),
+and the managed key commits to the schema stamp plus the complete sorted
+per-relation stamp vector, exactly as completed answers and projections do.
+The dedicated machine-checked proof for cross-revision denotation framing
+remains open; the mechanism is covered today by the closure-completeness
+compilation guard, the randomized cached-versus-cache-free differential
+oracles under interleaved writes, and the directed cross-revision reuse
+tests.
 
 ## Eviction and resource bounds
 
-Completed-answer tiers are bounded by `:max-entries`. Admission can retain
-every completed answer or wait until the same semantic key is seen twice with
-`:remember-answers :on-repeat`.
+Completed answers, projections, and denotations use separate weighted budgets
+inside one store implementation. Separate budgets prevent one large recursive
+denotation from evicting every hot relationship projection, and a page-heavy
+answer workload from starving the traversal tiers. Entry weight is a
+deterministic admission unit that approximates retained key/value size; it is
+not a portable heap-byte measurement. Completed answers weigh in by result
+rows by default; backends with better knowledge of the retained
+representation supply the weight directly. No configuration leaves completed
+answers byte-unbounded.
 
-Projection and denotation entries use separate weighted budgets. This prevents
-one large recursive denotation from evicting every hot relationship
-projection. Entry weight is a deterministic admission unit that approximates
-retained key/value size; it is not a portable heap-byte measurement.
+Each tier tracks recency. When publication would exceed the tier's weight
+budget, it evicts the least recently accessed completed entries until the
+tier fits. The entry currently being published and in-flight entries are
+protected from eviction. A projection or denotation heavier than its complete
+tier budget is rejected instead of displacing the tier; a completed answer
+heavier than one quarter of the answer budget is likewise rejected and
+counted under `:oversized-rejections`, so a single maximum-size page cannot
+displace every retained answer.
 
-Each subproblem tier tracks recency. When publication would exceed its weight
-budget, it evicts the least recently accessed completed entries until the tier
-fits. The entry currently being published and in-flight entries are protected
-from eviction. An entry heavier than its complete tier budget is rejected
-instead of displacing the tier.
-
-Completed answers use bounded deterministic admission. Datomic's optional
-portable compatibility store uses weighted least-recently-used capacity and
-optional second-sighting admission, but portable provider values are not an
-authority for native completed authorization answers.
+Admission can retain every completed answer (the default) or wait until the
+same semantic key is seen twice: `:remember-answers :on-repeat` on Datomic,
+`:admit-on-repeat? true` on Datahike and DataScript. Second sightings are
+tracked in a first-in-first-out window of `:max-entries` distinct first
+sightings (default 1024): the oldest first sightings are forgotten as new
+keys arrive, so a key seen twice in close succession is admitted at any
+keyspace size and the retained sighting set cannot converge to a fixed key
+subset. Datomic's optional portable compatibility store keeps its own
+weighted least-recently-used capacity, but portable provider values are not
+an authority for native completed authorization answers.
 
 Time-to-live is optional and is not the correctness mechanism. Exact snapshot
 identity and managed mutation stamps determine validity. Capacity eviction
@@ -223,9 +241,14 @@ Advanced bounds:
   {:enabled? true
    :projection-max-weight (* 8 1024 1024)
    :denotation-max-weight (* 8 1024 1024)
+   :answer-max-weight (* 16 1024 1024)
    :max-inflight 256
    :managed-proof-max-atoms 256}}}
 ```
+
+Completed answers are bounded by `:answer-max-weight` (default 16 MiB).
+`:max-entries` sizes the on-repeat sighting window and, on Datomic, the
+portable provider store; it does not bound native completed answers.
 
 For completed-answer second-sighting admission, Datomic accepts
 `{:cache {:remember-answers :on-repeat}}`; Datahike and DataScript accept
@@ -267,8 +290,8 @@ counts, admission counts, and active computation counts.
 
 The nested subproblem metrics include:
 
-- projection and denotation hits;
-- managed projection and denotation hits;
+- projection, denotation, and completed-answer hits;
+- managed projection, denotation, and completed-answer hits;
 - managed proof reads, hits, failures, and overflows;
 - single-flight waits and recursive self-bypasses;
 - admission, oversized-entry, in-flight, and invalid-result rejections;
