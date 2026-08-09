@@ -204,6 +204,7 @@
              (journal/transact!
               conn
               {:mutation-id mutation-id
+               :calculation-db db
                :kind :schema
                :canonical-data
                {:operation :write-schema

@@ -8,11 +8,11 @@
   '{:EACL-FORMAL-001
     eacl.bench.pagination-test/benchmark-seeders-initialize-empty-database-test
     :EACL-FORMAL-002
-    eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test
+    eacl.datomic.lookup-cache-test/recursive-cursors-resume-from-the-client-private-denotation-test
     :EACL-FORMAL-003
     eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-004
-    eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test
+    eacl.datomic.cache-review-regressions-test/proofless-cursor-falls-back-to-exact-snapshot-test
     :EACL-FORMAL-005
     eacl.secure-format-test/portable-cursor-expiry-boundary-test
     :EACL-FORMAL-006
@@ -20,27 +20,27 @@
     :EACL-FORMAL-007
     eacl.secure-format-test/canonical-portable-format-test
     :EACL-FORMAL-008
-    eacl.cache-test/proof-provider-failure-fails-closed-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-009
     eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters
     :EACL-FORMAL-010
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
     :EACL-FORMAL-011
     eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results
     :EACL-FORMAL-012
     eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
     :EACL-FORMAL-013
-    eacl.subproblem-cache-test/recursive-lookup-of-own-flight-is-a-miss-test
+    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
     :EACL-FORMAL-014
-    eacl.subproblem-cache-test/inherited-same-key-self-bypass-acquires-a-child-slot-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-015
-    eacl.subproblem-cache-test/lifecycle-selection-is-linearized-before-recursive-binding-test
+    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
     :EACL-FORMAL-016
-    eacl.subproblem-cache-test/authoritative-lookup-action-precedes-storage-mutation-test
+    eacl.subproblem-cache-test/lookup-never-starts-work-test
     :EACL-FORMAL-017
-    eacl.subproblem-cache-test/cache-unadmitted-fallbacks-still-share-one-flight-test
+    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
     :EACL-FORMAL-018
-    eacl.subproblem-cache-test/flight-removal-serializes-with-lifecycle-selection-test
+    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
     :EACL-FORMAL-019
     eacl.backend.v8-test/descending-merge-retains-maximum-eid-test
     :EACL-FORMAL-020
@@ -68,9 +68,9 @@
     :EACL-FORMAL-031
     eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
     :EACL-FORMAL-032
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-033
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-034
     eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test
     :EACL-FORMAL-035
@@ -86,19 +86,19 @@
     :EACL-FORMAL-040
     eacl.formal.production-kernel-test/production-jvm-two-stream-merge-refines-exact-source-model
     :EACL-FORMAL-041
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-042
-    eacl.datascript.contract-test/generated-authority-is-the-only-production-engine-test
+    eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-043
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
     :EACL-FORMAL-044
-    eacl.datomic.recursive-cache-test/recursive-cursor-rebases-after-relevant-write-test
+    eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
     :EACL-FORMAL-045
     eacl.formal.java-round-trip-test/generated-java-persistent-collection-boundary
     :EACL-FORMAL-046
     eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies
     :EACL-FORMAL-047
-    eacl.datascript.contract-test/current-lookup-cursor-restarts-when-result-identity-disappears-test
+    eacl.datascript.keyset-recursion-test/order-perturbing-write-rejects-current-only-cursor-test
     :EACL-FORMAL-048
     eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
     :EACL-FORMAL-049
@@ -114,7 +114,7 @@
     :EACL-FORMAL-054
     eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test
     :EACL-FORMAL-055
-    eacl.formal.state-trace-differential-test/generated-mode-routes-and-does-not-reorder-acyclic-multipath-pages
+    eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality
     :EACL-FORMAL-056
     eacl.datascript.impl-test/read-relationships-query-matrix-test
     :EACL-FORMAL-057
@@ -128,7 +128,15 @@
     :EACL-FORMAL-061
     eacl.datascript.enumeration-routing-test/adapter-neutral-continuation-hit-miss-and-isolation-test
     :EACL-FORMAL-062
-    eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test})
+    eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
+    :EACL-FORMAL-063
+    eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test
+    :EACL-FORMAL-064
+    eacl.datascript.enumeration-routing-test/content-proof-cursors-use-current-basis-without-relation-scan-test
+    :EACL-FORMAL-065
+    eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test
+    :EACL-FORMAL-066
+    eacl.datascript.enumeration-routing-test/recursive-fanout-publishes-fuel-cut-scan-waves-test})
 
 (defn- read-edn
   [path]
@@ -168,7 +176,14 @@
     ;; module test nREPL must skip those unavailable namespaces rather than
     ;; failing merely because the repository file exists outside its classpath.
     (try
-      (requiring-resolve test-symbol)
+      (let [test-var (requiring-resolve test-symbol)]
+        (when-not (var? test-var)
+          (throw
+           (ex-info
+            "A recorded counterexample regression var is missing."
+            {:type :eacl.formal/missing-counterexample-regression
+             :test-symbol test-symbol})))
+        test-var)
       (catch java.io.FileNotFoundException _
         nil))))
 
@@ -206,8 +221,8 @@
     (is (not (re-find #"\(contains\? request :(?:limit|cursor)\)"
                       page-source))
         "the generated RawPageRequest smoke must use only current v8 fields")
-    (is (= {:first-page [10 20]
-            :continuation-page [30]}
+    (is (= {:first-page [10 30]
+            :continuation-page [20]}
            (:production-recursive-pages vectors)))
     (is (re-find
          #":production-recursive-pages \(cross-runtime-vectors\)"
@@ -249,8 +264,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-062 (:latest revision)))
-    (is (= 62 (count entries)))))
+    (is (= :EACL-FORMAL-066 (:latest revision)))
+    (is (= 66 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

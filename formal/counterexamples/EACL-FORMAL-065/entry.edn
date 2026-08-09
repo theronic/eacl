@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-065
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "explorer/server-view/account-view-pure-alias/exact-count-100000"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["v8.0 commit e50f1cb5395e105edf3875d50e0afb16b1ba7cee"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Acyclic frontier deduplication compared raw arrow target permission names. Semantically identical account->view and account->admin paths remained distinct when view had the exact body admin, producing duplicate indexed traversal streams and exceeding the 100k deterministic scan envelope."
+ :fix
+ "Follow only cycle-guarded exact single self-permission aliases, normalize arrow target permission names before existing first-occurrence frontier deduplication, and leave composite bodies unchanged."
+ :closing-evidence
+ ["SchemaPlanCost.CanonicalPermissionAliasPreservesDenotation"
+  "SchemaPlanCost.CanonicalFrontierDeduplicationCannotAddTraversalStreams"
+  "SchemaPlanCost.CanonicalFrontierSequenceIsUniqueAndKeepsFirstPath"
+  "eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test"
+  "eacl.bench.explorer-enumeration-test/explorer-100000-super-user-count-builds-one-merged-traversal"
+  "cross-runtime authorization oracle suites"]}

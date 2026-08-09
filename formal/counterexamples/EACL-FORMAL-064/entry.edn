@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-064
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "datascript/content-proof/lookup-page/cache-bypass/relationship-width"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["v8.0 commit e50f1cb5395e105edf3875d50e0afb16b1ba7cee"]
+ :affected-backends [:datascript]
+ :root-cause
+ "Cursor construction always supplied the permission relation closure. In default content-proof mode the DataScript adapter converted that request into a full relationship-content digest, so even a cache-bypassed seven-item demand page scanned the entire authorization graph merely to mint its cursor."
+ :fix
+ "Supply dependency relation ids only for explicit managed mutation-stamp mode. Default content/no-proof modes bind exact immutable snapshot identity; current-only DataScript rejects every later basis instead of scanning content or yielding a hybrid page."
+ :closing-evidence
+ ["PageWindow.ContentCursorMintingDoesNoRelationProofScan"
+  "PageWindow.OnlyManagedMutationModeRequestsDependencyProof"
+  "PageWindow.DataScriptChangedBasisCannotYieldCursorPage"
+  "eacl.datascript.enumeration-routing-test/content-proof-cursors-use-current-basis-without-relation-scan-test"
+  "eacl.bench.explorer-enumeration-test/explorer-10000-user-page-does-not-scale-with-denotation"]}

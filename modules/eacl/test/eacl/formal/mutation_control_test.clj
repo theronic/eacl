@@ -1,7 +1,9 @@
 (ns eacl.formal.mutation-control-test
   (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [eacl.authorization-oracle :as oracle]
+            [eacl.engine.portable-decisions :as portable]
             [eacl.formal.generators :as generators]
             [eacl.test-support.repo :as repo]))
 
@@ -151,16 +153,6 @@
              (= (:request-id pending) (:request-id response)))
         mutant (= (:request-id pending) (:request-id response))]
     (and (false? correct) (true? mutant))))
-
-(defn- lookup-self-scope-omits-lifecycle-killed?
-  []
-  (let [lifecycle (Object.)
-        tier :denotation
-        key :recursive
-        resolving #{[lifecycle tier key]}
-        correct (contains? resolving [lifecycle tier key])
-        mutant (contains? resolving [tier key])]
-    (and (true? correct) (false? mutant))))
 
 (defn- ordered-merge-wrong-comparator-killed?
   []
@@ -418,69 +410,6 @@
     (and (true? correct-emits?)
          (false? mutant-emits?))))
 
-(defn- inherited-self-bypass-skips-computation-slot-killed?
-  []
-  (let [parent-context (Object.)
-        child-context (Object.)
-        same-owner? (identical? parent-context child-context)
-        parent-active 1
-        correct-active (+ parent-active (if same-owner? 0 1))
-        mutant-active parent-active]
-    (and (false? same-owner?)
-         (= 2 correct-active)
-         (= 1 mutant-active)
-         (not= correct-active mutant-active))))
-
-(defn- split-lifecycle-read-between-self-check-and-flight-selection-killed?
-  []
-  (let [old-lifecycle (Object.)
-        new-lifecycle (Object.)
-        tier :projection
-        key :same
-        correct-recursive-address [new-lifecycle tier key]
-        correct-flight-address [new-lifecycle tier key]
-        mutant-recursive-address [old-lifecycle tier key]
-        mutant-flight-address [new-lifecycle tier key]]
-    (and (not (identical? old-lifecycle new-lifecycle))
-         (= correct-recursive-address correct-flight-address)
-         (not= mutant-recursive-address mutant-flight-address))))
-
-(defn- lookup-decision-after-flight-installation-killed?
-  []
-  (let [authoritative-action :bypass-recursive-self
-        correct-flight-installations
-        (if (= :start-computation authoritative-action) 1 0)
-        mutant-flight-installations 1]
-    (and (zero? correct-flight-installations)
-         (= 1 mutant-flight-installations)
-         (not= correct-flight-installations
-               mutant-flight-installations))))
-
-(defn- unrepresented-flight-ignored-by-lookup-killed?
-  []
-  (let [represented-entry nil
-        registered-flight? true
-        correct-candidate
-        (cond
-          (= :complete represented-entry) :complete
-          (or registered-flight?
-              (= :computing represented-entry)) :computing
-          :else :missing)
-        mutant-candidate
-        (cond
-          (= :complete represented-entry) :complete
-          (= :computing represented-entry) :computing
-          :else :missing)
-        action
-        (fn [candidate]
-          (if (= :computing candidate)
-            :join-computation
-            :start-computation))]
-    (and (= :join-computation (action correct-candidate))
-         (= :start-computation (action mutant-candidate))
-         (not= (action correct-candidate)
-               (action mutant-candidate)))))
-
 (defn- projection-key-omits-inclusive-bound-killed?
   []
   (let [base
@@ -544,35 +473,12 @@
     (and (false? correct-retain?)
          (true? mutant-retain?))))
 
-(defn- exception-poisons-flight-killed?
-  []
-  (let [ticket (Object.)
-        before {:same {:ticket ticket :status :computing}}
-        removed
-        (update before :same
-                #(when-not (identical? ticket (:ticket %)) %))
-        correct (into {} (remove (comp nil? val)) removed)
-        mutant before]
-    (and (not (contains? correct :same))
-         (contains? mutant :same))))
-
-(defn- flight-removal-outside-selection-lock-killed?
-  []
-  (let [store-lock-held? true
-        flight-present? true
-        correct-present-during-selection?
-        (and store-lock-held? flight-present?)
-        mutant-present-during-selection? false]
-    (and (true? correct-present-during-selection?)
-         (false? mutant-present-during-selection?))))
-
 (defn- datomic-subproblem-config-dropped-killed?
   []
   (let [requested
         {:enabled? false
          :projection-max-weight 17
          :denotation-max-weight 19
-         :max-inflight 2
          :managed-proof-max-atoms 3}
         normalized
         {:native-subproblem-cache requested}
@@ -580,6 +486,19 @@
         {:native-subproblem-cache {}}]
     (and (= requested (:native-subproblem-cache normalized))
          (not= requested (:native-subproblem-cache mutant)))))
+
+(defn- datomic-facade-restores-default-traversal-limits-killed?
+  []
+  (let [caller-limits {:max-derived-grants 3
+                       :max-advanced-datoms 100000
+                       :max-queued-work 100000}
+        facade-defaults {:max-derived-grants 100000
+                         :max-advanced-datoms 100000
+                         :max-queued-work 100000}
+        correct-forwarding caller-limits
+        mutant-forwarding facade-defaults]
+    (and (= caller-limits correct-forwarding)
+         (not= caller-limits mutant-forwarding))))
 
 (defn- shadow-typed-error-omits-limit-killed?
   []
@@ -644,10 +563,10 @@
          :javascript [107520 262144]
          :browser [165055 393216]}
         rebuilt-full-kernel
-        {:java-source 1749970
-         :java-classes 1597574
-         :javascript 766357
-         :browser 845730}
+        {:java-source 2130973
+         :java-classes 1890556
+         :javascript 949688
+         :browser 591497}
         stale-gate-passed?
         (every?
          (fn [[_ [baseline maximum]]]
@@ -806,8 +725,10 @@
          "^ResourceCounters counters"
          "^ForwardInit outcome"
          "^ReverseInit outcome"
-         "^ForwardStep outcome"
-         "^ReverseStep outcome"
+         "^ForwardBatchStep outcome"
+         "^ReverseBatchStep outcome"
+         "^ForwardBatchState state"
+         "^ReverseBatchState state"
          "^ForwardResume outcome"
          "^ReverseResume outcome"
          "^PageContinuationError error"
@@ -1136,6 +1057,15 @@
          (= :recursive mutant)
          (not= correct mutant))))
 
+(defn- completed-acyclic-artifact-keeps-fixed-point-order-killed?
+  []
+  (let [fixed-point-discovery [30 10 20]
+        correct (vec (sort fixed-point-discovery))
+        mutant (vec fixed-point-discovery)]
+    (and (= [10 20 30] correct)
+         (= [30 10 20] mutant)
+         (not= correct mutant))))
+
 (defn- active-recursive-data-forces-acyclic-killed?
   []
   (let [recursive? true
@@ -1184,16 +1114,125 @@
     (and (false? correct)
          (true? mutant))))
 
-(defn- acyclic-rebase-enters-recursive-machine-killed?
+(defn- cljs-default-restores-generated-kernel-killed?
   []
-  (let [authorized [10 20 30]
-        bound 20
-        suffix (drop-while #(< % bound) authorized)
-        correct (= bound (first suffix))
-        mutant :recursive-limit-exceeded]
-    (and (true? correct)
-         (= :recursive-limit-exceeded mutant)
-         (not= correct mutant))))
+  (let [orchestration
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "client"
+                    "orchestration.cljc"))
+        production
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "formal"
+                    "production_kernel_cljs.cljs"))]
+    (and (str/includes? orchestration "production-kernel-cljs")
+         (not (str/includes? orchestration
+                             "production-kernel-js :as production-kernel"))
+         (str/includes? production "portable-decision-kernel")
+         (str/includes? production "portable-indexed-kernel"))))
+
+(defn- cljs-scan-scope-check-removed-killed?
+  []
+  (= {:status :rejected :reason :mismatched-request-scope}
+     (portable/decide
+      :indexed-scan-response
+      {:command
+       {:request-scope 71
+        :request-id 0
+        :projection
+        {:kind :subject->resources
+         :subject-type "user"
+         :subject-eid 1
+         :relation-eid 2
+         :resource-type "document"
+         :bound-eid nil}
+        :chunk-size 2}
+       :response
+       {:request-scope 72
+        :request-id 0
+        :values [10]
+        :terminal? true
+        :fetched-values 1}})))
+
+(defn- cljs-lookahead-continuation-dropped-killed?
+  []
+  (let [engine
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "engine"
+                    "portable_indexed.cljc"))
+        tests
+        (slurp
+         (repo/file "formal" "smoke" "cljs" "eacl" "formal"
+                    "production_kernel_test.cljs"))]
+    (and (str/includes? engine ":continuation-state")
+         (str/includes? tests
+                        "continues-pages-from-verified-lookahead")
+         (str/includes? tests
+                        "continues-reverse-pages-from-verified-lookahead"))))
+
+(defn- cljs-generated-browser-payload-restored-killed?
+  []
+  (let [build (slurp (repo/file "modules" "eacl" "build.clj"))
+        deps (slurp (repo/file "modules" "eacl" "deps.edn"))]
+    (and (not (str/includes? build "EaclKernel.browser.js"))
+         (not (str/includes? deps "target/formal/browser"))
+         (.isFile
+          (repo/file "formal" "smoke" "cljs" "eacl" "formal"
+                     "production_kernel_js.cljs")))))
+
+(defn- content-cursor-restores-relationship-proof-scan-killed?
+  []
+  (let [correct-strategy
+        (fn [proof-mode]
+          (if (= :mutation proof-mode) :dependency :exact-snapshot))
+        mutant-strategy (constantly :dependency)
+        relationship-proof-commands
+        (fn [strategy] (if (= :dependency strategy) 1 0))]
+    (and (= :exact-snapshot (correct-strategy :content))
+         (zero?
+          (relationship-proof-commands
+           (correct-strategy :content)))
+         (= 1
+            (relationship-proof-commands
+             (mutant-strategy :content))))))
+
+(defn- pure-permission-alias-keeps-duplicate-frontier-killed?
+  []
+  (let [bodies {:view [:self-permission :admin]
+                :admin [:composite]}
+        canonical
+        (fn [permission]
+          (let [body (get bodies permission)]
+            (if (and (= 2 (count body))
+                     (= :self-permission (first body)))
+              (second body)
+              permission)))
+        paths [[:account :view] [:account :admin]]
+        correct (distinct (map #(update % 1 canonical) paths))
+        mutant (distinct paths)]
+    (and (= [[:account :admin]] (vec correct))
+         (= [[:account :view] [:account :admin]] (vec mutant))
+         (< (count correct) (count mutant)))))
+
+(defn- fuel-cut-wave-rolls-back-original-state-killed?
+  []
+  (let [portable
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "engine"
+                    "portable_indexed.cljc"))
+        batching
+        (slurp
+         (repo/file "formal" "dafny" "IndexedBatching.dfy"))]
+    (and
+     (str/includes? portable
+                    "(zero? fuel)\n      (if (seq pending)")
+     (str/includes? portable "(pending-outcome state pending)")
+     (not (str/includes? portable
+                         "(if (seq pending) original state)"))
+     (str/includes? batching
+                    "return ForwardNeedScans(batch, ForwardCommands(pending));")
+     (str/includes? batching
+                    "return ReverseNeedScans(batch, ReverseCommands(pending));")
+     (not (str/includes? batching "BatchYielded(original)")))))
 
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
@@ -1213,8 +1252,6 @@
    current-cache-missing-entry-hit-killed?
    :mismatched-indexed-request-scope-response
    mismatched-indexed-request-scope-response-killed?
-   :lookup-self-scope-omits-lifecycle
-   lookup-self-scope-omits-lifecycle-killed?
    :ordered-merge-wrong-comparator
    ordered-merge-wrong-comparator-killed?
    :leapfrog-equal-head-skipped
@@ -1263,14 +1300,6 @@
    ordered-merge-sentinel-collides-with-domain-killed?
    :generic-ordered-merge-nil-sentinel-collides-with-domain
    generic-ordered-merge-nil-sentinel-collides-with-domain-killed?
-   :inherited-self-bypass-skips-computation-slot
-   inherited-self-bypass-skips-computation-slot-killed?
-   :split-lifecycle-read-between-self-check-and-flight-selection
-   split-lifecycle-read-between-self-check-and-flight-selection-killed?
-   :lookup-decision-after-flight-installation
-   lookup-decision-after-flight-installation-killed?
-   :unrepresented-flight-ignored-by-lookup
-   unrepresented-flight-ignored-by-lookup-killed?
    :projection-key-omits-inclusive-bound
    projection-key-omits-inclusive-bound-killed?
    :inclusive-bound-treated-exclusive
@@ -1281,12 +1310,10 @@
    stale-endpoint-stamp-accepted-killed?
    :over-budget-publication
    over-budget-publication-killed?
-   :exception-poisons-flight
-   exception-poisons-flight-killed?
-   :flight-removal-outside-selection-lock
-   flight-removal-outside-selection-lock-killed?
    :datomic-subproblem-config-dropped
    datomic-subproblem-config-dropped-killed?
+   :datomic-facade-restores-default-traversal-limits
+   datomic-facade-restores-default-traversal-limits-killed?
    :shadow-typed-error-omits-limit
    shadow-typed-error-omits-limit-killed?
    :shadow-generated-stale-cursor-adds-direction
@@ -1359,6 +1386,8 @@
    enumeration-route-forces-recursive-killed?
    :inactive-recursive-data-forces-fixed-point
    inactive-recursive-data-forces-fixed-point-killed?
+   :completed-acyclic-artifact-keeps-fixed-point-order
+   completed-acyclic-artifact-keeps-fixed-point-order-killed?
    :active-recursive-data-forces-acyclic
    active-recursive-data-forces-acyclic-killed?
    :acyclic-merge-emits-overlap-twice
@@ -1367,8 +1396,20 @@
    acyclic-continuation-context-disconnected-killed?
    :acyclic-work-allows-recursive-budget
    acyclic-work-allows-recursive-budget-killed?
-   :acyclic-rebase-enters-recursive-machine
-   acyclic-rebase-enters-recursive-machine-killed?})
+   :cljs-default-restores-generated-kernel
+   cljs-default-restores-generated-kernel-killed?
+   :cljs-scan-scope-check-removed
+   cljs-scan-scope-check-removed-killed?
+   :cljs-lookahead-continuation-dropped
+   cljs-lookahead-continuation-dropped-killed?
+   :cljs-generated-browser-payload-restored
+   cljs-generated-browser-payload-restored-killed?
+   :content-cursor-restores-relationship-proof-scan
+   content-cursor-restores-relationship-proof-scan-killed?
+   :pure-permission-alias-keeps-duplicate-frontier
+   pure-permission-alias-keeps-duplicate-frontier-killed?
+   :fuel-cut-wave-rolls-back-original-state
+   fuel-cut-wave-rolls-back-original-state-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

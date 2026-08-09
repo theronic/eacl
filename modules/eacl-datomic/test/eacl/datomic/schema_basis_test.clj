@@ -1,10 +1,10 @@
 (ns eacl.datomic.schema-basis-test
-  "Pins the v8.0 client-lifecycle schema-cache contract.
+  "Pins the v8.0 immutable-snapshot schema-cache contract.
 
-  A connection-backed client reads :eacl/schema-version once at construction
-  and owns exactly one cache generation. New Datomic db values never trigger a
-  schema read or definition scan. write-schema! through the client swaps that
-  generation; arbitrary-db internals are uncached and cannot mutate it."
+  Each request derives schema semantics from its selected Datomic value and a
+  bounded proof-keyed generation registry. Unrelated DB values reuse the same
+  schema generation; schema changes install another immutable generation
+  without an EACL lock or mutable current-schema latch."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [spice-object]]
@@ -43,7 +43,7 @@
                               :owner
                               (spice-object :account [:eacl/id "a"])))))
 
-(deftest client-schema-is-read-once-not-on-every-db-value-test
+(deftest proof-keyed-schema-generation-is-reused-across-unrelated-db-values-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
@@ -70,8 +70,8 @@
             (is (true? (eacl/can? acl u :admin a))))
 
           (eacl/write-schema! acl schema-v1)
-          (is (= 1 @version-reads)
-              "new db values and client schema writes reuse the construction-time version")
+          (is (= 2 @version-reads)
+              "only construction and the write's calculation snapshot read the stamp")
           (is (= 1 @path-calcs)
               "unrelated and identical schema transactions never recompute permission paths"))))))
 
@@ -106,12 +106,9 @@
             (is (true? (eacl/can? acl viewer :admin account)))
             (is (= 2 @path-calcs))))))))
 
-(deftest page-token-across-schema-generations-is-rejected-test
-  ;; Re-goldened for cursor-dependency-validity (was
-  ;; page-token-recovers-on-the-current-schema-generation-test): the schema
-  ;; check validates the actual schema mutation identity on every acceptance
-  ;; — the :cursor-recovery bypass is gone, so the previously-dead check now
-  ;; fires with the typed error instead of silently restarting the walk.
+(deftest page-token-across-schema-generations-uses-exact-snapshot-test
+  ;; Datomic can reconstruct the authenticated immutable old snapshot. It does
+  ;; not reinterpret the cursor under the changed current schema.
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a-1"} {:eacl/id "a-2"}])
@@ -131,18 +128,11 @@
           cursor (get-in page1 [:page-info :end-cursor])]
       (is (some? cursor))
       (eacl/write-schema! acl schema-viewer-only)
-      (let [error
-            (try
-              (eacl/lookup-resources acl (assoc query :after cursor))
-              nil
-              (catch clojure.lang.ExceptionInfo thrown
-                thrown))]
-        (is (some? error)
-            "a cursor from another schema generation must not resume — recovery mode included")
-        (is (= :eacl.pagination/stale-schema (:type (ex-data error))))
-        (is (not= (:expected (ex-data error))
-                  (:actual (ex-data error)))
-            "the stamp is the schema mutation identity, so the generations differ"))
+      (let [page2 (eacl/lookup-resources acl (assoc query :after cursor))]
+        (is (= 1 (count (:data page2))))
+        (is (not= (:data page1) (:data page2)))
+        (is (nil? (get-in page2 [:page-info :cursor-recovery]))
+            "exact continuation has no rebase/restart marker"))
       (is (empty? (:data (eacl/lookup-resources acl query)))
           "a new enumeration uses the new schema generation"))))
 
@@ -194,41 +184,6 @@
         (eacl/write-schema! acl schema-v1)
         (is (some? (idx/schema-version (d/db conn))))
         (is (true? (eacl/can? acl u :admin a)))))))
-
-(deftest schema-generation-adoption-uses-one-database-value-test
-  ;; The adopted generation label and the cache-generation object must derive
-  ;; from one immutable db value. Today construction is cheap metadata; keeping
-  ;; the snapshot boundary explicit prevents future eager schema state from
-  ;; being mislabeled and removes a redundant d/db call.
-  (with-mem-conn [conn schema/v7-schema]
-    (schema/write-schema! conn schema-v1)
-    (let [db-v1 (d/db conn)
-          v1 (idx/schema-version db-v1)]
-      (schema/write-schema! conn schema-viewer-only)
-      (let [db-v2 (d/db conn)
-            v2 (idx/schema-version db-v2)
-            state (atom {:schema-version nil})
-            lock (java.util.concurrent.locks.ReentrantReadWriteLock.)
-            reads (atom [db-v1 db-v2])
-            built-from (atom nil)
-            make-schema-cache idx/make-schema-cache
-            adopt (ns-resolve 'eacl.datomic.core
-                              'adopt-schema-generation!)]
-        (with-redefs [d/db
-                      (fn [_]
-                        (let [db (first @reads)]
-                          (swap! reads rest)
-                          db))
-                      idx/make-schema-cache
-                      (fn [db version]
-                        (reset! built-from (idx/schema-version db))
-                        (make-schema-cache db version))]
-          (adopt conn state lock))
-        (is (contains? #{v1 v2} (:schema-version @state)))
-        (is (= (:schema-version @state) @built-from)
-            "the generation UUID and the db used to build it are one snapshot")
-        (is (= 1 (- 2 (count @reads)))
-            "adoption needs one immutable Datomic value, not a torn pair")))))
 
 (deftest unstamped-client-does-not-cache-lookup-results-test
   (with-mem-conn [conn schema/v7-schema]
@@ -284,3 +239,32 @@
 
       (is (true? (eacl/can? old-client viewer :admin account)))
       (is (true? (eacl/can? (core/make-client conn {}) viewer :admin account))))))
+
+(deftest immutable-snapshot-read-does-not-block-schema-commit-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema! conn schema-v1)
+    (seed-owner! conn)
+    (let [acl (core/make-client conn {})
+          user (spice-object :user "u")
+          account (spice-object :account "a")
+          before-version (idx/schema-version (d/db conn))
+          entered (promise)
+          release-read (promise)
+          original-can? impl/can?]
+      (with-redefs [impl/can?
+                    (fn [& args]
+                      (deliver entered true)
+                      @release-read
+                      (apply original-can? args))]
+        (let [read-work (future (eacl/can? acl user :admin account))
+              _ @entered
+              write-work (future (eacl/write-schema! acl schema-v2))
+              write-result (deref write-work 2000 ::timed-out)]
+          (try
+            (is (not= ::timed-out write-result)
+                "an S1 schema commit must not wait for an EACL S0 read lock")
+            (finally
+              (deliver release-read true)))
+          (is (true? @read-work)
+              "the in-flight authorization remains correct for immutable S0")
+          (is (not= before-version (idx/schema-version (d/db conn)))))))))

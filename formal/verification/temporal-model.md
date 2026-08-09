@@ -13,11 +13,11 @@ Its 25 transitions cover:
 - retained and evicted snapshots in a causal history graph;
 - selected, computation, and exact snapshots;
 - complete dependency scopes, structural proofs, and proof lifting;
-- authenticated cache lookup, tampering, provider failure, future and sibling
+- authenticated cache lookup, tampering, abstract local-read/proof failure, future and sibling
   entries, storage, invalidation generations, and telemetry compare-and-set;
 - cursor authentication, operation/non-page-query/result scope, positional
-  direction changes, expiry, current-graph recovery, exact-snapshot selection,
-  divergence, and conflict;
+  direction changes, expiry, proof-equivalent current selection, exact-snapshot
+  fallback, divergence, stale rejection, and freshness conflict;
 - recursive continuation and page publication, retry, eviction, lookup, and
   deterministic replay.
 
@@ -25,9 +25,10 @@ The model checks these safety properties:
 
 1. cache reuse is exact-snapshot or forward-only from a causal ancestor with
    matching authenticated source, query, scope, and proof;
-2. authenticated query-scoped cursors either continue or recover on the
-   selected graph in non-exact mode, continue on their retained graph in exact
-   mode, or fail closed;
+2. authenticated query-scoped cursors continue on current only when its
+   dependency proof equals the cursor proof, otherwise continue on the
+   retained exact graph when available and freshness-compatible, or fail
+   closed;
 3. a page walk never combines results from different computation graphs;
 4. cache and continuation publication or eviction races do not change the
    authorization decision.
@@ -51,20 +52,20 @@ trace length. Therefore `bin/formal apalache-invariant` separately checks:
 `formal/dafny/TemporalSafety.dfy` additionally expresses cache, cursor,
 continuation, and telemetry states as typed predicates and proves each
 transition constructor preserves the corresponding safety predicate without a
-finite trace bound. Its cursor machine distinguishes authenticated current
-recovery from retained exact continuation and proves both select only the
-request-scoped graph allowed by their mode.
+finite trace bound. Its cursor machine distinguishes proof-equal current
+continuation from retained exact continuation and proves that a changed proof
+never selects current.
 
-The temporal model deliberately stops at graph selection. The item-level
-meaning of current recovery is specified separately in
-`formal/dafny/PageWindow.dfy`: after selecting the current graph, an
-authenticated recursive cursor is rebound by its stable result EID to the
-current complete denotation, or the same scoped query restarts when that EID is
-absent. `PageWindow.RebaseCursorBound` is compiled to Java and JavaScript and
-is invoked by production verified authority; the Clojure/CLJS boundary rejects
-a duplicate denotation or a generated ordinal/restart that contradicts the
-validated input. This separation prevents the TLA+ graph-selection abstraction
-from being misrepresented as a proof of item-level cursor positioning.
+The temporal model deliberately stops at graph selection. Item-level completed
+pagination is specified separately in `formal/dafny/PageWindow.dfy`: an
+authenticated logical boundary is the pair of its ordinal and external result
+identity in the generated logical order. The completed-denotation path emits
+the exact exclusive slice only when both values match; a mismatch is stale.
+Production implements that branch in `eacl.engine.v8/complete-logical-page`.
+The Dafny function matches the host branch, but the correspondence remains a
+cross-checked host-control refinement rather than a mechanized Clojure source
+refinement. Demand continuations validate the same ordinal and identity in the
+generated indexed continuation authority and never switch graphs.
 
 ## Reproduction
 
@@ -78,10 +79,10 @@ bin/formal apalache-scheduled
 bin/formal verify
 ```
 
-On 2026-08-02 all configurations and all three induction obligations passed.
-The detailed model exposed 65 initiation clauses and 25 transition alternatives
-to the inductive checker. No counterexample was produced, so this tranche adds
-no entry to the counterexample ledger.
+The checked-in release evidence records the exact toolchain, bounds, and model
+digests for each run. The detailed model exposes 25 transition alternatives to
+the inductive checker. No unbounded claim is inferred from the finite checks;
+the separate inductive run is required for that transition system.
 
 ## Claim boundary
 

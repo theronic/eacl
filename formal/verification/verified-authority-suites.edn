@@ -1,7 +1,8 @@
 {:schema-version 1
- :date "2026-08-06"
+ :date "2026-08-08"
  :status :passed
- :mode :generated-only
+ :mode {:clj-java :generated-only
+        :cljs-javascript :portable-differentially-certified}
  :execution :persistent-nrepl
  :ci-process-isolation
  {:generated-boundary-jvm :fresh-heap-bounded
@@ -14,17 +15,21 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/clj/run-verified-authority nonbenchmark"
   :backends [:datomic :datahike :datascript]
-  :tests 509
-  :assertions 34773
+ :tests 523
+ :assertions 39462
   :failures 0
   :errors 0
   :injected-clients
-  {:datomic 338
-   :datahike 66
-   :datascript 87}
+  {:datomic 366
+   :datahike 71
+   :datascript 127}
   :required-generated-operations
   [:recursive-routing-certificate
-   :cursor-bound-rebase
+   :enumeration-route
+   :acyclic-page
+   :acyclic-continuation
+   :acyclic-count
+   :acyclic-work
    :indexed-traversal-compile
    :indexed-traversal-initialize
    :indexed-traversal-drive
@@ -40,7 +45,7 @@
    eacl.bench.pagination-test
    eacl.bench.subproblem-cache-test]
   :tests 17
-  :assertions 4062
+  :assertions 4058
   :failures 0
   :errors 0
   :required-generated-operations []
@@ -60,16 +65,26 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/cljs/run-verified-authority"
   :backend :datascript
-  :tests 155
-  :assertions 4419
+  :tests 172
+  :assertions 4682
   :failures 0
   :errors 0
-  :injected-clients 56
-  :generated-calls-observed true
+  :injected-clients 79
+  :portable-calls-observed true
+  :all-required-indexed-operations-observed true
   :persistent-nrepl-executor-postcondition :passed}
+ :latest-local-rerun
+ {:status :passed
+  :suite :clj-heavy
+  :tests 17
+  :assertions 4058
+  :failures 0
+  :errors 0
+  :source-refresh [eacl.engine.v8 eacl.bench.subproblem-cache-test]
+  :qualification :complete-authoritative-rerun}
  :qualification
- [:full-public-contract-and-regression-suites-under-generated-authority
-  :generated-calls-and-client-injection-required
+ [:full-public-contract-and-regression-suites-under-target-authority
+  :target-authority-calls-and-client-injection-required
   :heavy-latency-and-logical-work-gates-passed
   :retained-live-heap-cutover-gate-passed
   :not-a-proof-of-adapter-implementation

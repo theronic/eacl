@@ -10,5 +10,7 @@ boundary must do the same: record provider-failure telemetry, skip all cache
 admission/reuse logic, and return a freshly computed result. This is an
 availability/fail-closed orchestration defect, not a false grant.
 
-The retained regression is
-`eacl.cache-test/proof-provider-failure-fails-closed-test` in CLJ and CLJS.
+The final v8 simplification removes the proof-provider callback path rather
+than retaining an exception boundary around it. The live regression is
+`eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test`:
+the deleted `eacl.cache/resolve!` surface must not return.

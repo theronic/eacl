@@ -69,7 +69,7 @@ snapshot have one deterministic backend sequence: following its cursors does
 not move items between pages and emits no item twice.
 
 The authenticated database identity is checked before EACL selects a cursor basis or resolves
-query inputs. Sharing a stable page-token key across backend instances does not make a cursor
+query inputs. Sharing a stable cursor security key across backend instances does not make a cursor
 portable to another logical Datomic database, even when a cloned database has matching schema,
 basis revisions, internal EIDs, and query shape.
 
@@ -374,12 +374,10 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
 
 Forward and backward pages return results in the same order for one fixed query
 and cursor-pinned snapshot. Acyclic lookup uses backend internal-ID order,
-recursive lookup uses deterministic traversal order, and relationship reads use
-backend tuple-index order. These are pagination orders, not a global,
-cross-backend, or domain sort order. Backward pagination returns the previous
-window; it does not reverse the result order. Bare `:last` without `:before` is
-not supported for recursive lookup because it requires traversing the full
-closure.
+recursive lookup uses the same canonical ascending internal-ID order, and
+relationship reads use backend tuple-index order. These are pagination orders,
+not a global, cross-backend, or domain sort order. Backward pagination returns
+the previous window; it does not reverse the result order.
 
 ## Datomic Pro Quickstart
 
@@ -412,7 +410,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:object-id->ident (fn [obj-id] [:eacl/id obj-id])
+   {:object-id->lookup-ref (fn [obj-id] [:eacl/id obj-id])
     :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))}))
 
 ; Write your permission schema using SpiceDB schema DSL:
@@ -737,7 +735,7 @@ SpiceDB uses strings for all external subject & resource IDs, whereas EACL uses 
 *Note*: internal Datomic eids should not be exposed to consumers, because those eids are not guaranteed to be stable after a DB rebuild.
 
 `eacl.datomic.core/make-client` accepts a Datomic connection and
-`:entid->object-id`/`:object-id->ident` functions for converting between
+`:entid->object-id`/`:object-id->lookup-ref` functions for converting between
 internal entity IDs and external object IDs.
 
 It is common to attach a unique UUID to permissioned entities for exposing them externally, or you can convert external->internal at your call sites. Here is how you can configure EACL to convert to/from a unique attribute named `:your/id`:
@@ -745,7 +743,7 @@ It is common to attach a unique UUID to permissioned entities for exposing them 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
-            :object-id->ident (fn [obj-id] [:your/id obj-id])}))
+            :object-id->lookup-ref (fn [obj-id] [:your/id obj-id])}))
 ```
 
 Note that this attribute should have property `:db/unique :db.unique/identity`. 
@@ -754,12 +752,12 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [_db eid] eid)
-            :object-id->ident (fn [obj-id] obj-id)}))
+            :object-id->lookup-ref (fn [obj-id] obj-id)}))
 ```
 
 `make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
 Page tokens expire after 5 minutes by default; tune with
-`:page-token-ttl-seconds`.
+`:cursor-ttl-seconds`.
 
 ### Caching
 
@@ -924,15 +922,15 @@ Keys you omit keep their defaults (`eacl.datomic.impl.indexed/default-recursive-
 These are heap-protection limits, not ordinary page-size controls. Prefer `:count-limit` for
 situated authorization counts; raise traversal ceilings only after load-testing the host JVM.
 
-For multi-peer deployments, configure stable shared page- and Zed-token keys so `eacl4_...`
+For multi-peer deployments, configure stable shared cursor- and Zed-token keys so `eacl4_...`
 cursors and frontend-returned `eacl_z3_...` tokens survive restarts and can be verified by every
 backend:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:coherence-authority :managed
-            :page-token-key "32+ bytes of shared secret key material"
-            :page-token-kid :page-2026-07
+            :security-key "32+ bytes of shared secret key material"
+            :security-kid :cursor-2026-07
             :zed-token-keyring {:zed-2026-06 old-zed-root
                                 :zed-2026-07 current-zed-root}
             :zed-token-kid :zed-2026-07
@@ -943,8 +941,16 @@ New Zed tokens are signed only with `:zed-token-kid`; all keys explicitly retain
 `:zed-token-keyring` remain verification keys during a rotation overlap. Remove an old key only
 after the intended outstanding-token lifetime. A single `:zed-token-key` is shorthand for a
 one-key ring. If no dedicated Zed key is configured, EACL derives domain-separated signing keys
-from the page-token keyring. The default page key is random per client instance, so the derived
+from the cursor security keyring. The default cursor key is random per client instance, so the derived
 default is fail-closed but not portable across clients, restarts, or backend instances.
+
+The canonical construction options shared by all backends are
+`:security-key`, `:security-keyring`, `:security-kid`,
+`:cursor-ttl-seconds`, `:entid->object-id`, and
+`:object-id->lookup-ref`. Datomic additionally accepts `:zed-token-key`,
+`:zed-token-keyring`, `:zed-token-kid`, and
+`:consistency-sync-timeout-ms`. The old Datomic `:page-token-*` names and
+`:object-id->ident` remain non-mixable legacy aliases.
 
 ### Unknown object IDs
 

@@ -62,11 +62,11 @@ REPL is not evidence for generated-class reproducibility.
 
 Generated Java/JavaScript remains reproducible build output under `target/`;
 it is not checked-in source and must never be hand edited. Release packaging
-publishes the compiled Java classes/runtime and the browser/Node-compatible
-JavaScript IIFE inside `cloudafrica/eacl`, together with CLJ/CLJS providers and
-`deps.cljs` loader metadata, so consumers do not install Dafny. The JAR build
-fails if any required generated-authority entry is absent. CI regenerates
-these artifacts from locked tools, compares their digests, and fails on
+publishes the compiled Java classes/runtime plus the portable CLJC/CLJS
+authority inside `cloudafrica/eacl`; the generated browser/Node IIFE and its
+loader metadata are formal-oracle artifacts and are not packaged. The JAR
+build fails if a required target-authority entry is absent. CI regenerates the
+formal artifacts from locked tools, compares their digests, and fails on
 nondeterminism before publishing them.
 
 This keeps Dafny source as the semantic and algorithmic authority while
@@ -85,5 +85,5 @@ These are spike measurements, not cutover thresholds:
 
 The full kernel will be larger. The historical cutover thresholds were derived
 from the former handwritten-engine benchmark and full generated kernel, not
-from this round-trip spike. Current release gates measure the generated-only
-runtime directly.
+from this round-trip spike. Current release gates measure the generated JVM
+runtime and portable CLJS production bundle separately.

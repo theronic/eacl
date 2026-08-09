@@ -11,8 +11,7 @@
  :root-cause
  "The host selected or installed a cache flight before invoking the generated lookup decision. The returned generated action only controlled a later recursive-bypass branch, so verified-authoritative lookup was not authoritative over the state transition it purported to decide. A divergent bypass action could leave an unrealized registered flight and incomplete entry behind."
  :fix
- "The generated lookup action is now selected from the lifecycle-stable candidate state inside the store transition and is dispatched before any flight installation. Resolve and lookup consume that selected action for complete-hit versus join/start behavior instead of recomputing or ignoring it. The strict boundary rejects any generated action that contradicts its validated candidate state."
+ "The final v8 cache makes lookup read-only and removes flight installation. A miss never mutates state or starts work; independent computation precedes a separate bounded compare-and-set publication transition."
  :closing-evidence
- ["eacl.subproblem-cache-test/authoritative-lookup-action-precedes-storage-mutation-test"
-  "formal mutation :lookup-decision-after-flight-installation"
-  "formal/dafny/SubproblemCache.dfy recursive bypass flight-installation lemma"]}
+ ["eacl.subproblem-cache-test/lookup-never-starts-work-test"
+  "eacl.subproblem-cache-test/completed-entry-is-validated-once-before-publication-test"]}

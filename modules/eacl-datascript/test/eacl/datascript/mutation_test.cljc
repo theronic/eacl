@@ -200,6 +200,41 @@
       (is (false? (journal/contains-anchor? (ds/db conn) old-head)))
       (is (true? (journal/contains-anchor? (ds/db conn) next-id))))))
 
+(deftest stale-calculation-head-cannot-be-adopted-at-submission-test
+  (let [conn (schema/create-conn)
+        _ (journal/ensure-migrated! conn)
+        calculation-db (ds/db conn)
+        expected-head (:head-id (journal/graph-state calculation-db))
+        winner-id (mutation/new-id)
+        loser-id (mutation/new-id)
+        _ (journal/transact!
+           conn
+           {:mutation-id winner-id
+            :calculation-db calculation-db
+            :kind :custom
+            :canonical-data {:writer :winner}
+            :tx-data []})
+        error
+        (try
+          (journal/transact!
+           conn
+           {:mutation-id loser-id
+            :calculation-db calculation-db
+            :kind :custom
+            :canonical-data {:writer :stale}
+            :tx-data []})
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo) error
+            (ex-data error)))
+        final-db (ds/db conn)]
+    (is (= :eacl.mutation/concurrent-write (:type error)) (pr-str error))
+    (is (= expected-head (:expected-head error)))
+    (is (= winner-id (:observed-head error)))
+    (is (true? (:retryable? error)))
+    (is (= winner-id (:head-id (journal/graph-state final-db))))
+    (is (not (journal/contains-anchor? final-db loser-id)))))
+
 #?(:clj
    (deftest migration-race-test
      (let [conn (schema/create-conn)

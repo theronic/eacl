@@ -440,11 +440,11 @@ module IndexedRendering {
     ensures [1, 2] != [2, 1]
     ensures
       RenderDenotationSpec(
-        Indexed.RenderPage(2, Indexed.NoCursorBound),
+        Indexed.RenderPage(2),
         [1, 2]
       ) !=
       RenderDenotationSpec(
-        Indexed.RenderPage(2, Indexed.NoCursorBound),
+        Indexed.RenderPage(2),
         [2, 1]
       )
   {

@@ -7,6 +7,7 @@
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
+            [eacl.execution-test]
             [eacl.mutation-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
@@ -43,6 +44,7 @@
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test
+               'eacl.execution-test
                'eacl.mutation-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test

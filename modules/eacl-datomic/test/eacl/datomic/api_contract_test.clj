@@ -11,6 +11,7 @@
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]
             [eacl.verified-kernel :as verified]))
 
 (def ^:private acyclic-schema
@@ -112,6 +113,32 @@
                   :first 10}))))
         (is (zero? @seeks)
             "an empty relation-definition set proves the result is empty")))))
+
+(deftest relationship-pages-use-the-shared-index-edge-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [{:keys [db]} (seed-acyclic! conn 3)
+          query {:resource/type :account :first 1}
+          page-1 (impl/read-relationships db query)
+          edge (get-in page-1 [:page-info :end-cursor])
+          page-2 (impl/read-relationships db (assoc query :after edge))]
+      (is (= {:kind :relationship-index
+              :v 1
+              :scan-index 0}
+             (select-keys edge [:kind :v :scan-index])))
+      (is (= #{:kind :v :scan-index :subject-id :resource-id}
+             (set (keys edge))))
+      (is (= 1 (count (:data page-2))))
+      (testing "the superseded Datomic-private edge is rejected"
+        (is (= :eacl.pagination/invalid-cursor
+               (:eacl/error
+                (ex-data-of
+                 #(impl/read-relationships
+                   db
+                   (assoc query
+                          :after {:kind :relationship
+                                  :scan :global-forward
+                                  :e 1
+                                  :v [:user 1 :account 1]}))))))))))
 
 ;; --- page cursors ------------------------------------------------------------
 
@@ -308,7 +335,11 @@
     (testing "a client can raise the ceiling"
       (let [tight (core/make-client conn {:recursive-traversal-limits {:max-derived-grants 3}})
             roomy (core/make-client conn {:recursive-traversal-limits {:max-derived-grants 100000}})
-            query {:subject (spice-object :user "u") :permission :read :resource/type :folder :first 10}]
+            query {:subject (spice-object :user "u")
+                   :permission :read
+                   :resource/type :folder
+                   :first 10
+                   :evaluation :complete-denotation}]
         (is (= :eacl.recursive-traversal/limit-exceeded
                (:eacl/error (ex-data-of #(eacl/lookup-resources tight query)))))
         (is (= 10 (count (:data (eacl/lookup-resources roomy query)))))))
@@ -321,7 +352,8 @@
                                           {:subject (spice-object :user "u")
                                            :permission :read
                                            :resource/type :folder
-                                           :first 10})))))))
+                                           :first 10
+                                           :evaluation :complete-denotation})))))))
 
     (testing "a malformed limits map is rejected at construction"
       (doseq [bad [{:no-such-limit 1} {:max-derived-grants 0} {:max-derived-grants "many"} :not-a-map]]
@@ -338,11 +370,12 @@
 
       (testing "bare :last serves the tail of the canonical recursive denotation"
         (let [full      (:data (idx/lookup-resources db (assoc query :first 100)))
-              last-page (idx/lookup-resources db (assoc query :last 2))]
+              last-page (binding [engine/*evaluation-mode* :complete-denotation]
+                          (idx/lookup-resources db (assoc query :last 2)))]
           (is (= (take-last 2 full) (:data last-page)))
           (is (true? (get-in last-page [:page-info :has-previous-page?])))
           (is (false? (get-in last-page [:page-info :has-next-page?])))
-          (is (= :lookup-eid
+          (is (= :recursive-logical
                  (get-in last-page [:page-info :start-cursor :kind])))))
 
       (testing "count-subjects agrees with lookup-subjects on a recursive permission"

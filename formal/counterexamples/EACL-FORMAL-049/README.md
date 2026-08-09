@@ -17,8 +17,7 @@ absolute work remained about 144 allocated bytes per identity and the
 one-million-identity cases completed in about 114–115 ms. A fresh JVM happened
 to pass the invalid fixture because its small first result allocated more.
 
-Both host fixtures now start at two adapter chunks and span fourfold sizes:
-8,192–32,768 identities for JVM/Java and 32,768–131,072 for
-JavaScript. The gates reject fixtures outside that multi-chunk domain. The JVM
-gate starts in a fresh 1 GiB process and prints its complete result before any
-failure. No threshold was relaxed; the one-million-identity gate is retained.
+The intermediate harness was corrected to compare one multi-chunk operation
+shape. Final v8 later removed cursor rebase/restart from production, so this
+gate is retired and retained only as historical counterexample evidence. It is
+not an active performance or certification claim.

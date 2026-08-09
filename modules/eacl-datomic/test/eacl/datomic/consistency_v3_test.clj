@@ -165,6 +165,7 @@
           query {:subject user
                  :permission :view
                  :resource/type :document
+                 :evaluation :complete-denotation
                  :first 10}
           first-page (eacl/lookup-resources authorization query)
           exact-hit (eacl/lookup-resources authorization query)]
@@ -236,14 +237,13 @@
               authorization
               (eacl/->Relationship
                user :reader (second documents))))]
-        (testing "a relationship change resumes on the current graph"
+        (testing "a relationship change resumes on the exact cursor snapshot"
           (let [page
                 (eacl/lookup-resources
                  authorization
                  (assoc query :after fresh-cursor))]
-            (is (= ["doc-c"] (mapv :id (:data page))))
-            (is (= :rebased
-                   (get-in page [:page-info :cursor-recovery])))))
+            (is (= ["doc-b"] (mapv :id (:data page))))
+            (is (nil? (get-in page [:page-info :cursor-recovery])))))
         (testing "a changed causal floor is a different query scope"
           (is (= :eacl.pagination/invalid-cursor
                  (:type

@@ -1,0 +1,22 @@
+{:id :EACL-FORMAL-066
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "indexed-recursive/fuel-256/nonempty-wave-below-64/broad-fanout"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 pre-release through commit 02ddcd3390d1a5f6389053130ebf15bed82d70f7"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "When fuel ended with a nonempty scan wave smaller than the 64-command batch size, both the generated forward/reverse drivers and portable CLJS driver returned Yielded with the quantum's original state. The next quantum repeated the identical prefix, so some broad fan-out traversals never reached their count/page sentinel or deadline boundary."
+ :fix
+ "Publish every nonempty fuel-cut scan wave from the current verified state, retain request-id order and the 64-command upper bound, and yield current state only when no scan is pending. Regenerate Java, JavaScript, and browser authorities from the corrected Dafny transition and keep the portable transition structurally identical."
+ :closing-evidence
+ ["IndexedBatching.DriveForwardScans"
+  "IndexedBatching.DriveReverseScans"
+  "IndexedBatchCompleteness.ForwardBatchCoverageInvariant"
+  "IndexedBatchCompleteness.ReverseBatchCoverageInvariant"
+  "eacl.formal.production-kernel-test/generated-java-publishes-fuel-cut-scan-waves"
+  "eacl.formal.production-kernel-test/portable-and-generated-javascript-publish-fuel-cut-scan-waves"
+  "eacl.datascript.enumeration-routing-test/recursive-fanout-publishes-fuel-cut-scan-waves-test"]}

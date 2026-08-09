@@ -10,10 +10,7 @@
 (defn- seed-adapter
   [fixture]
   (let [conn (datascript/create-conn)
-        registry (atom {:order [] :snapshots {}})
-        client (datascript/make-client
-                conn
-                {:exact-snapshot-registry-size 16})]
+        client (datascript/make-client conn {})]
     (eacl/write-schema! client (:schema fixture))
     (ds/transact!
      conn
@@ -34,9 +31,7 @@
           (:eacl/id (ds/entity snapshot internal-id)))
         :conn conn
         :coherence-authority :managed
-        :proof-mode :content
-        :exact-registry registry
-        :exact-registry-limit 16}))))
+        :proof-mode :content}))))
 
 (deftest datascript-adapter-certification-test
   (doseq [fixture (certification/coherent-fixtures [820084])]

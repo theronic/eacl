@@ -126,7 +126,9 @@ jobs:
                               \"modules/eacl-datascript/test\"
                               \"modules/eacl-datahike/test\"
                               \"src-build\"]
-                       :excludes [:benchmark]})]
+                       ;; Bundle gates run only after formal.yml has built the
+                       ;; advanced-optimized comparison artifacts.
+                       :excludes [:benchmark :formal-artifact]})]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"nREPL test suite failed\" result)))
                  result))"
@@ -222,7 +224,7 @@ jobs:
                          [\"test\"]
                          [\"test\" \"../eacl/test\"])
                        :patterns
-                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]counterexample-replay-test$)(?!eacl[.]formal[.]mutation-control-test$).*-test$\"]
+                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]).*-test$\"]
                        :excludes [:benchmark]})]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"isolated nREPL tests failed\" result)))

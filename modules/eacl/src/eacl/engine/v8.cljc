@@ -1,11 +1,16 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
             [eacl.core :refer [spice-object]]
+            [eacl.execution :as execution]
             [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def engine-version 8)
+
+(def ^:dynamic *evaluation-mode*
+  "Normalized public evaluation mode. Cache state never changes this value."
+  :demand)
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
@@ -19,21 +24,13 @@
   ;; and vector realization overhead without changing results or logical work.
   16384)
 (def ^:private lookup-continuation-version 2)
+(def recursive-cursor-version 1)
+(def recursive-order-abi 2)
+(def ^:private recursive-continuation-version 1)
+(def ^:private recursive-page-version 1)
 
-(def ^:private projection-key-version 1)
+(def ^:private projection-key-version 2)
 (def ^:private denotation-key-version 1)
-
-(def ^:dynamic *projection-chunk-size*
-  "Maximum relationship eids retained for one exact projection prefix.
-
-  The cached prefix is deliberately smaller than a potentially unbounded
-  adjacency list. A caller that consumes beyond it resumes with an exclusive
-  backend seek and does not retain the tail."
-  32)
-
-(defn- count-projection-chunk-size
-  [page-size]
-  (max *projection-chunk-size* (inc page-size)))
 
 (def ^:dynamic *backend-work-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
@@ -58,6 +55,21 @@
   *request-shape-stats* so the enumeration-routing invariant — an
   acyclic route performs ZERO recursive work — stays assertable as
   (empty? @stats). Observation-only."
+  nil)
+
+(def ^:dynamic *execution-trace*
+  "Optional atom receiving ordered semantic-evaluation trace events.
+
+  Events expose the generated evaluator direction, exact generated commands,
+  adapter responses, fetched values, and terminal reason. The observer is
+  diagnostic only: no evaluator or cache decision reads it. Tests use this
+  seam as the executable trace-refinement oracle for cache-on/cache-off work."
+  nil)
+
+(defn- record-execution-trace!
+  [event data]
+  (when *execution-trace*
+    (swap! *execution-trace* conj (assoc data :event event)))
   nil)
 
 (def ^:dynamic *request-shape-stats*
@@ -134,7 +146,6 @@
                (println message (pr-str data)))
              :cljs
              (.warn js/console message (pr-str data))))))))
-
 
 (defn object-eid
   "Resolves an external object id through the snapshot adapter."
@@ -324,7 +335,6 @@
      :bound-eid cursor-or-opts
      :inclusive-bound? false}))
 
-
 (defn- path-frontier-identity
   "Stable, semantic identity for a permission path.
 
@@ -356,8 +366,6 @@
 
     [:unknown (pr-str path)]))
 
-
-
 (defn- page-info
   [{:keys [items has-next? has-previous?]}]
   {:start-cursor (some-> items first :cursor)
@@ -375,7 +383,6 @@
      :page-info (page-info {:items items
                             :has-next? (and any? has-next?)
                             :has-previous? (and any? has-previous?)})}))
-
 
 (defn- raw-subject->resources
   [snapshot subject-type subject-eid relation-eid resource-type opts]
@@ -409,86 +416,17 @@
         (every? true?
                 (map ordered? values (next values))))))
 
-(defn- valid-projection-chunk?
-  [direction maximum-size value]
-  (and (map? value)
-       (vector? (:values value))
-       (boolean? (:terminal? value))
-       (every? integer? (:values value))
-       (strictly-ordered? direction (:values value))
-       (<= (count (:values value)) maximum-size)
-       (= (:terminal? value)
-          (< (count (:values value)) maximum-size))))
-
-(defn- projection-weight
-  [{:keys [values]}]
-  (+ 128 (* 16 (count values))))
-
-(defn- cached-projection
-  [operation dependency key-args opts raw-scan]
-  (if-not subproblem/*store*
-    (raw-scan opts)
-    (let [chunk-size *projection-chunk-size*
-          key [projection-key-version
-               operation
-               key-args
-               (:direction opts)
-               (:bound-eid opts)
-               (:inclusive-bound? opts)
-               chunk-size]
-          resolved
-          (subproblem/resolve-layered-bound!
-           :projection
-           key
-           {:valid? #(valid-projection-chunk?
-                      (:direction opts) chunk-size %)
-            :weight-fn projection-weight}
-           dependency
-           (fn []
-             (let [values (vec (take chunk-size (raw-scan opts)))
-                   chunk {:values values
-                          :terminal? (< (count values) chunk-size)}]
-               (subproblem/add-fetched-projection-values! (count values))
-               chunk)))
-          {:keys [values terminal?]} (:value resolved)]
-      (when (:cached? resolved)
-        (subproblem/record-avoided-backend-operation!))
-      (if (or terminal? (empty? values))
-        values
-        (concat
-         values
-         (lazy-seq
-          (cached-projection
-           operation
-           dependency
-           key-args
-           (assoc opts
-                  :bound-eid (peek values)
-                  :inclusive-bound? false)
-           raw-scan)))))))
-
-
 (defn subject->resources
   [snapshot subject-type subject-eid relation-eid resource-type cursor-or-opts]
   (let [opts (scan-opts cursor-or-opts)]
-    (cached-projection
-     :subject->resources
-     relation-eid
-     [subject-type subject-eid relation-eid resource-type]
-     opts
-     #(raw-subject->resources
-       snapshot subject-type subject-eid relation-eid resource-type %))))
+    (raw-subject->resources
+     snapshot subject-type subject-eid relation-eid resource-type opts)))
 
 (defn resource->subjects
   [snapshot resource-type resource-eid relation-eid subject-type cursor-or-opts]
   (let [opts (scan-opts cursor-or-opts)]
-    (cached-projection
-     :resource->subjects
-     relation-eid
-     [resource-type resource-eid relation-eid subject-type]
-     opts
-     #(raw-resource->subjects
-       snapshot resource-type resource-eid relation-eid subject-type %))))
+    (raw-resource->subjects
+     snapshot resource-type resource-eid relation-eid subject-type opts)))
 
 (defn relation-datoms
   "Compatibility shape used by the extracted algorithm while storage adapters
@@ -664,12 +602,30 @@
     snapshot
     (backend/invoke snapshot :schema-proof)))
   ([snapshot schema-proof]
-   [(backend/backend-id snapshot)
+   [engine-version
+    (backend/backend-id snapshot)
+    (backend/fingerprint snapshot)
     (backend/invoke snapshot :source-scope)
     schema-proof]))
 
+(def ^:private maximum-schema-cache-generations 64)
+
+(defn- trim-schema-generations
+  [generations protected-key]
+  (let [overflow (- (count generations) maximum-schema-cache-generations)]
+    (if (pos? overflow)
+      (apply dissoc
+             generations
+             (take overflow
+                   (sort-by pr-str (remove #{protected-key}
+                                           (keys generations)))))
+      generations)))
+
 (defn schema-cache-for!
-  "Returns a derived-schema generation keyed by selected source and proof."
+  "Returns a bounded derived generation keyed by selected source and proof.
+
+  Installation is one nonblocking atomic update. A request retains its
+  immutable generation even if a later install evicts it from the registry."
   [registry snapshot]
   (let [schema-proof (backend/invoke snapshot :schema-proof)
         key (schema-cache-key snapshot schema-proof)
@@ -679,12 +635,18 @@
       (let [created
             (make-schema-cache
              snapshot
-             schema-proof)]
-        (get (swap! registry
-                    #(if (contains? % key)
-                       %
-                       (assoc % key created)))
-             key)))))
+             schema-proof)
+            selected (volatile! created)]
+        (swap! registry
+               (fn [generations]
+                 (if-let [installed (get generations key)]
+                   (do
+                     (vreset! selected installed)
+                     generations)
+                   (trim-schema-generations
+                    (assoc generations key created)
+                    key))))
+        @selected))))
 
 (defn- permission-paths-cache-key
   [resource-type permission-name]
@@ -699,10 +661,10 @@
   ([schema-cache]
    (some-> (:permission-roots schema-cache) (reset! {}))
    (reset! (:permission-paths schema-cache) {})
-  (reset! (:traversal-permissions schema-cache) {})
-  (some-> (:traversal-analysis schema-cache) (reset! nil))
-  (some-> (:recursive-cycle-guards schema-cache) (reset! {}))
-  (reset! (:relationship-dependencies schema-cache) {})
+   (reset! (:traversal-permissions schema-cache) {})
+   (some-> (:traversal-analysis schema-cache) (reset! nil))
+   (some-> (:recursive-cycle-guards schema-cache) (reset! {}))
+   (reset! (:relationship-dependencies schema-cache) {})
    (some-> (:recursive-plans schema-cache) (reset! {}))
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
@@ -839,6 +801,24 @@
         resource-type])))
    (get-permission-paths db resource-type permission-name)))
 
+(defn- canonical-permission-alias
+  "Collapses a chain of pure same-resource permission aliases.
+
+  A permission with exactly one `self-permission` body has the identical
+  denotation as its target. Canonicalizing that name before frontier-key
+  deduplication removes duplicate traversal streams without caching a prefix,
+  widening a scan, or retaining result values beyond the request."
+  [db resource-type permission-name]
+  (loop [current permission-name
+         seen #{}]
+    (if (contains? seen current)
+      current
+      (let [paths (get-permission-paths db resource-type current)]
+        (if (and (= 1 (count paths))
+                 (= :self-permission (:type (first paths))))
+          (recur (:target-permission (first paths)) (conj seen current))
+          current)))))
+
 (defn- frontier-permission-paths
   "Expands same-resource permission aliases into independently resumable paths.
 
@@ -859,8 +839,18 @@
                            db resource-type permission-name))))))]
     ;; `permission view = owner + admin` where `permission admin = owner`
     ;; expands to the same relation path twice: scanned twice, and both
-    ;; collapsing onto one routing-path identity anyway.
+    ;; collapsing onto one routing-path identity anyway. An arrow to a pure
+    ;; alias (for example `account->view` where `view = admin`) is normalized
+    ;; before the same exact-path deduplication.
     (->> (expand permission-name #{})
+         (map (fn [path]
+                (if (and (= :arrow (:type path))
+                         (:target-permission path))
+                  (update path
+                          :target-permission
+                          #(canonical-permission-alias
+                            db (:target-type path) %))
+                  path)))
          (reduce (fn [{:keys [seen paths] :as acc} path]
                    (let [k (path-frontier-identity path)]
                      (if (contains? seen k)
@@ -1509,8 +1499,6 @@
         :edge-checks (:edge-checks decision)}))
     (zipmap nodes (:traversal decision))))
 
-
-
 (defn direct-match-datoms-in-relationship-index
   [snapshot subject-type subject-eid relation-eid resource-type resource-eid]
   (let [resolved
@@ -1537,7 +1525,6 @@
     (if (:value resolved)
       [true]
       [])))
-
 
 (defn all-permission-nodes
   [snapshot]
@@ -1666,7 +1653,20 @@
            "Generated enumeration route rejected its schema binding."
            {:reason (:reason decision)
             :actual-schema actual-identity
-            :certificate-schema certificate-identity}))))))
+           :certificate-schema certificate-identity}))))))
+
+(defn- evaluation-route
+  "Keeps certified acyclic shortcuts demand-only.
+
+  Explicit complete-denotation evaluation deliberately executes the generated
+  fixed-point route even for an acyclic root. That is the caller's opt-in to
+  materialize a complete reusable denotation; silently taking the point/page/
+  count shortcut would make the public evaluation mode decorative."
+  [route]
+  (if (and (= :complete-denotation *evaluation-mode*)
+           (= :acyclic route))
+    :recursive
+    route))
 
 (defn traversal-nodes
   [db]
@@ -1675,15 +1675,13 @@
                  (traversal-permission? db resource-type permission-name)))
        set))
 
-(def ^:private recursive-engine-version 2)
-
 (def default-recursive-traversal-limits
   "Safety ceilings for one recursive traversal.
 
   These bound a SINGLE page computation. A cache-disabled recursive cursor may
   replay its traversal prefix when its relationship proof is still current.
-  Cache-enabled cursors resume a retained continuation and fail explicitly
-  when that continuation has expired.
+  Cache-enabled cursors resume a retained continuation when available and
+  otherwise replay the authenticated logical prefix on the same snapshot.
 
   These are logical work/cardinality ceilings, not JVM-byte, live-heap, CPU,
   backend-command, or wall-time bounds. `:max-queued-work` bounds instantaneous
@@ -1723,7 +1721,6 @@
 (def ^:dynamic *count-stats*
   "Optional atom recording bounded count-page work for tests/benchmarks."
   nil)
-
 
 (def ^:private dimensional-counter-keys
   [:backend-commands
@@ -1766,7 +1763,6 @@
    (or current {})
    sample))
 
-
 (defn- recursive-traversal-error!
   [message data]
   (throw (ex-info message data)))
@@ -1786,8 +1782,6 @@
   [k n]
   (when *recursive-traversal-stats*
     (swap! *recursive-traversal-stats* update k (fnil + 0) n)))
-
-
 
 (defn- sorted-paths
   [paths]
@@ -2518,7 +2512,6 @@
      (* 512 (long (or (:consumer-count state)
                       (count (:consumers state)))))))
 
-
 ;; NOTE ON `traversal` VS `page-direction`
 ;;
 ;; `traversal` is the traversal axis and is CONSTANT per API: :forward for
@@ -2537,7 +2530,6 @@
   caller did not ask for. Count operations and large pages keep the larger
   batch so index-seek overhead remains amortized."
   64)
-
 
 (defn- scan-eids
   [db {:keys [scan-kind subject-type subject-eid relation-eid
@@ -2613,7 +2605,7 @@
      :subject-type (generated-type plan subject-type)
      :bound-eid bound-eid}))
 
-(defn- execute-generated-command
+(defn- raw-generated-command-response
   [db plan {:keys [request-scope request-id projection chunk-size]}]
   (let [realized
         (vec
@@ -2631,6 +2623,60 @@
      :terminal? (not more?)
      :fetched-values (count realized)}))
 
+(defn- valid-generated-command-response?
+  [chunk-size response]
+  (and
+   (map? response)
+   (vector? (:values response))
+   (boolean? (:terminal? response))
+   (integer? (:fetched-values response))
+   (not (neg? (:fetched-values response)))
+   (every? #(and (integer? %) (not (neg? %))) (:values response))
+   (strictly-ordered? :asc (:values response))
+   (<= (count (:values response)) chunk-size)
+   (= (:fetched-values response)
+      (+ (count (:values response))
+         (if (:terminal? response) 0 1)))))
+
+(defn- generated-command-response-weight
+  [{:keys [values]}]
+  (+ 192 (* 16 (count values))))
+
+(defn- execute-generated-command
+  "Executes or exactly reuses one generated adapter command.
+
+  Request ids are traversal-local anti-confusion fields and are rewritten on a
+  hit. Every answer-affecting command field, adapter ABI, and engine ABI remains
+  in the exact-generation key. No cache layer changes bounds, chunk size, or
+  continuation and no proof provider is invoked to rescue a miss."
+  [db plan {:keys [request-scope request-id projection chunk-size] :as command}]
+  (if-not subproblem/*store*
+    (raw-generated-command-response db plan command)
+    (let [response-key
+          [projection-key-version
+           :generated-command-response
+           engine-version
+           (backend/fingerprint db)
+           (dissoc command :request-scope :request-id)]
+          resolved
+          (subproblem/resolve-bound!
+           :projection
+           response-key
+           {:valid? #(valid-generated-command-response? chunk-size %)
+            :weight-fn generated-command-response-weight}
+           (fn []
+             (let [response
+                   (raw-generated-command-response db plan command)]
+               (subproblem/add-fetched-projection-values!
+                (:fetched-values response))
+               (dissoc response :request-scope :request-id))))
+          response (:value resolved)]
+      (when (:cached? resolved)
+        (subproblem/record-avoided-backend-operation!))
+      (assoc response
+             :request-scope request-scope
+             :request-id request-id))))
+
 (def ^:private generated-limit-option
   {:derived-grants :max-derived-grants
    :advanced-datoms :max-advanced-datoms
@@ -2642,6 +2688,13 @@
     :limit-exceeded
     (let [limit-kind (:limit-kind outcome)
           limit (get limits (get generated-limit-option limit-kind))]
+      (record-execution-trace!
+       :evaluation-stop
+       {:direction direction
+        :stopping-reason :resource-limit-exceeded
+        :resource-limit-outcome {:status :exceeded
+                                 :limit-kind limit-kind
+                                 :limit limit}})
       (recursive-traversal-error!
        "Generated recursive traversal safety limit exceeded."
        {:eacl/error :eacl.recursive-traversal/limit-exceeded
@@ -2739,6 +2792,14 @@
       {:status :rejected
        :reason :unusable-cached-state})))
 
+(defn- generated-stopping-reason
+  [result]
+  (case (:status result)
+    :boolean (if (:allowed? result) :target-derived :graph-exhausted)
+    :count (if (:truncated? result) :demand-sentinel :graph-exhausted)
+    :page (if (:has-next? result) :demand-sentinel :graph-exhausted)
+    :unknown))
+
 (defn- run-generated-traversal
   ([db plan direction initialization]
    (run-generated-traversal db plan direction initialization nil))
@@ -2749,20 +2810,37 @@
                 :request-scope
                 (next-generated-request-scope!))
          limits (:limits initialization)
+         _ (execution/check! :generated-initialize)
          started
          (if continuation
            (restore-generated-continuation
             selection direction continuation (:render initialization))
            (verified/initialize-indexed
             selection direction initialization))]
+     (record-execution-trace!
+      :evaluation-start
+      {:direction direction
+       :cache-enabled? (boolean subproblem/*store*)
+       :render (:render initialization)
+       :limits limits})
      (if (and continuation
               (= :rejected (:status started)))
-       {:status :continuation-rejected
-        :reason (:reason started)}
+       (do
+         (record-execution-trace!
+          :evaluation-stop
+          {:direction direction
+           :stopping-reason :continuation-rejected
+           :resource-limit-outcome {:status :within-limits}})
+         {:status :continuation-rejected
+          :reason (:reason started)})
        (do
          (when-not (contains? #{:initialized :continued} (:status started))
            (generated-traversal-error! direction limits started))
          (loop [state (:state started)]
+           (execution/check!
+            execution/*contract*
+            :generated-quantum
+            (select-keys (:counters state) dimensional-counter-keys))
            (let [outcome
                  (verified/drive-indexed
                   selection direction state limits generated-drive-fuel)]
@@ -2771,11 +2849,67 @@
                (recur (:state outcome))
 
                :need-scan
-               (let [response
-                     (execute-generated-command db plan (:command outcome))
+               (let [command (:command outcome)
+                     _ (execution/check!
+                        execution/*contract*
+                        :adapter-command
+                        (select-keys
+                         (:counters (:state outcome))
+                         dimensional-counter-keys))
+                     _ (record-execution-trace!
+                        :generated-command
+                        {:direction direction :command command})
+                     response
+                     (execute-generated-command db plan command)
+                     _ (execution/check!
+                        execution/*contract*
+                        :adapter-response
+                        (select-keys
+                         (:counters (:state outcome))
+                         dimensional-counter-keys))
+                     _ (record-execution-trace!
+                        :adapter-response
+                        {:direction direction
+                         :response response
+                         :fetched-values (:fetched-values response)})
                      resumed
                      (verified/resume-indexed
                       selection direction (:state outcome) response limits)]
+                 (if (= :resumed (:status resumed))
+                   (recur (:state resumed))
+                   (generated-traversal-error! direction limits resumed)))
+
+               :need-scans
+               (let [commands (:commands outcome)
+                     _ (execution/check!
+                        execution/*contract*
+                        :adapter-command
+                        (select-keys
+                         (:counters (:state outcome))
+                         dimensional-counter-keys))
+                     _ (doseq [command commands]
+                         (record-execution-trace!
+                          :generated-command
+                          {:direction direction :command command}))
+                     responses
+                     (mapv
+                      #(execute-generated-command db plan %)
+                      commands)
+                     _ (execution/check!
+                        execution/*contract*
+                        :adapter-response
+                        (select-keys
+                         (:counters (:state outcome))
+                         dimensional-counter-keys))
+                     _ (doseq [response responses]
+                         (record-execution-trace!
+                          :adapter-response
+                          {:direction direction
+                           :response response
+                           :fetched-values (:fetched-values response)}))
+                     resumed
+                     (verified/resume-indexed
+                      selection direction (:state outcome) responses limits)]
                  (if (= :resumed (:status resumed))
                    (recur (:state resumed))
                    (generated-traversal-error! direction limits resumed)))
@@ -2788,6 +2922,11 @@
                  (record-generated-stats!
                   result
                   (:counters continuation))
+                 (record-execution-trace!
+                  :evaluation-stop
+                  {:direction direction
+                   :stopping-reason (generated-stopping-reason result)
+                   :resource-limit-outcome {:status :within-limits}})
                  (assoc result :state final-state))
 
                (generated-traversal-error!
@@ -2844,44 +2983,47 @@
       (:max-queued-work *recursive-traversal-limits*)}}
     continuation)))
 
-(def ^:private recursive-denotation-version 3) ; v3: sorted canonical form (5.1)
+(def ^:private recursive-denotation-version 5) ; v5: route-stable public order
 
-(defn- canonical-denotation
-  "Sorts a completed fixed-point eid vector into the canonical strictly
-  ascending form. The count assert is the permutation guard: sorting
-  must neither drop nor invent grants."
-  [items]
-  (let [sorted (vec (sort items))]
-    (assert (= (count sorted) (count items))
-            "denotation sort changed cardinality")
-    sorted))
+(defn- completed-denotation-public-order
+  [certified-route]
+  (case certified-route
+    :acyclic :certified-acyclic-eid-order
+    :recursive :fixed-point-logical-order
+    (routing-cache-error!
+     "A completed denotation requires a defined certified route."
+     {:certified-route certified-route})))
 
-(defn- strictly-ascending-eids?
-  [value]
-  (loop [index 1
-         previous (nth value 0 nil)]
-    (if (>= index (count value))
-      true
-      (let [current (nth value index)]
-        (if (< (long previous) (long current))
-          (recur (inc index) current)
-          false)))))
+(defn- valid-completed-denotation?
+  "Validates the immutable order-bearing artifact before cache publication."
+  [public-order value]
+  (and
+   (vector? value)
+   (every? #(and (integer? %) (pos? %)) value)
+   (= (count value) (count (set value)))
+   (case public-order
+     :certified-acyclic-eid-order
+     (or (< (count value) 2)
+         (every? true? (map < value (rest value))))
 
-(defn- valid-recursive-denotation?
-  "Canonical denotation form: a vector of strictly ascending positive
-  eids. Strict ascent subsumes distinctness and is the invariant every
-  cache read re-checks (the sort itself is trusted host code guarded
-  here, at the sort site's permutation assert, and by the certified
-  per-slice ordering of DecideAcyclicPage)."
-  [value]
-  (and (vector? value)
-       (every? #(and (integer? %) (pos? %)) value)
-       (or (empty? value)
-           (strictly-ascending-eids? value))))
+     :fixed-point-logical-order true
+     false)))
 
 (defn- recursive-denotation-weight
   [value]
   (+ 256 (* 24 (count value))))
+
+(defn- canonicalize-completed-denotation
+  "Preserves the public order of the root's certified demand route.
+
+  Recursive roots expose generated logical order. Certified acyclic roots
+  expose ascending EID order in both demand and complete evaluation, even
+  though completion itself is produced by the generated fixed-point machine."
+  [public-order values]
+  (let [values (vec values)]
+    (if (= :certified-acyclic-eid-order public-order)
+      (vec (sort values))
+      values)))
 
 (defn- permission-denotation-identity
   "Certified indexed identity of one permission root's incoming rule bodies.
@@ -2896,7 +3038,7 @@
   (:root-denotation-identity (recursive-plan db root-node)))
 
 (defn- recursive-denotation-key
-  [db direction root-node anchor-type anchor-eid result-type]
+  [db direction root-node anchor-type anchor-eid result-type public-order]
   (inc-shape-stat! :denotation-key-builds)
   [denotation-key-version
    :permission-fixed-point
@@ -2906,6 +3048,7 @@
    anchor-type
    anchor-eid
    result-type
+   public-order
    *recursive-traversal-limits*])
 
 (defn- recursive-denotation-dependencies
@@ -2914,14 +3057,13 @@
   (permission-relationship-eids db (first root-node) (second root-node)))
 
 (defn- record-permission-denotation-hit!
-  [db root-node]
-  (if (traversal-permission? db (first root-node) (second root-node))
-    (subproblem/record-recursive-component-hit!)
-    (subproblem/record-acyclic-denotation-hit!)))
-
+  [public-order]
+  (if (= :certified-acyclic-eid-order public-order)
+    (subproblem/record-acyclic-denotation-hit!)
+    (subproblem/record-recursive-component-hit!)))
 
 (defn- complete-generated-forward-denotation
-  [db subject-type subject-eid root-node result-type]
+  [db subject-type subject-eid root-node result-type public-order]
   (let [result
         (generated-forward-result
          db
@@ -2939,10 +3081,10 @@
        {:eacl/error :eacl.recursive-traversal/invalid-generated-outcome
         :direction :forward
         :outcome-status :incomplete-denotation}))
-    (canonical-denotation (:items result))))
+    (canonicalize-completed-denotation public-order (:items result))))
 
 (defn- resolve-forward-denotation
-  [db subject-type subject-eid root-node result-type]
+  [db subject-type subject-eid root-node result-type public-order]
   (if-not subproblem/*store*
     ;; No store: key construction would compile and certify the plan and
     ;; walk the dependency closure purely to build keys no cache can use
@@ -2950,70 +3092,38 @@
     ;; with a nil store computes uncached, and the :cached? gate meant
     ;; the hit recorder never fired on this branch.
     (complete-generated-forward-denotation
-     db subject-type subject-eid root-node result-type)
+     db subject-type subject-eid root-node result-type public-order)
     (let [key
           (recursive-denotation-key
-           db :forward root-node subject-type subject-eid result-type)
+           db :forward root-node subject-type subject-eid result-type
+           public-order)
           resolved
           (subproblem/resolve-layered-bound!
            :denotation
            key
-           {:valid? valid-recursive-denotation?
+           {:valid? #(valid-completed-denotation? public-order %)
             :weight-fn recursive-denotation-weight}
            (recursive-denotation-dependencies db root-node)
            #(complete-generated-forward-denotation
-             db subject-type subject-eid root-node result-type))]
+             db subject-type subject-eid root-node result-type public-order))]
       (when (:cached? resolved)
-        (record-permission-denotation-hit! db root-node))
+        (record-permission-denotation-hit! public-order))
       (:value resolved))))
 
 (defn- lookup-forward-denotation
-  [db subject-type subject-eid root-node result-type]
+  [db subject-type subject-eid root-node result-type public-order]
   (when subproblem/*store*
     (when-let [resolved
                (subproblem/lookup-layered-bound!
                 :denotation
                 (recursive-denotation-key
-                 db :forward root-node subject-type subject-eid result-type)
-                {:valid? valid-recursive-denotation?
+                 db :forward root-node subject-type subject-eid result-type
+                 public-order)
+                {:valid? #(valid-completed-denotation? public-order %)
                  :weight-fn recursive-denotation-weight}
                 (recursive-denotation-dependencies db root-node))]
-      (record-permission-denotation-hit! db root-node)
+      (record-permission-denotation-hit! public-order)
       (:value resolved))))
-
-(defn- publish-forward-denotation!
-  [db subject-type subject-eid root-node result-type values]
-  (when subproblem/*store*
-    (:value
-     (subproblem/resolve-layered-bound!
-      :denotation
-      (recursive-denotation-key
-       db :forward root-node subject-type subject-eid result-type)
-      {:valid? valid-recursive-denotation?
-       :weight-fn recursive-denotation-weight}
-      (recursive-denotation-dependencies db root-node)
-      #(vec values)))))
-
-(defn- mark-recursive-restart
-  [page restarted?]
-  (cond-> page
-    restarted?
-    (assoc-in [:page-info :cursor-recovery] :restarted)))
-
-(defn- restart-unroutable-rebase
-  "Drops a recover-current cursor only when its permission root no longer
-  exists. The authenticated query remains scoped to the same permission, so
-  restarting can only return that permission's (now empty) first page."
-  [defined-root? query]
-  (let [bound (or (:after query) (:before query))
-        restart?
-        (and
-         (not defined-root?)
-         (true? (:rebase? bound)))]
-    [(if restart?
-       (dissoc query :after :before)
-       query)
-     restart?]))
 
 (declare valid-cursor-eid?)
 
@@ -3021,6 +3131,66 @@
   [eid]
   {:kind :lookup-eid
    :result-eid eid})
+
+(defn- recursive-lookup-edge
+  [traversal ordinal eid]
+  {:kind :recursive-logical
+   :version recursive-cursor-version
+   :order-abi recursive-order-abi
+   :traversal traversal
+   :ordinal ordinal
+   :result-eid eid})
+
+(defn- validate-recursive-lookup-bound!
+  [traversal bound]
+  (when bound
+    (when-not (= :recursive-logical (:kind bound))
+      (page-error!
+       "Recursive lookup cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :expected :recursive-logical
+        :actual (:kind bound)}))
+    (when-not (= 1 (:version bound))
+      (page-error!
+       "Recursive lookup cursor has an unsupported version."
+       {:eacl/error :eacl.pagination/cursor-version-mismatch
+        :expected 1
+        :actual (:version bound)}))
+    (when-not (= recursive-order-abi (:order-abi bound))
+      (page-error!
+       "Recursive lookup cursor uses a different logical ordering ABI."
+       {:eacl/error :eacl.pagination/order-abi-mismatch
+        :expected recursive-order-abi
+        :actual (:order-abi bound)}))
+    (when-not (= traversal (:traversal bound))
+      (page-error!
+       "Recursive lookup cursor belongs to the other traversal direction."
+       {:eacl/error :eacl.pagination/wrong-cursor-traversal
+        :expected traversal
+        :actual (:traversal bound)}))
+    (when-not (and (integer? (:ordinal bound))
+                   (<= 0 (:ordinal bound))
+                   (< (:ordinal bound)
+                      (:max-derived-grants *recursive-traversal-limits*)))
+      (page-error!
+       "Recursive lookup cursor has an invalid logical ordinal."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :ordinal (:ordinal bound)}))
+    (when-not (valid-cursor-eid? (:result-eid bound))
+      (page-error!
+       "Recursive lookup cursor has an invalid result identity."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :result-eid (:result-eid bound)}))))
+
+(defn- recursive-lookup-items
+  [result-type traversal start-ordinal eids]
+  (mapv
+   (fn [offset eid]
+     {:node (spice-object result-type eid)
+      :cursor
+      (recursive-lookup-edge traversal (+ start-ordinal offset) eid)})
+   (range)
+   eids))
 
 (defn- lookup-items
   [result-type eids]
@@ -3045,92 +3215,88 @@
        {:eacl/error :eacl.pagination/invalid-cursor
         :result-eid (:result-eid bound)}))))
 
-(defn- eid-insertion-point
-  "Index of the first eid in the canonical sorted vector satisfying
-  (pred eid). Binary search: values is strictly ascending."
-  [values pred]
+(defn- sorted-eid-bound-index
+  "Binary-searches a strictly ascending completed acyclic denotation.
+
+  `after-bound?` selects the first EID strictly greater than the boundary;
+  otherwise this returns the first EID greater than or equal to it."
+  [values bound-eid after-bound?]
   (loop [low 0
          high (count values)]
-    (if (>= low high)
-      low
-      (let [mid (quot (+ low high) 2)]
-        (if (pred (nth values mid))
-          (recur low mid)
-          (recur (inc mid) high))))))
+    (if (< low high)
+      (let [middle (quot (+ low high) 2)
+            middle-eid (nth values middle)
+            before-result?
+            (if after-bound?
+              (<= middle-eid bound-eid)
+              (< middle-eid bound-eid))]
+        (if before-result?
+          (recur (inc middle) high)
+          (recur low middle)))
+      low)))
 
-(defn- denotation-member?
-  "O(log n) membership on the canonical sorted denotation."
-  [values eid]
-  (let [index (eid-insertion-point values #(<= eid %))]
-    (and (< index (count values))
-         (= eid (nth values index)))))
+(defn- complete-acyclic-page
+  "Slices a fixed-point-completed acyclic denotation without changing the
+  acyclic route's public EID order or cursor ABI."
+  [values result-type direction size bound]
+  (validate-lookup-eid-bound! bound)
+  (let [values (vec values)
+        value-count (count values)
+        bound-eid (:result-eid bound)
+        realized
+        (case direction
+          :asc
+          (let [start
+                (if bound
+                  (sorted-eid-bound-index values bound-eid true)
+                  0)]
+            (subvec values
+                    start
+                    (min value-count (+ start size 1))))
 
-(defn- keyset-window
-  "Realized scan-order window (at most size+1 eids, sentinel included)
-  from the canonical sorted denotation for one keyset bound. :desc
-  windows are returned in descending scan order for the certified page
-  decision, exactly like the acyclic streaming route."
-  [values page-direction bound-eid size]
-  (let [value-count (count values)]
-    (case page-direction
-      :asc
-      (let [start (if bound-eid
-                    (eid-insertion-point values #(> % bound-eid))
-                    0)]
-        (subvec values start (min value-count (+ start (inc size)))))
-
-      :desc
-      (let [end (if bound-eid
-                  (eid-insertion-point values #(>= % bound-eid))
+          :desc
+          (let [end
+                (if bound
+                  (sorted-eid-bound-index values bound-eid false)
                   value-count)
-            start (max 0 (- end (inc size)))]
-        (vec (rseq (subvec values start end)))))))
-
-(defn- keyset-rebase
-  "FORMAL-047 contract on the sorted denotation: a recover-current bound
-  survives only when its result identity is a member of the CURRENT
-  denotation (binary search - the page needs the denotation anyway).
-  Hit: exclusive resume from the same eid. Miss: drop the bound and
-  restart honestly."
-  [values bound]
-  (if-not (:rebase? bound)
-    [bound false]
-    (let [eid (:result-eid bound)]
-      (if (and eid (denotation-member? values eid))
-        [{:kind :lookup-eid :result-eid eid} false]
-        [nil true]))))
-
-(defn- certified-keyset-page
-  "Certified slice shared by the acyclic streaming route and the keyset
-  recursive route: every emitted page window passes the generated
-  DecideAcyclicPage ordering/window decision (strict per-direction
-  order revalidated at the kernel boundary)."
-  [result-type page-direction size bound? realized restarted?]
-  (let [page-decision
+                start (max 0 (- end (inc size)))]
+            (vec (reverse (subvec values start end)))))
+        page-decision
         (verified/decide
          subproblem/*decision-kernel*
          :acyclic-page
-         {:direction page-direction
+         {:direction direction
           :realized-eids realized
           :size size
-          :bound? bound?})
+          :bound? (boolean bound)})
         scan-order
         (vec (take (:take-count page-decision) realized))
         page-eids
         (if (:reverse? page-decision)
           (vec (reverse scan-order))
-          scan-order)
-        page
-        (mark-recursive-restart
-         (page-response
-          {:items (lookup-items result-type page-eids)
-           :has-next? (:has-next? page-decision)
-           :has-previous? (:has-previous? page-decision)})
-         restarted?)]
-    {:page page
-     :page-decision page-decision
-     :scan-order scan-order
-     :has-sentinel? (> (count realized) size)}))
+          scan-order)]
+    (page-response
+     {:items (lookup-items result-type page-eids)
+      :has-next? (:has-next? page-decision)
+      :has-previous? (:has-previous? page-decision)})))
+
+(defn- completed-denotation-member?
+  "Uses the artifact's certified public order without imposing one order on
+  every route. Acyclic completion is sorted and supports binary search;
+  recursive completion preserves generated logical order and uses equality."
+  [public-order values target-eid]
+  (case public-order
+    :certified-acyclic-eid-order
+    (and
+     (integer? target-eid)
+     (let [index (sorted-eid-bound-index values target-eid false)]
+       (and (< index (count values))
+            (= target-eid (nth values index)))))
+
+    :fixed-point-logical-order
+    (boolean (some #(= target-eid %) values))
+
+    false))
 
 (defn- continue-probe-to-closure
   "Extends a bounded probe's machine state to the complete fixed point
@@ -3154,27 +3320,27 @@
         :outcome-status :probe-continuation-rejected}))
     (when (:has-next? continued)
       (recursive-traversal-error!
-       "Recursive denotation exceeds :max-derived-grants, so no sorted page can be produced. Raise :recursive-traversal-limits, attach the subproblem store (a client caches the one-time closure), use :count-limit for bounded counts, or model the permission acyclically."
+       "Recursive denotation exceeds :max-derived-grants, so no completed logical page can be produced. Raise :recursive-traversal-limits, use demand evaluation or :count-limit, or model the permission acyclically."
        {:eacl/error :eacl.recursive-traversal/limit-exceeded
         :direction direction
         :limit (:max-derived-grants *recursive-traversal-limits*)
         :outcome-status :incomplete-denotation}))
-    (canonical-denotation (into (vec items) (:items continued)))))
+    (into (vec items) (:items continued))))
 
 (defn- probe-then-continue-forward
   "No-store denotation materialization at streaming cost for small
   results: a bounded probe keeps today's early-stop economics (the
   machine halts the fixed point once size+1 results are delivered); a
-  result that fits one page IS the complete denotation. Larger results
-  pay closure-minus-probe - the irreducible price of sorted first
-  pages - via the verified continuation on the same state."
+  result that fits one page IS the complete denotation. Explicitly completed
+  larger results pay closure-minus-probe via the verified continuation on the
+  same state while preserving generated logical order."
   [db subject-type subject-eid root-node result-type size]
   (let [plan (recursive-plan db root-node)
         probe (generated-forward-result
                db plan subject-type subject-eid root-node result-type
                {:kind :page :size size :bound nil})]
     (if-not (:has-next? probe)
-      (canonical-denotation (:items probe))
+      (vec (:items probe))
       (continue-probe-to-closure
        db plan :forward
        (fn [render continuation]
@@ -3190,7 +3356,7 @@
                db plan subject-type root-node resource-eid subject-type
                {:kind :page :size size :bound nil})]
     (if-not (:has-next? probe)
-      (canonical-denotation (:items probe))
+      (vec (:items probe))
       (continue-probe-to-closure
        db plan :reverse
        (fn [render continuation]
@@ -3199,37 +3365,346 @@
           render continuation))
        probe))))
 
+(defn- complete-evaluation-required!
+  [query]
+  (page-error!
+   "This recursive page shape requires :evaluation :complete-denotation."
+   {:eacl/error :eacl.pagination/complete-evaluation-required
+    :evaluation *evaluation-mode*
+    :page-request (select-keys query [:first :after :last :before])}))
+
+(defn- valid-recursive-generated-continuation?
+  [traversal boundary value]
+  (and (map? value)
+       (= recursive-continuation-version (:version value))
+       (= recursive-order-abi (:order-abi value))
+       (= traversal (:traversal value))
+       (= boundary (:boundary value))
+       ;; The generated Java authority stores its state in a generated runtime
+       ;; value; the portable CLJS authority uses a host value. This store is
+       ;; client-private and explicitly opaque, so structural validation here
+       ;; would duplicate (and, for Java, contradict) the generated boundary.
+       ;; Restoration below is the authoritative checked conversion and turns
+       ;; an unusable value into a safe replay miss.
+       (some? (get-in value [:continuation :state]))
+       (map? (get-in value [:continuation :counters]))))
+
+(defn- cached-recursive-generated-continuation
+  [continuation-cache traversal boundary]
+  (when (and continuation-cache boundary)
+    (execution/check! :continuation-lookup)
+    (when-let [value ((:get continuation-cache) boundary)]
+      (if (valid-recursive-generated-continuation?
+           traversal boundary value)
+        (do
+          (inc-stat! :continuation-hits)
+          (:continuation value))
+        (do
+          ((:evict! continuation-cache) boundary)
+          (inc-stat! :continuation-misses)
+          nil)))))
+
+(defn- recursive-page-request-key
+  [traversal size bound]
+  {:version recursive-page-version
+   :order-abi recursive-order-abi
+   :traversal traversal
+   :page-direction :asc
+   :size size
+   :bound bound})
+
+(defn- valid-recursive-page?
+  [request value]
+  (and (map? value)
+       (= recursive-page-version (:version value))
+       (= request (:request value))
+       (map? (:page value))
+       (vector? (get-in value [:page :data]))
+       (map? (get-in value [:page :page-info]))))
+
+(defn- cached-recursive-page
+  [continuation-cache request]
+  (when-let [get-page (:get-page continuation-cache)]
+    (execution/check! :continuation-page-lookup)
+    (when-let [value (get-page request)]
+      (when (valid-recursive-page? request value)
+        (inc-stat! :recursive-page-hits)
+        (:page value)))))
+
+(defn- recursive-page-weight
+  [page]
+  ;; Internal pages contain compact EID/type/cursor maps. This is a bounded
+  ;; admission estimate, not a JVM object-size claim.
+  (+ 512 (* 128 (count (:data page)))))
+
+(defn- store-recursive-page!
+  [continuation-cache request page]
+  (when-let [put-page! (:put-page! continuation-cache)]
+    (execution/check! :continuation-page-publication)
+    (put-page!
+     request
+     {:version recursive-page-version
+      :request request
+      :page page}
+     (recursive-page-weight page)))
+  nil)
+
+(defn- store-recursive-generated-continuation!
+  [continuation-cache traversal result]
+  (when (and continuation-cache
+             (:has-next? result)
+             (seq (:items result)))
+    (let [ordinal (+ (:start-ordinal result)
+                     (dec (count (:items result))))
+          eid (peek (:items result))
+          boundary (recursive-lookup-edge traversal ordinal eid)
+          state (:state result)]
+      (execution/check! :continuation-publication)
+      ((:put! continuation-cache)
+       boundary
+       {:version recursive-continuation-version
+        :order-abi recursive-order-abi
+        :traversal traversal
+        :boundary boundary
+        :continuation {:state state
+                       :counters (:counters result)}}
+       (continuation-weight state))))
+  nil)
+
+(defn- generated-demand-page
+  [run traversal result-type size bound continuation-cache]
+  (let [page-request
+        (recursive-page-request-key traversal size bound)
+        cached-page
+        (cached-recursive-page continuation-cache page-request)
+        render-bound
+        (fn [boundary]
+          {:ordinal (:ordinal boundary)
+           :eid (:result-eid boundary)})
+        first-page
+        (fn []
+          (run {:kind :page :size size :bound nil} nil))
+        replay
+        (fn []
+          (let [ordinal (:ordinal bound)
+                replay-size (inc ordinal)
+                probe (run {:kind :page
+                            :size replay-size
+                            :bound nil}
+                           nil)
+                boundary-matches?
+                (and (= 0 (:start-ordinal probe))
+                     (= replay-size (count (:items probe)))
+                     (= (:result-eid bound)
+                        (peek (:items probe))))]
+            (cond
+              (not boundary-matches?)
+              (stale-recursive-cursor!
+               "Recursive cursor boundary is not present at its authenticated logical ordinal.")
+
+              (not (:has-next? probe))
+              {:items []
+               :start-ordinal replay-size
+               :has-next? false
+               :has-previous? true}
+
+              :else
+              (let [continued
+                    (run {:kind :page
+                          :size size
+                          :bound (render-bound bound)}
+                         {:state (:state probe)
+                          :counters (:counters probe)})]
+                (if (= :continuation-rejected (:status continued))
+                  (page-error!
+                   "Generated evaluator rejected deterministic cursor replay."
+                   {:eacl/error
+                    :eacl.recursive-traversal/invalid-generated-outcome
+                    :outcome-status :replay-continuation-rejected})
+                  continued)))))
+        result
+        (when-not cached-page
+          (if-not bound
+            (first-page)
+            (if-let [continuation
+                     (cached-recursive-generated-continuation
+                      continuation-cache traversal bound)]
+              (let [continued
+                    (run {:kind :page
+                          :size size
+                          :bound (render-bound bound)}
+                         continuation)]
+                (if (= :continuation-rejected (:status continued))
+                  (do
+                    ((:evict! continuation-cache) bound)
+                    (replay))
+                  continued))
+              (do
+                (inc-stat! :continuation-misses)
+                (replay)))))
+        page
+        (or
+         cached-page
+         (page-response
+          {:items
+           (recursive-lookup-items
+            result-type traversal (:start-ordinal result) (:items result))
+           :has-next? (:has-next? result)
+           :has-previous? (:has-previous? result)}))]
+    (when result
+      (store-recursive-generated-continuation!
+       continuation-cache traversal result)
+      (store-recursive-page! continuation-cache page-request page))
+    page))
+
+(defn- generated-prefix-window-page
+  "Replays only the authenticated logical prefix for `:last N :before`.
+
+  Generated continuations advance in at-most-N windows. The host retains only
+  the last N emitted identities plus one boundary-validation result, so the
+  operation never materializes the complete prefix or suffix."
+  [run traversal result-type size bound]
+  (let [boundary bound
+        target-ordinal (:ordinal boundary)
+        stale!
+        (fn []
+          (stale-recursive-cursor!
+           "Recursive before-cursor boundary is not present at its authenticated logical ordinal."))]
+    (loop [emitted 0
+           window []
+           prior nil]
+      (if (< emitted target-ordinal)
+        (let [request-size (min size (- target-ordinal emitted))
+              render-bound
+              (when prior
+                {:ordinal (dec emitted)
+                 :eid (peek (:items prior))})
+              result
+              (run {:kind :page
+                    :size request-size
+                    :bound render-bound}
+                   (when prior
+                     {:state (:state prior)
+                      :counters (:counters prior)}))
+              items (:items result)
+              emitted' (+ emitted (count items))
+              combined (into window items)
+              window'
+              (if (> (count combined) size)
+                (subvec combined (- (count combined) size))
+                combined)]
+          (when (or (= :continuation-rejected (:status result))
+                    (not= emitted (:start-ordinal result))
+                    (not= request-size (count items))
+                    (and (< emitted' target-ordinal)
+                         (not (:has-next? result))))
+            (stale!))
+          (recur emitted' window' result))
+        (let [render-bound
+              (when prior
+                {:ordinal (dec emitted)
+                 :eid (peek (:items prior))})
+              boundary-result
+              (run {:kind :page :size 1 :bound render-bound}
+                   (when prior
+                     {:state (:state prior)
+                      :counters (:counters prior)}))]
+          (when (or (= :continuation-rejected (:status boundary-result))
+                    (not= target-ordinal
+                          (:start-ordinal boundary-result))
+                    (not= [(:result-eid boundary)]
+                          (:items boundary-result)))
+            (stale!))
+          (let [start (- target-ordinal (count window))]
+            (page-response
+             {:items (recursive-lookup-items
+                      result-type traversal start window)
+              :has-next? true
+              :has-previous? (pos? start)})))))))
+
+(defn- complete-logical-page
+  "Slices an explicitly completed recursive denotation in the identical
+  generated logical order used by demand evaluation.
+
+  Completion may compute and retain the whole denotation, but it must not
+  change public page order. Cursor identity is ordinal plus result identity;
+  either mismatch is stale rather than a keyset rebase or restart."
+  [values traversal result-type direction size bound]
+  (let [values (vec values)
+        value-count (count values)
+        bound-ordinal (:ordinal bound)
+        _ (when bound
+            (when-not (and (integer? bound-ordinal)
+                           (not (neg? bound-ordinal))
+                           (< bound-ordinal value-count)
+                           (= (:result-eid bound)
+                              (nth values bound-ordinal)))
+              (stale-recursive-cursor!
+               "Recursive cursor boundary does not match the completed logical denotation.")))
+        [start end]
+        (case direction
+          :asc
+          (let [start (if bound (inc bound-ordinal) 0)]
+            [start (min value-count (+ start size))])
+
+          :desc
+          (let [end (if bound bound-ordinal value-count)]
+            [(max 0 (- end size)) end]))
+        items (subvec values start end)]
+    (page-response
+     {:items
+      (recursive-lookup-items result-type traversal start items)
+      :has-next? (< end value-count)
+      :has-previous? (pos? start)})))
+
 (defn- recursive-forward-page
   [db query continuation-cache]
   (let [{:keys [direction size bound]} (normalize-page-request query)
-        _ (validate-lookup-eid-bound! bound)
+        _ (validate-recursive-lookup-bound! :forward bound)
         {:keys [subject permission]} query
         subject-type (:type subject)
         subject-eid (object-eid db (:id subject))
         result-type (:resource/type query)
         root-node (permission-query-node result-type permission)]
-    (if-not subject-eid
-      (page-response {:items []
-                      :has-next? false
-                      :has-previous? (boolean bound)})
-      (let [values
-            (if subproblem/*store*
-              (or (lookup-forward-denotation
-                   db subject-type subject-eid root-node result-type)
-                  (resolve-forward-denotation
-                   db subject-type subject-eid root-node result-type))
-              (probe-then-continue-forward
-               db subject-type subject-eid root-node result-type size))
-            [bound' restarted?] (keyset-rebase values bound)
-            realized (keyset-window
-                      values direction (:result-eid bound') size)]
-        (:page
-         (certified-keyset-page
-          result-type direction size (boolean bound')
-          realized restarted?))))))
+    (if (and (= :demand *evaluation-mode*)
+             (= :desc direction)
+             (nil? bound))
+      (complete-evaluation-required! query)
+      (if-not subject-eid
+        (page-response {:items []
+                        :has-next? false
+                        :has-previous? (boolean bound)})
+        (if (and (= :demand *evaluation-mode*) (= :asc direction))
+          (let [plan (recursive-plan db root-node)]
+            (generated-demand-page
+             (fn [render continuation]
+               (generated-forward-result
+                db plan subject-type subject-eid root-node result-type
+                render continuation))
+             :forward result-type size bound continuation-cache))
+          (if (= :demand *evaluation-mode*)
+            (let [plan (recursive-plan db root-node)]
+              (generated-prefix-window-page
+               (fn [render continuation]
+                 (generated-forward-result
+                  db plan subject-type subject-eid root-node result-type
+                  render continuation))
+               :forward result-type size bound))
+            (let [values
+                  (if subproblem/*store*
+                    (or (lookup-forward-denotation
+                         db subject-type subject-eid root-node result-type
+                         :fixed-point-logical-order)
+                        (resolve-forward-denotation
+                         db subject-type subject-eid root-node result-type
+                         :fixed-point-logical-order))
+                    (probe-then-continue-forward
+                     db subject-type subject-eid root-node result-type size))]
+              (complete-logical-page
+               values :forward result-type direction size bound))))))))
 
 (defn- complete-generated-reverse-denotation
-  [db resource-type resource-eid root-node subject-type]
+  [db resource-type resource-eid root-node subject-type public-order]
   (let [result
         (generated-reverse-result
          db
@@ -3248,58 +3723,46 @@
         :direction :reverse
         :outcome-status :incomplete-denotation
         :resource-type resource-type}))
-    (canonical-denotation (:items result))))
+    (canonicalize-completed-denotation public-order (:items result))))
 
 (defn- resolve-reverse-denotation
-  [db resource-type resource-eid root-node subject-type]
+  [db resource-type resource-eid root-node subject-type public-order]
   (if-not subproblem/*store*
     ;; Mirror of resolve-forward-denotation's nil-store fast path.
     (complete-generated-reverse-denotation
-     db resource-type resource-eid root-node subject-type)
+     db resource-type resource-eid root-node subject-type public-order)
     (let [key
           (recursive-denotation-key
-           db :reverse root-node resource-type resource-eid subject-type)
+           db :reverse root-node resource-type resource-eid subject-type
+           public-order)
           resolved
           (subproblem/resolve-layered-bound!
            :denotation
            key
-           {:valid? valid-recursive-denotation?
+           {:valid? #(valid-completed-denotation? public-order %)
             :weight-fn recursive-denotation-weight}
            (recursive-denotation-dependencies db root-node)
            #(complete-generated-reverse-denotation
-             db resource-type resource-eid root-node subject-type))]
+             db resource-type resource-eid root-node subject-type
+             public-order))]
       (when (:cached? resolved)
-        (record-permission-denotation-hit! db root-node))
+        (record-permission-denotation-hit! public-order))
       (:value resolved))))
 
 (defn- lookup-reverse-denotation
-  [db resource-type resource-eid root-node subject-type]
+  [db resource-type resource-eid root-node subject-type public-order]
   (when subproblem/*store*
     (when-let [resolved
                (subproblem/lookup-layered-bound!
                 :denotation
                 (recursive-denotation-key
-                 db :reverse root-node resource-type resource-eid subject-type)
-                {:valid? valid-recursive-denotation?
+                 db :reverse root-node resource-type resource-eid subject-type
+                 public-order)
+                {:valid? #(valid-completed-denotation? public-order %)
                  :weight-fn recursive-denotation-weight}
                 (recursive-denotation-dependencies db root-node))]
-      (record-permission-denotation-hit! db root-node)
+      (record-permission-denotation-hit! public-order)
       (:value resolved))))
-
-(defn- publish-reverse-denotation!
-  [db resource-type resource-eid root-node subject-type values]
-  (when subproblem/*store*
-    (:value
-     (subproblem/resolve-layered-bound!
-      :denotation
-      (recursive-denotation-key
-       db :reverse root-node resource-type resource-eid subject-type)
-      {:valid? valid-recursive-denotation?
-       :weight-fn recursive-denotation-weight}
-      (recursive-denotation-dependencies db root-node)
-      #(vec values)))))
-
-
 
 (defn- recursive-reverse-page
   [db query continuation-cache]
@@ -3308,44 +3771,63 @@
                  {:eacl/error :eacl.pagination/unsupported-filter
                   :filter :subject/relation}))
   (let [{:keys [direction size bound]} (normalize-page-request query)
-        _ (validate-lookup-eid-bound! bound)
+        _ (validate-recursive-lookup-bound! :reverse bound)
         {:keys [resource permission]} query
         resource-type (:type resource)
         resource-eid (object-eid db (:id resource))
         subject-type (:subject/type query)
         root-node (permission-query-node resource-type permission)]
-    (if-not resource-eid
-      (page-response {:items []
-                      :has-next? false
-                      :has-previous? (boolean bound)})
-      (let [values
-            (if subproblem/*store*
-              (or (lookup-reverse-denotation
-                   db resource-type resource-eid root-node subject-type)
-                  (resolve-reverse-denotation
-                   db resource-type resource-eid root-node subject-type))
-              (probe-then-continue-reverse
-               db resource-type resource-eid root-node subject-type size))
-            [bound' restarted?] (keyset-rebase values bound)
-            realized (keyset-window
-                      values direction (:result-eid bound') size)]
-        (:page
-         (certified-keyset-page
-          subject-type direction size (boolean bound')
-          realized restarted?))))))
+    (if (and (= :demand *evaluation-mode*)
+             (= :desc direction)
+             (nil? bound))
+      (complete-evaluation-required! query)
+      (if-not resource-eid
+        (page-response {:items []
+                        :has-next? false
+                        :has-previous? (boolean bound)})
+        (if (and (= :demand *evaluation-mode*) (= :asc direction))
+          (let [plan (recursive-plan db root-node)]
+            (generated-demand-page
+             (fn [render continuation]
+               (generated-reverse-result
+                db plan subject-type root-node resource-eid subject-type
+                render continuation))
+             :reverse subject-type size bound continuation-cache))
+          (if (= :demand *evaluation-mode*)
+            (let [plan (recursive-plan db root-node)]
+              (generated-prefix-window-page
+               (fn [render continuation]
+                 (generated-reverse-result
+                  db plan subject-type root-node resource-eid subject-type
+                  render continuation))
+               :reverse subject-type size bound))
+            (let [values
+                  (if subproblem/*store*
+                    (or (lookup-reverse-denotation
+                         db resource-type resource-eid root-node subject-type
+                         :fixed-point-logical-order)
+                        (resolve-reverse-denotation
+                         db resource-type resource-eid root-node subject-type
+                         :fixed-point-logical-order))
+                    (probe-then-continue-reverse
+                     db resource-type resource-eid root-node subject-type size))]
+              (complete-logical-page
+               values :reverse subject-type direction size bound))))))))
+
+(declare acyclic-bound-authorized? forward-acyclic-direction)
 
 (defn- recursive-can?
   "Evaluates one point query with the generated monotone indexed machine.
 
-  A cache-enabled request exhausts and publishes the complete fixed point so
-  distinct point, page, and count consumers can reuse it. The cache-free
-  machine may stop once the target grant is derived because positive grants
-  cannot be retracted by later least-fixed-point iterations."
-  [db subject-type subject-eid root-node resource-type resource-eid]
-  (if subproblem/*store*
-    (denotation-member?
+  Demand mode is target-anchored regardless of cache state. Explicit complete
+  mode exhausts a compatible forward denotation before membership testing."
+  [db subject-type subject-eid root-node resource-type resource-eid
+   public-order]
+  (if (= :complete-denotation *evaluation-mode*)
+    (completed-denotation-member?
+     public-order
      (resolve-forward-denotation
-      db subject-type subject-eid root-node resource-type)
+      db subject-type subject-eid root-node resource-type public-order)
      resource-eid)
     (let [plan (recursive-plan db root-node)
           reverse-result
@@ -3383,22 +3865,22 @@
                (frontier-permission-paths
                 db (first root-node) (second root-node)))]
           (boolean
-           (when
+           (and
             (some
              #(seq
                (direct-match-datoms-in-relationship-index
                 db subject-type subject-eid %
                 resource-type resource-eid))
              relation-eids)
-             (:allowed?
-              (generated-forward-result
-               db
-               plan
-               subject-type
-               subject-eid
-               root-node
-               resource-type
-               {:kind :boolean :target-eid resource-eid})))))))))
+            (:allowed?
+             (generated-forward-result
+              db
+              plan
+              subject-type
+              subject-eid
+              root-node
+              resource-type
+              {:kind :boolean :target-eid resource-eid})))))))))
 
 (defn can?
   [db subject permission resource]
@@ -3412,10 +3894,38 @@
              (permission-root-defined?
               db resource-type permission))]
     (if defined-root?
-      (recursive-can?
-       db subject-type subject-eid
-       (permission-query-node resource-type permission)
-       resource-type resource-eid)
+      (let [certified-route
+            (if (= :complete-denotation *evaluation-mode*)
+              (enumeration-route db resource-type permission)
+              ;; A bound schema cache carries the generated acyclicity
+              ;; certificate. Without that binding, use the generated
+              ;; fixed-point authority for the demand point check.
+              (if (and (derived-cache-active?)
+                       (not (traversal-permission?
+                             db resource-type permission)))
+                :acyclic
+                :recursive))
+            route (evaluation-route certified-route)]
+        (case route
+          :acyclic
+          (binding [*acyclic-route?* true
+                    *inactive-recursive-cycle-guards* #{}]
+            (add-acyclic-work! :routed-acyclic 1)
+            (boolean
+             (acyclic-bound-authorized?
+              db
+              forward-acyclic-direction
+              {:subject subject
+               :permission permission
+               :resource/type resource-type}
+              resource-eid)))
+
+          :recursive
+          (recursive-can?
+           db subject-type subject-eid
+           (permission-query-node resource-type permission)
+           resource-type resource-eid
+           (completed-denotation-public-order certified-route))))
       false)))
 
 ;; --- Certified acyclic enumeration -----------------------------------------
@@ -3793,14 +4303,10 @@
 
 (defn- acyclic-bound-authorized?
   [db direction query result-eid]
-  ;; Revalidating a recover-current cursor is part of the certified acyclic
-  ;; route. Entering recursive-can? here made a relationship write turn a
-  ;; harmless cursor rebase into an unbounded fixed-point walk (and eventually
-  ;; a recursive safety-limit error) for super-user-sized result sets.
-  ;;
   ;; Each indexed stream is strictly ascending. An inclusive scan beginning at
-  ;; the authenticated result EID therefore proves membership exactly when its
-  ;; first deduplicated result is that EID; no prefix enumeration is required.
+  ;; the requested result EID proves point membership exactly when its first
+  ;; deduplicated result is that EID; no prefix enumeration or recursive
+  ;; fixed-point walk is required for a certified acyclic root.
   (let [point-opts
         {:direction :asc
          :bound-eid result-eid
@@ -3838,24 +4344,6 @@
               (:subject/type query)
               point-opts
               #{}))))))))
-
-(defn- rebase-acyclic-query
-  [db direction query]
-  (let [bound-field
-        (cond
-          (contains? query :after) :after
-          (contains? query :before) :before)
-        bound (get query bound-field)]
-    (if-not (true? (:rebase? bound))
-      [query false]
-      (if (acyclic-bound-authorized?
-           db direction query (:result-eid bound))
-        [(assoc
-          query
-          bound-field
-          (select-keys bound [:kind :result-eid]))
-         false]
-        [(dissoc query :after :before) true]))))
 
 (defn- lazy-merged-acyclic-lookup
   [db direction query page-request continuation]
@@ -3952,8 +4440,7 @@
 
 (defn- acyclic-lookup
   [db route query continuation-cache]
-  (let [[query restarted?] (rebase-acyclic-query db route query)
-        page-request (normalize-page-request query)
+  (let [page-request (normalize-page-request query)
         {page-direction :direction
          :keys [size bound]} page-request
         _ (validate-lookup-eid-bound! bound)
@@ -3981,14 +4468,12 @@
           (vec (reverse scan-order))
           scan-order)
         page
-        (mark-recursive-restart
-         (page-response
-          {:items (lookup-items ((:result-type route) query) page-eids)
-           :has-next?
-           (:has-next? page-decision)
-           :has-previous?
-           (:has-previous? page-decision)})
-         restarted?)]
+        (page-response
+         {:items (lookup-items ((:result-type route) query) page-eids)
+          :has-next?
+          (:has-next? page-decision)
+          :has-previous?
+          (:has-previous? page-decision)})]
     (add-acyclic-work! :pages 1)
     (add-acyclic-work!
      :merge-advances (:merge-advances page-decision))
@@ -4022,80 +4507,78 @@
   ;; same account/team/VPC streams thousands of times. Keep one lazy tail and
   ;; consume it in bounded certified windows instead. Recur replaces the prior
   ;; tail, so already-counted pages are not retained.
-  (binding [*projection-chunk-size*
-            (count-projection-chunk-size *count-window-size*)]
-    (loop [total 0
-           results
-           (:results
-            (lazy-merged-acyclic-lookup
-             db
-             direction
-             (dissoc query :count-limit)
-             {:direction :asc
-              :size *count-window-size*
-              :bound nil}
-             nil))]
-      (let [remaining (when limit (- limit total))
-            page-size
-            (if remaining
-              (max 1 (min *count-window-size* (inc remaining)))
-              *count-window-size*)
-            realized (vec (take (inc page-size) results))
-            has-sentinel? (> (count realized) page-size)
-            page-eids (if has-sentinel? (pop realized) realized)
-            page-count (count page-eids)
-            total' (+ total page-count)]
-        (add-acyclic-work! :count-pages 1)
-        (add-acyclic-work! :merge-advances (count realized))
-        (add-acyclic-work! :counted-results page-count)
-        (when-not
-         (= :accepted
-            (verified/decide
-             subproblem/*decision-kernel*
-             :acyclic-work
-             {:requested-window page-size
-              :merge-advances (count realized)
-              :emitted-results page-count
-              :recursive-work 0}))
-          (routing-cache-error!
-           "Generated acyclic count work authority rejected the page."
-           {:page-size page-size
-            :realized-count (count realized)
-            :page-count page-count}))
-        (when *count-stats*
-          (swap!
-           *count-stats*
-           (fn [stats]
-             (-> stats
-                 (update :pages (fnil inc 0))
-                 (update :max-page-eids (fnil max 0) page-count)))))
-        (cond
-          (and limit (> total' limit))
-          (select-keys
-           (verified/decide
-            subproblem/*decision-kernel*
-            :acyclic-count
-            {:unique-count total'
-             :more? has-sentinel?
-             :limit limit})
-           [:count :truncated?])
+  (loop [total 0
+         results
+         (:results
+          (lazy-merged-acyclic-lookup
+           db
+           direction
+           (dissoc query :count-limit)
+           {:direction :asc
+            :size *count-window-size*
+            :bound nil}
+           nil))]
+    (let [remaining (when limit (- limit total))
+          page-size
+          (if remaining
+            (max 1 (min *count-window-size* (inc remaining)))
+            *count-window-size*)
+          realized (vec (take (inc page-size) results))
+          has-sentinel? (> (count realized) page-size)
+          page-eids (if has-sentinel? (pop realized) realized)
+          page-count (count page-eids)
+          total' (+ total page-count)]
+      (add-acyclic-work! :count-pages 1)
+      (add-acyclic-work! :merge-advances (count realized))
+      (add-acyclic-work! :counted-results page-count)
+      (when-not
+       (= :accepted
+          (verified/decide
+           subproblem/*decision-kernel*
+           :acyclic-work
+           {:requested-window page-size
+            :merge-advances (count realized)
+            :emitted-results page-count
+            :recursive-work 0}))
+        (routing-cache-error!
+         "Generated acyclic count work authority rejected the page."
+         {:page-size page-size
+          :realized-count (count realized)
+          :page-count page-count}))
+      (when *count-stats*
+        (swap!
+         *count-stats*
+         (fn [stats]
+           (-> stats
+               (update :pages (fnil inc 0))
+               (update :max-page-eids (fnil max 0) page-count)))))
+      (cond
+        (and limit (> total' limit))
+        (select-keys
+         (verified/decide
+          subproblem/*decision-kernel*
+          :acyclic-count
+          {:unique-count total'
+           :more? has-sentinel?
+           :limit limit})
+         [:count :truncated?])
 
-          has-sentinel?
-          (recur
-           total'
+        has-sentinel?
+        (recur
+         total'
            ;; The sentinel is the first value of the next certified window.
            ;; Advance only by the values counted in this window.
-           (drop page-size results))
+         (drop page-size results))
 
-          :else
-          (select-keys
-           (verified/decide
-            subproblem/*decision-kernel*
-            :acyclic-count
-            {:unique-count total'
-             :more? false
-             :limit limit})
-           [:count :truncated?]))))))
+        :else
+        (select-keys
+         (verified/decide
+          subproblem/*decision-kernel*
+          :acyclic-count
+          {:unique-count total'
+           :more? false
+           :limit limit})
+         [:count :truncated?])))))
 
 (defn lookup-resources
   "Runs generated forward pagination.
@@ -4107,38 +4590,54 @@
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
-         route
+         certified-route
          (enumeration-route
           db (:resource/type query) (:permission query))
-         [query restart?]
-         (restart-unroutable-rebase (not= :undefined route) query)
-         result
-         (case route
-           :recursive
-           (recursive-forward-page db query cache)
+         route (evaluation-route certified-route)]
+     (case route
+       :recursive
+       (if (= :acyclic certified-route)
+         (let [{:keys [direction size bound]}
+               (normalize-page-request query)
+               {:keys [subject permission]} query
+               subject-type (:type subject)
+               subject-eid (object-eid db (:id subject))
+               result-type (:resource/type query)
+               root-node (permission-query-node result-type permission)
+               values
+               (if subject-eid
+                 (resolve-forward-denotation
+                  db subject-type subject-eid root-node result-type
+                  (completed-denotation-public-order certified-route))
+                 [])]
+           (complete-acyclic-page
+            values result-type direction size bound))
+         (recursive-forward-page db query cache))
 
-           :acyclic
-           (binding [*acyclic-route?* true
-                     *inactive-recursive-cycle-guards*
-                     (inactive-recursive-cycle-guard-keys
-                      db (:resource/type query) (:permission query) route)]
-             (add-acyclic-work! :routed-acyclic 1)
-             (acyclic-lookup
-              db forward-acyclic-direction query cache))
+       :acyclic
+       (binding [*acyclic-route?* true
+                 *inactive-recursive-cycle-guards*
+                 (inactive-recursive-cycle-guard-keys
+                  db
+                  (:resource/type query)
+                  (:permission query)
+                  certified-route)]
+         (add-acyclic-work! :routed-acyclic 1)
+         (acyclic-lookup
+          db forward-acyclic-direction query cache))
 
-           (let [{:keys [bound]} (normalize-page-request query)]
-             (when bound
-               (case (:kind bound)
-                 :lookup-eid (validate-lookup-eid-bound! bound)
-                 (page-error!
-                  "Lookup page cursor has the wrong kind."
-                  {:eacl/error :eacl.pagination/wrong-cursor-kind
-                   :actual (:kind bound)})))
-             (page-response
-              {:items []
-               :has-next? false
-               :has-previous? (boolean bound)})))]
-     (mark-recursive-restart result restart?))))
+       (let [{:keys [bound]} (normalize-page-request query)]
+         (when bound
+           (case (:kind bound)
+             :lookup-eid (validate-lookup-eid-bound! bound)
+             (page-error!
+              "Lookup page cursor has the wrong kind."
+              {:eacl/error :eacl.pagination/wrong-cursor-kind
+               :actual (:kind bound)})))
+         (page-response
+          {:items []
+           :has-next? false
+           :has-previous? (boolean bound)}))))))
 
 (defn lookup-subjects
   "See lookup-resources: cursors are only valid against the minting db basis."
@@ -4154,41 +4653,55 @@
                    :filter :subject/relation}))
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
-         route
+         certified-route
          (enumeration-route
           db (:type (:resource query)) (:permission query))
-         [query restart?]
-         (restart-unroutable-rebase (not= :undefined route) query)
-         result
-         (case route
-           :recursive
-           (recursive-reverse-page db query cache)
+         route (evaluation-route certified-route)]
+     (case route
+       :recursive
+       (if (= :acyclic certified-route)
+         (let [{:keys [direction size bound]}
+               (normalize-page-request query)
+               {:keys [resource permission]} query
+               resource-type (:type resource)
+               resource-eid (object-eid db (:id resource))
+               subject-type (:subject/type query)
+               root-node
+               (permission-query-node resource-type permission)
+               values
+               (if resource-eid
+                 (resolve-reverse-denotation
+                  db resource-type resource-eid root-node subject-type
+                  (completed-denotation-public-order certified-route))
+                 [])]
+           (complete-acyclic-page
+            values subject-type direction size bound))
+         (recursive-reverse-page db query cache))
 
-           :acyclic
-           (binding [*acyclic-route?* true
-                     *inactive-recursive-cycle-guards*
-                     (inactive-recursive-cycle-guard-keys
-                      db
-                      (:type (:resource query))
-                      (:permission query)
-                      route)]
-             (add-acyclic-work! :routed-acyclic 1)
-             (acyclic-lookup
-              db reverse-acyclic-direction query cache))
+       :acyclic
+       (binding [*acyclic-route?* true
+                 *inactive-recursive-cycle-guards*
+                 (inactive-recursive-cycle-guard-keys
+                  db
+                  (:type (:resource query))
+                  (:permission query)
+                  certified-route)]
+         (add-acyclic-work! :routed-acyclic 1)
+         (acyclic-lookup
+          db reverse-acyclic-direction query cache))
 
-           (let [{:keys [bound]} (normalize-page-request query)]
-             (when bound
-               (case (:kind bound)
-                 :lookup-eid (validate-lookup-eid-bound! bound)
-                 (page-error!
-                  "Lookup page cursor has the wrong kind."
-                  {:eacl/error :eacl.pagination/wrong-cursor-kind
-                   :actual (:kind bound)})))
-             (page-response
-              {:items []
-               :has-next? false
-               :has-previous? (boolean bound)})))]
-     (mark-recursive-restart result restart?))))
+       (let [{:keys [bound]} (normalize-page-request query)]
+         (when bound
+           (case (:kind bound)
+             :lookup-eid (validate-lookup-eid-bound! bound)
+             (page-error!
+              "Lookup page cursor has the wrong kind."
+              {:eacl/error :eacl.pagination/wrong-cursor-kind
+               :actual (:kind bound)})))
+         (page-response
+          {:items []
+           :has-next? false
+           :has-previous? (boolean bound)}))))))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])
@@ -4226,9 +4739,10 @@
   [db {:as query}]
   (reject-count-pagination-keys! "count-resources" query)
   (let [limit (query-count-limit query)
-        route
+        certified-route
         (enumeration-route
-         db (:resource/type query) (:permission query))]
+         db (:resource/type query) (:permission query))
+        route (evaluation-route certified-route)]
     (count-response
      (case route
        :undefined
@@ -4250,14 +4764,11 @@
              root-node (permission-query-node result-type permission)]
          (if-not subject-eid
            {:count 0 :truncated? false}
-           (if subproblem/*store*
-             ;; Store-bound counts resolve (and therefore PUBLISH) the
-             ;; complete denotation so distinct/overlapping counts, pages,
-             ;; and point checks stop repaying the full fixed point (the
-             ;; audited count-amortization gap).
+           (if (= :complete-denotation *evaluation-mode*)
              (count-denotation
               (resolve-forward-denotation
-               db (:type subject) subject-eid root-node result-type)
+               db (:type subject) subject-eid root-node result-type
+               (completed-denotation-public-order certified-route))
               limit)
              ;; Cache-free counts keep the bounded generated renders so
              ;; :count-limit truncation still stops the machine early.
@@ -4283,9 +4794,10 @@
                  {:eacl/error :eacl.pagination/unsupported-filter
                   :filter :subject/relation}))
   (let [limit (query-count-limit query)
-        route
+        certified-route
         (enumeration-route
-         db (:type (:resource query)) (:permission query))]
+         db (:type (:resource query)) (:permission query))
+        route (evaluation-route certified-route)]
     (count-response
      (case route
        :undefined
@@ -4310,10 +4822,11 @@
              root-node (permission-query-node (:type resource) permission)]
          (if-not resource-eid
            {:count 0 :truncated? false}
-           (if subproblem/*store*
+           (if (= :complete-denotation *evaluation-mode*)
              (count-denotation
               (resolve-reverse-denotation
-               db (:type resource) resource-eid root-node subject-type)
+               db (:type resource) resource-eid root-node subject-type
+               (completed-denotation-public-order certified-route))
               limit)
              (select-keys
               (generated-reverse-result

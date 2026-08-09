@@ -18,7 +18,7 @@
                                 :eacl/id id})
                              contract/smoke-objects)))
 
-(deftest generated-authority-is-the-only-production-engine-test
+(deftest one-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
         default-selection
@@ -95,11 +95,6 @@
   [stats]
   (+ (get-in stats [:subproblems :denotation-hits] 0)
      (get-in stats [:subproblems :recursive-component-hits] 0)))
-
-(defn- managed-reusable-subproblem-hits
-  [stats]
-  (+ (get-in stats [:subproblems :managed-projection-hits] 0)
-     (get-in stats [:subproblems :managed-denotation-hits] 0)))
 
 (def ^:private denotation-key-separation-schema
   "definition user {}
@@ -201,6 +196,7 @@
              {:subject alice
               :permission permission
               :resource server
+              :evaluation :complete-denotation
               :cache? true}))]
       (eacl/write-schema! writer denotation-key-separation-schema)
       (ds/transact!
@@ -216,29 +212,73 @@
         (eacl/->Relationship backup :backup server)])
 
       (is (true? (decision :same_a)))
-      (let [before-hits
+      (let [before-stats (datascript/cache-stats client)
+            before-hits
             (get-in
-             (datascript/cache-stats client)
+             before-stats
              [:subproblems :denotation-hits]
+             0)
+            before-acyclic-hits
+            (get-in
+             before-stats
+             [:subproblems :acyclic-denotation-hits]
              0)]
         (is (true? (decision :same_b)))
-        (let [equal-hits
+        (let [equal-stats (datascript/cache-stats client)
+              equal-hits
+              (get-in
+               equal-stats
+               [:subproblems :denotation-hits]
+               0)
+              equal-acyclic-hits
+              (get-in
+               equal-stats
+               [:subproblems :acyclic-denotation-hits]
+               0)
+              count-work (atom {})
+              count-result
+              (binding [engine/*backend-work-stats* count-work]
+                (eacl/count-resources
+                 client
+                 {:subject alice
+                  :permission :same_b
+                  :resource/type :server
+                  :evaluation :complete-denotation}))
+              lookup-work (atom {})
+              lookup-result
+              (binding [engine/*backend-work-stats* lookup-work]
+                (eacl/lookup-resources
+                 client
+                 {:subject alice
+                  :permission :same_b
+                  :resource/type :server
+                  :evaluation :complete-denotation
+                  :first 1}))
+              reused-acyclic-hits
               (get-in
                (datascript/cache-stats client)
-               [:subproblems :denotation-hits]
+               [:subproblems :acyclic-denotation-hits]
                0)]
           (is (> equal-hits before-hits))
+          (is (> equal-acyclic-hits before-acyclic-hits)
+              "the metric must identify an actual complete acyclic denotation")
+          (is (= 1 (:count count-result)))
+          (is (empty? @count-work)
+              "complete count must reuse the denotation across operations")
+          (is (= [server] (:data lookup-result)))
+          (is (empty? @lookup-work)
+              "complete lookup must reuse the denotation across operations")
           (is (false? (decision :different_relation)))
-          (is (= equal-hits
+          (is (= reused-acyclic-hits
                  (get-in
                   (datascript/cache-stats client)
-                  [:subproblems :denotation-hits]
+                  [:subproblems :acyclic-denotation-hits]
                   0)))
           (is (false? (decision :different_target)))
-          (is (= equal-hits
+          (is (= reused-acyclic-hits
                  (get-in
                   (datascript/cache-stats client)
-                  [:subproblems :denotation-hits]
+                  [:subproblems :acyclic-denotation-hits]
                   0))))))))
 
 (deftest datascript-contract-test
@@ -303,14 +343,16 @@
              client
              {:subject subject
               :permission :read
-              :resource/type :folder}))))
+              :resource/type :folder
+              :evaluation :complete-denotation}))))
     (is (= 1
            (:count
             (eacl/count-subjects
              client
              {:resource last-folder
               :permission :read
-              :subject/type :user}))))
+              :subject/type :user
+              :evaluation :complete-denotation}))))
     (let [before (datascript/cache-stats client)
           page-work (atom {})
           page
@@ -320,6 +362,7 @@
              {:subject subject
               :permission :read
               :resource/type :folder
+              :evaluation :complete-denotation
               :first 3}))
           page-2
           (eacl/lookup-resources
@@ -327,6 +370,7 @@
            {:subject subject
             :permission :read
             :resource/type :folder
+            :evaluation :complete-denotation
             :first 3
             :after (get-in page [:page-info :end-cursor])})
           previous
@@ -335,6 +379,7 @@
            {:subject subject
             :permission :read
             :resource/type :folder
+            :evaluation :complete-denotation
             :last 3
             :before (get-in page-2 [:page-info :start-cursor])})
           reverse-work (atom {})
@@ -345,11 +390,17 @@
              {:resource last-folder
               :permission :read
               :subject/type :user
+              :evaluation :complete-denotation
               :first 10}))
           work (atom {})
           allowed?
           (binding [engine/*backend-work-stats* work]
-            (eacl/can? client subject :read last-folder))
+            (eacl/can?
+             client
+             {:subject subject
+              :permission :read
+              :resource last-folder
+              :evaluation :complete-denotation}))
           after (datascript/cache-stats client)]
       (is (= ["folder-0" "folder-1" "folder-2"]
              (mapv :id (:data page))))
@@ -368,7 +419,7 @@
              (reusable-denotation-hits after))
           "the point check must reuse the complete recursive denotation"))))
 
-(deftest cold-recursive-point-check-publishes-complete-fixed-point-test
+(deftest demand-point-check-does-not-publish-complete-fixed-point-test
   (let [conn (datascript/create-conn)
         client
         (datascript/make-client
@@ -402,14 +453,15 @@
             (eacl/can? client subject :read (folder 1)))
           after (datascript/cache-stats client)]
       (is (true? allowed?))
-      (is (empty? @work)
-          "an unrelated revision reuses the proved complete fixed point")
-      (is (< (get-in before
+      (is (pos? (get @work :executed-backend-operations 0))
+          "a demand decision performs only the new target's required work")
+      (is (= (get-in before
                      [:subproblems :managed-denotation-hits])
              (get-in after
-                     [:subproblems :managed-denotation-hits]))))))
+                     [:subproblems :managed-denotation-hits]))
+          "demand mode neither publishes nor lifts a complete denotation"))))
 
-(deftest managed-projection-portions-survive-unrelated-forward-writes-test
+(deftest demand-acyclic-cache-miss-matches-bypass-work-test
   (let [conn (datascript/create-conn)
         client
         (datascript/make-client
@@ -421,7 +473,15 @@
         server-1 (eacl/spice-object :server "server-1")
         server-2 (eacl/spice-object :server "server-2")
         document-1 (eacl/spice-object :document "document-1")
-        document-2 (eacl/spice-object :document "document-2")]
+        document-2 (eacl/spice-object :document "document-2")
+        decision
+        (fn [subject permission resource cache?]
+          (eacl/can?
+           client
+           {:subject subject
+            :permission permission
+            :resource resource
+            :cache? cache?}))]
     (eacl/write-schema!
      client
      "definition user {}
@@ -452,33 +512,40 @@
       (eacl/->Relationship group :team server-1)
       (eacl/->Relationship other-user :owner document-1)])
 
-    (is (true? (eacl/can? client user :read_a server-1)))
+    (is (true? (decision user :read_a server-1 true)))
     (let [before (datascript/cache-stats client)]
       ;; This advances the exact graph generation without touching either
       ;; relation used by the server permission.
       (eacl/create-relationships!
        client
        [(eacl/->Relationship other-user :owner document-2)])
-      (let [work (atom {})
-            allowed?
-            (binding [engine/*backend-work-stats* work]
-              (eacl/can? client user :read_b server-1))
+      (let [cached-work (atom {})
+            bypass-work (atom {})
+            cached-allowed?
+            (binding [engine/*backend-work-stats* cached-work]
+              (decision user :read_b server-1 true))
+            bypass-allowed?
+            (binding [engine/*backend-work-stats* bypass-work]
+              (decision user :read_b server-1 false))
             after (datascript/cache-stats client)]
-        (is (true? allowed?))
-        (is (pos?
-             (- (managed-reusable-subproblem-hits after)
-                (managed-reusable-subproblem-hits before)))
-            "a distinct top-level query reuses relation-stamped portions")
-        (is (< (get @work :executed-backend-operations 0) 2)
-            "shared portions avoid the two direct relationship probes")))
+        (is (true? cached-allowed?))
+        (is (= cached-allowed? bypass-allowed?))
+        (is (= (:executed-backend-operations @bypass-work)
+               (:executed-backend-operations @cached-work))
+            "a cold demand cache attempt performs the same semantic work as bypass")
+        (is (= (get-in before
+                       [:subproblems :managed-projection-hits])
+               (get-in after
+                       [:subproblems :managed-projection-hits]))
+            "demand mode does not lift partial projections across generations")))
 
     ;; A write to the depended-on relation must select a different managed key,
     ;; not reuse the previous negative projection.
-    (is (false? (eacl/can? client user :read_c server-2)))
+    (is (false? (decision user :read_c server-2 true)))
     (eacl/create-relationships!
      client
      [(eacl/->Relationship group :team server-2)])
-    (is (true? (eacl/can? client user :read_c server-2)))))
+    (is (true? (decision user :read_c server-2 true)))))
 
 (deftest datascript-delete-object-contract-test
   (let [conn   (datascript/create-conn)

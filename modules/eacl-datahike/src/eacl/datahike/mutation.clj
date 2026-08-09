@@ -116,14 +116,16 @@
       :retention-grace-seconds retention-grace-seconds})))
 
 (defn transact!
-  [conn {:keys [mutation-id canonical-data tx-data] :as mutation-options}]
+  [conn {:keys [mutation-id canonical-data tx-data calculation-db]
+         :as mutation-options}]
   (ensure-migrated! conn)
-  (let [db (d/db conn)]
-    (if-let [stored (mutation-entity db mutation-id)]
+  (let [submission-db (d/db conn)
+        calculation-db (or calculation-db submission-db)]
+    (if-let [stored (mutation-entity submission-db mutation-id)]
       (if (mutation/mutation-data-matches?
            stored mutation-id canonical-data)
-        {:db-before db
-         :db-after db
+        {:db-before submission-db
+         :db-after submission-db
          :tx-data []
          :mutation-id mutation-id
          :idempotent-recovery? true}
@@ -135,15 +137,17 @@
          (d/transact
          conn
           (native-tx-data
-           db
+           calculation-db
            (into (vec tx-data)
-                 (mutation-transaction-data db mutation-options))))
+                 (mutation-transaction-data
+                  calculation-db mutation-options))))
          (catch Throwable error
-           (if-let [stored (mutation-entity (d/db conn) mutation-id)]
+           (let [observed-db (d/db conn)]
+             (if-let [stored (mutation-entity observed-db mutation-id)]
              (if (mutation/mutation-data-matches?
                   stored mutation-id canonical-data)
-               {:db-before db
-                :db-after (d/db conn)
+               {:db-before submission-db
+                :db-after observed-db
                 :tx-data []
                 :mutation-id mutation-id
                 :idempotent-recovery? true}
@@ -151,9 +155,21 @@
                 (ex-info
                  "EACL mutation id was reused with different data."
                  {:type :eacl.mutation/id-reused
-                  :mutation-id mutation-id}
+                 :mutation-id mutation-id}
                  error)))
-             (throw error))))
+               (if (cas-conflict? error)
+                 (throw
+                  (ex-info
+                   "EACL mutation was calculated from a stale Datahike graph head."
+                   {:type :eacl.mutation/concurrent-write
+                    :eacl/error :eacl.mutation/concurrent-write
+                    :backend :datahike
+                    :expected-head
+                    (:head-id (graph-state calculation-db))
+                    :observed-head (:head-id (graph-state observed-db))
+                    :retryable? true}
+                   error))
+                 (throw error))))))
        :mutation-id mutation-id))))
 
 (defn prune-expired!

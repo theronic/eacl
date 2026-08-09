@@ -204,14 +204,12 @@
         expected
         #{:authenticated? :scope-matches? :expired?
           :source :cursor-source :current-proof :cursor-proof
-          :mode :cursor-graph :exact}]
+          :cursor-graph :exact}]
     (exact-keys! operation :input input expected)
     (doseq [field [:authenticated? :scope-matches? :expired?]]
       (require-value! operation field boolean? (get input field)))
     (doseq [field [:source :cursor-source :current-proof :cursor-proof]]
       (require-value! operation field bounded-string? (get input field)))
-    (require-value!
-     operation :mode #{:recover-current :exact-snapshot} (:mode input))
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
@@ -327,9 +325,7 @@
          operation
          :input
          input
-         #{:decision :recursive-self? :candidate})
-        (require-value!
-         operation :recursive-self? boolean? (:recursive-self? input))
+         #{:decision :candidate})
         (require-value!
          operation
          :candidate
@@ -343,13 +339,13 @@
          :input
          input
          #{:decision :candidate-present?
-           :represented-candidates :maximum-candidates})
+           :attempted-publications :maximum-attempts})
         (require-value!
          operation
          :candidate-present?
          boolean?
          (:candidate-present? input))
-        (doseq [field [:represented-candidates :maximum-candidates]]
+        (doseq [field [:attempted-publications :maximum-attempts]]
           (require-value!
            operation field safe-natural? (get input field))))
 
@@ -1014,7 +1010,6 @@
         expected
         (case kind
           :page #{:kind :size :bound}
-          :backward-page #{:kind :size :bound}
           :count #{:kind :limit}
           :all-count #{:kind}
           :boolean #{:kind :target-eid}
@@ -1027,7 +1022,7 @@
         :kind kind}))
     (exact-keys! operation :render render expected)
     (case kind
-      (:page :backward-page)
+      :page
       (do
         (require-value!
          operation [:render :size]
@@ -1035,10 +1030,9 @@
          (:size render))
         (validate-indexed-bound!
          operation [:render :bound] (:bound render))
-        (when (and (= :backward-page kind)
-                   (nil? (:bound render)))
+        (when (some? (:bound render))
           (boundary-error!
-           "Backward indexed rendering requires an exact cursor bound."
+           "Initial indexed page rendering does not accept a cursor bound; use the verified page-continuation operation."
            {:operation operation
             :field [:render :bound]})))
 
@@ -1229,6 +1223,22 @@
         (validate-indexed-state! operation (:state result))
         (validate-indexed-scan-command!
          operation :command (:command result)))
+
+      :need-scans
+      (do
+        (exact-keys!
+         operation :result result #{:status :state :commands})
+        (validate-indexed-state! operation (:state result))
+        (let [commands
+              (bounded-vector!
+               operation :commands (:commands result))]
+          (when-not (seq commands)
+            (boundary-error!
+             "Generated indexed drive returned an empty scan wave."
+             {:operation operation :field :commands}))
+          (doseq [[index command] (map-indexed vector commands)]
+            (validate-indexed-scan-command!
+             operation [:commands index] command))))
 
       (:complete :yielded)
       (do
@@ -1736,7 +1746,6 @@
 
 (def continuation-decisions
   #{:current
-    :rebase-current
     :exact
     :invalid-authentication
     :scope-mismatch
@@ -1862,13 +1871,10 @@
        {:operation operation :result result}))))
 
 (def subproblem-cache-actions
-  #{:bypass-recursive-self
-    :start-computation
-    :join-computation
+  #{:start-independent-computation
     :use-completed-value
-    :join-existing
-    :admit-computation
-    :compute-without-admission
+    :attempt-publication
+    :skip-publication
     :retain-publication
     :drop-publication})
 
@@ -1884,19 +1890,16 @@
   [{:keys [decision] :as input}]
   (case decision
     :lookup
-    (cond
-      (:recursive-self? input) :bypass-recursive-self
-      (= :missing (:candidate input)) :start-computation
-      (= :computing (:candidate input)) :join-computation
-      (= :complete (:candidate input)) :use-completed-value
-      :else :start-computation)
+    (if (= :complete (:candidate input))
+      :use-completed-value
+      :start-independent-computation)
 
     :admission
-    (cond
-      (:candidate-present? input) :join-existing
-      (< (:represented-candidates input)
-         (:maximum-candidates input)) :admit-computation
-      :else :compute-without-admission)
+    (if (and (not (:candidate-present? input))
+             (< (:attempted-publications input)
+                (:maximum-attempts input)))
+      :attempt-publication
+      :skip-publication)
 
     :publication
     (if (and (:ticket-current? input)
@@ -2654,12 +2657,21 @@
        validate-indexed-drive-result!))))
 
 (defn resume-indexed
-  "Resumes opaque generated state with one portable ordered scan response."
+  "Resumes opaque authority state with one response or one ordered scan wave."
   [selection direction state response limits]
   (let [operation :indexed-traversal-resume]
     (require-value! operation :direction indexed-directions direction)
     (validate-indexed-state! operation state)
-    (validate-indexed-response! response)
+    (if (vector? response)
+      (do
+        (bounded-vector! operation :responses response)
+        (when-not (seq response)
+          (boundary-error!
+           "Generated indexed resume received an empty scan wave."
+           {:operation operation :field :responses}))
+        (doseq [item response]
+          (validate-indexed-response! item)))
+      (validate-indexed-response! response))
     (validate-indexed-limits! operation limits)
     (let [kernel (indexed-kernel selection operation)]
       (invoke-indexed-kernel
@@ -2701,4 +2713,3 @@
   [selection operation input]
   (let [{:keys [kernel]} (normalize-selection selection)]
     (invoke-kernel kernel operation input)))
-

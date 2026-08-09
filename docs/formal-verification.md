@@ -7,10 +7,12 @@ customer's policy intent. The current release manifest reports
 `:conditionally-verified`: production routing, cross-adapter campaigns, and
 performance gates pass, while independent security/formal-methods review
 remains an explicit unmet release obligation. The generated engine is the only
-production decision engine on Datomic, Datahike, and DataScript. Differential
-fixtures and the former handwritten engine are retained outside production
-source paths as independent test oracles; no runtime option can reactivate
-them.
+production decision engine on the JVM. ClojureScript uses one portable CLJC
+decision and indexed-traversal kernel, differentially certified against the
+generated JavaScript oracle and the independent fixed-point oracle. The
+generated JavaScript adapter is formal-smoke-only and no runtime option can
+select an alternate engine. Browser answers are advisory and deployments must
+re-check authorization on the server.
 
 The measured performance consequences and recommended cache-free reference,
 consistency, cache, cursor, and backend architecture are recorded in the
@@ -67,8 +69,8 @@ for another.
 
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
-clj-kondo version in the toolchain lock. The ledger closes 62 named shared,
-generated-provider, and backend roots over 1,505 definitions in 53 source
+clj-kondo version in the toolchain lock. The ledger closes 63 named shared,
+authority-provider, and backend roots over 1,424 definitions in 55 source
 files, including unattributed usages assigned to their exact containing
 `defrecord` spans. It is static completeness evidence only: it does not prove
 Clojure source or adapter semantics. `backend-dispatch.edn` additionally
@@ -95,8 +97,9 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `AcyclicEngine.dfy` | path compilation, direct checks, acyclic projections and counts |
 | `RecursiveEngine.dfy` | typed SCC routing, recursive reachability, forward/reverse worklists, limits, continuation replay |
 | `OrderedMerge.dfy` | ordered union and uniqueness |
-| `Pagination.dfy` | frontier and direction laws |
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
+| `IndexedBatching.dfy` | bounded ordered scan waves, ordered response folding, fuel-cut progress publication, crossing law |
+| `IndexedBatchCompleteness.dfy` | proof-only pending-scan ghost views and generalized batch coverage invariants |
 | `CacheKernel.dfy` | dependency closure, cache validation, telemetry CAS laws |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
@@ -267,22 +270,25 @@ immutable result does not cover current source. It proves no production time,
 allocation, heap, or backend-work bound.
 
 Materializing an entire database remains unacceptable on large EACL graphs.
-The production route therefore uses the generated indexed state machine over
-certified ordered adapter scans rather than a whole-graph runtime evaluator.
-Public permission checks, lookup, count, pagination, and cache/cursor decisions
-route through the mapped generated boundaries, and generated-authority/load
-suites pass on all three backends and the supported CLJS target. No handwritten
-authorization engine or runtime engine-selection branch is packaged in
-production. Independent review remains a separate release-assurance
-obligation, so the manifest reports `:conditionally-verified`, not an
-unqualified whole-deployment claim.
+Production therefore uses an indexed state machine over certified ordered
+adapter scans rather than a whole-graph runtime evaluator. On the JVM that
+machine and its decision kernel are generated from Dafny. On ClojureScript the
+portable CLJC implementation is the sole shipped authority and is gated by
+generated-JavaScript, independent-oracle, randomized, counterexample, mutation,
+and full DataScript differentials. The generated browser runtime stays outside
+the production classpath. There is no runtime engine-selection branch.
+Independent review remains a separate release-assurance obligation, so the
+manifest reports `:conditionally-verified`, not an unqualified whole-deployment
+claim.
 
 ## Interpreting the assurance claim
 
-“Verified” means a mapped generated operation refines the formal least-fixed-
-point semantics when its listed adapter and trusted-boundary assumptions hold.
-It includes exact successful lookup/count/page behavior and fail-closed limit,
-cache, and cursor decisions. It does not mean the entire EACL deployment or
-backend is proved correct. Missing coverage, a failed adapter obligation, a
-surviving mutant, a timeout, an undocumented axiom, or an unmet performance or
-shadow gate withholds the claim.
+“Verified” means a mapped generated JVM operation refines the formal
+least-fixed-point semantics when its listed adapter and trusted-boundary
+assumptions hold. The portable CLJS engine carries a narrower, differentially
+certified claim against that authority; it is not mechanically extracted from
+Dafny. The evidence includes exact successful lookup/count/page behavior and
+fail-closed limit, cache, and cursor decisions. It does not mean the entire
+EACL deployment or backend is proved correct. Missing coverage, a failed
+adapter obligation, a surviving mutant, a timeout, an undocumented axiom, or
+an unmet performance gate withholds the claim.

@@ -181,13 +181,8 @@ module IndexedTraversal {
         continuation: ReverseContinuation
       )
 
-  datatype CursorBound =
-    | NoCursorBound
-    | AfterCursor(ordinal: nat, eid: int)
-
   datatype RenderMode =
-    | RenderPage(size: nat, after: CursorBound)
-    | RenderBackwardPage(size: nat, before: CursorBound)
+    | RenderPage(size: nat)
     | RenderCount(limit: nat)
     | RenderAllCount
     | RenderBoolean(targetEid: int)
@@ -197,7 +192,6 @@ module IndexedTraversal {
     ordinal: nat,
     emitted: seq<int>,
     delivered: seq<int>,
-    boundMatched: bool,
     complete: bool,
     truncated: bool
   )
@@ -369,13 +363,7 @@ module IndexedTraversal {
 
   predicate ValidRenderMode(mode: RenderMode) {
     match mode
-    case RenderPage(size, after) =>
-      0 < size &&
-      (after.AfterCursor? ==> 0 <= after.eid)
-    case RenderBackwardPage(size, before) =>
-      0 < size &&
-      before.AfterCursor? &&
-      0 <= before.eid
+    case RenderPage(size) => 0 < size
     case RenderCount(_) => true
     case RenderAllCount => true
     case RenderBoolean(targetEid) => 0 <= targetEid
@@ -398,20 +386,10 @@ module IndexedTraversal {
        eid in render.emitted) &&
     UniqueEids(render.delivered) &&
     match render.mode
-    case RenderPage(size, after) =>
-      (after.NoCursorBound? ==> render.boundMatched) &&
-      |render.delivered| <= size + 1 &&
-      (!render.complete ==> |render.delivered| <= size) &&
-      !render.truncated
-    case RenderBackwardPage(size, before) =>
-      before.AfterCursor? &&
+    case RenderPage(size) =>
       |render.delivered| <= size + 1 &&
       |render.delivered| <= render.ordinal &&
-      |render.delivered| <= before.ordinal &&
-      (render.boundMatched ==>
-         render.ordinal == before.ordinal + 1) &&
-      (!render.boundMatched ==> render.ordinal <= before.ordinal) &&
-      (render.boundMatched ==> render.complete) &&
+      (!render.complete ==> |render.delivered| <= size) &&
       !render.truncated
     case RenderCount(limit) =>
       |render.delivered| <= limit &&
@@ -424,40 +402,6 @@ module IndexedTraversal {
       |render.delivered| <= 1 &&
       (|render.delivered| == 1 ==> render.complete) &&
       !render.truncated
-  }
-
-  lemma CompletedBackwardRenderConsumesAuthenticatedPrefix(
-    render: RenderState
-  )
-    requires ValidRenderState(render)
-    requires render.mode.RenderBackwardPage?
-    requires render.complete
-    requires render.boundMatched
-    ensures render.ordinal == render.mode.before.ordinal + 1
-    ensures |render.emitted| == render.mode.before.ordinal + 1
-  {
-  }
-
-  function BackwardReplayBoundCounterexampleOrdinal(
-    pageSize: nat,
-    multiplier: nat
-  ): nat
-    requires 0 < pageSize
-  {
-    multiplier * pageSize
-  }
-
-  lemma NoUniformBackwardReplayPageBound(
-    pageSize: nat,
-    multiplier: nat
-  )
-    requires 0 < pageSize
-    ensures
-      BackwardReplayBoundCounterexampleOrdinal(
-        pageSize,
-        multiplier
-      ) + 1 > multiplier * pageSize
-  {
   }
 
   function ProjectionBound(projection: Projection): OptionalEid {
@@ -1226,6 +1170,7 @@ module IndexedTraversal {
     match outcome
     case ForwardScanResumed(after) =>
       ForwardSemanticFrame(before, after) &&
+      after.nextRequestId == before.nextRequestId &&
       after.seen == before.seen &&
       after.emitted == before.emitted &&
       after.pending.NoForwardPending? &&
@@ -1454,6 +1399,7 @@ module IndexedTraversal {
     match outcome
     case ReverseScanResumed(after) =>
       ReverseSemanticFrame(before, after) &&
+      after.nextRequestId == before.nextRequestId &&
       after.seenGoals == before.seenGoals &&
       after.seenGrants == before.seenGrants &&
       after.grantsByGoal == before.grantsByGoal &&
@@ -1944,103 +1890,18 @@ module IndexedTraversal {
     var deliveredWithEid :=
       AppendFreshEidValue(render.delivered, eid);
     match render.mode
-    case RenderPage(size, after) =>
-      if !render.boundMatched
-      then
-        if after.NoCursorBound?
-        then RenderRejected(CursorSkipped(0, render.ordinal))
-        else if render.ordinal < after.ordinal
-          then
-            RenderProgress(
-              RenderState(
-                render.mode,
-                render.ordinal + 1,
-                traversed,
-                render.delivered,
-                false,
-                false,
-                false
-              ),
-              false
-            )
-          else if render.ordinal > after.ordinal
-            then
-              RenderRejected(
-                CursorSkipped(after.ordinal, render.ordinal)
-              )
-            else if eid != after.eid
-              then
-                RenderRejected(
-                  CursorResultMismatch(render.ordinal, after.eid, eid)
-                )
-              else
-                RenderProgress(
-                  RenderState(
-                    render.mode,
-                    render.ordinal + 1,
-                    traversed,
-                    render.delivered,
-                    true,
-                    false,
-                    false
-                  ),
-                  false
-                )
-      else
-        RenderProgress(
-          RenderState(
-            render.mode,
-            render.ordinal + 1,
-            traversed,
-            deliveredWithEid,
-            true,
-            |deliveredWithEid| == size + 1,
-            false
-          ),
-          true
-        )
-    case RenderBackwardPage(size, before) =>
-      if before.NoCursorBound?
-      then RenderRejected(CursorSkipped(0, render.ordinal))
-      else if render.ordinal < before.ordinal
-        then
-          var appended := deliveredWithEid;
-          var ring := BoundedSequenceTail(appended, size + 1);
-          RenderProgress(
-            RenderState(
-              render.mode,
-              render.ordinal + 1,
-              traversed,
-              ring,
-              false,
-              false,
-              false
-            ),
-            false
-          )
-        else if render.ordinal > before.ordinal
-          then
-            RenderRejected(
-              CursorSkipped(before.ordinal, render.ordinal)
-            )
-          else if eid != before.eid
-            then
-              RenderRejected(
-                CursorResultMismatch(render.ordinal, before.eid, eid)
-              )
-            else
-              RenderProgress(
-                RenderState(
-                  render.mode,
-                  render.ordinal + 1,
-                  traversed,
-                  render.delivered,
-                  true,
-                  true,
-                  false
-                ),
-                false
-              )
+    case RenderPage(size) =>
+      RenderProgress(
+        RenderState(
+          render.mode,
+          render.ordinal + 1,
+          traversed,
+          deliveredWithEid,
+          |deliveredWithEid| == size + 1,
+          false
+        ),
+        true
+      )
     case RenderCount(limit) =>
       if |render.delivered| < limit
       then
@@ -2050,7 +1911,6 @@ module IndexedTraversal {
             render.ordinal + 1,
             traversed,
             deliveredWithEid,
-            true,
             false,
             false
           ),
@@ -2064,7 +1924,6 @@ module IndexedTraversal {
             traversed,
             render.delivered,
             true,
-            true,
             true
           ),
           false
@@ -2076,7 +1935,6 @@ module IndexedTraversal {
           render.ordinal + 1,
           traversed,
           render.delivered,
-          true,
           false,
           false
         ),
@@ -2092,7 +1950,6 @@ module IndexedTraversal {
           if matched
           then deliveredWithEid
           else render.delivered,
-          true,
           matched,
           false
         ),
@@ -2134,49 +1991,7 @@ module IndexedTraversal {
     assert (set value <- deliveredWithEid) ==
            (set value <- render.delivered) + {eid};
     match render.mode
-    case RenderPage(size, after) => {
-      if !render.boundMatched {
-        if after.NoCursorBound? {
-          assert false;
-        }
-        if render.ordinal < after.ordinal {
-          return RenderProgress(
-              RenderState(
-                render.mode,
-                render.ordinal + 1,
-                traversed,
-                render.delivered,
-                false,
-                false,
-                false
-              ),
-              false
-            );
-        }
-        if render.ordinal > after.ordinal {
-          return RenderRejected(
-              CursorSkipped(after.ordinal, render.ordinal)
-            );
-        }
-        if eid != after.eid {
-          return RenderRejected(
-              CursorResultMismatch(render.ordinal, after.eid, eid)
-            );
-        }
-        return RenderProgress(
-            RenderState(
-              render.mode,
-              render.ordinal + 1,
-              traversed,
-              render.delivered,
-              true,
-              false,
-              false
-            ),
-            false
-          );
-      }
-
+    case RenderPage(size) => {
       var delivered := deliveredWithEid;
       return RenderProgress(
           RenderState(
@@ -2184,61 +1999,10 @@ module IndexedTraversal {
             render.ordinal + 1,
             traversed,
             delivered,
-            true,
             |delivered| == size + 1,
             false
           ),
           true
-        );
-    }
-    case RenderBackwardPage(size, before) => {
-      if before.NoCursorBound? {
-        assert false;
-      }
-      if render.ordinal < before.ordinal {
-        var appended := deliveredWithEid;
-        var ring :=
-          if |appended| <= size + 1
-          then appended
-          else appended[1..];
-        if |appended| > size + 1 {
-          UniqueSequenceTail(appended);
-        }
-        assert UniqueEids(ring);
-        return RenderProgress(
-            RenderState(
-              render.mode,
-              render.ordinal + 1,
-              traversed,
-              ring,
-              false,
-              false,
-              false
-            ),
-            false
-          );
-      }
-      if render.ordinal > before.ordinal {
-        return RenderRejected(
-            CursorSkipped(before.ordinal, render.ordinal)
-          );
-      }
-      if eid != before.eid {
-        return RenderRejected(
-            CursorResultMismatch(render.ordinal, before.eid, eid)
-          );
-      }
-      return RenderProgress(
-          RenderState(
-            render.mode,
-            render.ordinal + 1,
-            traversed,
-            render.delivered,
-            true,
-            true,
-            false
-          ),
-          false
         );
     }
     case RenderCount(limit) => {
@@ -2249,7 +2013,6 @@ module IndexedTraversal {
               render.ordinal + 1,
               traversed,
               deliveredWithEid,
-              true,
               false,
               false
             ),
@@ -2262,7 +2025,6 @@ module IndexedTraversal {
             render.ordinal + 1,
             traversed,
             render.delivered,
-            true,
             true,
             true
           ),
@@ -2276,7 +2038,6 @@ module IndexedTraversal {
             render.ordinal + 1,
             traversed,
             render.delivered,
-            true,
             false,
             false
           ),
@@ -2293,7 +2054,6 @@ module IndexedTraversal {
             if matched
             then deliveredWithEid
             else render.delivered,
-            true,
             matched,
             false
           ),
@@ -2307,29 +2067,17 @@ module IndexedTraversal {
   ): RenderAdvance
     requires ValidRenderState(render)
   {
-    if render.mode.RenderPage? && !render.boundMatched
-    then
-      RenderRejected(
-        CursorSkipped(render.mode.after.ordinal, render.ordinal)
-      )
-    else if render.mode.RenderBackwardPage? && !render.boundMatched
-      then
-        RenderRejected(
-          CursorSkipped(render.mode.before.ordinal, render.ordinal)
-        )
-      else
-        RenderProgress(
-          RenderState(
-            render.mode,
-            render.ordinal,
-            render.emitted,
-            render.delivered,
-            render.boundMatched,
-            true,
-            render.truncated
-          ),
-          false
-        )
+    RenderProgress(
+      RenderState(
+        render.mode,
+        render.ordinal,
+        render.emitted,
+        render.delivered,
+        true,
+        render.truncated
+      ),
+      false
+    )
   }
 
   method FinishRender(
@@ -2344,29 +2092,12 @@ module IndexedTraversal {
               outcome.state.emitted == render.emitted &&
               outcome.state.delivered == render.delivered
   {
-    if render.mode.RenderPage? && !render.boundMatched {
-      if render.mode.after.AfterCursor? {
-        return RenderRejected(
-            CursorSkipped(render.mode.after.ordinal, render.ordinal)
-          );
-      }
-      assert false;
-    }
-    if render.mode.RenderBackwardPage? && !render.boundMatched {
-      if render.mode.before.AfterCursor? {
-        return RenderRejected(
-            CursorSkipped(render.mode.before.ordinal, render.ordinal)
-          );
-      }
-      assert false;
-    }
     return RenderProgress(
         RenderState(
           render.mode,
           render.ordinal,
           render.emitted,
           render.delivered,
-          render.boundMatched,
           true,
           render.truncated
         ),
@@ -2381,31 +2112,17 @@ module IndexedTraversal {
     requires render.complete
   {
     match render.mode
-    case RenderPage(size, after) =>
+    case RenderPage(size) =>
       var items :=
         if |render.delivered| <= size
         then render.delivered
         else render.delivered[..size];
-      var start :=
-        if after.AfterCursor?
-        then after.ordinal + 1
-        else 0;
+      var start := render.ordinal - |render.delivered|;
       PageReady(
         items,
         start,
         |render.delivered| > size,
-        after.AfterCursor?
-      )
-    case RenderBackwardPage(size, before) =>
-      var items :=
-        if |render.delivered| <= size
-        then render.delivered
-        else render.delivered[1..];
-      PageReady(
-        items,
-        before.ordinal - |items|,
-        true,
-        |render.delivered| > size
+        0 < start
       )
     case RenderCount(_) =>
       CountReady(|render.delivered|, render.truncated)
@@ -2422,8 +2139,7 @@ module IndexedTraversal {
     requires render.complete
     ensures result == ReadRenderResultSpec(render)
     ensures result.PageReady? ==>
-              (render.mode.RenderPage? ||
-               render.mode.RenderBackwardPage?) &&
+              render.mode.RenderPage? &&
               |result.items| <= render.mode.size
     ensures result.CountReady? ==>
               (render.mode.RenderCount? || render.mode.RenderAllCount?) &&
@@ -2436,36 +2152,17 @@ module IndexedTraversal {
               (result.allowed <==> |render.delivered| == 1)
   {
     match render.mode
-    case RenderPage(size, after) => {
+    case RenderPage(size) => {
       var items :=
         if |render.delivered| <= size
         then render.delivered
         else render.delivered[..size];
-      var start :=
-        if after.AfterCursor?
-        then after.ordinal + 1
-        else 0;
+      var start := render.ordinal - |render.delivered|;
       return PageReady(
           items,
           start,
           |render.delivered| > size,
-          after.AfterCursor?
-        );
-    }
-    case RenderBackwardPage(size, before) => {
-      if before.NoCursorBound? {
-        assert false;
-      }
-      var items :=
-        if |render.delivered| <= size
-        then render.delivered
-        else render.delivered[1..];
-      assert |items| <= before.ordinal;
-      return PageReady(
-          items,
-          before.ordinal - |items|,
-          true,
-          |render.delivered| > size
+          0 < start
         );
     }
     case RenderCount(_) => {
@@ -2494,9 +2191,7 @@ module IndexedTraversal {
     requires 0 <= afterEid
     requires
       afterOrdinal ==
-      (if render.mode.after.AfterCursor?
-       then render.mode.after.ordinal + 1
-       else 0) +
+      render.ordinal - |render.delivered| +
       render.mode.size - 1
     requires render.delivered[render.mode.size - 1] == afterEid
     ensures ValidRenderState(
@@ -2530,11 +2225,10 @@ module IndexedTraversal {
       ).delivered == [render.delivered[render.mode.size]]
   {
     RenderState(
-      RenderPage(size, AfterCursor(afterOrdinal, afterEid)),
+      RenderPage(size),
       render.ordinal,
       render.emitted,
       [render.delivered[render.mode.size]],
-      true,
       false,
       false
     )
@@ -2580,9 +2274,7 @@ module IndexedTraversal {
         ForwardPageContinuationRejected(ContinuationHasPendingScan);
     }
     var start :=
-      if state.render.mode.after.AfterCursor?
-      then state.render.mode.after.ordinal + 1
-      else 0;
+      state.render.ordinal - |state.render.delivered|;
     if afterEid < 0 ||
        afterOrdinal != start + state.render.mode.size - 1 ||
        state.render.delivered[state.render.mode.size - 1] != afterEid
@@ -2656,9 +2348,7 @@ module IndexedTraversal {
         ReversePageContinuationRejected(ContinuationHasPendingScan);
     }
     var start :=
-      if state.render.mode.after.AfterCursor?
-      then state.render.mode.after.ordinal + 1
-      else 0;
+      state.render.ordinal - |state.render.delivered|;
     if afterEid < 0 ||
        afterOrdinal != start + state.render.mode.size - 1 ||
        state.render.delivered[state.render.mode.size - 1] != afterEid
@@ -3139,6 +2829,7 @@ module IndexedTraversal {
     ensures outcome.ForwardAdvanced? ==>
               ForwardStateInvariant(outcome.state) &&
               CountersWithinLimits(outcome.state.counters, limits) &&
+              outcome.state.nextRequestId == state.nextRequestId &&
               outcome.state.pending.NoForwardPending? &&
               ValidForwardQueuedEids(outcome.state.queue)
     ensures outcome.ForwardYielded? ==>
@@ -3154,6 +2845,7 @@ module IndexedTraversal {
     ensures outcome.ForwardEmitted? ==>
               ForwardStateInvariant(outcome.state) &&
               CountersWithinLimits(outcome.state.counters, limits) &&
+              outcome.state.nextRequestId == state.nextRequestId &&
               outcome.state.pending.NoForwardPending? &&
               ValidForwardQueuedEids(outcome.state.queue) &&
               outcome.eid in outcome.state.emitted &&
@@ -4597,6 +4289,7 @@ module IndexedTraversal {
     ensures outcome.ReverseAdvanced? ==>
               ReverseStateInvariant(outcome.state) &&
               CountersWithinLimits(outcome.state.counters, limits) &&
+              outcome.state.nextRequestId == state.nextRequestId &&
               outcome.state.pending.NoReversePending? &&
               ValidReverseQueuedEids(outcome.state.queue)
     ensures outcome.ReverseYielded? ==>
@@ -4612,6 +4305,7 @@ module IndexedTraversal {
     ensures outcome.ReverseEmitted? ==>
               ReverseStateInvariant(outcome.state) &&
               CountersWithinLimits(outcome.state.counters, limits) &&
+              outcome.state.nextRequestId == state.nextRequestId &&
               outcome.state.pending.NoReversePending? &&
               ValidReverseQueuedEids(outcome.state.queue) &&
               outcome.eid in outcome.state.emitted &&
@@ -5417,12 +5111,6 @@ module IndexedTraversal {
       0,
       [],
       [],
-      match mode
-      case RenderPage(_, after) => after.NoCursorBound?
-      case RenderBackwardPage(_, _) => false
-      case RenderCount(_) => true
-      case RenderAllCount => true
-      case RenderBoolean(_) => true,
       false,
       false
     )

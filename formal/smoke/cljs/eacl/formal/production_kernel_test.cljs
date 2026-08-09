@@ -9,6 +9,8 @@
    [eacl.core :as eacl :refer [spice-object]]
    [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
+   [eacl.engine.portable-indexed :as indexed]
+   [eacl.engine.portable-decisions :as decisions]
    [eacl.engine.v8 :as engine]
    [eacl.engine.relationships :as relationship-engine]
    [eacl.formal.differential-runner :as differential]
@@ -19,6 +21,11 @@
    [eacl.verified-kernel :as verified]))
 
 (def selection
+  {:kernel
+   (indexed/portable-indexed-kernel
+    decisions/portable-decision-kernel)})
+
+(def generated-selection
   {:kernel production/generated-javascript-kernel})
 
 (defn- cross-runtime-vectors
@@ -487,7 +494,7 @@
     request (:limits public-recursive-authorization-input)))
   ([request limits]
    (verified/decide
-    selection
+    generated-selection
     :authorization-evaluation
     (assoc public-recursive-authorization-input
            :request request
@@ -846,7 +853,7 @@
            :size 20
            :bound? false
            :realized-count 21})))
-  (is (= :rebase-current
+  (is (= :snapshot-unavailable
          (verified/decide
           selection
           :cursor-continuation
@@ -857,7 +864,6 @@
            :cursor-source "source"
            :current-proof "new"
            :cursor-proof "old"
-           :mode :recover-current
            :cursor-graph 0
            :exact nil})))
   (is (= {:status :miss :reason :future-or-sibling}
@@ -900,16 +906,15 @@
           selection
           :subproblem-cache-decision
           {:decision :lookup
-           :recursive-self? false
            :candidate :complete})))
-  (is (= :compute-without-admission
+  (is (= :skip-publication
          (verified/decide
           selection
           :subproblem-cache-decision
           {:decision :admission
            :candidate-present? false
-           :represented-candidates 8
-           :maximum-candidates 8})))
+           :attempted-publications 8
+           :maximum-attempts 8})))
   (is (= :drop-publication
          (verified/decide
           selection
@@ -1169,6 +1174,177 @@
   {:max-derived-grants 100
    :max-advanced-datoms 100
    :max-queued-work 100})
+
+(defn- empty-scan-response
+  [command]
+  {:request-scope (:request-scope command)
+   :request-id (:request-id command)
+   :values []
+   :terminal? true
+   :fetched-values 0})
+
+(defn- batched-forward-crossing-trace
+  ([selection stream-count]
+   (batched-forward-crossing-trace selection stream-count 256))
+  ([selection stream-count fuel]
+   (let [limits (assoc indexed-limits :max-queued-work (+ stream-count 64))
+         rules
+         (mapv
+          (fn [relation-eid]
+            (assoc indexed-direct-rule :relation-eid relation-eid))
+          (range 1 (inc stream-count)))
+         compiled-plan
+         (verified/compile-indexed-plan
+          selection
+          {:indexed-rules rules
+           :seed-rules-by-subject-type {"user" rules}})
+         initialized
+         (verified/initialize-indexed
+          selection
+          :forward
+          {:compiled-plan compiled-plan
+           :request-scope 73
+           :subject-type "user"
+           :subject-eid 7
+           :root-node {:resource-type "folder" :permission "read"}
+           :result-type "folder"
+           :render {:kind :all-count}
+           :chunk-size 2
+           :limits limits})]
+     (loop [state (:state initialized)
+            crossings 0
+            waves []]
+       (when (> crossings (+ (* 4 stream-count) 16))
+         (throw
+          (ex-info "Forward fuel-cut trace did not make progress."
+                   {:stream-count stream-count
+                    :fuel fuel
+                    :crossings crossings})))
+       (let [driven
+             (verified/drive-indexed
+              selection :forward state limits fuel)]
+         (case (:status driven)
+           :need-scans
+           (let [commands (:commands driven)
+                 resumed
+                 (verified/resume-indexed
+                  selection :forward (:state driven)
+                  (mapv empty-scan-response commands)
+                  limits)]
+             (recur (:state resumed)
+                    (+ crossings 2)
+                    (conj waves commands)))
+
+           :yielded
+           (recur (:state driven) (inc crossings) waves)
+
+           :complete
+           {:crossings (inc crossings)
+            :waves waves
+            :result
+            (verified/read-indexed-result
+             selection :forward (:state driven))}))))))
+
+(defn- batched-reverse-crossing-trace
+  [selection stream-count fuel]
+  (let [limits (assoc indexed-limits :max-queued-work (+ stream-count 64))
+        rules
+        (mapv
+         (fn [relation-eid]
+           (assoc indexed-direct-rule :relation-eid relation-eid))
+         (range 1 (inc stream-count)))
+        compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules rules
+          :seed-rules-by-subject-type {"user" rules}})
+        initialized
+        (verified/initialize-indexed
+         selection
+         :reverse
+         {:compiled-plan compiled-plan
+          :request-scope 74
+          :subject-type "user"
+          :root-node {:resource-type "folder" :permission "read"}
+          :root-resource-eid 10
+          :result-type "user"
+          :render {:kind :all-count}
+          :chunk-size 2
+          :limits limits})]
+    (loop [state (:state initialized)
+           crossings 0
+           waves []]
+      (when (> crossings (+ (* 4 stream-count) 16))
+        (throw
+         (ex-info "Reverse fuel-cut trace did not make progress."
+                  {:stream-count stream-count
+                   :fuel fuel
+                   :crossings crossings})))
+      (let [driven
+            (verified/drive-indexed
+             selection :reverse state limits fuel)]
+        (case (:status driven)
+          :need-scans
+          (let [commands (:commands driven)
+                resumed
+                (verified/resume-indexed
+                 selection :reverse (:state driven)
+                 (mapv empty-scan-response commands)
+                 limits)]
+            (recur (:state resumed)
+                   (+ crossings 2)
+                   (conj waves commands)))
+
+          :yielded
+          (recur (:state driven) (inc crossings) waves)
+
+          :complete
+          {:crossings (inc crossings)
+           :waves waves
+           :result
+           (verified/read-indexed-result
+            selection :reverse (:state driven))})))))
+
+(deftest portable-and-generated-javascript-batch-independent-scan-waves
+  (doseq [[label kernel-selection]
+          [[:portable selection]
+           [:generated-javascript generated-selection]]]
+    (testing (name label)
+      (let [stream-count 128
+            batch-size 64
+            {:keys [crossings waves result]}
+            (batched-forward-crossing-trace kernel-selection stream-count)]
+        (is (= [64 64] (mapv count waves)))
+        (is (= (vec (range 1 (inc stream-count)))
+               (mapv #(get-in % [:projection :relation-eid])
+                     (mapcat identity waves)))
+            "ordered response folding preserves deterministic command emission")
+        (is (<= crossings
+                (inc (* 2 (quot (+ stream-count (dec batch-size))
+                                batch-size))))
+            "crossings <= 2*ceil(streams/batch)+1")
+        (is (= {:status :count :count 0 :truncated? false}
+               (select-keys result [:status :count :truncated?])))))))
+
+(deftest portable-and-generated-javascript-publish-fuel-cut-scan-waves
+  (doseq [[label kernel-selection]
+          [[:portable selection]
+           [:generated-javascript generated-selection]]
+          [direction trace expected-wave-sizes]
+          [[:forward batched-forward-crossing-trace [10 8]]
+           [:reverse batched-reverse-crossing-trace [9 9]]]]
+    (testing (str (name label) " " (name direction))
+      (let [stream-count 18
+            fuel 10
+            {:keys [waves result]}
+            (trace kernel-selection stream-count fuel)]
+        (is (= expected-wave-sizes (mapv count waves)))
+        (is (= (vec (range 1 (inc stream-count)))
+               (mapv #(get-in % [:projection :relation-eid])
+                     (mapcat identity waves)))
+            "fuel cuts preserve command order and progress")
+        (is (= {:status :count :count 0 :truncated? false}
+               (select-keys result [:status :count :truncated?])))))))
 
 (deftest generated-javascript-all-count-retains-no-rendered-results
   (let [compiled-plan
@@ -1512,8 +1688,7 @@
 
 (deftest production-subproblem-store-uses-generated-javascript-decisions
   (let [store (subproblem/store {:projection-max-weight 1024
-                                 :denotation-max-weight 1024
-                                 :max-inflight 1})
+                                 :denotation-max-weight 1024})
         computes (atom 0)]
     (binding [subproblem/*decision-kernel* selection]
       (is (= 7
@@ -1895,13 +2070,20 @@
                    (engine/lookup-resources
                     changed-adapter
                     (assoc page-query :first 10))))
-            resumed
-            (engine/lookup-resources
-             changed-adapter
-             (assoc page-query :after raw-bound))]
-        (is (= (filterv #(> % (:result-eid raw-bound)) current-ids)
-               (mapv :id (:data resumed)))
-            "a raw keyset bound resumes exclusively after its eid on the current graph"))
+            resume-error
+            (try
+              (engine/lookup-resources
+               changed-adapter
+               (assoc page-query :after raw-bound))
+              nil
+              (catch :default error
+                error))]
+        (is (= {:current-ids []
+                :error-data
+                {:eacl/error :eacl.pagination/stale-cursor}}
+               {:current-ids current-ids
+                :error-data (ex-data resume-error)})
+            "a changed recursive boundary is stale rather than rebased on DataScript's current DB"))
       (let [render-rejected
             (try
               (engine/generated-traversal-error!

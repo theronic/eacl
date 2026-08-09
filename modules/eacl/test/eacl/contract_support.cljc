@@ -590,7 +590,7 @@
                 :permission :duplicate
                 :resource/type :folder})))))
 
-    (testing "managed relation stamps retain unrelated writes and invalidate relevant writes"
+    (testing "demand answers are exact-generation and changed cursors fail closed"
       (let [all-query (assoc query :first 20)
             miss (eacl/lookup-resources client all-query)
             hit (eacl/lookup-resources client all-query)]
@@ -601,7 +601,8 @@
          client denied :auditor (folder 0))
         (let [after-unrelated-write
               (eacl/lookup-resources client all-query)]
-          (is (true? (:cached? after-unrelated-write)))
+          (is (false? (:cached? after-unrelated-write))
+              "demand mode does not perform proof reads to lift an old answer")
           (is (= (mapv folder (range recursive-connected-folder-count))
                  (:data after-unrelated-write))))
 
@@ -613,16 +614,22 @@
 
         (let [stale-cursor
               (get-in (last pages) [:page-info :end-cursor])
-              stale-result
-              (eacl/lookup-resources
-               client
-               (assoc query :after stale-cursor))]
-          (is (= :rebased
-                 (get-in stale-result
-                         [:page-info :cursor-recovery])))
-          (is (= [(folder recursive-connected-folder-count)]
-                 (:data stale-result))
-              "recover-current resumes after the same result in the current fixed point"))
+              outcome
+              (try
+                {:page
+                 (eacl/lookup-resources
+                  client
+                  (assoc query :after stale-cursor))}
+                (catch #?(:clj Exception :cljs :default) thrown
+                  {:error (ex-data thrown)}))]
+          (if-let [error (:error outcome)]
+            (is (= :eacl.pagination/stale-cursor (:type error))
+                "a current-only backend rejects a cursor from an older basis")
+            (do
+              (is (empty? (get-in outcome [:page :data]))
+                  "an immutable time-travel backend may resume the exact old snapshot")
+              (is (nil? (get-in outcome
+                                [:page :page-info :cursor-recovery]))))))
 
         (let [after-write (eacl/lookup-resources client all-query)]
           (is (false? (:cached? after-write)))
@@ -667,7 +674,8 @@
            {:subject (->user "recursive-user")
             :permission :read
             :resource/type :folder
-            :first 10})
+            :first 10
+            :evaluation :complete-denotation})
           nil
           (catch #?(:clj Exception :cljs :default) error
             (ex-data error)))]

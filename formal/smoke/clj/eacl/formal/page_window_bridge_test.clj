@@ -79,7 +79,6 @@
          :cursor-source "source"
          :current-proof "proof"
          :cursor-proof "proof"
-         :mode :exact-snapshot
          :cursor-graph 7}]
     (is (= :current
            (formal/continuation-decision base)))
@@ -91,11 +90,10 @@
              :exact {:graph 7
                      :source "source"
                      :proof "proof"}))))
-    (is (= :rebase-current
+    (is (= :snapshot-unavailable
            (formal/continuation-decision
             (assoc base
-                   :current-proof "changed"
-                   :mode :recover-current))))
+                   :current-proof "changed"))))
     (is (= :expired
            (formal/continuation-decision
             (assoc base :expired? true))))

@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 36
+  :verified-obligations 40
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -14,31 +14,45 @@
    :page-size-independent-sequence
    :page-uniqueness
    :complete-forward-walk
-   :current-proof-continuation
-   :authenticated-current-recovery
-   :current-recovery-rebases-by-stable-result-identity
-   :current-recovery-restarts-only-when-result-identity-is-absent
-   :current-recovery-identity-search-is-linear
-   :recovery-does-not-require-retained-history
-   :authenticated-exact-fallback
-   :history-divergence-rejection
-   :exact-snapshot-unavailable-rejection
-   :expiry-rejection
-   :relationship-offset-page-exact
+   :backward-page-is-exact-preceding-window
+   :content-cursor-minting-does-no-relation-proof-scan
+   :no-cache-proof-cursor-minting-does-no-relation-proof-scan
+   :only-managed-mutation-mode-requests-dependency-proof
+   :current-continuation-requires-equal-proof
+   :exact-continuation-requires-authenticated-exact-proof
+   :changed-proof-never-continues-on-current
+   :changed-proof-without-exact-snapshot-is-rejected
+   :datascript-exact-proof-continues-only-at-current-basis
+   :datascript-changed-basis-cannot-yield-cursor-page
+   :completed-logical-page-is-exact-slice
+   :mismatched-logical-boundary-is-stale
+   :matching-authorization-page-scope-reuses-exact-page
+   :authorization-page-scope-mismatch-cannot-hit
    :relationship-keyset-page-decision-exact
-   :relationship-exact-snapshot-proof
-   :no-linear-result-proof-per-page]}
+   :relationship-page-from-normalized-request-exact]}
+ :shipped-consumers
+ {:request-normalization
+  [eacl.engine.v8/normalize-page-request
+   eacl.engine.relationships/normalized-page]
+  :keyset-page-decision eacl.engine.relationships/execute-page
+  :cursor-proof-strategy eacl.client.orchestration/cursor-options
+  :continuation-decision eacl.relay/continuation-decision
+  :completed-logical-page eacl.engine.v8/complete-logical-page
+  :retained-exact-page
+  [eacl.relay/lookup-visited-page
+   eacl.engine.v8/cached-recursive-page]}
  :generated-targets
  {:java
   {:status :passed
-   :tests 10
-   :assertions 7013
+   :tests 2
+   :assertions 6754
    :failures 0
    :errors 0}
   :javascript
   {:status :passed
-   :tests 5
-   :assertions 557
+   :suite-tests 46
+   :suite-assertions 9983
+   :qualification :full-formal-cljs-suite-includes-page-window-boundaries
    :failures 0
    :errors 0}}
  :production-regression
@@ -54,7 +68,7 @@
   {:tests 90
    :assertions 1309
    :status :passed}}
- :production-generated-routing
+ :production-authority-routing
  {:clj-java
   {:namespace eacl.formal.production-kernel-test
    :tests 4
@@ -64,29 +78,33 @@
   {:namespace eacl.formal.production-kernel-test
    :tests 4
    :assertions 19
-   :status :passed}
+   :status :portable-production-and-generated-oracle-passed}
   :coverage
   [:lookup-cursor-current-proof
-   :lookup-cursor-current-identity-rebase
+   :lookup-cursor-changed-proof-rejection
+   :lookup-cursor-exact-fallback
    :relationship-cursor-current-proof
    :relationship-page-window
    :relationship-keyset-page-window
    :strict-generated-result-validation]}
- :current-recovery-boundary
- {:operation :cursor-bound-rebase
+ :host-completed-logical-page-boundary
+ {:operation :completed-logical-page
+  :source eacl.engine.v8/complete-logical-page
   :input
-  {:values :unique-current-complete-denotation-eids
-   :bound-eid :authenticated-query-scoped-result-eid}
+  {:values :generated-logical-order-complete-denotation-eids
+   :bound [:authenticated-logical-ordinal
+           :authenticated-external-result-identity]}
   :result
-  [:rebased-current-ordinal :restarted]
+  [:exact-exclusive-page :stale-logical-boundary]
   :logical-work
-  {:success "ordinal + 1 inspected identities"
-   :absence "N inspected identities"
-   :upper-bound "N"
+  {:boundary-validation :constant-index-and-identity-check
+   :slice "at most requested page size"
    :heap-and-latency :host-regression-gates-not-dafny-claims}
   :production-authority
-  {:clj-java :generated
-   :cljs-javascript :generated
+  {:model PageWindow/DecideCompletedLogicalPage
+   :clj-java :host-control-flow-over-generated-logical-denotation
+   :cljs-javascript :same-portable-host-control-flow
    :runtime-engine-selector :absent}
-  :counterexample :EACL-FORMAL-044}
- :remaining []}
+  :qualification
+  :proof-model-matches-host-branch-without-mechanized-source-refinement}
+ :remaining [:host-control-source-refinement :independent-review]}

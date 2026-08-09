@@ -268,7 +268,7 @@ Add the EACL dependency to your `deps.edn` file:
 ;  Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl (eacl.datomic.core/make-client conn
            ; optional config:
-           {:object-id->ident (fn [obj-id] [:eacl/id obj-id])
+           {:object-id->lookup-ref (fn [obj-id] [:eacl/id obj-id])
             :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))}))
 
 ; Write your permission schema using SpiceDB schema DSL:
@@ -483,13 +483,13 @@ Internal Datomic eids are not guaranteed to be stable after a DB rebuild, so EAC
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
-            :object-id->ident (fn [obj-id] [:your/id obj-id])}))
+            :object-id->lookup-ref (fn [obj-id] [:your/id obj-id])}))
 ```
 The default options are to use `:eacl/id`, but if you want to use internal Datomic eids (e.g. if you don't expose anything to the outside world), you can pass the following options:
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [_db eid] eid)
-            :object-id->ident (fn [obj-id] obj-id)}))
+            :object-id->lookup-ref (fn [obj-id] obj-id)}))
 ```
 
 `eacl.core/spice-object` accepts `type`, `id` and optionally `subject_relation`, and returns a SpiceObject.

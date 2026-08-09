@@ -6,120 +6,112 @@ CONSTANTS
   Generations,
   \* @type: Set(Int);
   Keys,
+  \* @type: Set(Int);
+  Requests,
   \* @type: Int;
-  Budget,
-  \* @type: Int;
-  InflightBound
+  Budget
 
 ASSUME
   /\ Generations # {}
   /\ Keys # {}
+  /\ Requests # {}
   /\ 0 \in Generations
   /\ 0 \in Keys
+  /\ 0 \in Requests
   /\ 0 < Budget
-  /\ 0 < InflightBound
 
-Absent == 0
+Idle == 0
 Computing == 1
-Partial == 2
-Complete == 3
-Failed == 4
-EntryStates == {Absent, Computing, Partial, Complete, Failed}
+RequestStates == {Idle, Computing}
 
 NoOutcome == 0
 CacheHit == 1
 CacheMiss == 2
-SingleFlightJoin == 3
-Outcomes == {NoOutcome, CacheHit, CacheMiss, SingleFlightJoin}
+PublicationRetained == 3
+PublicationDropped == 4
+Outcomes ==
+  {NoOutcome, CacheHit, CacheMiss, PublicationRetained, PublicationDropped}
 
 VARIABLES
   \* @type: Int;
   activeGeneration,
   \* @type: Int;
   lifecycle,
+  \* Completed immutable values only. There is no computing cache entry.
+  \* @type: Set(Int);
+  entries,
   \* @type: Int -> Int;
-  entryState,
+  entryGeneration,
   \* @type: Int -> Int;
-  capturedGeneration,
+  entryLifecycle,
+  \* Each miss is owned independently by its initiating request.
   \* @type: Int -> Int;
-  capturedLifecycle,
+  requestState,
   \* @type: Int -> Int;
-  entryWeight,
-  \* @type: Int;
-  admittedWeight,
-  \* @type: Int;
-  orphanPublications,
+  requestKey,
+  \* @type: Int -> Int;
+  requestGeneration,
+  \* @type: Int -> Int;
+  requestLifecycle,
   \* @type: Int;
   chosenKey,
   \* @type: Int;
-  outcome
+  chosenRequest,
+  \* @type: Int;
+  outcome,
+  \* @type: Int;
+  detachedPublications
 
 vars ==
-  <<activeGeneration, lifecycle, entryState, capturedGeneration,
-    capturedLifecycle, entryWeight, admittedWeight, orphanPublications,
-    chosenKey, outcome>>
+  <<activeGeneration, lifecycle, entries, entryGeneration, entryLifecycle,
+    requestState, requestKey, requestGeneration, requestLifecycle,
+    chosenKey, chosenRequest, outcome, detachedPublications>>
 
 TypeOK ==
   /\ activeGeneration \in Generations
   /\ lifecycle \in Nat
-  /\ entryState \in [Keys -> EntryStates]
-  /\ capturedGeneration \in [Keys -> Generations]
-  /\ capturedLifecycle \in [Keys -> Nat]
-  /\ entryWeight \in [Keys -> Nat]
-  /\ admittedWeight \in Nat
-  /\ orphanPublications \in Nat
+  /\ entries \in SUBSET Keys
+  /\ entryGeneration \in [Keys -> Generations]
+  /\ entryLifecycle \in [Keys -> Nat]
+  /\ requestState \in [Requests -> RequestStates]
+  /\ requestKey \in [Requests -> Keys]
+  /\ requestGeneration \in [Requests -> Generations]
+  /\ requestLifecycle \in [Requests -> Nat]
   /\ chosenKey \in Keys
+  /\ chosenRequest \in Requests
   /\ outcome \in Outcomes
+  /\ detachedPublications \in Nat
 
-WeightBound ==
-  admittedWeight <= Budget
+CompletedStoreIsBounded == Cardinality(entries) <= Budget
 
-CompleteKeys ==
-  {key \in Keys: entryState[key] = Complete}
-
-InflightKeys ==
-  {key \in Keys:
-    entryState[key] \in {Computing, Partial}}
-
-ReservedKeys ==
-  CompleteKeys \union InflightKeys
-
-EntryWeightsAreAccounted ==
-  /\ admittedWeight = Cardinality(ReservedKeys)
-  /\ \A key \in Keys:
-    entryWeight[key] =
-      IF key \in ReservedKeys THEN 1 ELSE 0
-
-HitIsCompleteAndCurrent ==
+HitIsCompletedAndCurrent ==
   outcome # CacheHit \/
-    /\ entryState[chosenKey] = Complete
-    /\ capturedGeneration[chosenKey] = activeGeneration
-    /\ capturedLifecycle[chosenKey] = lifecycle
+    /\ chosenKey \in entries
+    /\ entryGeneration[chosenKey] = activeGeneration
+    /\ entryLifecycle[chosenKey] = lifecycle
 
-SingleFlightJoinIsCurrentAndComputing ==
-  outcome # SingleFlightJoin \/
-    /\ entryState[chosenKey] = Computing
-    /\ capturedGeneration[chosenKey] = activeGeneration
-    /\ capturedLifecycle[chosenKey] = lifecycle
+OnlyCompletedValuesAreRepresented ==
+  \A key \in entries:
+    /\ entryGeneration[key] = activeGeneration
+    /\ entryLifecycle[key] = lifecycle
 
-PartialNeverHits ==
-  outcome = CacheHit => entryState[chosenKey] # Partial
+NoRequestWaitsForAnother ==
+  \A request \in Requests:
+    requestState[request] \in {Idle, Computing}
 
-OneFlightPerKey ==
-  \A key \in Keys:
-    entryState[key] \in EntryStates
-
-InflightIsBounded ==
-  Cardinality(InflightKeys) <= InflightBound
+LateGenerationCannotPublish ==
+  \A request \in Requests:
+    requestState[request] = Computing /\
+    requestLifecycle[request] # lifecycle
+      => requestKey[request] \notin entries \/
+         entryLifecycle[requestKey[request]] = lifecycle
 
 Safety ==
-  /\ WeightBound
-  /\ EntryWeightsAreAccounted
-  /\ HitIsCompleteAndCurrent
-  /\ SingleFlightJoinIsCurrentAndComputing
-  /\ PartialNeverHits
-  /\ OneFlightPerKey
-  /\ InflightIsBounded
+  /\ CompletedStoreIsBounded
+  /\ HitIsCompletedAndCurrent
+  /\ OnlyCompletedValuesAreRepresented
+  /\ NoRequestWaitsForAnother
+  /\ LateGenerationCannotPublish
 
 InductiveInvariant ==
   /\ TypeOK
@@ -128,129 +120,98 @@ InductiveInvariant ==
 Init ==
   /\ activeGeneration = 0
   /\ lifecycle = 0
-  /\ entryState = [key \in Keys |-> Absent]
-  /\ capturedGeneration = [key \in Keys |-> 0]
-  /\ capturedLifecycle = [key \in Keys |-> 0]
-  /\ entryWeight = [key \in Keys |-> 0]
-  /\ admittedWeight = 0
-  /\ orphanPublications = 0
+  /\ entries = {}
+  /\ entryGeneration = [key \in Keys |-> 0]
+  /\ entryLifecycle = [key \in Keys |-> 0]
+  /\ requestState = [request \in Requests |-> Idle]
+  /\ requestKey = [request \in Requests |-> 0]
+  /\ requestGeneration = [request \in Requests |-> 0]
+  /\ requestLifecycle = [request \in Requests |-> 0]
   /\ chosenKey = 0
+  /\ chosenRequest = 0
   /\ outcome = NoOutcome
+  /\ detachedPublications = 0
 
-BeginMiss ==
-  \E key \in Keys:
-    /\ entryState[key] = Absent
-    /\ Cardinality(InflightKeys) < InflightBound
-    /\ admittedWeight + 1 <= Budget
-    /\ entryState' = [entryState EXCEPT ![key] = Computing]
-    /\ capturedGeneration' =
-      [capturedGeneration EXCEPT ![key] = activeGeneration]
-    /\ capturedLifecycle' =
-      [capturedLifecycle EXCEPT ![key] = lifecycle]
-    /\ entryWeight' = [entryWeight EXCEPT ![key] = 1]
-    /\ chosenKey' = key
-    /\ outcome' = CacheMiss
-    /\ admittedWeight' = admittedWeight + 1
+LookupOrBeginIndependentMiss ==
+  \E request \in Requests:
+    \E key \in Keys:
+      /\ requestState[request] = Idle
+      /\ chosenRequest' = request
+      /\ chosenKey' = key
+      /\ IF /\ key \in entries
+            /\ entryGeneration[key] = activeGeneration
+            /\ entryLifecycle[key] = lifecycle
+         THEN /\ outcome' = CacheHit
+              /\ UNCHANGED
+                   <<requestState, requestKey, requestGeneration,
+                     requestLifecycle>>
+         ELSE /\ outcome' = CacheMiss
+              /\ requestState' =
+                   [requestState EXCEPT ![request] = Computing]
+              /\ requestKey' = [requestKey EXCEPT ![request] = key]
+              /\ requestGeneration' =
+                   [requestGeneration EXCEPT ![request] = activeGeneration]
+              /\ requestLifecycle' =
+                   [requestLifecycle EXCEPT ![request] = lifecycle]
+      /\ UNCHANGED
+           <<activeGeneration, lifecycle, entries, entryGeneration,
+             entryLifecycle, detachedPublications>>
+
+PublishOrDiscard ==
+  \E request \in Requests:
+    /\ requestState[request] = Computing
+    /\ chosenRequest' = request
+    /\ chosenKey' = requestKey[request]
+    /\ requestState' = [requestState EXCEPT ![request] = Idle]
+    /\ IF /\ requestGeneration[request] = activeGeneration
+          /\ requestLifecycle[request] = lifecycle
+          /\ requestKey[request] \notin entries
+          /\ Cardinality(entries) < Budget
+       THEN /\ entries' = entries \union {requestKey[request]}
+            /\ entryGeneration' =
+                 [entryGeneration EXCEPT
+                    ![requestKey[request]] = activeGeneration]
+            /\ entryLifecycle' =
+                 [entryLifecycle EXCEPT ![requestKey[request]] = lifecycle]
+            /\ outcome' = PublicationRetained
+            /\ UNCHANGED detachedPublications
+       ELSE /\ UNCHANGED <<entries, entryGeneration, entryLifecycle>>
+            /\ outcome' = PublicationDropped
+            /\ detachedPublications' =
+                 detachedPublications +
+                 (IF requestLifecycle[request] # lifecycle THEN 1 ELSE 0)
     /\ UNCHANGED
-      <<activeGeneration, lifecycle, orphanPublications>>
+         <<activeGeneration, lifecycle, requestKey, requestGeneration,
+           requestLifecycle>>
 
-JoinOrRead ==
-  \E key \in Keys:
-    /\ chosenKey' = key
-    /\ outcome' =
-      IF /\ entryState[key] = Complete
-         /\ capturedGeneration[key] = activeGeneration
-         /\ capturedLifecycle[key] = lifecycle
-      THEN CacheHit
-      ELSE IF /\ entryState[key] = Computing
-              /\ capturedGeneration[key] = activeGeneration
-              /\ capturedLifecycle[key] = lifecycle
-           THEN SingleFlightJoin
-      ELSE CacheMiss
-    /\ UNCHANGED
-      <<activeGeneration, lifecycle, entryState, capturedGeneration,
-        capturedLifecycle, entryWeight, admittedWeight,
-        orphanPublications>>
-
-PublishComplete ==
-  \E key \in Keys:
-    /\ entryState[key] = Computing
-    /\ capturedGeneration[key] = activeGeneration
-    /\ capturedLifecycle[key] = lifecycle
-    /\ entryState' = [entryState EXCEPT ![key] = Complete]
-    /\ entryWeight' = [entryWeight EXCEPT ![key] = 1]
-    /\ chosenKey' = key
-    /\ outcome' = NoOutcome
-    /\ UNCHANGED
-      <<activeGeneration, lifecycle, capturedGeneration,
-        capturedLifecycle, admittedWeight, orphanPublications>>
-
-PublishPartial ==
-  \E key \in Keys:
-    /\ entryState[key] = Computing
-    /\ entryState' = [entryState EXCEPT ![key] = Partial]
-    /\ chosenKey' = key
-    /\ outcome' = NoOutcome
-    /\ UNCHANGED
-      <<activeGeneration, lifecycle, capturedGeneration,
-        capturedLifecycle, entryWeight, admittedWeight,
-        orphanPublications>>
-
-FailOrReject ==
-  \E key \in Keys:
-    /\ entryState[key] \in {Computing, Partial}
-    /\ entryState' = [entryState EXCEPT ![key] = Absent]
-    /\ entryWeight' = [entryWeight EXCEPT ![key] = 0]
-    /\ admittedWeight' = admittedWeight - 1
+EvictCompleted ==
+  \E key \in entries:
+    /\ entries' = entries \ {key}
     /\ chosenKey' = key
     /\ outcome' = NoOutcome
     /\ UNCHANGED
-      <<activeGeneration, lifecycle, capturedGeneration,
-        capturedLifecycle, orphanPublications>>
-
-EvictReserved ==
-  \E key \in Keys:
-    /\ key \in ReservedKeys
-    /\ entryState' = [entryState EXCEPT ![key] = Absent]
-    /\ admittedWeight' = admittedWeight - 1
-    /\ entryWeight' = [entryWeight EXCEPT ![key] = 0]
-    /\ chosenKey' = key
-    /\ outcome' = NoOutcome
-    /\ UNCHANGED
-      <<activeGeneration, lifecycle, capturedGeneration,
-        capturedLifecycle, orphanPublications>>
+         <<activeGeneration, lifecycle, entryGeneration, entryLifecycle,
+           requestState, requestKey, requestGeneration, requestLifecycle,
+           chosenRequest, detachedPublications>>
 
 ExpireGeneration ==
   \E generation \in Generations:
     /\ activeGeneration' = generation
     /\ lifecycle' = lifecycle + 1
-    /\ entryState' = [key \in Keys |-> Absent]
-    /\ capturedGeneration' =
-      [key \in Keys |-> activeGeneration']
-    /\ capturedLifecycle' = [key \in Keys |-> lifecycle']
-    /\ entryWeight' = [key \in Keys |-> 0]
-    /\ admittedWeight' = 0
+    /\ entries' = {}
+    /\ entryGeneration' = [key \in Keys |-> generation]
+    /\ entryLifecycle' = [key \in Keys |-> lifecycle']
     /\ outcome' = NoOutcome
-    /\ UNCHANGED <<orphanPublications, chosenKey>>
-
-LateOrphanCompletion ==
-  /\ orphanPublications' = orphanPublications + 1
-  /\ outcome' = NoOutcome
-  /\ UNCHANGED
-    <<activeGeneration, lifecycle, entryState, capturedGeneration,
-      capturedLifecycle, entryWeight, admittedWeight, chosenKey>>
+    /\ UNCHANGED
+         <<requestState, requestKey, requestGeneration, requestLifecycle,
+           chosenKey, chosenRequest, detachedPublications>>
 
 Next ==
-  \/ BeginMiss
-  \/ JoinOrRead
-  \/ PublishComplete
-  \/ PublishPartial
-  \/ FailOrReject
-  \/ EvictReserved
+  \/ LookupOrBeginIndependentMiss
+  \/ PublishOrDiscard
+  \/ EvictCompleted
   \/ ExpireGeneration
-  \/ LateOrphanCompletion
 
-Spec ==
-  Init /\ [][Next]_vars
+Spec == Init /\ [][Next]_vars
 
 =====================================================================

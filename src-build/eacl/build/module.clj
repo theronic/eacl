@@ -12,7 +12,7 @@
   #{"deps.cljs"
     "eacl/formal/generated_runtime.clj"
     "eacl/formal/production_kernel.clj"
-    "eacl/formal/production_kernel_js.cljs"
+    "eacl/formal/production_kernel_cljs.cljs"
     "AcyclicEngine/__default.class"
     "CacheKernel/__default.class"
     "IndexedTraversal/__default.class"

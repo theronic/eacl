@@ -7,7 +7,6 @@
   truth: two schema proofs and two plan compiles per raw list request;
   zero proofs per raw point check). Per-push, no wall-clock assertions."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [datomic.api :as d]
             [eacl.backend.v8 :as backend]
@@ -18,31 +17,11 @@
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as dschema]
             [eacl.engine.v8 :as engine]
+            [eacl.test-support.repo :as repo]
             [eacl.verified-kernel :as verified]))
 
-(defn- repository-root
-  []
-  (loop [candidate (.getCanonicalFile (io/file "."))]
-    (cond
-      (.isFile
-       (io/file
-        candidate
-        "formal/verification/recursive-op-count-envelopes.edn"))
-      candidate
-
-      (nil? (.getParentFile candidate))
-      (throw
-       (ex-info
-        "Could not locate the EACL repository root."
-        {:start (.getCanonicalPath (io/file "."))}))
-
-      :else
-      (recur (.getParentFile candidate)))))
-
 (def ^:private envelopes
-  (-> (io/file
-       (repository-root)
-       "formal/verification/recursive-op-count-envelopes.edn")
+  (-> (repo/file "formal" "verification" "recursive-op-count-envelopes.edn")
       slurp
       edn/read-string
       :work-envelopes))
@@ -107,11 +86,17 @@
 
 (defn- assert-crossing-law!
   [{:keys [drive resume stream-fills advanced]}]
-  (let [fuel (get-in envelopes [:crossing-law :fuel])]
-    (is (= resume stream-fills)
-        "every NeedScan resumes exactly once (:indexed-traversal-resume = :stream-fills)")
-    (is (<= drive (+ stream-fills 1 (quot advanced fuel)))
-        ":indexed-traversal-drive bounded by scans + 1 + fuel-yield allowance")))
+  (let [{:keys [batch-size constant fuel]}
+        (:crossing-law envelopes)
+        batches (quot (+ stream-fills (dec batch-size)) batch-size)
+        fuel-yields (quot advanced fuel)]
+    (is (<= resume stream-fills)
+        "one ordered response wave resumes one or more backend scans")
+    (is (<= drive (+ resume 1 fuel-yields))
+        ":indexed-traversal-drive bounded by response waves + completion + fuel yields")
+    (is (<= (+ drive resume)
+            (+ (* 2 batches) constant fuel-yields))
+        "star crossings <= 2*ceil(streams/batch)+recorded constant")))
 
 (deftest raw-lookup-op-count-test
   (let [e (:raw-lookup-first-50 envelopes)

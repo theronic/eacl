@@ -43,10 +43,12 @@
   :scope-note
   "12.2/12.3 are the recorded 6-10 week Dafny effort (pending-scan
    coverage-invariant generalization via the ghost-view trick;
-   Yielded-on-partial-batch for order determinism; cursor-digest version
+   nonempty fuel-cut batch publication from current state for progress;
+   cursor-digest version
    bump; batched-crossings gate 2*ceil(streams/batch)+constant). They are
    deliberately NOT begun inside eacl-v8-root-fixes sessions that cannot
-   carry a multi-week proof effort; this record is the 12.1 deliverable."}
+   carry a multi-week proof effort; this record is the 12.1 deliverable.
+   EACL-FORMAL-066 supersedes the initially proposed rollback behavior."}
  :scenarios
  {:star-2k
   {:fixture {:shape :star :accounts 2000}

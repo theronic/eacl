@@ -1,12 +1,19 @@
 # eacl-v8-root-fixes — session handoff
 
+> **Historical checkpoint, not release evidence.** The later
+> `demand-bounded-authorization-execution` change supersedes this handoff's
+> single-flight, sorted-recursive-keyset, implicit completion, DataScript
+> history, and authorization-lock assumptions. Counts, digests, performance
+> observations, and commands below describe an intermediate worktree. Current
+> normative behavior lives in the later change's specs; current certification
+> evidence lives in `formal/verification/manifest.edn` and
+> `formal/verification/final-assurance-audit.md`.
+
 Checkpoint for a fresh session with none of the prior context. Read this,
 then `proposal.md` → `design.md` → `tasks.md` → `specs/**`. Progress:
-**48/54 tasks** — groups 1–8 complete, 9 complete except two recorded
-Datomic sub-items, 11.1–11.3 complete, 12.1 recorded (**:triggered**).
-Remaining engineering: the two Datomic 9.x sub-items, group 10 (CLJS
-engine — the one large remaining build), 11.4 (Dafny cleanup, may trail),
-and 12.2–12.3 (wave batching — triggered, its own multi-week track).
+**54/54 primary tasks and all triggered follow-ons are complete.** Groups
+11.4 and 12.2–12.3 landed in the final pass. Only 6.4 remains deferred with
+its recorded synchronous-CLJS-crypto cause.
 
 ## What this change is
 
@@ -23,11 +30,10 @@ sanctioned.
 
 ## Where the code lives (critical)
 
-- **This worktree** is
-  `/Users/petrus/Code/eacl/.claude/worktrees/eacl-v8-correctness-optimization-a58fe3`
-  on branch `claude/eacl-v8-correctness-optimization-a58fe3` — the v8
-  lineage plus this change's commits. Module layout: `modules/eacl` (core,
-  `.cljc`), `modules/eacl-datomic|-datahike|-datascript`.
+- **This worktree** is `/Users/petrus/Code/eacl`, checked out detached at the
+  requested v8 commit `c757d3ddea925ef8eb7d96a24fc569ab22642b94` with the
+  OpenSpec implementation in the working tree. Module layout: `modules/eacl`
+  (core, `.cljc`), `modules/eacl-datomic|-datahike|-datascript`.
 - **NOT `main`** — main is v7.3. The audit's read-only reference copy of the
   pre-change v8 tip is `/Users/petrus/.codex/worktrees/4916/eacl` (branch
   `codex/restore-v8-enumeration-performance`); diff against it, never edit it.
@@ -41,15 +47,12 @@ sanctioned.
 
 ## How to work in this repo (hard-won gotchas)
 
-1. **Stale-nREPL mixing produces false test results.** After any src change
-   that matters, verify on a FRESH JVM:
-   `clojure -M:dev -e "(require 'the.ns :reload) ..."` or run suites via a
-   fresh `clojure -M:dev -e "(require 'clojure.test 'ns1 ...) (run-tests ...)"`.
-   Always double-quote code args (single quotes strip `!`). When piping
-   output, remember the pipe eats the exit code — write to a log file and
-   `echo $?` (this bit us once tonight: a "green" run had 2 failures).
-2. **Forward references bite on cold compile but not warm REPL.** Finish with
-   a cold `clojure -M:dev -e "(require ...)"` before committing.
+1. **Stale-nREPL mixing produces false test results.** Run every Clojure test
+   through `clj-nrepl-eval` against a fresh nREPL and require changed
+   namespaces with `:reload`. If a renamed test Var remains in a persistent
+   namespace, `remove-ns` before the reload.
+2. **Forward references bite on warm reloads.** Finish with a fresh nREPL
+   namespace load; do not use the Clojure CLI as a test runner.
 3. **Public source-closure ledger.** Touching public engine/backend src
    changes the reachable-var closure; CI enforces it. Regenerate with
    `node bin/public-source-closure.mjs write` then `... check`. The ROOTS
@@ -86,9 +89,9 @@ sanctioned.
    eacl.datomic.lookup-cache-test eacl.datomic.cache-differential-test
    eacl.datomic.cache-model-test eacl.datomic.trusted-surface-audit-test
    eacl.formal.counterexample-replay-test eacl.characterization-fixture-test`.
-   Formal smoke: `clojure -M:dev:formal-smoke -e "(require ... 'eacl.formal.production-kernel-test) ..."`.
-   CLJS: `clojure -M:datascript-cljs-test && node target/datascript-cljs-test.js`
-   (failures=0 errors=0). Plus ledger check + reflection gate.
+   Formal smoke and CLJS compilation must likewise be initiated through the
+   running nREPL (`formal/smoke/cljs/run` is the reference wrapper). Plus
+   ledger check + reflection gate.
 
 ## Done (commits, newest first)
 
@@ -118,12 +121,29 @@ sanctioned.
 - `b4e83a6` and earlier — groups 1–6 (see git log and the previous handoff in
   history; group summaries remain accurate in `tasks.md`).
 
-## Remaining work — instructions
+## Completed follow-ons — implementation record
 
 Run items sequentially; they share files with each other far less than the
 finished groups did, but 9.2-tail and 11.4 both touch cursor formats.
 
-### 1. Group 9.2-tail — Datomic relationship pages onto `eacl.engine.relationships`
+### Completed after this handoff: Group 9.2-tail
+
+Datomic relationship pages now execute through `eacl.engine.relationships`
+with the shared `:relationship-index` cursor edge. The Datomic page-token
+version was bumped so tokens carrying the retired private edge fail as typed
+invalid cursors. Focused API, implementation, contract, codec, and Spice suites
+were re-goldened and passed.
+
+### Completed after this handoff: Group 9.3-Datomic
+
+Datomic construction now uses the shared `:security-*`,
+`:cursor-ttl-seconds`, and `:object-id->lookup-ref` names. Its old spellings
+remain non-mixable legacy aliases, Zed-token options are documented Datomic
+extensions, and unknown-option errors expose the shared key shape. The
+decorative provider-store option is rejected; the canonical
+`eacl.cache/no-cache` value controls the real private stores.
+
+### 1. Group 9.2-tail — Datomic relationship pages onto `eacl.engine.relationships` (DONE)
 
 Replace `eacl.datomic.impl/relationship-page` (impl.clj ~440–525: the
 private scan-plan/relationship-datoms machinery over `d/seek-datoms` with
@@ -158,7 +178,7 @@ edges are `{:kind :relationship-index :v 1 :scan-index n :subject-id eid
    Datomic and must stay green.
 5. Update the closure-ledger roots if any datomic fn named there dies.
 
-### 2. Group 9.3-Datomic — option-family unification
+### 2. Group 9.3-Datomic — option-family unification (DONE)
 
 DS/DH now share `eacl.client.orchestration/base-client-opt-keys`
 (`:security-key(ring)/(kid)`, `:cursor-ttl-seconds`, ...). Datomic still
@@ -175,54 +195,64 @@ provider option: either wire provider adapters back to something real
 demands "options that had no effect now either work or are rejected".
 Re-golden `eacl.datomic.config-test` + `lookup_cache_test` option blocks.
 
-### 3. Group 10 — CLJS production engine (R8; the big one; own sessions)
+### 3. Group 10 — CLJS production engine (R8; DONE)
 
-Design D-8. The switch point is
-`eacl.formal.production-kernel-js/default-selection` (currently
-`{:kernel generated-javascript-kernel}`). The promotion target is the
-handwritten CLJC engine `eacl.engine.indexed`
-(`formal/smoke/clj/eacl/engine/indexed.cljc` — move it back under
-`modules/eacl/src` when promoting). **Honest scoping from this session:**
-the kernel boundary is two protocols in `eacl.verified-kernel`
-(`DecisionKernel/-decide` with ~15 pure decision operations, and
-`IndexedTraversalKernel` — compile/init/drive/resume/continue-page/read —
-the scan-command state machine). Backing those with the handwritten engine
-means writing a handwritten CLJS state machine honoring the generated
-contract, certified by the existing rig
-(`formal/smoke/cljs/.../verified_authority_test_runner.cljs`, cross-runtime
-vectors, 62-case counterexample replay, mutation controls, plus the new
-`eacl.datascript.cache-model-test` already in the CLJS runner). That is
-multi-session work; do NOT start it at the end of a long session. Tractable
-first steps in order: (a) 10.2's rig-against-CLJS-engine job — the
-semantics-bridge differential (`formal/smoke/clj/.../semantics_bridge_test`)
-already compares `eacl.engine.indexed` to the generated kernel on JVM; add
-the CLJS twin to CI. (b) 10.3's `:advanced` build job (expect it red; the
-452 unexterned access sites live in the generated foreign-lib consumers —
-`eacl.formal.production-kernel-js` + `dafny-seq` shim). (c) 10.4's ns/result
-ceiling gate recorded into
-`formal/verification/explorer-v8-release.edn`-style EDN. (d) only then the
-engine swap itself.
+The production CLJS default now composes
+`eacl.engine.portable-decisions` and `eacl.engine.portable-indexed`; the
+generated JavaScript adapter and runtime live only under `formal/smoke/` as
+the differential oracle. The release JAR packages the portable CLJC/CLJS
+sources and generated JVM classes, but no generated browser IIFE, extern, or
+loader metadata.
 
-### 4. Group 11.4 — Dafny cleanup pass (may trail indefinitely)
+CI builds the formal differential runner, full DataScript/core suite, payload
+audit graphs, and indexed benchmark under `:advanced` with warnings-as-errors.
+Local certification passed **44 tests / 9,963 assertions**, **167 tests / 9,556
+assertions**, and the injected portable-authority suite at **165 tests / 4,554
+assertions** with 73 clients and every required traversal operation observed.
+The full counterexample/mutation/characterization/bundle gate passed **71 tests
+/ 18,778 assertions**.
 
-Delete the ordinal rebase family + backward-render mode + `AfterCursor` arm
-from `formal/dafny` (dead generated ops are never invoked, so this is
-proof-tree hygiene, not behavior); retarget or delete `Pagination.dfy`;
-update `formal/verification/assurance-matrix.edn` so every model maps to
-shipped code; regenerate kernels/vectors/manifests via `bin/formal`. Needs a
-Dafny toolchain and the regeneration pipeline; budget a full session.
+`formal/verification/cljs-production.edn` records 8,684 ns/result at the
+16,384-result reference size against a 15,000 ceiling. The portable engine adds
+15,335 raw / 3,409 Java-GZIP bytes over the empty advanced runtime, within the
+32 KiB / 8 KiB budgets and more than an order of magnitude below the retired
+591,497-byte IIFE. The production bundle gate rejects BigNumber and generated
+runtime markers. Browser authorization is explicitly advisory with a required
+generated-JVM server re-check; the native-number Dafny ESM alternative remains
+recorded.
 
-### 5. Groups 12.2–12.3 — wave-batched scan protocol (TRIGGERED)
+### 4. Group 11.4 — Dafny cleanup pass (DONE)
 
-The 12.1 decision is recorded in
-`formal/verification/explorer-v8-recursive-performance.edn`
-(`:batching-trigger-decision`). The proof plan (pending-scans ghost-view
-generalization through `IndexedForwardCompleteness`/`IndexedReverseCompleteness`/
-`IndexedRefinement`; drive returns bounded command batches; resume folds
-ordered responses; fuel exhaustion Yields without partial batches; cursor
-digests version the emission order) lives in the workflow record cited in
-design D-9. 6–10 weeks of Dafny; run it as its own OpenSpec change or a
-dedicated track, not inside a night session.
+`Pagination.dfy` and the ordinal rebase/backward-render/`AfterCursor` surface
+are gone. `PageWindow.dfy` owns the retained normalization, window, keyset, and
+continuation laws. A CI cleanup test checks every active source for the retired
+markers and requires an exact one-to-one mapping from all 26 Dafny files to
+the assurance matrix. The regenerated tree verifies 8,594 proof efforts with
+a 24,106,086 maximum under the 50M deterministic limit.
+
+### 5. Groups 12.2–12.3 — wave-batched scan protocol (DONE)
+
+`IndexedBatching.dfy` implements request-ordered forward/reverse waves of at
+most 64 commands, ordered response folding, and publication of every nonempty
+fuel-cut wave from the current state. `IndexedBatchCompleteness.dfy` gives
+exact pending-scan ghost views and generalized forward/reverse coverage
+invariants. Generated JVM and portable CLJS authorities use the same protocol;
+cursor digests commit emission-order version 2. Independent streams require
+exactly `2×ceil(streams/64)+1` crossings. Current evidence: JVM differential
+51/16,156, CLJS differential 46/9,983 (normal and advanced), crossing gates
+39/8,500, replay 61/18,310, and mutation control 249/249.
+
+The earlier original-state rollback rule was superseded after broad fan-out
+demonstrated that it can repeat the same transition prefix indefinitely when a
+quantum ends with fewer than 64 pending scans. The demand-bounded execution
+change records the corrected progress contract and regenerated evidence.
+
+The post-regeneration all-backend nonbenchmark authority wrapper was also
+started after its stale `watermark-test` inventory entry was replaced by the
+live trusted-surface audit. It emitted no failure but was interrupted by its
+600-second local timeout while Datahike enumeration was CPU-active, so that
+attempt is not a fresh pass and should not be reported as one. The focused
+OpenSpec completion gates above all completed.
 
 ## Deferred with cause (decisions, not omissions)
 
@@ -236,8 +266,10 @@ dedicated track, not inside a night session.
 
 ## Current perf picture
 
-Unchanged from post-group-5 recording (groups 6–9 don't touch crossing
-counts): star/chain counts 3.7–5.9× v7, deep checks 5.7×–56× (v7
-stack-overflows where v8 completes on chain-10k), raw first-50 pays the
-documented keyset closure trade. The path to ≤2.0× on crossing-dominated
-ops is 12.2 batching (triggered) — everything host-side is done.
+Wave batching replaces the old one-scan-per-round-trip profile. A 128-stream
+independent fixture now produces two 64-command waves and exactly five kernel
+crossings. Populated star recursion fell from roughly 4,067 crossings to about
+99–102, with remaining variance explained by explicitly counted fuel yields.
+The advanced portable CLJS 16,384-result gate measured 8,209 ns/result against
+the 15,000 ceiling with a 0.62 largest/smallest normalized ratio. Raw first-50
+still pays the documented sorted-keyset closure trade.

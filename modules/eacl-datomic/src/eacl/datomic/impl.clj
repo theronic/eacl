@@ -6,6 +6,7 @@
    [eacl.datomic.backend :as backend]
    [eacl.datomic.impl.base :as base]
    [eacl.datomic.impl.indexed :as impl.indexed]
+   [eacl.engine.relationships :as relationship-engine]
    [eacl.engine.v8 :as engine]
    [eacl.relationships.endpoint-pair :as endpoint-pair]
    [eacl.relationships.filters :as relationship-filters]
@@ -291,265 +292,202 @@
        sort
        vec))
 
-(defn- decode-forward-datom
-  [db relation-by-eid datom]
-  (let [subject-eid (:e datom)
-        [subject-type relation-eid resource-type resource-eid] (:v datom)
-        relation-name (or (get relation-by-eid relation-eid)
-                          (:eacl.relation/relation-name (d/entity db relation-eid)))]
-    (eacl/->Relationship
-     (spice-object subject-type subject-eid)
-     relation-name
-     (spice-object resource-type resource-eid))))
+(defn- relation-def
+  [relation]
+  {:relation-id (:db/id relation)
+   :resource-type (:eacl.relation/resource-type relation)
+   :relation-name (:eacl.relation/relation-name relation)
+   :subject-type (:eacl.relation/subject-type relation)})
 
-(defn- decode-reverse-datom
-  [db relation-by-eid datom]
-  (let [resource-eid (:e datom)
-        [resource-type relation-eid subject-type subject-eid] (:v datom)
-        relation-name (or (get relation-by-eid relation-eid)
-                          (:eacl.relation/relation-name (d/entity db relation-eid)))]
-    (eacl/->Relationship
-     (spice-object subject-type subject-eid)
-     relation-name
-     (spice-object resource-type resource-eid))))
-
-(defn- relationship-matches-filters?
-  [filters {:keys [subject relation resource]}]
-  (and (or (nil? (:subject/type filters))
-           (= (:subject/type filters) (:type subject)))
-       (or (nil? (:subject/id filters))
-           (= (:subject/id filters) (:id subject)))
-       (or (nil? (:resource/type filters))
-           (= (:resource/type filters) (:type resource)))
-       (or (nil? (:resource/id filters))
-           (= (:resource/id filters) (:id resource)))
-       (or (nil? (:resource/relation filters))
-           (= (:resource/relation filters) relation))))
-
-(defn- single-relation-hint
-  [relations]
-  (when (= 1 (count relations))
-    (let [relation (first relations)]
-      {:relation-eid (:db/id relation)
-       :subject-type (:eacl.relation/subject-type relation)
-       :resource-type (:eacl.relation/resource-type relation)})))
-
-(defn- forward-tuple-prefix
-  [filters relation-hint]
-  (let [subject-type (or (:subject/type filters) (:subject-type relation-hint))
-        relation-eid (:relation-eid relation-hint)
-        resource-type (or (:resource/type filters) (:resource-type relation-hint))]
-    (cond-> []
-      subject-type (conj subject-type)
-      (and subject-type relation-eid) (conj relation-eid)
-      (and subject-type relation-eid resource-type) (conj resource-type))))
-
-(defn- reverse-tuple-prefix
-  [filters relation-hint]
-  (let [resource-type (or (:resource/type filters) (:resource-type relation-hint))
-        relation-eid (:relation-eid relation-hint)
-        subject-type (or (:subject/type filters) (:subject-type relation-hint))]
-    (cond-> []
-      resource-type (conj resource-type)
-      (and resource-type relation-eid) (conj relation-eid)
-      (and resource-type relation-eid subject-type) (conj subject-type))))
-
-(defn- scan-plan
-  [db filters subject-eid resource-eid relations]
-  (let [relation-hint (single-relation-hint relations)]
-    (cond
-      subject-eid
-      {:key :subject-forward
-       :index :eavt
-       :attr-eid (d/entid db relationship-storage/forward-attribute)
-       :fixed-eid subject-eid
-       :tuple-prefix (not-empty (forward-tuple-prefix filters relation-hint))
-       :decode decode-forward-datom}
-
-      resource-eid
-      {:key :resource-reverse
-       :index :eavt
-       :attr-eid (d/entid db relationship-storage/reverse-attribute)
-       :fixed-eid resource-eid
-       :tuple-prefix (not-empty (reverse-tuple-prefix filters relation-hint))
-       :decode decode-reverse-datom}
-
-      (seq (forward-tuple-prefix filters relation-hint))
-      {:key :global-forward
-       :index :avet
-       :attr-eid (d/entid db relationship-storage/forward-attribute)
-       :tuple-prefix (forward-tuple-prefix filters relation-hint)
-       :decode decode-forward-datom}
-
-      :else
-      {:key :global-reverse
-       :index :avet
-       :attr-eid (d/entid db relationship-storage/reverse-attribute)
-       :tuple-prefix (not-empty (reverse-tuple-prefix filters relation-hint))
-       :decode decode-reverse-datom})))
-
-(defn- relationship-edge
-  [scan-key datom]
-  {:kind :relationship
-   :scan scan-key
-   :e (:e datom)
-   :v (vec (:v datom))})
-
-(defn- same-edge-datom?
-  [edge datom]
-  (and (= (:e edge) (:e datom))
-       (= (:v edge) (vec (:v datom)))))
-
-(defn- tuple-prefix?
-  [prefix tuple]
-  (or (empty? prefix)
-      (= prefix (subvec (vec tuple) 0 (count prefix)))))
-
-(defn- reverse-start-tuple
-  [prefix]
-  (if (seq prefix)
-    (conj (vec prefix) Long/MAX_VALUE)
-    nil))
-
-(defn- unbounded-scan-components
-  [{:keys [index attr-eid fixed-eid tuple-prefix]} direction]
-  (case index
-    :eavt
-    (cond-> [fixed-eid attr-eid]
-      (and (= direction :asc) (seq tuple-prefix)) (conj (vec tuple-prefix))
-      (and (= direction :desc) (seq tuple-prefix)) (conj (reverse-start-tuple tuple-prefix)))
-
-    :avet
-    (cond-> [attr-eid]
-      (and (= direction :asc) (seq tuple-prefix)) (conj (vec tuple-prefix))
-      (and (= direction :desc) (seq tuple-prefix)) (conj (reverse-start-tuple tuple-prefix)))))
-
-(defn- bound-scan-components
-  [{:keys [index attr-eid fixed-eid]} bound]
-  (case index
-    :eavt [fixed-eid attr-eid (:v bound)]
-    :avet [attr-eid (:v bound) (:e bound)]))
-
-(defn- scan-components
-  [plan direction bound]
-  (if bound
-    (bound-scan-components plan bound)
-    (unbounded-scan-components plan direction)))
-
-(defn- validate-relationship-bound!
-  [{:keys [key fixed-eid]} bound]
-  (when bound
-    (when-not (= :relationship (:kind bound))
-      (throw (ex-info "Relationship page cursor has the wrong kind."
-                      {:kind (:kind bound)})))
-    (when-not (= key (:scan bound))
-      (throw (ex-info "Relationship page cursor does not match the selected scan."
-                      {:expected key
-                       :actual (:scan bound)})))
-    (when (and fixed-eid (not= fixed-eid (:e bound)))
-      (throw (ex-info "Relationship page cursor does not match the selected anchor."
-                      {:expected fixed-eid
-                       :actual (:e bound)})))))
-
-(defn- matching-index-datom?
-  [{:keys [index attr-eid fixed-eid tuple-prefix]} datom]
-  (and (== attr-eid (:a datom))
-       (case index
-         :eavt (== fixed-eid (:e datom))
-         :avet true)
-       (tuple-prefix? tuple-prefix (:v datom))))
-
-(defn- relationship-datoms
-  [db plan direction bound]
-  (let [components (scan-components plan direction bound)
-        datoms (case direction
-                 :asc (apply d/seek-datoms db (:index plan) components)
-                 :desc (apply d/rseek-datoms db (:index plan) components))]
-    (->> datoms
-         (take-while #(matching-index-datom? plan %))
-         (drop-while #(and bound (same-edge-datom? bound %))))))
-
-(defn- relation-eid
-  [datom]
-  (nth (:v datom) 1))
-
-(defn- relationship-item
-  [db relation-by-eid scan-key decode datom]
-  {:node (decode db relation-by-eid datom)
-   :cursor (relationship-edge scan-key datom)})
-
-(defn- relationship-page
-  [db relations filters subject-eid resource-eid]
-  (let [{:keys [direction size bound]} (impl.indexed/normalize-page-request filters)
-        plan (scan-plan db filters subject-eid resource-eid relations)
-        relation-by-eid (into {}
-                              (map (juxt :db/id :eacl.relation/relation-name))
-                              relations)
-        relation-eids (set (keys relation-by-eid))]
-    (validate-relationship-bound! plan bound)
-    (if (empty? relation-eids)
-      ;; A valid relation-name/type filter that resolves to no schema relation
-      ;; is a proved-empty query. Falling into the generic plan here scanned
-      ;; the entire global relationship index only to reject every datom.
-      {:data []
-       :page-info {:start-cursor nil
-                   :end-cursor nil
-                   :has-next-page? false
-                   :has-previous-page? false}}
-      (let [matching-items
-            (->> (relationship-datoms db plan direction bound)
-                 (filter #(contains? relation-eids (relation-eid %)))
-                 (map #(relationship-item db relation-by-eid
-                                          (:key plan) (:decode plan) %))
-                 (filter #(relationship-matches-filters? filters (:node %))))
-            realized (doall (take (inc size) matching-items))
-            items (mapv identity
+(defn- endpoint-datoms
+  [db endpoint attr prefix cursor-eid direction]
+  (let [attr-eid (d/entid db attr)
+        bound (conj prefix
+                    (or cursor-eid
                         (case direction
-                          :asc (take size realized)
-                          :desc (reverse (take size realized))))
-            any? (boolean (seq items))]
-        ;; An empty page carries no cursors, so it can advertise neither
-        ;; direction — see eacl.datomic.impl.indexed/page-response.
-        {:data (mapv :node items)
-         :page-info {:start-cursor (some-> items first :cursor)
-                     :end-cursor (some-> items last :cursor)
-                     :has-next-page? (and any?
-                                          (case direction
-                                            :asc (> (count realized) size)
-                                            :desc (boolean bound)))
-                     :has-previous-page? (and any?
-                                              (case direction
-                                                :asc (boolean bound)
-                                                :desc (> (count realized)
-                                                         size)))}}))))
+                          :asc 0
+                          :desc Long/MAX_VALUE)))
+        datoms ((case direction
+                  :asc d/seek-datoms
+                  :desc d/rseek-datoms)
+                db :eavt endpoint attr-eid bound)]
+    (take-while
+     (fn [{:keys [e a v]}]
+       (and (== endpoint e)
+            (== attr-eid a)
+            (endpoint-pair/value-prefix? v prefix)))
+     datoms)))
+
+(defn- global-endpoint-datoms
+  [db attr prefix cursor-eid cursor-endpoint direction]
+  (let [attr-eid (d/entid db attr)
+        bound (conj prefix
+                    (or cursor-eid
+                        (case direction
+                          :asc 0
+                          :desc Long/MAX_VALUE)))
+        components (cond-> [attr-eid bound]
+                     cursor-endpoint (conj cursor-endpoint))
+        datoms (apply (case direction
+                        :asc d/seek-datoms
+                        :desc d/rseek-datoms)
+                      db :avet components)]
+    (take-while
+     (fn [{:keys [a v]}]
+       (and (== attr-eid a)
+            (endpoint-pair/value-prefix? v prefix)))
+     datoms)))
 
 (defn read-relationships
-  [db filters]
-  ;; The unified filter contract shared by every backend
-  ;; (backend-unification 9.1). Value-presence anchor semantics: a
-  ;; present-but-nil anchor throws instead of widening the read.
-  (relationship-filters/validate! filters)
-  (let [relations    (find-relations db filters)
-        subject-id    (:subject/id filters)
-        resource-id   (:resource/id filters)
-        ;; object-eid, not d/entid: a raw-impl caller passing a string id got a
-        ;; bare :db.error/not-a-keyword out of Datomic.
-        subject-eid  (when (some? subject-id) (impl.indexed/object-eid db subject-id))
-        resource-eid (when (some? resource-id) (impl.indexed/object-eid db resource-id))
-        normalized-filters (cond-> filters
-                             subject-eid (assoc :subject/id subject-eid)
-                             resource-eid (assoc :resource/id resource-eid))]
-    (cond
-      (and subject-id (nil? subject-eid))
-      (throw (ex-info "read-relationships is missing a valid :subject/id."
-                      {:subject/id subject-id}))
+  ([db filters]
+   (read-relationships db filters nil))
+  ([db filters decision-kernel]
+   ;; The unified filter contract shared by every backend
+   ;; (backend-unification 9.1). Value-presence anchor semantics: a
+   ;; present-but-nil anchor throws instead of widening the read.
+   (relationship-filters/validate! filters)
+   (let [relations (find-relations db filters)
+         subject-id (:subject/id filters)
+         resource-id (:resource/id filters)
+         ;; object-eid, not d/entid: a raw-impl caller passing a string id got a
+         ;; bare :db.error/not-a-keyword out of Datomic.
+         subject-eid (when (some? subject-id)
+                       (impl.indexed/object-eid db subject-id))
+         resource-eid (when (some? resource-id)
+                        (impl.indexed/object-eid db resource-id))
+         normalized-filters (cond-> filters
+                              subject-eid (assoc :subject/id subject-eid)
+                              resource-eid (assoc :resource/id resource-eid))]
+     (cond
+       (and subject-id (nil? subject-eid))
+       (throw (ex-info "read-relationships is missing a valid :subject/id."
+                       {:subject/id subject-id}))
 
-      (and resource-id (nil? resource-eid))
-      (throw (ex-info "read-relationships is missing a valid :resource/id."
-                      {:resource/id resource-id}))
+       (and resource-id (nil? resource-eid))
+       (throw (ex-info "read-relationships is missing a valid :resource/id."
+                       {:resource/id resource-id}))
 
-      :else
-      (relationship-page db relations normalized-filters subject-eid resource-eid))))
+       :else
+       (letfn [(relationship-row [spec subject-id resource-id]
+                 {:spec-idx (:idx spec)
+                  :subject-id subject-id
+                  :resource-id resource-id
+                  :relationship
+                  (eacl/->Relationship
+                   (spice-object (:subject-type spec) subject-id)
+                   (:relation-name spec)
+                   (spice-object (:resource-type spec) resource-id))})
+               (drop-until-beyond-cursor [spec cursor direction rows]
+                 (drop-while
+                  #(not
+                    (relationship-engine/beyond-cursor?
+                     (:scan-kind spec) direction cursor %))
+                  rows))
+               (exact-match-row [spec cursor direction]
+                 (let [row
+                       (when (and (:subject-id spec) (:resource-id spec))
+                         (when
+                          (seq
+                           (d/datoms
+                            db :eavt
+                            (:subject-id spec)
+                            relationship-storage/forward-attribute
+                            (endpoint-pair/forward-value
+                             (:subject-type spec)
+                             (:relation-id spec)
+                             (:resource-type spec)
+                             (:resource-id spec))))
+                           (relationship-row
+                            spec (:subject-id spec) (:resource-id spec))))]
+                   (if row
+                     (drop-until-beyond-cursor
+                      spec cursor direction [row])
+                     [])))
+               (scan-forward-anchored [spec cursor direction]
+                 (if (:resource-id spec)
+                   (exact-match-row spec cursor direction)
+                   (->> (endpoint-datoms
+                         db
+                         (:subject-id spec)
+                         relationship-storage/forward-attribute
+                         [(:subject-type spec)
+                          (:relation-id spec)
+                          (:resource-type spec)]
+                         (:resource-id cursor)
+                         direction)
+                        (map
+                         (fn [{:keys [v]}]
+                           (relationship-row
+                            spec (:subject-id spec) (nth v 3))))
+                        (drop-until-beyond-cursor
+                         spec cursor direction))))
+               (scan-reverse-anchored [spec cursor direction]
+                 (if (:subject-id spec)
+                   (exact-match-row spec cursor direction)
+                   (->> (endpoint-datoms
+                         db
+                         (:resource-id spec)
+                         relationship-storage/reverse-attribute
+                         [(:resource-type spec)
+                          (:relation-id spec)
+                          (:subject-type spec)]
+                         (:subject-id cursor)
+                         direction)
+                        (map
+                         (fn [{:keys [v]}]
+                           (relationship-row
+                            spec (nth v 3) (:resource-id spec))))
+                        (drop-until-beyond-cursor
+                         spec cursor direction))))
+               (scan-forward-partial [spec cursor direction]
+                 (->> (global-endpoint-datoms
+                       db
+                       relationship-storage/forward-attribute
+                       [(:subject-type spec)
+                        (:relation-id spec)
+                        (:resource-type spec)]
+                       (:resource-id cursor)
+                       (:subject-id cursor)
+                       direction)
+                      (map
+                       (fn [{:keys [e v]}]
+                         (relationship-row spec e (nth v 3))))
+                      (drop-until-beyond-cursor
+                       spec cursor direction)))
+               (scan-reverse-partial [spec cursor direction]
+                 (->> (global-endpoint-datoms
+                       db
+                       relationship-storage/reverse-attribute
+                       [(:resource-type spec)
+                        (:relation-id spec)
+                        (:subject-type spec)]
+                       (:subject-id cursor)
+                       (:resource-id cursor)
+                       direction)
+                      (map
+                       (fn [{:keys [e v]}]
+                         (relationship-row spec (nth v 3) e)))
+                      (drop-until-beyond-cursor
+                       spec cursor direction)))
+               (scan-spec [spec cursor direction]
+                 (case (:scan-kind spec)
+                   :forward-anchored
+                   (scan-forward-anchored spec cursor direction)
+
+                   :reverse-anchored
+                   (scan-reverse-anchored spec cursor direction)
+
+                   :forward-partial
+                   (scan-forward-partial spec cursor direction)
+
+                   (scan-reverse-partial spec cursor direction)))]
+         (relationship-engine/execute-page
+          (relationship-engine/plan-scans
+           (mapv relation-def relations)
+           normalized-filters)
+          normalized-filters
+          decision-kernel
+          scan-spec))))))
 
 ;; --- Object deletion --------------------------------------------------------
 ;;

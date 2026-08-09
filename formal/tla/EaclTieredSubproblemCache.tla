@@ -7,6 +7,8 @@ CONSTANTS
   \* @type: Set(Int);
   Keys,
   \* @type: Set(Int);
+  Requests,
+  \* @type: Set(Int);
   Tiers,
   \* @type: Int;
   ProjectionTier,
@@ -17,61 +19,44 @@ CONSTANTS
   \* @type: Int;
   DenotationBudget,
   \* @type: Int;
-  CandidateBound,
-  \* @type: Int;
-  ExecutionBound,
-  \* @type: Int;
   MaximumLifecycle,
+  \* Mutation controls.
   \* @type: Bool;
   AllowPartialHit,
   \* @type: Bool;
-  AllowStaleHit,
-  \* @type: Bool;
-  AllowDuplicateStart,
-  \* @type: Bool;
   PublishLateOrphan,
   \* @type: Bool;
-  CoupleTierBudgets,
-  \* @type: Bool;
-  EvictIncompleteAndDropFlight,
-  \* @type: Bool;
-  AllowObsoleteFlightJoin
+  CoupleTierBudgets
 
 ASSUME
   /\ Generations # {}
   /\ Keys # {}
+  /\ Requests # {}
   /\ 0 \in Generations
   /\ 0 \in Keys
+  /\ 0 \in Requests
   /\ ProjectionTier # DenotationTier
   /\ Tiers = {ProjectionTier, DenotationTier}
   /\ 0 < ProjectionBudget
   /\ 0 < DenotationBudget
-  /\ 0 < CandidateBound
-  /\ 0 < ExecutionBound
   /\ 0 < MaximumLifecycle
 
-Absent == 0
-Waiting == 1
-Computing == 2
-Partial == 3
-Complete == 4
-Failed == 5
-EntryStates == {Absent, Waiting, Computing, Partial, Complete, Failed}
+Idle == 0
+Computing == 1
+RequestStates == {Idle, Computing}
 
 NoOutcome == 0
 CacheHit == 1
 CacheMiss == 2
-SingleFlightJoin == 3
-OrphanDropped == 4
+PublicationRetained == 3
+PublicationDropped == 4
 Outcomes ==
-  {NoOutcome, CacheHit, CacheMiss, SingleFlightJoin, OrphanDropped}
+  {NoOutcome, CacheHit, CacheMiss, PublicationRetained, PublicationDropped}
 
 TierBudget(tier) ==
-  IF tier = ProjectionTier
-  THEN ProjectionBudget
-  ELSE DenotationBudget
+  IF tier = ProjectionTier THEN ProjectionBudget ELSE DenotationBudget
 
-AdmissionTierBudget(tier) ==
+AdmissionBudget(tier) ==
   IF CoupleTierBudgets
   THEN ProjectionBudget + DenotationBudget
   ELSE TierBudget(tier)
@@ -81,583 +66,234 @@ VARIABLES
   activeGeneration,
   \* @type: Int;
   lifecycle,
-  \* @type: Int -> (Int -> Int);
-  entryState,
+  \* @type: Int -> Set(Int);
+  completeEntries,
+  \* Partial values are never answer artifacts in the unmutated model.
+  \* @type: Int -> Set(Int);
+  partialEntries,
   \* @type: Int -> (Int -> Int);
   capturedGeneration,
   \* @type: Int -> (Int -> Int);
   capturedLifecycle,
-  \* @type: Int -> (Int -> Int);
-  entryWeight,
   \* @type: Int -> Int;
   admittedWeight,
+  \* Request-owned computation is separate from cache representation.
+  \* @type: Int -> Int;
+  requestState,
+  \* @type: Int -> Int;
+  requestTier,
+  \* @type: Int -> Int;
+  requestKey,
+  \* @type: Int -> Int;
+  requestGeneration,
+  \* @type: Int -> Int;
+  requestLifecycle,
   \* @type: Int;
   chosenTier,
   \* @type: Int;
   chosenKey,
   \* @type: Int;
+  chosenRequest,
+  \* @type: Int;
   outcome,
   \* @type: Int;
-  orphanPublicationCount,
-  \* @type: Int;
-  actualActiveComputations,
-  \* Flight ownership is coordinator state, indexed by the lifecycle ticket
-  \* as well as tier and key. Expiry may therefore detach an old flight while
-  \* a new-lifecycle flight for the same tier/key waits or executes.
-  \* @type: <<Int, Int, Int>> -> Bool;
-  flightOwner,
-  \* @type: <<Int, Int, Int>> -> Int;
-  actualCount
+  orphanPublicationCount
 
 vars ==
-  <<activeGeneration, lifecycle, entryState, capturedGeneration,
-    capturedLifecycle, entryWeight, admittedWeight, chosenTier,
-    chosenKey, outcome, orphanPublicationCount,
-    actualActiveComputations, flightOwner, actualCount>>
-
-\* @type: Set(<<Int, Int>>);
-Addresses == Tiers \X Keys
-
-\* Apalache 0.58.3 cannot check inductiveness over a three-level nested
-\* finite-function type. A tuple-keyed function expresses the same product
-\* state without adding a semantic abstraction.
-\* @type: Set(<<Int, Int, Int>>);
-FlightAddresses == (0..MaximumLifecycle) \X Tiers \X Keys
-
-\* @type: Set(<<Int, Int>>);
-CompleteAddresses ==
-  UNION
-    {IF entryState[tier][key] = Complete
-     THEN {<<tier, key>>}
-     ELSE {}:
-       tier \in Tiers, key \in Keys}
-
-\* @type: Set(<<Int, Int>>);
-InflightAddresses ==
-  UNION
-    {IF entryState[tier][key] \in {Waiting, Computing, Partial}
-     THEN {<<tier, key>>}
-     ELSE {}:
-       tier \in Tiers, key \in Keys}
-
-\* @type: Set(<<Int, Int>>);
-ActiveRepresentedAddresses ==
-  UNION
-    {IF entryState[tier][key] \in {Computing, Partial}
-     THEN {<<tier, key>>}
-     ELSE {}:
-       tier \in Tiers, key \in Keys}
-
-\* @type: Set(<<Int, Int, Int>>);
-ActiveExecutionAddresses ==
-  UNION
-    {IF 0 < actualCount[<<flightLifecycle, tier, key>>]
-     THEN {<<flightLifecycle, tier, key>>}
-     ELSE {}:
-       flightLifecycle \in 0..MaximumLifecycle,
-       tier \in Tiers,
-       key \in Keys}
-
-\* @type: Set(<<Int, Int, Int>>);
-RegisteredFlightAddresses ==
-  UNION
-    {IF flightOwner[<<flightLifecycle, tier, key>>]
-     THEN {<<flightLifecycle, tier, key>>}
-     ELSE {}:
-       flightLifecycle \in 0..MaximumLifecycle,
-       tier \in Tiers,
-       key \in Keys}
-
-\* @type: Set(<<Int, Int>>);
-ReservedAddresses ==
-  CompleteAddresses \union InflightAddresses
-
-ReservedKeysInTier(tier) ==
-  {key \in Keys:
-    <<tier, key>> \in ReservedAddresses}
+  <<activeGeneration, lifecycle, completeEntries, partialEntries,
+    capturedGeneration, capturedLifecycle, admittedWeight,
+    requestState, requestTier, requestKey, requestGeneration,
+    requestLifecycle, chosenTier, chosenKey, chosenRequest,
+    outcome, orphanPublicationCount>>
 
 TypeOK ==
   /\ activeGeneration \in Generations
   /\ lifecycle \in 0..MaximumLifecycle
-  /\ entryState \in [Tiers -> [Keys -> EntryStates]]
+  /\ completeEntries \in [Tiers -> SUBSET Keys]
+  /\ partialEntries \in [Tiers -> SUBSET Keys]
   /\ capturedGeneration \in [Tiers -> [Keys -> Generations]]
-  /\ capturedLifecycle \in
-     [Tiers -> [Keys -> 0..MaximumLifecycle]]
-  /\ entryWeight \in [Tiers -> [Keys -> 0..1]]
-  /\ admittedWeight \in
-     [Tiers -> 0..(ProjectionBudget + DenotationBudget)]
+  /\ capturedLifecycle \in [Tiers -> [Keys -> 0..MaximumLifecycle]]
+  /\ admittedWeight \in [Tiers -> Nat]
+  /\ requestState \in [Requests -> RequestStates]
+  /\ requestTier \in [Requests -> Tiers]
+  /\ requestKey \in [Requests -> Keys]
+  /\ requestGeneration \in [Requests -> Generations]
+  /\ requestLifecycle \in [Requests -> 0..MaximumLifecycle]
   /\ chosenTier \in Tiers
   /\ chosenKey \in Keys
+  /\ chosenRequest \in Requests
   /\ outcome \in Outcomes
-  /\ orphanPublicationCount \in 0..1
-  /\ actualActiveComputations \in 0..ExecutionBound
-  /\ flightOwner \in [FlightAddresses -> BOOLEAN]
-  /\ actualCount \in [FlightAddresses -> 0..ExecutionBound]
+  /\ orphanPublicationCount \in Nat
 
-TierWeightBounds ==
+SeparateTierWeightBounds ==
+  \A tier \in Tiers: admittedWeight[tier] <= TierBudget(tier)
+
+WeightsMatchCompletedEntries ==
   \A tier \in Tiers:
-    admittedWeight[tier] <= TierBudget(tier)
+    admittedWeight[tier] = Cardinality(completeEntries[tier])
 
-EntryWeightsAreAccounted ==
-  \A tier \in Tiers:
-    /\ admittedWeight[tier] =
-       Cardinality(ReservedKeysInTier(tier))
-    /\ \A key \in Keys:
-      entryWeight[tier][key] =
-        IF key \in ReservedKeysInTier(tier) THEN 1 ELSE 0
+PartialArtifactsNeverHit ==
+  outcome # CacheHit \/ chosenKey \notin partialEntries[chosenTier]
 
-RepresentedCandidatesAreCurrent ==
-  \A address \in ReservedAddresses:
-    /\ capturedGeneration[address[1]][address[2]] =
-       activeGeneration
-    /\ capturedLifecycle[address[1]][address[2]] = lifecycle
+PartialArtifactsRequireMutation ==
+  AllowPartialHit \/
+    \A tier \in Tiers: partialEntries[tier] = {}
 
 HitIsCompleteAndCurrent ==
   outcome # CacheHit \/
-    /\ entryState[chosenTier][chosenKey] = Complete
-    /\ capturedGeneration[chosenTier][chosenKey] =
-       activeGeneration
+    /\ chosenKey \in completeEntries[chosenTier]
+    /\ capturedGeneration[chosenTier][chosenKey] = activeGeneration
     /\ capturedLifecycle[chosenTier][chosenKey] = lifecycle
 
-SingleFlightJoinIsCurrentAndIncomplete ==
-  outcome # SingleFlightJoin \/
-    /\ flightOwner[<<lifecycle, chosenTier, chosenKey>>]
-    /\ entryState[chosenTier][chosenKey] \in
-         {Absent, Failed} \/
-       /\ entryState[chosenTier][chosenKey] \in
-          {Waiting, Computing, Partial}
-       /\ capturedGeneration[chosenTier][chosenKey] =
-          activeGeneration
-       /\ capturedLifecycle[chosenTier][chosenKey] = lifecycle
+NoRequestWaitsForAnother ==
+  \A request \in Requests:
+    requestState[request] \in {Idle, Computing}
 
-PartialRecursiveDenotationNeverHits ==
-  outcome # CacheHit \/
-    chosenTier # DenotationTier \/
-    entryState[chosenTier][chosenKey] = Complete
-
-InflightIsGloballyBounded ==
-  Cardinality(InflightAddresses) <= CandidateBound
-
-ActiveRepresentedFlightsAreAccounted ==
-  \A address \in ActiveRepresentedAddresses:
-    actualCount[
-      <<capturedLifecycle[address[1]][address[2]],
-        address[1],
-        address[2]>>] = 1
-
-IncompleteCandidatesKeepFlightOwnership ==
-  \A address \in InflightAddresses:
-    flightOwner[
-      <<capturedLifecycle[address[1]][address[2]],
-        address[1],
-        address[2]>>]
-
-ActiveExecutionsKeepFlightOwnership ==
-  \A address \in ActiveExecutionAddresses:
-    flightOwner[address]
-
-ExactAddressHasAtMostOneActiveComputation ==
-  \A flightLifecycle \in 0..MaximumLifecycle:
-    \A tier \in Tiers:
-      \A key \in Keys:
-        actualCount[<<flightLifecycle, tier, key>>] <= 1
-
-ActualComputationAccounting ==
-  actualActiveComputations =
-    Cardinality(ActiveExecutionAddresses)
-
-ActualComputationsAreGloballyBounded ==
-  actualActiveComputations <= ExecutionBound
-
-LateCompletionCannotPublish ==
+LatePublicationCannotReachActiveGeneration ==
   orphanPublicationCount = 0
 
 Safety ==
-  /\ TierWeightBounds
-  /\ EntryWeightsAreAccounted
-  /\ RepresentedCandidatesAreCurrent
+  /\ SeparateTierWeightBounds
+  /\ WeightsMatchCompletedEntries
+  /\ PartialArtifactsRequireMutation
+  /\ PartialArtifactsNeverHit
   /\ HitIsCompleteAndCurrent
-  /\ SingleFlightJoinIsCurrentAndIncomplete
-  /\ PartialRecursiveDenotationNeverHits
-  /\ InflightIsGloballyBounded
-  /\ ActiveRepresentedFlightsAreAccounted
-  /\ IncompleteCandidatesKeepFlightOwnership
-  /\ ActiveExecutionsKeepFlightOwnership
-  /\ ExactAddressHasAtMostOneActiveComputation
-  /\ ActualComputationAccounting
-  /\ ActualComputationsAreGloballyBounded
-  /\ LateCompletionCannotPublish
+  /\ NoRequestWaitsForAnother
+  /\ LatePublicationCannotReachActiveGeneration
 
-InductiveInvariant ==
-  /\ TypeOK
-  /\ Safety
+InductiveInvariant == /\ TypeOK /\ Safety
 
 Init ==
   /\ activeGeneration = 0
   /\ lifecycle = 0
-  /\ entryState =
-     [tier \in Tiers |-> [key \in Keys |-> Absent]]
+  /\ completeEntries = [tier \in Tiers |-> {}]
+  /\ partialEntries = [tier \in Tiers |-> {}]
   /\ capturedGeneration =
-     [tier \in Tiers |-> [key \in Keys |-> 0]]
+       [tier \in Tiers |-> [key \in Keys |-> 0]]
   /\ capturedLifecycle =
-     [tier \in Tiers |-> [key \in Keys |-> 0]]
-  /\ entryWeight =
-     [tier \in Tiers |-> [key \in Keys |-> 0]]
+       [tier \in Tiers |-> [key \in Keys |-> 0]]
   /\ admittedWeight = [tier \in Tiers |-> 0]
+  /\ requestState = [request \in Requests |-> Idle]
+  /\ requestTier = [request \in Requests |-> ProjectionTier]
+  /\ requestKey = [request \in Requests |-> 0]
+  /\ requestGeneration = [request \in Requests |-> 0]
+  /\ requestLifecycle = [request \in Requests |-> 0]
   /\ chosenTier = ProjectionTier
   /\ chosenKey = 0
+  /\ chosenRequest = 0
   /\ outcome = NoOutcome
   /\ orphanPublicationCount = 0
-  /\ actualActiveComputations = 0
-  /\ flightOwner =
-     [address \in FlightAddresses |-> FALSE]
-  /\ actualCount =
-     [address \in FlightAddresses |-> 0]
 
-BeginMiss ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] \in {Absent, Failed}
-      /\ ~flightOwner[<<lifecycle, tier, key>>]
-      /\ Cardinality(InflightAddresses) < CandidateBound
-      /\ admittedWeight[tier] + 1 <= AdmissionTierBudget(tier)
-      /\ entryState' =
-         [entryState EXCEPT ![tier][key] = Waiting]
-      /\ capturedGeneration' =
-         [capturedGeneration EXCEPT
-           ![tier][key] = activeGeneration]
-      /\ capturedLifecycle' =
-         [capturedLifecycle EXCEPT ![tier][key] = lifecycle]
-      /\ entryWeight' =
-         [entryWeight EXCEPT ![tier][key] = 1]
-      /\ admittedWeight' =
-         [admittedWeight EXCEPT ![tier] = @ + 1]
-      /\ flightOwner' =
-         [flightOwner EXCEPT
-           ![<<lifecycle, tier, key>>] = TRUE]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = CacheMiss
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, orphanPublicationCount,
-          actualActiveComputations, actualCount>>
+LookupOrBeginIndependentMiss ==
+  \E request \in Requests:
+    \E tier \in Tiers:
+      \E key \in Keys:
+        /\ requestState[request] = Idle
+        /\ chosenRequest' = request
+        /\ chosenTier' = tier
+        /\ chosenKey' = key
+        /\ IF /\ \/ key \in completeEntries[tier]
+                      \/ /\ AllowPartialHit
+                         /\ key \in partialEntries[tier]
+              /\ capturedGeneration[tier][key] = activeGeneration
+              /\ capturedLifecycle[tier][key] = lifecycle
+           THEN /\ outcome' = CacheHit
+                /\ UNCHANGED
+                     <<requestState, requestTier, requestKey,
+                       requestGeneration, requestLifecycle>>
+           ELSE /\ outcome' = CacheMiss
+                /\ requestState' =
+                     [requestState EXCEPT ![request] = Computing]
+                /\ requestTier' = [requestTier EXCEPT ![request] = tier]
+                /\ requestKey' = [requestKey EXCEPT ![request] = key]
+                /\ requestGeneration' =
+                     [requestGeneration EXCEPT
+                        ![request] = activeGeneration]
+                /\ requestLifecycle' =
+                     [requestLifecycle EXCEPT ![request] = lifecycle]
+        /\ UNCHANGED
+             <<activeGeneration, lifecycle, completeEntries, partialEntries,
+               capturedGeneration, capturedLifecycle, admittedWeight,
+               orphanPublicationCount>>
 
-StartRepresentedCompute ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] = Waiting
-      /\ flightOwner[
-           <<capturedLifecycle[tier][key], tier, key>>]
-      /\ actualCount[
-           <<capturedLifecycle[tier][key], tier, key>>] = 0
-      /\ actualActiveComputations < ExecutionBound
-      /\ entryState' =
-         [entryState EXCEPT ![tier][key] = Computing]
-      /\ actualActiveComputations' =
-         actualActiveComputations + 1
-      /\ actualCount' =
-         [actualCount EXCEPT
-           ![<<capturedLifecycle[tier][key], tier, key>>] = 1]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, capturedGeneration,
-          capturedLifecycle, entryWeight, admittedWeight,
-          orphanPublicationCount, flightOwner>>
+PublishOrDiscard ==
+  \E request \in Requests:
+    /\ requestState[request] = Computing
+    /\ chosenRequest' = request
+    /\ chosenTier' = requestTier[request]
+    /\ chosenKey' = requestKey[request]
+    /\ requestState' = [requestState EXCEPT ![request] = Idle]
+    /\ IF /\ \/ PublishLateOrphan
+                \/ /\ requestGeneration[request] = activeGeneration
+                   /\ requestLifecycle[request] = lifecycle
+          /\ requestKey[request] \notin completeEntries[requestTier[request]]
+          /\ admittedWeight[requestTier[request]] <
+             AdmissionBudget(requestTier[request])
+       THEN /\ completeEntries' =
+                  [completeEntries EXCEPT
+                    ![requestTier[request]] =
+                      @ \union {requestKey[request]}]
+            /\ capturedGeneration' =
+                 [capturedGeneration EXCEPT
+                   ![requestTier[request]][requestKey[request]] =
+                     requestGeneration[request]]
+            /\ capturedLifecycle' =
+                 [capturedLifecycle EXCEPT
+                   ![requestTier[request]][requestKey[request]] =
+                     requestLifecycle[request]]
+            /\ admittedWeight' =
+                 [admittedWeight EXCEPT ![requestTier[request]] = @ + 1]
+            /\ outcome' = PublicationRetained
+            /\ orphanPublicationCount' =
+                 orphanPublicationCount +
+                 (IF requestLifecycle[request] # lifecycle THEN 1 ELSE 0)
+       ELSE /\ UNCHANGED
+                  <<completeEntries, capturedGeneration,
+                    capturedLifecycle, admittedWeight,
+                    orphanPublicationCount>>
+            /\ outcome' = PublicationDropped
+    /\ UNCHANGED
+         <<activeGeneration, lifecycle, partialEntries, requestTier,
+           requestKey, requestGeneration, requestLifecycle>>
 
-JoinOrRead ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' =
-        IF /\ \/ entryState[tier][key] = Complete
-               \/ /\ AllowPartialHit
-                  /\ entryState[tier][key] = Partial
-           /\ \/ AllowStaleHit
-              \/ /\ capturedGeneration[tier][key] = activeGeneration
-                 /\ capturedLifecycle[tier][key] = lifecycle
-        THEN CacheHit
-             ELSE IF
-                     /\ IF AllowObsoleteFlightJoin
-                        THEN \E flightLifecycle
-                               \in 0..MaximumLifecycle:
-                               flightOwner[
-                                 <<flightLifecycle, tier, key>>]
-                        ELSE flightOwner[
-                               <<lifecycle, tier, key>>]
-                     /\ \/ entryState[tier][key] \in {Absent, Failed}
-                        \/ /\ entryState[tier][key] \in
-                              {Waiting, Computing, Partial}
-                           /\ capturedGeneration[tier][key] =
-                              activeGeneration
-                           /\ capturedLifecycle[tier][key] = lifecycle
-             THEN SingleFlightJoin
-             ELSE CacheMiss
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, entryState,
-          capturedGeneration, capturedLifecycle, entryWeight,
-          admittedWeight, orphanPublicationCount,
-          actualActiveComputations, flightOwner, actualCount>>
-
-PublishComplete ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] \in {Computing, Partial}
-      /\ flightOwner[
-           <<capturedLifecycle[tier][key], tier, key>>]
-      /\ actualCount[
-           <<capturedLifecycle[tier][key], tier, key>>] = 1
-      /\ capturedGeneration[tier][key] = activeGeneration
-      /\ capturedLifecycle[tier][key] = lifecycle
-      /\ 0 < actualActiveComputations
-      /\ entryState' =
-         [entryState EXCEPT ![tier][key] = Complete]
-      /\ actualActiveComputations' =
-         actualActiveComputations - 1
-      /\ flightOwner' =
-         [flightOwner EXCEPT
-           ![<<capturedLifecycle[tier][key], tier, key>>] = FALSE]
-      /\ actualCount' =
-         [actualCount EXCEPT
-           ![<<capturedLifecycle[tier][key], tier, key>>] = 0]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, capturedGeneration,
-          capturedLifecycle, entryWeight, admittedWeight,
-          orphanPublicationCount>>
-
-PublishPartial ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] = Computing
-      /\ entryState' =
-         [entryState EXCEPT ![tier][key] = Partial]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, capturedGeneration,
-          capturedLifecycle, entryWeight, admittedWeight,
-          orphanPublicationCount, actualActiveComputations,
-          flightOwner, actualCount>>
-
-FailOrReject ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] \in {Computing, Partial}
-      /\ flightOwner[
-           <<capturedLifecycle[tier][key], tier, key>>]
-      /\ actualCount[
-           <<capturedLifecycle[tier][key], tier, key>>] = 1
-      /\ 0 < actualActiveComputations
-      /\ entryState' =
-         [entryState EXCEPT ![tier][key] = Absent]
-      /\ entryWeight' =
-         [entryWeight EXCEPT ![tier][key] = 0]
-      /\ admittedWeight' =
-         [admittedWeight EXCEPT ![tier] = @ - 1]
-      /\ actualActiveComputations' =
-         actualActiveComputations - 1
-      /\ flightOwner' =
-         [flightOwner EXCEPT
-           ![<<capturedLifecycle[tier][key], tier, key>>] = FALSE]
-      /\ actualCount' =
-         [actualCount EXCEPT
-           ![<<capturedLifecycle[tier][key], tier, key>>] = 0]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, capturedGeneration,
-          capturedLifecycle, orphanPublicationCount>>
-
-EvictReserved ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ \/ entryState[tier][key] = Complete
-         \/ /\ EvictIncompleteAndDropFlight
-            /\ entryState[tier][key] \in
-               {Waiting, Computing, Partial}
-      /\ entryState' =
-         [entryState EXCEPT ![tier][key] = Absent]
-      /\ entryWeight' =
-         [entryWeight EXCEPT ![tier][key] = 0]
-      /\ admittedWeight' =
-         [admittedWeight EXCEPT ![tier] = @ - 1]
-      /\ flightOwner' =
-         [flightOwner EXCEPT
-           ![<<capturedLifecycle[tier][key], tier, key>>] =
-             IF entryState[tier][key] = Complete
-             THEN @
-             ELSE FALSE]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, capturedGeneration,
-          capturedLifecycle, orphanPublicationCount,
-          actualActiveComputations, actualCount>>
+PublishPartialMutation ==
+  /\ AllowPartialHit
+  /\ \E tier \in Tiers:
+       \E key \in Keys:
+         /\ partialEntries' =
+              [partialEntries EXCEPT ![tier] = @ \union {key}]
+         /\ capturedGeneration' =
+              [capturedGeneration EXCEPT ![tier][key] = activeGeneration]
+         /\ capturedLifecycle' =
+              [capturedLifecycle EXCEPT ![tier][key] = lifecycle]
+         /\ chosenTier' = tier
+         /\ chosenKey' = key
+         /\ outcome' = NoOutcome
+  /\ UNCHANGED
+       <<activeGeneration, lifecycle, completeEntries, admittedWeight,
+         requestState, requestTier, requestKey, requestGeneration,
+         requestLifecycle, chosenRequest, orphanPublicationCount>>
 
 ExpireGeneration ==
-  \E generation \in Generations:
-    /\ lifecycle < MaximumLifecycle
-    /\ activeGeneration' = generation
-    /\ lifecycle' = lifecycle + 1
-    /\ entryState' =
-       [tier \in Tiers |-> [key \in Keys |-> Absent]]
-    /\ capturedGeneration' =
-       [tier \in Tiers |-> [key \in Keys |-> generation]]
-    /\ capturedLifecycle' =
-       [tier \in Tiers |-> [key \in Keys |-> lifecycle + 1]]
-    /\ entryWeight' =
-       [tier \in Tiers |-> [key \in Keys |-> 0]]
-    /\ admittedWeight' = [tier \in Tiers |-> 0]
-    /\ outcome' = NoOutcome
-    /\ UNCHANGED
-      <<chosenTier, chosenKey, orphanPublicationCount,
-        actualActiveComputations, flightOwner, actualCount>>
-
-UnsafeAdvanceGeneration ==
-  /\ AllowStaleHit
+  /\ lifecycle < MaximumLifecycle
   /\ \E generation \in Generations:
-    /\ generation # activeGeneration
-    /\ activeGeneration' = generation
-    /\ outcome' = NoOutcome
-    /\ UNCHANGED
-      <<lifecycle, entryState, capturedGeneration,
-        capturedLifecycle, entryWeight, admittedWeight,
-        chosenTier, chosenKey, orphanPublicationCount,
-        actualActiveComputations, flightOwner, actualCount>>
-
-BeginUnadmittedFlight ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] \in {Absent, Failed}
-      /\ ~flightOwner[<<lifecycle, tier, key>>]
-      /\ flightOwner' =
-         [flightOwner EXCEPT
-           ![<<lifecycle, tier, key>>] = TRUE]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = CacheMiss
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, entryState,
-          capturedGeneration, capturedLifecycle, entryWeight,
-          admittedWeight, orphanPublicationCount,
-          actualActiveComputations, actualCount>>
-
-StartUnrepresentedCompute ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] \in {Absent, Failed}
-      /\ flightOwner[<<lifecycle, tier, key>>]
-      /\ \/ actualCount[<<lifecycle, tier, key>>] = 0
-         \/ AllowDuplicateStart
-      /\ actualActiveComputations < ExecutionBound
-      /\ actualActiveComputations' =
-         actualActiveComputations + 1
-      /\ actualCount' =
-         [actualCount EXCEPT
-           ![<<lifecycle, tier, key>>] = @ + 1]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, entryState,
-          capturedGeneration, capturedLifecycle, entryWeight,
-          admittedWeight, orphanPublicationCount, flightOwner>>
-
-StartDetachedCompute ==
-  \E flightLifecycle \in 0..MaximumLifecycle:
-    \E tier \in Tiers:
-      \E key \in Keys:
-        /\ flightLifecycle # lifecycle
-        /\ flightOwner[<<flightLifecycle, tier, key>>]
-        /\ actualCount[<<flightLifecycle, tier, key>>] = 0
-        /\ actualActiveComputations < ExecutionBound
-        /\ actualActiveComputations' =
-           actualActiveComputations + 1
-        /\ actualCount' =
-           [actualCount EXCEPT
-             ![<<flightLifecycle, tier, key>>] = 1]
-        /\ chosenTier' = tier
-        /\ chosenKey' = key
-        /\ outcome' = NoOutcome
-        /\ UNCHANGED
-          <<activeGeneration, lifecycle, entryState,
-            capturedGeneration, capturedLifecycle, entryWeight,
-            admittedWeight, orphanPublicationCount, flightOwner>>
-
-FinishUnrepresentedCompute ==
-  \E tier \in Tiers:
-    \E key \in Keys:
-      /\ entryState[tier][key] \in {Absent, Failed}
-      /\ flightOwner[<<lifecycle, tier, key>>]
-      /\ actualCount[<<lifecycle, tier, key>>] = 1
-      /\ actualActiveComputations' =
-         actualActiveComputations - 1
-      /\ flightOwner' =
-         [flightOwner EXCEPT
-           ![<<lifecycle, tier, key>>] = FALSE]
-      /\ actualCount' =
-         [actualCount EXCEPT
-           ![<<lifecycle, tier, key>>] = 0]
-      /\ chosenTier' = tier
-      /\ chosenKey' = key
-      /\ outcome' = NoOutcome
-      /\ UNCHANGED
-        <<activeGeneration, lifecycle, entryState,
-          capturedGeneration, capturedLifecycle, entryWeight,
-          admittedWeight, orphanPublicationCount>>
-
-LateOrphanCompletion ==
-  \E flightLifecycle \in 0..MaximumLifecycle:
-    \E tier \in Tiers:
-      \E key \in Keys:
-        /\ flightLifecycle # lifecycle
-        /\ flightOwner[<<flightLifecycle, tier, key>>]
-        /\ actualCount[<<flightLifecycle, tier, key>>] = 1
-        /\ actualActiveComputations' =
-           actualActiveComputations - 1
-        /\ flightOwner' =
-           [flightOwner EXCEPT
-             ![<<flightLifecycle, tier, key>>] = FALSE]
-        /\ actualCount' =
-           [actualCount EXCEPT
-             ![<<flightLifecycle, tier, key>>] = 0]
-        /\ orphanPublicationCount' =
-           IF PublishLateOrphan
-           THEN 1
-           ELSE orphanPublicationCount
-        /\ chosenTier' = tier
-        /\ chosenKey' = key
-        /\ outcome' = OrphanDropped
-        /\ UNCHANGED
-          <<activeGeneration, lifecycle, entryState,
-            capturedGeneration, capturedLifecycle, entryWeight,
-            admittedWeight>>
+       /\ activeGeneration' = generation
+       /\ lifecycle' = lifecycle + 1
+  /\ completeEntries' = [tier \in Tiers |-> {}]
+  /\ partialEntries' = [tier \in Tiers |-> {}]
+  /\ admittedWeight' = [tier \in Tiers |-> 0]
+  /\ outcome' = NoOutcome
+  /\ UNCHANGED
+       <<capturedGeneration, capturedLifecycle, requestState,
+         requestTier, requestKey, requestGeneration, requestLifecycle,
+         chosenTier, chosenKey, chosenRequest, orphanPublicationCount>>
 
 Next ==
-  \/ BeginMiss
-  \/ StartRepresentedCompute
-  \/ JoinOrRead
-  \/ PublishComplete
-  \/ PublishPartial
-  \/ FailOrReject
-  \/ EvictReserved
+  \/ LookupOrBeginIndependentMiss
+  \/ PublishOrDiscard
+  \/ PublishPartialMutation
   \/ ExpireGeneration
-  \/ UnsafeAdvanceGeneration
-  \/ BeginUnadmittedFlight
-  \/ StartUnrepresentedCompute
-  \/ StartDetachedCompute
-  \/ FinishUnrepresentedCompute
-  \/ LateOrphanCompletion
 
-Spec ==
-  Init /\ [][Next]_vars
+Spec == Init /\ [][Next]_vars
 
-==================================================================
+====================================================================

@@ -15,10 +15,16 @@
      relation super_admin: user
    }
 
+   definition org {
+     relation platform: platform
+     permission admin = platform->super_admin
+     permission view = admin
+   }
+
    definition account {
      relation owner: user
-     relation platform: platform
-     permission admin = owner + platform->super_admin
+     relation org: org
+     permission admin = owner + org->admin
      permission view = admin
    }
 
@@ -52,11 +58,17 @@
      relation super_admin: user
    }
 
+   definition org {
+     relation platform: platform
+     permission admin = platform->super_admin
+     permission view = admin
+   }
+
    definition account {
      relation owner: user
-     relation platform: platform
+     relation org: org
      relation parent: account
-     permission admin = owner + parent->admin + platform->super_admin
+     permission admin = owner + parent->admin + org->admin
      permission view = admin + parent->admin
    }
 
@@ -92,6 +104,7 @@
 (def user-1 (object :user "user-1"))
 (def owner-0001 (object :user "owner-0001"))
 (def platform (object :platform "platform"))
+(def org (object :org "org"))
 
 (defn- zero-pad
   [width value]
@@ -148,6 +161,15 @@
 (def acceptance-100k-shape
   (assoc default-shape :accounts 50))
 
+(def populated-recursive-shape
+  (assoc default-shape
+         :accounts 100
+         :teams-per-account 0
+         :vpcs-per-account 0
+         :servers-per-account 0
+         :user-1-account-count 10
+         :subaccount-count 50))
+
 (defn expected-counts
   [{:keys [accounts servers-per-account user-1-account-count]}]
   {:super-user (* accounts servers-per-account)
@@ -157,7 +179,7 @@
 (defn objects
   [{:keys [accounts teams-per-account vpcs-per-account servers-per-account]}]
   (concat
-   [super-user user-1 platform]
+   [super-user user-1 platform org]
    (mapcat
     (fn [account-index]
       (concat
@@ -183,14 +205,15 @@
   [{:keys [accounts teams-per-account vpcs-per-account servers-per-account
            user-1-account-count]}]
   (concat
-   [(eacl/->Relationship super-user :super_admin platform)]
+   [(eacl/->Relationship super-user :super_admin platform)
+    (eacl/->Relationship platform :platform org)]
    (mapcat
     (fn [account-index]
       (let [account (object :account (account-id account-index))]
         (concat
          [(eacl/->Relationship
            (object :user (owner-id account-index)) :owner account)
-          (eacl/->Relationship platform :platform account)]
+          (eacl/->Relationship org :org account)]
          (when (< account-index user-1-account-count)
            [(eacl/->Relationship user-1 :owner account)])
          (mapcat
@@ -231,6 +254,22 @@
           (range servers-per-account)))))
     (range accounts))))
 
+(defn populated-recursive-relationships
+  [{:keys [accounts user-1-account-count subaccount-count]
+    :as shape}]
+  (let [subaccount-end
+        (min accounts (+ user-1-account-count subaccount-count))]
+    (concat
+     (relationships shape)
+     (for [account-index (range user-1-account-count subaccount-end)]
+       (eacl/->Relationship
+        (object :account
+                (account-id (if (= account-index user-1-account-count)
+                              0
+                              (dec account-index))))
+        :parent
+        (object :account (account-id account-index)))))))
+
 (defn object-transactions
   [shape]
   (map-indexed
@@ -244,6 +283,12 @@
    (relationship-batches shape 500))
   ([shape batch-size]
    (partition-all batch-size (relationships shape))))
+
+(defn populated-recursive-relationship-batches
+  ([shape]
+   (populated-recursive-relationship-batches shape 500))
+  ([shape batch-size]
+   (partition-all batch-size (populated-recursive-relationships shape))))
 
 (defn resource-query
   ([subject permission]

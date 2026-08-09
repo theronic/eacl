@@ -1,17 +1,9 @@
-include "Pagination.dfy"
 include "TemporalSafety.dfy"
 
 module PageWindow {
-  import Pagination
   import TemporalSafety
 
-  const MaximumCursorRebaseChunkLimit: nat := 16384
-
-  newtype {:nativeType "number", "long"} CursorEid =
-    value: int | 0 <= value <= 9007199254740991
-
-  newtype {:nativeType "number", "long"} CursorChunkIndex =
-    value: int | 0 <= value <= MaximumCursorRebaseChunkLimit
+  datatype Direction = Ascending | Descending
 
   datatype Presence<T> =
     | Absent
@@ -37,7 +29,7 @@ module PageWindow {
 
   datatype NormalizedPageRequest =
     | ValidPageRequest(
-        direction: Pagination.Direction,
+        direction: Direction,
         size: nat,
         bound: Presence<nat>
       )
@@ -84,8 +76,8 @@ module PageWindow {
       else
         ValidPageRequest(
           if raw.last.Absent?
-          then Pagination.Ascending
-          else Pagination.Descending,
+          then Ascending
+          else Descending,
           requested,
           if raw.last.Absent? then raw.after else raw.before
         )
@@ -135,7 +127,7 @@ module PageWindow {
 
   function WindowStart(
     length: nat,
-    direction: Pagination.Direction,
+    direction: Direction,
     size: nat,
     bound: Presence<nat>
   ): nat {
@@ -153,7 +145,7 @@ module PageWindow {
 
   function WindowEnd(
     length: nat,
-    direction: Pagination.Direction,
+    direction: Direction,
     size: nat,
     bound: Presence<nat>
   ): nat {
@@ -184,7 +176,7 @@ module PageWindow {
   )
 
   method DecideKeysetPage(
-    direction: Pagination.Direction,
+    direction: Direction,
     size: nat,
     boundPresent: bool,
     realizedCount: nat
@@ -222,7 +214,7 @@ module PageWindow {
 
   function PageValues<T>(
     values: seq<T>,
-    direction: Pagination.Direction,
+    direction: Direction,
     size: nat,
     bound: Presence<nat>
   ): Page<T>
@@ -277,124 +269,100 @@ module PageWindow {
     )
   }
 
+  datatype LogicalBoundary<T(==)> =
+    | NoLogicalBoundary
+    | LogicalBoundary(ordinal: nat, value: T)
+
+  datatype CompletedLogicalPageDecision<T> =
+    | CompletedLogicalPage(page: Page<T>)
+    | StaleLogicalBoundary
+
+  predicate LogicalBoundaryMatches<T(==)>(
+    values: seq<T>,
+    bound: LogicalBoundary<T>
+  ) {
+    bound.NoLogicalBoundary? ||
+    (bound.ordinal < |values| && values[bound.ordinal] == bound.value)
+  }
+
+  function LogicalBoundaryPresence<T(==)>(
+    bound: LogicalBoundary<T>
+  ): Presence<nat> {
+    if bound.NoLogicalBoundary?
+    then Absent
+    else PresentValue(bound.ordinal)
+  }
+
+  function DecideCompletedLogicalPage<T(==)>(
+    values: seq<T>,
+    direction: Direction,
+    size: nat,
+    bound: LogicalBoundary<T>
+  ): CompletedLogicalPageDecision<T>
+    requires 0 < size
+  {
+    if !LogicalBoundaryMatches(values, bound) then
+      StaleLogicalBoundary
+    else
+      CompletedLogicalPage(
+        PageValues(
+          values,
+          direction,
+          size,
+          LogicalBoundaryPresence(bound)
+        )
+      )
+  }
+
+  lemma AcceptedCompletedLogicalPageIsExactLogicalSlice<T>(
+    values: seq<T>,
+    direction: Direction,
+    size: nat,
+    bound: LogicalBoundary<T>
+  )
+    requires 0 < size
+    requires LogicalBoundaryMatches(values, bound)
+    ensures DecideCompletedLogicalPage(
+              values,
+              direction,
+              size,
+              bound
+            ).CompletedLogicalPage?
+    ensures DecideCompletedLogicalPage(
+              values,
+              direction,
+              size,
+              bound
+            ).page ==
+            PageValues(
+              values,
+              direction,
+              size,
+              LogicalBoundaryPresence(bound)
+            )
+  {
+  }
+
+  lemma MismatchedLogicalBoundaryIsStale<T>(
+    values: seq<T>,
+    direction: Direction,
+    size: nat,
+    bound: LogicalBoundary<T>
+  )
+    requires 0 < size
+    requires !LogicalBoundaryMatches(values, bound)
+    ensures DecideCompletedLogicalPage(
+              values,
+              direction,
+              size,
+              bound
+            ).StaleLogicalBoundary?
+  {
+  }
+
   ghost predicate Unique<T>(values: seq<T>) {
     forall left, right | 0 <= left < right < |values| ::
       values[left] != values[right]
-  }
-
-  datatype CursorBoundRebase =
-    | CursorBoundRebased(ordinal: nat, inspectedCount: nat)
-    | CursorBoundRestarted(inspectedCount: nat)
-
-  lemma CursorRebaseAdapterChunkIsBounded(
-    offset: nat,
-    length: nat,
-    chunkLimit: nat
-  )
-    requires offset < length
-    requires 0 < chunkLimit <= MaximumCursorRebaseChunkLimit
-    ensures var end :=
-              if offset + chunkLimit < length
-              then offset + chunkLimit
-              else length;
-            offset < end <= length &&
-            end - offset <= chunkLimit &&
-            end - offset <= MaximumCursorRebaseChunkLimit
-  {
-  }
-
-  method RebaseCursorBound(
-    values: array<CursorEid>,
-    boundEid: CursorEid
-  ) returns (decision: CursorBoundRebase)
-    requires values.Length <= MaximumCursorRebaseChunkLimit
-    ensures decision.CursorBoundRebased? ==>
-              decision.ordinal < values.Length &&
-              values[decision.ordinal] == boundEid &&
-              decision.inspectedCount == decision.ordinal + 1 &&
-              forall prior | 0 <= prior < decision.ordinal ::
-                values[prior] != boundEid
-    ensures decision.CursorBoundRestarted? ==>
-              boundEid !in values[..] &&
-              decision.inspectedCount == values.Length
-    ensures boundEid in values[..] <==>
-            decision.CursorBoundRebased?
-    ensures decision.inspectedCount <= values.Length
-  {
-    var length := values.Length as CursorChunkIndex;
-    var ordinal: CursorChunkIndex := 0;
-    while ordinal < length
-      invariant ordinal as int <= values.Length
-      invariant length as int == values.Length
-      invariant forall prior | 0 <= prior < ordinal as int ::
-                  values[prior] != boundEid
-      decreases length as int - ordinal as int
-    {
-      if values[ordinal] == boundEid {
-        decision :=
-          CursorBoundRebased(
-            ordinal as nat,
-            ordinal as nat + 1
-          );
-        return;
-      }
-      ordinal := ordinal + 1;
-    }
-    decision := CursorBoundRestarted(length as nat);
-  }
-
-  method RebaseCursorBoundChunked(
-    values: array<CursorEid>,
-    boundEid: CursorEid,
-    chunkLimit: nat
-  ) returns (decision: CursorBoundRebase)
-    requires 0 < chunkLimit <= MaximumCursorRebaseChunkLimit
-    ensures decision.CursorBoundRebased? ==>
-              decision.ordinal < values.Length &&
-              values[decision.ordinal] == boundEid &&
-              decision.inspectedCount == decision.ordinal + 1 &&
-              forall prior | 0 <= prior < decision.ordinal ::
-                values[prior] != boundEid
-    ensures decision.CursorBoundRestarted? ==>
-              boundEid !in values[..] &&
-              decision.inspectedCount == values.Length
-    ensures boundEid in values[..] <==>
-            decision.CursorBoundRebased?
-    ensures decision.inspectedCount <= values.Length
-  {
-    var offset: nat := 0;
-    while offset < values.Length
-      invariant offset <= values.Length
-      invariant forall prior | 0 <= prior < offset ::
-                  values[prior] != boundEid
-      decreases values.Length - offset
-    {
-      var end :=
-        if offset + chunkLimit < values.Length
-        then offset + chunkLimit
-        else values.Length;
-      CursorRebaseAdapterChunkIsBounded(
-        offset,
-        values.Length,
-        chunkLimit
-      );
-      var ordinal := offset;
-      while ordinal < end
-        invariant offset <= ordinal <= end <= values.Length
-        invariant forall prior | 0 <= prior < ordinal ::
-                    values[prior] != boundEid
-        decreases end - ordinal
-      {
-        if values[ordinal] == boundEid {
-          decision :=
-            CursorBoundRebased(ordinal, ordinal + 1);
-          return;
-        }
-        ordinal := ordinal + 1;
-      }
-      offset := end;
-    }
-    decision := CursorBoundRestarted(values.Length);
   }
 
   lemma SlicePreservesUniqueness<T>(
@@ -410,7 +378,7 @@ module PageWindow {
 
   lemma PagePreservesDeterministicSequence<T>(
     values: seq<T>,
-    direction: Pagination.Direction,
+    direction: Direction,
     size: nat,
     bound: Presence<nat>
   )
@@ -463,7 +431,7 @@ module PageWindow {
     ensures var page :=
               PageValues(
                 values,
-                Pagination.Descending,
+                Descending,
                 size,
                 PresentValue(before)
               );
@@ -474,10 +442,6 @@ module PageWindow {
   {
   }
 
-  datatype ConsistencyMode =
-    | RecoverCurrent
-    | ExactSnapshotMode
-
   datatype ExactSelection =
     | ExactUnavailable
     | ExactSnapshot(
@@ -485,6 +449,56 @@ module PageWindow {
         sourceIdentity: string,
         itemsProof: string
       )
+
+  // Production normalizes :proof-mode before cursor construction. Only the
+  // explicitly managed mutation-stamp mode may ask the adapter for a
+  // dependency-scoped relation proof. Content/no-proof modes pin the exact
+  // selected immutable snapshot instead; this keeps cursor minting
+  // independent of relationship-graph cardinality.
+  datatype NormalizedProofMode =
+    | MutationStampProof
+    | ContentProof
+    | NoCacheProof
+
+  datatype CursorProofStrategy =
+    | ManagedDependencyProof
+    | ExactSnapshotProof
+
+  function SelectCursorProofStrategy(
+    proofMode: NormalizedProofMode
+  ): CursorProofStrategy {
+    if proofMode.MutationStampProof?
+    then ManagedDependencyProof
+    else ExactSnapshotProof
+  }
+
+  function CursorRelationProofCommands(
+    proofMode: NormalizedProofMode
+  ): nat {
+    if SelectCursorProofStrategy(proofMode).ManagedDependencyProof?
+    then 1
+    else 0
+  }
+
+  lemma ContentCursorMintingDoesNoRelationProofScan()
+    ensures SelectCursorProofStrategy(ContentProof).ExactSnapshotProof?
+    ensures CursorRelationProofCommands(ContentProof) == 0
+  {
+  }
+
+  lemma NoCacheProofCursorMintingDoesNoRelationProofScan()
+    ensures SelectCursorProofStrategy(NoCacheProof).ExactSnapshotProof?
+    ensures CursorRelationProofCommands(NoCacheProof) == 0
+  {
+  }
+
+  lemma OnlyManagedMutationModeRequestsDependencyProof(
+    proofMode: NormalizedProofMode
+  )
+    ensures CursorRelationProofCommands(proofMode) > 0 <==>
+            proofMode.MutationStampProof?
+  {
+  }
 
   datatype ContinuationRejectReason =
     | InvalidAuthentication
@@ -496,95 +510,78 @@ module PageWindow {
 
   datatype ContinuationDecision =
     | UseCurrent
-    | RebaseCurrent
     | UseExact(graph: TemporalSafety.Graph)
     | Reject(reason: ContinuationRejectReason)
 
-  datatype RelationshipPageOutcome<T> =
-    | ReturnedCurrentPage(page: Page<T>)
-    | ReturnedRecoveredPage(
-        page: Page<T>,
-        rebase: CursorBoundRebase
-      )
-    | ReturnedExactPage(
-        graph: TemporalSafety.Graph,
-        page: Page<T>
-      )
-    | RelationshipPageRejected(reason: ContinuationRejectReason)
+  datatype RetainedAuthorizationPageDecision<T> =
+    | AuthorizationPageCacheMiss
+    | AuthorizationPageCacheHit(page: Page<T>)
 
-  datatype RetainedRelationshipPageDecision<T> =
-    | RelationshipPageCacheMiss
-    | RelationshipPageCacheHit(page: Page<T>)
-
-  function DecideRetainedRelationshipPage<T>(
+  function DecideRetainedAuthorizationPage<T>(
     cacheEnabled: bool,
     sameClient: bool,
     sameGeneration: bool,
     sameOperation: bool,
     sameQuery: bool,
+    samePageRequest: bool,
+    sameOrderingAbi: bool,
     retained: Page<T>
-  ): RetainedRelationshipPageDecision<T> {
+  ): RetainedAuthorizationPageDecision<T> {
     if cacheEnabled &&
        sameClient &&
        sameGeneration &&
        sameOperation &&
-       sameQuery
-    then RelationshipPageCacheHit(retained)
-    else RelationshipPageCacheMiss
+       sameQuery &&
+       samePageRequest &&
+       sameOrderingAbi
+    then AuthorizationPageCacheHit(retained)
+    else AuthorizationPageCacheMiss
   }
 
-  lemma MatchingRelationshipPageScopeReusesExactPage<T>(
+  lemma MatchingAuthorizationPageScopeReusesExactPage<T>(
     retained: Page<T>
   )
-    ensures DecideRetainedRelationshipPage(
+    ensures DecideRetainedAuthorizationPage(
+              true,
+              true,
               true,
               true,
               true,
               true,
               true,
               retained
-            ) == RelationshipPageCacheHit(retained)
+            ) == AuthorizationPageCacheHit(retained)
   {
   }
 
-  lemma RelationshipPageScopeMismatchCannotHit<T>(
+  lemma AuthorizationPageScopeMismatchCannotHit<T>(
     cacheEnabled: bool,
     sameClient: bool,
     sameGeneration: bool,
     sameOperation: bool,
     sameQuery: bool,
+    samePageRequest: bool,
+    sameOrderingAbi: bool,
     retained: Page<T>
   )
     requires !cacheEnabled ||
              !sameClient ||
              !sameGeneration ||
              !sameOperation ||
-             !sameQuery
-    ensures DecideRetainedRelationshipPage(
+             !sameQuery ||
+             !samePageRequest ||
+             !sameOrderingAbi
+    ensures DecideRetainedAuthorizationPage(
               cacheEnabled,
               sameClient,
               sameGeneration,
               sameOperation,
               sameQuery,
+              samePageRequest,
+              sameOrderingAbi,
               retained
-            ).RelationshipPageCacheMiss?
+            ).AuthorizationPageCacheMiss?
   {
-  }
-
-  function ApplyCursorBoundRebase(
-    raw: RawPageRequest,
-    rebase: CursorBoundRebase
-  ): RawPageRequest {
-    var rebound :=
-      if rebase.CursorBoundRebased?
-      then PresentValue(rebase.ordinal)
-      else Absent;
-    RawPageRequest(
-      raw.first,
-      raw.last,
-      if raw.after.Absent? then raw.after else rebound,
-      if raw.before.Absent? then raw.before else rebound
-    )
   }
 
   function DecideContinuation(
@@ -595,7 +592,6 @@ module PageWindow {
     cursorSourceIdentity: string,
     currentProof: string,
     cursorProof: string,
-    mode: ConsistencyMode,
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection
   ): ContinuationDecision {
@@ -609,8 +605,6 @@ module PageWindow {
         Reject(CursorExpired)
       else if currentProof == cursorProof then
         UseCurrent
-      else if mode.RecoverCurrent? then
-        RebaseCurrent
       else
         match exact
         case ExactUnavailable =>
@@ -633,7 +627,6 @@ module PageWindow {
     cursorSourceIdentity: string,
     currentProof: string,
     cursorProof: string,
-    mode: ConsistencyMode,
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection
   )
@@ -645,7 +638,6 @@ module PageWindow {
               cursorSourceIdentity,
               currentProof,
               cursorProof,
-              mode,
               cursorGraph,
               exact
             ).UseCurrent? ==>
@@ -665,7 +657,6 @@ module PageWindow {
     cursorSourceIdentity: string,
     currentProof: string,
     cursorProof: string,
-    mode: ConsistencyMode,
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection
   )
@@ -677,7 +668,6 @@ module PageWindow {
               cursorSourceIdentity,
               currentProof,
               cursorProof,
-              mode,
               cursorGraph,
               exact
             ).UseExact? ==>
@@ -686,7 +676,6 @@ module PageWindow {
               !expired &&
               sourceIdentity == cursorSourceIdentity &&
               currentProof != cursorProof &&
-              mode.ExactSnapshotMode? &&
               exact.ExactSnapshot? &&
               exact.graph == cursorGraph &&
               exact.sourceIdentity == cursorSourceIdentity &&
@@ -694,7 +683,7 @@ module PageWindow {
   {
   }
 
-  lemma RecoverCurrentNeverRequiresRetainedHistory(
+  lemma ChangedProofNeverContinuesOnCurrent(
     cursorGraph: TemporalSafety.Graph,
     exact: ExactSelection,
     currentProof: string,
@@ -709,41 +698,75 @@ module PageWindow {
               "source",
               currentProof,
               cursorProof,
-              RecoverCurrent,
               cursorGraph,
               exact
-            ) == RebaseCurrent
+            ) != UseCurrent
   {
   }
 
-  lemma RebasedContinuationRequiresAuthenticatedSameScope(
-    authenticated: bool,
-    scopeMatches: bool,
-    expired: bool,
-    sourceIdentity: string,
-    cursorSourceIdentity: string,
+  lemma ChangedProofWithoutExactSnapshotIsRejected(
     currentProof: string,
     cursorProof: string,
-    cursorGraph: TemporalSafety.Graph,
-    exact: ExactSelection
+    cursorGraph: TemporalSafety.Graph
   )
+    requires currentProof != cursorProof
     ensures DecideContinuation(
-              authenticated,
-              scopeMatches,
-              expired,
-              sourceIdentity,
-              cursorSourceIdentity,
+              true,
+              true,
+              false,
+              "source",
+              "source",
               currentProof,
               cursorProof,
-              RecoverCurrent,
               cursorGraph,
-              exact
-            ).RebaseCurrent? ==>
-              authenticated &&
-              scopeMatches &&
-              !expired &&
-              sourceIdentity == cursorSourceIdentity &&
-              currentProof != cursorProof
+              ExactUnavailable
+            ) == Reject(SnapshotUnavailable)
+  {
+  }
+
+  function DataScriptCurrentBasisContinuation(
+    currentBasisProof: string,
+    cursorBasisProof: string,
+    cursorGraph: TemporalSafety.Graph
+  ): ContinuationDecision {
+    DecideContinuation(
+      true,
+      true,
+      false,
+      "datascript-current",
+      "datascript-current",
+      currentBasisProof,
+      cursorBasisProof,
+      cursorGraph,
+      ExactUnavailable
+    )
+  }
+
+  lemma DataScriptExactProofContinuesOnlyAtCurrentBasis(
+    currentBasisProof: string,
+    cursorBasisProof: string,
+    cursorGraph: TemporalSafety.Graph
+  )
+    ensures DataScriptCurrentBasisContinuation(
+              currentBasisProof,
+              cursorBasisProof,
+              cursorGraph
+            ).UseCurrent? <==>
+            currentBasisProof == cursorBasisProof
+  {
+  }
+
+  lemma DataScriptChangedBasisCannotYieldCursorPage(
+    currentBasisProof: string,
+    cursorBasisProof: string,
+    cursorGraph: TemporalSafety.Graph
+  )
+    requires currentBasisProof != cursorBasisProof
+    ensures DataScriptCurrentBasisContinuation(
+              currentBasisProof,
+              cursorBasisProof,
+              cursorGraph
+            ) == Reject(SnapshotUnavailable)
   {
   }
 
@@ -791,171 +814,4 @@ module PageWindow {
     );
   }
 
-  method PaginateRelationshipContinuation(
-    currentValues: array<CursorEid>,
-    exactValues: seq<CursorEid>,
-    cursorBoundEid: CursorEid,
-    raw: RawPageRequest,
-    defaultSize: nat,
-    maximumSize: nat,
-    authenticated: bool,
-    scopeMatches: bool,
-    expired: bool,
-    sourceIdentity: string,
-    cursorSourceIdentity: string,
-    currentProof: string,
-    cursorProof: string,
-    mode: ConsistencyMode,
-    cursorGraph: TemporalSafety.Graph,
-    exact: ExactSelection
-  ) returns (outcome: RelationshipPageOutcome<CursorEid>)
-    ensures outcome.ReturnedCurrentPage? ==>
-              authenticated &&
-              scopeMatches &&
-              !expired &&
-              sourceIdentity == cursorSourceIdentity &&
-              currentProof == cursorProof &&
-              outcome.page ==
-              PageFromNormalized(
-                currentValues[..],
-                NormalizePageRequest(
-                  raw,
-                  defaultSize,
-                  maximumSize
-                )
-              )
-    ensures outcome.ReturnedExactPage? ==>
-              authenticated &&
-              scopeMatches &&
-              !expired &&
-              sourceIdentity == cursorSourceIdentity &&
-              currentProof != cursorProof &&
-              mode.ExactSnapshotMode? &&
-              exact.ExactSnapshot? &&
-              exact.graph == cursorGraph &&
-              exact.sourceIdentity == cursorSourceIdentity &&
-              exact.itemsProof == cursorProof &&
-              outcome.graph == cursorGraph &&
-              outcome.page ==
-              PageFromNormalized(
-                exactValues,
-                NormalizePageRequest(
-                  raw,
-                  defaultSize,
-                  maximumSize
-                )
-              )
-    ensures outcome.ReturnedRecoveredPage? ==>
-              authenticated &&
-              scopeMatches &&
-              !expired &&
-              sourceIdentity == cursorSourceIdentity &&
-              currentProof != cursorProof &&
-              mode.RecoverCurrent? &&
-              outcome.page ==
-              PageFromNormalized(
-                currentValues[..],
-                NormalizePageRequest(
-                  ApplyCursorBoundRebase(raw, outcome.rebase),
-                  defaultSize,
-                  maximumSize
-                )
-              ) &&
-              (outcome.rebase.CursorBoundRebased? ==>
-                 outcome.rebase.ordinal < currentValues.Length &&
-                 currentValues[outcome.rebase.ordinal] ==
-                 cursorBoundEid &&
-                 outcome.rebase.inspectedCount ==
-                 outcome.rebase.ordinal + 1) &&
-              (outcome.rebase.CursorBoundRestarted? ==>
-                 cursorBoundEid !in currentValues[..] &&
-                 outcome.rebase.inspectedCount ==
-                 currentValues.Length)
-  {
-    var decision := DecideContinuation(
-      authenticated,
-      scopeMatches,
-      expired,
-      sourceIdentity,
-      cursorSourceIdentity,
-      currentProof,
-      cursorProof,
-      mode,
-      cursorGraph,
-      exact
-    );
-    if decision.Reject? {
-      return RelationshipPageRejected(decision.reason);
-    }
-
-    var normalized: NormalizedPageRequest;
-    var page: Page<CursorEid>;
-    if decision.UseCurrent? {
-      normalized, page := PaginateRelationshipItems(
-        currentValues[..],
-        raw,
-        defaultSize,
-        maximumSize
-      );
-      CurrentContinuationRequiresEqualProof(
-        authenticated,
-        scopeMatches,
-        expired,
-        sourceIdentity,
-        cursorSourceIdentity,
-        currentProof,
-        cursorProof,
-        mode,
-        cursorGraph,
-        exact
-      );
-      return ReturnedCurrentPage(page);
-    }
-
-    if decision.RebaseCurrent? {
-      var rebase := RebaseCursorBoundChunked(
-        currentValues,
-        cursorBoundEid,
-        MaximumCursorRebaseChunkLimit
-      );
-      normalized, page := PaginateRelationshipItems(
-        currentValues[..],
-        ApplyCursorBoundRebase(raw, rebase),
-        defaultSize,
-        maximumSize
-      );
-      RebasedContinuationRequiresAuthenticatedSameScope(
-        authenticated,
-        scopeMatches,
-        expired,
-        sourceIdentity,
-        cursorSourceIdentity,
-        currentProof,
-        cursorProof,
-        cursorGraph,
-        exact
-      );
-      return ReturnedRecoveredPage(page, rebase);
-    }
-
-    normalized, page := PaginateRelationshipItems(
-      exactValues,
-      raw,
-      defaultSize,
-      maximumSize
-    );
-    ExactContinuationRequiresAuthenticatedExactProof(
-      authenticated,
-      scopeMatches,
-      expired,
-      sourceIdentity,
-      cursorSourceIdentity,
-      currentProof,
-      cursorProof,
-      mode,
-      cursorGraph,
-      exact
-    );
-    return ReturnedExactPage(decision.graph, page);
-  }
 }

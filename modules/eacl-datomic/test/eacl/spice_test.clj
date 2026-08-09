@@ -541,7 +541,7 @@
 	                                          :resource/type :server
 	                                          :first         2}))))
 
-	    (testing "non-exact page tokens recover against live changes"
+	    (testing "non-exact page tokens use exact fallback after relevant changes"
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -561,12 +561,11 @@
 	               (assoc base-query
 	                      :first 100
 	                      :after page1-end-cursor))]
-	          (is (not= (:data expected-page2)
-	                    (:data recovered)))
-	          (is (some #(= new-server %) (:data recovered)))
-	          (is (= :rebased
-	                 (get-in recovered
-	                         [:page-info :cursor-recovery])))))
+	          (is (= (:data expected-page2)
+	                 (:data recovered)))
+	          (is (not-any? #(= new-server %) (:data recovered)))
+	          (is (nil? (get-in recovered
+	                            [:page-info :cursor-recovery])))))
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -592,10 +591,9 @@
 	               (assoc base-query
 	                      :first 2
 	                      :after page1-end-cursor))]
-	          (is (not-any? #(= victim %) (:data recovered)))
-	          (is (= :rebased
-	                 (get-in recovered
-	                         [:page-info :cursor-recovery]))))))
+	          (is (some #(= victim %) (:data recovered)))
+	          (is (nil? (get-in recovered
+	                            [:page-info :cursor-recovery]))))))
 
 	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
 	      (testing "transact the test entities we are about to use"

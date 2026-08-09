@@ -41,8 +41,8 @@
            :exact {:graph 7 :source "source" :proof "old"}}
    :expected :exact}
   {:input {:current-proof "new" :cursor-proof "old"
-           :mode :recover-current}
-   :expected :rebase-current}
+           :exact nil}
+   :expected :snapshot-unavailable}
   {:input {:current-proof "p" :cursor-proof "p" :expired? true}
    :expected :expired}
   {:input {:current-proof "new" :cursor-proof "old"
@@ -175,8 +175,8 @@
    :expected :rejected}]
 
  :production-recursive-pages
- {:first-page [10 20]
-  :continuation-page [30]}
+ {:first-page [10 30]
+  :continuation-page [20]}
 
  :round-trips
  [{:tag "eacl.round-trip/v1" :values [0 7 42] :limit 3

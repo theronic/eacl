@@ -4,8 +4,7 @@
   Cache availability never changes a recomputable authorization answer. Store
   failures, eviction, and disabled caches fall back to indexed/traversal work
   against the selected live or historical Datomic value."
-  (:require [eacl.cache :as shared])
-  (:import [java.util Iterator LinkedHashMap Map$Entry]))
+  (:require [eacl.cache :as shared]))
 
 (def cache-entry-version 2)
 (def portable-value-version 1)
@@ -100,68 +99,60 @@
   (cond-> (update state metric (fnil inc 0))
     kind (update-in [:by-kind kind metric] (fnil inc 0))))
 
-(defn- remove-entry!
-  [^LinkedHashMap entries state k reason]
-  (when-let [{:keys [weight kind]} (.remove entries k)]
-    (swap! state
-           (fn [s]
-             (-> s
-                 (update :weight - weight)
-                 (update :entries-by-kind
-                         (fn [entries-by-kind]
-                           (let [n (dec (get entries-by-kind kind 1))]
-                             (if (pos? n)
-                               (assoc entries-by-kind kind n)
-                               (dissoc entries-by-kind kind)))))
-                 (update :weight-by-kind
-                         (fn [weight-by-kind]
-                           (let [n (- (get weight-by-kind kind 0) weight)]
-                             (if (pos? n)
-                               (assoc weight-by-kind kind n)
-                               (dissoc weight-by-kind kind)))))
-                 (update-metric kind reason))))
-    true))
+(defn- remove-key
+  [state k reason]
+  (if-let [{:keys [weight kind]} (get-in state [:entries k])]
+    [(-> state
+         (update :entries dissoc k)
+         (update :order #(into [] (remove (partial = k)) %))
+         (update :weight - weight)
+         (update :entries-by-kind
+                 (fn [entries-by-kind]
+                   (let [n (dec (get entries-by-kind kind 1))]
+                     (if (pos? n)
+                       (assoc entries-by-kind kind n)
+                       (dissoc entries-by-kind kind)))))
+         (update :weight-by-kind
+                 (fn [weight-by-kind]
+                   (let [n (- (get weight-by-kind kind 0) weight)]
+                     (if (pos? n)
+                       (assoc weight-by-kind kind n)
+                       (dissoc weight-by-kind kind)))))
+         (update-metric kind reason))
+     true]
+    [state false]))
 
-(defn- evict-to-capacity!
-  [^LinkedHashMap entries state {:keys [max-weight max-entries]}]
-  (loop []
-    (when (or (> (.size entries) max-entries)
-              (> (:weight @state) max-weight))
-      (let [^Iterator iterator (.iterator (.entrySet entries))]
-        (when (.hasNext iterator)
-          (let [^Map$Entry map-entry (.next iterator)
-                {:keys [weight kind]} (.getValue map-entry)]
-            (.remove iterator)
-            (swap! state
-                   (fn [s]
-                     (-> s
-                         (update :weight - weight)
-                         (update :entries-by-kind update kind (fnil dec 1))
-                         (update :entries-by-kind
-                                 #(if (pos? (get % kind 0)) % (dissoc % kind)))
-                         (update :weight-by-kind update kind (fnil - 0) weight)
-                         (update :weight-by-kind
-                                 #(if (pos? (get % kind 0)) % (dissoc % kind)))
-                         (update-metric kind :evictions))))
-            (recur)))))))
+(defn- touch-key
+  [order k]
+  (conj (into [] (remove (partial = k)) order) k))
+
+(defn- evict-to-capacity
+  [state {:keys [max-weight max-entries]}]
+  (loop [state state]
+    (if (and (seq (:order state))
+             (or (> (count (:entries state)) max-entries)
+                 (> (:weight state) max-weight)))
+      (let [[state _] (remove-key state (first (:order state)) :evictions)]
+        (recur state))
+      state)))
 
 (defn- entry-kind
   [value]
   (or (:eacl.cache/kind value) :untyped))
 
-(defn- frequency-admitted?
-  [^LinkedHashMap admission config k kind existing?]
-  (if (or existing? (not (contains? (:two-hit-kinds config) kind)))
-    true
-    (let [candidate [kind (hash k)]
-          sightings (inc (long (or (.get admission candidate) 0)))]
-      (.put admission candidate sightings)
-      (while (> (.size admission) (:admission-entries config))
-        (let [^Iterator iterator (.iterator (.entrySet admission))]
-          (when (.hasNext iterator)
-            (.next iterator)
-            (.remove iterator))))
-      (>= sightings 2))))
+(defn- record-sighting
+  [state config k kind]
+  (let [candidate [kind (hash k)]
+        sightings (inc (long (get-in state [:admission candidate] 0)))
+        order (touch-key (:admission-order state) candidate)
+        overflow (- (count order) (:admission-entries config))
+        discarded (if (pos? overflow) (subvec order 0 overflow) [])
+        order (if (pos? overflow) (subvec order overflow) order)]
+    [(-> state
+         (assoc-in [:admission candidate] sightings)
+         (update :admission #(apply dissoc % discarded))
+         (assoc :admission-order order))
+     (>= sightings 2)]))
 
 (defn- within-kind-capacity?
   [state config kind weight existing]
@@ -175,26 +166,50 @@
           kind-limit))
     true))
 
-(defrecord LocalStore [^LinkedHashMap entries ^LinkedHashMap admission state config]
+(defn- initial-state
+  []
+  {:entries {}
+   :order []
+   :admission {}
+   :admission-order []
+   :generation (Object.)
+   :weight 0
+   :entries-by-kind {}
+   :weight-by-kind {}
+   :by-kind {}
+   :hits 0
+   :misses 0
+   :puts 0
+   :evictions 0
+   :expirations 0
+   :replacements 0
+   :manual-evictions 0
+   :rejections 0
+   :provider-errors 0
+   :provider-errors-by-operation {}})
+
+(defrecord LocalStore [state config]
   CacheStore
   (lookup [_ k]
-    ;; Only the map access and weight accounting need the monitor. The hit/miss
-    ;; counters are advanced after releasing it: a swap! on the shared metrics
-    ;; atom is a CAS loop plus several map allocations, and running it inside
-    ;; the critical section lengthened the one lock every concurrent
-    ;; authorization call contends for.
-    (let [now (now-ms config)
-          [hit? kind value]
-          (locking entries
-            (if-let [{:keys [value kind] :as entry} (.get entries k)]
-              (if (expired? now entry)
-                (do
-                  (remove-entry! entries state k :expirations)
-                  [false kind nil])
-                [true kind value])
-              [false :unknown nil]))]
-      (swap! state update-metric kind (if hit? :hits :misses))
-      value))
+    (let [before @state
+          entry (get-in before [:entries k])
+          expired-entry? (and entry (expired? (now-ms config) entry))
+          kind (or (:kind entry) :unknown)
+          [without-expired _]
+          (if expired-entry?
+            (remove-key before k :expirations)
+            [before false])
+          after
+          (if (and entry (not expired-entry?))
+            (-> without-expired
+                (update :order touch-key k)
+                (update-metric kind :hits))
+            (update-metric without-expired kind :misses))]
+      ;; Lookup never waits for cache bookkeeping. A concurrent generation
+      ;; change may discard the LRU/metric update, but an immutable value read
+      ;; from the request's captured generation remains valid for that request.
+      (compare-and-set! state before after)
+      (when-not expired-entry? (:value entry))))
 
   (store! [_ k value weight ttl-ms]
     (let [{:keys [max-entry-weight]} config
@@ -207,85 +222,115 @@
                    (or (not (integer? ttl-ms))
                        (not (pos? ttl-ms)))))
         (do
-          (swap! state update-metric kind :rejections)
+          (let [before @state]
+            (compare-and-set! state before
+                              (update-metric before kind :rejections)))
           false)
-        (locking entries
-          (let [now (now-ms config)
-                existing (.get entries k)
-                existing (if (and existing (expired? now existing))
-                           (do
-                             (remove-entry! entries state k :expirations)
-                             nil)
-                           existing)]
-            (if (and (frequency-admitted? admission config k kind (some? existing))
-                     (within-kind-capacity? @state config kind weight existing))
-              (do
-                (remove-entry! entries state k :replacements)
-                (.put entries k {:value value
-                                 :weight weight
-                                 :kind kind
-                                 :expires-at (when ttl-ms (+ now (long ttl-ms)))})
-                (swap! state
-                       (fn [s]
-                         (-> s
-                             (update :weight + weight)
-                             (update-in [:entries-by-kind kind] (fnil inc 0))
-                             (update-in [:weight-by-kind kind] (fnil + 0) weight)
-                             (update-metric kind :puts))))
-                (evict-to-capacity! entries state config)
-                (boolean (.containsKey entries k)))
-              (do
-                (swap! state update-metric kind :rejections)
-                false)))))))
+        (let [generation (:generation @state)
+              now (now-ms config)]
+          (loop [attempt 0]
+            (if (>= attempt 64)
+              false
+              (let [before @state]
+                (if-not (identical? generation (:generation before))
+                  false
+                  (let [existing-before (get-in before [:entries k])
+                        [without-expired _]
+                        (if (and existing-before
+                                 (expired? now existing-before))
+                          (remove-key before k :expirations)
+                          [before false])
+                        existing (get-in without-expired [:entries k])
+                        [with-sighting admitted?]
+                        (if (or existing
+                                (not (contains? (:two-hit-kinds config) kind)))
+                          [without-expired true]
+                          (record-sighting without-expired config k kind))
+                        kind-capacity?
+                        (within-kind-capacity?
+                         with-sighting config kind weight existing)
+                        candidate
+                        (if (and admitted? kind-capacity?)
+                          (let [[without-existing _]
+                                (remove-key with-sighting k :replacements)]
+                            (-> without-existing
+                                (assoc-in [:entries k]
+                                          {:value value
+                                           :weight weight
+                                           :kind kind
+                                           :expires-at
+                                           (when ttl-ms
+                                             (+ now (long ttl-ms)))})
+                                (update :order touch-key k)
+                                (update :weight + weight)
+                                (update-in [:entries-by-kind kind]
+                                           (fnil inc 0))
+                                (update-in [:weight-by-kind kind]
+                                           (fnil + 0) weight)
+                                (update-metric kind :puts)
+                                (evict-to-capacity config)))
+                          (update-metric
+                           with-sighting kind :rejections))
+                        stored? (contains? (:entries candidate) k)]
+                    (if (compare-and-set! state before candidate)
+                      stored?
+                      (recur (inc attempt))))))))))))
 
   (evict! [_ k]
-    (locking entries
-      (boolean (remove-entry! entries state k :manual-evictions))))
+    (let [before @state
+          [after removed?] (remove-key before k :manual-evictions)]
+      (and removed? (compare-and-set! state before after))))
 
   (clear! [_]
-    (locking entries
-      (.clear entries)
-      (.clear admission)
-      (swap! state assoc
-             :weight 0
-             :entries-by-kind {}
-             :weight-by-kind {})
-      nil))
+    (swap! state
+           #(merge (initial-state)
+                   (select-keys % [:by-kind :hits :misses :puts :evictions
+                                   :expirations :replacements
+                                   :manual-evictions :rejections
+                                   :provider-errors
+                                   :provider-errors-by-operation])))
+    nil)
 
   (stats [_]
-    (locking entries
-      (assoc @state
-             :entries (.size entries)
-             :max-weight (:max-weight config)
-             :max-entry-weight (:max-entry-weight config)
-             :max-entries (:max-entries config)
-             :kind-max-weight (:kind-max-weight config))))
+    (let [snapshot @state]
+      (-> snapshot
+          (dissoc :order :admission :admission-order :generation)
+          (assoc :entries (count (:entries snapshot))
+                 :max-weight (:max-weight config)
+                 :max-entry-weight (:max-entry-weight config)
+                 :max-entries (:max-entries config)
+                 :kind-max-weight (:kind-max-weight config)))))
 
   CacheProvider
   (capabilities [_]
     #{:opaque-values :portable-values :ttl :namespaced-clear})
 
   (clear-namespace! [_ namespace]
-    (locking entries
-      (let [ks (->> (.iterator (.entrySet entries))
-                    iterator-seq
-                    (keep (fn [^Map$Entry map-entry]
-                            (when (= namespace
-                                     (get-in (.getValue map-entry)
-                                             [:value :eacl.cache/namespace]))
-                              (.getKey map-entry))))
-                    vec)]
-        (doseq [k ks]
-          (remove-entry! entries state k :manual-evictions))
-        (count ks))))
+    (let [before @state
+          ks (->> (:entries before)
+                  (keep (fn [[k entry]]
+                          (when (= namespace
+                                   (get-in entry
+                                           [:value :eacl.cache/namespace]))
+                            k)))
+                  vec)
+          after (reduce (fn [current k]
+                          (first
+                           (remove-key current k :manual-evictions)))
+                        before
+                        ks)]
+      (if (compare-and-set! state before after)
+        (count ks)
+        0)))
 
   (record-provider-error! [_ operation kind]
-    (swap! state
-           (fn [s]
-             (-> s
-                 (update-metric kind :provider-errors)
-                 (update-in [:provider-errors-by-operation operation]
-                            (fnil inc 0)))))
+    (let [before @state]
+      (compare-and-set!
+       state before
+       (-> before
+           (update-metric kind :provider-errors)
+           (update-in [:provider-errors-by-operation operation]
+                      (fnil inc 0)))))
     nil))
 
 (defn local-store
@@ -322,21 +367,7 @@
        (throw (ex-info "Invalid EACL cache capacity."
                        {:type :eacl/invalid-config
                         :cache config'})))
-     (->LocalStore (LinkedHashMap. 16 0.75 true)
-                   (LinkedHashMap. 16 0.75 true)
-                   (atom {:weight 0
-                          :entries-by-kind {}
-                          :weight-by-kind {}
-                          :by-kind {}
-                          :hits 0
-                          :misses 0
-                          :puts 0
-                          :evictions 0
-                          :expirations 0
-                          :rejections 0
-                          :provider-errors 0
-                          :provider-errors-by-operation {}})
-                   config'))))
+     (->LocalStore (atom (initial-state)) config'))))
 
 (defn local-continuation-store
   "Creates the bounded client-private store for opaque traversal continuations.

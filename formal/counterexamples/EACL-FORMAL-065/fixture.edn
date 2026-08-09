@@ -1,0 +1,12 @@
+{:operation :count-resources
+ :resource-type :server
+ :permission :view
+ :schema-fragment
+ {:account/view [:self-permission :account/admin]
+  :server/view
+  [[:arrow :account :view]
+   [:arrow :account :admin]]}
+ :before
+ {:canonical-frontiers 5
+  :backend-scans-at-100000 515}
+ :risk :duplicate-semantic-traversal-exceeded-the-ratcheted-scan-envelope}

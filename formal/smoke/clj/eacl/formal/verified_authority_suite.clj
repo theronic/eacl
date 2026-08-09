@@ -51,8 +51,8 @@
     eacl.datomic.recursive-cache-test
     eacl.datomic.schema-basis-test
     eacl.datomic.schema-test
+    eacl.datomic.trusted-surface-audit-test
     eacl.datomic.v8-characterization-test
-    eacl.datomic.watermark-test
     eacl.migrations.v6-to-v7-test
     eacl.spice-test
     eacl.backend.v8-test
@@ -63,6 +63,7 @@
     eacl.engine.relationships-test
     eacl.formal.cache-strategy-adversarial-test
     eacl.formal.counterexample-replay-test
+    eacl.formal.dafny-cleanup-gate-test
     eacl.formal.differential-runner-test
     eacl.formal.generators-test
     eacl.formal.mutation-control-test

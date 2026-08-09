@@ -18,9 +18,8 @@
   :required-dimensions
   {:represented-admission-weight :logical-gauge
    :represented-candidates :logical-gauge
-   :registered-flights :coordinator-gauge
-   :actual-running-host-computations :scheduler-gauge
-   :waiting-callers :external-concurrency-gauge
+   :request-owned-computations :external-concurrency-gauge
+   :publication-attempts :request-counter
    :backend-scan-or-probe-operations :request-counter
    :logical-response-items :request-counter
    :abstract-collection-operations :request-counter
@@ -30,9 +29,9 @@
   :substitution-policy :no-cross-dimensional-proof-substitution
   :current-production-claims
   {:represented-admission-weight :proved-conditionally
-   :actual-running-host-computations :bounded-by-shared-fair-semaphore
-   :registered-flights :observable-not-independently-bounded
-   :waiting-callers :bounded-only-by-external-caller-concurrency
+   :request-owned-computations :bounded-only-by-external-caller-concurrency
+   :publication-attempts :finite-client-configured-bound
+   :cache-waiting-callers 0
    :backend-scan-or-probe-operations :measured-fixture-specific
    :logical-response-items :proved-for-named-model-transitions
    :abstract-collection-operations :partially-modeled
@@ -70,9 +69,9 @@
    :full-case-study
    {:status :rejected
     :error :invalid-eacl-resource-claim
-    :claim :production/unconditional-per-key-single-flight
+    :claim :historical-retired/unconditional-per-key-single-flight
     :reason
-    :the-pinned-old-refutation-witness-does-not-match-the-new-revision}
+    :the-pinned-old-refutation-witness-does-not-match-the-new-revision-and-the-mechanism-is-deleted}
    :production-source-resource-refinement :unmatched
    :current-tree-qualification
    :current-production-and-formal-source-are-not-analyzed-by-lore}
@@ -98,7 +97,7 @@
     :equivalence-lemma
     IndexedTraversal.StrictlyIncreasingIffAdjacent
     :changed-module-verification
-    {:verified-obligations 669
+    {:verified-obligations 565
      :errors 0}}
    :java-runtime
    {:set :clojure-persistent-hash-set
@@ -136,11 +135,11 @@
     :status :passed}
    :cross-target-correctness
    {:cljs-generated-smoke
-    {:tests 58 :assertions 10968 :failures 0 :errors 0}
+    {:tests 46 :assertions 9983 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 155 :assertions 4419 :failures 0 :errors 0}
+    {:tests 172 :assertions 4682 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 509 :assertions 34773 :failures 0 :errors 0}}
+    {:tests 523 :assertions 39462 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -184,46 +183,80 @@
   :fixed-heap-host-latency-plus-explicit-backend-work-not-a-worst-case-wall-time-or-live-heap-theorem
   :status :passed}
 
- :verified-authority-shared-subgraph-cache
+ :portable-cljs-counter-state-cutover
+ {:runtime {:node "22.23.1" :optimization :advanced}
+  :fixture :one-direct-relation-complete-denotation
+  :reference-size 16384
+  :source "modules/eacl/src/eacl/engine/portable_indexed.cljc"
+  :mechanism
+  :single-persistent-counter-map-replacement-per-logical-state-update
+  :unchanged
+  [:logical-counter-values
+   :queue-order
+   :grant-order
+   :stopping-rules
+   :public-results]
+  :before-fresh-process-p50-samples-ns-per-result
+  [6848.34545898437 6854.543029785158 6816.004455566404]
+  :after-fresh-process-p50-samples-ns-per-result
+  [5335.207641601558 5281.517028808594 5537.040710449221]
+  :before-three-process-median-p50-ns-per-result 6848.34545898437
+  :after-three-process-median-p50-ns-per-result 5335.207641601558
+  :median-ratio 0.7790506004048436
+  :absolute-ceiling-ns-per-result 15000.0
+  :semantic-parity
+  {:formal-oracle-cljs {:tests 46 :assertions 9983}
+   :full-datascript-cljs {:tests 176 :assertions 9693}
+   :injected-authority-cljs {:tests 172 :assertions 4682}}
+  :qualification
+  :host-runtime-measurement-with-deterministic-semantic-counters-unchanged
+  :status :passed}
+
+ :explicit-completion-shared-subgraph-cache-benchmark
  {:backend :datascript
   :fixture
   {:distinct-top-level-permissions 80
    :shared-arrow-depth 48
    :servers 1000
+   :evaluation :complete-denotation
+   :certified-root-route :acyclic
+   :selected-evaluator-route :generated-fixed-point
    :completed-answer-final-hits 0
    :layered-final-hits 0}
   :completed-answer-only
-  {:p50-ms 0.673958
-   :executed-backend-operations 3920}
+  {:five-run-median-p50-ms 3.4185
+   :executed-backend-operations 5120}
   :layered
-  {:p50-ms 0.181417
+  {:five-run-median-p50-ms 0.140375
    :executed-backend-operations 0
    :denotation-hits 158
    :managed-denotation-hits 1
    :acyclic-denotation-hits 79
    :managed-proof-reads 1}
-  :layered-to-completed-p50-ratio 0.26918146234631835
+  :five-run-median-paired-p50-ratio 0.041063331870703525
+  :paired-p50-ratio-range
+  [0.03914322618740082 0.043954153669253454]
   :maximum-allowed-ratio 0.75
   :qualification
-  :equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
+  :explicit-completion-only-equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
   :status :passed}
 
  :formal-pipeline
- {:scope :all-25-dafny-modules
-  :proof-efforts 9802
-  :last-observed-local-wall-seconds 1169
+ {:scope :all-27-dafny-modules
+  :proof-efforts 8616
+  :last-observed-local-wall-seconds 1001
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3727263247
+  :total-observed-resource-count 3122941608
   :maximum-observed-proof-effort
-  {:source "IndexedForwardCompleteness.dfy"
+  {:source "IndexedReverseCompleteness.dfy"
    :display-name
-   "IndexedForwardCompleteness.DirectSubjectDerivationIsSeen (correctness) (assertion batch 31)"
-   :resource-count 33547591}
+   "IndexedReverseCompleteness.ReverseResponseWorkCoversSourceFact (correctness)"
+   :resource-count 24106086}
   :recursive-driver-proof-optimization
   {:transparent-specification-maximum-resource-count 161654668
    :opaque-explicit-unfold-maximum-resource-count 10270077
@@ -716,7 +749,7 @@
    {:forward-and-reverse-page-delivered-sequence-counted true
     :all-count-delivered-sequence-retained false
     :all-count-final-denotation-publication-required false
-    :indexed-traversal-obligations 669
+    :indexed-traversal-obligations 565
     :status :passed}
    :clojure
    {:legacy-fabricated-traversal-sequence-removed true
@@ -731,11 +764,11 @@
    :generated-java
    {:tests 36 :assertions 10395 :status :passed}
    :generated-javascript
-   {:tests 58 :assertions 10968 :status :passed}
+   {:tests 46 :assertions 9983 :status :passed}
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy
-   {:tests 17 :assertions 4062 :failures 0 :errors 0}
+   {:tests 17 :assertions 4058 :failures 0 :errors 0}
    :qualification
    :logical-retention-is-not-host-heap-allocation-or-wall-time}
   :qualification
@@ -921,6 +954,8 @@
  {:fixture
   {:backend :datascript
    :managed-coherence true
+   :evaluation :complete-denotation
+   :demand-mode-managed-completion false
    :permission-depth 48
    :distinct-queries 80
    :completed-answer-hits 0
@@ -931,8 +966,10 @@
    :maximum-new-generation-proof-reads 50
    :maximum-hot-hit-regression-ratio 1.05
    :maximum-cache-disabled-regression-ratio 1.05}
-  :observed
+ :observed
   {:repeated-runs 5
+   :historical-pre-demand-bounded
+   {:repeated-runs 5
    :baseline-backend-operations 3920
    :layered-backend-operations 0
    :p50-latency-ratio-range [0.4981661538461538 0.5600387252924566]
@@ -951,30 +988,40 @@
     :p50-latency-ratio 1.008695652173913}
    :hot-hit-regression-ratio 1.0
    :cache-disabled-regression-ratio 1.0035726495726496
+   :status :superseded-by-explicit-completion-route}
    :current-rerun
-   {:date "2026-08-03"
-    :tests 5
-    :assertions 12
-    :baseline-backend-operations 3920
+   {:date "2026-08-08"
+    :tests 6
+    :assertions 20
+    :evaluation :complete-denotation
+    :certified-root-route :acyclic
+    :selected-evaluator-route :generated-fixed-point
+    :baseline-backend-operations 5120
     :layered-backend-operations 0
-    :completed-answer-only-p50-ms 0.282542
-    :layered-subproblem-p50-ms 0.179584
-    :p50-latency-ratio 0.6356010787776684
-    :managed-projection-hits 49
-    :new-generation-proof-reads 49
-    :hot-hit-regression-ratio 0.9986101694915255
-    :cache-disabled-regression-ratio 1.0007083705790085
-    :hit-cardinality-p50-ratio 1.0383030039439738
-    :cached-recursive-page-p50-ratio 1.015267175572519
+    :completed-answer-only-five-run-median-p50-ms 3.4185
+    :layered-subproblem-five-run-median-p50-ms 0.140375
+    :paired-p50-latency-ratio-range
+    [0.03914322618740082 0.043954153669253454]
+    :median-paired-p50-latency-ratio 0.041063331870703525
+    :p50-latency-ratio 0.041063331870703525
+    :managed-denotation-hits 1
+    :acyclic-denotation-hits 79
+    :new-generation-proof-reads 1
+    :median-hot-hit-regression-ratio 1.0016484163428705
+    :median-cache-disabled-regression-ratio 1.0001917191361416
+    :hot-hit-regression-ratio 1.0016484163428705
+    :cache-disabled-regression-ratio 1.0001917191361416
+    :median-hit-cardinality-p50-ratio 1.0729001264222502
+    :median-cached-recursive-page-p50-ratio 1.0184929480224874
     :miss-finalization
     {:resource-dimension :actual-host-computation-lifecycle
      :small-entries 64
      :large-entries 4096
      :entry-count-ratio 64
      :misses-per-batch 20
-     :p50-latency-ratio 1.001580436654774
+     :median-p50-latency-ratio 1.0168809523809523
      :interpretation
-     :shared-lifecycle-lock-does-not-introduce-entry-count-linear-finalization}}}
+     :bounded-independent-publication-does-not-introduce-entry-count-linear-finalization}}}
  :raw-sample-source
   "modules/eacl-datascript/test/eacl/bench/subproblem_cache_test.clj"
   :status :passed}
@@ -1176,11 +1223,16 @@
   :host-specific-regression-gate-not-retained-heap-or-worst-case-bound
   :status :historical-cutover-evidence}
 
- :recoverable-cursor-rebase
+ :historical-retired-cursor-rebase
  {:counterexample :EACL-FORMAL-049
+  :active? false
+  :superseded-by
+  :equal-proof-current-or-verified-exact-snapshot-or-stale
+  :retirement-reason
+  :production-no-longer-rebases-or-restarts-a-cursor-on-a-changed-proof
   :scope
-  :authenticated-current-cursor-stable-result-identity-rebase-after-proof-change
-  :formal-model "formal/dafny/PageWindow.dfy"
+  :historical-authenticated-current-cursor-rebase-after-proof-change
+  :former-formal-model "formal/dafny/PageWindow.dfy"
   :runners
   {:clj-java
    "formal/smoke/clj/eacl/formal/cursor_rebase_benchmark.clj"
@@ -1194,8 +1246,8 @@
    :maximum-adapter-input-items
    {:clj-java 4096
     :cljs-javascript 16384}
-   :assurance
-   :dafny-exact-first-match-and-bounded-adapter-chunk-theorems}
+   :historical-assurance
+   :superseded-dafny-exact-first-match-and-bounded-adapter-chunk-theorems}
   :required
   {:clj-java
    {:maximum-normalized-latency-ratio 2.0
@@ -1273,7 +1325,7 @@
    :true-peak-heap :not-established
    :whole-process-allocation :not-established
    :lore-analyser-contribution :none}
-  :status :passed}
+  :status :historical-superseded}
 
  :memory-and-token
  {:maximum-retained-page-eids 16384
@@ -1281,9 +1333,7 @@
   :default-subproblem-cache
   {:projection-max-weight 4194304
    :denotation-max-weight 4194304
-   :answer-max-weight 16777216 ; D-6 answer tier (7.1): completed answers
-                               ; joined the weighted store
-   :max-inflight 256
+   :answer-max-weight 16777216 ; completed immutable answer tier
    :managed-proof-max-atoms 256}
   :recursive-4000-result-gc-stabilized-delta-bytes
   {:minimum -3760
@@ -1409,11 +1459,11 @@
   :maximum-verified-to-legacy-retained-heap-ratio 1.5}
 
  :final-heavy-run
- {:date "2026-08-05"
+ {:date "2026-08-08"
   :command
   "clj-nrepl-eval -p <fresh-formal-smoke-port> --timeout 1800000 \"(do (require 'eacl.formal.verified-authority-suite :reload) (eacl.formal.verified-authority-suite/run-heavy!))\""
   :result {:tests 17
-           :assertions 4062
+           :assertions 4058
            :failures 0
            :errors 0}
   :status :verified-authority-all-backends-passed
@@ -1469,4 +1519,78 @@
   :cutover-decision
   {:current-cache-blocked false
    :verified-authority-decision :not-evaluated-by-this-cache-gate
-   :reason :proof-per-hit-path-removed}}}
+   :reason :proof-per-hit-path-removed}}
+
+ :explorer-demand-page-proof-and-alias-cutover
+ {:date "2026-08-08"
+  :candidate-before
+  "e50f1cb5395e105edf3875d50e0afb16b1ba7cee"
+  :counterexamples [:EACL-FORMAL-064 :EACL-FORMAL-065]
+  :unchanged-gates
+  {:user-page-10000-maximum-median-ms 2.8545
+   :owner-count-10000-maximum-median-ms 4.95275
+   :count-100000-maximum-median-ms 381.529832
+   :count-100000-maximum-backend-scans 512}
+  :failed-github-linux-observation-before
+  {:user-page-10000-median-ms 1160.802592
+   :owner-count-10000-median-ms 5.360945
+   :count-100000-median-ms 326.699408
+   :count-100000-backend-scans 515}
+  :local-macos-arm64-observation-after
+  {:user-page-10000-median-ms 0.698875
+   :owner-count-10000-median-ms 1.97875
+   :count-100000-median-ms 154.3555
+   :count-100000-backend-scans 462
+   :count-100000-permission-paths 4
+   :exact-count 100000
+   :recursive-work 0}
+  :logical-cutover
+  {:default-content-cursor-relation-proof-commands {:before 1 :after 0}
+   :canonical-permission-paths {:before 5 :after 4}
+   :count-100000-backend-scans {:before 515 :after 462}}
+  :qualification
+  :wall-times-are-host-specific-and-not-cross-host-ratios-logical-counters-and-results-are-directly-gated
+  :result {:tests 5 :assertions 79 :failures 0 :errors 0}
+  :status :passed-without-threshold-relaxation}
+
+ :demand-bounded-pagination-run
+ {:date "2026-08-08"
+  :command
+  "clj-nrepl-eval -p <fresh-dev-port> --timeout 600000 \"(do (require 'eacl.bench.pagination-test) (clojure.test/run-tests 'eacl.bench.pagination-test))\""
+  :result {:tests 9 :assertions 3406 :failures 0 :errors 0}
+  :page-size-scaling
+  [{:page-size 10 :pages 200 :cached-work 2000 :replayed-work 201199}
+   {:page-size 25 :pages 80 :cached-work 2000 :replayed-work 81079}
+   {:page-size 100 :pages 20 :cached-work 2000 :replayed-work 21019}
+   {:page-size 250 :pages 8 :cached-work 2000 :replayed-work 9007}
+   {:page-size 1000 :pages 2 :cached-work 2000 :replayed-work 3001}]
+  :recursive-4000
+  {:pages 160
+   :cached-work 4000
+   :replayed-work 322159
+   :completed-hit-work 0
+   :cached-ms 257.656042
+   :replayed-ms 7827.796334
+   :completed-hit-ms 131.754041
+   :time-ratio 30.38079865404437
+   :work-ratio 80.53975}
+  :broad-15000
+  {:first-middle-last-traversal-calls [282 157 79]
+   :first-middle-last-realized-relationship-eids [845 432 220]
+   :complete-walk-calls 46202
+   :complete-walk-realized-relationship-eids 131481
+   :continuation-rejections 0}
+  :point-target-locality
+  {:small-reachable-resources 16
+   :large-reachable-resources 1040
+   :identical-work
+   {:backend-commands 2
+    :adapter-fetched-values 1
+    :engine-consumed-values 1
+    :unique-grants 1
+    :rule-applications 2
+    :render-advances 1}}
+  :point-latency-microseconds
+  {:warm 151.88 :cold 429.02 :completed-cache-hit 40.42}
+  :status :passed}
+}

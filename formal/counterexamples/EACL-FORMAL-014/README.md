@@ -13,7 +13,6 @@ execution context and acquires another permit before it runs. The shared
 flight registry remains unchanged: recursive bypass is not a second
 top-level flight.
 
-This is the production distinction Lore's resource analysis requires. A bound
-on represented candidates or registered flights is not a bound on actual
-callbacks unless every callback path crosses the same execution-capacity
-mechanism.
+The final v8 simplification removes the coordinator, permits, shared flights,
+and inherited self-bypass path. Cache misses do their own request-bounded work;
+the trusted-surface audit fails if blocking coordination returns.
