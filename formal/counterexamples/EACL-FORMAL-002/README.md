@@ -20,12 +20,14 @@ Reproduce the minimized regression through nREPL:
 (do
   (require 'eacl.datomic.lookup-cache-test :reload)
   (clojure.test/test-var
-   #'eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test))
+   #'eacl.datomic.lookup-cache-test/recursive-cursors-resume-from-the-client-private-denotation-test))
 ```
 
 The fix must not restore unauthenticated opaque values in a caller-supplied
 provider. Opaque engine state may only be retained in a bounded client-private
 store keyed by the selected snapshot's complete authenticated proof identity.
 
-The implemented store satisfies that boundary and falls back to deterministic
-exact-snapshot replay on a miss, eviction, rejected admission, or new client.
+The final v8 implementation satisfies that boundary with an explicitly
+requested completed denotation. A later page slices the client-private
+denotation without backend traversal. A different client or an unretained
+artifact replays from its independently selected immutable snapshot.

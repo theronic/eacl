@@ -8,11 +8,11 @@
   '{:EACL-FORMAL-001
     eacl.bench.pagination-test/benchmark-seeders-initialize-empty-database-test
     :EACL-FORMAL-002
-    eacl.datomic.lookup-cache-test/recursive-cursors-resume-private-continuations-within-client-test
+    eacl.datomic.lookup-cache-test/recursive-cursors-resume-from-the-client-private-denotation-test
     :EACL-FORMAL-003
     eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-004
-    eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test
+    eacl.datomic.cache-review-regressions-test/proofless-cursor-falls-back-to-exact-snapshot-test
     :EACL-FORMAL-005
     eacl.secure-format-test/portable-cursor-expiry-boundary-test
     :EACL-FORMAL-006
@@ -20,7 +20,7 @@
     :EACL-FORMAL-007
     eacl.secure-format-test/canonical-portable-format-test
     :EACL-FORMAL-008
-    eacl.cache-test/proof-provider-failure-fails-closed-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-009
     eacl.formal.state-trace-differential-test/generated-cache-and-cursor-state-traces-across-jvm-adapters
     :EACL-FORMAL-010
@@ -30,17 +30,17 @@
     :EACL-FORMAL-012
     eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
     :EACL-FORMAL-013
-    eacl.subproblem-cache-test/recursive-lookup-of-own-flight-is-a-miss-test
+    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
     :EACL-FORMAL-014
-    eacl.subproblem-cache-test/inherited-same-key-self-bypass-acquires-a-child-slot-test
+    eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-015
-    eacl.subproblem-cache-test/lifecycle-selection-is-linearized-before-recursive-binding-test
+    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
     :EACL-FORMAL-016
-    eacl.subproblem-cache-test/authoritative-lookup-action-precedes-storage-mutation-test
+    eacl.subproblem-cache-test/lookup-never-starts-work-test
     :EACL-FORMAL-017
-    eacl.subproblem-cache-test/cache-unadmitted-fallbacks-still-share-one-flight-test
+    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
     :EACL-FORMAL-018
-    eacl.subproblem-cache-test/flight-removal-serializes-with-lifecycle-selection-test
+    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
     :EACL-FORMAL-019
     eacl.backend.v8-test/descending-merge-retains-maximum-eid-test
     :EACL-FORMAL-020
@@ -128,7 +128,9 @@
     :EACL-FORMAL-061
     eacl.datascript.enumeration-routing-test/adapter-neutral-continuation-hit-miss-and-isolation-test
     :EACL-FORMAL-062
-    eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test})
+    eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
+    :EACL-FORMAL-063
+    eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test})
 
 (defn- read-edn
   [path]
@@ -168,7 +170,14 @@
     ;; module test nREPL must skip those unavailable namespaces rather than
     ;; failing merely because the repository file exists outside its classpath.
     (try
-      (requiring-resolve test-symbol)
+      (let [test-var (requiring-resolve test-symbol)]
+        (when-not (var? test-var)
+          (throw
+           (ex-info
+            "A recorded counterexample regression var is missing."
+            {:type :eacl.formal/missing-counterexample-regression
+             :test-symbol test-symbol})))
+        test-var)
       (catch java.io.FileNotFoundException _
         nil))))
 
@@ -249,8 +258,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-062 (:latest revision)))
-    (is (= 62 (count entries)))))
+    (is (= :EACL-FORMAL-063 (:latest revision)))
+    (is (= 63 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

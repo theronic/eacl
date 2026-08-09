@@ -137,7 +137,7 @@
    {:cljs-generated-smoke
     {:tests 58 :assertions 10968 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 155 :assertions 4419 :failures 0 :errors 0}
+    {:tests 169 :assertions 4659 :failures 0 :errors 0}
     :jvm-verified-authority
     {:tests 509 :assertions 34773 :failures 0 :errors 0}}
    :qualification
@@ -183,33 +183,38 @@
   :fixed-heap-host-latency-plus-explicit-backend-work-not-a-worst-case-wall-time-or-live-heap-theorem
   :status :passed}
 
- :historical-shared-subgraph-cache-benchmark
+ :explicit-completion-shared-subgraph-cache-benchmark
  {:backend :datascript
   :fixture
   {:distinct-top-level-permissions 80
    :shared-arrow-depth 48
    :servers 1000
+   :evaluation :complete-denotation
+   :certified-root-route :acyclic
+   :selected-evaluator-route :generated-fixed-point
    :completed-answer-final-hits 0
    :layered-final-hits 0}
   :completed-answer-only
-  {:p50-ms 0.673958
-   :executed-backend-operations 3920}
+  {:five-run-median-p50-ms 3.6525
+   :executed-backend-operations 5120}
   :layered
-  {:p50-ms 0.181417
+  {:five-run-median-p50-ms 0.175583
    :executed-backend-operations 0
    :denotation-hits 158
    :managed-denotation-hits 1
    :acyclic-denotation-hits 79
    :managed-proof-reads 1}
-  :layered-to-completed-p50-ratio 0.26918146234631835
+  :five-run-median-paired-p50-ratio 0.048072005475701576
+  :paired-p50-ratio-range
+  [0.03596662826823053 0.0530171463356894]
   :maximum-allowed-ratio 0.75
   :qualification
-  :equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
-  :status :superseded-by-demand-bounded-v8-execution}
+  :explicit-completion-only-equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
+  :status :passed}
 
  :formal-pipeline
  {:scope :all-27-dafny-modules
-  :proof-efforts 8586
+  :proof-efforts 8589
   :last-observed-local-wall-seconds 1001
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -217,7 +222,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3122790307
+  :total-observed-resource-count 3122812706
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -734,7 +739,7 @@
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy
-   {:tests 17 :assertions 4062 :failures 0 :errors 0}
+   {:tests 17 :assertions 4058 :failures 0 :errors 0}
    :qualification
    :logical-retention-is-not-host-heap-allocation-or-wall-time}
   :qualification
@@ -920,6 +925,8 @@
  {:fixture
   {:backend :datascript
    :managed-coherence true
+   :evaluation :complete-denotation
+   :demand-mode-managed-completion false
    :permission-depth 48
    :distinct-queries 80
    :completed-answer-hits 0
@@ -930,8 +937,10 @@
    :maximum-new-generation-proof-reads 50
    :maximum-hot-hit-regression-ratio 1.05
    :maximum-cache-disabled-regression-ratio 1.05}
-  :observed
+ :observed
   {:repeated-runs 5
+   :historical-pre-demand-bounded
+   {:repeated-runs 5
    :baseline-backend-operations 3920
    :layered-backend-operations 0
    :p50-latency-ratio-range [0.4981661538461538 0.5600387252924566]
@@ -950,30 +959,40 @@
     :p50-latency-ratio 1.008695652173913}
    :hot-hit-regression-ratio 1.0
    :cache-disabled-regression-ratio 1.0035726495726496
+   :status :superseded-by-explicit-completion-route}
    :current-rerun
-   {:date "2026-08-03"
-    :tests 5
-    :assertions 12
-    :baseline-backend-operations 3920
+   {:date "2026-08-08"
+    :tests 6
+    :assertions 20
+    :evaluation :complete-denotation
+    :certified-root-route :acyclic
+    :selected-evaluator-route :generated-fixed-point
+    :baseline-backend-operations 5120
     :layered-backend-operations 0
-    :completed-answer-only-p50-ms 0.282542
-    :layered-subproblem-p50-ms 0.179584
-    :p50-latency-ratio 0.6356010787776684
-    :managed-projection-hits 49
-    :new-generation-proof-reads 49
-    :hot-hit-regression-ratio 0.9986101694915255
-    :cache-disabled-regression-ratio 1.0007083705790085
-    :hit-cardinality-p50-ratio 1.0383030039439738
-    :cached-recursive-page-p50-ratio 1.015267175572519
+    :completed-answer-only-five-run-median-p50-ms 3.6525
+    :layered-subproblem-five-run-median-p50-ms 0.175583
+    :paired-p50-latency-ratio-range
+    [0.03596662826823053 0.0530171463356894]
+    :median-paired-p50-latency-ratio 0.048072005475701576
+    :p50-latency-ratio 0.048072005475701576
+    :managed-denotation-hits 1
+    :acyclic-denotation-hits 79
+    :new-generation-proof-reads 1
+    :median-hot-hit-regression-ratio 1.0016484163428705
+    :median-cache-disabled-regression-ratio 1.0001917191361416
+    :hot-hit-regression-ratio 1.0016484163428705
+    :cache-disabled-regression-ratio 1.0001917191361416
+    :median-hit-cardinality-p50-ratio 1.0729001264222502
+    :median-cached-recursive-page-p50-ratio 1.0184929480224874
     :miss-finalization
     {:resource-dimension :actual-host-computation-lifecycle
      :small-entries 64
      :large-entries 4096
      :entry-count-ratio 64
      :misses-per-batch 20
-     :p50-latency-ratio 1.001580436654774
+     :median-p50-latency-ratio 1.0168809523809523
      :interpretation
-     :shared-lifecycle-lock-does-not-introduce-entry-count-linear-finalization}}}
+     :bounded-independent-publication-does-not-introduce-entry-count-linear-finalization}}}
  :raw-sample-source
   "modules/eacl-datascript/test/eacl/bench/subproblem_cache_test.clj"
   :status :passed}
@@ -1411,11 +1430,11 @@
   :maximum-verified-to-legacy-retained-heap-ratio 1.5}
 
  :final-heavy-run
- {:date "2026-08-05"
+ {:date "2026-08-08"
   :command
   "clj-nrepl-eval -p <fresh-formal-smoke-port> --timeout 1800000 \"(do (require 'eacl.formal.verified-authority-suite :reload) (eacl.formal.verified-authority-suite/run-heavy!))\""
   :result {:tests 17
-           :assertions 4062
+           :assertions 4058
            :failures 0
            :errors 0}
   :status :verified-authority-all-backends-passed

@@ -40,9 +40,20 @@ MUST NOT be presented as certification of production behavior.
 #### Scenario: Recursive and acyclic authority classes stay distinct
 - **WHEN** production classifies a permission root for point, lookup, or count execution
 - **THEN** recursive roots are mapped to the generated indexed authority on the JVM and the differentially certified portable recursive authority on CLJS
-- **AND** certified acyclic roots are mapped to generated route/page/count/work decisions plus the exact digest-locked host source specializations they execute
+- **AND** demand-mode certified acyclic roots are mapped to generated route/page/count/work decisions plus the exact digest-locked host source specializations they execute
 - **AND** the inclusive exact-EID acyclic point probe is not reported as a generated indexed traversal
 - **AND** any claim that all permission roots execute the generated indexed state machine fails the conformance gate
+
+#### Scenario: Explicit completion overrides the acyclic shortcut
+- **WHEN** production receives `:evaluation :complete-denotation` for a defined
+  root certified as acyclic
+- **THEN** the execution-contract model and production route selector both
+  choose the fixed-point evaluator for point, lookup, and count operations
+- **AND** the demand-mode acyclic specialization is not allowed to make the
+  explicit completion control decorative
+- **AND** cross-operation complete-denotation reuse is executable evidence for
+  that route selection, not evidence that the demand shortcut materialized a
+  denotation
 
 ### Requirement: Assurance traceability is bidirectional and complete
 EACL SHALL assign stable claim identifiers and maintain a machine-validated

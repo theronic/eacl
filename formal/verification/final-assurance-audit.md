@@ -222,17 +222,17 @@ The final pre-audit run on 2026-08-06 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 27 modules, 8,586 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 27 modules, 8,589 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
 | Generated Java runtime bridges | 47 tests, 15,628 assertions, 0 failures/errors |
 | Generated-authority-injected JVM public/backend suite | 504 tests, 39,188 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
-| Generated-only DataScript CLJS suite | 155 tests, 4,419 assertions, 0 failures/errors |
+| Generated-authority-injected DataScript CLJS suite | 169 tests, 4,659 assertions, 0 failures/errors; 75 client constructions injected and every required portable authority operation observed |
 | Portable CLJS formal/oracle suite | 44 tests, 9,963 assertions, 0 failures/errors under `:advanced` |
 | Portable CLJS full DataScript/core suite | 169 tests, 9,652 assertions, 0 failures/errors under `:advanced` |
 | Portable CLJS injected-authority suite | 167 tests, 4,650 assertions, all required portable operations observed |
 | Portable CLJS performance/payload | 8,684 ns/result at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
-| Heavy generated-only backend/performance suite | 17 tests, 4,062 assertions, 0 failures/errors |
-| Minimized counterexample replay | 55 tests / 18,280 assertions on the full formal-smoke classpath, 0 failures/errors |
+| Heavy generated-only backend/performance suite | 17 tests, 4,058 assertions, 0 failures/errors |
+| Minimized counterexample replay | 67 tests / 18,431 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
 | Mutation control | 2 tests, 211 assertions, 0 failures/errors; every registered mutant killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
 | Generated artifact size | browser bundle 591,497 bytes; Java classes/runtime 1,890,556 bytes; Java source 2,130,973 bytes; JavaScript/runtime 949,688 bytes; every re-anchored ceiling passed |

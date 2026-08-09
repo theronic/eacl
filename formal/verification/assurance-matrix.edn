@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 56
   :public-roots 63
-  :reachable-definitions 1414
+  :reachable-definitions 1415
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -43,6 +43,7 @@
    :class :proof-only-host-control-model
    :consumer ['eacl.execution/normalize
               'eacl.execution/check!
+              'eacl.engine.v8/evaluation-route
               'eacl.engine.v8/run-generated-traversal]}
   {:source "formal/dafny/CursorCost.dfy"
    :class :spec-only-cost-model

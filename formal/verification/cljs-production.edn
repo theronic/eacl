@@ -74,7 +74,7 @@
   :full-datascript-core
   {:tests 167 :assertions 9556 :failures 0 :errors 0}
   :injected-portable-authority
-  {:tests 165 :assertions 4554 :failures 0 :errors 0
+  {:tests 169 :assertions 4659 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}
   :mutation-registry
   {:mutants 92 :killed 92 :survived 0}}

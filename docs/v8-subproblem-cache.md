@@ -19,6 +19,11 @@ An exact miss may copy a valid managed value into the exact store. Later
 operations on the same snapshot then need neither another relation-proof read
 nor another managed lookup.
 
+Managed cross-generation projection or denotation reuse is enabled only when
+the caller explicitly selects `:evaluation :complete-denotation`. Demand mode
+uses only exact selected-snapshot artifacts and never performs proof work or
+widens traversal for future reuse.
+
 The managed key commits to:
 
 - cache/key version;
@@ -53,14 +58,15 @@ but would increase transaction and storage cost.
 
 Projection keys do not contain the principal or top-level permission. Suppose
 two different queries converge on the same `group#member` or `server#team`
-edge. The first query reads and stores that bounded projection chunk; the
-second can reuse it even though its completed-answer key is different. This is
-the intended cache network effect.
+edge. An exact selected-snapshot command response may be reused when the second
+query issues the identical command. Managed reuse across graph generations is
+restricted to explicit complete-denotation evaluation. Neither path permits
+cache policy to issue or widen an adapter command.
 
-Ordered projections are retained in lazy fixed-width chunks. Asking for a
-small page does not materialize the complete adjacency. Empty terminal chunks
-are retained as useful negative results. Direct membership probes use the same
-relation-stamped mechanism.
+Projection artifacts bind the evaluator's exact adapter command, including
+direction, bound, inclusivity, maximum response size, and continuation. Cache
+code cannot choose a wider chunk or fetch beyond the command. Empty terminal
+responses remain useful exact negative artifacts.
 
 Acyclic denotations and completed recursive least-fixed-point result vectors
 are publishable only after the worklist completes; visited-set fragments and
@@ -118,21 +124,26 @@ eviction, fetched projection values, and avoided backend operations.
 
 The checked-in DataScript benchmark uses a depth-48 shared arrow, 80 distinct
 top-level permission keys, and an unrelated relationship write between warmup
-and measurement. It asserts zero completed-answer hits and alternates matched
-baseline/layered queries to reduce JVM phase bias.
+and measurement. Every measured request explicitly selects
+`:evaluation :complete-denotation`; this gate is not evidence of implicit
+demand-mode warming. It asserts zero completed-answer hits and alternates
+matched baseline/layered queries to reduce JVM phase bias.
 
-On the recorded 2026-08-03 run:
+On the recorded 2026-08-08 run after enforcing that explicit completion
+overrides the certified acyclic shortcut:
 
-- backend scan/probe operations fell from 3,920 to 0;
-- 49 managed projection hits crossed the unrelated graph revision;
-- the new exact generation performed 49 proof reads, bounded by distinct
-  relation dependencies rather than queries or chunks;
-- five paired-run p50 latency ratios were 0.498–0.560, a 44.0–50.2% reduction;
-- completed-answer hot-hit ratio was 1.000;
-- `:cache? false` ratio was 1.002;
+- backend scan/probe operations fell from 5,120 to 0;
+- one managed completed-denotation hit crossed the unrelated graph revision
+  and 79 distinct roots reused it in the selected exact generation;
+- the new exact generation performed one bounded dependency-proof read;
+- five-run median p50 latency was 0.176 ms versus 3.653 ms, with paired
+  ratios from 0.036 to 0.053;
+- completed-answer hot-hit ratio was 1.002;
+- `:cache? false` ratio was 1.003;
 - a 2,048× recursive closure-size increase changed cached page-render p50 by
-  only 1.01×; and
-- a 64× retained-entry-count increase changed hit-batch p50 by 1.08×.
+  a median 1.018×; and
+- a 64× retained-entry-count increase changed hit-batch p50 by a median
+  1.073×.
 
 These are regression measurements on one host, not latency theorems. The
 enforced requirements are at least 50% fewer backend operations, at least 25%

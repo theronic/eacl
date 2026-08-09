@@ -1625,7 +1625,20 @@
            "Generated enumeration route rejected its schema binding."
            {:reason (:reason decision)
             :actual-schema actual-identity
-            :certificate-schema certificate-identity}))))))
+           :certificate-schema certificate-identity}))))))
+
+(defn- evaluation-route
+  "Keeps certified acyclic shortcuts demand-only.
+
+  Explicit complete-denotation evaluation deliberately executes the generated
+  fixed-point route even for an acyclic root. That is the caller's opt-in to
+  materialize a complete reusable denotation; silently taking the point/page/
+  count shortcut would make the public evaluation mode decorative."
+  [route]
+  (if (and (= :complete-denotation *evaluation-mode*)
+           (= :acyclic route))
+    :recursive
+    route))
 
 (defn traversal-nodes
   [db]
@@ -3737,28 +3750,35 @@
              (permission-root-defined?
               db resource-type permission))]
     (if defined-root?
-      ;; A bound schema cache carries the generated acyclicity certificate.
-      ;; Reuse the exact indexed membership probe for those roots: sending
-      ;; overlapping acyclic streams through the recursive scan-wave machine
-      ;; can duplicate queued work before the ordered responses are folded.
-      (if (and (derived-cache-active?)
-               (not (traversal-permission?
-                     db resource-type permission)))
-        (binding [*acyclic-route?* true
-                  *inactive-recursive-cycle-guards* #{}]
-          (add-acyclic-work! :routed-acyclic 1)
-          (boolean
-           (acyclic-bound-authorized?
-            db
-            forward-acyclic-direction
-            {:subject subject
-             :permission permission
-             :resource/type resource-type}
-            resource-eid)))
-        (recursive-can?
-         db subject-type subject-eid
-         (permission-query-node resource-type permission)
-         resource-type resource-eid))
+      (let [route
+            (evaluation-route
+             ;; A bound schema cache carries the generated acyclicity
+             ;; certificate. Without that binding, use the generated
+             ;; fixed-point authority for the point check.
+             (if (and (derived-cache-active?)
+                      (not (traversal-permission?
+                            db resource-type permission)))
+               :acyclic
+               :recursive))]
+        (case route
+          :acyclic
+          (binding [*acyclic-route?* true
+                    *inactive-recursive-cycle-guards* #{}]
+            (add-acyclic-work! :routed-acyclic 1)
+            (boolean
+             (acyclic-bound-authorized?
+              db
+              forward-acyclic-direction
+              {:subject subject
+               :permission permission
+               :resource/type resource-type}
+              resource-eid)))
+
+          :recursive
+          (recursive-can?
+           db subject-type subject-eid
+           (permission-query-node resource-type permission)
+           resource-type resource-eid)))
       false)))
 
 ;; --- Certified acyclic enumeration -----------------------------------------
@@ -4424,8 +4444,9 @@
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
          route
-         (enumeration-route
-          db (:resource/type query) (:permission query))]
+         (evaluation-route
+          (enumeration-route
+           db (:resource/type query) (:permission query)))]
      (case route
        :recursive
        (recursive-forward-page db query cache)
@@ -4467,8 +4488,9 @@
    (let [cache (or continuation-cache
                    (when continuation-cache-fn (continuation-cache-fn)))
          route
-         (enumeration-route
-          db (:type (:resource query)) (:permission query))]
+         (evaluation-route
+          (enumeration-route
+           db (:type (:resource query)) (:permission query)))]
      (case route
        :recursive
        (recursive-reverse-page db query cache)
@@ -4535,8 +4557,9 @@
   (reject-count-pagination-keys! "count-resources" query)
   (let [limit (query-count-limit query)
         route
-        (enumeration-route
-         db (:resource/type query) (:permission query))]
+        (evaluation-route
+         (enumeration-route
+          db (:resource/type query) (:permission query)))]
     (count-response
      (case route
        :undefined
@@ -4588,8 +4611,9 @@
                   :filter :subject/relation}))
   (let [limit (query-count-limit query)
         route
-        (enumeration-route
-         db (:type (:resource query)) (:permission query))]
+        (evaluation-route
+         (enumeration-route
+          db (:type (:resource query)) (:permission query)))]
     (count-response
      (case route
        :undefined

@@ -76,9 +76,21 @@ materialization and publication, but MUST preserve the public operation's value
 and consistency contract. EACL MUST NOT expose a separate prewarm API.
 
 #### Scenario: Explicit reusable completion
-- **WHEN** a caller requests `:evaluation :complete-denotation` for a recursive point or page operation
-- **THEN** EACL may exhaust and retain the complete compatible denotation before returning
+- **WHEN** a caller requests `:evaluation :complete-denotation` for a point,
+  page, or count over any defined recursive or certified acyclic root
+- **THEN** EACL exhausts the complete compatible denotation before returning
+- **AND** may retain it when cache admission is enabled and succeeds
 - **AND** reports that complete-denotation evaluation was selected
+
+#### Scenario: Acyclic shortcuts are demand-only
+- **WHEN** a certified acyclic root is evaluated with
+  `:evaluation :complete-denotation`
+- **THEN** point, lookup, and count operations select the generated fixed-point
+  completion route rather than the demand-only acyclic shortcut
+- **AND** the completed artifact may be reused across compatible operations and
+  proof-equivalent managed generations
+- **AND** omitting this route override is an implementation/spec conformance
+  failure rather than an allowed optimization
 
 #### Scenario: Complete recursive order
 - **WHEN** explicit completion materializes a recursive denotation whose generated logical order is not numeric EID order

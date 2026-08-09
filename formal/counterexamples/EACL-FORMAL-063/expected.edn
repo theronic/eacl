@@ -1,0 +1,8 @@
+{:demand
+ {:selected-evaluator :certified-route
+  :post-demand-warming false}
+ :complete-denotation
+ {:defined-acyclic-root-selected-evaluator :generated-fixed-point
+  :point-count-lookup-share-compatible-completed-denotation true
+  :managed-cross-generation-reuse :complete-proof-required}
+ :undefined-root-selected-evaluator :undefined}

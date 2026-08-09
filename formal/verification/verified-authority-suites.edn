@@ -1,5 +1,5 @@
 {:schema-version 1
- :date "2026-08-07"
+ :date "2026-08-08"
  :status :passed
  :mode {:clj-java :generated-only
         :cljs-javascript :portable-differentially-certified}
@@ -45,7 +45,7 @@
    eacl.bench.pagination-test
    eacl.bench.subproblem-cache-test]
   :tests 17
-  :assertions 4062
+  :assertions 4058
   :failures 0
   :errors 0
   :required-generated-operations []
@@ -65,21 +65,23 @@
  {:command
   "EACL_NREPL_PORT=<dev-port> formal/smoke/cljs/run-verified-authority"
   :backend :datascript
-  :tests 165
-  :assertions 4554
+  :tests 169
+  :assertions 4659
   :failures 0
   :errors 0
-  :injected-clients 73
+  :injected-clients 75
   :portable-calls-observed true
   :all-required-indexed-operations-observed true
   :persistent-nrepl-executor-postcondition :passed}
  :latest-local-rerun
- {:status :timed-out
-  :timeout-seconds 600
-  :last-namespace eacl.datahike.enumeration-routing-test
-  :failures-reported-before-interrupt 0
-  :qualification
-  :not-a-pass-or-failure-prior-complete-campaign-remains-the-recorded-evidence}
+ {:status :passed
+  :suite :clj-heavy
+  :tests 17
+  :assertions 4058
+  :failures 0
+  :errors 0
+  :source-refresh [eacl.engine.v8 eacl.bench.subproblem-cache-test]
+  :qualification :complete-authoritative-rerun}
  :qualification
  [:full-public-contract-and-regression-suites-under-target-authority
   :target-authority-calls-and-client-injection-required

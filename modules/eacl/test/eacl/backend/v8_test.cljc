@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
             [eacl.engine.v8 :as engine]
+            [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.spicedb.consistency :as consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -67,6 +68,40 @@
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
+
+(deftest descending-merge-retains-maximum-eid-test
+  (let [maximum-eid #?(:clj Long/MAX_VALUE
+                       :cljs js/Number.MAX_SAFE_INTEGER)]
+    (is (= [maximum-eid 9 8]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc
+             identity
+             [[maximum-eid 9]
+              [8]]))))
+    (is (= [maximum-eid 9 8]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc
+             identity
+             [[maximum-eid 9]
+              [maximum-eid 8]]))))))
+
+(deftest generic-merge-retains-nil-key-test
+  (let [left-nil {:key nil :source :left}
+        right-nil {:key nil :source :right}
+        one {:key 1}
+        two {:key 2}]
+    (is (= [left-nil one two]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+             :key
+             [[left-nil one]
+              [two]]))))
+    (is (= [left-nil one two]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+             :key
+             [[left-nil one]
+              [right-nil two]]))))))
 
 (deftest unusable-generated-continuation-is-a-recoverable-cache-miss-test
   (let [calls (atom [])

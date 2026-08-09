@@ -8,6 +8,50 @@ module ExecutionContract {
     | Demand
     | CompleteDenotation
 
+  datatype CertifiedEvaluatorRoute =
+    | UndefinedEvaluator
+    | AcyclicShortcutEvaluator
+    | FixedPointEvaluator
+
+  function SelectedEvaluatorRoute(
+    evaluation: EvaluationMode,
+    certifiedRoute: CertifiedEvaluatorRoute
+  ): CertifiedEvaluatorRoute
+  {
+    if evaluation.CompleteDenotation? &&
+       certifiedRoute.AcyclicShortcutEvaluator?
+    then FixedPointEvaluator
+    else certifiedRoute
+  }
+
+  lemma DemandPreservesCertifiedEvaluatorRoute(
+    certifiedRoute: CertifiedEvaluatorRoute
+  )
+    ensures SelectedEvaluatorRoute(Demand, certifiedRoute) == certifiedRoute
+  {
+  }
+
+  lemma CompleteEvaluationUsesFixedPointForEveryDefinedRoot(
+    certifiedRoute: CertifiedEvaluatorRoute
+  )
+    requires !certifiedRoute.UndefinedEvaluator?
+    ensures SelectedEvaluatorRoute(
+              CompleteDenotation,
+              certifiedRoute
+            ).FixedPointEvaluator?
+  {
+  }
+
+  lemma UndefinedRootNeverSelectsAnEvaluator(
+    evaluation: EvaluationMode
+  )
+    ensures SelectedEvaluatorRoute(
+              evaluation,
+              UndefinedEvaluator
+            ).UndefinedEvaluator?
+  {
+  }
+
   datatype DemandShape =
     | BooleanDemand(targetEid: int)
     | PageDemand(size: nat, boundaryOrdinal: nat)

@@ -11,8 +11,7 @@ the kernel observed the flight and incomplete entry already installed. A
 contradictory generated action could therefore leave state that its action
 forbade, which contradicted the recorded authoritative-transition claim.
 
-Lookup action selection now occurs from the lifecycle-stable candidate state
-before mutation. Only `start-computation` may reach flight installation.
-Resolve and read-only lookup also use the selected action to distinguish
-completed hits from joined computations. The strict generated boundary rejects
-any action inconsistent with its validated input state.
+The final v8 simplification makes lookup read-only and removes flight
+installation. A miss never mutates cache state or starts work; publication is
+a separate bounded compare-and-set transition after independent computation.
+The generated cache decision remains authoritative over the state it models.

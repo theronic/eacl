@@ -355,9 +355,9 @@
     :tests 509 :assertions 34773 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
-    :tests 17 :assertions 4062 :failures 0 :errors 0}
+    :tests 17 :assertions 4058 :failures 0 :errors 0}
    :cljs-datascript
-   {:tests 155 :assertions 4419 :failures 0 :errors 0}
+   {:tests 169 :assertions 4659 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed

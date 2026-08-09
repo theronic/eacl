@@ -14,7 +14,7 @@ private optimization owned by one EACL client and one connection.
 | omitted / `:minimize-latency` | current DB visible to this Peer | current connection DB | current connection DB | enabled |
 | `:fully-consistent` | bounded zero-argument `d/sync`, then selected DB | backend head barrier when supported | serialized live connection head | enabled on the selected current DB |
 | `:at-least-as-fresh` | targeted `d/sync conn t`, then anchor validation | waits/selects a descendant containing the token anchor | selects a known descendant containing the token anchor | enabled only if the selected DB is current |
-| `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | bounded exact-snapshot registry | bypassed |
+| `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | unsupported; rejected before cache access | bypassed |
 
 The default is `:minimize-latency`. EACL does not call `d/sync` and does not call
 `d/as-of` on the normal path. A consumer that requires the Peer to observe
@@ -42,11 +42,15 @@ Each client owns a bounded native cache with two tiers:
    The key contains the schema generation and the maximum last-change
    transaction over the permission's complete relation dependency set.
 
-Both tiers cache complete semantic answers only: Booleans, complete internal
-result sequences/sets, and complete counts. Public IDs and response metadata
-are rendered from the selected DB after lookup. Partial traversal failures,
-provider failures, tokens, cursors, and page-local fragments are not admitted
-as complete answers.
+The answer tiers retain completed public operation results. The traversal
+cache may additionally retain exact generated-command responses and private
+continuations produced before the request's stopping boundary. Demand mode
+never widens a scan or continues traversal to warm a broader artifact.
+Completed acyclic or recursive denotations are retained only when traversal
+naturally exhausts or the caller explicitly requests
+`:evaluation :complete-denotation`. Public IDs and response metadata are
+rendered from the selected DB after lookup. Failed or timed-out work is never
+admitted as a completed answer or denial.
 
 The cache never changes authorization semantics. Disable it globally:
 
@@ -198,6 +202,10 @@ Recursive continuation state is an optional performance optimization.
 Continuation-store eviction deterministically replays the authenticated prefix
 on the already-selected immutable snapshot. It never selects another graph or
 changes the public walk.
+
+DataScript has no EACL time-travel path. It continues only on a
+proof-equivalent current DB and returns the typed stale/unsupported error when
+that is impossible; it never retains an old DB in a hidden registry.
 
 ## Operational invariants
 

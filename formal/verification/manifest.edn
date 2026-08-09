@@ -13,7 +13,7 @@
  :theorems
  {:normalized-execution-contract
   {:status :passed
-   :verified-obligations 13
+   :verified-obligations 16
    :source "formal/dafny/ExecutionContract.dfy"
    :report "formal/verification/execution-contract.edn"
    :claim :proof-only-host-control-model-cross-checked-against-production}
@@ -136,7 +136,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8586
+   :verified-obligations 8589
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -182,7 +182,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-062
+ {:latest :EACL-FORMAL-063
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -244,11 +244,12 @@
           :EACL-FORMAL-059
           :EACL-FORMAL-060
           :EACL-FORMAL-061
-          :EACL-FORMAL-062]}
+          :EACL-FORMAL-062
+          :EACL-FORMAL-063]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 62}
+  :entries 63}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

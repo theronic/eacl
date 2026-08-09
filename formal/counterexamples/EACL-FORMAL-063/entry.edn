@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-063
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "complete-denotation/certified-acyclic/distinct-equal-root-bodies"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["v8.0 commit b8adcb9e847813b0c1b5e730472d9082c80b9db5"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Point, lookup, and count dispatch selected the certified acyclic shortcut without first applying the normalized evaluation mode. The shortcut is correct for the public value but does not materialize a complete denotation, so :complete-denotation was silently decorative for acyclic roots."
+ :fix
+ "Centralize evaluation-route selection: demand preserves the certified route, explicit completion maps every defined acyclic route to the generated fixed-point evaluator, and undefined roots remain undefined."
+ :closing-evidence
+ ["ExecutionContract.CompleteEvaluationUsesFixedPointForEveryDefinedRoot"
+  "ExecutionContract.DemandPreservesCertifiedEvaluatorRoute"
+  "eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test"
+  "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"]}

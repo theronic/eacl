@@ -6,5 +6,6 @@ used that identity in its dynamic recursion set, while `lookup!` tested only
 in-flight entry therefore failed to recognize itself and could dereference its
 own unresolved delay.
 
-`lookup!` now uses the identical lifecycle-qualified identity. Such a probe is
-a cache miss, performs no nested computation, and cannot wait on itself.
+The final v8 simplification deletes shared flights entirely. `lookup!` never
+starts work, and two identical misses compute independently and race only a
+bounded nonblocking publication. There is no own-flight object to wait on.

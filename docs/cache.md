@@ -144,9 +144,12 @@ Suppose separate permission queries converge on the same `group#member` or
 projection key can be identical. The first query stores a bounded projection
 chunk; the second consumes it without another backend index scan.
 
-Projection chunks are ordered and fixed-width. A small page does not
-materialize an entire adjacency list. Empty terminal chunks are retained
-because a shared negative probe can be as useful as a positive one.
+Projection entries are exact responses to generated adapter commands. Their
+direction, endpoint, bound, inclusivity, and maximum response size come from
+the evaluator's current demand; cache policy cannot widen any of them. A small
+page therefore does not materialize an entire adjacency list. Empty terminal
+responses are retained because a shared negative probe can be as useful as a
+positive one.
 
 The other cross-query network effect is schema planning. Permission paths,
 dependency closures, strongly connected components, reverse reachability, and
@@ -366,7 +369,8 @@ verify that runtime inputs and outputs match the generated contracts.
 
 Performance gates cover:
 
-- reduced backend work and latency on shared-subgraph reuse;
+- reduced backend work and latency on explicitly requested complete-denotation
+  shared-subgraph reuse; demand mode never warms past caller demand;
 - constant-count work on hot completed-answer hits;
 - proof work bounded by distinct relevant dependencies rather than result or
   graph size;

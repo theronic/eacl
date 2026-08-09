@@ -2,8 +2,9 @@
 
 EACL v8 replaces the proof-per-hit cache candidate with a client-private
 current-generation cache, adds recoverable query-scoped cursors, and makes the
-current DB visible to the local backend the default consistency contract. Exact
-snapshot pinning remains available through `at-exact-snapshot`. These are
+current DB visible to the local backend the default consistency contract.
+Exact snapshot pinning remains available on history-capable backends; DataScript
+is deliberately current-only and rejects `at-exact-snapshot`. These are
 deliberate pre-release breaking changes.
 
 V8 also adds the database-visible v3 mutation journal and authenticated causal
@@ -66,7 +67,8 @@ number equality.
 - `:at-least-as-fresh` performs targeted freshness selection and validates the
   authenticated graph anchor.
 - `:at-exact-snapshot` performs exact selection and bypasses completed-answer
-  caching.
+  caching on backends that advertise it. DataScript rejects it before cache
+  access because DataScript has no EACL time-travel registry.
 - Low-level operations accepting an arbitrary `db`, including caller-created
   `d/as-of`, `d/with`, prospective, or filtered views, bypass completed-answer
   caching.
@@ -320,14 +322,17 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
   `:eacl/relation-version`; a managed entry could therefore remain stale.
   Managed Datomic validation now prefers the relation-version datom
   transaction and uses the mutation datom only as the initialization fallback.
-- **DataScript exact-snapshot ABA.** Numeric `max-tx` is not a unique database
-  identity across `reset-conn!`. Exact snapshot/cursor identity now uses a
-  bounded registry of opaque immutable-DB handles.
+- **DataScript exact-snapshot ABA (superseded by the final current-only
+  contract).** Numeric `max-tx` cannot identify immutable DB values across
+  `reset-conn!`. Instead of retaining a second historical registry and its
+  lifecycle, v8 removes DataScript exact selection. Each request uses the
+  current immutable DB, current continuation requires proof equivalence, and
+  unsupported exact requests fail before cache access.
 - **Mixed-snapshot cursor complexity.** Proof-equivalent lifting made a page
   depend on validation across two graphs and converted retention eviction into
   an availability failure. Non-exact continuation now discards graph-specific
-  state and re-evaluates on one selected current graph; only explicit
-  `at-exact-snapshot` walks remain graph-pinned.
+  state and re-evaluates on one selected current graph; only explicit exact
+  walks on history-capable backends remain graph-pinned.
 - **Late publication after expiry.** In-flight work could conceptually publish
   after a cache reset if publication resolved “current cache” twice. The new
   resolver captures the lifecycle/generation; old publication is unreachable.
@@ -390,6 +395,15 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
   in the descriptor, while false produces `:eacl/unsupported-consistency`.
   Dafny retains those public-input classes and cross-backend regressions close
   the source refinement.
+- **Explicit completion was decorative for certified acyclic roots
+  (EACL-FORMAL-063).** Point checks, pages, and counts returned the right value
+  but silently selected the demand shortcut even with
+  `:evaluation :complete-denotation`, so no reusable completed denotation was
+  produced. One shared route selector now keeps the acyclic shortcut
+  demand-only and sends explicit completion through the generated fixed-point
+  evaluator for every defined root. The minimized regression requires
+  cross-operation reuse with zero backend work; the execution-contract model
+  proves the same route law.
 - **Token consistency descriptors admitted unknown fields
   (EACL-FORMAL-053).** The shared descriptor checked the required mode and
   token values but accepted additional fields, contradicting the formal
@@ -451,8 +465,9 @@ shipped.
 The browser no longer executes the Dafny JavaScript runtime or BigNumber on
 the authorization hot path. Advanced-optimized certification passed 44 formal
 tests with 9,963 assertions, the full DataScript/core suite passed 167 tests
-with 9,556 assertions, and the injected-authority suite passed 165 tests with
-4,554 assertions while observing every required traversal operation.
+with 9,556 assertions, and the current injected-authority suite passed 169
+tests with 4,659 assertions while observing every required traversal
+operation.
 
 At the 16,384-result reference size the recorded median is 8,684 ns/result,
 below the 15,000 ns/result ceiling. The advanced portable-kernel payload adds
@@ -481,7 +496,7 @@ redesign:
 | Datahike repeated `can?` | 12.2 µs | 17.6 µs | 1.4× |
 
 Datomic's private current-cache lookup itself measured about 1.5 µs. The
-current forced-authority heavy suite passes 17 tests and 4,062 assertions. On
+current forced-authority heavy suite passes 17 tests and 4,058 assertions. On
 the latest fixed-heap run:
 
 - 15,000-resource first page median: 0.24 ms;
@@ -489,9 +504,11 @@ the latest fixed-heap run:
 - reverse max-page median: 0.45 ms;
 - 4,000-node recursive walk: 134.09 ms with cached continuation versus
   3,141.52 ms replaying prefixes;
-- distinct-query shared-subgraph p50: 0.182125 ms versus 0.789916 ms for
-  completed-answer-only caching, with zero backend operations on the reused
-  path.
+- explicit-completion distinct-query shared-subgraph five-run median p50:
+  0.176 ms versus 3.653 ms for completed-answer-only caching, with zero
+  backend operations on the reused path and paired ratios from 0.036 to 0.053.
+  This is opt-in `:complete-denotation` evidence; ordinary demand requests
+  never traverse farther to warm this artifact.
 
 These are comparative development measurements, not portable latency promises.
 The decisive result is architectural: hot exact hits no longer calculate

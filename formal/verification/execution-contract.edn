@@ -1,7 +1,7 @@
 {:schema-version 1
  :status :model-matches-production-control-contract
  :source "formal/dafny/ExecutionContract.dfy"
- :verified-obligations 13
+ :verified-obligations 16
  :classification :proof-only-host-control-model
  :cache-attempt-contract
  {:supported-fields
@@ -13,7 +13,10 @@
    :maximum-candidates]
   :provider-stores :rejected-before-request-execution}
  :claims
- [:deadline-dominates-all-modeled-execution-boundaries
+ [:demand-preserves-certified-evaluator-route
+  :complete-evaluation-uses-fixed-point-for-every-defined-root
+  :undefined-root-never-selects-an-evaluator
+  :deadline-dominates-all-modeled-execution-boundaries
   :demand-page-stops-at-n-plus-one
   :bounded-count-stops-at-l-plus-one
   :complete-evaluation-ignores-demand-sentinels
@@ -23,6 +26,13 @@
  {:normalization
   [eacl.execution/normalize
    eacl.execution/operation-demand]
+  :evaluation-route
+  [eacl.engine.v8/evaluation-route
+   eacl.engine.v8/can?
+   eacl.engine.v8/lookup-resources
+   eacl.engine.v8/lookup-subjects
+   eacl.engine.v8/count-resources
+   eacl.engine.v8/count-subjects]
   :deadline
   [eacl.execution/check!
    eacl.engine.v8/run-generated-traversal]
@@ -71,6 +81,7 @@
   :natural-completion :graph-exhausted}
  :executable-evidence
  [eacl.execution-test/execution-contract-normalization-test
+  eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test
   eacl.relay-test/cursor-is-bound-to-normalized-traversal-limits-test
   eacl.datomic.api-contract-test/recursive-traversal-limits-are-configurable-test
   eacl.datomic.recursive-cache-test/datomic-recursive-cursor-binds-normalized-traversal-limits-test

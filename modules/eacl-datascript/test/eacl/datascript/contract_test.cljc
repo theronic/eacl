@@ -212,29 +212,73 @@
         (eacl/->Relationship backup :backup server)])
 
       (is (true? (decision :same_a)))
-      (let [before-hits
+      (let [before-stats (datascript/cache-stats client)
+            before-hits
             (get-in
-             (datascript/cache-stats client)
+             before-stats
              [:subproblems :denotation-hits]
+             0)
+            before-acyclic-hits
+            (get-in
+             before-stats
+             [:subproblems :acyclic-denotation-hits]
              0)]
         (is (true? (decision :same_b)))
-        (let [equal-hits
+        (let [equal-stats (datascript/cache-stats client)
+              equal-hits
+              (get-in
+               equal-stats
+               [:subproblems :denotation-hits]
+               0)
+              equal-acyclic-hits
+              (get-in
+               equal-stats
+               [:subproblems :acyclic-denotation-hits]
+               0)
+              count-work (atom {})
+              count-result
+              (binding [engine/*backend-work-stats* count-work]
+                (eacl/count-resources
+                 client
+                 {:subject alice
+                  :permission :same_b
+                  :resource/type :server
+                  :evaluation :complete-denotation}))
+              lookup-work (atom {})
+              lookup-result
+              (binding [engine/*backend-work-stats* lookup-work]
+                (eacl/lookup-resources
+                 client
+                 {:subject alice
+                  :permission :same_b
+                  :resource/type :server
+                  :evaluation :complete-denotation
+                  :first 1}))
+              reused-acyclic-hits
               (get-in
                (datascript/cache-stats client)
-               [:subproblems :denotation-hits]
+               [:subproblems :acyclic-denotation-hits]
                0)]
           (is (> equal-hits before-hits))
+          (is (> equal-acyclic-hits before-acyclic-hits)
+              "the metric must identify an actual complete acyclic denotation")
+          (is (= 1 (:count count-result)))
+          (is (empty? @count-work)
+              "complete count must reuse the denotation across operations")
+          (is (= [server] (:data lookup-result)))
+          (is (empty? @lookup-work)
+              "complete lookup must reuse the denotation across operations")
           (is (false? (decision :different_relation)))
-          (is (= equal-hits
+          (is (= reused-acyclic-hits
                  (get-in
                   (datascript/cache-stats client)
-                  [:subproblems :denotation-hits]
+                  [:subproblems :acyclic-denotation-hits]
                   0)))
           (is (false? (decision :different_target)))
-          (is (= equal-hits
+          (is (= reused-acyclic-hits
                  (get-in
                   (datascript/cache-stats client)
-                  [:subproblems :denotation-hits]
+                  [:subproblems :acyclic-denotation-hits]
                   0))))))))
 
 (deftest datascript-contract-test
