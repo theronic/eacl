@@ -88,6 +88,16 @@ Release gates will require:
 
 Baselines will be produced by the same harness, dataset seed, query sequence, runtime mode, and host process isolation. Raw milliseconds alone were rejected as the primary gate because they are host-sensitive; work counters alone were rejected because user-visible latency must also be restored.
 
+Applicability is exact and fail-closed: operating system, architecture,
+operating-system version, CPU model, logical processor count, physical or
+container memory, maximum JVM heap, JDK, VM implementation/vendor,
+backend/runtime, and measurement method must all match the baseline. A missing
+field is a harness error. A mismatched runner records the raw candidate samples
+and an explicit `not-applicable` result; it cannot turn incomparable raw
+milliseconds into either a pass or a regression. Portable CI continues to
+enforce correctness and deterministic work, while release qualification needs
+separately applicable matched-host latency evidence.
+
 ### 7. Certify data-dependent recursion activation
 
 A recursive permission SCC does not by itself require fixed-point data work. The generated route decision therefore combines the schema certificate with a snapshot-bound activity bit. For each requested root, shared core derives the complete set of in-SCC arrow-permission guards. Every backend implements an exact indexed `relation-populated?` prefix probe. When all guards are empty, the recursive contribution is empty and the generated route selects the bounded acyclic evaluator; the first populated guard selects the recursive fixed-point evaluator.

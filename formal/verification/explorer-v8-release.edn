@@ -44,7 +44,12 @@
    :finding
    :raw-arrow-target-permission-names-created-two-traversal-streams-for-one-exact-pure-alias-denotation
    :remediation
-   :cycle-guarded-exact-single-self-permission-canonicalization-before-first-occurrence-frontier-deduplication}]
+   :cycle-guarded-exact-single-self-permission-canonicalization-before-first-occurrence-frontier-deduplication}
+  {:id :cross-host-matched-v7-latency-comparison
+   :finding
+   :a-macos-arm64-jdk24-same-host-baseline-was-enforced-on-linux-x86-64-jdk21-ci-especially-distorting-sub-six-millisecond-scenarios
+   :remediation
+   :exact-host-and-jvm-class-qualification-with-explicit-not-applicable-results-and-portable-correctness-work-gates-retained}]
 
  :formal-verification
  {:command "bin/formal verify"
@@ -86,39 +91,82 @@
  :focused-enumeration-routing
   {:tests 13 :assertions 75 :failures 0 :errors 0}
   :heavy-explorer-suite
-  {:tests 5 :assertions 79 :failures 0 :errors 0}
+  {:tests 6 :assertions 86 :failures 0 :errors 0}
   :heavy-explorer-100000
   {:count 100000
-   :elapsed-ms 227.899416
-   :warmed-median-ms 154.3555
+   :elapsed-ms 153.7155
+   :warmed-median-ms 149.267
    :permission-paths 4
    :backend-scans 462
    :count-pages 7
    :recursive-work 0}}
 
  :matched-v7-cache-bypassed-clj
- {:host-class :same-host-same-process-shape-harness
+ {:host-class {:os :macos
+               :arch :arm64
+               :os-version "26.5.1"
+               :cpu-model "Apple M3 Pro"
+               :logical-processors 12
+               :total-memory-bytes 19327352832
+               :max-heap-bytes 4831838208
+               :jdk "24.0.1"
+               :vm-name "OpenJDK 64-Bit Server VM"
+               :vm-vendor "Eclipse Adoptium"
+               :runtime :datascript-clj
+               :measurement :warmed-median}
+  :qualification :exact-host-and-jvm-class
+  :mismatched-host-policy :not-applicable-never-passed
   :variance-policy {:warmups 3 :samples 7 :statistic :median}
   :user-1-forward-page-10000
-  {:v7-median-ms 1.42725
-   :v8-median-ms 0.698875
-   :v8-to-v7-ratio 0.489665440532
+  {:v7-median-ms 2.923375
+   :v8-samples-ms
+   [1.487875 1.493542 1.073417 1.030417 1.047167 1.104375 1.0225]
+   :v8-median-ms 1.073417
+   :v8-to-v7-ratio 0.3671841621413606
    :maximum-ratio 2.0}
   :owner-0001-exact-count-2000-of-10000
-  {:v7-median-ms 2.476375
-   :v8-median-ms 1.97875
-   :v8-to-v7-ratio 0.799051032255
+  {:v7-median-ms 1.6295
+   :v8-samples-ms
+   [1.929333 2.18025 1.915458 1.916708 1.904666 2.115083 2.069042]
+   :v8-median-ms 1.929333
+   :v8-to-v7-ratio 1.1840030684258975
    :maximum-ratio 2.0}
   :super-user-exact-count-50000
-  {:v7-median-ms 86.823625
-   :v8-median-ms 76.31225
-   :v8-to-v7-ratio 0.878934161065
+  {:v7-median-ms 73.016792
+   :v8-samples-ms
+   [69.401416 69.092542 74.362 73.459416 67.967417 69.867583 73.427334]
+   :v8-median-ms 69.867583
+   :v8-to-v7-ratio 0.9568700717500709
    :maximum-ratio 2.0}
   :super-user-exact-count-50000-empty-recursive-schema
-  {:v7-nonrecursive-median-ms 86.823625
-   :v8-median-ms 91.900917
-   :v8-to-v7-ratio 1.058478231011
+  {:v7-nonrecursive-median-ms 73.016792
+   :v8-samples-ms
+   [102.294458 88.813708 86.83925 90.534834 87.206375 90.366333 97.304875]
+   :v8-median-ms 90.366333
+   :v8-to-v7-ratio 1.2376102883292928
+   :maximum-ratio 2.0}
+  :super-user-exact-count-100000
+  {:v7-median-ms 155.008042
+   :v8-samples-ms
+   [145.260291 158.489583 145.527041 151.186167 144.928458 158.165375 149.267]
+   :v8-median-ms 149.267
+   :v8-to-v7-ratio 0.9629629409808299
    :maximum-ratio 2.0}}
+
+ :cross-host-ci-observation
+ {:run 31300416898
+  :reported-environment {:runner-image :ubuntu-22.04
+                         :arch :x86-64
+                         :jdk "21.0.11"
+                         :runtime :datascript-clj
+                         :measurement :warmed-median}
+  :latency-gate :not-applicable
+  :observed-ms {:user-1-forward-page 3.758435
+                :owner-0001-exact-count 5.53214
+                :super-user-exact-count-50000 127.508101
+                :super-user-exact-count-100000 256.150414}
+  :portable-gates {:correctness :passed
+                   :deterministic-work :passed}}
 
  :deterministic-work
  {:pagination-10000
@@ -158,14 +206,14 @@
    :backend-scans 71
    :merge-advances 12000
    :recursive-work 0
-   :elapsed-ms 19.559791}
+   :elapsed-ms 68.182709}
   :content-proof-page-10000
   {:page-size 20
    :cache? false
    :relation-proof-commands 0
    :first-page-backend-scans 45
    :continued-page-backend-scans 24
-   :warmed-median-ms 0.698875}}
+   :warmed-median-ms 1.073417}}
 
  :explorer-browser
  {:url "http://localhost:18091/index.html"

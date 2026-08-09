@@ -42,6 +42,16 @@ The verified acyclic implementation SHALL expose deterministic logical-work coun
 
 The release performance harness MUST compare v8 and v7 using the same dataset seed, schema, request sequence, runtime mode, warmed process conditions, and host. For the named 10,000- and 50,000-resource scenarios, v8 warmed median latency SHALL be no worse than 2.0 times the recorded v7 median, subject to the harness's checked-in variance policy.
 
+The harness MUST enforce a recorded latency ratio only when the current
+operating system, architecture, operating-system version, CPU model, logical
+processor count, physical or container memory, maximum JVM heap, JDK, VM
+implementation/vendor, backend/runtime, and measurement method exactly match
+the baseline host and JVM class. A mismatch or incomplete class MUST fail
+closed: mismatch is reported as `not-applicable`, missing metadata is an error,
+and neither outcome may be reported as a latency pass. Correctness and
+deterministic work gates remain mandatory. Release qualification still requires
+applicable matched-host latency evidence for every named scenario.
+
 #### Scenario: Ten-thousand-server owner count
 
 - **WHEN** the harness measures the exact view count for the representative owner on matched v7 and v8 datasets
@@ -56,6 +66,13 @@ The release performance harness MUST compare v8 and v7 using the same dataset se
 
 - **WHEN** the harness measures the super-user's exact server count at 50,000 resources
 - **THEN** v8 satisfies the 2.0-times-v7 latency gate, completes exactly, and records no recursive traversal work
+
+#### Scenario: CI runner does not match the recorded host
+
+- **WHEN** any exact host-class field differs from the recorded v7 baseline
+- **THEN** the ratio gate reports `not-applicable` rather than comparing raw milliseconds
+- **AND** exact results and deterministic work envelopes remain mandatory
+- **AND** the mismatch cannot qualify the release's matched-host latency requirement
 
 ### Requirement: Formal and generated authority gates
 
