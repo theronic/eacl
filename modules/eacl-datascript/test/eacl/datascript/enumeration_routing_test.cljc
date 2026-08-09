@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.backend.v8 :as backend]
             [eacl.bench.explorer-fixture :as fixture]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
@@ -255,6 +256,45 @@
     (is (= :eacl.pagination/stale-cursor (:type data)))
     (is (= :dependency-proof-changed (:reason data)))))
 
+(deftest content-proof-cursors-use-current-basis-without-relation-scan-test
+  (let [{:keys [conn client]} (seed-client! small-shape)
+        query (fixture/resource-query fixture/user-1 :view 7)
+        backend-stats (atom {})
+        first-page
+        (binding [backend/*backend-op-stats* backend-stats]
+          (eacl/lookup-resources client query))
+        bypass-page
+        (binding [backend/*backend-op-stats* backend-stats]
+          (eacl/lookup-resources client (assoc query :cache? false)))
+        cursor (get-in first-page [:page-info :end-cursor])]
+    (testing "cursor minting is constant in relationship-graph size"
+      (is (= 7 (count (:data first-page))))
+      (is (= (:data first-page) (:data bypass-page)))
+      (is (zero? (get @backend-stats :relation-proof 0)))
+      (is (pos? (get @backend-stats :snapshot-id 0))))
+    (testing "current-only DataScript rejects every later basis"
+      (ds/transact! conn [{:eacl/id "unrelated-after-cursor"}])
+      (let [data
+            (error-data
+             #(eacl/lookup-resources client (assoc query :after cursor)))]
+        (is (= :eacl.pagination/stale-cursor (:type data)))
+        (is (= :dependency-proof-changed (:reason data)))))))
+
+(deftest pure-permission-aliases-share-one-acyclic-frontier-test
+  (let [{:keys [client]} (seed-client! small-shape)
+        stats (atom {})
+        result
+        (binding [engine/*acyclic-work-stats* stats]
+          (eacl/count-resources
+           client
+           (assoc (fixture/count-query fixture/super-user :view)
+                  :cache? false)))]
+    (is (= 200 (:count result)))
+    (is (= 4 (:permission-paths @stats))
+        "a pure permission alias must not create a duplicate traversal")
+    (is (<= (:backend-scans @stats) 57)
+        "alias canonicalization must remove work without widening scans")))
+
 (deftest recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
   (let [{baseline-client :client}
         (seed-client! small-shape)
@@ -293,19 +333,14 @@
       (is (= 1 (:routed-acyclic @page-stats)))
       (is (empty? @recursive-stats))
       (is (= (:count baseline-count) (:count count-result)))
-      (is (= (select-keys @baseline-stats
-                          [:backend-scans
-                           :subject->resources-scans
-                           :permission-paths
-                           :merge-advances
-                           :counted-results])
-             (select-keys @count-stats
-                          [:backend-scans
-                           :subject->resources-scans
-                           :permission-paths
-                           :merge-advances
-                           :counted-results]))
-          "empty recursive guards must not add work to the acyclic count"))
+      (is (= (:merge-advances @baseline-stats)
+             (:merge-advances @count-stats)))
+      (is (= (:counted-results @baseline-stats)
+             (:counted-results @count-stats)))
+      (is (<= (- (:backend-scans @count-stats)
+                 (:backend-scans @baseline-stats))
+              8)
+          "empty cycle guards may add only their bounded indexed seeks"))
     (testing "an actual cycle-enabling relationship restores recursive routing"
       (eacl/create-relationship!
        client

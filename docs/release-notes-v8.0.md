@@ -225,12 +225,15 @@ backward navigation.
   recursive page computation. Completed pages use the identical generated
   logical order and validate both cursor ordinal and result identity before
   slicing; a mismatch is stale, never a restart.
-- Current continuation is permitted only when the complete dependency and
-  ordering proof equals the cursor proof. After a relevant proof change,
-  Datomic and Datahike may reconstruct the authenticated exact snapshot;
-  DataScript, which is current-basis-only, returns a typed stale-cursor error.
-  A newer `at-least-as-fresh` floor that excludes the cursor snapshot returns
-  a typed cursor-consistency conflict.
+- Default content/no-proof cursors bind the exact selected immutable snapshot;
+  cursor minting does not scan relationship content. Datomic and Datahike may
+  reconstruct that authenticated exact snapshot after the current head moves.
+  DataScript is current-basis-only, so every later basis is a typed stale
+  cursor in these modes, even after an unrelated write. Explicit managed
+  mutation-stamp mode may continue on a newer current basis only when its
+  complete dependency and ordering stamps remain equal. A newer
+  `at-least-as-fresh` floor that excludes the cursor snapshot returns a typed
+  cursor-consistency conflict.
 - Continuation-store eviction, a deleted boundary, a schema change, and a
   relevant relationship change never silently switch the walk to current or
   restart page one.
@@ -288,15 +291,31 @@ directly from EAVT. The previous general Datalog query was on every adapter
 construction path, including a relationship-page cache hit, and dominated
 browser hit latency as the database grew.
 
+Default DataScript authorization cursors now use exact current-basis identity
+instead of computing a content digest over their relationship dependency
+closure. This removes graph-linear work from a first page, including with
+`:cache? false`, without adding historical retention or allowing cross-basis
+results. Managed mutation-stamp clients retain bounded dependency-scoped
+continuation.
+
+The acyclic frontier builder also canonicalizes exact pure permission aliases
+before its existing first-occurrence identity deduplication. In the Explorer
+schema, `account.view = admin` therefore makes `account->view` and
+`account->admin` one semantic traversal stream. Composite bodies remain
+untouched; exact values and public order are unchanged.
+
 The matched v7/cache-bypassed performance gate passes:
 
-- 10k user-1 page: v8 median 0.79ms versus v7 1.43ms.
-- 10k owner-0001 exact 2k count: v8 2.60ms versus v7 2.48ms.
-- 50k super-user exact count: v8 117.81ms versus v7 86.82ms
-  (1.36x, below the 2.0x release bound).
+- 10k user-1 page: v8 median 0.70ms versus v7 1.43ms.
+- 10k owner-0001 exact 2k count: v8 1.98ms versus v7 2.48ms.
+- 50k super-user exact count: v8 76.31ms versus v7 86.82ms
+  (0.88x, below the 2.0x release bound).
 - The same 50k count with the Explorer recursive schema and no parent
-  relationships takes 111.73ms, reports 50,003 merge advances, and performs
+  relationships takes 91.90ms, reports 50,003 merge advances, and performs
   zero recursive work.
+- The 100k exact count retains the existing 512-scan ceiling and now performs
+  462 scans across four canonical permission paths; its warmed median is
+  154.36ms.
 
 The local CLJS Explorer acceptance run keeps repeated nested page hits around
 1–3ms, completes recursive-schema view/admin switching at 10k, and completes
@@ -406,6 +425,22 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
   keyset cursor ABI. The minimized regressions require invariant public order,
   cross-operation reuse, and zero backend work; the execution-contract model
   proves the route and order laws.
+- **Default DataScript cursors scanned the entire relationship graph
+  (EACL-FORMAL-064).** Cursor orchestration always supplied a permission's
+  relation closure. Under default content proof mode, a seven-item demand page
+  therefore hashed every matching forward and reverse relationship record just
+  to mint a cursor; `:cache? false` did not avoid that work. Content/no-proof
+  cursors now bind exact immutable snapshot identity and issue zero relation
+  proof commands. Since DataScript cannot select history, any later basis is
+  stale. Only explicit managed mutation stamps permit bounded proof-equivalent
+  cross-basis continuation.
+- **Pure permission aliases duplicated acyclic traversal streams
+  (EACL-FORMAL-065).** Raw arrow target names kept `account->view` and
+  `account->admin` distinct even when `view = admin`, pushing the 100k Explorer
+  count to 515 backend scans above the unchanged 512-scan ceiling. The frontier
+  builder now follows only cycle-guarded exact single self-permission bodies,
+  canonicalizes arrow targets, and preserves the first path's order. The
+  denotation is unchanged and composite permissions are not rewritten.
 - **Token consistency descriptors admitted unknown fields
   (EACL-FORMAL-053).** The shared descriptor checked the required mode and
   token values but accepted additional fields, contradicting the formal
@@ -443,7 +478,7 @@ coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 8,596 proof efforts across 27 source-project
+The locked Dafny run completes 8,616 proof efforts across 27 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes
@@ -466,10 +501,10 @@ shipped.
 
 The browser no longer executes the Dafny JavaScript runtime or BigNumber on
 the authorization hot path. Certification passed 45 formal/oracle tests with
-9,971 assertions, the full advanced DataScript/core suite passed 172 tests
-with 9,673 assertions, and the current injected-authority suite passed 170
-tests with 4,671 assertions while observing every required traversal
-operation.
+9,971 assertions, the full advanced DataScript/core suite passed 174 tests
+with 9,684 assertions, and the current injected-authority suite passed 172
+tests with 4,682 assertions across 79 client constructions while observing
+every required traversal operation.
 
 At the 16,384-result reference size the recorded three-process median is
 5,335 ns/result,

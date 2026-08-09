@@ -1,8 +1,8 @@
 {:schema-version 1
- :corpus-revision :EACL-FORMAL-063
- :entries 63
+ :corpus-revision :EACL-FORMAL-065
+ :entries 65
  :status :passed
- :tests 67
- :assertions 18431
+ :tests 69
+ :assertions 18516
  :missing-var-in-available-namespace-policy :fail
  :command "EACL_NREPL_PORT=<formal-smoke-port> bin/formal counterexample-replay"}

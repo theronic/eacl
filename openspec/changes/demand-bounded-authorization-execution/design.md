@@ -390,10 +390,21 @@ Consistency modes are:
   contains the authenticated mutation anchor `T`;
 - `:at-exact-snapshot`: typed unsupported capability before cache/evaluation.
 
-For pagination, a proof-equivalent current DB may resume deterministic traversal
-after unrelated writes. A relevant schema, relationship, identity, or ordering
-proof change returns a typed stale-cursor or newer-floor conflict. DataScript
-never silently restarts and never uses cached pages from the old proof.
+For pagination, the default content/unknown-authority path binds the cursor to
+the exact selected DataScript basis. It does not hash relationship content to
+mint or resume a small page: that graph-linear proof made `:cache? false` pages
+hundreds of times slower while providing no historical DataScript basis to
+resume. Any later basis is therefore stale in this mode, including after an
+unrelated transaction.
+
+Explicit managed mutation-stamp mode may instead bind the compiled dependency
+closure and continue on a newer current DB when all bounded schema,
+relationship, identity, and ordering stamps remain equal. A changed stamp
+returns a typed stale-cursor or newer-floor conflict. DataScript never silently
+restarts and never uses cached pages from the old proof. This distinction is
+deliberate: exact-basis identity is the safe constant-cost default; scoped
+cross-basis continuation is available only under the writer authority that can
+maintain bounded complete mutation stamps.
 
 ### 12. Observability reports independent decisions
 
@@ -511,6 +522,13 @@ faster. Reproducible latency, throughput, allocation, and retained-memory
 benchmarks then enforce absolute and relative thresholds with environment and
 variance disclosure. Neither evidence class impersonates the other, and both
 are bound to the exact candidate artifact in the certification ledger.
+
+The certified acyclic frontier also canonicalizes exact pure permission aliases
+before identity deduplication. Only a permission body consisting of one
+same-resource self-permission qualifies; composite bodies remain untouched and
+alias traversal is cycle-guarded. This removes duplicate indexed streams such
+as `account->view` and `account->admin` when `view = admin`, preserves the first
+canonical path's public position, and cannot widen scans or change denotation.
 
 ## Risks / Trade-offs
 

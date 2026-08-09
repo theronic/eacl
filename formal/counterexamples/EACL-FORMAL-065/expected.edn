@@ -1,0 +1,7 @@
+{:pure-alias-definition :exact-single-self-permission-body
+ :cycle-guarded true
+ :composite-permissions-canonicalized false
+ :first-occurrence-order-preserved true
+ :denotation-unchanged true
+ :canonical-frontiers 4
+ :maximum-backend-scans-at-100000 512}

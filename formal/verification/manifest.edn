@@ -67,7 +67,7 @@
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 34
+   :verified-obligations 40
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
@@ -78,7 +78,7 @@
    :claim :conditional-operation-count-bound}
   :recursive-engine-cost-model
   {:status :passed
-   :verified-obligations 38
+   :verified-obligations 52
    :source "formal/dafny/SchemaPlanCost.dfy"
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
@@ -136,7 +136,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8596
+   :verified-obligations 8616
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -182,7 +182,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-063
+ {:latest :EACL-FORMAL-065
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -245,11 +245,13 @@
           :EACL-FORMAL-060
           :EACL-FORMAL-061
           :EACL-FORMAL-062
-          :EACL-FORMAL-063]}
+          :EACL-FORMAL-063
+          :EACL-FORMAL-064
+          :EACL-FORMAL-065]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 63}
+  :entries 65}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

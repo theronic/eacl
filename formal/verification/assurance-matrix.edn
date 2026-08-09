@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 56
   :public-roots 63
-  :reachable-definitions 1419
+  :reachable-definitions 1420
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -86,10 +86,11 @@
    :class :generated-decision-and-source-specialization
    :consumer ['eacl.lazy-merge-sort]}
   {:source "formal/dafny/PageWindow.dfy"
-   :class :generated-production
+   :class :generated-production-and-proof-only-host-control-model
    :consumer ['eacl.engine.v8/normalize-page-request
               'eacl.engine.relationships/normalized-page
               'eacl.engine.relationships/execute-page
+              'eacl.client.orchestration/cursor-options
               'eacl.relay]}
   {:source "formal/dafny/RecursiveEngine.dfy"
    :class :generated-production
@@ -101,8 +102,9 @@
    :class :generated-production
    :consumer ['eacl.engine.v8/enumeration-route]}
   {:source "formal/dafny/SchemaPlanCost.dfy"
-   :class :spec-only-cost-model
-   :consumer ["formal/verification/performance-gates.edn"]}
+   :class :proof-only-host-control-and-cost-model
+   :consumer ['eacl.engine.v8/frontier-permission-paths
+              "formal/verification/performance-gates.edn"]}
   {:source "formal/dafny/SnapshotOracle.dfy"
    :class :spec-only-interface-contract
    :consumer ['eacl.consistency]}
@@ -291,22 +293,61 @@
     :consistency-boundary-performance
     :mutation-control]}
   {:operation :lookup-cursor-continuation
-   :entry-points ['eacl.relay]
+   :entry-points ['eacl.client.orchestration/cursor-options
+                  'eacl.relay]
    :theorems [:cursor-scope-before-influence
               :single-permitted-graph
+              :content-cursor-minting-does-no-relation-proof-scan
+              :no-cache-proof-cursor-minting-does-no-relation-proof-scan
+              :only-managed-mutation-mode-requests-dependency-proof
               :current-continuation-requires-equal-proof
               :exact-continuation-requires-authenticated-exact-proof
               :changed-proof-never-continues-on-current
-              :changed-proof-without-exact-snapshot-is-rejected]
+              :changed-proof-without-exact-snapshot-is-rejected
+              :datascript-exact-proof-continues-only-at-current-basis
+              :datascript-changed-basis-cannot-yield-cursor-page]
    :dafny ["formal/dafny/PageWindow.dfy"
            "formal/dafny/TemporalSafety.dfy"]
-   :adapter-obligations [:immutable-snapshot :exact-selection
-                         :source-fingerprint
-                         :complete-dependency-and-order-proof]
+   :adapter-obligations
+   [:immutable-snapshot
+    :exact-selection
+    :source-fingerprint
+    :exact-snapshot-identity-collision-resistance
+    :managed-mutation-stamp-completeness
+    :complete-dependency-and-order-proof]
    :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   {:continuation-decision :generated-production
+    :cursor-proof-strategy :proof-only-host-control-model-cross-checked}
+   :remaining
+   [:mechanized-host-cursor-proof-strategy-source-refinement
+    :backend-proof-construction-refinement
+    :independent-review]
    :ci [:generated-production-kernel
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
+  {:operation :acyclic-frontier-alias-canonicalization
+   :entry-points ['eacl.engine.v8/frontier-permission-paths]
+   :theorems
+   [:canonical-permission-alias-preserves-denotation
+    :canonical-frontier-deduplication-cannot-add-traversal-streams
+    :canonical-frontier-sequence-is-unique-and-keeps-first-path]
+   :dafny ["formal/dafny/SchemaPlanCost.dfy"]
+   :adapter-obligations
+   [:complete-permission-body-materialization
+    :same-resource-self-permission-semantics
+    :stable-first-occurrence-frontier-order]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   {:alias-selection :proof-only-host-control-model-cross-checked
+    :frontier-traversal :digest-locked-source-specialization}
+   :remaining
+   [:mechanized-host-alias-canonicalization-source-refinement
+    :backend-permission-body-materialization-refinement
+    :independent-review]
+   :ci [:explorer-enumeration
+        :cross-runtime-authorization-oracle
+        :mutation-control]}
   {:operation :relationship-pagination
    :entry-points ['eacl.engine.relationships/execute-page
                   'eacl.relay/externalize-relationship-page]

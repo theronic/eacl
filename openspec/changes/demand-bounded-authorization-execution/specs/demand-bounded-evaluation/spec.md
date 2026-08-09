@@ -178,3 +178,8 @@ permission.
 - **WHEN** `:cache? false` is supplied
 - **THEN** the response is not labeled a hit and cache statistics record no lookup or publication for that request
 - **AND** EACL performs no cache key, lookup, proof-lifting, admission, publication, or cache-coordination work
+
+#### Scenario: Default page cursor proof
+- **WHEN** a demand page uses content proof mode or disables answer-cache reuse
+- **THEN** cursor minting binds the selected immutable snapshot identity without scanning relationship content
+- **AND** the cursor mechanism performs no work proportional to the relationship graph merely to make the demanded page resumable

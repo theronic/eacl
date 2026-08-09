@@ -137,9 +137,9 @@
    {:cljs-generated-smoke
     {:tests 45 :assertions 9971 :failures 0 :errors 0}
     :cljs-verified-authority
-    {:tests 170 :assertions 4671 :failures 0 :errors 0}
+    {:tests 172 :assertions 4682 :failures 0 :errors 0}
     :jvm-verified-authority
-    {:tests 519 :assertions 39362 :failures 0 :errors 0}}
+    {:tests 523 :assertions 39462 :failures 0 :errors 0}}
    :qualification
    :reviewed-target-runtime-plus-property-differential-scaling-and-fixed-heap-evidence-not-a-peak-resource-theorem
    :status :passed-for-named-indexed-traversal-targets}}
@@ -206,8 +206,8 @@
   :absolute-ceiling-ns-per-result 15000.0
   :semantic-parity
   {:formal-oracle-cljs {:tests 45 :assertions 9971}
-   :full-datascript-cljs {:tests 172 :assertions 9673}
-   :injected-authority-cljs {:tests 170 :assertions 4671}}
+   :full-datascript-cljs {:tests 174 :assertions 9684}
+   :injected-authority-cljs {:tests 172 :assertions 4682}}
   :qualification
   :host-runtime-measurement-with-deterministic-semantic-counters-unchanged
   :status :passed}
@@ -243,7 +243,7 @@
 
  :formal-pipeline
  {:scope :all-27-dafny-modules
-  :proof-efforts 8596
+  :proof-efforts 8616
   :last-observed-local-wall-seconds 1001
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -1520,6 +1520,38 @@
   {:current-cache-blocked false
    :verified-authority-decision :not-evaluated-by-this-cache-gate
    :reason :proof-per-hit-path-removed}}
+
+ :explorer-demand-page-proof-and-alias-cutover
+ {:date "2026-08-08"
+  :candidate-before
+  "e50f1cb5395e105edf3875d50e0afb16b1ba7cee"
+  :counterexamples [:EACL-FORMAL-064 :EACL-FORMAL-065]
+  :unchanged-gates
+  {:user-page-10000-maximum-median-ms 2.8545
+   :owner-count-10000-maximum-median-ms 4.95275
+   :count-100000-maximum-median-ms 381.529832
+   :count-100000-maximum-backend-scans 512}
+  :failed-github-linux-observation-before
+  {:user-page-10000-median-ms 1160.802592
+   :owner-count-10000-median-ms 5.360945
+   :count-100000-median-ms 326.699408
+   :count-100000-backend-scans 515}
+  :local-macos-arm64-observation-after
+  {:user-page-10000-median-ms 0.698875
+   :owner-count-10000-median-ms 1.97875
+   :count-100000-median-ms 154.3555
+   :count-100000-backend-scans 462
+   :count-100000-permission-paths 4
+   :exact-count 100000
+   :recursive-work 0}
+  :logical-cutover
+  {:default-content-cursor-relation-proof-commands {:before 1 :after 0}
+   :canonical-permission-paths {:before 5 :after 4}
+   :count-100000-backend-scans {:before 515 :after 462}}
+  :qualification
+  :wall-times-are-host-specific-and-not-cross-host-ratios-logical-counters-and-results-are-directly-gated
+  :result {:tests 5 :assertions 79 :failures 0 :errors 0}
+  :status :passed-without-threshold-relaxation}
 
  :demand-bounded-pagination-run
  {:date "2026-08-08"

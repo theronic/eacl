@@ -450,6 +450,56 @@ module PageWindow {
         itemsProof: string
       )
 
+  // Production normalizes :proof-mode before cursor construction. Only the
+  // explicitly managed mutation-stamp mode may ask the adapter for a
+  // dependency-scoped relation proof. Content/no-proof modes pin the exact
+  // selected immutable snapshot instead; this keeps cursor minting
+  // independent of relationship-graph cardinality.
+  datatype NormalizedProofMode =
+    | MutationStampProof
+    | ContentProof
+    | NoCacheProof
+
+  datatype CursorProofStrategy =
+    | ManagedDependencyProof
+    | ExactSnapshotProof
+
+  function SelectCursorProofStrategy(
+    proofMode: NormalizedProofMode
+  ): CursorProofStrategy {
+    if proofMode.MutationStampProof?
+    then ManagedDependencyProof
+    else ExactSnapshotProof
+  }
+
+  function CursorRelationProofCommands(
+    proofMode: NormalizedProofMode
+  ): nat {
+    if SelectCursorProofStrategy(proofMode).ManagedDependencyProof?
+    then 1
+    else 0
+  }
+
+  lemma ContentCursorMintingDoesNoRelationProofScan()
+    ensures SelectCursorProofStrategy(ContentProof).ExactSnapshotProof?
+    ensures CursorRelationProofCommands(ContentProof) == 0
+  {
+  }
+
+  lemma NoCacheProofCursorMintingDoesNoRelationProofScan()
+    ensures SelectCursorProofStrategy(NoCacheProof).ExactSnapshotProof?
+    ensures CursorRelationProofCommands(NoCacheProof) == 0
+  {
+  }
+
+  lemma OnlyManagedMutationModeRequestsDependencyProof(
+    proofMode: NormalizedProofMode
+  )
+    ensures CursorRelationProofCommands(proofMode) > 0 <==>
+            proofMode.MutationStampProof?
+  {
+  }
+
   datatype ContinuationRejectReason =
     | InvalidAuthentication
     | ScopeMismatch
@@ -670,6 +720,52 @@ module PageWindow {
               cursorProof,
               cursorGraph,
               ExactUnavailable
+            ) == Reject(SnapshotUnavailable)
+  {
+  }
+
+  function DataScriptCurrentBasisContinuation(
+    currentBasisProof: string,
+    cursorBasisProof: string,
+    cursorGraph: TemporalSafety.Graph
+  ): ContinuationDecision {
+    DecideContinuation(
+      true,
+      true,
+      false,
+      "datascript-current",
+      "datascript-current",
+      currentBasisProof,
+      cursorBasisProof,
+      cursorGraph,
+      ExactUnavailable
+    )
+  }
+
+  lemma DataScriptExactProofContinuesOnlyAtCurrentBasis(
+    currentBasisProof: string,
+    cursorBasisProof: string,
+    cursorGraph: TemporalSafety.Graph
+  )
+    ensures DataScriptCurrentBasisContinuation(
+              currentBasisProof,
+              cursorBasisProof,
+              cursorGraph
+            ).UseCurrent? <==>
+            currentBasisProof == cursorBasisProof
+  {
+  }
+
+  lemma DataScriptChangedBasisCannotYieldCursorPage(
+    currentBasisProof: string,
+    cursorBasisProof: string,
+    cursorGraph: TemporalSafety.Graph
+  )
+    requires currentBasisProof != cursorBasisProof
+    ensures DataScriptCurrentBasisContinuation(
+              currentBasisProof,
+              cursorBasisProof,
+              cursorGraph
             ) == Reject(SnapshotUnavailable)
   {
   }

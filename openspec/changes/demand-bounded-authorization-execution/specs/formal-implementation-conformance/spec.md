@@ -61,6 +61,19 @@ MUST NOT be presented as certification of production behavior.
   that route selection, not evidence that the demand shortcut materialized a
   denotation
 
+#### Scenario: Cursor proof strategy matches production
+- **WHEN** production normalizes content, no-cache-proof, or managed mutation-stamp proof mode for cursor construction
+- **THEN** the formal model selects the same exact-snapshot or managed-dependency strategy as the shipped orchestration branch
+- **AND** proves that content and no-cache-proof cursor minting issue zero relationship-proof commands
+- **AND** proves that current-only DataScript rejects a changed exact basis because no historical selection is available
+
+#### Scenario: Pure permission alias frontier optimization matches production
+- **WHEN** production canonicalizes an arrow target whose permission body is exactly one same-resource self-permission
+- **THEN** the formal model follows the same cycle-guarded alias chain
+- **AND** proves the target permission denotation is unchanged and canonical frontier deduplication cannot add traversal streams
+- **AND** models the production left-to-right seen-set fold, proving canonical streams are unique and the first canonical path remains first
+- **AND** composite permission bodies are not treated as aliases
+
 ### Requirement: Assurance traceability is bidirectional and complete
 EACL SHALL assign stable claim identifiers and maintain a machine-validated
 bidirectional mapping among changed OpenSpec requirements and scenarios, public

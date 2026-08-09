@@ -118,3 +118,25 @@ and measured results MUST carry the exact production artifact digest they test.
   production artifact and source-closure digest
 - **THEN** the conformance gate rejects the evidence as stale
 - **AND** prospective external certification remains unavailable
+
+### Requirement: Exact semantic aliases do not duplicate traversal
+
+Before constructing an acyclic merge frontier, EACL SHALL canonicalize only a
+permission whose complete body is exactly one same-resource self-permission.
+It SHALL follow that alias chain with a cycle guard, normalize arrow target
+permission identities, and preserve first-occurrence traversal order while
+removing duplicate canonical frontier identities. It MUST NOT generalize a
+composite permission, inspect relationship data to infer an alias, widen a
+backend scan, or change the permission denotation.
+
+#### Scenario: Two arrow targets differ only by a pure alias
+
+- **WHEN** two acyclic arrow paths have the same relation/type identity and one target permission is a pure alias of the other
+- **THEN** EACL constructs one canonical traversal stream at the first path's position
+- **AND** exact count, page order, point decisions, and stopping conditions are unchanged
+
+#### Scenario: Composite or cyclic permission body
+
+- **WHEN** a permission has multiple components or a pure-alias chain cycles
+- **THEN** EACL does not erase a component or recurse indefinitely
+- **AND** cycle handling remains conservative and denotationally correct

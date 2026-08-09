@@ -211,7 +211,19 @@
            {:adapter adapter
             :stamp (delay (:schema-version @schema-cache))}
            :cursor-dependency-relation-ids
-           (when (and resource-type permission)
+           ;; Content proofs are linear in the relationship graph. Paying
+           ;; that cost merely to mint a cursor made a demand-bounded page
+           ;; hundreds of times slower when answer caching was bypassed.
+           ;; Dependency-scoped reuse is therefore reserved for managed
+           ;; mutation stamps, whose cost is bounded by the compiled relation
+           ;; closure. Other modes bind the cursor to the selected immutable
+           ;; snapshot identity. Datomic/Datahike can select that exact
+           ;; snapshot on resume; current-only DataScript rejects the cursor
+           ;; after any basis change instead of scanning content or yielding a
+           ;; hybrid page.
+           (when (and resource-type
+                      permission
+                      (= :mutation (:proof-mode opts)))
              (delay
                (try
                  (binding [engine/*schema-cache* @schema-cache]

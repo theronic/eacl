@@ -223,23 +223,23 @@ The final pre-audit run on 2026-08-08 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 27 modules, 8,596 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 27 modules, 8,616 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
 | Generated Java runtime bridges | 51 tests, 16,176 assertions, 0 failures/errors |
-| Generated-authority-injected JVM public/backend suite | 519 tests, 39,362 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
-| Portable-authority-injected DataScript CLJS suite | 170 tests, 4,671 assertions, 0 failures/errors; 77 client constructions injected and every required portable authority operation observed |
+| Generated-authority-injected JVM public/backend suite | 523 tests, 39,462 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
+| Portable-authority-injected DataScript CLJS suite | 172 tests, 4,682 assertions, 0 failures/errors; 79 client constructions injected and every required portable authority operation observed |
 | Portable CLJS formal/oracle suite | 45 tests, 9,971 assertions, 0 failures/errors |
-| Portable CLJS full DataScript/core suite | 172 tests, 9,673 assertions, 0 failures/errors under `:advanced` |
+| Portable CLJS full DataScript/core suite | 174 tests, 9,684 assertions, 0 failures/errors under `:advanced` |
 | Portable CLJS performance/payload | 5,335 ns/result three-process median at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
 | Heavy generated-only backend/performance suite | 17 tests, 4,058 assertions, 0 failures/errors |
-| Minimized counterexample replay | 67 tests / 18,431 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
-| Mutation control | 2 tests, 213 assertions, 0 failures/errors; all 93 registered mutants killed |
+| Minimized counterexample replay | 69 tests / 18,516 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |
+| Mutation control | 2 tests, 217 assertions, 0 failures/errors; all 95 registered mutants killed |
 | Retained-live-heap gate | five complete 4,000-result recursive walks retained 5,335,984–5,344,744 bytes after full GC, below the 8 MiB ceiling, with identical result digests |
-| Generated artifact size | browser bundle 592,279 bytes; Java classes/runtime 1,907,070 bytes; Java source 2,142,584 bytes; JavaScript/runtime 953,503 bytes; every ceiling passed |
+| Generated artifact size | browser bundle 594,693 bytes; Java classes/runtime 1,917,082 bytes; Java source 2,151,864 bytes; JavaScript/runtime 957,820 bytes; every ceiling passed |
 
 The JVM suite observed generated decision calls for all required operations on
-all three adapters (366 injected Datomic clients, 71 Datahike, 123 DataScript).
-The latest portable CLJS suite observed 77 injected DataScript clients. These
+all three adapters (366 injected Datomic clients, 71 Datahike, 127 DataScript).
+The latest portable CLJS suite observed 79 injected DataScript clients. These
 counters prevent a green suite that accidentally bypasses the selected
 authority.
 

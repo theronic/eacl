@@ -130,7 +130,11 @@
     :EACL-FORMAL-062
     eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
     :EACL-FORMAL-063
-    eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test})
+    eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test
+    :EACL-FORMAL-064
+    eacl.datascript.enumeration-routing-test/content-proof-cursors-use-current-basis-without-relation-scan-test
+    :EACL-FORMAL-065
+    eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test})
 
 (defn- read-edn
   [path]
@@ -258,8 +262,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-063 (:latest revision)))
-    (is (= 63 (count entries)))))
+    (is (= :EACL-FORMAL-065 (:latest revision)))
+    (is (= 65 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

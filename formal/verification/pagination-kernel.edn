@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 34
+  :verified-obligations 40
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -15,10 +15,15 @@
    :page-uniqueness
    :complete-forward-walk
    :backward-page-is-exact-preceding-window
+   :content-cursor-minting-does-no-relation-proof-scan
+   :no-cache-proof-cursor-minting-does-no-relation-proof-scan
+   :only-managed-mutation-mode-requests-dependency-proof
    :current-continuation-requires-equal-proof
    :exact-continuation-requires-authenticated-exact-proof
    :changed-proof-never-continues-on-current
    :changed-proof-without-exact-snapshot-is-rejected
+   :datascript-exact-proof-continues-only-at-current-basis
+   :datascript-changed-basis-cannot-yield-cursor-page
    :completed-logical-page-is-exact-slice
    :mismatched-logical-boundary-is-stale
    :matching-authorization-page-scope-reuses-exact-page
@@ -30,6 +35,7 @@
   [eacl.engine.v8/normalize-page-request
    eacl.engine.relationships/normalized-page]
   :keyset-page-decision eacl.engine.relationships/execute-page
+  :cursor-proof-strategy eacl.client.orchestration/cursor-options
   :continuation-decision eacl.relay/continuation-decision
   :completed-logical-page eacl.engine.v8/complete-logical-page
   :retained-exact-page

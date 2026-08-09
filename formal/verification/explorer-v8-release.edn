@@ -1,5 +1,5 @@
 {:schema-version 1
- :recorded-at "2026-08-06"
+ :recorded-at "2026-08-08"
  :change :restore-v8-enumeration-performance
 
  :root-causes
@@ -32,12 +32,24 @@
    :finding
    :exact-count-rebuilt-the-complete-permission-path-merge-for-every-internal-window-causing-fanout-index-scans-to-scale-with-window-count-times-intermediate-count
    :remediation
-   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}]
+   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}
+  {:id :content-cursor-proof-scan
+   :counterexample :EACL-FORMAL-064
+   :finding
+   :default-datascript-content-proof-cursor-minting-scanned-the-complete-relationship-dependency-content-even-for-cache-bypassed-small-pages
+   :remediation
+   :bind-default-cursors-to-exact-current-basis-and-reserve-bounded-dependency-stamps-for-explicit-managed-mutation-mode}
+  {:id :pure-permission-alias-frontier-duplication
+   :counterexample :EACL-FORMAL-065
+   :finding
+   :raw-arrow-target-permission-names-created-two-traversal-streams-for-one-exact-pure-alias-denotation
+   :remediation
+   :cycle-guarded-exact-single-self-permission-canonicalization-before-first-occurrence-frontier-deduplication}]
 
  :formal-verification
  {:command "bin/formal verify"
   :modules 27
-  :proof-efforts 8596
+  :proof-efforts 8616
   :errors 0
   :retained-exact-page-theorems
   [PageWindow.MatchingAuthorizationPageScopeReusesExactPage
@@ -50,7 +62,15 @@
   [SchemaPlanCost.CountProjectionChunkCoversWindowAndSentinel
    SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound
    SchemaPlanCost.ExactCountBuildsOneMergeTraversal
-   SchemaPlanCost.CountWindowAdvanceIsBounded]}
+   SchemaPlanCost.CountWindowAdvanceIsBounded]
+  :cursor-proof-authority
+  [PageWindow.ContentCursorMintingDoesNoRelationProofScan
+   PageWindow.OnlyManagedMutationModeRequestsDependencyProof
+   PageWindow.DataScriptChangedBasisCannotYieldCursorPage]
+  :pure-alias-authority
+  [SchemaPlanCost.CanonicalPermissionAliasPreservesDenotation
+   SchemaPlanCost.CanonicalFrontierDeduplicationCannotAddTraversalStreams
+   SchemaPlanCost.CanonicalFrontierSequenceIsUniqueAndKeepsFirstPath]}
 
  :runtime-suites
  {:datascript-clj
@@ -63,14 +83,16 @@
   {:tests 240 :assertions 11204 :failures 0 :errors 0}
   :shared-core-clj
   {:tests 85 :assertions 666 :failures 0 :errors 0}
-  :focused-enumeration-routing
-  {:tests 9 :assertions 51 :failures 0 :errors 0}
+ :focused-enumeration-routing
+  {:tests 13 :assertions 75 :failures 0 :errors 0}
+  :heavy-explorer-suite
+  {:tests 5 :assertions 79 :failures 0 :errors 0}
   :heavy-explorer-100000
   {:count 100000
-   :elapsed-ms 258.188958
-   :warmed-median-ms 248.518833
-   :permission-paths 5
-   :backend-scans 456
+   :elapsed-ms 227.899416
+   :warmed-median-ms 154.3555
+   :permission-paths 4
+   :backend-scans 462
    :count-pages 7
    :recursive-work 0}}
 
@@ -79,23 +101,23 @@
   :variance-policy {:warmups 3 :samples 7 :statistic :median}
   :user-1-forward-page-10000
   {:v7-median-ms 1.42725
-   :v8-median-ms 0.791542
-   :v8-to-v7-ratio 0.5546
+   :v8-median-ms 0.698875
+   :v8-to-v7-ratio 0.489665440532
    :maximum-ratio 2.0}
   :owner-0001-exact-count-2000-of-10000
   {:v7-median-ms 2.476375
-   :v8-median-ms 2.604417
-   :v8-to-v7-ratio 1.0517
+   :v8-median-ms 1.97875
+   :v8-to-v7-ratio 0.799051032255
    :maximum-ratio 2.0}
   :super-user-exact-count-50000
   {:v7-median-ms 86.823625
-   :v8-median-ms 117.805542
-   :v8-to-v7-ratio 1.3568
+   :v8-median-ms 76.31225
+   :v8-to-v7-ratio 0.878934161065
    :maximum-ratio 2.0}
   :super-user-exact-count-50000-empty-recursive-schema
   {:v7-nonrecursive-median-ms 86.823625
-   :v8-median-ms 111.730166
-   :v8-to-v7-ratio 1.2869
+   :v8-median-ms 91.900917
+   :v8-to-v7-ratio 1.058478231011
    :maximum-ratio 2.0}}
 
  :deterministic-work
@@ -108,35 +130,42 @@
    :recursive-work 0}
   :owner-count-2000
   {:count 2000
-   :backend-scans 14
+   :backend-scans 18
    :merge-advances 2000
    :recursive-work 0}
   :super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 231
+   :backend-scans 237
    :merge-advances 50003
    :recursive-work 0}
   :empty-recursive-super-count-50000
   {:count 50000
    :count-pages 4
-   :backend-scans 231
+   :backend-scans 265
    :merge-advances 50003
    :recursive-work 0}
   :super-count-100000
   {:count 100000
    :count-pages 7
-   :backend-scans 456
-   :permission-paths 5
+   :backend-scans 462
+   :permission-paths 4
    :merge-advances 100006
    :recursive-work 0}
   :cold-user-count-12000-of-40000
   {:count 12000
    :count-pages 1
-   :backend-scans 59
+   :backend-scans 71
    :merge-advances 12000
    :recursive-work 0
-   :elapsed-ms 30.553917}}
+   :elapsed-ms 19.559791}
+  :content-proof-page-10000
+  {:page-size 20
+   :cache? false
+   :relation-proof-commands 0
+   :first-page-backend-scans 45
+   :continued-page-backend-scans 24
+   :warmed-median-ms 0.698875}}
 
  :explorer-browser
  {:url "http://localhost:18091/index.html"

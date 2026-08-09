@@ -242,8 +242,8 @@
     (is (= 100000 (get-in report [:value :count])))
     (is (empty? (:recursive report)))
     (is (= 1 (get-in report [:acyclic :routed-acyclic])))
-    (is (= 5 (get-in report [:acyclic :permission-paths]))
-        "count windows must not rebuild the five server permission paths")
+    (is (= 4 (get-in report [:acyclic :permission-paths]))
+        "count windows must not rebuild the four canonical server permission paths")
     (assert-work-envelope! report envelope)
     (is (<= (:warmed-median-ms report)
             (get-in manifest

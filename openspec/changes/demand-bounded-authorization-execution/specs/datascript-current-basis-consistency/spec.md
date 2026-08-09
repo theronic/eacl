@@ -86,18 +86,29 @@ answer observationally equivalent on `S`.
 - **WHEN** `:cache? false` is supplied with any supported consistency mode
 - **THEN** EACL evaluates on the same selected `S` without cache work
 
-### Requirement: DataScript cursors continue only on proof-equivalent current data
-A DataScript cursor SHALL continue on the selected current DB only when its
-complete dependency and ordering proofs equal the cursor proof. A relevant
-change SHALL return a typed stale-cursor or newer-floor conflict; DataScript
-MUST NOT silently restart, reconstruct an old DB, or return a cached old page.
+### Requirement: DataScript cursors use bounded current-basis proof
+A DataScript cursor SHALL continue only on the selected current DB. In default
+content, unknown-authority, or no-cache-proof modes, the cursor SHALL bind the
+exact current immutable basis and SHALL NOT compute a relationship-content
+proof. Any later basis SHALL return a typed stale-cursor or newer-floor
+conflict. Only explicit managed mutation-stamp mode MAY use a dependency-scoped
+schema/relationship stamp and continue on a newer current basis whose complete
+dependency and ordering stamps are equal. DataScript MUST NOT silently restart,
+reconstruct an old DB, scan relationship content to mint a cursor, or return a
+cached old page.
 
 #### Scenario: Unrelated current transaction
-- **WHEN** current `S1` differs from cursor snapshot `S0` only outside complete cursor dependencies
-- **THEN** EACL may resume deterministically on `S1` without duplicates or omissions
+- **WHEN** default content or no-cache-proof mode selects `S1` after a cursor was minted on `S0`
+- **THEN** EACL rejects the cursor even when the transaction was unrelated
+- **AND** performs no relationship-content scan to attempt cross-basis continuation
+
+#### Scenario: Managed unrelated current transaction
+- **WHEN** explicit managed mutation-stamp mode selects `S1` and every complete cursor dependency and ordering stamp equals the cursor minted on `S0`
+- **THEN** EACL may resume deterministically on current `S1` without duplicates or omissions
+- **AND** the authorization answer remains validated on `S1`
 
 #### Scenario: Relevant relationship change
-- **WHEN** a relationship in the cursor dependency closure changes between pages
+- **WHEN** managed mutation-stamp mode observes a changed relationship in the cursor dependency closure between pages
 - **THEN** EACL rejects continuation as stale
 - **AND** the caller may explicitly begin a new enumeration
 

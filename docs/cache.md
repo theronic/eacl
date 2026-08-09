@@ -349,9 +349,12 @@ restarts the public walk.
 
 Explicit `at-exact-snapshot`, historical replay, filtered databases,
 prospective databases, and other arbitrary database values bypass completed
-answers. Current cursor continuation requires an equal dependency/order proof.
-A changed proof requires verified exact historical reconstruction or fails
-closed; DataScript never reconstructs history.
+answers. Default content/no-proof cursors bind exact immutable snapshot
+identity without scanning relationship content. A changed proof requires
+verified exact historical reconstruction or fails closed; DataScript never
+reconstructs history, so every later basis is stale in those modes. Explicit
+managed mutation-stamp mode may use bounded dependency/order stamps and
+continue on a newer current basis only when all complete stamps remain equal.
 
 ## Performance and correctness gates
 

@@ -352,12 +352,12 @@
   {:report "formal/verification/verified-authority-suites.edn"
    :jvm-nonbenchmark
    {:backends [:datomic :datahike :datascript]
-    :tests 519 :assertions 39362 :failures 0 :errors 0}
+    :tests 523 :assertions 39462 :failures 0 :errors 0}
    :jvm-heavy
    {:backends [:datomic :datahike :datascript]
     :tests 17 :assertions 4058 :failures 0 :errors 0}
    :cljs-datascript
-   {:tests 170 :assertions 4671 :failures 0 :errors 0}
+   {:tests 172 :assertions 4682 :failures 0 :errors 0}
    :required-generated-operations-observed-per-jvm-backend true
    :retained-live-heap
    {:status :passed

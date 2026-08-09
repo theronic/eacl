@@ -801,6 +801,24 @@
         resource-type])))
    (get-permission-paths db resource-type permission-name)))
 
+(defn- canonical-permission-alias
+  "Collapses a chain of pure same-resource permission aliases.
+
+  A permission with exactly one `self-permission` body has the identical
+  denotation as its target. Canonicalizing that name before frontier-key
+  deduplication removes duplicate traversal streams without caching a prefix,
+  widening a scan, or retaining result values beyond the request."
+  [db resource-type permission-name]
+  (loop [current permission-name
+         seen #{}]
+    (if (contains? seen current)
+      current
+      (let [paths (get-permission-paths db resource-type current)]
+        (if (and (= 1 (count paths))
+                 (= :self-permission (:type (first paths))))
+          (recur (:target-permission (first paths)) (conj seen current))
+          current)))))
+
 (defn- frontier-permission-paths
   "Expands same-resource permission aliases into independently resumable paths.
 
@@ -821,8 +839,18 @@
                            db resource-type permission-name))))))]
     ;; `permission view = owner + admin` where `permission admin = owner`
     ;; expands to the same relation path twice: scanned twice, and both
-    ;; collapsing onto one routing-path identity anyway.
+    ;; collapsing onto one routing-path identity anyway. An arrow to a pure
+    ;; alias (for example `account->view` where `view = admin`) is normalized
+    ;; before the same exact-path deduplication.
     (->> (expand permission-name #{})
+         (map (fn [path]
+                (if (and (= :arrow (:type path))
+                         (:target-permission path))
+                  (update path
+                          :target-permission
+                          #(canonical-permission-alias
+                            db (:target-type path) %))
+                  path)))
          (reduce (fn [{:keys [seen paths] :as acc} path]
                    (let [k (path-frontier-identity path)]
                      (if (contains? seen k)

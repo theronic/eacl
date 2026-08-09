@@ -1179,6 +1179,40 @@
           (repo/file "formal" "smoke" "cljs" "eacl" "formal"
                      "production_kernel_js.cljs")))))
 
+(defn- content-cursor-restores-relationship-proof-scan-killed?
+  []
+  (let [correct-strategy
+        (fn [proof-mode]
+          (if (= :mutation proof-mode) :dependency :exact-snapshot))
+        mutant-strategy (constantly :dependency)
+        relationship-proof-commands
+        (fn [strategy] (if (= :dependency strategy) 1 0))]
+    (and (= :exact-snapshot (correct-strategy :content))
+         (zero?
+          (relationship-proof-commands
+           (correct-strategy :content)))
+         (= 1
+            (relationship-proof-commands
+             (mutant-strategy :content))))))
+
+(defn- pure-permission-alias-keeps-duplicate-frontier-killed?
+  []
+  (let [bodies {:view [:self-permission :admin]
+                :admin [:composite]}
+        canonical
+        (fn [permission]
+          (let [body (get bodies permission)]
+            (if (and (= 2 (count body))
+                     (= :self-permission (first body)))
+              (second body)
+              permission)))
+        paths [[:account :view] [:account :admin]]
+        correct (distinct (map #(update % 1 canonical) paths))
+        mutant (distinct paths)]
+    (and (= [[:account :admin]] (vec correct))
+         (= [[:account :view] [:account :admin]] (vec mutant))
+         (< (count correct) (count mutant)))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1348,7 +1382,11 @@
    :cljs-lookahead-continuation-dropped
    cljs-lookahead-continuation-dropped-killed?
    :cljs-generated-browser-payload-restored
-   cljs-generated-browser-payload-restored-killed?})
+   cljs-generated-browser-payload-restored-killed?
+   :content-cursor-restores-relationship-proof-scan
+   content-cursor-restores-relationship-proof-scan-killed?
+   :pure-permission-alias-keeps-duplicate-frontier
+   pure-permission-alias-keeps-duplicate-frontier-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

@@ -99,6 +99,8 @@
 - [x] 10.5 Validate older cache candidates only after current snapshot selection, keep `:cache-basis` as the computation basis rather than relabeling it as selected `S`, and miss on every relevant proof change.
 - [x] 10.6 Continue DataScript cursors only on proof-equivalent current DB values; reject relevant schema, relationship, identity, source, or order changes without silent restart.
 - [x] 10.7 Run one shared CLJ/CLJS corpus covering current selection, at-least floors, raw/managed writes, cache hits/misses, unsupported exact requests, and cursor mutation outcomes.
+- [x] 10.8 Bind default content/no-cache-proof DataScript cursors to exact current basis with zero relationship-content proof scans; reject every later basis because DataScript has no historical selection.
+- [x] 10.9 Retain dependency-scoped cross-basis cursor continuation only for explicit managed mutation-stamp mode and prove changed stamps fail stale.
 
 ## 11. Expose Honest Provenance, Metrics, and Diagnostics
 
@@ -127,6 +129,7 @@
 - [ ] 12.15 Produce a clean-checkout certification bundle with pinned toolchain/runtime/solver versions, reproducible commands, source/generated/evidence hashes, proof logs, residual assumptions, exclusions, and an independently verifiable bundle digest.
 - [x] 12.16 Add the external-certifier review procedure and require independent sign-off evidence before the manifest can move from conditionally verified to an externally certified status.
 - [x] 12.17 Align explicit completion's formal route, public-order, artifact-version, cache-key, admission, and immutable-hit contracts with production; add a controlled acyclic-order mutant and CLJ/CLJS schema-acyclic plus data-acyclic regressions.
+- [x] 12.18 Model production cursor-proof selection and cycle-guarded pure-alias canonicalization; prove zero content-proof relation scans, changed-basis DataScript rejection, alias denotation preservation, and non-increasing canonical frontier streams.
 
 ## 13. Simplify the Architecture Without Regressing Performance
 
@@ -138,3 +141,5 @@
 - [ ] 13.6 Bind the structural and performance evidence to the exact production artifact and source-closure digest in the implementation-conformance ledger and reproducible certification bundle.
 - [x] 13.7 Reuse the canonical completed acyclic vector for binary-search point membership while preserving linear equality membership for recursive logical-order artifacts.
 - [x] 13.8 Batch portable indexed-engine queue, grant, emission, and counter mutations into one persistent counter-map replacement per logical update; retain the 15,000 ns/result ceiling and prove unchanged logical counters, traversal order, stopping rules, and public results through the generated-oracle, full DataScript, and injected-authority CLJS suites.
+- [x] 13.9 Remove graph-linear relationship-content proof work from default cursor minting without weakening current-basis correctness or adding an EACL lock, historical registry, cache exception, or new public API.
+- [x] 13.10 Canonicalize exact pure permission aliases before acyclic frontier deduplication, preserving first-occurrence order and denotation while reducing deterministic backend scans.

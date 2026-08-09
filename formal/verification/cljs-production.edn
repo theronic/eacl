@@ -77,12 +77,12 @@
    :failures 0
    :errors 0}
   :full-datascript-core
-  {:tests 172 :assertions 9673 :failures 0 :errors 0}
+  {:tests 174 :assertions 9684 :failures 0 :errors 0}
   :injected-portable-authority
-  {:tests 170 :assertions 4671 :failures 0 :errors 0
+  {:tests 172 :assertions 4682 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}
   :mutation-registry
-  {:mutants 93 :killed 93 :survived 0}}
+  {:mutants 95 :killed 95 :survived 0}}
  :trust-posture
  {:browser-authorization :advisory
   :server-recheck-required true
