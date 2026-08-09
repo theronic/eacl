@@ -61,6 +61,18 @@ The unreleased relationship-entity representation is not migrated or
 dual-read. Recreate explorer/demo databases, or reload every relationship
 through the EACL API, after upgrading to this v8 candidate.
 
+```clojure
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+```
+
+Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
+not declare core separately. EACL targets Java 26 by default; explicit
+source/custom builds can target older Java, subject to DataScript's own runtime
+requirements. Build this module in isolation with `clojure -T:build jar`; Git and `:local/root`
+development must first follow the explicitly opt-in
+[core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+Maven consumers install no formal tools.
+
 Useful workspace test commands:
 
 - `clj-nrepl-eval -p <port> "(do (require 'eacl.datascript.contract-test :reload-all) (clojure.test/run-tests 'eacl.datascript.contract-test))"`

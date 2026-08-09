@@ -19,8 +19,29 @@
             [eacl.engine.v8 :as engine]
             [eacl.verified-kernel :as verified]))
 
+(defn- repository-root
+  []
+  (loop [candidate (.getCanonicalFile (io/file "."))]
+    (cond
+      (.isFile
+       (io/file
+        candidate
+        "formal/verification/recursive-op-count-envelopes.edn"))
+      candidate
+
+      (nil? (.getParentFile candidate))
+      (throw
+       (ex-info
+        "Could not locate the EACL repository root."
+        {:start (.getCanonicalPath (io/file "."))}))
+
+      :else
+      (recur (.getParentFile candidate)))))
+
 (def ^:private envelopes
-  (-> (io/file "formal/verification/recursive-op-count-envelopes.edn")
+  (-> (io/file
+       (repository-root)
+       "formal/verification/recursive-op-count-envelopes.edn")
       slurp
       edn/read-string
       :work-envelopes))

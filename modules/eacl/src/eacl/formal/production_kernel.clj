@@ -1,6 +1,7 @@
 (ns eacl.formal.production-kernel
   "Released generated-Java implementation of EACL's strict decision SPI."
-  (:require [eacl.verified-kernel :as verified])
+  (:require [eacl.formal.generated-runtime]
+            [eacl.verified-kernel :as verified])
   (:import
    (CacheKernel CacheCandidate ProofState Telemetry)
    (ConsistencyDecision

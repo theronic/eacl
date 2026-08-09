@@ -16,6 +16,18 @@ Responsibilities:
 Depending on this module keeps existing `eacl.core` and `eacl.datomic.*`
 require forms unchanged.
 
+```clojure
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
+```
+
+Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
+not declare core separately. EACL targets Java 26 by default; explicit
+source/custom builds can target older Java, subject to Datomic's own runtime
+requirements. Build this module in isolation with `clojure -T:build jar`; Git and `:local/root`
+development must first follow the explicitly opt-in
+[core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+Maven consumers install no formal tools.
+
 For the cross-backend capability matrix, recursive controls, and cache
 mutation rules, see the
 [v8 backend and upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).

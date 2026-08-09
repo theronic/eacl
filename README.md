@@ -92,7 +92,7 @@ caller already handles for expiry.
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > The current version is the EACL 8.0 release candidate.
-> Releases are not tagged yet, so pin the Git SHA.
+> The first Clojars build will be `8.0.0-SNAPSHOT`; until all four artifacts are visible on Clojars, use one of the source dependency forms below.
 
 ## Modules
 
@@ -103,36 +103,120 @@ The repository is a workspace with four independently consumable modules:
 - `modules/eacl-datascript`: the CLJ/CLJS DataScript adapter and its backend contract tests.
 - `modules/eacl-datahike`: the CLJ Datahike adapter, including both keyword and numeric attribute-reference representations.
 
-Choose the adapter you use:
+Choose the adapter you use. Maven is the normal consumer path and does not
+install or run any formal tooling:
 
 ```clojure
-{:deps
- {theronic/eacl-datomic
-  {:git/url "git@github.com:theronic/eacl.git"
-   :git/sha "REPLACE_WITH_SHA"
-   :deps/root "modules/eacl-datomic"}
+;; Only Datomic users
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-  ;; Or, for DataScript:
-  ;; theronic/eacl-datascript
-  ;; {:git/url "git@github.com:theronic/eacl.git"
-  ;;  :git/sha "REPLACE_WITH_SHA"
-  ;;  :deps/root "modules/eacl-datascript"}
+;; Only Datahike users
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-  ;; Or, for Datahike:
-  ;; theronic/eacl-datahike
-  ;; {:git/url "git@github.com:theronic/eacl.git"
-  ;;  :git/sha "REPLACE_WITH_SHA"
-  ;;  :deps/root "modules/eacl-datahike"}
+;; Only DataScript users
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-  ;; Core-only/backend authors:
-  ;; theronic/eacl
-  ;; {:git/url "git@github.com:theronic/eacl.git"
-  ;;  :git/sha "REPLACE_WITH_SHA"
-  ;;  :deps/root "modules/eacl"}
-  }}
+;; Core-only consumers and backend authors
+{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
-The root `deps.edn` is a development workspace, not the consumer artifact boundary. Build or install modules independently with `clojure -T:build-eacl install`, `clojure -T:build-eacl-datomic install`, `clojure -T:build-eacl-datascript install`, or `clojure -T:build-eacl-datahike install`.
+Each backend POM pulls the exact same `dev.eacl/eacl` version transitively.
+The core JAR contains the generated JVM classes and browser runtime, so Maven
+consumers do not need an EACL checkout, Dafny, Apalache, TLA+, or Node.
+
+For Git-based development, pin a commit and select the module root:
+
+```clojure
+{:deps {dev.eacl/eacl-datomic
+        {:git/url "https://github.com/theronic/eacl.git"
+         :git/sha "REPLACE_WITH_FULL_SHA"
+         :deps/root "modules/eacl-datomic"}}}
+```
+
+For a full local checkout, keep the same library coordinate and use
+`:local/root`; the backend module resolves the sibling core module:
+
+```clojure
+{:deps {dev.eacl/eacl-datomic
+        {:local/root "/absolute/path/to/eacl/core/modules/eacl-datomic"}}}
+```
+
+The root `deps.edn` is a development workspace, not the consumer artifact
+boundary. Build or install modules independently with
+`clojure -T:build-eacl install`, `clojure -T:build-eacl-datomic install`,
+`clojure -T:build-eacl-datascript install`, or
+`clojure -T:build-eacl-datahike install`.
+
+### Source dependencies and formal tooling
+
+Git and `:local/root` consumers must explicitly prepare a newly checked-out
+core. Dependency resolution, IntelliJ import, and application startup never do
+this automatically. If the generated runtime is missing, EACL reports this
+command and links back to this section.
+
+> [!WARNING]
+> The following command may download the checksum-verified formal toolchain:
+> Dafny 4.11.0 (including Boogie, Z3, Java/JavaScript translators, and
+> `DafnyRuntime.jar`), Apalache 0.58.3, and `tla2tools.jar` 1.7.4. It may also
+> install repository-pinned Node packages. Downloads are cached under
+> `target/formal-tools`; generated, proof-checking, bundling, and diagnostic
+> output is written under `target/formal` and
+> `modules/eacl/target/generated`. This can use substantial disk space and
+> take a long time.
+
+Choose the default Java 26 target or one explicit older bytecode target:
+
+```bash
+cd modules/eacl
+
+# Default: Java 26 bytecode
+clojure -T:build prep
+
+# Example: bytecode that Java 17 and newer can load
+clojure -T:build prep :java-release 17
+clojure -T:build jar :java-release 17
+```
+
+`prep` explicitly generates the JVM classes and browser bundle. Dafny checks
+the translated programs as part of translation, but this is distinct from the
+full, explicitly bounded formal verification suite. When building or installing
+an older-target artifact, pass the same `:java-release` value to `prep` and the
+subsequent `jar` or `install` task so the bytecode audit checks the intended
+target.
+
+> [!WARNING]
+> The following maintainer command bootstraps the same checksum-verified
+> Dafny/Boogie/Z3, Apalache, and TLA+ toolchain and writes verification output
+> under `target/formal-tools` and `target/formal`. It can consume substantial
+> disk space and run for a long time.
+
+```bash
+bin/formal verify
+```
+
+Tool versions and archive checksums are pinned in
+`formal/toolchain.lock.json`. Formal downloads are reused from
+`target/formal-tools`; npm uses its normal cache while the repository-managed
+packages are installed for generated JavaScript bundling and smoke checks.
+Published Maven consumers run neither runtime generation nor full formal
+verification.
+
+### Java runtime compatibility
+
+EACL targets Java 26 by default: an ordinary generated build uses
+`javac --release 26` and is audited as class-file major version 70. Source and
+custom artifact builds may explicitly select Java 8 through Java 26 with
+`:java-release` (or `EACL_JAVA_RELEASE` when invoking `bin/formal build-java`).
+The generated sources are compiled and audited against the selected target;
+for example, Java 8 produces class-file major version 52.
+
+Java class files are portable across operating systems, CPU architectures, and
+JVM patch releases. One build runs on its selected Java release and newer JVMs;
+it does not require a separate class for every JVM. The standard Clojars
+release workflow keeps the Java 26 default, so consumers needing an older
+runtime must use an artifact intentionally rebuilt for that target. Backend
+and application dependencies may impose a higher minimum Java version than the
+EACL core classes.
 
 EACL does not select a logging implementation. Applications remain responsible for their own logging backend and configuration.
 
@@ -304,10 +388,7 @@ The following example is contained in [eacl-example](https://github.com/theronic
 Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {theronic/eacl-datomic
-        {:git/url "git@github.com:theronic/eacl.git"
-         :git/sha "REPLACE_WITH_SHA"
-         :deps/root "modules/eacl-datomic"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -403,10 +484,7 @@ For Clojure/JVM applications backed by Datahike, add the Datahike adapter
 dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {theronic/eacl-datahike
-        {:git/url "git@github.com:theronic/eacl.git"
-         :git/sha "REPLACE_WITH_SHA"
-         :deps/root "modules/eacl-datahike"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -454,10 +532,7 @@ dependency to your `deps.edn` file:
 For server-side or browser demos, use the DataScript adapter:
 
 ```clojure
-{:deps {theronic/eacl-datascript
-        {:git/url "git@github.com:theronic/eacl.git"
-         :git/sha "REPLACE_WITH_SHA"
-         :deps/root "modules/eacl-datascript"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1072,6 +1147,51 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   sufficient for a cursor walk with no movement or duplicates; sort by a
   domain key after reading if presentation order matters. SpiceDB likewise
   returns results in discovery or schema order.
+
+## Maintainer Clojars releases
+
+Publication uses the Clojure CLI throughout: `tools.build` creates each JAR and
+POM, and `deps-deploy` runs through `clojure -X:deploy`. EACL does not use
+Leiningen or Boot for publication.
+
+One root-controlled version builds all four JAR/POM pairs. Ordinary publication
+is push-triggered only from a branch whose complete name is
+`vMAJOR.MINOR.PATCH`: for example, branch `v8.1.0` publishes immutable version
+`8.1.0`. `main`, `release/v8.0`, arbitrary branches, pull requests, and tags
+never publish. The gate accepts only the explicit Tests and Formal verification
+checks for the exact release commit and rechecks provenance in the protected
+deployment job.
+
+The one bootstrap exception is deliberately narrower: a manual dispatch from
+the exact head of `codex/v8-demand-bounded-authorization` may publish only
+`8.0.0-SNAPSHOT`. It bypasses only the ordinary green-check condition. Remove
+the exception and its environment branch rule as soon as the reference
+consumer succeeds.
+
+Before the first deployment:
+
+- Keep the apex `eacl.dev` TXT record `clojars theronic` in authoritative DNS.
+  It verifies the reverse-domain Maven group `dev.eacl`; Clojars user
+  `theronic` has administrator and all-project deploy access to that group.
+- In the GitHub `clojars` environment, allow selected branches `v*` and,
+  temporarily, exact branch `codex/v8-demand-bounded-authorization`. Remove
+  `main` and every tag rule. Add a required reviewer and disable administrator
+  bypass when the repository plan supports those controls.
+- Set `CLOJARS_USERNAME` to the Clojars username `theronic`, not the sign-in
+  email. Set `CLOJARS_DEPLOY_TOKEN` initially to a reusable, unscoped deploy
+  token because the four projects do not yet exist. No additional
+  long-lived GitHub secret is required; the workflow's built-in token has only
+  read access.
+- After the bootstrap release, replace the initial token with a reusable token
+  scoped to the verified `dev.eacl` group.
+
+All four artifacts are built, audited, clean-installed, and smoke-tested before
+the first upload; deployment is serialized in core, Datomic, Datahike,
+DataScript order. If validation fails, nothing is uploaded. If a snapshot
+upload partially succeeds, inspect Clojars, retain the same version and source
+commit, rerun all local validation, and retry only under the same guarded
+provenance. Never overwrite a partial immutable release: correct it with a new
+patch version.
 
 ## How to Run All Tests
 

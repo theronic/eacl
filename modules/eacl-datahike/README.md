@@ -46,7 +46,19 @@ The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
 `:last`/`:before`; see the
 [upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
 
-Run its tests through a module-local nREPL and build it from this directory:
+```clojure
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+```
+
+Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
+not declare core separately. EACL targets Java 26 by default; explicit
+source/custom builds can target older Java, subject to Datahike's own runtime
+requirements. Git and `:local/root` development must first follow the explicitly opt-in
+[core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+Maven consumers install no formal tools.
+
+Run its tests through a module-local nREPL and build it in isolation from this
+directory:
 
 ```shell
 clojure -M:test:nrepl

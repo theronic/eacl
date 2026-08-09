@@ -12,6 +12,23 @@ Responsibilities:
 
 This module must not depend on Datomic or a logging backend.
 
+## Dependency and runtime
+
+```clojure
+{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
+```
+
+The published JAR includes all generated JVM kernel/Dafny runtime classes,
+`deps.cljs`, and `EaclKernel.browser.js`. EACL targets Java 26 by default, while
+an explicit source/custom build can target Java 8 through 26. The same
+platform-neutral class files run on the selected Java release and newer JVMs
+without per-JVM artifacts.
+
+Build this module in isolation with `clojure -T:build jar`. Git and
+`:local/root` consumers must first follow the explicitly opt-in
+[source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
+Maven consumers neither install formal tools nor run verification.
+
 ## Backend contract
 
 Backends supply the validated operation map consumed through
