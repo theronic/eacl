@@ -108,19 +108,31 @@
        (ex-info
         "Explorer latency gate requires fail-closed host-mismatch handling"
         {:mismatched-host-policy mismatch-policy})))
-    (doseq [[label host] [[:baseline baseline-host] [:current current-host]]]
-      (when-not (every? some? (map host host-class-keys))
+    (let [missing-baseline
+          (filterv #(nil? (get baseline-host %)) host-class-keys)]
+      (when (seq missing-baseline)
         (throw
          (ex-info
-          "Explorer latency gate requires a complete host class"
-          {:host label
+          "Explorer latency gate requires a complete baseline host class"
+          {:missing-keys missing-baseline
            :required-keys host-class-keys
-           :host-class host}))))
+           :host-class baseline-host}))))
     (let [baseline (select-keys baseline-host host-class-keys)
-          current (select-keys current-host host-class-keys)]
-      {:status (if (= baseline current) :enforced :not-applicable)
+          current (select-keys current-host host-class-keys)
+          missing-current
+          (filterv #(nil? (get current-host %)) host-class-keys)
+          status (if (and (empty? missing-current) (= baseline current))
+                   :enforced
+                   :not-applicable)]
+      {:status status
+       :applicability-reason
+       (cond
+         (seq missing-current) :incomplete-current-host-class
+         (= :enforced status) :exact-host-and-jvm-match
+         :else :host-or-jvm-mismatch)
        :qualification qualification
        :mismatched-host-policy mismatch-policy
+       :missing-current-keys missing-current
        :baseline-host baseline
        :current-host current})))
 
@@ -460,8 +472,14 @@
            (latency-gate-context baseline baseline))))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"requires a complete host class"
+         #"requires a complete baseline host class"
          (latency-gate-context (dissoc baseline :jdk) baseline)))
+    (is (= {:status :not-applicable
+            :applicability-reason :incomplete-current-host-class
+            :missing-current-keys [:cpu-model]}
+           (select-keys
+            (latency-gate-context baseline (dissoc baseline :cpu-model))
+            [:status :applicability-reason :missing-current-keys])))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"candidate latency measurement is malformed"

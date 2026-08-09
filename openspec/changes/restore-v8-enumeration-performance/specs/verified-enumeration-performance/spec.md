@@ -46,11 +46,12 @@ The harness MUST enforce a recorded latency ratio only when the current
 operating system, architecture, operating-system version, CPU model, logical
 processor count, physical or container memory, maximum JVM heap, JDK, VM
 implementation/vendor, backend/runtime, and measurement method exactly match
-the baseline host and JVM class. A mismatch or incomplete class MUST fail
-closed: mismatch is reported as `not-applicable`, missing metadata is an error,
-and neither outcome may be reported as a latency pass. Correctness and
-deterministic work gates remain mandatory. Release qualification still requires
-applicable matched-host latency evidence for every named scenario.
+the baseline host and JVM class. An incomplete baseline is a harness error. A
+current-host mismatch or missing current-host field MUST fail closed as
+`not-applicable`, MUST list the missing fields where applicable, and MUST never
+be reported as a latency pass. Correctness and deterministic work gates remain
+mandatory. Release qualification still requires applicable matched-host
+latency evidence for every named scenario.
 
 #### Scenario: Ten-thousand-server owner count
 

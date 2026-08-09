@@ -86,12 +86,13 @@ retained memory where the runtime exposes them. Measurements MUST disclose
 warmup, sample count, runtime, hardware class, backend, variance, and confidence
 method, and MUST remain explicitly distinct from proved semantic/work claims.
 Relative latency gates MUST compare only exactly matching host and JVM classes,
-including processor, memory, heap, JDK, and VM implementation. Missing
-applicability metadata MUST be a harness error. A mismatched class MUST report
-the ratio gate as `not-applicable`, never as passed, and MUST continue to enforce
-every portable correctness and deterministic-work gate. Release qualification
-MUST include applicable matched-host evidence; a portable work-only CI pass is
-not a substitute.
+including processor, memory, heap, JDK, and VM implementation. Missing baseline
+metadata MUST be a harness error. A mismatched or incompletely observable
+current class MUST report the ratio gate as `not-applicable`, list missing
+fields, never report the ratio as passed, and continue to enforce every portable
+correctness and deterministic-work gate. Release qualification MUST include
+applicable matched-host evidence; a portable work-only CI pass is not a
+substitute.
 
 #### Scenario: Candidate exceeds a performance threshold
 

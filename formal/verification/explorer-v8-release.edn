@@ -91,7 +91,7 @@
  :focused-enumeration-routing
   {:tests 13 :assertions 75 :failures 0 :errors 0}
   :heavy-explorer-suite
-  {:tests 6 :assertions 86 :failures 0 :errors 0}
+  {:tests 6 :assertions 87 :failures 0 :errors 0}
   :heavy-explorer-100000
   {:count 100000
    :elapsed-ms 153.7155

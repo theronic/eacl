@@ -92,10 +92,11 @@ Applicability is exact and fail-closed: operating system, architecture,
 operating-system version, CPU model, logical processor count, physical or
 container memory, maximum JVM heap, JDK, VM implementation/vendor,
 backend/runtime, and measurement method must all match the baseline. A missing
-field is a harness error. A mismatched runner records the raw candidate samples
-and an explicit `not-applicable` result; it cannot turn incomparable raw
-milliseconds into either a pass or a regression. Portable CI continues to
-enforce correctness and deterministic work, while release qualification needs
+baseline field is a harness error. A mismatched or incompletely observable
+current runner records the raw candidate samples, missing field names, and an
+explicit `not-applicable` result; it cannot turn incomparable raw milliseconds
+into either a pass or a regression. Portable CI continues to enforce
+correctness and deterministic work, while release qualification needs
 separately applicable matched-host latency evidence.
 
 ### 7. Certify data-dependent recursion activation
