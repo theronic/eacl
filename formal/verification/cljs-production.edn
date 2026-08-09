@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :runtime :cljs-portable-cljc
  :production-default
  "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs"
@@ -18,12 +18,45 @@
   :status :passed}
  :bundle
  {:optimization :advanced
-  :empty-runtime-bytes 97122
-  :empty-runtime-gzip-bytes 21279
-  :portable-kernel-bytes 112457
-  :portable-kernel-gzip-bytes 24688
-  :incremental-engine-bytes 15335
-  :incremental-engine-gzip-bytes 3409
+  :representation-policy
+  {:cross-platform-byte-equality false
+   :reason
+   [:advanced-output-representation-variance
+    :gzip-output-representation-variance]
+   :release-invariants
+   [:absolute-payload-ceilings
+    :incremental-engine-ceilings
+    :forbidden-production-runtime-markers]}
+  :reference-observations
+  [{:environment
+    {:source :local-clean-rebuild
+     :os :macos
+     :jdk "21.0.2"
+     :clojurescript "1.12.42"
+     :clean-output-directories true}
+    :empty-runtime-bytes 97122
+    :empty-runtime-gzip-bytes 21279
+    :portable-kernel-bytes 112457
+    :portable-kernel-gzip-bytes 24688
+    :incremental-engine-bytes 15335
+    :incremental-engine-gzip-bytes 3409}
+   {:environment
+    {:source :github-actions-run-31285905988
+     :os :ubuntu-22.04.5
+     :runner-image "20260720.234.2"
+     :jdk "21.0.11+10"
+     :clojurescript "1.12.42"
+     :clean-output-directories true}
+    :empty-runtime-bytes 97124
+    :empty-runtime-gzip-bytes 21281
+    :portable-kernel-bytes 112459
+    :portable-kernel-gzip-bytes 24689
+    :incremental-engine-bytes 15335
+    :incremental-engine-gzip-bytes 3408}]
+  :maximum-empty-runtime-bytes 98304
+  :maximum-empty-runtime-gzip-bytes 22528
+  :maximum-portable-kernel-bytes 114688
+  :maximum-portable-kernel-gzip-bytes 25600
   :maximum-incremental-engine-bytes 32768
   :maximum-incremental-engine-gzip-bytes 8192
   :retired-generated-iife-bytes 591497

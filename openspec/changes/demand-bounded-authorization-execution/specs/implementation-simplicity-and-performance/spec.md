@@ -93,6 +93,18 @@ method, and MUST remain explicitly distinct from proved semantic/work claims.
 - **THEN** the release gate fails with the raw samples and environment metadata
 - **AND** no deterministic proof claim is rewritten to imply a wall-clock proof
 
+#### Scenario: Platform-sensitive artifact representation
+
+- **WHEN** supported compiler, JVM, operating-system, or compression
+  implementations produce semantically equivalent artifacts with different
+  byte representations
+- **THEN** exact reference measurements retain their complete environment as
+  evidence but MUST NOT be enforced as cross-platform equality
+- **AND** the release gate enforces reviewed absolute and incremental ceilings,
+  production-graph exclusions, and semantic parity independently
+- **AND** the allowed variance MUST NOT permit any applicable ceiling or
+  forbidden-runtime invariant to be bypassed
+
 ### Requirement: Simplicity and performance evidence is certification-linked
 
 Every structural inventory and non-regression result MUST be mapped into the

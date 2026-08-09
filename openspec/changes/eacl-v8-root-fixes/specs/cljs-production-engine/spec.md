@@ -16,6 +16,12 @@ The browser authorization hot path (point checks, page enumeration, counts) SHAL
 - **WHEN** the production browser bundle is analyzed
 - **THEN** the authorization hot path contains no BigNumber arithmetic and the shipped engine payload is within the recorded size budget (an order of magnitude below the current 591 KB raw / 96 KB gzip foreign-lib)
 
+#### Scenario: Equivalent compiler output varies by platform
+- **WHEN** supported JVM/OS pairs emit semantically equivalent advanced bundles whose Closure symbol allocation or gzip representation differs
+- **THEN** reference observations record their measurement environment but are not treated as byte-identical release invariants
+- **AND** CI enforces reviewed absolute runtime/kernel ceilings, independent incremental-engine ceilings, and forbidden-runtime markers on every build
+- **AND** an output that is smaller than every applicable ceiling does not fail solely because it differs from one reference observation
+
 ### Requirement: Absolute CLJS performance ceiling
 CLJS traversal performance SHALL be gated by an absolute recorded ceiling (ns per result) in addition to linearity ratios. The ceiling SHALL be recorded in the verification EDN and enforced in CI.
 
