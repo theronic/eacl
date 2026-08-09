@@ -1597,8 +1597,7 @@
 
 (deftest production-subproblem-store-uses-generated-javascript-decisions
   (let [store (subproblem/store {:projection-max-weight 1024
-                                 :denotation-max-weight 1024
-                                 :max-inflight 1})
+                                 :denotation-max-weight 1024})
         computes (atom 0)]
     (binding [subproblem/*decision-kernel* selection]
       (is (= 7
@@ -1980,13 +1979,20 @@
                    (engine/lookup-resources
                     changed-adapter
                     (assoc page-query :first 10))))
-            resumed
-            (engine/lookup-resources
-             changed-adapter
-             (assoc page-query :after raw-bound))]
-        (is (= (filterv #(> % (:result-eid raw-bound)) current-ids)
-               (mapv :id (:data resumed)))
-            "a raw keyset bound resumes exclusively after its eid on the current graph"))
+            resume-error
+            (try
+              (engine/lookup-resources
+               changed-adapter
+               (assoc page-query :after raw-bound))
+              nil
+              (catch :default error
+                error))]
+        (is (= {:current-ids []
+                :error-data
+                {:eacl/error :eacl.pagination/stale-cursor}}
+               {:current-ids current-ids
+                :error-data (ex-data resume-error)})
+            "a changed recursive boundary is stale rather than rebased on DataScript's current DB"))
       (let [render-rejected
             (try
               (engine/generated-traversal-error!

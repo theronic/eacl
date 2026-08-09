@@ -955,8 +955,9 @@
         (is (= :eacl.pagination/stale-cursor
                (:eacl/error (ex-data resumed-error)))
             "current-only continuation rejects a disappeared authenticated boundary")
-        (is (= (select-keys bound [:ordinal :result-eid])
-               (select-keys (ex-data resumed-error) [:ordinal :result-eid])))))
+        (is (= {:eacl/error :eacl.pagination/stale-cursor}
+               (ex-data resumed-error))
+            "internal ordinal and EID diagnostics do not leak through the public stale-cursor shape")))
     (let [render-rejected
           (try
             (#'engine/generated-traversal-error!

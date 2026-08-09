@@ -3351,11 +3351,8 @@
                         (peek (:items probe))))]
             (cond
               (not boundary-matches?)
-              (page-error!
-               "Recursive cursor boundary is not present at its authenticated logical ordinal."
-               {:eacl/error :eacl.pagination/stale-cursor
-                :ordinal ordinal
-                :result-eid (:result-eid bound)})
+              (stale-recursive-cursor!
+               "Recursive cursor boundary is not present at its authenticated logical ordinal.")
 
               (not (:has-next? probe))
               {:items []
@@ -3423,11 +3420,8 @@
         target-ordinal (:ordinal boundary)
         stale!
         (fn []
-          (page-error!
-           "Recursive before-cursor boundary is not present at its authenticated logical ordinal."
-           {:eacl/error :eacl.pagination/stale-cursor
-            :ordinal target-ordinal
-            :result-eid (:result-eid boundary)}))]
+          (stale-recursive-cursor!
+           "Recursive before-cursor boundary is not present at its authenticated logical ordinal."))]
     (loop [emitted 0
            window []
            prior nil]
@@ -3497,11 +3491,8 @@
                            (< bound-ordinal value-count)
                            (= (:result-eid bound)
                               (nth values bound-ordinal)))
-              (page-error!
-               "Recursive cursor boundary does not match the completed logical denotation."
-               {:eacl/error :eacl.pagination/stale-cursor
-                :ordinal bound-ordinal
-                :result-eid (:result-eid bound)})))
+              (stale-recursive-cursor!
+               "Recursive cursor boundary does not match the completed logical denotation.")))
         [start end]
         (case direction
           :asc
