@@ -182,7 +182,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-065
+ {:latest :EACL-FORMAL-066
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -247,11 +247,12 @@
           :EACL-FORMAL-062
           :EACL-FORMAL-063
           :EACL-FORMAL-064
-          :EACL-FORMAL-065]}
+          :EACL-FORMAL-065
+          :EACL-FORMAL-066]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 65}
+  :entries 66}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"
@@ -303,8 +304,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 92
-  :registered 92}
+  :killed 96
+  :registered 96}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"

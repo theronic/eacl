@@ -130,6 +130,7 @@
 - [x] 12.16 Add the external-certifier review procedure and require independent sign-off evidence before the manifest can move from conditionally verified to an externally certified status.
 - [x] 12.17 Align explicit completion's formal route, public-order, artifact-version, cache-key, admission, and immutable-hit contracts with production; add a controlled acyclic-order mutant and CLJ/CLJS schema-acyclic plus data-acyclic regressions.
 - [x] 12.18 Model production cursor-proof selection and cycle-guarded pure-alias canonicalization; prove zero content-proof relation scans, changed-basis DataScript rejection, alias denotation preservation, and non-increasing canonical frontier streams.
+- [x] 12.19 Replace partial-wave fuel rollback with bounded fuel-cut wave publication in forward and reverse generated/portable authorities; prove state and coverage invariants, regenerate all authority artifacts, and add low-fuel plus broad recursive fan-out regressions across runtimes and cache modes.
 
 ## 13. Simplify the Architecture Without Regressing Performance
 

@@ -596,8 +596,7 @@
   [_direction state limits fuel]
   (loop [state (dissoc state :pending-scans)
          fuel fuel
-         pending []
-         original state]
+         pending []]
     (cond
       (and (seq pending)
            (or (:complete? state) (empty? (:queue state))))
@@ -617,8 +616,11 @@
        :limit-kind (limit-kind state limits)}
 
       (zero? fuel)
-      ;; A fuel boundary cannot expose a partially collected scan wave.
-      {:status :yielded :state (if (seq pending) original state)}
+      (if (seq pending)
+        ;; Preserve progress: every issued request is published in a bounded
+        ;; wave instead of being discarded and repeated by the next quantum.
+        (pending-outcome state pending)
+        {:status :yielded :state state})
 
       :else
       (let [outcome (drive-step state)]
@@ -628,9 +630,8 @@
                 next-state (assoc (:state outcome) :pending-scan nil)]
             (if (= scan-batch-size (count next-pending))
               (pending-outcome next-state next-pending)
-              (recur next-state (dec fuel) next-pending original)))
-          (do
-            (recur outcome (dec fuel) pending original)))))))
+              (recur next-state (dec fuel) next-pending)))
+          (recur outcome (dec fuel) pending))))))
 
 (defn- scan-rejection
   [command response]

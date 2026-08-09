@@ -230,9 +230,10 @@ executable adjacent-order scan implements the pairwise mathematical contract.
 `IndexedBatching` bounds a wave at 64 request-ordered scans and folds its
 responses in the same order. `IndexedBatchCompleteness` maps every pending scan
 to the existing virtual FIFO work view and proves the generalized forward and
-reverse coverage invariants. Fuel exhaustion returns the original state before
-any partial wave becomes observable; production crossing gates separately
-enforce the resulting wave-count envelope.
+reverse coverage invariants. When fuel ends with pending scans, the authority
+publishes the current verified state and that nonempty bounded wave; only a
+pending-empty fuel cut yields current state. Production crossing gates
+separately enforce unsplit base waves and fuel-cut overhead.
 Java persistent set/map replacements and JavaScript HAMT/sequence wrappers
 have explicit persistence, structural-equality, collision, slice, concat, and
 indexing boundary tests. Adversarial scaling and fixed-heap completion gates

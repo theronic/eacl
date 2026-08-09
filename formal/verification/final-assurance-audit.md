@@ -97,8 +97,9 @@ abstract snapshot-oracle contract:
 6. generated forward/reverse worklists are sound, complete, duplicate-free,
    terminating within configured limits, and fail closed on limit exhaustion;
 7. pending scans are exposed as bounded, request-ordered waves; responses fold
-   in that same order; partial-fuel exits publish no partial wave; and the
-   independent-stream crossing count is `2 × ceil(scans / batch-size) + 1`;
+   in that same order; a fuel cut publishes every nonempty pending wave from
+   current state without rollback or request loss; and unsplit independent
+   streams use `2 × ceil(scans / batch-size) + 1` crossings;
 8. typed SCC routing and the proof-carrying routing certificate classify
    recursive roots and their transitive ancestors;
 9. ordered merge, pagination windows, keyset page decisions, and
@@ -142,7 +143,7 @@ What closes the gap:
   engine.
 - Authority state is opaque across adapter round trips. Host orchestration
   supplies validated ordered response waves and cannot replace traversal
-  transitions or publish a partial wave.
+  transitions or discard, synthesize, or reorder a fuel-cut wave.
 - Strict converters validate every generated input and output family.
 - Source-closure and backend-dispatch ledgers inventory all named public roots,
   reachable definitions, and literal adapter operations so an unclassified
@@ -228,8 +229,8 @@ The final pre-audit run on 2026-08-08 produced the following evidence:
 | Generated Java runtime bridges | 51 tests, 16,176 assertions, 0 failures/errors |
 | Generated-authority-injected JVM public/backend suite | 523 tests, 39,462 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
 | Portable-authority-injected DataScript CLJS suite | 172 tests, 4,682 assertions, 0 failures/errors; 79 client constructions injected and every required portable authority operation observed |
-| Portable CLJS formal/oracle suite | 45 tests, 9,971 assertions, 0 failures/errors |
-| Portable CLJS full DataScript/core suite | 174 tests, 9,684 assertions, 0 failures/errors under `:advanced` |
+| Portable CLJS formal/oracle suite | 46 tests, 9,983 assertions, 0 failures/errors |
+| Portable CLJS full DataScript/core suite | 176 tests, 9,693 assertions, 0 failures/errors under `:advanced` |
 | Portable CLJS performance/payload | 5,335 ns/result three-process median at 16,384 (15,000 ceiling); 15,335 raw / 3,409 compressed incremental bytes |
 | Heavy generated-only backend/performance suite | 17 tests, 4,058 assertions, 0 failures/errors |
 | Minimized counterexample replay | 69 tests / 18,516 assertions on the full formal-smoke classpath, 0 failures/errors; any recorded test var missing from an available namespace is a hard failure |

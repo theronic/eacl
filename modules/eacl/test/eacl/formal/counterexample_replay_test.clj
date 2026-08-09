@@ -134,7 +134,9 @@
     :EACL-FORMAL-064
     eacl.datascript.enumeration-routing-test/content-proof-cursors-use-current-basis-without-relation-scan-test
     :EACL-FORMAL-065
-    eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test})
+    eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test
+    :EACL-FORMAL-066
+    eacl.datascript.enumeration-routing-test/recursive-fanout-publishes-fuel-cut-scan-waves-test})
 
 (defn- read-edn
   [path]
@@ -262,8 +264,8 @@
     (is (= (set (keys regression-vars))
            (set (map :id entries))
            (set (:fixed revision))))
-    (is (= :EACL-FORMAL-065 (:latest revision)))
-    (is (= 65 (count entries)))))
+    (is (= :EACL-FORMAL-066 (:latest revision)))
+    (is (= 66 (count entries)))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

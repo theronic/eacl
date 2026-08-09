@@ -590,6 +590,13 @@
    :killed-by
    {:proof :canonical-frontier-deduplication-cannot-add-traversal-streams
     :test :pure-permission-aliases-share-one-acyclic-frontier-test}}
+  {:id :fuel-cut-wave-rolls-back-original-state
+   :mechanism
+   :return-the-quantum-input-state-and-discard-nonempty-pending-scans-at-fuel-exhaustion
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :fuel-cut-wave-publishes-current-progress-without-request-loss
+    :test :generated-portable-and-public-fanout-fuel-cut-regressions}}
   {:id :managed-proof-bypass
    :mechanism :reuse-managed-projection-with-mismatched-relation-proof
    :control

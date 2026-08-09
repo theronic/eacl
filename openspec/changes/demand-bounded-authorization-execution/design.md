@@ -264,6 +264,14 @@ discipline, and a complete tie-breaker. Physical adapter chunk size, wave batch
 size, fuel, cache hits, and page size may change how many crossings occur but
 MUST NOT change the logical sequence.
 
+Fuel is a scheduling boundary, not a transactional rollback boundary. If a
+quantum has collected pending scans when fuel reaches zero, the authority emits
+that nonempty request-ordered wave immediately, even when it is smaller than
+the maximum wave size. Yielding the quantum's original state would discard
+issued request state and can repeat the same prefix forever. Only a fuel cut
+with no pending scan yields the current state. Forward and reverse generated
+authorities and the portable CLJS refinement implement this same transition.
+
 Cursor envelopes bind:
 
 - source/family/branch and selected graph identity;
@@ -440,6 +448,8 @@ Required executable evidence includes:
 - bounded/exact counts, first/continued/before/last pages, and cross-operation
   request sequences;
 - chunk/fuel/batch/page/cache permutations producing identical order;
+- forward and reverse fuel cuts with nonempty scan waves proving bounded
+  publication, request-id order, and monotonic progress on broad fan-out;
 - 1k, 10k, 100k, and acceptance-gated larger broad-principal fixtures;
 - relevant/unrelated schema, relationship, identity, restore, reset, and branch
   mutations under unknown and managed authority;

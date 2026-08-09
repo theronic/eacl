@@ -72,12 +72,12 @@
  :certification
  {:cross-runtime-and-randomized-oracle
   {:seeds [820084 820116]
-   :tests 45
-   :assertions 9971
+   :tests 46
+   :assertions 9983
    :failures 0
    :errors 0}
   :full-datascript-core
-  {:tests 174 :assertions 9684 :failures 0 :errors 0}
+  {:tests 176 :assertions 9693 :failures 0 :errors 0}
   :injected-portable-authority
   {:tests 172 :assertions 4682 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}

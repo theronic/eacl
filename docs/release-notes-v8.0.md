@@ -325,13 +325,15 @@ snapshot errors. Full evidence is recorded in
 
 Recursive indexed traversal now groups independent backend requests into
 request-ordered waves of at most 64 scans. The JVM generated kernel and the
-portable ClojureScript authority fold responses in the same order; exhausting
-fuel before a complete wave yields the original state, so no partial wave is
-observable. Independent-stream regressions enforce exactly
-`2 × ceil(streams / 64) + 1` kernel crossings, while star-recursion gates allow
-only the separately counted fuel-yield constant. The generalized pending-work
-coverage and crossing law are proved in `IndexedBatchCompleteness.dfy` and
-`IndexedBatching.dfy`.
+portable ClojureScript authority fold responses in the same order. If fuel ends
+with pending scans, both publish the current verified state and that nonempty
+bounded wave; they never roll back and repeat the same prefix. A pending-empty
+fuel cut yields current state. Independent streams not split by fuel use
+exactly `2 × ceil(streams / 64) + 1` kernel crossings; general recursion records
+fuel-cut wave overhead separately. The generalized pending-work coverage and
+crossing law are proved in `IndexedBatchCompleteness.dfy` and
+`IndexedBatching.dfy`. EACL-FORMAL-066 retains the broad-fanout livelock
+counterexample that forced this correction.
 
 ## Correctness findings closed
 
@@ -500,9 +502,9 @@ shipped.
 ### ClojureScript production authority
 
 The browser no longer executes the Dafny JavaScript runtime or BigNumber on
-the authorization hot path. Certification passed 45 formal/oracle tests with
-9,971 assertions, the full advanced DataScript/core suite passed 174 tests
-with 9,684 assertions, and the current injected-authority suite passed 172
+the authorization hot path. Certification passed 46 formal/oracle tests with
+9,983 assertions, the full advanced DataScript/core suite passed 176 tests
+with 9,693 assertions, and the current injected-authority suite passed 172
 tests with 4,682 assertions across 79 client constructions while observing
 every required traversal operation.
 

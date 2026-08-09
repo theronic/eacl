@@ -69,6 +69,29 @@ sort the complete denotation merely to render a bounded page.
 - **THEN** EACL replays deterministic traversal to the authenticated ordinal/boundary under the request deadline and limits
 - **AND** does not silently restart the public walk from page one
 
+### Requirement: Fuel boundaries preserve recursive traversal progress
+EACL SHALL publish every nonempty pending scan sequence as a current-state bounded ordered wave when a generated fuel quantum ends.
+This applies even before the configured wave size is reached. The valid wave
+size is `1..B`, where `B` is the configured maximum. EACL MUST NOT discard the
+pending requests, roll back to the quantum's
+input state, or repeat the same transition prefix indefinitely. A quantum that
+ends with no pending request MAY yield its current state.
+
+#### Scenario: Forward fan-out crosses a fuel boundary
+- **WHEN** forward recursive traversal consumes its fuel with a nonempty partial scan wave
+- **THEN** the generated JVM authority and portable CLJS authority return the current state and every pending command in request-id order
+- **AND** resumption continues after that state without repeating the discarded prefix
+
+#### Scenario: Reverse fan-out crosses a fuel boundary
+- **WHEN** reverse recursive traversal consumes its fuel with a nonempty partial scan wave
+- **THEN** the same bounded publication and monotonic-progress rules apply
+- **AND** `lookup-subjects` and `count-subjects` cannot livelock on that boundary
+
+#### Scenario: Cache mode cannot mask fuel progress
+- **WHEN** the same broad recursive count runs with `:cache? false` and `:cache? true`
+- **THEN** both executions terminate at the requested sentinel or exhaustion under the same deadline and traversal limits
+- **AND** neither mode may rely on speculative completion to escape a repeated fuel prefix
+
 ### Requirement: Cursor identity binds execution and order
 Every recursive cursor SHALL authenticate source/branch/incarnation, graph and
 dependency proof, canonical query and operation, schema/engine/adapter/identity

@@ -89,8 +89,12 @@
    :batch-size 64
    :command-order :request-id-order
    :response-fold :same-order-as-command-wave
-   :partial-fuel :yield-original-state-without-publishing-a-partial-wave
-   :crossing-law "2 * ceil(scans / 64) + 1 for independent scan streams"}
+   :fuel-cut
+   :publish-current-nonempty-bounded-wave-without-request-loss-or-rollback
+   :crossing-law
+   {:unsplit-independent-streams "2 * ceil(scans / 64) + 1"
+    :general-recursion
+    :base-wave-crossings-plus-separately-counted-fuel-cut-waves}}
   :source-plan-and-seed-certification
   {:status :verified-modes-routed-at-schema-plan-compilation
    :operations
@@ -121,7 +125,7 @@
   :bounded-ordered-forward-scan-waves
   :bounded-ordered-reverse-scan-waves
   :ordered-batch-response-folding
-  :partial-fuel-wave-rollback
+  :fuel-cut-wave-publication
   :bounded-and-unbounded-counts
   :boolean-early-completion
   :typed-traversal-limits
@@ -266,14 +270,14 @@
    :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
  :generated-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 28
-   :assertions 8420
+   :tests 29
+   :assertions 8426
    :qualification :namespace-includes-non-indexed-production-decisions
    :status :passed}
  :generated-javascript
   {:runner "formal/smoke/cljs/run"
-   :suite-tests 45
-   :suite-assertions 9971
+   :suite-tests 46
+   :suite-assertions 9983
    :datascript-public-recursive-cache-mode-differential true
    :status :passed}
   :production-recursive-contract

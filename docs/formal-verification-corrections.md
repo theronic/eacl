@@ -195,6 +195,22 @@ no verified-release claim existed.
   when a consumer bypasses the EACL deletion API. Shadow mode compares the
   Boolean result, not the non-equivalent directional work counters.
 
+### EACL-FORMAL-066 — partial fuel-wave rollback could livelock
+
+- **Affected:** generated JVM and portable ClojureScript forward/reverse
+  recursive traversal on every backend.
+- **Impact:** availability. A broad recursive fan-out could repeat one fuel
+  quantum forever, so bounded page/count work failed to reach its sentinel and
+  instead ended only at an outer request timeout.
+- **Root cause:** fuel exhaustion with a nonempty wave below the 64-command
+  maximum returned the quantum's original state and discarded every pending
+  scan. The next quantum deterministically recreated the same discarded wave.
+- **Correction:** forward and reverse authorities publish every nonempty
+  fuel-cut wave from current verified state and yield current state only when
+  no scan is pending. Direct low-fuel regressions cover generated Java,
+  generated JavaScript, and portable CLJS; the public DataScript regression
+  covers broad fan-out with cache enabled and disabled.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

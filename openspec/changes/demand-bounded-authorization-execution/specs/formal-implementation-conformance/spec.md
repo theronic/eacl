@@ -33,6 +33,12 @@ MUST NOT be presented as certification of production behavior.
 - **THEN** its authenticated query scope and private continuation key bind exactly `L`
 - **AND** a cursor presented under different limits fails before traversal
 
+#### Scenario: Fuel-cut scan transition matches every authority
+- **WHEN** the verified forward or reverse driver consumes its quantum with a nonempty pending scan sequence
+- **THEN** generated Java, generated JavaScript, and the portable CLJS refinement publish the same current-state bounded wave in request-id order
+- **AND** none returns the quantum input state or discards pending work
+- **AND** the source-closure, generated-artifact, direct low-fuel, and public broad-fanout evidence are bound to the same transition claim
+
 #### Scenario: Differential-only target
 - **WHEN** a handwritten runtime is tested differentially against a verified oracle without a mechanized source refinement
 - **THEN** EACL reports differential conformance rather than claiming the implementation itself is proved

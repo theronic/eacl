@@ -221,10 +221,13 @@
   :generated-scan-request-scope-ownership true
   :generated-bounded-ordered-scan-waves true
   :generated-ordered-batch-response-folding true
-  :generated-partial-fuel-wave-rollback true
+  :generated-fuel-cut-wave-publication true
   :generated-default-scan-batch-size 64
   :generated-batched-crossing-law
-  "2 * ceil(scans / batch-size) + 1 for independent streams"
+  {:unsplit-independent-streams
+   "2 * ceil(scans / batch-size) + 1"
+   :fuel-cut
+   :each-cut-publishes-one-current-nonempty-bounded-wave-without-rollback}
   :production-scan-response-routing true
   :production-plan-certification-routing
   {:clj-java :generated-only-schema-plan-compilation
@@ -272,16 +275,16 @@
   :production-routing
   {:clj-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 28
-   :assertions 8420
+   :tests 29
+   :assertions 8426
     :leapfrog-reseek-side-and-target-trace :exact
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407}
  :cljs-javascript
-   {:namespace-tests 34
-    :suite-tests 45
-    :suite-assertions 9971
+   {:namespace-tests 35
+    :suite-tests 46
+    :suite-assertions 9983
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407
@@ -295,15 +298,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 28
-    :namespace-assertions 8420
+    :namespace-tests 29
+    :namespace-assertions 8426
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 34
-    :suite-tests 45
-    :suite-assertions 9971
+    :namespace-tests 35
+    :suite-tests 46
+    :suite-assertions 9983
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}

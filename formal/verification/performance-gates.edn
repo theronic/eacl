@@ -135,7 +135,7 @@
     :status :passed}
    :cross-target-correctness
    {:cljs-generated-smoke
-    {:tests 45 :assertions 9971 :failures 0 :errors 0}
+    {:tests 46 :assertions 9983 :failures 0 :errors 0}
     :cljs-verified-authority
     {:tests 172 :assertions 4682 :failures 0 :errors 0}
     :jvm-verified-authority
@@ -205,8 +205,8 @@
   :median-ratio 0.7790506004048436
   :absolute-ceiling-ns-per-result 15000.0
   :semantic-parity
-  {:formal-oracle-cljs {:tests 45 :assertions 9971}
-   :full-datascript-cljs {:tests 174 :assertions 9684}
+  {:formal-oracle-cljs {:tests 46 :assertions 9983}
+   :full-datascript-cljs {:tests 176 :assertions 9693}
    :injected-authority-cljs {:tests 172 :assertions 4682}}
   :qualification
   :host-runtime-measurement-with-deterministic-semantic-counters-unchanged
@@ -764,7 +764,7 @@
    :generated-java
    {:tests 36 :assertions 10395 :status :passed}
    :generated-javascript
-   {:tests 45 :assertions 9971 :status :passed}
+   {:tests 46 :assertions 9983 :status :passed}
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy

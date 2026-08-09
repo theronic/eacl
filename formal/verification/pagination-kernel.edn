@@ -50,8 +50,8 @@
    :errors 0}
   :javascript
   {:status :passed
-   :suite-tests 45
-   :suite-assertions 9971
+   :suite-tests 46
+   :suite-assertions 9983
    :qualification :full-formal-cljs-suite-includes-page-window-boundaries
    :failures 0
    :errors 0}}

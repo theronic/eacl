@@ -391,6 +391,49 @@
     (is (pos? (get @recursive-stats :stream-fills 0))
         "populated account/server parents must exercise recursive traversal")))
 
+(deftest recursive-fanout-publishes-fuel-cut-scan-waves-test
+  (let [shape (assoc small-shape
+                     :accounts 8
+                     :servers-per-account 25
+                     :user-1-account-count 2)
+        {:keys [client]} (seed-client! shape fixture/recursive-schema {})
+        fanout
+        (mapv
+         (fn [[parent-index child-index]]
+           (eacl/->Relationship
+            (fixture/object :account (fixture/account-id parent-index))
+            :parent
+            (fixture/object :account (fixture/account-id child-index))))
+         [[0 2] [1 3] [0 4]])
+        _ (eacl/write-relationships!
+           client
+           (mapv #(eacl/->RelationshipUpdate :touch %) fanout))
+        query {:subject fixture/user-1
+               :permission :view
+               :resource/type :server
+               :count-limit 100
+               :timeout-ms 2000}
+        reports
+        (mapv
+         (fn [cache?]
+           (let [stats (atom {})
+                 result
+                 (binding [engine/*recursive-traversal-stats* stats]
+                   (eacl/count-resources client (assoc query :cache? cache?)))]
+             {:cache? cache? :result result :stats @stats}))
+         [false true])]
+    (doseq [{:keys [cache? result stats]} reports]
+      (is (= {:count 100 :limit 100 :truncated? true}
+             (select-keys result [:count :limit :truncated?]))
+          (str "recursive fanout count, cache? " cache?))
+      (is (pos? (get stats :stream-fills 0))
+          (str "recursive route exercised, cache? " cache?))
+      (is (<= (get-in stats
+                      [:generated-dimensional-counters :backend-commands]
+                      0)
+              512)
+          (str "fanout remains demand-bounded, cache? " cache?)))))
+
 (deftest cold-exact-count-reuses-one-merge-across-certified-windows-test
   (let [shape
         (assoc

@@ -1213,6 +1213,27 @@
          (= [[:account :view] [:account :admin]] (vec mutant))
          (< (count correct) (count mutant)))))
 
+(defn- fuel-cut-wave-rolls-back-original-state-killed?
+  []
+  (let [portable
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "engine"
+                    "portable_indexed.cljc"))
+        batching
+        (slurp
+         (repo/file "formal" "dafny" "IndexedBatching.dfy"))]
+    (and
+     (str/includes? portable
+                    "(zero? fuel)\n      (if (seq pending)")
+     (str/includes? portable "(pending-outcome state pending)")
+     (not (str/includes? portable
+                         "(if (seq pending) original state)"))
+     (str/includes? batching
+                    "return ForwardNeedScans(batch, ForwardCommands(pending));")
+     (str/includes? batching
+                    "return ReverseNeedScans(batch, ReverseCommands(pending));")
+     (not (str/includes? batching "BatchYielded(original)")))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1386,7 +1407,9 @@
    :content-cursor-restores-relationship-proof-scan
    content-cursor-restores-relationship-proof-scan-killed?
    :pure-permission-alias-keeps-duplicate-frontier
-   pure-permission-alias-keeps-duplicate-frontier-killed?})
+   pure-permission-alias-keeps-duplicate-frontier-killed?
+   :fuel-cut-wave-rolls-back-original-state
+   fuel-cut-wave-rolls-back-original-state-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

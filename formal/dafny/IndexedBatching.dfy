@@ -304,7 +304,6 @@ module IndexedBatching {
     ensures outcome.ForwardBatchComplete? ==>
               Indexed.ForwardStateInvariant(outcome.state)
   {
-    var original := state;
     var current := state;
     var remaining := fuel;
     var pending: seq<Indexed.ForwardPending> := [];
@@ -389,8 +388,11 @@ module IndexedBatching {
       }
     }
     if 0 < |pending| {
-      // Fuel must never make a partially collected wave externally visible.
-      return ForwardBatchYielded(original);
+      // Every issued request must either remain in the returned state or be
+      // published as a bounded wave.  Rolling back here would repeat the same
+      // prefix forever whenever fuel expires with fewer than batchSize scans.
+      var batch := ForwardBatchState(current, pending);
+      return ForwardNeedScans(batch, ForwardCommands(pending));
     }
     return ForwardBatchYielded(current);
   }
@@ -415,7 +417,6 @@ module IndexedBatching {
     ensures outcome.ReverseBatchComplete? ==>
               Indexed.ReverseStateInvariant(outcome.state)
   {
-    var original := state;
     var current := state;
     var remaining := fuel;
     var pending: seq<Indexed.ReversePending> := [];
@@ -500,7 +501,8 @@ module IndexedBatching {
       }
     }
     if 0 < |pending| {
-      return ReverseBatchYielded(original);
+      var batch := ReverseBatchState(current, pending);
+      return ReverseNeedScans(batch, ReverseCommands(pending));
     }
     return ReverseBatchYielded(current);
   }

@@ -424,7 +424,7 @@
     :forward-least-fixed-point-completeness
     :reverse-least-fixed-point-completeness
     :bounded-ordered-scan-waves
-    :partial-wave-fuel-yields-without-publication
+    :fuel-cut-wave-publishes-current-progress-without-request-loss
     :pending-scan-ghost-view-is-exact
     :batched-crossing-law
     :deterministic-render-prefix-independent-of-chunk-boundary

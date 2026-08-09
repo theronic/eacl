@@ -98,7 +98,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `RecursiveEngine.dfy` | typed SCC routing, recursive reachability, forward/reverse worklists, limits, continuation replay |
 | `OrderedMerge.dfy` | ordered union and uniqueness |
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
-| `IndexedBatching.dfy` | bounded ordered scan waves, ordered response folding, partial-fuel rollback, crossing law |
+| `IndexedBatching.dfy` | bounded ordered scan waves, ordered response folding, fuel-cut progress publication, crossing law |
 | `IndexedBatchCompleteness.dfy` | proof-only pending-scan ghost views and generalized batch coverage invariants |
 | `CacheKernel.dfy` | dependency closure, cache validation, telemetry CAS laws |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |

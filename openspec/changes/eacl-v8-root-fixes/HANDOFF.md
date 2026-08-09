@@ -233,14 +233,19 @@ a 24,106,086 maximum under the 50M deterministic limit.
 ### 5. Groups 12.2–12.3 — wave-batched scan protocol (DONE)
 
 `IndexedBatching.dfy` implements request-ordered forward/reverse waves of at
-most 64 commands, ordered response folding, and rollback to the original state
-when fuel ends before a complete wave. `IndexedBatchCompleteness.dfy` gives
+most 64 commands, ordered response folding, and publication of every nonempty
+fuel-cut wave from the current state. `IndexedBatchCompleteness.dfy` gives
 exact pending-scan ghost views and generalized forward/reverse coverage
 invariants. Generated JVM and portable CLJS authorities use the same protocol;
 cursor digests commit emission-order version 2. Independent streams require
 exactly `2×ceil(streams/64)+1` crossings. Current evidence: JVM differential
-51/16,156, CLJS differential 45/9,971 (normal and advanced), crossing gates
+51/16,156, CLJS differential 46/9,983 (normal and advanced), crossing gates
 39/8,500, replay 61/18,310, and mutation control 249/249.
+
+The earlier original-state rollback rule was superseded after broad fan-out
+demonstrated that it can repeat the same transition prefix indefinitely when a
+quantum ends with fewer than 64 pending scans. The demand-bounded execution
+change records the corrected progress contract and regenerated evidence.
 
 The post-regeneration all-backend nonbenchmark authority wrapper was also
 started after its stale `watermark-test` inventory entry was replaced by the
