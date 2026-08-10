@@ -4,13 +4,11 @@
   (:require [datomic.api :as d]
             [eacl.backend.v8 :as backend]
             [eacl.datomic.db :as ddb]
-            [eacl.datomic.mutation :as journal]
-            [eacl.mutation :as mutation]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.storage :as relationship-storage])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.util Base64]))
+           [java.util Base64 UUID]))
 
 (def capabilities
   {:consistency #{:minimize-latency
@@ -18,12 +16,17 @@
                   :at-least-as-fresh
                   :at-exact-snapshot}
    :snapshots #{:current :historical}
-   :source #{:stable-scope :graph-head :anchor-membership :order-hint
+   :source #{:stable-scope :source-lifecycle :native-revision :order-hint
              :exact-locator}
    :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :transactions #{:schema :relationships :object-deletion}
    :cache-proofs #{:schema :relations :snapshot-bound :database-visible}
    :runtime #{:clj}})
+
+(defn- db-revision
+  "Returns the actual selected Datomic revision, including an as-of bound."
+  [^datomic.Database db]
+  (or (.asOfT db) (d/basis-t db)))
 
 (defn- relation-defs
   [db resource-type relation-name]
@@ -81,7 +84,11 @@
     []
     (let [relation-ids (if scope
                          relation-ids
-                         (journal/relation-ids db))
+                         (if (d/entid db :eacl.relation/relation-name)
+                           (map :e
+                                (d/datoms db :aevt
+                                          :eacl.relation/relation-name))
+                           []))
           permission-nodes (if scope
                              permission-nodes
                              (ddb/all-permission-nodes db))]
@@ -154,18 +161,21 @@
 
 (defn- mutation-schema-proof
   [db]
-  (some-> (d/entity db [:eacl/id mutation/schema-entity-id])
-          (get mutation/schema-mutation-id-attr)))
+  (when-let [schema-eid (d/entid db [:eacl/id "schema-string"])]
+    (when-let [datom (first (d/datoms db :eavt schema-eid
+                                      :eacl/schema-version))]
+      [(:tx datom) (str (:v datom))])))
 
 (defn- mutation-relation-proof
   [db relation-ids]
   (let [proof
         (mapv (fn [relation-id]
-                [relation-id
-                 (get (d/entity db relation-id)
-                      mutation/relation-mutation-id-attr)])
+                (when-let [datom
+                           (first (d/datoms db :eavt relation-id
+                                            :eacl/relation-version))]
+                  [relation-id (:tx datom) (:v datom)]))
               (sort relation-ids))]
-    (when (every? (comp some? second) proof)
+    (when (every? some? proof)
       proof)))
 
 (defn snapshot-adapter
@@ -175,17 +185,28 @@
    (snapshot-adapter db {}))
   ([db {:keys [entid->object-id
                object-eid-fn subject->resources-fn
-               resource->subjects-fn conn coherence-authority
-               database-id proof-mode selected-order-hint
-               selected-exact-locator]
+               resource->subjects-fn conn
+               database-id proof-mode]
         :or {proof-mode :content}
         :as opts}]
    (let [external-id
          (or entid->object-id
              (fn [snapshot eid]
                (:eacl/id (d/entity snapshot eid))))
-         graph-state
-         (delay (journal/graph-state db))]
+         source-lifecycle
+         (or (some-> (:source-lifecycle-state opts) deref)
+             (:source-lifecycle opts)
+             (str (UUID/randomUUID)))
+         source-scope
+         (or (:source-scope opts)
+             {:source-id
+              {:database-id
+               (or database-id (str (.id ^datomic.Database db)))}
+              :branch nil})
+         opts' (-> opts
+                   (dissoc :source-lifecycle-state)
+                   (assoc :source-lifecycle source-lifecycle
+                          :source-scope source-scope))]
      (backend/make-adapter
       {:id :datomic
        :fingerprint (:adapter-fingerprint opts)
@@ -195,14 +216,9 @@
                            :selected-internal/current-external-v1)
        :capabilities
        (cond-> capabilities
-         (not= :managed coherence-authority)
-         (update :consistency disj
-                 :at-least-as-fresh
-                 :at-exact-snapshot)
-
          (nil? conn)
          (update :consistency disj
-                 :fully-consistent
+                 :fully-consistent :at-least-as-fresh
                  :at-exact-snapshot))
        :state {:db db
                :opts opts}
@@ -210,38 +226,26 @@
        {:snapshot-id
         (fn []
           {:database-id (str (.id ^datomic.Database db))
-           :basis-t (or selected-exact-locator
-                        (d/basis-t db))})
+           :basis-t (db-revision db)})
 
         :source-scope
-        (fn []
-          {:source-id
-            {:database-id
-            (or database-id
-                (str (.id ^datomic.Database db)))
-            :family-id (:family-id @graph-state)}
-           :branch nil})
+        (fn [] source-scope)
 
-        :graph-head
-        (fn []
-          {:graph-anchor (:head-id @graph-state)
-           :order-hint (or selected-order-hint
-                           (d/basis-t db))
-           :exact-locator (or selected-exact-locator
-                              (d/basis-t db))})
+        :source-lifecycle
+        (fn [] source-lifecycle)
 
-        :contains-anchor?
-        (fn [anchor]
-          (journal/contains-anchor? db anchor))
+        :native-revision
+        (fn []
+          {:revision (db-revision db)
+           :exact-locator (db-revision db)})
 
         :order-hint
         (fn []
-          (or selected-order-hint
-              (d/basis-t db)))
+          (db-revision db))
 
         :select-current
         (fn []
-          (snapshot-adapter (if conn (d/db conn) db) opts))
+          (snapshot-adapter (if conn (d/db conn) db) opts'))
 
         :select-authoritative
         (fn [timeout-ms]
@@ -260,7 +264,7 @@
                    :eacl/error :eacl.consistency/freshness-unavailable
                    :reason :freshness-timeout
                    :timeout-ms (or timeout-ms 30000)})))
-              (snapshot-adapter selected opts))
+              (snapshot-adapter selected opts'))
             (catch clojure.lang.ExceptionInfo error
               (if (= :eacl.consistency/freshness-unavailable
                      (:type (ex-data error)))
@@ -279,11 +283,11 @@
           (try
             (let [selected
                   (if conn
-                    (deref (d/sync conn (:order-hint token-data))
+                    (deref (d/sync conn (:revision token-data))
                            (or timeout-ms 30000)
                            ::timeout)
                     db)
-                  requested-order-hint (:order-hint token-data)]
+                  requested-order-hint (:revision token-data)]
               (when (= ::timeout selected)
                 (throw
                  (ex-info
@@ -291,7 +295,7 @@
                   {:type :eacl.consistency/freshness-unavailable
                    :eacl/error :eacl.consistency/freshness-unavailable
                    :reason :freshness-timeout
-                   :requested-order-hint (:order-hint token-data)
+                   :requested-order-hint (:revision token-data)
                    :timeout-ms (or timeout-ms 30000)})))
               ;; d/sync is specified to return a DB at least as new as the
               ;; requested basis. Check the postcondition anyway: adapters and
@@ -308,7 +312,7 @@
                    :requested-order-hint requested-order-hint
                    :observed-order-hint (d/basis-t selected)
                    :timeout-ms (or timeout-ms 30000)})))
-              (snapshot-adapter selected opts))
+              (snapshot-adapter selected opts'))
             (catch clojure.lang.ExceptionInfo error
               (if (= :eacl.consistency/freshness-unavailable
                      (:type (ex-data error)))
@@ -319,14 +323,13 @@
                   {:type :eacl.consistency/freshness-unavailable
                    :eacl/error :eacl.consistency/freshness-unavailable
                    :reason :sync-failed
-                   :requested-order-hint (:order-hint token-data)
+                   :requested-order-hint (:revision token-data)
                    :timeout-ms (or timeout-ms 30000)}
                   error))))))
 
         :exact-locator
         (fn []
-          (or selected-exact-locator
-              (d/basis-t db)))
+          (db-revision db))
 
         :select-exact
         (fn [token-data _timeout-ms]
@@ -337,7 +340,7 @@
               (try
                 (snapshot-adapter
                  (d/as-of current locator)
-                 (assoc opts
+                 (assoc opts'
                         :selected-order-hint locator
                         :selected-exact-locator locator))
                 (catch Throwable _

@@ -8,12 +8,11 @@
   (:require [clojure.string :as str]
             [datahike.api :as d]
             [eacl.datahike.db :as ddb]
-            [eacl.datahike.mutation :as journal]
             [eacl.relationships.safe-retraction :as safe]
             [eacl.relationships.storage :as storage]))
 
 (def function-digest
-  "8db6ea954b6e22fd681d394a26963498e787c1f1bfbf6756c50855ff7a226c3b")
+  "99ec0f983ea09eea439583e22297f55611ca55d8114f4b9230954834efc42bbc")
 
 (def function-doc
   (str safe/function-doc-prefix " v" safe/function-version
@@ -64,48 +63,124 @@
                :reason :unknown-schema-flexibility
                :requires-installation? false})))))
 
-(defn- native-mutation-data
-  [db tx-data]
-  (mapv
-   (fn [op]
-     (if (and (vector? op) (= :db.fn/cas (first op)))
-       (assoc op 2 (ddb/attr-repr db (nth op 2)))
-       op))
-   tx-data))
+(defn- component-attributes
+  [db]
+  (into #{}
+        (map #(ddb/attr-repr db %))
+        (d/q '[:find [?ident ...]
+               :where
+               [?attribute :db/ident ?ident]
+               [?attribute :db/isComponent true]]
+             db)))
+
+(defn- component-children
+  [db component-attrs eid]
+  (into []
+        (comp (filter #(contains? component-attrs (:a %)))
+              (map :v))
+        (d/datoms db {:index :eavt :components [eid]})))
+
+(defn- control-entity-data
+  [db eid]
+  (let [entity (d/entity db eid)]
+    {:db-ident (:db/ident entity)
+     :eacl-id (:eacl/id entity)
+     :schema-string (:eacl/schema-string entity)
+     :relation-name (:eacl.relation/relation-name entity)
+     :permission-name (:eacl.permission/permission-name entity)}))
+
+(defn- relation-triples
+  [db]
+  (mapv (fn [{:keys [e v]}]
+          [(nth v 0) e (nth v 2)])
+        (ddb/avet-datoms
+         db :eacl.relation/resource-type+relation-name+subject-type)))
+
+(defn- known-ghost-plan
+  [db target-eid]
+  (safe/combine-plans
+   (mapcat
+    (fn [[resource-type relation-eid subject-type]]
+      (let [reverse-value
+            [resource-type relation-eid subject-type target-eid]
+            forward-value
+            [subject-type relation-eid resource-type target-eid]
+            reverse-peers
+            (ddb/avet-datoms db storage/reverse-attribute reverse-value)
+            forward-peers
+            (ddb/avet-datoms db storage/forward-attribute forward-value)]
+        (concat
+         (for [{peer-eid :e} reverse-peers]
+           {:peer-retractions
+            [[:db/retract peer-eid storage/reverse-attribute reverse-value]]
+            :relation-ids [relation-eid]
+            :local-half-count 0})
+         (for [{peer-eid :e} forward-peers]
+           {:peer-retractions
+            [[:db/retract peer-eid storage/forward-attribute forward-value]]
+            :relation-ids [relation-eid]
+            :local-half-count 0}))))
+    (relation-triples db))))
 
 (defn retract-entity-function
-  [db target envelope]
-  (safe/validate-envelope target envelope)
-  (let [target-eid (ddb/entid db target)]
-    (if-not (and target-eid (ddb/entity-exists? db target-eid))
+  [db target]
+  (safe/validate-target! target)
+  (let [target-eid (ddb/entid db target)
+        lookup-ref? (vector? target)]
+    (if (and lookup-ref? (nil? target-eid))
       []
-      (let [forward-values
-            (mapv :v (ddb/eavt-datoms db target-eid
-                                      storage/forward-attribute))
-            reverse-values
-            (mapv :v (ddb/eavt-datoms db target-eid
-                                      storage/reverse-attribute))
-            {:keys [peer-retractions relation-ids]}
-            (safe/plan-local-halves target-eid
-                                    forward-values reverse-values)
-            mutation-data
-            (native-mutation-data
-             db
-             (safe/mutation-tx-data
-              (journal/graph-state db)
-              relation-ids
-              :db/current-tx
-              envelope))]
-        (into (into mutation-data peer-retractions)
-              [[:db.fn/retractEntity target-eid]])))))
+      (let [live? (and target-eid (ddb/entity-exists? db target-eid))
+            closure
+            (when live?
+              (let [component-attrs (component-attributes db)]
+                (safe/component-closure
+                 target-eid
+                 #(component-children db component-attrs %))))
+            protected-eid
+            (some (fn [eid]
+                    (when (safe/protected-control-entity?
+                           (control-entity-data db eid))
+                      eid))
+                  closure)]
+        (when protected-eid
+          (throw
+           (ex-info
+            "EACL safe retraction cannot delete schema/control entities."
+            {:type :eacl.safe-retraction/invalid
+             :eacl/error :eacl.safe-retraction/invalid
+             :reason :protected-control-entity
+             :target-eid target-eid
+             :protected-eid protected-eid})))
+        (let [plan
+              (if live?
+                (safe/combine-plans
+                 (map (fn [eid]
+                        (safe/plan-local-halves
+                         eid
+                         (mapv :v (ddb/eavt-datoms
+                                   db eid storage/forward-attribute))
+                         (mapv :v (ddb/eavt-datoms
+                                   db eid storage/reverse-attribute))))
+                      closure))
+                (if target-eid
+                  (known-ghost-plan db target-eid)
+                  {:peer-retractions []
+                   :relation-ids []
+                   :local-half-count 0}))]
+          (into []
+                (concat
+                 (:peer-retractions plan)
+                 (safe/relation-stamps (:relation-ids plan))
+                 (when live?
+                   [[:db.fn/retractEntity target-eid]]))))))))
 
 (defn retract-entity-direct-function
   "Direct-call argument order avoids a Datahike attribute-ref parser edge:
   the transaction parser examines the first user argument as if it were an
   attribute before dispatching `:db.fn/call`. The envelope is non-numeric,
   whereas a raw target eid commonly is numeric."
-  [db envelope target]
-  (retract-entity-function db target envelope))
+  [db wrapped-target]
+  (retract-entity-function db (first wrapped-target)))
 
 (def function-definition
   {:db/ident safe/function-ident
@@ -126,7 +201,7 @@
     :absent))
 
 (defn prepare!
-  "Prepares mutation-journal state and, in named mode, installs the function.
+  "Prepares the optional named/direct safe-retraction capability.
 
   Returns the effective capability and installation state."
   [conn]
@@ -139,7 +214,6 @@
          :eacl/error :eacl.safe-retraction/unsupported
          :backend :datahike
          :support initial-support})))
-    (journal/ensure-migrated! conn)
     (let [db (d/db conn)
           support (support-descriptor db)]
     (case (:mode support)
@@ -237,20 +311,19 @@
   Call `prepare!` on the connection first. The database argument makes mode
   selection explicit and prevents a direct function value from accidentally
   crossing a remote writer boundary."
-  ([db target]
-   (retract-entity-tx-data db target {}))
-  ([db target options]
-   (let [support (support-descriptor db)
-         envelope (safe/mutation-envelope target options)]
-     (safe/validate-envelope target envelope)
-     (case (:mode support)
-       :named [[safe/function-ident target envelope]]
-       :direct [[:db.fn/call retract-entity-direct-function envelope target]]
-       :unsupported
-       (throw
-        (ex-info
-         "This Datahike writer does not support safe transaction-function invocation."
-         {:type :eacl.safe-retraction/unsupported
-          :eacl/error :eacl.safe-retraction/unsupported
-          :backend :datahike
-          :support support}))))))
+  [db target]
+  (safe/validate-target! target)
+  (let [support (support-descriptor db)]
+    (case (:mode support)
+      :named [[safe/function-ident target]]
+      ;; Wrapping keeps a numeric eid out of Datahike's first-user-argument
+      ;; attribute parser without changing the public target-only semantics.
+      :direct [[:db.fn/call retract-entity-direct-function [target]]]
+      :unsupported
+      (throw
+       (ex-info
+        "This Datahike writer does not support safe transaction-function invocation."
+        {:type :eacl.safe-retraction/unsupported
+         :eacl/error :eacl.safe-retraction/unsupported
+         :backend :datahike
+         :support support})))))

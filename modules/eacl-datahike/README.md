@@ -13,7 +13,7 @@ Responsibilities:
 - current immutable-snapshot selection and object/reference conversion
 - ordered adjacency in both keyword and numeric `:attribute-refs?` modes
 - proof-equivalent authenticated Relay cursors with exact fallback
-- database-visible mutation identities plus schema/relation proofs
+- database-visible native schema/relation generations
 - `delete-object!` relationship cleanup
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
@@ -67,20 +67,23 @@ Both keyword and numeric `:attribute-refs?` representations are supported.
 Function values are not transported to remote writers, which receive a
 structured `:unsupported` descriptor/error and must use `delete-object!`.
 
-The function performs two target-scoped endpoint reads, advances v3 graph and
-relation proofs, and delegates ordinary entity removal in the same commit. Use
-one invocation per transaction; sibling relationship additions are not
-visible. Reinstall named functions after persistence restore unless the store
-is known to preserve IFn values. Rollback callers before removing a named
-installation. Missing targets do not trigger a global ghost scan; use the
-integrity report for existing damage. Prefer batched `delete-object!` for
-high-degree entities to avoid monopolizing the writer.
+The function computes the target's native component closure, retracts exact
+peer halves discovered from both endpoint indexes, stamps each distinct
+affected relation with `:db/current-tx`, and delegates ordinary entity removal
+in the same commit. Multiple and repeated invocations compose in one
+transaction. Do not combine relationship additions involving a target with
+its retraction in the same application transaction. Reinstall named functions
+after persistence restore unless the store is known to preserve IFn values.
+Rollback callers before removing a named installation. A missing valid lookup
+ref is a no-op; a known numeric retracted eid repairs peer-only ghosts through
+relation-schema enumeration and exact index probes. Prefer batched
+`delete-object!` for high-degree entities to avoid monopolizing the writer.
 
 This replaces the unreleased v8 Datahike relationship-entity layout. Recreate
 pre-release Datahike databases rather than carrying both physical models; no
 rollback or dual-read migration is included.
 
-Datahike supports local `:minimize-latency`, managed causal at-least selection,
+Datahike supports local `:minimize-latency`, native-revision causal at-least selection,
 and exact reconstruction from retained commits or temporal history. It
 advertises `:fully-consistent` only for a direct `:self` writer with an
 authoritative branch-head barrier; lagging/replicated sources reject it.

@@ -77,17 +77,20 @@
               adapter
               :direct-match?
               :user alice relation-id :account account)))
-        (is (string?
-             (backend/invoke adapter :schema-proof)))
+        (let [schema-proof (backend/invoke adapter :schema-proof)]
+          (is (= 2 (count schema-proof)))
+          (is (integer? (first schema-proof)))
+          (is (string? (second schema-proof))))
         (is (= relation-id
                (ffirst
                 (backend/invoke
                  adapter :relation-proof [relation-id]))))
-        (is (string?
-             (second
+        (let [[_relation-id assertion-t generation]
               (first
                (backend/invoke
-                adapter :relation-proof [relation-id])))))
+                adapter :relation-proof [relation-id]))]
+          (is (integer? assertion-t))
+          (is (integer? generation)))
         (testing "the adapter advertises Datomic's existing guarantees"
           (doseq [mode [:fully-consistent
                         :minimize-latency

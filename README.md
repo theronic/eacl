@@ -55,11 +55,12 @@ Situated AuthZ offers some advantages for typical use-cases:
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates already known to be irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-EACL page tokens bind database/source identity, graph head and exact locator,
-operation, query, ordering, and configuration. A walk remains pinned to the
-cursor's exact snapshot. If current has advanced, EACL reconstructs the
-authenticated original exact value; a missing value or incompatible freshness
-floor returns a typed failure.
+EACL page tokens bind backend/source identity, source lifecycle, native
+revision and exact locator, operation, query, ordering, and configuration. A
+walk remains pinned to the cursor's selected snapshot. If current has
+advanced, a backend with exact reconstruction may recover the authenticated
+original value; a missing value or incompatible freshness floor returns a
+typed failure.
 
 Relationship pages seek directly through the backend's immutable tuple indexes
 with an authenticated physical keyset edge and read at most the requested page
@@ -778,8 +779,13 @@ were computed, which stays correct even when authorization data is written
 outside EACL (a raw `transact!`, a fixture load, another library). Pass
 `:coherence-authority :managed` — an explicit contract that every schema and
 relationship mutation goes through EACL's client APIs — to let unchanged
-cache portions survive unrelated transactions; a schema change invalidates
-the managed generation.
+cache portions survive unrelated transactions. Managed keys contain the
+selected source lifecycle, physical schema generation, and complete sorted
+vector of physical generations for the query's relation dependency closure.
+A relevant relation write changes exactly its relation generation; a schema
+change rotates the managed schema generation. No transaction listener,
+transaction-log scan, mutation journal, or global graph-head CAS participates
+in cache validity.
 
 Most applications need no cache configuration. To set a completed-answer
 weight budget (answers are byte-weight bounded with least-recently-used
@@ -841,17 +847,20 @@ cache. Inspect or expire that exact cache through the backend API:
 
 Cache data is never written to the application's database.
 
-Call the backend's `expire-cache!` to clear a client's in-memory cache on
-demand. For cache tiers, validity rules, eviction, concurrency, metrics,
-tuning, and performance guidance, read the
+Call the backend's `expire-cache!` to rotate the complete client lifecycle and
+clear exact, managed, derived-schema, cursor, page-navigation, continuation,
+and checkpoint state. Supply a coordinated bounded `:source-lifecycle` when
+multiple processes must exchange tokens; rotate it after restore, reset,
+branch force, or source replacement. For cache tiers, validity rules,
+eviction, concurrency, metrics, tuning, and performance guidance, read the
 [cache architecture guide](docs/cache.md).
 
 ### Consistency and Zed tokens
 
 Authorization defaults to the immutable DB currently visible to the local
 backend. It does not synchronize and does not select history. Mutation
-responses under managed authority return an authenticated Zed token for
-explicit at-least/exact workflows. Reads accept these descriptors:
+responses return an authenticated backend-native revision token independently
+of cache authority. Reads accept these descriptors:
 
 ```clojure
 (require '[eacl.spicedb.consistency :as consistency])
@@ -864,8 +873,8 @@ explicit at-least/exact workflows. Reads accept these descriptors:
 ;; bounded zero-argument (d/sync conn).
 (eacl/can? acl subject :view resource consistency/fully-consistent)
 
-;; Select a snapshot containing the token's mutation anchor. Datomic may use
-;; targeted (d/sync conn T) as a bounded waiting hint.
+;; Select a snapshot whose native revision is at least the authenticated floor.
+;; Datomic uses targeted (d/sync conn T) as a bounded barrier.
 (eacl/can? acl subject :view resource
            (consistency/at-least-as-fresh write-token))
 
@@ -882,8 +891,14 @@ Datomic `fully-consistent` performs a bounded zero-argument `d/sync` barrier.
 The default does not.
 At-least waits and exact/cursor reconstruction are bounded by
 `:consistency-sync-timeout-ms` (30,000 ms by default). Failure returns a typed
-error; it never falls back to an older or incomparable graph. DataScript and
+error; it never falls back to an older or incomparable lifecycle. DataScript and
 Datahike advertise only the modes their configured source can establish.
+
+Version-3 graph-anchor tokens are rejected with
+`:eacl/zed-token-upgrade-required`; their numeric hints are never treated as
+v4 revision authority. A native revision proves freshness only within the
+authenticated backend/source/branch/lifecycle scope. Rotate that lifecycle
+whenever the source's numeric revision history can be replaced or regress.
 
 Zed-token authentication prevents a frontend from changing the database or revision, but it does
 not make a valid token single-use, bind it to an end user, prevent replay, or authorize historical
@@ -986,11 +1001,12 @@ entities, each naming its peer *inside a tuple value*:
 Datomic's `:db.fn/retractEntity` follows `:db.type/ref` *attributes*; it does not follow ref-typed *components of a heterogeneous tuple* (and a heterogeneous tuple cannot be `:db/isComponent`). DataScript vectors have the same issue. Retracting a permissioned entity directly therefore removes only the half stored on that entity and leaves a **ghost relationship** on its peer, where it can keep answering authorization queries. The survivor is then unreachable through ordinary relationship writes because the deleted endpoint no longer resolves.
 
 EACL provides an opt-in `:eacl.fn/retractEntity` transaction function. It
-reads only the target's forward and reverse endpoint attributes from the
-transaction-start database, retracts the exact peer halves, advances affected
-cache/consistency proofs, and delegates entity removal to the backend's
-ordinary retract operation in the same transaction. It is not present in any
-default schema.
+accepts the same target shapes as native retraction—a numeric eid or valid
+lookup ref. For a live target it computes the native component closure, reads
+the forward and reverse endpoint attributes on each closure entity, retracts
+the exact peer halves, stamps each distinct affected relation with the current
+transaction, and delegates entity removal to the backend's ordinary retract
+operation in the same transaction. It is not present in any default schema.
 
 | Backend/configuration | Mode | Preparation |
 | --- | --- | --- |
@@ -1045,17 +1061,26 @@ writer topology:
   (d/db conn) [:eacl/id "acme"]))
 ```
 
-The constructor creates a retry-stable authenticated mutation envelope outside
-the transaction function; submit the returned invocation once. Only one
-safe-retraction invocation is supported per application transaction. A
-relationship added elsewhere in that same transaction is not visible to the
-function and is unsupported. Certified EACL relationship writers racing in a
-separate transaction are serialized by the mutation graph: a prior write is
-observed and removed, while a write calculated before a winning deletion loses
-its graph-head CAS and retries/fails.
+The invocation contains only the target; there is no mutation envelope,
+clock, journal record, graph head, or cache mutation. Multiple and repeated
+invocations compose in one transaction:
 
-Expansion is linear in the target's local relationship degree plus its distinct
-relations and performs no whole-database/schema relationship scan. Because the
+```clojure
+@(d/transact conn [[:eacl.fn/retractEntity 1]
+                   [:eacl.fn/retractEntity 2]
+                   [:eacl.fn/retractEntity 1]])
+```
+
+Do not add a relationship involving a target elsewhere in that same
+application transaction; portable transaction-function visibility/order does
+not define that combination. A separate EACL relationship write committed
+first is observed and removed. A write plan calculated before a winning
+deletion fails its commit-time endpoint identity CAS rather than recreating a
+tuple whose endpoint disappeared. The safe function itself needs no CAS.
+
+Live expansion is linear in component-closure size plus closure-local
+relationship degree and distinct affected relations; it performs no scan over
+unrelated permissioned entities. Because the
 work executes in the serialized transaction pipeline, use the existing batched
 `delete-object!` workflow below for very high-degree targets or when transaction
 size/latency is more important than single-transaction atomicity.
@@ -1087,10 +1112,13 @@ from transaction-start state.
 
 `delete-object!` retracts relationships only — retracting the entity itself stays your call. It is idempotent, batches high-degree cleanup, and also accepts the raw eid of an entity you already retracted, which is how you clean up after the fact.
 
-Safe retraction deliberately returns no relationship or proof data when the
-target is already missing. It cannot rediscover a peer-only ghost without an
-unbounded scan. Use the integrity workflow below for old damage; installing the
-function does not retroactively repair it.
+A valid lookup ref that does not resolve is a no-op because its former eid is
+unrecoverable. A numeric eid remains useful after native retraction: EACL
+enumerates the relatively small relation schema and performs exact peer-index
+probes in both tuple directions, removes matching peer-only ghosts, and stamps
+only the relations it actually repairs. Use the integrity workflow below when
+the old eid is unknown; installation does not scan or repair old damage by
+itself.
 
 EACL does not prevent direct `:db.fn/retractEntity` calls or add existence probes to every read.
 To detect and repair relationship halves left by such calls, use the explicit offline integrity
@@ -1108,8 +1136,8 @@ API (it scans both relationship indexes):
 Datahike uses the same two endpoint tuple datoms and therefore has the same
 deletion contract. Its offline detector is
 `eacl.datahike.integrity/dangling-relationship-report`; repair a reported
-endpoint through `eacl/delete-object!` with its raw eid so the v3 mutation
-journal and cache dependencies are advanced atomically.
+endpoint through `eacl/delete-object!` with its raw eid so the native relation
+generations and cache dependencies are advanced atomically.
 
 DataScript uses the same two endpoint values as indexed ordinary vectors, so
 its embedded peer eid is not a ref and has the same deletion contract. Its
@@ -1218,12 +1246,12 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - `expand-permission-tree` is not implemented yet.
 - *Managed-current caching requires complete writer authority:* managed EACL
   writes atomically update the affected relation transaction stamps.
-  DataScript assumes this contract by default; mixed or hand-written
-  DataScript authorization writers must select `:coherence-authority :unknown`.
-  Datomic and Datahike select managed authority explicitly only when every
-  schema, relationship, caveat, and future authorization-dependency writer
-  follows that protocol. Unknown authority safely retains only answers from
-  the identical immutable DB generation.
+  Every backend defaults to `:coherence-authority :unknown`; select managed
+  authority explicitly only when every schema, relationship, caveat, and
+  future authorization-dependency writer follows that protocol. Unknown
+  authority safely retains only answers from the identical immutable DB
+  generation. Raw `:db.fn/retractEntity` is outside the managed contract;
+  `:eacl.fn/retractEntity` is inside it.
 - *Deleting entities:* Datomic and Datahike entity retraction does not remove
   peer relationship tuples. Consumers should delete relationships first;
   `delete-object!` is a convenience helper, and the backend integrity

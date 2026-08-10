@@ -8,7 +8,7 @@ Responsibilities:
 - Datomic tuple/index storage implementation
 - Datomic relationship write planning and transaction execution
 - v8 consistency descriptors, Zed tokens, encrypted Relay-style pagination, and historical reads
-- v8 authenticated result cache with mutation/content proofs and cache-store contract
+- v8 authenticated result cache with native schema/relation generations
 - v6-to-v7 migration and v8 object-deletion/integrity helpers
 - Datomic compatibility namespaces preserving the existing public surface
 - Datomic-only regression and storage-mechanics tests
@@ -35,21 +35,40 @@ database function removes both endpoint halves and the entity atomically:
   (safe-retraction/retract-entity-tx-data [:eacl/id "account-1"]))
 ```
 
-`install!` also prepares the v3 mutation graph. It installs
-`:eacl.fn/retractEntity` only when called, upgrades recognized EACL
-version/digest markers, and refuses to overwrite an unrelated occupant. The
-stored `d/function` body uses only Clojure core, JDK cryptography, and
+`install!` installs `:eacl.fn/retractEntity` only when called, upgrades
+recognized EACL version/digest markers, and refuses to overwrite an unrelated
+occupant. The stored `[db target]` function uses only Clojure core and
 `datomic.api`; no `DATOMIC_EXT_CLASSPATH` or EACL transactor dependency is
 required. Treat installation/removal as a schema deployment and roll back
 callers before removing the installed entity.
 
-The function reads the target's two endpoint attributes from transaction-start
-state, authenticates the mutation envelope, advances graph/relation proofs,
-and preserves Datomic's native inbound-ref/component retraction. It does not
-repair ghosts when the target is already missing, and it does not see sibling
-relationship additions in the same application transaction. Use one invocation
-per transaction. For high-degree targets, prefer batched `eacl/delete-object!`
-followed by ordinary entity retraction; use
+For a live target, the function computes the native component closure, reads
+the two EACL endpoint attributes on every closure entity, retracts each exact
+peer half, stamps every distinct affected relation with the current
+transaction, and finally delegates deletion to `:db.fn/retractEntity`. The
+relation stamps are the managed-cache invalidation mechanism; the function
+does not modify an in-memory cache and contains no global CAS.
+
+Multiple and repeated invocations compose in one transaction:
+
+```clojure
+@(d/transact conn [[:eacl.fn/retractEntity 1]
+                   [:eacl.fn/retractEntity 2]
+                   [:eacl.fn/retractEntity 1]])
+```
+
+A valid lookup ref that does not resolve is a no-op. A numeric eid remains a
+repair key after its entity datoms have been retracted: the function enumerates
+the relatively small relation schema and performs exact AVET probes in both
+tuple directions to remove peer-only ghosts and stamp their relations. This
+fallback cannot recover the eid from a missing lookup ref.
+
+Do not combine relationship additions involving a target with its safe
+retraction in the same application transaction; transaction-function
+visibility/order cannot provide portable semantics for that case. Separate
+EACL writers calculated before a winning deletion fail their commit-time
+endpoint identity CAS. For high-degree targets, prefer batched
+`eacl/delete-object!` followed by ordinary entity retraction; use
 `eacl.datomic.integrity/dangling-relationship-report` and
 `repair-tx-batches` for existing damage.
 

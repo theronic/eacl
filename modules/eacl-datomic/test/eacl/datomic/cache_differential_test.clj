@@ -8,9 +8,10 @@
   omitted the pagination direction, so a `:last/:before` page was served to a
   later `:first/:after` request with the same cursor and size.
 
-  The oracle is a {:cache cache/no-cache} client sharing the same :page-token-key, so a
-  cursor minted by one client is readable by the other and any divergence is
-  attributable to caching alone."
+  The oracle is a {:cache cache/no-cache} client sharing the same signing key
+  and explicitly coordinated source lifecycle, so a cursor minted by one
+  client is readable by the other and any divergence is attributable to
+  caching alone."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
@@ -22,6 +23,7 @@
             [eacl.engine.v8 :as engine]))
 
 (def ^:private token-key "cache-differential-test-key")
+(def ^:private source-lifecycle "datomic-cache-differential-v4-test")
 
 (def ^:private recursive-schema
   "definition user {}
@@ -56,7 +58,11 @@
 
 (defn- client
   [conn config]
-  (core/make-client conn (assoc config :page-token-key token-key)))
+  (core/make-client
+   conn
+   (assoc config
+          :page-token-key token-key
+          :source-lifecycle source-lifecycle)))
 
 (defn- seed-recursive!
   "f0 <- f1 <- ... <- fN via :parent, alice owns f0, so `view` is recursive and

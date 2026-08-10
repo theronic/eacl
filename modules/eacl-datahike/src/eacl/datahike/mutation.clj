@@ -4,6 +4,42 @@
             [eacl.datahike.db :as ddb]
             [eacl.mutation :as mutation]))
 
+(def mutation-schema
+  "Legacy v3 retry-journal attributes. Optional: ordinary EACL databases and
+  writers do not install or use these attributes."
+  [{:db/ident :eacl.mutation/id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/unique :db.unique/identity
+    :db/index true}
+   {:db/ident :eacl.mutation/fingerprint :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.mutation/kind :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.mutation/issued-at :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.mutation/expires-at :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.graph/family-id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.graph/head-id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.graph/head-order :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.schema/mutation-id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.relation/mutation-id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/index true}
+   {:db/ident :eacl.dependency/mutation-id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/index true}])
+
+(defn ensure-schema!
+  "Installs the optional legacy journal schema explicitly."
+  [conn]
+  (let [db (d/db conn)
+        missing (remove #(ddb/entid db (:db/ident %)) mutation-schema)]
+    (when (seq missing)
+      (d/transact conn (vec missing))))
+  true)
+
 (defn graph-state
   [db]
   (when-let [entity (d/entity db [:eacl/id mutation/graph-entity-id])]
@@ -77,6 +113,7 @@
 
 (defn ensure-migrated!
   [conn]
+  (ensure-schema! conn)
   (or (graph-state (d/db conn))
       (let [_ (d/transact conn [{:eacl/id mutation/graph-entity-id}])
             db (d/db conn)

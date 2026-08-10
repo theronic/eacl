@@ -170,6 +170,29 @@
          [?relation :eacl.relation/subject-type ?subject-type]]
        db resource-type relation-name subject-type))
 
+(defn- endpoint-identity-guard
+  [db role eid object]
+  (when (and (number? eid) (not (neg? eid)))
+    (let [candidate (or (:eacl.relationship/identity-guard object)
+                        (when (and (vector? (:id object))
+                                   (= 2 (count (:id object))))
+                          (:id object))
+                        (when-let [value (:eacl/id (d/entity db eid))]
+                          [:eacl/id value]))]
+      (when-not (and (vector? candidate)
+                     (= 2 (count candidate))
+                     (keyword? (first candidate))
+                     (some? (second candidate)))
+        (throw
+         (ex-info
+          "A relationship endpoint has no commit-time identity guard."
+          {:type :eacl/endpoint-identity-unavailable
+           :role role
+           :endpoint-eid eid
+           :object object})))
+      (let [[attribute value] candidate]
+        [:db.fn/cas eid attribute value value]))))
+
 (defn- resolve-relationship
   [db {:keys [subject relation resource]} opts]
   (let [subject-type (:type subject)
@@ -189,11 +212,15 @@
     {:subject subject
      :subject-type subject-type
      :subject-eid subject-eid
+     :subject-identity-guard
+     (endpoint-identity-guard db :subject subject-eid subject)
      :relation relation
      :relation-eid relation-eid
      :resource resource
      :resource-type resource-type
-     :resource-eid resource-eid}))
+     :resource-eid resource-eid
+     :resource-identity-guard
+     (endpoint-identity-guard db :resource resource-eid resource)}))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-eid resource-type resource-eid]}]
@@ -207,13 +234,17 @@
 
 (defn- add-relationship-txes
   [resolved]
-  [[:db/add (:subject-eid resolved)
-    relationship-storage/forward-attribute
-    (relationship-tuple resolved)]
-   [:db/add (:resource-eid resolved)
-    relationship-storage/reverse-attribute
-    (reverse-relationship-tuple resolved)]
-   (tx-relation-version-stamp (:relation-eid resolved))])
+  (into []
+        (remove nil?)
+        [(:subject-identity-guard resolved)
+         (:resource-identity-guard resolved)
+         [:db/add (:subject-eid resolved)
+          relationship-storage/forward-attribute
+          (relationship-tuple resolved)]
+         [:db/add (:resource-eid resolved)
+          relationship-storage/reverse-attribute
+          (reverse-relationship-tuple resolved)]
+         (tx-relation-version-stamp (:relation-eid resolved))]))
 
 (defn- retract-relationship-txes
   [resolved]

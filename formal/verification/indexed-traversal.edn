@@ -261,7 +261,7 @@
      :maximum-resource-count 694159}}
    :aggregate
    {:indexed-obligations 7979
-    :whole-formal-tree-obligations 8616
+    :whole-formal-tree-obligations 8642
     :deterministic-proof-effort-resource-limit 50000000
     :whole-tree-maximum-resource-count 24106086
     :machine-readable-report "target/formal/dafny-verification.json"

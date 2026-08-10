@@ -18,12 +18,15 @@
      permission admin = owner
    }")
 
+(def ^:private source-lifecycle "datomic-consistency-cache-v4-test")
+
 (defn- cached-client
   [conn]
   (core/make-client
    conn
    {:coherence-authority :managed
     :zed-token-key "consistency-cache-test-key"
+    :source-lifecycle source-lifecycle
     :cache {:checkpoints true
             :remember-answers true}}))
 
@@ -41,7 +44,7 @@
     (causal-token/issue
      format-options
      (assoc payload
-            :order-hint order-hint
+            :revision order-hint
             :exact-locator order-hint))))
 
 (defn- seed!
@@ -422,8 +425,8 @@
              (core/zed-token-at-least-seconds-ago client 30)])
           current-payload (token-payload client current-token)
           age-payload (token-payload client age-token)]
-      (is (integer? (:order-hint current-payload)))
-      (is (integer? (:order-hint age-payload)))
+      (is (integer? (:revision current-payload)))
+      (is (integer? (:revision age-payload)))
       (is (= (:source-id current-payload)
              (:source-id age-payload)))
       (is (true?
@@ -525,6 +528,7 @@
           old-client
           (core/make-client conn
                             {:coherence-authority :managed
+                             :source-lifecycle source-lifecycle
                              :zed-token-keyring {:old old-key}
                              :zed-token-kid :old})
           _ (seed! conn old-client)
@@ -532,6 +536,7 @@
           overlap-client
           (core/make-client conn
                             {:coherence-authority :managed
+                             :source-lifecycle source-lifecycle
                              :zed-token-keyring {:old old-key
                                                  :new new-key}
                              :zed-token-kid :new})
@@ -539,6 +544,7 @@
           new-only-client
           (core/make-client conn
                             {:coherence-authority :managed
+                             :source-lifecycle source-lifecycle
                              :zed-token-keyring {:new new-key}
                              :zed-token-kid :new})
           demand [(spice-object :user "alice")

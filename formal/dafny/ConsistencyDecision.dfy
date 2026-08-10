@@ -189,7 +189,7 @@ module ConsistencyDecision {
   }
 
   predicate RequiresManagedAuthority(mode: SnapshotConsistencyMode) {
-    mode.AtLeastAsFresh? || mode.AtExactSnapshot?
+    false
   }
 
   function PlannedAction(mode: SnapshotConsistencyMode): SelectionAction {
@@ -217,8 +217,6 @@ module ConsistencyDecision {
   ): PlanOutcome {
     if !capabilitySupported then
       PlanRejected(UnsupportedModeError(mode))
-    else if RequiresManagedAuthority(mode) && !managedAuthority then
-      PlanRejected(UnsupportedHeadBarrier)
     else
       Planned(PlannedAction(mode))
   }
@@ -248,12 +246,11 @@ module ConsistencyDecision {
       );
   }
 
-  lemma CausalSelectionPlanRequiresManagedAuthority(
+  lemma NativeSelectionPlanIgnoresManagedCacheAuthority(
     mode: SnapshotConsistencyMode
   )
-    requires RequiresManagedAuthority(mode)
     ensures SelectionPlanDecision(mode, true, false) ==
-            PlanRejected(UnsupportedHeadBarrier)
+            SelectionPlanDecision(mode, true, true)
   {
   }
 

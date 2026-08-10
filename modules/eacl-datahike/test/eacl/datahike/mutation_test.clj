@@ -5,9 +5,11 @@
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.impl :as impl]
             [eacl.datahike.mutation :as journal]
             [eacl.datahike.schema :as schema]
             [eacl.mutation :as mutation]
+            [eacl.relationships.storage :as storage]
             [eacl.schema.model :as model]))
 
 (def test-schema
@@ -18,244 +20,210 @@
      permission view = owner + viewer
    }")
 
-(def security-key
-  "01234567890123456789012345678901")
+(def security-key "01234567890123456789012345678901")
 
-(defn- relation-eid
-  [db relation-name]
-  (ddb/entid
-   db
-   [:eacl/id
-    (model/->relation-id :folder relation-name :user)]))
+(def schema-with-owner
+  "definition user {}
+   definition folder { relation owner: user }")
 
-(deftest managed-writes-publish-one-committed-mutation-test
+(def schema-without-owner
+  "definition user {}
+   definition folder {}")
+
+(defn- relation-eid [db relation-name]
+  (ddb/entid db [:eacl/id (model/->relation-id :folder relation-name :user)]))
+
+(defn- stamp [db relation-name]
+  (first (ddb/eavt-datoms db (relation-eid db relation-name)
+                          :eacl/relation-version)))
+
+(defn- internal-relationship
+  [relationship]
+  (let [lookup-object #(assoc % :id [:eacl/id (:id %)])]
+    (-> relationship
+        (update :subject lookup-object)
+        (update :resource lookup-object))))
+
+(defn- schema-transaction?
+  [tx-data]
+  (some #(and (vector? %)
+              (= :db.fn/cas (first %))
+              (= :eacl/schema-write-fence (nth % 2 nil)))
+        tx-data))
+
+(deftest ordinary-writes-publish-native-generations-without-journal-test
   (let [conn (schema/create-conn)
         client (datahike/make-client
-                conn
-                {:coherence-authority :managed
-                 :security-key security-key})
+                conn {:coherence-authority :managed
+                      :security-key security-key})
         schema-result (eacl/write-schema! client test-schema)
-        first-payload
-        (causal-token/token-data
-         (get-in client [:opts :format-options])
-         (:zed/token schema-result))
-        first-head (:head-id (journal/graph-state (d/db conn)))
-        no-op-result (eacl/write-schema! client test-schema)
-        no-op-payload
-        (causal-token/token-data
-         (get-in client [:opts :format-options])
-         (:zed/token no-op-result))]
-    (testing "schema tokens name the committed graph head and branch"
-      (is (= first-head (:graph-anchor first-payload)))
-      (is (= (:max-tx (d/db conn)) (:order-hint first-payload)))
-      (is (= :db (:branch first-payload))))
-    (testing "a schema no-op keeps the graph head"
-      (is (= first-head (:head-id (journal/graph-state (d/db conn)))))
-      (is (= first-head (:graph-anchor no-op-payload))))
-
+        payload (causal-token/token-data
+                 (get-in client [:opts :format-options])
+                 (:zed/token schema-result))]
+    (testing "schema write initializes physical relation generations"
+      (is (= (:max-tx (d/db conn)) (:revision payload)))
+      (is (every? some? [(stamp (d/db conn) :owner)
+                         (stamp (d/db conn) :viewer)]))
+      (is (nil? (journal/graph-state (d/db conn))))
+      (is (nil? (ddb/entid (d/db conn) :eacl.mutation/id))))
     (d/transact conn [{:eacl/id "user-1"}
                       {:eacl/id "folder-1"}
                       {:eacl/id "folder-2"}])
-    (let [write-result
-          (eacl/create-relationships!
-           client
-           [(eacl/->Relationship
-             (eacl/spice-object :user "user-1")
-             :owner
-             (eacl/spice-object :folder "folder-1"))
-            (eacl/->Relationship
-             (eacl/spice-object :user "user-1")
-             :viewer
-             (eacl/spice-object :folder "folder-2"))])
-          db (d/db conn)
-          owner-eid (relation-eid db :owner)
-          viewer-eid (relation-eid db :viewer)
-          owner-stamp
-          (get (d/entity db owner-eid)
-               mutation/relation-mutation-id-attr)
-          viewer-stamp
-          (get (d/entity db viewer-eid)
-               mutation/relation-mutation-id-attr)
-          owner-stamp-tx
-          (:tx
-           (first
-            (ddb/eavt-datoms
-             db
-             owner-eid
-             mutation/relation-mutation-id-attr)))
-          viewer-stamp-tx
-          (:tx
-           (first
-            (ddb/eavt-datoms
-             db
-             viewer-eid
-             mutation/relation-mutation-id-attr)))
-          payload
-          (causal-token/token-data
-           (get-in client [:opts :format-options])
-           (:zed/token write-result))]
-      (testing "one batch stamps both affected relation identities"
-        (is (= owner-stamp viewer-stamp))
-        (is (= owner-stamp (:graph-anchor payload)))
-        (is (= owner-stamp-tx viewer-stamp-tx (:max-tx db))
-            "current datom transaction is the numeric cache stamp"))
-      (let [delete-result
-            (eacl/delete-object!
-             client
-             (eacl/spice-object :user "user-1"))
-            db-after (d/db conn)
-            owner-after-eid (relation-eid db-after :owner)
-            viewer-after-eid (relation-eid db-after :viewer)
-            owner-delete-stamp
-            (get (d/entity db-after owner-after-eid)
-                 mutation/relation-mutation-id-attr)
-            viewer-delete-stamp
-            (get (d/entity db-after viewer-after-eid)
-                 mutation/relation-mutation-id-attr)
-            owner-delete-tx
-            (:tx
-             (first
-              (ddb/eavt-datoms
-               db-after
-               owner-after-eid
-               mutation/relation-mutation-id-attr)))
-            viewer-delete-tx
-            (:tx
-             (first
-              (ddb/eavt-datoms
-               db-after
-               viewer-after-eid
-               mutation/relation-mutation-id-attr)))
-            delete-payload
-            (causal-token/token-data
-             (get-in client [:opts :format-options])
-             (:zed/token delete-result))]
-        (testing "cascade deletion stamps every affected relation"
-          (is (= owner-delete-stamp viewer-delete-stamp))
-          (is (not= owner-stamp owner-delete-stamp))
-          (is (= owner-delete-tx viewer-delete-tx (:max-tx db-after))
-              "cascade deletion advances every affected numeric stamp")
-          (is (= owner-delete-stamp
-                 (:graph-anchor delete-payload))))))))
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship (eacl/spice-object :user "user-1") :owner
+                           (eacl/spice-object :folder "folder-1"))
+      (eacl/->Relationship (eacl/spice-object :user "user-1") :viewer
+                           (eacl/spice-object :folder "folder-2"))])
+    (let [db (d/db conn)
+          owner (stamp db :owner)
+          viewer (stamp db :viewer)]
+      (testing "one batch advances every distinct affected relation"
+        (is (= (:tx owner) (:tx viewer) (:max-tx db)))
+        (is (= (:v owner) (:v viewer))))
+      (eacl/delete-object! client (eacl/spice-object :user "user-1"))
+      (let [after (d/db conn)]
+        (is (= (:max-tx after)
+               (:tx (stamp after :owner))
+               (:tx (stamp after :viewer))))
+        (is (not= (:tx owner) (:tx (stamp after :owner))))
+        (is (nil? (journal/graph-state after)))))))
 
-(deftest cross-connection-writer-and-migration-race-test
-  (let [conn-1 (schema/create-conn)
-        _ (d/transact
-           conn-1
-           [{:eacl/id "legacy-relation"
-             :eacl.relation/relation-name :member}])
-        config (:config (d/db conn-1))
-        conn-2 (d/connect config)
-        attempts
-        (doall
-         (for [conn [conn-1 conn-2]]
-           (future (journal/ensure-migrated! conn))))
-        states (mapv deref attempts)
-        state (journal/graph-state (d/db conn-1))]
-    (is (every? #(= (:family-id state) (:family-id %)) states))
-    (is (every? #(= (:head-id state) (:head-id %)) states))
-    (is (= (:head-id state)
-           (get (d/entity (d/db conn-1)
-                          [:eacl/id "legacy-relation"])
-                mutation/relation-mutation-id-attr)))
-    (let [first-id (mutation/new-id)
-          second-id (mutation/new-id)]
-      (journal/transact!
-       conn-1
-       {:mutation-id first-id
-        :kind :custom
-        :canonical-data {:writer 1}
-        :tx-data []})
-      (journal/transact!
-       conn-2
-       {:mutation-id second-id
-        :kind :custom
-        :canonical-data {:writer 2}
-        :tx-data []})
-      (is (journal/contains-anchor? (d/db conn-1) first-id))
-      (is (journal/contains-anchor? (d/db conn-1) second-id))
-      (is (= second-id
-             (:head-id (journal/graph-state (d/db conn-1))))))))
-
-(deftest idempotency-custom-dependency-and-expiry-test
+(deftest legacy-retry-journal-is-explicit-and-cache-independent-test
   (let [conn (schema/create-conn)
         _ (journal/ensure-migrated! conn)
-        _ (d/transact conn [{:eacl/id "identity-1"}])
         mutation-id (mutation/new-id)
-        options
-        {:mutation-id mutation-id
-         :kind :caveat-input
-         :canonical-data {:operation :caveat-input
-                          :id "identity-1"
-                          :value true}
-         :dependency-ids [[:eacl/id "identity-1"]]
-         :token-ttl-seconds 1
-         :retention-grace-seconds 0
-         :tx-data [[:db/add
-                    [:eacl/id "identity-1"]
-                    :eacl/schema-string
-                    "true"]]}
+        options {:mutation-id mutation-id
+                 :kind :custom
+                 :canonical-data {:operation :optional-audit}
+                 :tx-data []}
         report (journal/transact! conn options)
         recovered (journal/transact! conn options)]
     (is (not (:idempotent-recovery? report)))
     (is (true? (:idempotent-recovery? recovered)))
-    (is (= mutation-id
-           (get (d/entity (d/db conn) [:eacl/id "identity-1"])
-                mutation/dependency-mutation-id-attr)))
-    (is (= :eacl.mutation/id-reused
-           (try
-             (journal/transact!
-              conn
-              (assoc options :canonical-data {:different true}))
-             nil
-             (catch clojure.lang.ExceptionInfo error
-               (:type (ex-data error))))))
-    (let [old-head (:head-id (journal/graph-state (d/db conn)))
-          next-id (mutation/new-id)]
-      (journal/transact!
-       conn
-       {:mutation-id next-id
-        :kind :custom
-        :canonical-data {:operation :next}
-        :token-ttl-seconds 1
-        :retention-grace-seconds 0
-        :tx-data []})
-      (is (pos? (journal/prune-expired!
-                 conn
-                 (+ 2 (mutation/now-seconds)))))
-      (is (false? (journal/contains-anchor? (d/db conn) old-head)))
-      (is (true? (journal/contains-anchor? (d/db conn) next-id))))))
+    (is (journal/contains-anchor? (d/db conn) mutation-id))))
 
-(deftest stale-calculation-head-cannot-be-adopted-at-submission-test
+(deftest preparation-initializes-only-missing-generations-idempotently-test
   (let [conn (schema/create-conn)
-        _ (journal/ensure-migrated! conn)
-        calculation-db (d/db conn)
-        expected-head (:head-id (journal/graph-state calculation-db))
-        winner-id (mutation/new-id)
-        loser-id (mutation/new-id)
-        _ (journal/transact!
-           conn
-           {:mutation-id winner-id
-            :calculation-db calculation-db
-            :kind :custom
-            :canonical-data {:writer :winner}
-            :tx-data []})
-        error
-        (try
-          (journal/transact!
-           conn
-           {:mutation-id loser-id
-            :calculation-db calculation-db
-            :kind :custom
-            :canonical-data {:writer :stale}
-            :tx-data []})
-          nil
-          (catch clojure.lang.ExceptionInfo error
-            (ex-data error)))
-        final-db (d/db conn)]
-    (is (= :eacl.mutation/concurrent-write (:type error)) (pr-str error))
-    (is (= expected-head (:expected-head error)))
-    (is (= winner-id (:observed-head error)))
-    (is (true? (:retryable? error)))
-    (is (= winner-id (:head-id (journal/graph-state final-db))))
-    (is (not (journal/contains-anchor? final-db loser-id)))))
+        client (datahike/make-client conn {:security-key security-key})
+        _ (eacl/write-schema! client test-schema)
+        db (d/db conn)
+        schema-eid (ddb/entid db [:eacl/id "schema-string"])
+        schema-stamp (first (ddb/eavt-datoms
+                             db schema-eid :eacl/schema-generation))
+        owner-stamp (stamp db :owner)]
+    (d/transact conn [[:db/retract schema-eid :eacl/schema-generation
+                       (:v schema-stamp)]
+                      [:db/retract (relation-eid db :owner)
+                       :eacl/relation-version (:v owner-stamp)]])
+    (let [prepared (datahike/prepare-cache-coherence! conn)
+          repeated (datahike/prepare-cache-coherence! conn)]
+      (is (true? (:prepared? prepared)))
+      (is (true? (:changed? prepared)))
+      (is (true? (:schema-generation-initialized? prepared)))
+      (is (= 1 (:relation-generations-initialized prepared)))
+      (is (empty? (:missing-after prepared)))
+      (is (false? (:changed? repeated)))
+      (is (zero? (:relation-generations-initialized repeated))))))
+
+(deftest concurrent-schema-replacements-do-not-merge-test
+  (let [conn (schema/create-conn)
+        _ (schema/write-schema! conn "definition user {}")
+        schema-left
+        "definition user {}
+         definition folder { relation left: user }"
+        schema-right
+        "definition user {}
+         definition folder { relation right: user }"
+        ready (java.util.concurrent.CountDownLatch. 2)
+        transact d/transact]
+    (with-redefs [d/transact
+                  (fn [connection tx-data]
+                    (when (schema-transaction? tx-data)
+                      (.countDown ready)
+                      (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+                    (transact connection tx-data))]
+      (let [write
+            (fn [text]
+              (future
+                (try
+                  (schema/write-schema! conn text)
+                  :ok
+                  (catch clojure.lang.ExceptionInfo error
+                    (:type (ex-data error))))))
+            results (mapv deref [(write schema-left) (write schema-right)])
+            relation-names
+            (into #{}
+                  (map :eacl.relation/relation-name)
+                  (:relations (schema/read-schema (d/db conn))))]
+        (is (= #{:ok :eacl.schema/concurrent-write} (set results)))
+        (is (contains? #{#{:left} #{:right}} relation-names)
+            "the committed schema is one complete replacement, never a union")))))
+
+(deftest schema-removal-and-stale-relationship-writes-exclude-each-other-test
+  (testing "a relationship committed after preflight aborts relation removal"
+    (let [conn (schema/create-conn)
+          _ (schema/write-schema! conn schema-with-owner)
+          _ (d/transact conn [{:eacl/id "user"} {:eacl/id "folder"}])
+          relationship
+          (eacl/->Relationship (eacl/spice-object :user "user") :owner
+                               (eacl/spice-object :folder "folder"))
+          planned
+          (impl/tx-update-relationship
+           (d/db conn)
+           {:operation :create
+            :relationship (internal-relationship relationship)})
+          transact d/transact
+          inject? (atom true)
+          error
+          (with-redefs [d/transact
+                        (fn [connection tx-data]
+                          (when (and (schema-transaction? tx-data)
+                                     (compare-and-set! inject? true false))
+                            (transact connection planned))
+                          (transact connection tx-data))]
+            (try
+              (schema/write-schema! conn schema-without-owner)
+              nil
+              (catch clojure.lang.ExceptionInfo error error)))]
+      (is (= :eacl.schema/concurrent-write (:type (ex-data error))))
+      (is (some? (impl/find-one-relationship-id
+                  (d/db conn) (internal-relationship relationship))))))
+  (testing "a relation removed first aborts a stale planned relationship"
+    (let [conn (schema/create-conn)
+          _ (schema/write-schema! conn schema-with-owner)
+          _ (d/transact conn [{:eacl/id "user"} {:eacl/id "folder"}])
+          relationship
+          (eacl/->Relationship (eacl/spice-object :user "user") :owner
+                               (eacl/spice-object :folder "folder"))
+          db (d/db conn)
+          removed-relation-eid (relation-eid db :owner)
+          planned
+          (impl/tx-update-relationship
+           db
+           {:operation :create
+            :relationship (internal-relationship relationship)})
+          _ (schema/write-schema! conn schema-without-owner)
+          error (try (d/transact conn planned) nil
+                     (catch Exception error error))]
+      (is (some? error))
+      (is (empty? (d/datoms (d/db conn)
+                            {:index :eavt
+                             :components [removed-relation-eid]}))
+          "the stale relation stamp must not recreate an identity-less entity"))))
+
+(deftest reverse-only-ghost-blocks-relation-removal-test
+  (let [conn (schema/create-conn)
+        _ (schema/write-schema! conn schema-with-owner)
+        _ (d/transact conn [{:eacl/id "user"} {:eacl/id "folder"}])
+        db (d/db conn)
+        user-eid (ddb/entid db [:eacl/id "user"])
+        folder-eid (ddb/entid db [:eacl/id "folder"])
+        owner-eid (relation-eid db :owner)
+        reverse-value [:folder owner-eid :user user-eid]
+        _ (d/transact conn [[:db/add folder-eid
+                             storage/reverse-attribute reverse-value]])
+        error (try (schema/write-schema! conn schema-without-owner) nil
+                   (catch clojure.lang.ExceptionInfo error error))]
+    (is (= :eacl.schema/relation-in-use (:type (ex-data error))))
+    (is (= 1 (:count (ex-data error))))))

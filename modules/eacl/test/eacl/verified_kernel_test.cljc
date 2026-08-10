@@ -185,17 +185,13 @@
           input)))))
 
 (defn- expected-consistency-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (cond
     (not capability-supported?)
     (case mode
       :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
-
-    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
 
     :else
     (case mode

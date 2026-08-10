@@ -492,7 +492,8 @@
   [adapter relations]
   (let [snapshot-id (backend/invoke adapter :snapshot-id)
         source (backend/invoke adapter :source-scope)
-        head (backend/invoke adapter :graph-head)
+        lifecycle (backend/invoke adapter :source-lifecycle)
+        revision (backend/invoke adapter :native-revision)
         schema-proof (backend/invoke adapter :schema-proof)
         relation-ids (mapv :relation-id (vals relations))
         relation-proof
@@ -503,14 +504,17 @@
     (demand (= source (backend/invoke adapter :source-scope)
                (backend/invoke current :source-scope))
             "Current selection changed source identity.")
-    (demand (= head (backend/invoke adapter :graph-head))
-            "Graph head changed on an immutable adapter.")
-    (demand
-     (true?
-      (backend/invoke
-       adapter :contains-anchor? (:graph-anchor head)))
-     "An adapter did not contain its own graph head."
-     {:head head})
+    (demand (= lifecycle
+               (backend/invoke adapter :source-lifecycle)
+               (backend/invoke current :source-lifecycle))
+            "Current selection changed source lifecycle.")
+    (demand (= revision (backend/invoke adapter :native-revision))
+            "Native revision changed on an immutable adapter.")
+    (demand (= (:revision revision) (backend/invoke adapter :order-hint))
+            "Native revision disagreed with the order hint.")
+    (demand (= (:exact-locator revision)
+               (backend/invoke adapter :exact-locator))
+            "Native revision disagreed with the exact locator.")
     (demand (= schema-proof (backend/invoke adapter :schema-proof))
             "Schema proof was unstable on an immutable adapter.")
     (demand (= relation-proof
@@ -520,24 +524,24 @@
     (when (backend/supports?
            adapter :consistency :at-exact-snapshot)
       (let [exact
-            (backend/invoke adapter :select-exact head 1000)]
+            (backend/invoke adapter :select-exact revision 1000)]
         (demand (backend/adapter? exact)
                 "Advertised exact selection returned no adapter."
-                {:head head})
+                {:native-revision revision})
         (demand (= source (backend/invoke exact :source-scope))
                 "Exact selection changed source identity.")
+        (demand (= lifecycle (backend/invoke exact :source-lifecycle))
+                "Exact selection changed source lifecycle.")
         (demand
-         (= (:exact-locator head)
+         (= (:exact-locator revision)
             (backend/invoke exact :exact-locator))
          "Exact selection returned a different locator.")
-        (demand
-         (= (:graph-anchor head)
-            (:graph-anchor
-             (backend/invoke exact :graph-head)))
-         "Exact selection returned a different graph anchor.")))
+        (demand (= revision (backend/invoke exact :native-revision))
+                "Exact selection returned a different native revision.")))
     {:snapshot-id snapshot-id
      :source-scope source
-     :graph-head head
+     :source-lifecycle lifecycle
+     :native-revision revision
      :schema-proof-available? (some? schema-proof)
      :relation-proof-available? (some? relation-proof)
      :exact-selection?

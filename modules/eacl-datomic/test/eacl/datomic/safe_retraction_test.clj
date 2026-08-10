@@ -4,12 +4,10 @@
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datomic.core :as core]
-            [eacl.datomic.datomic-helpers :refer [with-mem-conn with-mem-conns]]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl]
-            [eacl.datomic.mutation :as journal]
             [eacl.datomic.safe-retraction :as safe-datomic]
             [eacl.datomic.schema :as schema]
-            [eacl.mutation :as mutation]
             [eacl.relationships.safe-retraction :as safe]
             [eacl.relationships.storage :as storage]))
 
@@ -19,6 +17,10 @@
    db
    [:eacl.relation/resource-type+relation-name+subject-type
     [resource-type relation-name subject-type]]))
+
+(defn- relation-generation
+  [db relation]
+  (some-> (first (d/datoms db :eavt relation :eacl/relation-version)) :v))
 
 (defn- resolve-relationship
   [db {:keys [subject relation resource]}]
@@ -35,51 +37,36 @@
   [db relationship]
   (let [{:keys [subject-eid resource-eid forward reverse]}
         (resolve-relationship db relationship)]
-    (and subject-eid
-         resource-eid
-         (seq (d/datoms db :eavt subject-eid storage/forward-attribute forward))
-         (seq (d/datoms db :eavt resource-eid storage/reverse-attribute reverse)))))
+    (boolean
+     (and subject-eid resource-eid
+          (seq (d/datoms db :eavt subject-eid storage/forward-attribute
+                         forward))
+          (seq (d/datoms db :eavt resource-eid storage/reverse-attribute
+                         reverse))))))
 
 (defn- seed-contract!
   [conn]
   (schema/write-schema! conn contract/safe-retraction-schema)
-  @(d/transact
-    conn
-    (mapv (fn [object] {:eacl/id (:id object)})
-          contract/safe-retraction-objects))
+  @(d/transact conn
+               (mapv (fn [object] {:eacl/id (:id object)})
+                     contract/safe-retraction-objects))
   (doseq [relationship contract/safe-retraction-relationships]
     @(d/transact conn (impl/tx-relationship (d/db conn) relationship)))
   true)
 
-(defn- deterministic-options
-  []
-  {:mutation-id (mutation/new-id)
-   :issued-at 1700000000})
-
-(deftest installation-is-explicit-versioned-and-safe-test
-  (testing "the default schema does not claim the opt-in ident"
-    (with-mem-conn [conn schema/v7-schema]
-      (is (nil? (d/entid (d/db conn) safe/function-ident)))
-      (is (= :absent
-             (safe-datomic/installation-state (d/db conn))))
-      (is (= :named (:mode (safe-datomic/support-descriptor))))
-      (is (= 64 (count safe-datomic/function-digest)))
-      (is (re-find #":requires \[\]"
-                   (pr-str (:db/fn safe-datomic/function-definition)))
-          "the stored function has no EACL or other transactor requires")
-      (is (true? (:requires-installation?
-                  (safe-datomic/support-descriptor))))
-
-      (is (= {:installed? true :state :absent}
-             (select-keys (safe-datomic/install! conn)
-                          [:installed? :state])))
-      (is (= :current
-             (safe-datomic/installation-state (d/db conn))))
-      (is (= {:installed? false :state :current}
-             (select-keys (safe-datomic/install! conn)
-                          [:installed? :state])))))
-
-  (testing "a recognized older EACL marker is upgraded"
+(deftest installation-is-explicit-idempotent-versioned-and-conflict-safe-test
+  (with-mem-conn [conn schema/v7-schema]
+    (is (nil? (d/entid (d/db conn) safe/function-ident)))
+    (is (= :named (:mode (safe-datomic/support-descriptor))))
+    (is (= 64 (count safe-datomic/function-digest)))
+    (is (re-find #":requires \[\]"
+                 (pr-str (:db/fn safe-datomic/function-definition)))
+        "the transactor function has no EACL classpath dependency")
+    (is (= {:installed? true :state :absent}
+           (select-keys (safe-datomic/install! conn) [:installed? :state])))
+    (is (= {:installed? false :state :current}
+           (select-keys (safe-datomic/install! conn) [:installed? :state]))))
+  (testing "recognized EACL markers upgrade"
     (with-mem-conn [conn schema/v7-schema]
       @(d/transact
         conn
@@ -88,222 +75,129 @@
           :db/fn (d/function {:lang "clojure"
                               :params '[db target envelope]
                               :code '(do [])})}])
-      (is (= :upgradeable
-             (safe-datomic/installation-state (d/db conn))))
-      (is (= :upgradeable (:state (safe-datomic/install! conn))))
-      (is (= safe-datomic/function-doc
-             (:db/doc (d/entity (d/db conn) safe/function-ident))))))
-
-  (testing "an unrelated occupant is never overwritten"
+      (is (= :upgradeable (:state (safe-datomic/install! conn))))))
+  (testing "unrecognized occupants fail closed"
     (with-mem-conn [conn schema/v7-schema]
       @(d/transact
         conn
         [{:db/ident safe/function-ident
-          :db/doc "Application-owned function"
+          :db/doc "Application function"
           :db/fn (d/function {:lang "clojure"
-                              :params '[db target envelope]
+                              :params '[db target]
                               :code '(do [])})}])
       (let [error (try
                     (safe-datomic/install! conn)
                     nil
                     (catch Exception error error))]
         (is (= :eacl.safe-retraction/install-conflict
-               (:type (ex-data error))))
-        (is (= "Application-owned function"
-               (:db/doc (d/entity (d/db conn) safe/function-ident))))))))
+               (:type (ex-data error))))))))
 
-(deftest installed-function-prewarm-is-repeatable-test
-  (with-mem-conn [conn schema/v7-schema]
-    (safe-datomic/install! conn)
-    (let [db (d/db conn)
-          target [:eacl/id "prewarm-missing"]
-          envelope (safe/mutation-envelope target (deterministic-options))
-          first-expansion (d/invoke db safe/function-ident db target envelope)
-          warmed-expansion (d/invoke db safe/function-ident db target envelope)]
-      (is (= [] first-expansion warmed-expansion)))))
-
-(deftest named-function-retracts-both-relationship-directions-test
+(deftest target-only-function-removes-both-halves-and-stamps-only-affected-relations-test
   (with-mem-conn [conn schema/v7-schema]
     (seed-contract! conn)
     (safe-datomic/install! conn)
-    (let [db-before (d/db conn)
-          target-eid (d/entid db-before [:eacl/id "target-account"])
-          owner-relation (relation-eid db-before :account :owner :user)
-          account-relation (relation-eid db-before :server :account :account)
-          peer-relation (relation-eid db-before :user :peer :user)
-          peer-version-before (:eacl/relation-version
-                               (d/entity db-before peer-relation))
-          old-head (:head-id (journal/graph-state db-before))
-          options (deterministic-options)
-          mutation-id (:mutation-id options)]
+    (let [before (d/db conn)
+          target-eid (d/entid before [:eacl/id "target-account"])
+          owner-rel (relation-eid before :account :owner :user)
+          server-rel (relation-eid before :server :account :account)
+          peer-rel (relation-eid before :user :peer :user)
+          generations-before
+          (mapv #(relation-generation before %)
+                [owner-rel server-rel peer-rel])
+          expansion
+          (d/invoke before safe/function-ident before
+                    [:eacl/id "target-account"])]
+      (is (= 1 (count (filter #(= :db.fn/retractEntity (first %)) expansion))))
+      (is (= 2 (count (filter #(and (= :db/add (first %))
+                                    (= :eacl/relation-version (nth % 2)))
+                              expansion))))
+      @(d/transact conn
+                   (safe-datomic/retract-entity-tx-data
+                    [:eacl/id "target-account"]))
+      (let [after (d/db conn)
+            generations-after
+            (mapv #(relation-generation after %)
+                  [owner-rel server-rel peer-rel])]
+        (is (empty? (d/datoms after :eavt target-eid)))
+        (is (= (set (drop 2 contract/safe-retraction-relationships))
+               (set (filterv #(relationship-present? after %)
+                             contract/safe-retraction-relationships))))
+        (is (not= (subvec generations-before 0 2)
+                  (subvec generations-after 0 2)))
+        (is (= (nth generations-before 2) (nth generations-after 2)))))))
+
+(deftest known-retracted-numeric-eid-repairs-a-peer-only-ghost-test
+  (with-mem-conn [conn schema/v7-schema]
+    (seed-contract! conn)
+    (safe-datomic/install! conn)
+    (let [relationship (nth contract/safe-retraction-relationships 2)
+          before (d/db conn)
+          {:keys [subject-eid resource-eid reverse]}
+          (resolve-relationship before relationship)]
+      @(d/transact conn [[:db.fn/retractEntity subject-eid]])
+      (is (seq (d/datoms (d/db conn) :eavt resource-eid
+                         storage/reverse-attribute reverse)))
+      @(d/transact conn (safe-datomic/retract-entity-tx-data subject-eid))
+      (is (empty? (d/datoms (d/db conn) :eavt resource-eid
+                            storage/reverse-attribute reverse)))
+      (is (= []
+             (d/invoke (d/db conn) safe/function-ident (d/db conn)
+                       [:eacl/id "missing"]))))))
+
+(deftest multiple-and-repeated-invocations-compose-in-one-transaction-test
+  (with-mem-conn [conn schema/v7-schema]
+    (seed-contract! conn)
+    (safe-datomic/install! conn)
+    (let [db (d/db conn)
+          account-eid (d/entid db [:eacl/id "target-account"])
+          folder-eid (d/entid db [:eacl/id "self-folder"])]
       @(d/transact
         conn
-        (safe-datomic/retract-entity-tx-data
-         [:eacl/id "target-account"] options))
-      (let [db (d/db conn)]
-        (is (empty? (d/datoms db :eavt target-eid)))
-        (is (every?
-             false?
-             (map #(boolean (relationship-present? db %))
-                  (take 2 contract/safe-retraction-relationships))))
-        (is (every?
-             true?
-             (map #(boolean (relationship-present? db %))
-                  (drop 2 contract/safe-retraction-relationships))))
-        (is (= mutation-id (:head-id (journal/graph-state db))))
-        (is (not= old-head mutation-id))
-        (is (= mutation-id
-               (:eacl.mutation/id
-                (d/entity db [:eacl.mutation/id mutation-id]))))
-        (is (= mutation-id
-               (:eacl.relation/mutation-id
-                (d/entity db owner-relation))))
-        (is (= mutation-id
-               (:eacl.relation/mutation-id
-                (d/entity db account-relation))))
-        (is (= peer-version-before
-               (:eacl/relation-version (d/entity db peer-relation)))
-            "an unrelated relation proof remains stable"))
+        [[:eacl.fn/retractEntity [:eacl/id "target-account"]]
+         [:eacl.fn/retractEntity [:eacl/id "self-folder"]]
+         [:eacl.fn/retractEntity account-eid]])
+      (is (empty? (d/datoms (d/db conn) :eavt account-eid)))
+      (is (empty? (d/datoms (d/db conn) :eavt folder-eid)))
+      (is (relationship-present?
+           (d/db conn) (nth contract/safe-retraction-relationships 2)))
+      (is (relationship-present?
+           (d/db conn) (nth contract/safe-retraction-relationships 4))))))
 
-      (testing "an unresolved lookup ref is a no-op"
-        (let [basis (d/basis-t (d/db conn))]
-          @(d/transact
-            conn
-            (safe-datomic/retract-entity-tx-data
-             [:eacl/id "missing"] (deterministic-options)))
-          (is (= mutation-id (:head-id (journal/graph-state (d/db conn)))))
-          (is (< basis (d/basis-t (d/db conn)))
-              "Datomic may record the otherwise empty transaction"))))))
-
-(deftest direct-expansion-matches-portable-local-half-oracle-test
-  (with-mem-conn [conn schema/v7-schema]
-    (seed-contract! conn)
-    (safe-datomic/install! conn)
-    (let [db (d/db conn)
-          target-eid (d/entid db [:eacl/id "target-account"])
-          forward-values (mapv :v (d/datoms db :eavt target-eid
-                                            storage/forward-attribute))
-          reverse-values (mapv :v (d/datoms db :eavt target-eid
-                                            storage/reverse-attribute))
-          expected (safe/plan-local-halves target-eid
-                                           forward-values reverse-values)
-          envelope (safe/mutation-envelope target-eid
-                                           (deterministic-options))
-          expansion (d/invoke db safe/function-ident db target-eid envelope)
-          peer-ops (into []
-                         (filter #(and (vector? %)
-                                       (= :db/retract (first %))))
-                         expansion)
-          report (d/with db expansion)]
-      (is (= (set (:peer-retractions expected)) (set peer-ops)))
-      (is (= (* 2 (count (:relation-ids expected)))
-             (count
-              (filter
-               #(or (and (vector? %)
-                         (= :db/add (first %))
-                         (= :eacl/relation-version (nth % 2 nil)))
-                    (and (map? %)
-                         (contains? % :eacl.relation/mutation-id)))
-               expansion))))
-      (is (empty? (d/datoms (:db-after report) :eavt target-eid)))
-      (is (every?
-           false?
-           (map #(boolean (relationship-present? (:db-after report) %))
-                (take 2 contract/safe-retraction-relationships))))
-      (let [error
-            (try
-              (d/invoke db safe/function-ident db target-eid
-                        (assoc envelope :fingerprint
-                               "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"))
-              nil
-              (catch Exception error error))]
-        (is (= :invalid-fingerprint (:reason (ex-data error))))))))
-
-(deftest expansion-performs-exactly-two-endpoint-attribute-reads-test
-  (with-mem-conn [conn schema/v7-schema]
-    (seed-contract! conn)
-    (safe-datomic/install! conn)
-    (let [db (d/db conn)
-          target-eid (d/entid db [:eacl/id "target-account"])
-          envelope (safe/mutation-envelope target-eid (deterministic-options))
-          calls (atom [])
-          original d/datoms]
-      (with-redefs [d/datoms
-                    (fn [& args]
-                      (swap! calls conj args)
-                      (apply original args))]
-        (d/invoke db safe/function-ident db target-eid envelope))
-      (is (= {storage/forward-attribute 1
-              storage/reverse-attribute 1}
-             (frequencies
-              (keep (fn [args]
-                      (let [attribute (nth args 3 nil)]
-                        (when (contains? storage/attributes attribute)
-                          attribute)))
-                    @calls)))))))
-
-(deftest self-relationship-and-raw-eid-test
-  (with-mem-conn [conn schema/v7-schema]
-    (seed-contract! conn)
-    (safe-datomic/install! conn)
-    (let [db (d/db conn)
-          self-relationship (nth contract/safe-retraction-relationships 3)
-          eid (d/entid db [:eacl/id "self-folder"])
-          envelope (safe/mutation-envelope eid (deterministic-options))
-          expansion (d/invoke db safe/function-ident db eid envelope)]
-      (is (relationship-present? db self-relationship))
-      (is (empty? (filter #(= :db/retract (first %)) expansion))
-          "ordinary retractEntity removes both local halves")
-      @(d/transact conn (safe-datomic/retract-entity-tx-data
-                         eid (deterministic-options)))
-      (is (empty? (d/datoms (d/db conn) :eavt eid))))))
-
-(deftest missing-target-does-not-repair-an-existing-ghost-test
-  (with-mem-conn [conn schema/v7-schema]
-    (seed-contract! conn)
-    (safe-datomic/install! conn)
-    (let [db (d/db conn)
-          relationship (nth contract/safe-retraction-relationships 2)
-          {:keys [subject-eid resource-eid reverse]}
-          (resolve-relationship db relationship)]
-      @(d/transact conn [[:db.fn/retractEntity subject-eid]])
-      (is (seq (d/datoms (d/db conn) :eavt
-                         resource-eid storage/reverse-attribute reverse)))
-      @(d/transact conn (safe-datomic/retract-entity-tx-data
-                         subject-eid (deterministic-options)))
-      (is (seq (d/datoms (d/db conn) :eavt
-                         resource-eid storage/reverse-attribute reverse))
-          "the missing target owns no local half from which to discover the ghost"))))
-
-(deftest ordinary-datomic-inbound-ref-and-component-semantics-are-preserved-test
+(deftest self-relationships-components-and-protected-entities-are-safe-test
   (let [extra-schema
-        [{:db/ident :test/target
-          :db/valueType :db.type/ref
-          :db/cardinality :db.cardinality/one}
-         {:db/ident :test/component
+        [{:db/ident :test/component
           :db/valueType :db.type/ref
           :db/cardinality :db.cardinality/one
           :db/isComponent true}]]
     (with-mem-conn [conn (into schema/v7-schema extra-schema)]
+      (seed-contract! conn)
       (safe-datomic/install! conn)
-      @(d/transact conn [{:eacl/id "target"}])
-      @(d/transact conn [{:eacl/id "referrer"
-                          :test/target [:eacl/id "target"]}
-                         {:eacl/id "parent"
-                          :test/component {:eacl/id "child"}}])
+      (let [client (core/make-client conn {})
+            child (eacl/spice-object :account "component-child")
+            relationship
+            (eacl/->Relationship
+             (eacl/spice-object :user "user-1") :owner child)]
+        (let [child-tempid (d/tempid :db.part/user)]
+          @(d/transact conn [{:db/id child-tempid
+                              :eacl/id "component-child"}
+                             {:eacl/id "component-parent"
+                              :test/component child-tempid}]))
+        (eacl/create-relationship! client relationship)
+        (let [db (d/db conn)
+              parent-eid (d/entid db [:eacl/id "component-parent"])
+              child-eid (d/entid db [:eacl/id "component-child"])]
+          @(d/transact conn
+                       (safe-datomic/retract-entity-tx-data parent-eid))
+          (is (empty? (d/datoms (d/db conn) :eavt parent-eid)))
+          (is (empty? (d/datoms (d/db conn) :eavt child-eid)))
+          (is (not (relationship-present? (d/db conn) relationship)))))
       (let [db (d/db conn)
-            target-eid (d/entid db [:eacl/id "target"])
-            child-eid (d/entid db [:eacl/id "child"])]
-        @(d/transact conn (safe-datomic/retract-entity-tx-data
-                           target-eid (deterministic-options)))
-        (is (empty? (d/datoms (d/db conn) :eavt target-eid)))
-        (is (nil? (:test/target
-                   (d/entity (d/db conn) [:eacl/id "referrer"]))))
-
-        @(d/transact conn (safe-datomic/retract-entity-tx-data
-                           [:eacl/id "parent"] (deterministic-options)))
-        (is (empty? (d/datoms (d/db conn) :eavt child-eid))
-            "component recursion remains Datomic's built-in behavior")))))
+            relation (relation-eid db :user :peer :user)
+            error (try
+                    (d/invoke db safe/function-ident db relation)
+                    nil
+                    (catch Exception error error))]
+        (is (= :protected-control-entity (:reason (ex-data error))))))))
 
 (def ^:private cache-schema
   "definition user {}
@@ -312,80 +206,57 @@
      permission admin = owner
    }")
 
-(defn- seed-cache-case!
-  [conn]
-  (schema/write-schema! conn cache-schema)
-  @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
-  (let [relationship
-        (eacl/->Relationship (eacl/spice-object :user "u")
-                             :owner
-                             (eacl/spice-object :account "a"))]
-    @(d/transact conn (impl/tx-relationship (d/db conn) relationship))
-    relationship))
-
-(deftest managed-cache-observes-safe-retraction-test
+(deftest managed-cache-and-stale-endpoint-writes-remain-correct-test
   (with-mem-conn [conn schema/v7-schema]
-    (seed-cache-case! conn)
+    (schema/write-schema! conn cache-schema)
+    @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
     (safe-datomic/install! conn)
-    (let [client (core/make-client conn {:coherence-authority :managed})
-          user (eacl/spice-object :user "u")
-          account (eacl/spice-object :account "a")]
-      (is (true? (eacl/can? client user :admin account)))
-      (is (true? (eacl/can? client user :admin account))
-          "the answer is warm before deletion")
-      @(d/transact conn
-                   (safe-datomic/retract-entity-tx-data
-                    [:eacl/id "a"] (deterministic-options)))
-      (is (false? (eacl/can? client user :admin account))
-          "the atomically advanced relation proof prevents stale reuse"))))
-
-(deftest certified-writer-serializes-with-safe-retraction-test
-  (testing "writer first: deletion observes and removes the committed pair"
-    (with-mem-conn [conn schema/v7-schema]
-      (schema/write-schema! conn cache-schema)
-      @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
-      (safe-datomic/install! conn)
-      (let [client (core/make-client conn {})
-            relationship
-            (eacl/->Relationship (eacl/spice-object :user "u")
-                                 :owner
-                                 (eacl/spice-object :account "a"))]
-        (eacl/create-relationship! client relationship)
+    (let [user (eacl/spice-object :user "u")
+          account (eacl/spice-object :account "a")
+          relationship (eacl/->Relationship user :owner account)
+          setup-client (core/make-client conn {})]
+      (eacl/create-relationship! setup-client relationship)
+      (let [client (core/make-client conn {:coherence-authority :managed})]
+        (is (true? (eacl/can? client user :admin account)))
+        (is (true? (eacl/can? client user :admin account)))
         @(d/transact conn
-                     (safe-datomic/retract-entity-tx-data
-                      [:eacl/id "a"] (deterministic-options)))
-        (is (not (relationship-present? (d/db conn) relationship))))))
+                     (safe-datomic/retract-entity-tx-data [:eacl/id "a"]))
+        (is (false? (eacl/can? client user :admin account))))
+      @(d/transact conn [{:eacl/id "b"}])
+      (let [new-account (eacl/spice-object :account "b")
+            calculation-db (d/db conn)
+            planned
+            (impl/tx-relationship
+             calculation-db (eacl/->Relationship user :owner new-account))]
+        @(d/transact conn
+                     (safe-datomic/retract-entity-tx-data [:eacl/id "b"]))
+        (let [error (try
+                      @(d/transact conn planned)
+                      nil
+                      (catch Exception error error))]
+          (is (some? error)
+              "commit-time endpoint identity CAS rejects the stale plan"))))))
 
-  (testing "deletion first: a writer calculated from the old graph head loses"
-    (with-mem-conns [writer-conn delete-conn schema/v7-schema]
-      (schema/write-schema! writer-conn cache-schema)
-      @(d/transact writer-conn [{:eacl/id "u"} {:eacl/id "a"}])
-      (safe-datomic/install! delete-conn)
-      (let [stale-db (d/db writer-conn)
-            relationship
-            (eacl/->Relationship (eacl/spice-object :user [:eacl/id "u"])
-                                 :owner
-                                 (eacl/spice-object :account [:eacl/id "a"]))
-            ordinary (impl/tx-update-relationship
-                      stale-db {:operation :create
-                                :relationship relationship})
-            guarded (impl/optimistic-relationship-tx-data stale-db ordinary)
-            relation-id (impl/relationship-relation-id stale-db relationship)]
-        @(d/transact delete-conn
-                     (safe-datomic/retract-entity-tx-data
-                      [:eacl/id "a"] (deterministic-options)))
-        (let [error
-              (try
-                (journal/transact!
-                 writer-conn
-                 {:mutation-id (mutation/new-id)
-                  :calculation-db stale-db
-                  :kind :relationships
-                  :canonical-data {:operation :concurrency-test}
-                  :relation-ids [relation-id]
-                  :tx-data guarded})
-                nil
-                (catch Throwable error error))]
-          (is (some? error) "the stale graph-head CAS must fail")
-          (is (empty? (d/datoms (d/db writer-conn) :eavt
-                                (d/entid stale-db [:eacl/id "a"])))))))))
+(deftest live-expansion-size-ignores-unrelated-database-growth-test
+  (with-mem-conn [conn schema/v7-schema]
+    (seed-contract! conn)
+    (safe-datomic/install! conn)
+    (let [target [:eacl/id "target-account"]
+          expansion-size
+          #(count (d/invoke (d/db conn) safe/function-ident (d/db conn) target))
+          before (expansion-size)
+          unrelated
+          (mapv (fn [index]
+                  [(eacl/spice-object :user (str "bulk-user-" index))
+                   (eacl/spice-object :account (str "bulk-account-" index))])
+                (range 128))]
+      @(d/transact conn
+                   (into []
+                         (mapcat (fn [[u a]]
+                                   [{:eacl/id (:id u)} {:eacl/id (:id a)}]))
+                         unrelated))
+      (let [client (core/make-client conn {})]
+        (eacl/create-relationships!
+         client
+         (mapv (fn [[u a]] (eacl/->Relationship u :owner a)) unrelated)))
+      (is (= before (expansion-size))))))

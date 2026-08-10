@@ -281,6 +281,20 @@
     (swap! (:metrics store) update :bypasses inc))
   nil)
 
+(defn capture-current-lifecycle
+  "Captures the cache lifecycle object at a public request boundary.
+
+  Passing this object back to `resolve-current!` prevents a request that was
+  already in flight during `expire-current!` from attaching its work to the
+  replacement lifecycle, even when expiry happens before cache lookup."
+  [store]
+  (when store
+    (when-not (current-cache? store)
+      (throw (ex-info "Expected an EACL current-generation cache."
+                      {:type :eacl/invalid-config
+                       :cache store})))
+    @(:lifecycle store)))
+
 (defn expire-current!
   "Atomically makes every exact and managed entry unreachable.
 
@@ -410,6 +424,7 @@
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
+           cache-lifecycle
            managed-descriptor-key-fn managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
            decision-kernel remember-answer? answer-weight-fn]
@@ -450,7 +465,7 @@
         (throw (ex-info "Invalid current-cache snapshot context."
                         {:type :eacl/invalid-config
                          :snapshot-order snapshot-order})))
-      (let [lifecycle @(:lifecycle store)
+      (let [lifecycle (or cache-lifecycle @(:lifecycle store))
             {:keys [generation active?]}
             (install-exact-generation!
             (:exact lifecycle)

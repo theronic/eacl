@@ -29,6 +29,9 @@
      permission read = reader + parent->read
    }")
 
+(def ^:private portable-source-lifecycle
+  "datomic-recursive-cache-v4-test")
+
 (defn- account-id [n]
   (str "account-" n))
 
@@ -241,15 +244,21 @@
 (deftest forward-recursive-pagination-resumes-retries-and-recomputes-misses-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-forward-cache"
-          cached-client (core/make-client conn {:page-token-key token-key})
+          cached-client (core/make-client conn {:page-token-key token-key
+                                                :source-lifecycle
+                                                portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn cached-client 30 1)
       (let [disabled-client (core/make-client conn {:page-token-key token-key
+                                                    :source-lifecycle
+                                                    portable-source-lifecycle
                                                     :cache cache/no-cache})
-            alternate-client (core/make-client conn {:page-token-key token-key})
+            alternate-client (core/make-client conn {:page-token-key token-key
+                                                      :source-lifecycle
+                                                      portable-source-lifecycle})
             page1-stats (atom {})
             page1 (binding [idx/*recursive-traversal-stats* page1-stats]
                     (eacl/lookup-resources cached-client query))
@@ -337,13 +346,17 @@
 (deftest recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-historical-cache"
-          cached-client (core/make-client conn {:page-token-key token-key})
+          cached-client (core/make-client conn {:page-token-key token-key
+                                                :source-lifecycle
+                                                portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn cached-client 15 1)
       (let [replay-client (core/make-client conn {:page-token-key token-key
+                                                  :source-lifecycle
+                                                  portable-source-lifecycle
                                                   :cache cache/no-cache})
             page1 (eacl/lookup-resources cached-client query)
             cursor (page-end-cursor page1)
@@ -584,7 +597,8 @@
           first-client
           (core/make-client
            conn
-           {:security-key token-key})
+           {:security-key token-key
+            :source-lifecycle portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -593,7 +607,8 @@
       (let [second-client
             (core/make-client
              conn
-             {:security-key token-key})
+             {:security-key token-key
+              :source-lifecycle portable-source-lifecycle})
             page1 (eacl/lookup-resources first-client query)
             stats (atom {})
             page2
@@ -644,13 +659,17 @@
 (deftest uncached-client-safely-serves-a-borrowed-cursor-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "recursive-rejected-cache"
-          client (core/make-client conn {:page-token-key token-key})
+          client (core/make-client conn {:page-token-key token-key
+                                         :source-lifecycle
+                                         portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
                  :first 3}]
       (seed-recursive! conn client 12 1)
       (let [fresh-client (core/make-client conn {:page-token-key token-key
+                                                 :source-lifecycle
+                                                 portable-source-lifecycle
                                                  :cache cache/no-cache})
             page1 (eacl/lookup-resources client query)
             stats (atom {})

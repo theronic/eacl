@@ -12,6 +12,8 @@
          :servers-per-account 24
          :user-1-account-count 2))
 
+(def ^:private source-lifecycle "datahike-enumeration-routing-test")
+
 (defn- seed-client!
   ([]
    (seed-client! fixture/schema))
@@ -20,7 +22,8 @@
         client
         (datahike/make-client
          conn
-         {:cache {:remember-answers false}})]
+         {:cache {:remember-answers false}
+          :source-lifecycle source-lifecycle})]
     (eacl/write-schema! client schema)
     (d/transact conn (vec (fixture/object-transactions small-shape)))
     (doseq [batch (fixture/relationship-batches small-shape)]
@@ -73,7 +76,8 @@
         isolated-client
         (datahike/make-client
          conn
-        {:cache {:remember-answers false}})
+        {:cache {:remember-answers false}
+         :source-lifecycle source-lifecycle})
         replay
         (observed-subject-page
          isolated-client

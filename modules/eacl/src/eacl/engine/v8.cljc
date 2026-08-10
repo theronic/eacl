@@ -529,10 +529,10 @@
     :source-scope (backend/invoke snapshot :source-scope)
     :database-id (:database-id (backend/invoke snapshot :snapshot-id))
     :schema-version known-schema-version
-    ;; The client-visible schema version may be a mutation journal token while
-    ;; the shared engine adapter uses the normalized schema-content proof.
-    ;; Bind generated routing certificates to the latter so proof modes cannot
-    ;; make an unchanged schema look stale.
+    ;; The client-visible schema proof may retain its physical assertion
+    ;; identity while the shared engine adapter normalizes the value. Bind
+    ;; routing certificates to the adapter proof so representation details
+    ;; cannot make unchanged schema semantics look stale.
     :routing-schema-identity (schema-version snapshot)
     :permission-roots (atom {})
     :permission-paths (atom {})
@@ -606,6 +606,7 @@
     (backend/backend-id snapshot)
     (backend/fingerprint snapshot)
     (backend/invoke snapshot :source-scope)
+    (backend/invoke snapshot :source-lifecycle)
     schema-proof]))
 
 (def ^:private maximum-schema-cache-generations 64)

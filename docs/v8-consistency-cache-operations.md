@@ -13,7 +13,7 @@ private optimization owned by one EACL client and one connection.
 | --- | --- | --- | --- | --- |
 | omitted / `:minimize-latency` | current DB visible to this Peer | current connection DB | current connection DB | enabled |
 | `:fully-consistent` | bounded zero-argument `d/sync`, then selected DB | backend head barrier when supported | serialized live connection head | enabled on the selected current DB |
-| `:at-least-as-fresh` | targeted `d/sync conn t`, then anchor validation | waits/selects a descendant containing the token anchor | selects a known descendant containing the token anchor | enabled only if the selected DB is current |
+| `:at-least-as-fresh` | targeted `d/sync conn t`, then revision validation | waits/selects a DB at or above the native revision | selects a DB at or above the connection-local revision | enabled only if the selected DB is current |
 | `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | unsupported; rejected before cache access | bypassed |
 
 The default is `:minimize-latency`. EACL does not call `d/sync` and does not call
@@ -39,8 +39,9 @@ Each client owns a bounded native cache with two tiers:
    generation. A hit is accepted only for that same generation. Any ordinary
    transaction replaces the generation, so no dependency proof is needed.
 2. **Managed-current.** Entries may survive unrelated forward transactions.
-   The key contains the schema generation and the maximum last-change
-   transaction over the permission's complete relation dependency set.
+   The key contains the source lifecycle, physical schema generation, and
+   complete canonical physical relation-generation vector for the permission's
+   dependency closure.
 
 The answer tiers retain completed public operation results. The traversal
 cache may additionally retain exact generated-command responses and private
@@ -100,23 +101,17 @@ Opt in to managed reuse only under this explicit contract:
 ```
 
 `managed` means every relationship mutation that can affect EACL uses an EACL
-mutation API or the documented backend transaction helper that atomically
-updates the affected relation-version/mutation datoms. Schema changes use
-`eacl/write-schema!`. This contract may be shared by multiple EACL clients and
-processes; the stamps live in the database, not in a listener.
-
-For Datomic, the managed relation stamp is the transaction component of the
-current `:eacl/relation-version` datom, with the schema-initialized
-`:eacl.relation/mutation-id` datom as the fallback for a relation that has
-never been written. This supports the documented `tx-relationship` helper as
-well as the public EACL writers. Datahike and DataScript use the transaction
-component of the current relation mutation datom.
+API or documented helper that atomically updates `:eacl/relation-version`.
+Schema changes use `eacl/write-schema!`. This contract may be shared by
+multiple clients and processes; generations live in the database, not in a
+listener. A missing generation is never replaced by a synthetic or mutation-ID
+fallback and therefore disables managed reuse for that candidate.
 
 For a dependency set `D`, EACL validates that every dependency has a stamp and
 builds the complete sorted per-relation stamp vector:
 
 ```text
-dependency-stamp = sort-by relation [[relation last-change-t mutation-id] ...]
+dependency-stamp = sort-by relation [[relation assertion-t stored-generation] ...]
                    for relation in D
 ```
 
@@ -147,9 +142,9 @@ branch force, manual history replacement, or an unstamped bulk repair:
 (eacl.datascript.core/expire-cache! acl)
 ```
 
-Expiry swaps the complete cache lifecycle atomically. In-flight work retains
-only the old lifecycle and can publish only into that unreachable object, so a
-late result cannot repopulate the new lifecycle.
+Expiry rotates source/token scope and swaps every client-private cache family.
+In-flight work retains its captured old semantic lifecycle, so its late result
+is unreachable from requests in the new lifecycle.
 
 `cache-stats` on the same backend namespace reports exact hits, managed hits,
 misses, bypasses, stamp failures, puts, expirations, and live entry counts.
@@ -175,8 +170,8 @@ of authorization.
 
 ## Cursors
 
-Cursors are authenticated and scoped to backend/source, operation, query,
-engine version, graph anchor, and an exact snapshot locator. The normalized
+Cursors are authenticated and scoped to backend/source lifecycle, operation,
+query, engine version, native revision, and an exact snapshot locator. The normalized
 query scope includes the principal, permission, filters, resource type, and
 consistency contract. Relay direction and page size are resume controls, not
 authorization scope.
@@ -200,7 +195,7 @@ continuation.
 
 Recursive continuation state is an optional performance optimization.
 Continuation-store eviction deterministically replays the authenticated prefix
-on the already-selected immutable snapshot. It never selects another graph or
+on the already-selected immutable snapshot. It never selects another lifecycle or
 changes the public walk.
 
 DataScript has no EACL time-travel path. It continues only on a

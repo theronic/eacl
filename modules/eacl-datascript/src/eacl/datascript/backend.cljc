@@ -4,18 +4,39 @@
             [eacl.backend.v8 :as backend]
             [eacl.datascript.db :as ddb]
             [eacl.datascript.impl :as impl]
-            [eacl.datascript.mutation :as journal]
-            [eacl.mutation :as mutation]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.storage :as relationship-storage]
-            [eacl.secure-format :as secure]))
+            [eacl.secure-format :as secure])
+  #?(:clj (:import [java.util WeakHashMap])))
+
+(defonce ^:private connection-source-ids
+  ;; A DataScript source is one connection, not merely any DB whose numeric
+  ;; :max-tx happens to match. Weak keys avoid retaining abandoned conns.
+  #?(:clj (WeakHashMap.)
+     :cljs (js/WeakMap.)))
+
+(defn connection-source-id
+  "Returns the process-local stable identity of one DataScript connection."
+  [conn]
+  (when conn
+    #?(:clj
+       (locking connection-source-ids
+         (or (.get ^WeakHashMap connection-source-ids conn)
+             (let [source-id (str (random-uuid))]
+               (.put ^WeakHashMap connection-source-ids conn source-id)
+               source-id)))
+       :cljs
+       (or (.get connection-source-ids conn)
+           (let [source-id (str (random-uuid))]
+             (.set connection-source-ids conn source-id)
+             source-id)))))
 
 (def capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
                   :at-least-as-fresh}
    :snapshots #{:current :authoritative :causal}
-   :source #{:stable-scope :graph-head :anchor-membership :order-hint}
+   :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
    :cursor #{:forward :reverse :opaque}
    :transactions #{:schema :relationships :object-deletion}
    :cache-proofs #{:schema :relations :snapshot-bound :database-visible}
@@ -25,15 +46,15 @@
   [token-data timeout-ms observed]
   (throw
    (ex-info
-    "DataScript connection did not acquire the requested mutation anchor."
+    "DataScript connection did not acquire the requested native revision."
     {:type :eacl.consistency/freshness-unavailable
      :eacl/error :eacl.consistency/freshness-unavailable
      :reason :freshness-timeout
-     :requested-order-hint (:order-hint token-data)
+     :requested-order-hint (:revision token-data)
      :observed-order-hint (:max-tx observed)
      :timeout-ms timeout-ms})))
 
-(defn- await-anchor-db
+(defn- await-revision-db
   [conn fallback token-data timeout-ms]
   (let [timeout-ms (or timeout-ms 30000)]
     #?(:clj
@@ -42,8 +63,7 @@
          (loop []
            (let [candidate (if conn (ds/db conn) fallback)]
              (cond
-               (journal/contains-anchor?
-                candidate (:graph-anchor token-data))
+               (>= (:max-tx candidate) (:revision token-data))
                candidate
 
                (>= (System/nanoTime) deadline)
@@ -56,8 +76,7 @@
                  (recur))))))
        :cljs
        (let [candidate (if conn (ds/db conn) fallback)]
-         (if (journal/contains-anchor?
-              candidate (:graph-anchor token-data))
+         (if (>= (:max-tx candidate) (:revision token-data))
            candidate
            ;; A synchronous browser API cannot yield to an asynchronous writer
            ;; while preserving this call's return type. It therefore reports
@@ -160,28 +179,43 @@
 
 (defn- mutation-schema-proof
   [db]
-  (some-> (ds/entity db [:eacl/id mutation/schema-entity-id])
-          (get mutation/schema-mutation-id-attr)))
+  (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
+    (when-let [datom (first (ds/datoms db :eavt schema-eid
+                                       :eacl/schema-generation))]
+      [(:tx datom) (:v datom)])))
 
 (defn- mutation-relation-proof
   [db relation-ids]
   (let [proof
         (mapv (fn [relation-id]
-                [relation-id
-                 (get (ds/entity db relation-id)
-                      mutation/relation-mutation-id-attr)])
+                (when-let [datom
+                           (first (ds/datoms db :eavt relation-id
+                                             :eacl/relation-version))]
+                  [relation-id (:tx datom) (:v datom)]))
               (sort relation-ids))]
-    (when (every? (comp some? second) proof)
+    (when (every? some? proof)
       proof)))
 
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable DataScript db value."
   [db {:keys [object-id->entid entid->object-id conn
-              coherence-authority proof-mode]
+              proof-mode]
        :or {proof-mode :content}
        :as opts}]
-  (let [graph-state
-        (delay (journal/graph-state db))]
+  (let [source-lifecycle
+        (or (some-> (:source-lifecycle-state opts) deref)
+            (:source-lifecycle opts)
+            (str (random-uuid)))
+        source-scope
+        (or (:source-scope opts)
+            {:source-id
+             {:connection-id
+              (or (:native-source-id opts) source-lifecycle)}
+             :branch nil})
+        opts' (-> opts
+                  (dissoc :source-lifecycle-state)
+                  (assoc :source-lifecycle source-lifecycle
+                         :source-scope source-scope))]
     (backend/make-adapter
      {:id :datascript
       :fingerprint (:adapter-fingerprint opts)
@@ -191,11 +225,9 @@
                           :selected-internal/current-external-v1)
       :capabilities
       (cond-> capabilities
-        (not= :managed coherence-authority)
-        (update :consistency disj :at-least-as-fresh)
-
         (nil? conn)
-        (update :consistency disj :fully-consistent))
+        (update :consistency disj
+                :fully-consistent :at-least-as-fresh))
       :state {:db db}
       :operations
       {:snapshot-id
@@ -204,35 +236,31 @@
           :basis-t (:max-tx db)})
 
        :source-scope
-       (fn []
-         {:source-id (:family-id @graph-state)
-          :branch nil})
+       (fn [] source-scope)
 
-       :graph-head
+       :source-lifecycle
+       (fn [] source-lifecycle)
+
+       :native-revision
        (fn []
-         {:graph-anchor (:head-id @graph-state)
-          :order-hint (:max-tx db)
+         {:revision (:max-tx db)
           :exact-locator nil})
-
-       :contains-anchor?
-       (fn [anchor]
-         (journal/contains-anchor? db anchor))
 
        :order-hint (fn [] (:max-tx db))
 
        :select-current
        (fn []
-         (snapshot-adapter db opts))
+         (snapshot-adapter db opts'))
 
        :select-authoritative
        (fn [_timeout-ms]
-         (snapshot-adapter db opts))
+         (snapshot-adapter (if conn (ds/db conn) db) opts'))
 
        :select-at-least
        (fn [token-data timeout-ms]
          (snapshot-adapter
-          (await-anchor-db conn db token-data timeout-ms)
-          opts))
+          (await-revision-db conn db token-data timeout-ms)
+          opts'))
 
        :exact-locator
        (constantly nil)

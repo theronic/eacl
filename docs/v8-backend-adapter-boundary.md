@@ -9,7 +9,7 @@ database mechanics; shared code must not import an adapter namespace.
 | Concern | Current Datomic implementation | V8 owner |
 | --- | --- | --- |
 | Public request and error contract | `eacl.datomic.core/spiceomic-*` and `eacl.datomic.impl.indexed/normalize-page-request` | Shared engine, except backend capability rejection |
-| Consistency descriptor selection | `eacl.consistency/select-snapshot` and `eacl.datomic.backend` | Shared capability validation; adapter selects the promised snapshot |
+| Consistency descriptor selection | `eacl.consistency/select` and `eacl.datomic.backend` | Shared capability validation; adapter selects the promised native revision |
 | Historical/current snapshot | `d/db`, `d/as-of`, `d/sync` in `eacl.datomic.core` | Adapter |
 | Object ID resolution | `object-id->entid`, `entid->object-id`, `object-eid` | Adapter |
 | Relation and permission definitions | `relation-datoms`, `find-permission-defs` | Adapter returns normalized definitions |
@@ -21,8 +21,8 @@ database mechanics; shared code must not import an adapter namespace.
 | Relay windowing and count limits | `normalize-page-request`, `page-response`, `count-*` | Shared engine |
 | Cursor traversal state | path frontiers and recursive continuation maps | Shared engine, versioned |
 | Cursor protection and runtime encoding | AES-GCM page tokens in `eacl.datomic.core` | Adapter/runtime |
-| Schema generation | current schema mutation datom transaction | Adapter, consumed by shared current cache |
-| Relationship stamps | current per-relation version/mutation datom transactions | Adapter, complete compiled dependency set |
+| Schema generation | physical schema-version/generation assertion | Adapter, consumed by shared current cache |
+| Relationship stamps | physical current-transaction per-relation version assertion | Adapter, complete compiled dependency set |
 | Completed answers | private exact/managed generations in `eacl.cache`; exact/arbitrary-DB bypass | Shared current-cache contract |
 | Schema parsing/model validation | `eacl.spicedb.parser`, `eacl.schema.model` | Shared |
 | Schema persistence | `eacl.datomic.schema` | Adapter |
@@ -35,6 +35,7 @@ database mechanics; shared code must not import an adapter namespace.
 to one immutable backend snapshot. The mandatory operations are:
 
 - snapshot identity;
+- stable source/branch identity, source lifecycle, and native revision;
 - external/internal object ID conversion;
 - relation and permission definition reads;
 - ordered forward and reverse adjacency scans;
@@ -56,7 +57,13 @@ Unsupported guarantees fail with `:eacl/unsupported-capability` before
 authorization work begins. Datomic declares all four v8 consistency modes,
 historical snapshots, authenticated encrypted cursors, schema/relationship
 transactions, deletion, and database-visible proofs. DataScript provides a
-serialized local head and optional bounded exact registry. Datahike derives
+serialized local head and no exact-history capability. Datahike derives
 authoritative-head and exact-history capabilities from the active writer,
 commit-graph, and history configuration. Shared code never maps an unsupported
 request to a weaker mode.
+
+The required adapter surface has no graph-state or anchor-membership
+operation. At-least selection proves a numeric native revision floor inside
+one authenticated source lifecycle; exact selection additionally proves the
+exact locator. Cache authority is independent: `:unknown` may still issue and
+consume supported native tokens while retaining completed answers exact-only.

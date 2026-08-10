@@ -10,8 +10,8 @@
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
-   :clj-invoke-sites 52
-   :cljs-invoke-sites 52
+   :clj-invoke-sites 49
+   :cljs-invoke-sites 49
    :literal-operation-keys 21
    :status :static-operation-key-closure-established
    :assurance :not-adapter-semantic-proof}
@@ -36,6 +36,11 @@
   {:source "formal/dafny/ConsistencyDecision.dfy"
    :class :generated-production
    :consumer ['eacl.consistency]}
+  {:source "formal/dafny/NativeGenerationCoherence.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.cache
+              'eacl.subproblem-cache
+              'eacl.relationships.safe-retraction]}
   {:source "formal/dafny/CurrentCache.dfy"
    :class :generated-production
    :consumer ['eacl.cache/current-generation-decision]}

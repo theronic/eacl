@@ -128,7 +128,7 @@
   "Boundary-alias scope for the client-private page-navigation cache.
 
   The navigation `generation` already pins the exact immutable snapshot
-  (graph head included), so this digest deliberately omits the schema stamp:
+  (native revision included), so this digest deliberately omits the schema stamp:
   it correlates adjacent pages within one generation and carries no
   validation authority."
   [operation query]
@@ -141,8 +141,8 @@
 (defn- page-generation
   [adapter]
   {:backend (backend/backend-id adapter)
-   :source-scope (backend/invoke adapter :source-scope)
-   :graph-head (backend/invoke adapter :graph-head)
+   :source-scope (consistency/source-scope adapter)
+   :native-revision (consistency/native-revision adapter)
    :adapter-fingerprint (backend/fingerprint adapter)
    :identity-contract (backend/identity-contract adapter)})
 
@@ -328,12 +328,10 @@
 
 (defn- build-dependency-context
   [adapter schema-stamp relation-ids]
-  (let [graph-head (backend/invoke adapter :graph-head)
+  (let [native-revision (consistency/native-revision adapter)
         base
-        {:source-scope
-         {:backend (backend/backend-id adapter)
-          :scope (backend/invoke adapter :source-scope)}
-         :graph-head graph-head
+        {:source-scope (consistency/source-scope adapter)
+         :native-revision native-revision
          :adapter-fingerprint (backend/fingerprint adapter)
          :identity-contract (backend/identity-contract adapter)}
         dependency-digests
@@ -347,7 +345,7 @@
              (secure/canonical-digest
               "eacl/cursor/exact-snapshot/v4"
               {:snapshot-id (backend/invoke adapter :snapshot-id)
-               :graph-head graph-head})))))
+               :native-revision native-revision})))))
 
 (defn dependency-context
   "Builds bounded continuation metadata for one immutable snapshot.
@@ -479,24 +477,21 @@
        field))
    execution-identity-fields))
 
-(defn- graph-code
-  "Graph-anchor code in the numbering shared by one continuation decision:
-  0 = the current selection's graph, 1 = the cursor's (different) graph,
-  2 = any other graph. The kernel's exact arm compares codes, so an exact
-  selection is accepted only when it resolves the cursor's own graph."
+(defn- revision-code
+  "Native-revision code in the numbering shared by one continuation decision:
+  0 = the current selection, 1 = the cursor's different revision, and 2 = any
+  other revision. The generated kernel still calls this scalar `graph`; the
+  value now represents exact native revision identity, never ancestry."
   [current envelope context]
-  (let [anchor
-        (secure/canonicalize
-         (get-in context [:graph-head :graph-anchor]))]
+  (let [revision
+        (secure/canonicalize (:native-revision context))]
     (cond
-      (= anchor
-         (secure/canonicalize
-          (get-in current [:graph-head :graph-anchor])))
+      (= revision
+         (secure/canonicalize (:native-revision current)))
       0
 
-      (= anchor
-         (secure/canonicalize
-          (get-in envelope [:graph-head :graph-anchor])))
+      (= revision
+         (secure/canonicalize (:native-revision envelope)))
       1
 
       :else 2)))
@@ -516,7 +511,7 @@
         cursor-proof (continuation-proof envelope)
         exact-decision
         (when exact
-          {:graph (graph-code current envelope exact)
+          {:graph (revision-code current envelope exact)
            :source (execution-identity exact)
            :proof (continuation-proof exact)})]
     (verified/decide
@@ -530,7 +525,7 @@
       :cursor-source cursor-source
       :current-proof current-proof
       :cursor-proof cursor-proof
-      :cursor-graph (graph-code current envelope envelope)
+      :cursor-graph (revision-code current envelope envelope)
       :exact exact-decision})))
 
 (defn- stale-context!
@@ -550,8 +545,8 @@
 (defn- ensure-cursor-satisfies-request!
   [opts envelope]
   (when-let [floor (:cursor-freshness-floor opts)]
-    (let [cursor-order (get-in envelope [:graph-head :order-hint])
-          floor-order (:order-hint floor)]
+    (let [cursor-order (get-in envelope [:native-revision :revision])
+          floor-order (:revision floor)]
       (when (or (not (integer? cursor-order))
                 (not (integer? floor-order))
                 (< cursor-order floor-order))
@@ -560,15 +555,15 @@
           :requested-order-hint floor-order}))))
   (when (= :at-exact-snapshot (:cursor-consistency-mode opts))
     (let [requested (:cursor-request-token opts)
-          cursor-head (:graph-head envelope)]
-      (when (or (not= (:graph-anchor requested)
-                      (:graph-anchor cursor-head))
+          cursor-revision (:native-revision envelope)]
+      (when (or (not= (:revision requested)
+                      (:revision cursor-revision))
                 (not= (:exact-locator requested)
-                      (:exact-locator cursor-head)))
+                      (:exact-locator cursor-revision)))
         (consistency/cursor-conflict!
-         {:cursor-graph-anchor (:graph-anchor cursor-head)
-          :requested-graph-anchor (:graph-anchor requested)
-          :cursor-exact-locator (:exact-locator cursor-head)
+         {:cursor-revision (:revision cursor-revision)
+          :requested-revision (:revision requested)
+          :cursor-exact-locator (:exact-locator cursor-revision)
           :requested-exact-locator (:exact-locator requested)})))))
 
 (defn- apply-continuation-decision!
@@ -604,10 +599,10 @@
 
     :conflict
     (consistency/cursor-conflict!
-     {:cursor-graph-anchor
-      (get-in envelope [:graph-head :graph-anchor])
-      :selected-graph-anchor
-      (get-in current [:graph-head :graph-anchor])})
+     {:cursor-revision
+      (get-in envelope [:native-revision :revision])
+      :selected-revision
+      (get-in current [:native-revision :revision])})
 
     :snapshot-unavailable
     (stale-context!
@@ -620,7 +615,7 @@
     :history-divergence
     (throw
      (ex-info
-      "The cursor exact locator resolved to another graph."
+      "The cursor exact locator resolved to another native revision."
       {:type :eacl.consistency/history-divergence
        :eacl/error :eacl.consistency/history-divergence}))
 
@@ -666,12 +661,10 @@
                 (backend/invoke
                  adapter
                  :select-exact
-                 {:graph-anchor
-                  (get-in envelope [:graph-head :graph-anchor])
-                  :order-hint
-                  (get-in envelope [:graph-head :order-hint])
+                 {:revision
+                  (get-in envelope [:native-revision :revision])
                   :exact-locator
-                  (get-in envelope [:graph-head :exact-locator])}
+                  (get-in envelope [:native-revision :exact-locator])}
                  (:timeout-ms opts)))]
             (execution/check!
              (:execution-contract opts)

@@ -4,12 +4,12 @@
   default EACL DataScript schema."
   (:require [clojure.string :as str]
             [datascript.core :as ds]
-            [eacl.datascript.mutation :as journal]
+            [eacl.datascript.db :as ddb]
             [eacl.relationships.safe-retraction :as safe]
             [eacl.relationships.storage :as storage]))
 
 (def function-digest
-  "5aeb7ef5d50d859a245f8220a837085e85af0825276478daa28a5bb9d453ac01")
+  "b95f310357fa216e59435c6d15a8adaea910650b0ee5d602f9d98e5cbeed4361")
 
 (def function-doc
   (str safe/function-doc-prefix " v" safe/function-version
@@ -29,38 +29,112 @@
   []
   support)
 
-(defn retract-entity-function
-  "DataScript transaction function implementation.
+(defn- component-attributes
+  [db]
+  (into #{}
+        (keep (fn [[attribute options]]
+                (when (true? (:db/isComponent options))
+                  attribute)))
+        (:schema db)))
 
-  It performs exactly two target-scoped endpoint reads. Peer operations and
-  proof bookkeeping grow only with the target's local degree and the number
-  of distinct affected relations."
-  [db target envelope]
-  (safe/validate-envelope target envelope)
-  (let [target-eid (ds/entid db target)]
-    (if-not (and target-eid (seq (ds/datoms db :eavt target-eid)))
+(defn- control-entity-data
+  [db eid]
+  (let [entity (ds/entity db eid)]
+    {:db-ident (:db/ident entity)
+     :eacl-id (:eacl/id entity)
+     :schema-string (:eacl/schema-string entity)
+     :relation-name (:eacl.relation/relation-name entity)
+     :permission-name (:eacl.permission/permission-name entity)}))
+
+(defn- relation-triples
+  [db]
+  (mapv (fn [{:keys [e v]}]
+          [(nth v 0) e (nth v 2)])
+        (ddb/avet-datoms
+         db :eacl.relation/resource-type+relation-name+subject-type)))
+
+(defn- known-ghost-plan
+  [db target-eid]
+  (safe/combine-plans
+   (mapcat
+    (fn [[resource-type relation-eid subject-type]]
+      (let [reverse-value
+            [resource-type relation-eid subject-type target-eid]
+            forward-value
+            [subject-type relation-eid resource-type target-eid]]
+        (concat
+         (for [{peer-eid :e}
+               (ddb/avet-datoms db storage/reverse-attribute reverse-value)]
+           {:peer-retractions
+            [[:db/retract peer-eid storage/reverse-attribute reverse-value]]
+            :relation-ids [relation-eid]
+            :local-half-count 0})
+         (for [{peer-eid :e}
+               (ddb/avet-datoms db storage/forward-attribute forward-value)]
+           {:peer-retractions
+            [[:db/retract peer-eid storage/forward-attribute forward-value]]
+            :relation-ids [relation-eid]
+            :local-half-count 0}))))
+    (relation-triples db))))
+
+(defn retract-entity-function
+  "DataScript target-only transaction function implementation."
+  [db target]
+  (safe/validate-target! target)
+  (let [target-eid (ds/entid db target)
+        lookup-ref? (vector? target)]
+    (if (and lookup-ref? (nil? target-eid))
       []
-      (let [forward-values
-            (mapv :v (ds/datoms db :eavt target-eid
-                                storage/forward-attribute))
-            reverse-values
-            (mapv :v (ds/datoms db :eavt target-eid
-                                storage/reverse-attribute))
-            {:keys [peer-retractions relation-ids]}
-            (safe/plan-local-halves target-eid
-                                    forward-values reverse-values)
-            mutation-data
-            ;; Unlike :db.fn/call, DataScript's named-function expansion does
-            ;; not auto-assign tempids to returned entity maps.
-            (update
-             (safe/mutation-tx-data
-              (journal/graph-state db)
-              relation-ids
-              :db/current-tx
-              envelope)
-             0 assoc :db/id -1)]
-        (into (into mutation-data peer-retractions)
-              [[:db.fn/retractEntity target-eid]])))))
+      (let [live? (and target-eid
+                       (seq (ds/datoms db :eavt target-eid)))
+            closure
+            (when live?
+              (let [component-attrs (component-attributes db)]
+                (safe/component-closure
+                 target-eid
+                 (fn [eid]
+                   (into []
+                         (comp
+                          (filter #(contains? component-attrs (:a %)))
+                          (map :v))
+                         (ds/datoms db :eavt eid))))))
+            protected-eid
+            (some (fn [eid]
+                    (when (safe/protected-control-entity?
+                           (control-entity-data db eid))
+                      eid))
+                  closure)]
+        (when protected-eid
+          (throw
+           (ex-info
+            "EACL safe retraction cannot delete schema/control entities."
+            {:type :eacl.safe-retraction/invalid
+             :eacl/error :eacl.safe-retraction/invalid
+             :reason :protected-control-entity
+             :target-eid target-eid
+             :protected-eid protected-eid})))
+        (let [plan
+              (if live?
+                (safe/combine-plans
+                 (map (fn [eid]
+                        (safe/plan-local-halves
+                         eid
+                         (mapv :v (ds/datoms db :eavt eid
+                                            storage/forward-attribute))
+                         (mapv :v (ds/datoms db :eavt eid
+                                            storage/reverse-attribute))))
+                      closure))
+                (if target-eid
+                  (known-ghost-plan db target-eid)
+                  {:peer-retractions []
+                   :relation-ids []
+                   :local-half-count 0}))]
+          (into []
+                (concat
+                 (:peer-retractions plan)
+                 (safe/relation-stamps (:relation-ids plan))
+                 (when live?
+                   [[:db.fn/retractEntity target-eid]]))))))))
 
 (def function-definition
   {:db/ident safe/function-ident
@@ -81,9 +155,9 @@
     :absent))
 
 (defn prepare!
-  "Ensures mutation-journal prerequisites for direct invocation."
-  [conn]
-  (journal/ensure-migrated! conn))
+  "Returns the direct invocation capability; no journal preparation is needed."
+  [_conn]
+  {:prepared? true :support support})
 
 (defn install!
   "Idempotently installs the named function into one DataScript connection.
@@ -113,20 +187,17 @@
 
 (defn retract-entity-tx-data
   "Builds one invocation of the installed named function."
-  ([target]
-   (retract-entity-tx-data target {}))
-  ([target options]
-   (let [envelope (safe/mutation-envelope target options)]
-     (safe/validate-envelope target envelope)
-     [[safe/function-ident target envelope]])))
+  [target]
+  (safe/target-invocation target))
 
 (defn direct-retract-entity-tx-data
   "Builds one in-process `:db.fn/call` invocation without installation.
 
   Call `prepare!` once for a new connection before submitting this data."
-  ([target]
-   (direct-retract-entity-tx-data target {}))
-  ([target options]
-   (let [envelope (safe/mutation-envelope target options)]
-     (safe/validate-envelope target envelope)
-     [[:db.fn/call retract-entity-function target envelope]])))
+  [target]
+  (safe/validate-target! target)
+  ;; Wrap the target so the same tx data works for numeric eids and lookup
+  ;; refs without any envelope or caller-generated metadata.
+  [[:db.fn/call (fn [db wrapped-target]
+                  (retract-entity-function db (first wrapped-target)))
+    [target]]])

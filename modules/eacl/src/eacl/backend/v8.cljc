@@ -5,7 +5,7 @@
   pagination, deletion, consistency selection, and exact cache proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 4)
+(def adapter-version 5)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
@@ -37,8 +37,8 @@
 (def required-snapshot-operations
   #{:snapshot-id
     :source-scope
-    :graph-head
-    :contains-anchor?
+    :source-lifecycle
+    :native-revision
     :order-hint
     :select-current
     :select-authoritative
@@ -69,10 +69,10 @@
    #{:stable-for-immutable-snapshot :source-and-revision-identity}
    :source-scope
    #{:stable-source-identity :branch-identity}
-   :graph-head
-   #{:selected-head-anchor :monotone-order-hint :exact-locator-identity}
-   :contains-anchor?
-   #{:iff-causal-ancestor-or-current}
+   :source-lifecycle
+   #{:bounded-canonical-identity :rotated-on-source-replacement}
+   :native-revision
+   #{:selected-native-revision :monotone-order-hint :exact-locator-identity}
    :order-hint
    #{:selected-snapshot-order :exact-integer}
    :select-current
@@ -80,7 +80,7 @@
    :select-authoritative
    #{:returns-immutable-snapshot :same-source :authoritative-or-fails-closed}
    :select-at-least
-   #{:returns-immutable-snapshot :same-source :contains-requested-anchor}
+   #{:returns-immutable-snapshot :same-source :native-revision-at-least-requested}
    :exact-locator
    #{:stable-for-immutable-snapshot}
    :select-exact
@@ -468,7 +468,7 @@
            backend-id operation-key :nonnegative value))
         value)
 
-      (:snapshot-id :source-scope :graph-head)
+      (:snapshot-id :source-scope :native-revision)
       (do
         (when-not (map? value)
           (contract-violation!
@@ -492,7 +492,7 @@
            backend-id operation-key :finite-node-set value))
         value)
 
-      (:contains-anchor? :direct-match? :relation-populated?)
+      (:direct-match? :relation-populated?)
       (do
         (when-not (boolean? value)
           (contract-violation!
@@ -512,7 +512,7 @@
       ;; proofs) require paired/global certification rather than a local shape
       ;; predicate. They still pass through this dispatch so an added callback
       ;; cannot silently bypass the runtime-guard review.
-      (:internal-id->object :exact-locator
+      (:internal-id->object :exact-locator :source-lifecycle
        :schema-proof :relation-proof)
       value
 

@@ -267,15 +267,13 @@
                   [] :exact-integer]
                  [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
                  [:source-scope (fn [& _] nil) [] :map-shape]
-                 [:graph-head (fn [& _] []) [] :map-shape]
+                 [:native-revision (fn [& _] []) [] :map-shape]
                  [:relation-defs (fn [& _] [:not-a-map])
                   [:document :reader] :finite-definition-sequence]
                  [:permission-defs (fn [& _] [nil])
                   [:document :view] :finite-definition-sequence]
                  [:all-permission-nodes (fn [& _] [])
                   [] :finite-node-set]
-                 [:contains-anchor? (fn [& _] :yes)
-                  ["anchor"] :boolean-result]
                  [:direct-match? (fn [& _] nil)
                   [:user 1 2 :document 3] :boolean-result]
                  [:select-current (fn [& _] {})

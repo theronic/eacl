@@ -267,18 +267,19 @@
 (deftest causal-token-round-trip-and-rejection-test
   (let [payload {:backend :datascript
                  :source-id "family"
+                 :source-lifecycle "secure-format-test"
                  :branch nil
-                 :graph-anchor "mutation"
-                 :order-hint 7
-                 :exact-locator "snapshot"}
+                 :revision 7
+                 :exact-locator nil}
         encoded (token/issue options payload)]
     (is (= (merge payload
-                  {:version 3}
+                  {:version 4}
                   (select-keys (token/token-data options encoded)
                                [:issued-at :expires-at]))
            (token/token-data options
                              {:backend :datascript
                               :source-id "family"
+                              :source-lifecycle "secure-format-test"
                               :branch nil}
                              encoded)))
     (is (= :scope-mismatch
@@ -288,6 +289,7 @@
                options
                {:backend :datascript
                 :source-id "other"
+                :source-lifecycle "secure-format-test"
                 :branch nil}
                encoded)))))
     (is (= :expired
@@ -301,6 +303,21 @@
     (is (= :malformed-token
            (:reason
             (error-data #(token/token-data options "17")))))))
+
+(deftest source-lifecycle-is-bounded-portable-canonical-data-test
+  (is (= :invalid-source-lifecycle
+         (:reason
+          (error-data
+           #(token/validate-source-lifecycle!
+             {:invalid (fn [])})))))
+  (is (= :invalid-source-lifecycle
+         (:reason
+          (error-data
+           #(token/validate-source-lifecycle!
+             {:oversized (apply str
+                                (repeat
+                                 token/maximum-scope-characters
+                                 "x"))}))))))
 
 (deftest authenticated-portable-cursor-test
   (let [value {:v 8 :edge {:kind :lookup-eid} :position [1 "a"]}

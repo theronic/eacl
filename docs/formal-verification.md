@@ -100,8 +100,9 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
 | `IndexedBatching.dfy` | bounded ordered scan waves, ordered response folding, fuel-cut progress publication, crossing law |
 | `IndexedBatchCompleteness.dfy` | proof-only pending-scan ghost views and generalized batch coverage invariants |
-| `CacheKernel.dfy` | dependency closure, cache validation, telemetry CAS laws |
+| `CacheKernel.dfy` | legacy cache validation and telemetry CAS laws retained for compatibility |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
+| `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
@@ -124,8 +125,9 @@ invariants; the final unbounded state predicates are carried in Dafny.
 ## Adapter certification
 
 The proof assumes adapters provide immutable coherent snapshots, injective
-identity conversion, complete schema/scans/proofs, real causal ancestry, and
-correct exact selection. Run the shared certification namespaces through a dev
+identity conversion, complete schema/scans/generation proofs, stable source
+lifecycle scope, monotone native revision selection, and correct exact
+selection. Managed cache correctness does not assume graph ancestry. Run the shared certification namespaces through a dev
 nREPL:
 
 - `eacl.datomic.adapter-certification-test`
@@ -136,7 +138,7 @@ The machine-readable result is
 `formal/verification/adapter-certification.edn`. Optional runtime guards check
 locally representable shape, order, uniqueness, bounds, booleans, adapters,
 and nonnegative exact-integer internal EIDs. Global completeness, ancestry,
-and proof truthfulness remain certification obligations.
+and generation-proof truthfulness remain certification obligations.
 
 ## Counterexamples and mutation controls
 

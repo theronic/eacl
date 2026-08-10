@@ -48,7 +48,7 @@ Caching does not alter the result:
 | Exact completed answer | Identical semantic operation on the same immutable database value | Skips the complete authorization computation |
 | Managed completed answer | Explicit `:complete-denotation` operation with the same schema and complete relation-dependency stamp | Survives unrelated forward transactions |
 | Exact relationship projection | Compatible traversals of the same relation/index portion on the same immutable database value | Shares bounded adjacency chunks and direct-membership probes |
-| Managed relationship projection | Compatible traversals with the same relation mutation identity and schema | Shares unchanged graph portions across unrelated transactions |
+| Managed relationship projection | Compatible traversals with the same physical relation generation and schema generation | Shares unchanged graph portions across unrelated transactions |
 | Completed denotation | Compatible operations on the same immutable database value | Reuses completed acyclic results and recursive least-fixed-point results |
 | Schema plan | All operations using the same schema generation | Reuses permission paths, dependency closures, recursive routing, and immutable traversal plans |
 | Navigation and continuation | One authenticated query and snapshot context | Resumes pagination without replaying work already performed |
@@ -106,13 +106,29 @@ audited opt-in on every backend.
   the same complete dependency protocol before they are eligible for managed
   reuse.
 
-Managed relationship writes update database-visible relation mutation stamps
-atomically with the relationship change. A managed key commits to the logical
-backend/source scope, schema mutation identity, relation definition, relation
-mutation identity, operation, direction, and projection bounds. Transaction
-identity and mutation value are both retained where the backend can fork or
-replace history, so equal numeric revisions from different histories do not
-become interchangeable.
+Managed relationship writes update database-visible physical relation
+generations atomically with the relationship change. A managed key commits to
+the backend/source lifecycle, physical schema generation, complete canonical
+relation-generation vector, semantic operation, direction, and bounds. The
+proof uses both assertion transaction and stored generation where the backend
+exposes them. There is no mutation-ID fallback: a missing or malformed
+generation is a cache miss.
+
+The coherence theorem is a frame theorem. For two selected immutable database
+values in one source lifecycle, if (1) the physical schema generations are
+equal, (2) the compiled relation dependency closure is complete, canonical,
+and equal—including the empty closure—and (3) every relation in it has equal
+physical generation evidence, then the built-in evaluator's query-local
+identity resolution and authorization result are equal. This follows because
+every managed writer atomically changes the generation of every relation whose
+tuples it changes, and every semantic schema change changes the schema
+generation. Unrelated object or relation churn lies outside the frame. No
+graph ancestry, transaction listener, or transaction-log read is needed.
+
+The theorem is intentionally scoped to one forward source lifecycle. A
+restore, reset, branch force, history replacement, or revision regression must
+rotate the lifecycle before traffic resumes. Equal numeric revisions across
+different lifecycles carry no authority.
 
 For an explicit `:evaluation :complete-denotation` answer, the compiled permission supplies its complete relation
 dependency set. EACL reads the dependency evidence from the same selected
@@ -163,11 +179,10 @@ compiled permission supplies the complete relation dependency closure (plan
 compilation fails if a compiled rule could reference a relation outside it),
 and the managed key commits to the schema stamp plus the complete sorted
 per-relation stamp vector, exactly as completed answers and projections do.
-The dedicated machine-checked proof for cross-revision denotation framing
-remains open; the mechanism is covered today by the closure-completeness
-compilation guard, the randomized cached-versus-cache-free differential
-oracles under interleaved writes, and the directed cross-revision reuse
-tests.
+The native-generation frame, empty-dependency case, stale-endpoint exclusion,
+component cleanup, and lifecycle-isolation lemmas are machine checked in
+`formal/dafny/NativeGenerationCoherence.dfy`. Runtime boundary and differential
+tests connect those assumptions to all three adapters.
 
 ## Eviction and resource bounds
 
@@ -212,7 +227,7 @@ them honestly. Store-level native weight budgets remain separate cache
 configuration.
 
 Time-to-live is optional and is not the correctness mechanism. Exact snapshot
-identity and managed mutation stamps determine validity. Capacity eviction
+identity and managed native generations determine validity. Capacity eviction
 normally gives better retention than discarding a still-hot valid entry merely
 because it is old.
 
@@ -244,6 +259,7 @@ Enable cross-transaction reuse only when EACL controls every relevant writer:
   (eacl.datomic.core/make-client
    conn
    {:coherence-authority :managed
+    :source-lifecycle "production-primary-v4"
     :cache {:max-entries 4096}}))
 ```
 
@@ -334,9 +350,12 @@ demand:
 (eacl.datascript.core/expire-cache! acl)
 ```
 
-Clearing atomically swaps the complete cache lifecycle. Work already in flight
-retains only the detached lifecycle and cannot repopulate the new one. This is
-an operational cache-control API, not a v8 rollback or migration mechanism.
+Clearing rotates the token/source lifecycle and swaps exact, managed,
+subproblem, derived-schema, cursor-codec, page-navigation, continuation, and
+checkpoint state. In-flight work keeps its captured old semantic lifecycle;
+even if it publishes late, a new-lifecycle request cannot address that entry.
+Pass the optional coordinated lifecycle argument when several processes must
+exchange tokens after an operator-controlled cutover.
 
 ## Cursors and historical reads
 
@@ -353,7 +372,7 @@ answers. Default content/no-proof cursors bind exact immutable snapshot
 identity without scanning relationship content. A changed proof requires
 verified exact historical reconstruction or fails closed; DataScript never
 reconstructs history, so every later basis is stale in those modes. Explicit
-managed mutation-stamp mode may use bounded dependency/order stamps and
+managed native-generation mode may use bounded dependency stamps and
 continue on a newer current basis only when all complete stamps remain equal.
 
 ## Performance and correctness gates

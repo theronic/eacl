@@ -26,13 +26,20 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
+(def ^:private source-lifecycle "datahike-consistency-v4-test")
+
 (defn- client
-  [conn]
-  (datahike/make-client
-   conn
-   {:coherence-authority :managed
-    :security-key security-key
-    :consistency-sync-timeout-ms 5}))
+  ([conn]
+   (client conn {}))
+  ([conn options]
+   (datahike/make-client
+    conn
+    (merge
+     {:coherence-authority :managed
+      :security-key security-key
+      :source-lifecycle source-lifecycle
+      :consistency-sync-timeout-ms 5}
+     options))))
 
 (defn- seed!
   [conn authorization]
@@ -278,9 +285,12 @@
       ;; Reconnect before advancing the replacement history.
       (d/release conn)
       (let [rewound-conn (d/connect (:config pre-write))
-            rewound-authorization (client rewound-conn)]
+            rewound-authorization
+            (client rewound-conn
+                    {:source-lifecycle
+                     "datahike-consistency-rewound-v4-test"})]
         (d/transact rewound-conn [{:eacl/id "unrelated"}])
-        (is (= :eacl.consistency/freshness-unavailable
+        (is (= :eacl.consistency/incomparable-scope
                (:type
                 (error-data
                  #(eacl/can?

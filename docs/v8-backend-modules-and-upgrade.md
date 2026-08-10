@@ -107,9 +107,10 @@ Exact-current entries are attached to one immutable selected DB generation.
 They need no content proof: a changed generation cannot hit the old
 generation. Under explicit `:coherence-authority :managed`, a second tier can
 survive unrelated forward transactions by keying complete answers with the
-schema generation and the maximum transaction stamp over the complete compiled
-relation dependency set. Relevant writes raise that maximum; unrelated writes
-do not.
+physical schema generation and complete canonical vector of physical relation
+generations for the compiled dependency closure. Relevant writes replace at
+least one vector element; unrelated writes leave the vector unchanged. Empty
+complete closures remain eligible under the schema generation alone.
 
 Prefer `write-schema!`, `create-relationship!`, `write-relationships!`,
 `delete-relationships!`, and `delete-object!`. Configure
@@ -119,6 +120,31 @@ uses exact-current caching and invalidates on every new immutable DB
 generation. Schema replacement drops all managed answers. Reset, restore,
 branch force, or unstamped bulk repair requires quiescence followed by the
 backend's `expire-cache!`.
+
+An upgraded database must run the backend's `prepare-cache-coherence!` before
+managed v4 readers start. Because this protocol is landing before v8 is
+released, the supported upgrade is a quiesced cutover, not a rolling
+dual-write bridge: stop every writer and managed reader, deploy v4 everywhere,
+replace the safe-retraction function, prepare and verify all native
+generations, rotate shared lifecycle/token state, attest that only stamped v4
+writers can resume, and then restore traffic. Database diagnostics prove
+stored preparation but cannot prove that an old process is no longer able to
+write. Legacy graph and journal datoms may remain inert; do not destructively
+remove them during the cutover. Rolling back to an older binary likewise
+requires quiescence, rebaselining that binary's legacy state, and another
+lifecycle rotation.
+
+Datahike and DataScript preparation also initializes
+`:eacl/schema-write-fence`, a small mutation-linearization token kept separate
+from `:eacl/schema-generation`. Their old-equals-old CAS implementations may
+reassert a datom, and predicate bookkeeping must not rotate the physical cache
+generation or invalidate every schema-derived entry.
+
+The optional `:eacl.fn/retractEntity` is target-only in v4. Multiple and
+repeated invocations compose in one transaction, and a known numeric retracted
+eid can repair peer-only ghosts. Quiesce callers during the arity cutover from
+the legacy envelope-based function; do not mix same-transaction relationship
+additions involving a retracted target.
 
 Caller-supplied portable stores are not trusted as an authority for completed
 native answers. Exact/historical cursor work and arbitrary low-level `db`

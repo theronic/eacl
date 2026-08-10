@@ -12,14 +12,14 @@
     :entid                      (fn [db lookup-ref-or-eid] eid-or-nil)
     :default-entid->object-id   (fn [db eid] external-id-or-nil)
     :snapshot-adapter           (fn [db opts] v8-adapter)
+    :native-source-id           optional (fn [conn] stable source identity)
     :managed-cache-descriptor   (fn [db relation-ids]
                                   {:schema-stamp s :dependency-stamp v})
                                 or nil pieces when stamps are unavailable
     :relationship-retraction-count (fn [db tx-data] n)
     :schema  {:read-schema    (fn [db] ...)
               :write-schema!  (fn [conn schema-string opts] ...)}
-    :journal {:ensure-migrated! (fn [conn])
-              :transact!        (fn [conn journal-tx] tx-report)}
+    :transact!                  (fn [conn native-tx] tx-report)
     :impl    {:validate-relationship-operation! (fn [operation])
               :relationship-relation-id         (fn [db relationship])
               :tx-update-relationship           (fn [db update])
@@ -46,7 +46,6 @@
                [eacl.formal.production-kernel :as production-kernel]
                :cljs
                [eacl.formal.production-kernel-cljs :as production-kernel])
-            [eacl.mutation :as mutation]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.secure-format :as secure]
@@ -55,10 +54,14 @@
 
 (defn- ensure-execution-contract
   [opts operation request]
-  (if (:execution-contract opts)
-    opts
-    (assoc opts
-           :execution-contract
+  (cond-> opts
+    (nil? (:cache-lifecycle opts))
+    (assoc :cache-lifecycle
+           (cache/capture-current-lifecycle
+            (:current-cache-store opts)))
+
+    (nil? (:execution-contract opts))
+    (assoc :execution-contract
            (execution/normalize opts operation request))))
 
 (defn- transform-frontier
@@ -233,7 +236,7 @@
                    nil)))))))
 
 (defn- page-context
-  [api opts selection operation query resource-type permission]
+  [opts selection operation query resource-type permission]
   (let [adapter (:adapter selection)
         current-opts
         (cursor-options
@@ -314,6 +317,8 @@
              :evaluation (:evaluation contract)
              :demand (:demand contract)
              :engine-version engine/engine-version
+             :source-lifecycle
+             (backend/invoke adapter :source-lifecycle)
              :adapter-fingerprint (:adapter-fingerprint opts)
              :recursive-traversal-limits
              (:recursive-traversal-limits opts)}]
@@ -327,6 +332,7 @@
                 (cache/resolve-current!
                  (:current-cache-store opts)
                  {:snapshot db
+          :cache-lifecycle (:cache-lifecycle opts)
           :snapshot-order (:max-tx db)
           :same-snapshot? identical?
           :cache-basis (backend/invoke adapter :snapshot-id)
@@ -350,7 +356,7 @@
                  dependency
                  [dependency]))))
                 :managed-subproblem-scope
-                (backend/invoke adapter :source-scope)}
+                (consistency-v3/source-scope adapter)}
                semantic-key
                operation
                  valid-value?
@@ -412,7 +418,7 @@
         {adapter :adapter page-db :db cursor-opts :opts
          page-query :query}
         (page-context
-         api opts selection :read-relationships filters nil nil)
+         opts selection :read-relationships filters nil nil)
         base-filters (apply dissoc filters
                             [:first :last :after :before :consistency :cache?])
         subject-id (:subject/id base-filters)
@@ -452,21 +458,25 @@
          :cache-basis nil))))))
 
 (defn spice-relationship->internal
-  [db {:keys [spice-object->internal]} {:keys [subject relation resource]}]
-  {:subject (spice-object->internal db subject)
-   :relation relation
-   :resource (spice-object->internal db resource)})
+  [db {:keys [spice-object->internal object-id->lookup-ref]}
+   {:keys [subject relation resource]}]
+  (let [internalize
+        (fn [object]
+          (assoc (spice-object->internal db object)
+                 :eacl.relationship/identity-guard
+                 (object-id->lookup-ref (:id object))))]
+    {:subject (internalize subject)
+     :relation relation
+     :resource (internalize resource)}))
 
 (defn- response-token
   [api db opts]
-  (when (= :managed (:coherence-authority opts))
-    (let [adapter ((:snapshot-adapter api) db opts)]
-      (causal-token/issue
-       (:format-options opts)
-       (merge
-        {:backend (:backend-id api)}
-        (backend/invoke adapter :source-scope)
-        (backend/invoke adapter :graph-head))))))
+  (let [adapter ((:snapshot-adapter api) db opts)]
+    (causal-token/issue
+     (:format-options opts)
+     (merge
+      (consistency-v3/source-scope adapter)
+      (consistency-v3/native-revision adapter)))))
 
 (defn- write-response
   [api db opts]
@@ -478,8 +488,6 @@
   [api conn opts updates]
   (let [validate-operation!
         (get-in api [:impl :validate-relationship-operation!])
-        relationship-relation-id
-        (get-in api [:impl :relationship-relation-id])
         tx-update-relationship
         (get-in api [:impl :tx-update-relationship])
         updates (vec updates)
@@ -490,36 +498,18 @@
         (S/transform [S/ALL :relationship]
                      #(spice-relationship->internal db opts %)
                      updates)
-        relation-ids
-        (->> internal-updates
-             (map (comp #(relationship-relation-id db %)
-                        :relationship))
-             distinct
-             vec)
         tx-data (->> internal-updates
                      (mapcat #(tx-update-relationship db %))
                      (remove nil?)
+                     distinct
                      vec)]
     (if (seq tx-data)
-      (let [mutation-id (mutation/new-id)
-            report
-            ((get-in api [:journal :transact!])
+      (let [report
+            ((:transact! api)
              conn
-             {:mutation-id mutation-id
-              :calculation-db db
-              :kind :relationships
-              :canonical-data
-              {:operation :write-relationships
-               :updates internal-updates}
-              :relation-ids relation-ids
-              :token-ttl-seconds (:token-ttl-seconds opts)
-              :retention-grace-seconds
-              (:retention-grace-seconds opts)
-              :tx-data tx-data})]
+             {:tx-data tx-data})]
         (write-response api (:db-after report) opts))
-      (do
-        ((get-in api [:journal :ensure-migrated!]) conn)
-        (write-response api ((:db api) conn) opts)))))
+      (write-response api ((:db api) conn) opts))))
 
 (defn delete-object!
   "Removes every relationship that references `object`, without retracting the
@@ -536,28 +526,15 @@
         tx-data ((get-in api [:impl :tx-delete-object]) db object-eid)]
     (if (seq tx-data)
       (let [report
-            ((get-in api [:journal :transact!])
+            ((:transact! api)
              conn
-             {:mutation-id (mutation/new-id)
-              :calculation-db db
-              :kind :object-deletion
-              :canonical-data
-              {:operation :delete-object
-               :object object
-               :tx-data tx-data}
-              :relation-ids ((get-in api [:impl :affected-relation-ids]) tx-data)
-              :token-ttl-seconds (:token-ttl-seconds opts)
-              :retention-grace-seconds
-              (:retention-grace-seconds opts)
-              :tx-data tx-data})]
+             {:tx-data tx-data})]
         (assoc (write-response api (:db-after report) opts)
                :retracted-datoms
                ((:relationship-retraction-count api)
                 (:db-after report) (:tx-data report))))
-      (do
-        ((get-in api [:journal :ensure-migrated!]) conn)
-        (assoc (write-response api ((:db api) conn) opts)
-               :retracted-datoms 0)))))
+      (assoc (write-response api ((:db api) conn) opts)
+             :retracted-datoms 0))))
 
 (defn- relationship-seq
   [relationships]
@@ -618,7 +595,7 @@
         {adapter :adapter selected-db :db cursor-opts :opts
          page-query :query}
         (page-context
-         api opts selection :lookup-resources query
+         opts selection :lookup-resources query
          (:resource/type query) (:permission query))
         internal-subject (spice-object->internal selected-db subject)]
     (if (nil? (:id internal-subject))
@@ -699,7 +676,7 @@
         {adapter :adapter selected-db :db cursor-opts :opts
          page-query :query}
         (page-context
-         api opts selection :lookup-subjects query
+         opts selection :lookup-subjects query
          (:type (:resource query)) (:permission query))
         internal-resource
         (spice-object->internal selected-db (:resource query))]
@@ -805,15 +782,13 @@
     (let [result
           ((get-in api [:schema :write-schema!])
            conn schema-string
-           (select-keys opts
-                        [:token-ttl-seconds
-                         :retention-grace-seconds]))]
-      (when-not (:eacl.mutation/no-op? result)
+           (select-keys opts [:token-ttl-seconds]))]
+      (when-not (:eacl.schema/no-op? result)
         (reset! (:derived-schema-caches opts) {})
         (when-let [store (:current-cache-store opts)]
           (cache/expire-current! store)))
       (merge result
-             (write-response api (:eacl.mutation/db-after result) opts))))
+             (write-response api (:eacl.schema/db-after result) opts))))
 
   (read-relationships [_ filters]
     (read-relationships
@@ -919,18 +894,28 @@
        (= backend-id (get-in client [:api :backend-id]))))
 
 (defn expire-cache!
-  "Expires every completed answer owned by one EACL client."
-  [client]
-  (when-let [store (get-in client [:opts :current-cache-store])]
-    (cache/expire-current! store))
-  (cursor/clear-codec-cache!
-   (get-in client [:opts :cursor-codec-cache]))
-  (relay/clear-page-navigation-cache!
-   (get-in client [:opts :page-navigation-cache]))
-  (some->
-   (get-in client [:opts :continuation-cache-store])
-   continuation/clear!)
-  nil)
+  "Rotates the complete local cache/token lifecycle for one EACL client.
+
+  The optional second argument is the coordinated lifecycle identity to use
+  across processes after a restore. Without it, a fresh process-local UUID is
+  installed. In-flight requests retain their captured old lifecycle."
+  ([client]
+   (expire-cache! client (str (random-uuid))))
+  ([client source-lifecycle]
+   (causal-token/validate-source-lifecycle! source-lifecycle)
+   (when-let [state (get-in client [:opts :source-lifecycle-state])]
+     (reset! state source-lifecycle))
+   (when-let [store (get-in client [:opts :current-cache-store])]
+     (cache/expire-current! store))
+   (some-> (get-in client [:opts :derived-schema-caches]) (reset! {}))
+   (cursor/clear-codec-cache!
+    (get-in client [:opts :cursor-codec-cache]))
+   (relay/clear-page-navigation-cache!
+    (get-in client [:opts :page-navigation-cache]))
+   (some->
+    (get-in client [:opts :continuation-cache-store])
+    continuation/clear!)
+   nil))
 
 (defn cache-stats
   "Returns private completed-cache counters for one EACL client."
@@ -962,7 +947,7 @@
     :security-keyring
     :security-kid
     :token-ttl-seconds
-    :retention-grace-seconds
+    :source-lifecycle
     :coherence-authority
     :proof-mode
     :adapter-fingerprint
@@ -991,7 +976,7 @@
            security-keyring
            security-kid
            token-ttl-seconds
-           retention-grace-seconds
+           source-lifecycle
            coherence-authority
            proof-mode
            adapter-fingerprint
@@ -1052,6 +1037,17 @@
                     {:type :eacl/invalid-config
                      :key :token-ttl-seconds
                      :value token-ttl-seconds})))
+  (when source-lifecycle
+    (try
+      (causal-token/validate-source-lifecycle! source-lifecycle)
+      (catch #?(:clj Exception :cljs :default) error
+        (throw
+         (ex-info
+          "EACL Config Error: :source-lifecycle must be bounded portable canonical data."
+          {:type :eacl/invalid-config
+           :key :source-lifecycle
+           :value source-lifecycle}
+          error)))))
   (when (and consistency-sync-timeout-ms
              (not (and (integer? consistency-sync-timeout-ms)
                        (pos? consistency-sync-timeout-ms))))
@@ -1071,10 +1067,15 @@
        :key :execution-timeout-ms
        :value execution-timeout-ms
        :maximum-timeout-ms execution/maximum-execution-timeout-ms})))
-  (let [_ ((get-in api [:journal :ensure-migrated!]) conn)
-        ;; Fail-safe default (D-5): managed reuse is an explicit writer
+  (let [;; Fail-safe default (D-5): managed reuse is an explicit writer
         ;; contract, never a silent default one raw transact can violate.
         coherence-authority (or coherence-authority :unknown)
+        source-lifecycle (or source-lifecycle (str (random-uuid)))
+        source-lifecycle-state (atom source-lifecycle)
+        native-source-id
+        (if-let [native-source-id-fn (:native-source-id api)]
+          (native-source-id-fn conn)
+          (str (random-uuid)))
         proof-mode (case (or proof-mode :auto)
                      :auto (if (= :managed coherence-authority)
                              :mutation
@@ -1104,7 +1105,7 @@
                         :keyring root-keyring
                         :token-ttl-seconds
                         (or token-ttl-seconds
-                            mutation/default-token-ttl-seconds)}
+                            causal-token/default-token-ttl-seconds)}
         object-id->entid (fn [db object-id]
                            ((:entid api) db (object-id->lookup-ref object-id)))
         custom-codec?
@@ -1157,6 +1158,9 @@
                           :object-id->entid object-id->entid
                           :cursor-ttl-seconds cursor-ttl-seconds
                           :format-options format-options
+                          :source-lifecycle source-lifecycle
+                          :source-lifecycle-state source-lifecycle-state
+                          :native-source-id native-source-id
                           :decision-kernel production-kernel/default-selection
                           :coherence-authority coherence-authority
                           :proof-mode proof-mode
@@ -1169,10 +1173,7 @@
                           (execution/normalize-cache-attempt cache-attempt)
                           :token-ttl-seconds
                           (or token-ttl-seconds
-                              mutation/default-token-ttl-seconds)
-                          :retention-grace-seconds
-                          (or retention-grace-seconds
-                              mutation/default-retention-grace-seconds)
+                              causal-token/default-token-ttl-seconds)
                           :current-cache-store
                           current-cache-store
                           :continuation-cache-store

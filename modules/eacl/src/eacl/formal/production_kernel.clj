@@ -776,12 +776,12 @@
     :else :history-divergence))
 
 (defn- consistency-plan-decision
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (let [outcome
         (ConsistencyDecision.__default/DecideSelectionPlan
          (snapshot-consistency-mode mode)
          capability-supported?
-         managed-authority?)]
+         true)]
     (if (.is_Planned outcome)
       (let [action (.dtor_action outcome)]
         (cond

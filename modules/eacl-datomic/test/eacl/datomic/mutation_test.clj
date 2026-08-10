@@ -4,8 +4,7 @@
             [eacl.causal-token :as causal-token]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
-            [eacl.datomic.datomic-helpers
-             :refer [with-mem-conn with-mem-conns]]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.mutation :as journal]
             [eacl.datomic.schema :as schema]
             [eacl.mutation :as mutation]
@@ -19,260 +18,91 @@
      permission view = owner + viewer
    }")
 
-(def security-key
-  "01234567890123456789012345678901")
+(def security-key "01234567890123456789012345678901")
 
-(defn- relation-eid
-  [db relation-name]
-  (d/entid
-   db
-   [:eacl/id
-    (model/->relation-id :folder relation-name :user)]))
+(defn- relation-eid [db relation-name]
+  (d/entid db [:eacl/id (model/->relation-id :folder relation-name :user)]))
 
-(deftest managed-writes-publish-committed-head-test
+(defn- stamp [db relation-name]
+  (first (d/datoms db :eavt (relation-eid db relation-name)
+                   :eacl/relation-version)))
+
+(deftest ordinary-writes-publish-native-generations-without-journal-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (datomic/make-client
-                  conn
-                  {:coherence-authority :managed
-                   :zed-token-key security-key})
+                  conn {:coherence-authority :managed
+                        :zed-token-key security-key})
           schema-result (eacl/write-schema! client test-schema)
-          first-payload
-          (causal-token/token-data
-           (get-in client [:opts :format-options])
-           (:zed/token schema-result))
-          first-head (:head-id (journal/graph-state (d/db conn)))
-          no-op-result (eacl/write-schema! client test-schema)
-          no-op-payload
-          (causal-token/token-data
-           (get-in client [:opts :format-options])
-           (:zed/token no-op-result))]
-      (testing "schema response derives its anchor and order from db-after"
-        (is (= first-head (:graph-anchor first-payload)))
-        (is (= (d/basis-t (d/db conn)) (:order-hint no-op-payload)))
-        (is (= first-head (:graph-anchor no-op-payload))))
-
+          payload (causal-token/token-data
+                   (get-in client [:opts :format-options])
+                   (:zed/token schema-result))]
+      (testing "schema write initializes physical relation generations"
+        (is (= (d/basis-t (d/db conn)) (:revision payload)))
+        (is (every? some? [(stamp (d/db conn) :owner)
+                           (stamp (d/db conn) :viewer)]))
+        (is (nil? (journal/graph-state (d/db conn))))
+        (is (nil? (d/entid (d/db conn) :eacl.mutation/id))))
       @(d/transact conn [{:eacl/id "user-1"}
                          {:eacl/id "folder-1"}
                          {:eacl/id "folder-2"}])
-      (let [write-result
-            (eacl/create-relationships!
-             client
-             [(eacl/->Relationship
-               (eacl/spice-object :user "user-1")
-               :owner
-               (eacl/spice-object :folder "folder-1"))
-              (eacl/->Relationship
-               (eacl/spice-object :user "user-1")
-               :viewer
-               (eacl/spice-object :folder "folder-2"))])
-            db (d/db conn)
-            owner-eid (relation-eid db :owner)
-            viewer-eid (relation-eid db :viewer)
-            owner-stamp
-            (get (d/entity db owner-eid)
-                 mutation/relation-mutation-id-attr)
-            viewer-stamp
-            (get (d/entity db viewer-eid)
-                 mutation/relation-mutation-id-attr)
-            owner-stamp-tx
-            (:tx
-             (first
-              (d/datoms
-               db :eavt owner-eid
-               mutation/relation-mutation-id-attr)))
-            viewer-stamp-tx
-            (:tx
-             (first
-              (d/datoms
-               db :eavt viewer-eid
-               mutation/relation-mutation-id-attr)))
-            payload
-            (causal-token/token-data
-             (get-in client [:opts :format-options])
-             (:zed/token write-result))]
-        (testing "one batched relationship write stamps every relation"
-          (is (= owner-stamp viewer-stamp))
-          (is (= owner-stamp (:graph-anchor payload)))
-          (is (= (d/basis-t db) (:order-hint payload)))
-          (is (= (d/basis-t db)
-                 (d/tx->t owner-stamp-tx)
-                 (d/tx->t viewer-stamp-tx))
-              "current datom transaction is the numeric cache stamp"))
-        (let [delete-result
-              (eacl/delete-object!
-               client
-               (eacl/spice-object :user "user-1"))
-              db-after (d/db conn)
-              owner-after-eid (relation-eid db-after :owner)
-              viewer-after-eid (relation-eid db-after :viewer)
-              owner-delete-stamp
-              (get (d/entity db-after owner-after-eid)
-                   mutation/relation-mutation-id-attr)
-              viewer-delete-stamp
-              (get (d/entity db-after viewer-after-eid)
-                   mutation/relation-mutation-id-attr)
-              owner-delete-tx
-              (:tx
-               (first
-                (d/datoms
-                 db-after :eavt owner-after-eid
-                 mutation/relation-mutation-id-attr)))
-              viewer-delete-tx
-              (:tx
-               (first
-                (d/datoms
-                 db-after :eavt viewer-after-eid
-                 mutation/relation-mutation-id-attr)))
-              delete-payload
-              (causal-token/token-data
-               (get-in client [:opts :format-options])
-               (:zed/token delete-result))]
-          (testing "cascade deletion publishes all dependency stamps"
-            (is (= owner-delete-stamp viewer-delete-stamp))
-            (is (not= owner-stamp owner-delete-stamp))
-            (is (= (d/basis-t db-after)
-                   (d/tx->t owner-delete-tx)
-                   (d/tx->t viewer-delete-tx))
-                "cascade deletion advances every affected numeric stamp")
-            (is (= owner-delete-stamp
-                   (:graph-anchor delete-payload)))))))))
+      (eacl/create-relationships!
+       client
+       [(eacl/->Relationship (eacl/spice-object :user "user-1") :owner
+                             (eacl/spice-object :folder "folder-1"))
+        (eacl/->Relationship (eacl/spice-object :user "user-1") :viewer
+                             (eacl/spice-object :folder "folder-2"))])
+      (let [db (d/db conn)
+            owner (stamp db :owner)
+            viewer (stamp db :viewer)]
+        (testing "one batch advances every distinct affected relation"
+          (is (= (d/tx->t (:tx owner))
+                 (d/tx->t (:tx viewer))
+                 (d/basis-t db)))
+          (is (= (:v owner) (:v viewer))))
+        (eacl/delete-object! client (eacl/spice-object :user "user-1"))
+        (let [after (d/db conn)]
+          (is (= (d/basis-t after)
+                 (d/tx->t (:tx (stamp after :owner)))
+                 (d/tx->t (:tx (stamp after :viewer)))))
+          (is (not= (:tx owner) (:tx (stamp after :owner))))
+          (is (nil? (journal/graph-state after))))))))
 
-(deftest migration-race-and-cross-connection-writers-test
-  (with-mem-conns [conn-1 conn-2 schema/v7-schema]
-    @(d/transact
-      conn-1
-      [{:eacl/id "legacy-relation"
-        :eacl.relation/relation-name :member}])
-    (let [attempts [(future (journal/ensure-migrated! conn-1))
-                    (future (journal/ensure-migrated! conn-2))]
-          states (mapv deref attempts)
-          state (journal/graph-state (d/db conn-1))]
-      (is (every? #(= (:family-id state) (:family-id %)) states))
-      (is (every? #(= (:head-id state) (:head-id %)) states))
-      (is (= (:head-id state)
-             (get (d/entity (d/db conn-1)
-                            [:eacl/id "legacy-relation"])
-                  mutation/relation-mutation-id-attr)))
-      (let [first-id (mutation/new-id)
-            second-id (mutation/new-id)]
-        (journal/transact!
-         conn-1
-         {:mutation-id first-id
-          :kind :custom
-          :canonical-data {:writer 1}
-          :tx-data []})
-        (journal/transact!
-         conn-2
-         {:mutation-id second-id
-          :kind :custom
-          :canonical-data {:writer 2}
-          :tx-data []})
-        (is (journal/contains-anchor? (d/db conn-1) first-id))
-        (is (journal/contains-anchor? (d/db conn-1) second-id))
-        (is (= second-id
-               (:head-id (journal/graph-state (d/db conn-1)))))))))
-
-(deftest idempotency-custom-dependency-and-expiry-test
+(deftest legacy-retry-journal-is-explicit-and-cache-independent-test
   (with-mem-conn [conn schema/v7-schema]
     (journal/ensure-migrated! conn)
-    @(d/transact conn [{:eacl/id "identity-1"}])
     (let [mutation-id (mutation/new-id)
-          options
-          {:mutation-id mutation-id
-           :kind :object-identity
-           :canonical-data {:operation :rename
-                            :id "identity-1"
-                            :value "public-2"}
-           :dependency-ids [[:eacl/id "identity-1"]]
-           :token-ttl-seconds 1
-           :retention-grace-seconds 0
-           :tx-data [[:db/add
-                      [:eacl/id "identity-1"]
-                      :eacl/schema-string
-                      "public-2"]]}
+          options {:mutation-id mutation-id
+                   :kind :custom
+                   :canonical-data {:operation :optional-audit}
+                   :tx-data []}
           report (journal/transact! conn options)
           recovered (journal/transact! conn options)]
       (is (not (:idempotent-recovery? report)))
       (is (true? (:idempotent-recovery? recovered)))
-      (is (= mutation-id
-             (get (d/entity (d/db conn) [:eacl/id "identity-1"])
-                  mutation/dependency-mutation-id-attr)))
-      (is (= :eacl.mutation/id-reused
-             (try
-               (journal/transact!
-                conn
-                (assoc options :canonical-data {:different true}))
-               nil
-               (catch clojure.lang.ExceptionInfo error
-                 (:type (ex-data error))))))
-      (let [old-head (:head-id (journal/graph-state (d/db conn)))
-            next-id (mutation/new-id)]
-        (journal/transact!
-         conn
-         {:mutation-id next-id
-          :kind :custom
-          :canonical-data {:operation :next}
-          :token-ttl-seconds 1
-          :retention-grace-seconds 0
-          :tx-data []})
-        (is (pos? (journal/prune-expired!
-                   conn
-                   (+ 2 (mutation/now-seconds)))))
-        (is (false? (journal/contains-anchor? (d/db conn) old-head)))
-        (is (true? (journal/contains-anchor? (d/db conn) next-id)))))))
+      (is (journal/contains-anchor? (d/db conn) mutation-id)))))
 
-(deftest incomplete-authority-cannot-issue-read-token-test
+(deftest unknown-cache-authority-still-issues-native-token-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (datomic/make-client
-                  conn
-                  {:zed-token-key security-key})]
-      (is (= :eacl/causal-authority-incomplete
-             (try
-               (datomic/current-zed-token client)
-               nil
-               (catch clojure.lang.ExceptionInfo error
-                 (:type (ex-data error)))))))))
+    (let [client (datomic/make-client conn {:zed-token-key security-key})
+          token (datomic/current-zed-token client)
+          payload (causal-token/token-data
+                   (get-in client [:opts :format-options]) token)]
+      (is (= :datomic (:backend payload)))
+      (is (= (d/basis-t (d/db conn)) (:revision payload))))))
 
-(deftest concurrent-mutation-id-claim-test
-  (with-mem-conns [conn-1 conn-2 schema/v7-schema]
-    (journal/ensure-migrated! conn-1)
-    (let [mutation-id (mutation/new-id)
-          options {:mutation-id mutation-id
-                   :kind :custom
-                   :canonical-data {:operation :same}
-                   :tx-data []}
-          results
-          (mapv deref
-                [(future (journal/transact! conn-1 options))
-                 (future (journal/transact! conn-2 options))])]
-      (is (= 1 (count (filter :idempotent-recovery? results))))
-      (is (= mutation-id
-             (:head-id (journal/graph-state (d/db conn-1))))))
-    (let [mutation-id (mutation/new-id)
-          result
-          (mapv
-           deref
-           [(future
-              (try
-                (journal/transact!
-                 conn-1
-                 {:mutation-id mutation-id
-                  :kind :custom
-                  :canonical-data {:value 1}
-                  :tx-data []})
-                :committed
-                (catch clojure.lang.ExceptionInfo error
-                  (:type (ex-data error)))))
-            (future
-              (try
-                (journal/transact!
-                 conn-2
-                 {:mutation-id mutation-id
-                  :kind :custom
-                  :canonical-data {:value 2}
-                  :tx-data []})
-                :committed
-                (catch clojure.lang.ExceptionInfo error
-                  (:type (ex-data error)))))])]
-      (is (= #{:committed :eacl.mutation/id-reused}
-             (set result))))))
+(deftest preparation-initializes-only-missing-generations-idempotently-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (datomic/make-client conn {:zed-token-key security-key})
+          _ (eacl/write-schema! client test-schema)
+          db (d/db conn)
+          owner-stamp (stamp db :owner)]
+      @(d/transact conn [[:db/retract (relation-eid db :owner)
+                          :eacl/relation-version (:v owner-stamp)]])
+      (let [prepared (datomic/prepare-cache-coherence! conn)
+            repeated (datomic/prepare-cache-coherence! conn)]
+        (is (true? (:prepared? prepared)))
+        (is (true? (:changed? prepared)))
+        (is (= 1 (:relation-generations-initialized prepared)))
+        (is (empty? (:missing-after prepared)))
+        (is (false? (:changed? repeated)))
+        (is (zero? (:relation-generations-initialized repeated)))))))

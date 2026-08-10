@@ -297,6 +297,38 @@
        (is (= 1 (get-in (cache/current-cache-stats store)
                         [:subproblems :projection-hits]))))))
 
+(deftest request-boundary-capture-prevents-pre-lookup-expiry-reattachment-test
+  (let [store (cache/current-cache)
+        captured (cache/capture-current-lifecycle store)
+        context {:snapshot 7
+                 :snapshot-order 7
+                 :same-snapshot? =
+                 :cache-basis 7}
+        resolve-projection
+        (fn [request-context top-level-key value]
+          (:value
+           (cache/resolve-current!
+            store request-context top-level-key :decision integer?
+            (fn []
+              (:value
+               (subproblem/resolve-bound!
+                :projection :shared-projection {}
+                (constantly value)))))))]
+    ;; Model expiry after a request selected its source snapshot but before it
+    ;; reached resolve-current!.  Reusing the numeric revision after a restore
+    ;; must not let that old request populate the replacement lifecycle.
+    (cache/expire-current! store)
+    (is (= 41
+           (resolve-projection
+            (assoc context :cache-lifecycle captured)
+            :old-request
+            41)))
+    (is (= 42
+           (resolve-projection context :new-request-a 42)))
+    (is (= 42
+           (resolve-projection context :new-request-b 99))
+        "new requests share only the replacement lifecycle's projection")))
+
 #?(:clj
    (deftest generation-expiry-detaches-old-publication-without-blocking-test
      (let [store (cache/current-cache)

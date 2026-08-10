@@ -27,17 +27,18 @@ widens traversal for future reuse.
 The managed key commits to:
 
 - cache/key version;
-- backend source/family and branch scope;
-- schema mutation datom identity (transaction plus mutation value);
+- backend source/branch and lifecycle scope;
+- physical schema-generation assertion identity;
 - relation-definition identity;
-- relation mutation datom identity (transaction plus mutation value);
+- physical relation-generation assertion identity and stored value;
 - operation and direction;
 - subject/resource types and internal endpoint IDs;
 - bound, inclusivity, and chunk width.
 
-The relation mutation identity is read from the same immutable snapshot as the
-authorization query. Including both transaction and mutation value prevents
-two forked histories at the same numeric transaction from colliding.
+The relation generation is read from the same immutable snapshot as the
+authorization query. Including both assertion transaction and stored value,
+plus an operator-rotated source lifecycle, prevents replaced histories at the
+same numeric transaction from colliding.
 EACL-managed writes change the identity atomically with every create, touch,
 delete, and object-deletion relationship mutation. Therefore an unchanged
 stamp frames that relation's projection; a changed relation selects a different
@@ -79,8 +80,8 @@ of the permission's dependency closure, and plan compilation fails if a
 compiled rule could reference a relation outside that closure. This is the
 same relation-stamp framing completed answers and projections use — one
 generation-layering implementation, differentially tested against the
-cache-free oracle under interleaved writes. Its dedicated machine-checked
-framing proof remains open and is tracked in the assurance matrix.
+cache-free oracle under interleaved writes. Its forward-history framing proof
+is machine checked in `formal/dafny/NativeGenerationCoherence.dfy`.
 
 ## Bounds and hit costs
 

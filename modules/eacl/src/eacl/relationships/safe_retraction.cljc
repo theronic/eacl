@@ -1,22 +1,20 @@
 (ns eacl.relationships.safe-retraction
-  "Portable planning and mutation-envelope contracts for safe entity retraction.
+  "Portable contracts and pure planning helpers for safe entity retraction.
 
-  Backend namespaces own database access and transaction submission. This
-  namespace deliberately depends only on the portable EACL artifact."
-  (:require [eacl.mutation :as mutation]
-            [eacl.relationships.endpoint-pair :as endpoint-pair]
-            [eacl.relationships.storage :as storage]
-            [eacl.secure-format :as secure]))
+  Backend namespaces own snapshot reads and native transaction-function
+  installation. The public transaction function deliberately takes only the
+  native retractEntity target; it carries no EACL mutation envelope or journal
+  state."
+  (:require [eacl.relationships.endpoint-pair :as endpoint-pair]
+            [eacl.relationships.storage :as storage]))
 
 (def function-ident :eacl.fn/retractEntity)
-(def function-version 1)
+(def function-version 2)
 (def function-doc-prefix "EACL safe entity retraction function")
 (def supported-modes #{:named :direct :unsupported})
 
-(defn canonical-request
-  [target]
-  {:operation :safe-retract-entity
-   :target target})
+(def relation-version-attribute :eacl/relation-version)
+(def current-transaction-value :db/current-tx)
 
 (defn- fail!
   [reason data]
@@ -38,69 +36,67 @@
     (fail! :missing-reason {:backend backend :mode mode}))
   descriptor)
 
-(defn mutation-envelope
-  "Builds authenticated, retry-stable metadata for one safe-retraction call.
+(defn valid-target?
+  "True for the portable subset of native retractEntity targets.
 
-  Randomness and wall-clock access happen here, outside transaction-function
-  evaluation. Pass :mutation-id and :issued-at in tests or deterministic retry
-  orchestration."
-  ([target]
-   (mutation-envelope target {}))
-  ([target {:keys [mutation-id issued-at token-ttl-seconds
-                   retention-grace-seconds]
-            :or {token-ttl-seconds mutation/default-token-ttl-seconds
-                 retention-grace-seconds
-                 mutation/default-retention-grace-seconds}}]
-   (let [mutation-id (or mutation-id (mutation/new-id))
-         issued-at (or issued-at (mutation/now-seconds))
-         canonical-data (canonical-request target)]
-     {:version function-version
-      :mutation-id mutation-id
-      :fingerprint
-      (mutation/mutation-fingerprint mutation-id canonical-data)
-      :issued-at issued-at
-      :previous-expires-at
-      (mutation/retention-expiry
-       {:issued-at issued-at
-        :token-ttl-seconds token-ttl-seconds
-        :retention-grace-seconds retention-grace-seconds})
-      :canonical-data canonical-data})))
+  Numeric eids remain valid even after their entity datoms disappear. Lookup
+  refs must be a two-element attribute/value vector; a missing lookup ref is a
+  backend no-op because its lost eid cannot be reconstructed."
+  [target]
+  (or (nat-int? target)
+      (and (vector? target)
+           (= 2 (count target))
+           (keyword? (first target))
+           (some? (second target)))))
 
-(def envelope-keys
-  #{:version :mutation-id :fingerprint :issued-at
-    :previous-expires-at :canonical-data})
+(defn validate-target!
+  [target]
+  (when-not (valid-target? target)
+    (fail! :invalid-target {:target target}))
+  target)
 
-(defn validate-envelope
-  "Returns `envelope` or throws structured data before any tx-data is emitted."
-  [target envelope]
-  (when-not (and (map? envelope)
-                 (= envelope-keys (set (keys envelope))))
-    (fail! :invalid-envelope-shape
-           {:actual-keys (when (map? envelope) (set (keys envelope)))}))
-  (let [{:keys [version mutation-id fingerprint issued-at
-                previous-expires-at canonical-data]} envelope
-        expected-data (canonical-request target)]
-    (when-not (= function-version version)
-      (fail! :unsupported-version {:version version}))
-    (when-not (= expected-data canonical-data)
-      (fail! :target-mismatch {:expected expected-data
-                               :actual canonical-data}))
-    (when-not (and (string? mutation-id) (= 43 (count mutation-id)))
-      (fail! :invalid-mutation-id {:mutation-id mutation-id}))
-    (when-not (and (integer? issued-at)
-                   (integer? previous-expires-at)
-                   (< issued-at previous-expires-at))
-      (fail! :invalid-retention
-             {:issued-at issued-at
-              :previous-expires-at previous-expires-at}))
-    (let [expected
-          (mutation/mutation-fingerprint mutation-id expected-data)]
-      (when-not
-       (and (string? fingerprint)
-            (secure/secure-equal? (secure/utf8-bytes expected)
-                                  (secure/utf8-bytes fingerprint)))
-        (fail! :invalid-fingerprint {})))
-    envelope))
+(defn protected-control-entity?
+  "True when a pulled entity belongs to EACL's schema/control plane.
+
+  Safe retraction is an object operation. Definitions and installed EACL
+  functions must be changed through their dedicated writers so the schema
+  generation remains authoritative."
+  [{:keys [db-ident eacl-id relation-name permission-name schema-string]}]
+  (or (= "schema-string" eacl-id)
+      (some? relation-name)
+      (some? permission-name)
+      (some? schema-string)
+      (and (keyword? db-ident)
+           (contains? #{"eacl" "eacl.fn"} (namespace db-ident)))))
+
+(defn component-closure
+  "Returns a breadth-first, cycle-safe native component deletion closure.
+
+  `children` is snapshot-bound and returns the component eids stored on one
+  entity. Work is O(closure size plus component edges)."
+  [root-eid children]
+  (when-not (nat-int? root-eid)
+    (fail! :invalid-target-eid {:target-eid root-eid}))
+  (when-not (fn? children)
+    (fail! :invalid-component-reader {}))
+  (loop [queue (conj #?(:clj clojure.lang.PersistentQueue/EMPTY
+                        :cljs (.-EMPTY cljs.core/PersistentQueue))
+                      root-eid)
+         seen #{}
+         result []]
+    (if (empty? queue)
+      result
+      (let [eid (peek queue)
+            queue (pop queue)]
+        (if (contains? seen eid)
+          (recur queue seen result)
+          (let [child-eids (vec (children eid))]
+            (when-not (every? nat-int? child-eids)
+              (fail! :invalid-component-eid
+                     {:entity-eid eid :component-eids child-eids}))
+            (recur (into queue child-eids)
+                   (conj seen eid)
+                   (conj result eid))))))))
 
 (defn- decoded-half!
   [direction target-eid value]
@@ -113,11 +109,11 @@
               :value value})))
 
 (defn plan-local-halves
-  "Plans peer retractions from the endpoint halves stored on `target-eid`.
+  "Plans peer retractions from endpoint halves stored on `target-eid`.
 
-  `forward-values` and `reverse-values` are the values of the two canonical
-  endpoint attributes. Local halves are intentionally omitted: the backend's
-  ordinary retractEntity operation owns them."
+  Local halves are intentionally omitted: the backend's native retractEntity
+  operation owns them. Call once per entity in the native component closure
+  and combine the distinct peer operations and relation ids."
   [target-eid forward-values reverse-values]
   (when-not (nat-int? target-eid)
     (fail! :invalid-target-eid {:target-eid target-eid}))
@@ -155,35 +151,25 @@
      :relation-ids (into [] (comp (map :relation-eid) (distinct)) plans)
      :local-half-count (count plans)}))
 
-(defn mutation-tx-data
-  "Portable v3 mutation proof data for one resolved safe retraction.
+(defn combine-plans
+  "Combines closure-local or repair plans without duplicate tx operations."
+  [plans]
+  {:peer-retractions
+   (into [] (comp (mapcat :peer-retractions) (distinct)) plans)
+   :relation-ids
+   (into [] (comp (mapcat :relation-ids) (distinct)) plans)
+   :local-half-count (reduce + 0 (map :local-half-count plans))})
 
-  The caller supplies the backend's current-transaction value. The graph state
-  must already exist; backend installers/preparers ensure that prerequisite."
-  [graph-state relation-ids order-value envelope]
-  (let [{:keys [head-id]} graph-state
-        {:keys [mutation-id fingerprint issued-at previous-expires-at]}
-        envelope]
-    (when-not (and (string? head-id) (not-empty head-id))
-      (fail! :missing-mutation-graph {:graph-state graph-state}))
-    (into
-     [{:eacl/id (mutation/mutation-entity-id mutation-id)
-       mutation/mutation-id-attr mutation-id
-       mutation/mutation-fingerprint-attr fingerprint
-       mutation/mutation-kind-attr :object-deletion
-       mutation/mutation-issued-at-attr issued-at}
-      [:db.fn/cas
-       [:eacl/id mutation/graph-entity-id]
-       mutation/graph-head-id-attr
-       head-id
-       mutation-id]
-      [:db/add
-       [:eacl/id mutation/graph-entity-id]
-       mutation/graph-head-order-attr
-       order-value]
-      {:db/id [mutation/mutation-id-attr head-id]
-       mutation/mutation-expires-at-attr previous-expires-at}]
-     (map (fn [relation-id]
-            {:db/id relation-id
-             mutation/relation-mutation-id-attr mutation-id}))
-     relation-ids)))
+(defn relation-stamps
+  "One idempotent current-transaction stamp per distinct affected relation."
+  [relation-ids]
+  (mapv (fn [relation-id]
+          [:db/add relation-id relation-version-attribute
+           current-transaction-value])
+        (distinct relation-ids)))
+
+(defn target-invocation
+  "Builds the named target-only invocation accepted by all named backends."
+  [target]
+  (validate-target! target)
+  [[function-ident target]])

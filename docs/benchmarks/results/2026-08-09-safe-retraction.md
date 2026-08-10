@@ -7,20 +7,21 @@ counts; the timings below are evidence, not absolute latency thresholds.
 
 ## Environment
 
-- EACL checkout: `02bf461a` plus the OpenSpec implementation worktree
+- EACL checkout: `6d68215` plus the `simplify-cache-coherence` implementation
 - Java: OpenJDK 26.0.2, 64-Bit Server VM
 - Host: Apple Mac Studio, M4 Max, 14 cores, 36 GB RAM
 - OS: macOS 26.4.1, arm64
 - Backend: DataScript 1.7.8, in-process JVM
-- Command: `clojure -M:dev -m eacl.bench.safe-retraction`
+- Command through the repository nREPL: `(eacl.bench.safe-retraction/run-benchmark!)`
 
 The runner is `eacl.bench.safe-retraction`. It records the first installed-IFn
 expansion separately, prewarms both paths 20 times, then measures warmed
-expansion and commits. The legacy comparison uses the current
-`tx-delete-object` generator plus native entity retraction in one DataScript
-commit. It is useful as a local work comparison but is not equivalent: it does
-not include EACL v3 mutation-proof bookkeeping and it calculates cleanup before
-submission rather than from transaction-start state.
+expansion and commits. The comparison uses the current `tx-delete-object`
+generator plus native entity retraction in one DataScript commit. Both paths
+publish native relation generations and neither uses the optional legacy
+journal. The comparison is still not semantically identical: the safe function
+discovers cleanup from the transaction-start database, while `tx-delete-object`
+calculates it before submission.
 
 ## Results
 
@@ -28,22 +29,24 @@ All times are microseconds. Values are median / p95.
 
 | Target degree | Atomic ops | Legacy generated ops | First atomic expansion | Warm atomic expansion | Warm legacy generation | Atomic commit | Legacy cleanup commit |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 5 | 0 | 1993.750 | 120.208 / 294.083 | 6.209 / 9.334 | 513.250 / 760.583 | 36.250 / 67.542 |
-| 1 | 7 | 2 | 190.667 | 61.334 / 110.916 | 10.791 / 25.458 | 260.167 / 448.500 | 47.875 / 92.292 |
-| 10 | 16 | 20 | 227.667 | 45.917 / 62.209 | 17.417 / 37.958 | 256.167 / 370.167 | 110.792 / 145.417 |
-| 100 | 106 | 200 | 162.000 | 75.000 / 95.000 | 123.833 / 147.709 | 1002.208 / 1047.000 | 934.500 / 1157.084 |
-| 1000 | 1006 | 2000 | 761.500 | 334.709 / 434.416 | 1084.417 / 1369.000 | 8670.000 / 10952.416 | 9511.333 / 9767.333 |
+| 0 | 1 | 0 | 200.500 | 9.417 / 14.333 | 3.416 / 7.584 | 23.250 / 36.334 | 15.542 / 34.792 |
+| 1 | 3 | 4 | 71.750 | 12.125 / 46.834 | 9.084 / 15.750 | 40.542 / 190.292 | 32.666 / 46.083 |
+| 10 | 12 | 22 | 108.333 | 13.209 / 17.625 | 25.750 / 94.709 | 78.375 / 155.500 | 103.458 / 119.291 |
+| 100 | 102 | 202 | 86.417 | 65.375 / 80.792 | 176.750 / 237.625 | 723.625 / 781.375 | 1246.167 / 1450.500 |
+| 1000 | 1002 | 2002 | 750.708 | 604.000 / 718.292 | 1846.000 / 3689.208 | 13187.666 / 20000.792 | 16624.667 / 16721.709 |
 
-The fixed atomic overhead is the authenticated mutation anchor, graph CAS and
-retention record. With one affected relation, emitted work is `degree + 6` for
-non-zero degree; the legacy pair cleanup emits `2 × degree`. Warm atomic
-expansion crossed below legacy generation between degrees 10 and 100 on this
-host. Commit cost was roughly even around degree 100 and lower for the atomic
-path at degree 1000, despite the atomic path carrying mutation proofs.
+The target-only function has no journal/anchor/CAS envelope. For a non-empty
+single-relation target it emits `degree` peer-half retractions, one native root
+retraction, and one relation-generation stamp: `degree + 2`. The precomputed
+comparison emits both tuple-half retractions plus the root retraction:
+`2 × degree + 1`, plus one relation-generation stamp and one
+schema-write-fence predicate when the degree is non-zero. On this host the
+safe-function expansion and commit were already lower at degree 10 and
+remained lower through degree 1000.
 
 ## Operational guidance
 
-The degree-1000 atomic sample committed in 8.67 ms median on this embedded
+The degree-1000 atomic sample committed in 13.19 ms median on this embedded
 development host. This does not establish a portable cutoff for Datomic or
 Datahike: transaction limits, production contention, storage and relation
 distribution determine the real crossover. Prewarm installed functions during

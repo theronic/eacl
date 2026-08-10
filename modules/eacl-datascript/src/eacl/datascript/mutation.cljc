@@ -3,6 +3,30 @@
   (:require [datascript.core :as ds]
             [eacl.mutation :as mutation]))
 
+(def mutation-schema
+  "Legacy v3 retry-journal schema. Pass it explicitly to create-conn when the
+  compatibility journal is required; ordinary EACL clients do not use it."
+  {:eacl.mutation/id {:db/unique :db.unique/identity :db/index true}
+   :eacl.mutation/fingerprint {:db/index true}
+   :eacl.mutation/kind {:db/index true}
+   :eacl.mutation/issued-at {:db/index true}
+   :eacl.mutation/expires-at {:db/index true}
+   :eacl.graph/family-id {:db/index true}
+   :eacl.graph/head-id {:db/index true}
+   :eacl.graph/head-order {:db/valueType :db.type/ref}
+   :eacl.schema/mutation-id {:db/index true}
+   :eacl.relation/mutation-id {:db/index true}
+   :eacl.dependency/mutation-id {:db/index true}})
+
+(defn- require-schema!
+  [db]
+  (when-not (every? #(contains? (:schema db) %) (keys mutation-schema))
+    (throw
+     (ex-info
+      "The optional DataScript retry journal schema is not installed."
+      {:type :eacl.mutation/schema-not-installed
+       :install-with 'eacl.datascript.mutation/mutation-schema}))))
+
 (defn graph-state
   [db]
   (when-let [entity (ds/entity db [:eacl/id mutation/graph-entity-id])]
@@ -48,6 +72,7 @@
 
 (defn ensure-migrated!
   [conn]
+  (require-schema! (ds/db conn))
   (or (graph-state (ds/db conn))
       (let [_ (ds/transact! conn [{:eacl/id mutation/graph-entity-id}])
             db (ds/db conn)

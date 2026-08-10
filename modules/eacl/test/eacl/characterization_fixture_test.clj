@@ -534,6 +534,20 @@
         (doseq [[_ {:keys [p50-ratio]}]
                 (:observed cross-backend-managed-proof)]
           (is (<= p50-ratio maximum)))
+        (doseq [[backend {:keys [unrelated-logical-writes
+                                 unrelated-transaction-attempts
+                                 same-relation-logical-writes
+                                 same-relation-transaction-attempts
+                                 global-graph-or-journal-ops]}]
+                (:concurrency-observed cross-backend-managed-proof)]
+          (is (= unrelated-logical-writes
+                 unrelated-transaction-attempts)
+              (str backend " unrelated writers retried"))
+          (is (<= same-relation-logical-writes
+                  same-relation-transaction-attempts)
+              (str backend " reported impossible contention attempts"))
+          (is (zero? global-graph-or-journal-ops)
+              (str backend " emitted a retired graph/journal operation")))
         (is (= :passed
                (get-in release-performance-evaluation
                        [:dimensions :proof-operations :status])))))

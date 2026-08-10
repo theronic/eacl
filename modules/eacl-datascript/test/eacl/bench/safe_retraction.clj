@@ -18,10 +18,6 @@
      relation owner: user
    }")
 
-(def fixed-options
-  {:mutation-id "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-   :issued-at 1700000000})
-
 (defn- round-3
   [value]
   (/ (Math/round (* 1000.0 value)) 1000.0))
@@ -79,9 +75,8 @@
   [degree]
   (let [{:keys [db target]} (fixture degree)
         target-eid (ds/entid db target)
-        envelope (safe/mutation-envelope target fixed-options)
         installed-function (:db/fn (ds/entity db safe/function-ident))
-        atomic-expansion #(installed-function db target envelope)
+        atomic-expansion #(installed-function db target)
         legacy-expansion #(impl/tx-delete-object db target-eid)
         first-use-us (elapsed-us atomic-expansion)
         _ (dotimes [_ 20]
@@ -113,7 +108,7 @@
            (ds/transact!
             conn
             (safe-datascript/retract-entity-tx-data
-             target fixed-options)))))
+             target)))))
       :legacy-cleanup-plus-native-retract
       (measure
        commit-iterations
@@ -138,7 +133,7 @@
     :qualification
     {:absolute-latency-gate? false
      :commit-comparison
-     "The legacy comparison combines current tx-delete-object generation with native entity retraction in one DataScript commit; it does not include EACL v3 mutation-proof bookkeeping."
+     "The comparison combines EACL peer cleanup with native entity retraction in one DataScript commit. Both paths use native relation generations and no mutation journal."
      :high-degree-guidance
      "Use atomic safe retraction only while one serialized transaction is operationally acceptable; use batched delete-object! before native entity deletion above that deployment-specific crossover."}
     :results (mapv benchmark-degree degrees)}))

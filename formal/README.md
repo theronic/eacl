@@ -37,6 +37,13 @@ manifest gate and therefore intentionally exits nonzero while complete-engine
 verified status is withheld. The larger scheduled temporal bound is available
 as `bin/formal apalache-scheduled`.
 
+`dafny/NativeGenerationCoherence.dfy` supersedes mutation-graph ancestry as
+the managed-cache coherence argument. It proves the forward-history frame from
+physical schema/relation generations, including empty dependency closures,
+component-safe deletion, stale endpoint guards, and source-lifecycle
+isolation. Older graph-oriented temporal artifacts remain bounded legacy
+regression models; they are not authority for the v4 cache or token protocol.
+
 The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in
 [`../docs/formal-verification.md`](../docs/formal-verification.md). Behavior

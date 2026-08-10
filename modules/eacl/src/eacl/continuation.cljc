@@ -233,6 +233,11 @@
            {:version context-version
             :backend (backend/backend-id adapter)
             :source-scope (backend/invoke adapter :source-scope)
+            ;; The store is cleared during explicit lifecycle rotation, but
+            ;; an in-flight request may finish after that clear.  Including
+            ;; the lifecycle in the address makes any such late publication
+            ;; unreachable to requests in the replacement lifecycle.
+            :source-lifecycle (backend/invoke adapter :source-lifecycle)
             :adapter-fingerprint (backend/fingerprint adapter)
             :identity-contract (backend/identity-contract adapter)
             :schema-proof (backend/invoke adapter :schema-proof)

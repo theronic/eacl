@@ -22,7 +22,8 @@
          (datascript/make-client
           conn
           (merge
-           {:cache {:remember-answers false}}
+           {:cache {:remember-answers false}
+            :source-lifecycle "datascript-enumeration-routing-test"}
            options))]
      (eacl/write-schema! client schema)
      (ds/transact! conn (vec (fixture/object-transactions shape)))
@@ -205,7 +206,8 @@
         other-client
         (datascript/make-client
          conn
-         {:cache {:remember-answers false}})
+         {:cache {:remember-answers false}
+          :source-lifecycle "datascript-enumeration-routing-test"})
         replay-stats (atom {})
         replay
         (timed-page other-client

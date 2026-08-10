@@ -2,7 +2,7 @@
   "Bounded client-private storage for immutable authorization subproblems.
 
   The store contains performance state only. Every admitted value belongs to
-  one exact selected graph generation; replacing that generation makes the
+  one exact selected immutable generation; replacing that generation makes the
   complete store unreachable."
   (:refer-clojure :exclude [resolve])
   (:require [eacl.execution :as execution]
@@ -31,7 +31,7 @@
   nil)
 
 (def ^:dynamic *managed-scope*
-  "Portable source/family/branch identity for managed projection keys."
+  "Portable backend/source/branch/lifecycle identity for managed projection keys."
   nil)
 
 (def ^:dynamic *publication-attempt-limit*
@@ -545,7 +545,6 @@
   (or
    (proof-component? value)
    (and (vector? value)
-        (seq value)
         (<= (count value) 4096)
         (every?
          #(or

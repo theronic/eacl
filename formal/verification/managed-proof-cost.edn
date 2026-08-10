@@ -1,89 +1,89 @@
 {:schema-version 1
- :date "2026-08-05"
+ :date "2026-08-10"
  :status :passed
- :benchmark
- eacl.bench.managed-proof-cost-test/cross-backend-write-amplification-and-proof-cost-test
+ :benchmarks
+ [eacl.bench.managed-proof-cost-test/cross-backend-write-amplification-and-proof-cost-test
+  eacl.bench.managed-proof-cost-test/unrelated-relation-writers-have-no-global-retry-test]
  :methodology
  {:logical-write-unit :one-public-relationship-create-or-delete
   :write-amplification-unit
   :committed-transaction-report-datom-events
   :proof-work-unit :one-immutable-adapter-relation-proof-call
   :elapsed-unit :nanoseconds-per-proof-call
-  :unrelated-growth
-  {:relation :auditor
-   :edges 1024}
+  :unrelated-growth {:relation :auditor :edges 1024}
   :target-proof-relation :reader
   :proof-calls-per-sample 500
   :warmup-samples 8
   :measurement-samples 31
+  :concurrency
+  {:writers 2
+   :relations [:reader :auditor]
+   :start :shared-promise-barrier
+   :required-unrelated-transaction-attempts 2
+   :same-relation-contention :recorded-not-portable-gated}
   :cardinality-gate
   {:statistic :p50
    :maximum-large-to-small-ratio 5.0}
   :dimension-policy
   [:logical-writes-not-substituted-for-datom-events
    :datom-events-not-substituted-for-bytes-or-storage-cost
-   :graph-cardinality-not-substituted-for-proof-calls
-   :elapsed-time-not-substituted-for-abstract-operation-count]}
+   :unrelated-database-cardinality-not-substituted-for-proof-calls
+   :elapsed-time-not-substituted-for-abstract-operation-count
+   :transaction-attempts-measured-separately-from-latency]}
  :results
  [{:backend :datomic
    :logical-relationship-writes 2
-   :create-committed-datom-events 16
-   :delete-committed-datom-events 17
-   :small-proof-p50-ns-per-call 1440.084
-   :large-proof-p50-ns-per-call 613.668
-   :large-to-small-p50-ratio 0.4261334755472597
-   :small-proof-samples-ns-per-call
-   [1473.5 1529.5 1550.916 1636.082 1467.834 1440.084 1459.332
-    1425.334 1470.082 1488.0 1550.418 1441.25 1424.25 1754.918
-    1520.5 1458.418 1404.5 1428.084 1444.584 1410.5 1391.584
-    1179.168 1188.25 1292.75 1198.082 1599.75 1222.084 1321.668
-    1166.834 1125.5 1187.75]
-   :large-proof-samples-ns-per-call
-   [615.0 612.25 613.584 611.334 612.834 613.084 615.916 613.668
-    615.332 613.584 616.5 856.25 618.834 615.168 622.166 624.668
-    622.666 612.084 627.168 612.166 612.416 613.168 626.75 609.0
-    612.082 610.418 618.5 620.0 612.25 614.084 612.916]}
+   :create-committed-datom-events 6
+   :delete-committed-datom-events 4
+   :small-proof-p50-ns-per-call 1018.584
+   :large-proof-p50-ns-per-call 1053.25
+   :large-to-small-p50-ratio 1.0340335210449016}
   {:backend :datahike
    :logical-relationship-writes 2
-   :create-committed-datom-events 13
-   :delete-committed-datom-events 13
-   :small-proof-p50-ns-per-call 1196.418
-   :large-proof-p50-ns-per-call 895.25
-   :large-to-small-p50-ratio 0.7482752683426696
-   :small-proof-samples-ns-per-call
-   [1200.084 1196.166 1232.582 1198.25 1196.418 1189.582 1223.334
-    1204.416 1180.25 1192.582 1209.25 1286.582 1275.0 1219.332
-    1234.25 1208.584 1105.084 1113.0 1106.584 1105.0 1110.584
-    1094.666 1100.082 1115.25 1107.418 1210.584 1376.832 1130.916
-    1216.75 1252.418 1127.75]
-   :large-proof-samples-ns-per-call
-   [901.5 879.082 1221.25 944.332 925.5 899.666 913.0 885.666
-    880.082 895.25 894.834 890.0 901.666 887.332 883.918 891.084
-    881.166 886.084 892.918 890.5 1298.75 924.0 965.832 929.25
-    900.584 907.0 935.416 898.084 887.082 889.668 892.25]}
+   :create-committed-datom-events 6
+   :delete-committed-datom-events 4
+   :small-proof-p50-ns-per-call 1333.25
+   :large-proof-p50-ns-per-call 1129.666
+   :large-to-small-p50-ratio 0.8473024564035252}
   {:backend :datascript
    :logical-relationship-writes 2
-   :create-committed-datom-events 14
-   :delete-committed-datom-events 14
-   :small-proof-p50-ns-per-call 910.0
-   :large-proof-p50-ns-per-call 934.084
-   :large-to-small-p50-ratio 1.0264659340659341
-   :small-proof-samples-ns-per-call
-   [1393.916 1177.168 943.75 4177.25 916.584 914.916 909.584 913.5
-    914.584 918.418 916.0 934.084 909.084 1134.584 1163.166
-    936.584 901.668 888.75 885.25 893.168 897.25 895.666 938.084
-    902.5 893.916 886.416 884.082 889.418 910.0 907.584 887.0]
-   :large-proof-samples-ns-per-call
-   [908.916 910.334 910.166 951.418 973.5 949.334 959.334 905.084
-    903.918 897.334 1004.25 998.5 1130.25 985.834 979.5 939.332
-    922.832 930.166 923.25 924.916 923.668 922.666 925.668
-    924.416 934.084 955.25 943.416 942.666 936.418 1003.668
-    921.416]}]
+   :create-committed-datom-events 6
+   :delete-committed-datom-events 4
+   :small-proof-p50-ns-per-call 407.668
+   :large-proof-p50-ns-per-call 392.834
+   :large-to-small-p50-ratio 0.9636125474650942}]
+ :unrelated-concurrency-results
+ [{:backend :datomic
+   :unrelated-logical-writes 2
+   :unrelated-transaction-attempts 2
+   :same-relation-logical-writes 2
+   :same-relation-transaction-attempts 3
+   :global-graph-or-journal-ops 0
+   :unrelated-elapsed-ns 2221833
+   :same-relation-elapsed-ns 2007833}
+  {:backend :datahike
+   :unrelated-logical-writes 2
+   :unrelated-transaction-attempts 2
+   :same-relation-logical-writes 2
+   :same-relation-transaction-attempts 2
+   :global-graph-or-journal-ops 0
+   :unrelated-elapsed-ns 5931292
+   :same-relation-elapsed-ns 1394250}
+  {:backend :datascript
+   :unrelated-logical-writes 2
+   :unrelated-transaction-attempts 2
+   :same-relation-logical-writes 2
+   :same-relation-transaction-attempts 2
+   :global-graph-or-journal-ops 0
+   :unrelated-elapsed-ns 1965583
+   :same-relation-elapsed-ns 588208}]
  :qualification
  {:write-amplification
-  :counts-committed-datom-events-including-journal-metadata-not-bytes-or-storage-price
+  :counts-committed-datom-events-not-bytes-or-storage-price
   :proof-cost
   :isolates-proof-provider-not-complete-public-managed-hit-latency
+  :concurrency
+  :same-process-two-writer-attempt-count-not-production-throughput
   :latency
   :same-process-microbenchmark-regression-evidence-not-portable-sla
   :complexity

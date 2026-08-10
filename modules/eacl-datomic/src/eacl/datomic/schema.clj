@@ -2,9 +2,6 @@
   (:require [clojure.set]
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
-            [eacl.datomic.mutation :as journal]
-            [eacl.datomic.mutation-schema :as mutation-schema]
-            [eacl.mutation :as mutation]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.spicedb.parser :as parser]))
 
@@ -75,8 +72,6 @@
    :db/valueType   :db.type/ref
    :db/cardinality :db.cardinality/one
    :db/noHistory   true})
-
-(def mutation-schema mutation-schema/attributes)
 
 (def assert-relation-unused-fn-definition
   "Commit-time guard for relation removal.
@@ -312,6 +307,49 @@
   {:relations   (read-relations db)
    :permissions (read-permissions db)})
 
+(defn prepare-cache-coherence!
+  "Initializes missing physical relation generations in an upgraded database.
+
+  Datomic schema generations predate this migration and must already exist;
+  a missing schema version fails closed instead of inventing authority."
+  [conn]
+  (let [db (d/db conn)
+        schema-eid (d/entid db [:eacl/id "schema-string"])]
+    (when-not (and (d/entid db :eacl/relation-version)
+                   schema-eid
+                   (seq (d/datoms db :eavt schema-eid
+                                  :eacl/schema-version)))
+      (throw
+       (ex-info
+        "Datomic database lacks the native EACL generation schema."
+        {:type :eacl.cache/generation-schema-missing
+         :eacl/error :eacl.cache/generation-schema-missing
+         :backend :datomic})))
+    (let [relation-eids
+          (if (d/entid db :eacl.relation/relation-name)
+            (into [] (map :e)
+                  (d/datoms db :aevt :eacl.relation/relation-name))
+            [])
+          missing-relations
+          (filterv #(empty? (d/datoms db :eavt %
+                                     :eacl/relation-version))
+                   relation-eids)
+          tx-data
+          (mapv #(vector :db/add % :eacl/relation-version "datomic.tx")
+                missing-relations)
+          report (when (seq tx-data) @(d/transact conn tx-data))
+          db-after (if report (:db-after report) db)
+          missing-after
+          (filterv #(empty? (d/datoms db-after :eavt %
+                                     :eacl/relation-version))
+                   relation-eids)]
+      {:prepared? true
+       :changed? (boolean report)
+       :schema-generation-initialized? false
+       :relation-generations-initialized (count missing-relations)
+       :missing-after missing-after
+       :db-after db-after})))
+
 (defn validate-schema-references
   "Validates that all permission references are valid.
    Returns nil if valid, throws ex-info with :errors vector if invalid.
@@ -474,15 +512,9 @@
   generation still in the database. Without it, two replacement writers can
   both commit additions calculated from the same old generation and leave the
   UNION of their schemas behind."
-  ([conn tx-data expected-version]
-   (transact-schema! conn tx-data expected-version nil))
-  ([conn tx-data expected-version journal-options]
-   (try
-     (if journal-options
-       (journal/transact!
-        conn
-        (assoc journal-options :tx-data (vec tx-data)))
-       @(d/transact conn tx-data))
+  [conn tx-data expected-version]
+  (try
+    @(d/transact conn tx-data)
      (catch Throwable throwable
        (if-let [relation-in-use
                 (caused-by-type throwable
@@ -500,7 +532,7 @@
               :actual-version (impl.indexed/schema-version (d/db conn))
               :datomic-error cause-data}
              throwable))
-           (throw throwable)))))))
+           (throw throwable))))))
 
 (defn write-schema!
   "Computes delta between existing schema and
@@ -517,7 +549,7 @@
   ([conn schema-string opts]
    (write-schema! conn schema-string opts ::read-current-version))
   ([conn schema-string
-    {:keys [allow-empty-schema? token-ttl-seconds retention-grace-seconds]}
+    {:keys [allow-empty-schema?]}
     known-schema-version]
    (let [new-schema-map (parser/->eacl-schema
                          (parser/parse-schema schema-string))
@@ -601,10 +633,16 @@
                      (assoc relation
                             :db/id (d/tempid :db.part/user)))
                    (:additions relations))
+             relation-initial-stamps
+             (mapv (fn [relation]
+                     [:db/add (:db/id relation)
+                      :eacl/relation-version "datomic.tx"])
+                   relation-addition-entities)
              tx-data
              (concat
               ;; Additions
               relation-addition-entities
+              relation-initial-stamps
               (:additions permissions)
               ;; Retractions
               (for [rel relation-retractions]
@@ -623,35 +661,20 @@
                 :eacl/id "schema-string"
                 :eacl/schema-string schema-string}
                [:db.fn/cas schema-entity
-                :eacl/schema-version current-version next-version]])]
-         (let [report
-               (if stamp-schema?
-                 (transact-schema!
-                  conn
-                  tx-data
-                  current-version
-                  {:mutation-id (mutation/new-id)
-                   :kind :schema
-                   :canonical-data
-                   {:operation :write-schema
-                    :schema-string schema-string
-                    :expected-schema-version
-                    (some-> current-version str)}
-                   :schema-change? true
-                   :relation-ids
-                   (mapv :db/id relation-addition-entities)
-                   :token-ttl-seconds token-ttl-seconds
-                   :retention-grace-seconds retention-grace-seconds})
-                 (let [db (d/db conn)]
-                   {:db-before db
-                    :db-after db
-                    :tx-data []
-                    :mutation-id
-                    (:head-id (journal/ensure-migrated! conn))
-                    :no-op? true}))]
-           (with-meta
-             deltas
-             {:eacl/schema-version next-version
-              :eacl.mutation/id (:mutation-id report)
-              :eacl.mutation/db-after (:db-after report)
-              :eacl.mutation/no-op? (boolean (:no-op? report))})))))))
+                :eacl/schema-version current-version next-version]])
+             report
+             (if stamp-schema?
+               (transact-schema!
+                conn
+                tx-data
+                current-version)
+               (let [db (d/db conn)]
+                 {:db-before db
+                  :db-after db
+                  :tx-data []
+                  :no-op? true}))]
+         (with-meta
+           deltas
+           {:eacl/schema-version next-version
+            :eacl.schema/db-after (:db-after report)
+            :eacl.schema/no-op? (boolean (:no-op? report))}))))))

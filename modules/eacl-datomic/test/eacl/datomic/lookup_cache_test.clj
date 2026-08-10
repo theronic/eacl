@@ -389,6 +389,8 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "shared-store-opaque-continuation"
           first-client (core/make-client conn {:cache {:remember-answers false}
+                                               :source-lifecycle
+                                               "datomic-lookup-cache-v4-test"
                                                :security-key token-key})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
@@ -409,6 +411,8 @@
       ;; page side cache was process-local and unauthenticated; v3 refuses to
       ;; read it until continuation state uses the proof envelope contract.
       (let [second-client (core/make-client conn {:cache {:remember-answers false}
+                                                  :source-lifecycle
+                                                  "datomic-lookup-cache-v4-test"
                                                   :security-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])

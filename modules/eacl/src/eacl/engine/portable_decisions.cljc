@@ -72,16 +72,13 @@
     :else :exact))
 
 (defn- consistency-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (cond
     (not capability-supported?)
     (case mode
       :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
-    (and (contains? #{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
     :else
     (case mode
       :minimize-latency :select-current
