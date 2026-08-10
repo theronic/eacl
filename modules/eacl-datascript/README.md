@@ -58,6 +58,36 @@ entity. `delete-object!` removes both halves but retains the endpoint entity;
 `eacl.datascript.integrity/dangling-relationship-report` detects peer halves
 left by direct `:db/retractEntity`.
 
+### Optional atomic entity retraction
+
+An embedded DataScript connection may explicitly install the safe transaction
+function; it is never part of `datascript-schema`:
+
+```clojure
+(require '[datascript.core :as ds]
+         '[eacl.datascript.safe-retraction :as safe-retraction])
+
+(safe-retraction/install! conn)
+(ds/transact!
+ conn
+ (safe-retraction/retract-entity-tx-data [:eacl/id "account-1"]))
+```
+
+The installed `:eacl.fn/retractEntity` reads the target's two endpoint
+attributes from transaction-start state, retracts peer halves, advances v3
+mutation/relation proofs, and applies ordinary `:db.fn/retractEntity` in one
+transaction. `direct-retract-entity-tx-data` provides the equivalent
+in-process `:db.fn/call` form after `prepare!`.
+
+Arbitrary IFn values are not assumed to survive DataScript serialization or a
+cross-runtime restore. Re-run `install!` after restore unless the chosen
+serializer explicitly preserves them. Rollback is to stop emitting invocations
+and return to `delete-object!`; the installed function is inert while unused.
+Use one safe invocation per transaction, do not combine it with sibling
+relationship additions, and use batched `delete-object!` for high-degree
+targets. A missing target is a bounded no-op and does not repair an old ghost;
+use the integrity report for detection.
+
 The unreleased relationship-entity representation is not migrated or
 dual-read. Recreate explorer/demo databases, or reload every relationship
 through the EACL API, after upgrading to this v8 candidate.

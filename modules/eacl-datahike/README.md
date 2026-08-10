@@ -33,6 +33,49 @@ Consumers must remove relationships through EACL before retracting a
 permissioned entity. `eacl.datahike.integrity/dangling-relationship-report`
 provides an explicit offline audit for violations of that contract.
 
+### Optional atomic entity retraction
+
+Datahike support is selected from the actual schema flexibility, attribute
+representation, and writer topology:
+
+```clojure
+(require '[datahike.api :as d]
+         '[eacl.datahike.safe-retraction :as safe-retraction])
+
+(safe-retraction/support-descriptor (d/db conn))
+;; :schema-flexibility :read  + in-process writer => :named
+;; default :write            + in-process writer => :direct
+;; function-unsafe remote writer                => :unsupported
+
+;; Named :read mode:
+(safe-retraction/install! conn)
+
+;; Direct :write mode (no named function is installed):
+(safe-retraction/prepare! conn)
+(d/transact
+ conn
+ (safe-retraction/retract-entity-tx-data
+  (d/db conn) [:eacl/id "account-1"]))
+```
+
+Named-mode `install!` installs `:eacl.fn/retractEntity` and verifies that the
+IFn value round-trips. Calling `install!` in direct mode fails with a
+structured `:installation-unavailable` error and points to the direct API.
+Default strict `:schema-flexibility :write` is not changed; `prepare!` retains
+it and the constructor emits an in-process `:db.fn/call`.
+Both keyword and numeric `:attribute-refs?` representations are supported.
+Function values are not transported to remote writers, which receive a
+structured `:unsupported` descriptor/error and must use `delete-object!`.
+
+The function performs two target-scoped endpoint reads, advances v3 graph and
+relation proofs, and delegates ordinary entity removal in the same commit. Use
+one invocation per transaction; sibling relationship additions are not
+visible. Reinstall named functions after persistence restore unless the store
+is known to preserve IFn values. Rollback callers before removing a named
+installation. Missing targets do not trigger a global ghost scan; use the
+integrity report for existing damage. Prefer batched `delete-object!` for
+high-degree entities to avoid monopolizing the writer.
+
 This replaces the unreleased v8 Datahike relationship-entity layout. Recreate
 pre-release Datahike databases rather than carrying both physical models; no
 rollback or dual-read migration is included.

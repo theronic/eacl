@@ -1216,6 +1216,7 @@
                  (journal/transact!
                   conn
                   {:mutation-id mutation-id
+                   :calculation-db db
                    :kind :relationships
                    :canonical-data
                    {:operation :write-relationships

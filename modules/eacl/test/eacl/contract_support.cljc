@@ -80,6 +80,65 @@
    (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
 
+(def safe-retraction-schema
+  "definition user {
+     relation peer: user
+   }
+   definition account {
+     relation owner: user
+   }
+   definition server {
+     relation account: account
+   }
+   definition folder {
+     relation parent: folder
+   }")
+
+(def safe-retraction-objects
+  [(eacl/spice-object :user "user-1")
+   (eacl/spice-object :user "user-2")
+   (eacl/spice-object :user "unrelated-user")
+   (eacl/spice-object :account "target-account")
+   (eacl/spice-object :account "unrelated-account")
+   (eacl/spice-object :server "server-1")
+   (eacl/spice-object :folder "self-folder")])
+
+(def safe-retraction-relationships
+  [(eacl/->Relationship (eacl/spice-object :user "user-1")
+                        :owner
+                        (eacl/spice-object :account "target-account"))
+   (eacl/->Relationship (eacl/spice-object :account "target-account")
+                        :account
+                        (eacl/spice-object :server "server-1"))
+   (eacl/->Relationship (eacl/spice-object :user "user-1")
+                        :peer
+                        (eacl/spice-object :user "user-2"))
+   (eacl/->Relationship (eacl/spice-object :folder "self-folder")
+                        :parent
+                        (eacl/spice-object :folder "self-folder"))
+   (eacl/->Relationship (eacl/spice-object :user "unrelated-user")
+                        :owner
+                        (eacl/spice-object :account "unrelated-account"))])
+
+(def safe-retraction-target
+  (eacl/spice-object :account "target-account"))
+
+(def safe-retraction-expected-remaining
+  (set (drop 2 safe-retraction-relationships)))
+
+(defn assert-safe-retraction-result!
+  [{:keys [target-exists? remaining-relationships unresolved-no-op?
+           existing-ghost-preserved?]}]
+  (is (false? target-exists?) "the target entity is retracted")
+  (is (= safe-retraction-expected-remaining
+         (set remaining-relationships))
+      "all and only relationships touching the target are removed")
+  (is (true? unresolved-no-op?)
+      "unresolved eid/lookup-ref invocation is a no-op")
+  (is (true? existing-ghost-preserved?)
+      "bounded safe retraction does not scan for a pre-existing peer-only ghost"))
+
+
 (defn- read-relationships-data
   [client query]
   (:data (eacl/read-relationships client query)))

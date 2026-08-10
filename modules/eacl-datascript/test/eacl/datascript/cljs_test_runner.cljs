@@ -24,6 +24,7 @@
             [eacl.datascript.enumeration-routing-test]
             [eacl.datascript.impl-test]
             [eacl.datascript.mutation-test]
+            [eacl.datascript.safe-retraction-test]
             [eacl.datascript.storage-test]))
 
 (nodejs/enable-util-print!)
@@ -61,6 +62,7 @@
                'eacl.datascript.enumeration-routing-test
                'eacl.datascript.impl-test
                'eacl.datascript.mutation-test
+               'eacl.datascript.safe-retraction-test
                'eacl.datascript.storage-test))
 
 (set! *main-cli-fn* -main)

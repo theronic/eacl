@@ -971,7 +971,9 @@ ID so it can be repaired.
 ### Deleting a permissioned entity
 
 > [!IMPORTANT]
-> `:db.fn/retractEntity` does **not** remove an entity's EACL relationships. Delete those relationships first; `eacl/delete-object!` is a convenience helper for doing so.
+> Ordinary `:db.fn/retractEntity` does **not** remove an entity's EACL
+> relationships. Use the optional atomic safe-retraction function below, or
+> delete the relationships first with `eacl/delete-object!`.
 
 A Datomic or Datahike relationship is two datoms living on two different
 entities, each naming its peer *inside a tuple value*:
@@ -981,10 +983,89 @@ entities, each naming its peer *inside a tuple value*:
 [<resource-eid> :eacl.v7.relationship/resource-type+relation+subject-type+subject   [resource-type relation-eid subject-type <subject-eid>]]
 ```
 
-Datomic's `:db.fn/retractEntity` follows `:db.type/ref` *attributes*; it does not follow ref-typed *components of a heterogeneous tuple* (and a heterogeneous tuple cannot be `:db/isComponent`). So retracting a permissioned entity directly removes only the half stored on that entity and leaves the peer's half behind, where it keeps answering queries — a deleted resource still passes `can?`, a deleted subject still appears in `lookup-subjects` — and the survivor is unreachable through `write-relationships!`, because resolving either endpoint now throws `:eacl/unknown-object`.
+Datomic's `:db.fn/retractEntity` follows `:db.type/ref` *attributes*; it does not follow ref-typed *components of a heterogeneous tuple* (and a heterogeneous tuple cannot be `:db/isComponent`). DataScript vectors have the same issue. Retracting a permissioned entity directly therefore removes only the half stored on that entity and leaves a **ghost relationship** on its peer, where it can keep answering authorization queries. The survivor is then unreachable through ordinary relationship writes because the deleted endpoint no longer resolves.
 
-The expected workflow is to call `eacl/delete-relationships!` for relationships known by the
-consumer, then retract the entity. `delete-object!` is a convenient catch-all:
+EACL provides an opt-in `:eacl.fn/retractEntity` transaction function. It
+reads only the target's forward and reverse endpoint attributes from the
+transaction-start database, retracts the exact peer halves, advances affected
+cache/consistency proofs, and delegates entity removal to the backend's
+ordinary retract operation in the same transaction. It is not present in any
+default schema.
+
+| Backend/configuration | Mode | Preparation |
+| --- | --- | --- |
+| Datomic Peer/Pro | `:named` | `eacl.datomic.safe-retraction/install!` |
+| DataScript CLJ/CLJS | `:named` (also direct in-process) | `eacl.datascript.safe-retraction/install!`; reinstall after DB restore unless the serializer preserves function values |
+| Datahike `:schema-flexibility :read`, in-process writer | `:named` | `eacl.datahike.safe-retraction/install!` |
+| Datahike default `:schema-flexibility :write`, in-process writer | `:direct` | `eacl.datahike.safe-retraction/prepare!`; configuration is unchanged |
+| Datahike remote/function-unsafe writer; SpiceDB | `:unsupported` | Use `delete-object!` and ordinary backend deletion |
+
+Datomic example:
+
+```clojure
+(require '[datomic.api :as d]
+         '[eacl.datomic.safe-retraction :as safe-retraction])
+
+;; Privileged, explicit, idempotent deployment step. The installed d/function
+;; body is self-contained and needs no EACL transactor classpath change.
+(safe-retraction/install! conn)
+
+@(d/transact
+  conn
+  (safe-retraction/retract-entity-tx-data [:eacl/id "acme"]))
+```
+
+DataScript example (the same code works in ClojureScript with `ds/transact!`):
+
+```clojure
+(require '[datascript.core :as ds]
+         '[eacl.datascript.safe-retraction :as safe-retraction])
+
+(safe-retraction/install! conn)
+(ds/transact!
+ conn
+ (safe-retraction/retract-entity-tx-data [:eacl/id "acme"]))
+```
+
+Datahike selects the supported mode from the actual database configuration and
+writer topology:
+
+```clojure
+(require '[datahike.api :as d]
+         '[eacl.datahike.safe-retraction :as safe-retraction])
+
+(let [{:keys [mode]} (safe-retraction/support-descriptor (d/db conn))]
+  (case mode
+    :named (safe-retraction/install! conn)
+    :direct (safe-retraction/prepare! conn)
+    :unsupported (throw (ex-info "Use delete-object!" {:mode mode}))))
+(d/transact
+ conn
+ (safe-retraction/retract-entity-tx-data
+  (d/db conn) [:eacl/id "acme"]))
+```
+
+The constructor creates a retry-stable authenticated mutation envelope outside
+the transaction function; submit the returned invocation once. Only one
+safe-retraction invocation is supported per application transaction. A
+relationship added elsewhere in that same transaction is not visible to the
+function and is unsupported. Certified EACL relationship writers racing in a
+separate transaction are serialized by the mutation graph: a prior write is
+observed and removed, while a write calculated before a winning deletion loses
+its graph-head CAS and retries/fails.
+
+Expansion is linear in the target's local relationship degree plus its distinct
+relations and performs no whole-database/schema relationship scan. Because the
+work executes in the serialized transaction pipeline, use the existing batched
+`delete-object!` workflow below for very high-degree targets or when transaction
+size/latency is more important than single-transaction atomicity.
+The maintained [qualified benchmark evidence](docs/benchmarks/results/2026-08-09-safe-retraction.md)
+records first-use, warmed expansion, and commit costs through degree 1000; it
+is guidance for local validation, not a universal production cutoff.
+
+Without the optional function, call `eacl/delete-relationships!` for known
+relationships before retracting the entity. `delete-object!` is a convenient,
+portable catch-all:
 
 ```clojure
 (eacl/delete-object! acl (->account "acme"))   ; removes both halves of every relationship touching it
@@ -1000,7 +1081,16 @@ Or in one application transaction, using the tx-data directly:
                         [:db.fn/retractEntity account-eid]))
 ```
 
-`delete-object!` retracts relationships only — retracting the entity itself stays your call. It is idempotent, and it also accepts the raw eid of an entity you already retracted, which is how you clean up after the fact.
+That precomputed form is suitable only when the caller excludes concurrent
+relationship writers; unlike `:eacl.fn/retractEntity`, it does not discover
+from transaction-start state.
+
+`delete-object!` retracts relationships only — retracting the entity itself stays your call. It is idempotent, batches high-degree cleanup, and also accepts the raw eid of an entity you already retracted, which is how you clean up after the fact.
+
+Safe retraction deliberately returns no relationship or proof data when the
+target is already missing. It cannot rediscover a peer-only ghost without an
+unbounded scan. Use the integrity workflow below for old damage; installing the
+function does not retroactively repair it.
 
 EACL does not prevent direct `:db.fn/retractEntity` calls or add existence probes to every read.
 To detect and repair relationship halves left by such calls, use the explicit offline integrity

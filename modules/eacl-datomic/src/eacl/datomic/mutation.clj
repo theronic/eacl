@@ -88,14 +88,16 @@
       :retention-grace-seconds retention-grace-seconds})))
 
 (defn transact!
-  [conn {:keys [mutation-id canonical-data tx-data] :as mutation-options}]
+  [conn {:keys [mutation-id canonical-data tx-data calculation-db]
+         :as mutation-options}]
   (ensure-migrated! conn)
-  (let [db (d/db conn)]
-    (if-let [stored (mutation-entity db mutation-id)]
+  (let [submission-db (d/db conn)
+        calculation-db (or calculation-db submission-db)]
+    (if-let [stored (mutation-entity submission-db mutation-id)]
       (if (mutation/mutation-data-matches?
            stored mutation-id canonical-data)
-        {:db-before db
-         :db-after db
+        {:db-before submission-db
+         :db-after submission-db
          :tx-data []
          :mutation-id mutation-id
          :idempotent-recovery? true}
@@ -107,12 +109,13 @@
          @(d/transact
            conn
            (into (vec tx-data)
-                 (mutation-transaction-data db mutation-options)))
+                 (mutation-transaction-data
+                  calculation-db mutation-options)))
          (catch Throwable error
            (if-let [stored (mutation-entity (d/db conn) mutation-id)]
              (if (mutation/mutation-data-matches?
                   stored mutation-id canonical-data)
-               {:db-before db
+               {:db-before submission-db
                 :db-after (d/db conn)
                 :tx-data []
                 :mutation-id mutation-id
