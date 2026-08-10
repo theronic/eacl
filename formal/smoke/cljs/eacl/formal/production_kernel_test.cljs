@@ -35,16 +35,13 @@
       reader/read-string))
 
 (defn- expected-consistency-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (cond
     (not capability-supported?)
     (case mode
       :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
-    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
     :else
     (case mode
       :minimize-latency :select-current
@@ -162,19 +159,28 @@
     :capabilities
     {:consistency (if capability-supported? #{mode} #{})
      :snapshots #{:current}
-     :source #{:stable-scope :graph-head
-               :anchor-membership :order-hint :exact-locator}
+     :source #{:stable-scope :source-lifecycle
+               :native-revision :order-hint :exact-locator}
      :cursor #{}
      :transactions #{}
      :cache-proofs #{}
      :runtime #{:cljs}}
     :operations
-    (into
-     {}
-     (map
-      (fn [operation]
-        [operation (fn [& _] nil)]))
-     backend/required-snapshot-operations)}))
+    (merge
+     (into
+      {}
+      (map
+       (fn [operation]
+         [operation (fn [& _] nil)]))
+      backend/required-snapshot-operations)
+     {:snapshot-id (constantly {:revision 1})
+      :source-scope
+      (constantly {:source-id "generated-plan" :branch nil})
+      :source-lifecycle (constantly "generated-plan-lifecycle")
+      :native-revision
+      (constantly {:revision 1 :exact-locator 1})
+      :order-hint (constantly 1)
+      :exact-locator (constantly 1)})}))
 
 (defn- observed-generated-plan
   [source mode managed-authority?]
@@ -557,7 +563,8 @@
     :capabilities
     {:consistency #{:minimize-latency}
      :snapshots #{:current :exact}
-     :source #{:scoped}
+     :source #{:stable-scope :source-lifecycle
+               :native-revision :order-hint :exact-locator}
      :cursor #{:forward :backward}
      :transactions #{}
      :cache-proofs #{:schema :relations}
@@ -571,15 +578,13 @@
                   [operation (fn [& _] nil)]))
            backend/required-snapshot-operations)
      {:snapshot-id (constantly {:basis 1})
-      :source-scope (constantly {:source "source"})
-      :graph-head
-      (constantly
-       {:graph-anchor "graph-1"
-        :order-hint 1
-        :exact-locator "graph-1"})
-      :contains-anchor? #(= "graph-1" %)
+      :source-scope
+      (constantly {:source-id "source" :branch nil})
+      :source-lifecycle (constantly "formal-production-lifecycle")
+      :native-revision
+      (constantly {:revision 1 :exact-locator 1})
       :order-hint (constantly 1)
-      :exact-locator (constantly "graph-1")
+      :exact-locator (constantly 1)
       :select-exact (fn [& _] nil)
       :object-id->internal
       #(case % "document-1" 1 "document-2" 2 nil)
@@ -643,7 +648,8 @@
       :capabilities
       {:consistency #{:minimize-latency}
        :snapshots #{:current}
-       :source #{:scoped}
+       :source #{:stable-scope :source-lifecycle
+                 :native-revision :order-hint :exact-locator}
        :cursor #{:forward :backward}
        :transactions #{}
        :cache-proofs #{:schema :relations}
@@ -659,6 +665,12 @@
         (constantly {:database-id :formal :basis-t 1})
         :source-scope
         (constantly {:source-id :formal :branch nil})
+        :source-lifecycle
+        (constantly "formal-recursive-plan-lifecycle")
+        :native-revision
+        (constantly {:revision 1 :exact-locator 1})
+        :order-hint (constantly 1)
+        :exact-locator (constantly 1)
         :schema-proof
         (fn
           ([] :schema-proof)

@@ -134,17 +134,14 @@
         operations
         {:snapshot-id (constantly {:source :memory :revision 1})
          :source-scope (constantly {:source-id :memory :branch nil})
-         :graph-head
-         (constantly
-          {:graph-anchor :memory-1
-           :order-hint 1
-           :exact-locator :memory-1})
-         :contains-anchor? #(= :memory-1 %)
+         :source-lifecycle (constantly "formal-memory-lifecycle")
+         :native-revision
+         (constantly {:revision 1 :exact-locator 1})
          :order-hint (constantly 1)
          :select-current (constantly nil)
          :select-authoritative (fn [_] nil)
          :select-at-least (fn [_ _] nil)
-         :exact-locator (constantly :memory-1)
+         :exact-locator (constantly 1)
          :select-exact (fn [_ _] nil)
          :object-id->internal
          (fn [object-id]

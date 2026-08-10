@@ -30,8 +30,8 @@
           :capabilities
           {:consistency #{:minimize-latency}
            :snapshots #{:current}
-           :source #{:stable-scope :graph-head
-                     :anchor-membership :order-hint :exact-locator}
+           :source #{:stable-scope :source-lifecycle
+                     :native-revision :order-hint :exact-locator}
            :cursor #{}
            :transactions #{}
            :cache-proofs #{}
@@ -42,11 +42,9 @@
            {:snapshot-id (fn [] [:source nil 1])
             :source-scope
             (fn [] {:source-id "source" :branch nil})
-            :graph-head
-            (fn [] {:graph-anchor "head"
-                    :order-hint 1
-                    :exact-locator 1})
-            :contains-anchor? (constantly true)
+            :source-lifecycle (constantly "benchmark-lifecycle")
+            :native-revision
+            (constantly {:revision 1 :exact-locator 1})
             :order-hint (constantly 1)
             :exact-locator (constantly 1)
             :select-current (fn [] @self)})})]
