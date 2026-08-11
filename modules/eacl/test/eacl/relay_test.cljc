@@ -25,9 +25,7 @@
     :order-hint (constantly snapshot-id)
     :exact-locator (constantly snapshot-id)
     :object-id->internal identity
-    :internal-id->object identity
-    :schema-proof (fn [& _] proof)
-    :relation-proof (fn [_] proof)}))
+    :internal-id->object identity}))
 
 (defn- adapter
   [snapshot-id proof deterministic?]

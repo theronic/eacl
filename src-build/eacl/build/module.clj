@@ -14,7 +14,7 @@
     "eacl/formal/production_kernel.clj"
     "eacl/formal/production_kernel_cljs.cljs"
     "AcyclicEngine/__default.class"
-    "CacheKernel/__default.class"
+    "CurrentCache/__default.class"
     "IndexedTraversal/__default.class"
     "dafny/DafnySequence.class"
     "EaclKernel.browser.js"

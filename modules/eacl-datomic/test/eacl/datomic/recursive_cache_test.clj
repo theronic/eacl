@@ -257,8 +257,8 @@
                                                     portable-source-lifecycle
                                                     :cache cache/no-cache})
             alternate-client (core/make-client conn {:page-token-key token-key
-                                                      :source-lifecycle
-                                                      portable-source-lifecycle})
+                                                     :source-lifecycle
+                                                     portable-source-lifecycle})
             page1-stats (atom {})
             page1 (binding [idx/*recursive-traversal-stats* page1-stats]
                     (eacl/lookup-resources cached-client query))
@@ -392,8 +392,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:page-token-key "recursive-freshness-floor"
-                   :coherence-authority :managed})
+                  {:page-token-key "recursive-freshness-floor"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -446,8 +445,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:page-token-key "recursive-unrelated"
-                   :coherence-authority :managed})
+                  {:page-token-key "recursive-unrelated"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -487,9 +485,10 @@
                 (binding [idx/*recursive-traversal-stats* fresh-stats]
                   (eacl/lookup-resources client query))]
             (is (= (:data page1) (:data fresh-page1)))
-            (is (false? (:cached? fresh-page1))
-                "demand mode does not lift a completed denotation")
-            (is (<= (get @fresh-stats :derived-grants 0) 6))))))))
+            (is (true? (:cached? fresh-page1))
+                "the completed demand answer is reusable under the unchanged scalar proof")
+            (is (zero? (get @fresh-stats :derived-grants 0))
+                "a managed answer hit performs no recursive traversal")))))))
 
 (deftest recursive-denotations-are-client-private-across-namespaces-test
   (with-mem-conn [conn schema/v7-schema]

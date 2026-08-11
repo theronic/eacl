@@ -3,6 +3,7 @@
             [eacl.core :refer [spice-object]]
             [eacl.execution :as execution]
             [eacl.lazy-merge-sort :as lazy-sort]
+            [eacl.proof-frame :as proof-frame]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
@@ -11,6 +12,10 @@
 (def ^:dynamic *evaluation-mode*
   "Normalized public evaluation mode. Cache state never changes this value."
   :demand)
+
+(def ^:dynamic *proof-frame*
+  "The request-scoped ordered-generation frame, or nil for raw evaluation."
+  nil)
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
@@ -488,11 +493,9 @@
 ;; --- Selected-snapshot permission-path cache (issue #74) ---------------------
 ;;
 ;; A client owns derived-schema generations keyed by backend, source scope, and
-;; the schema proof visible in the selected immutable snapshot. Managed writer
-;; authority makes that proof one atomically published mutation identity.
-;; Unknown writer authority deliberately uses a complete content proof instead:
-;; detecting arbitrary out-of-band schema writes without trusting a listener or
-;; writer-maintained stamp requires reading the database-visible definitions.
+;; the schema assertion generation visible in the selected immutable snapshot.
+;; Supported schema writers publish that generation atomically. Missing or
+;; malformed generations disable cross-snapshot derived-state reuse.
 ;;
 ;; Permission paths, dependency closures, and recursive-routing decisions are
 ;; memoized inside one proof generation. Their cold compilation cost is paid
@@ -508,10 +511,17 @@
   nil)
 
 (defn schema-version
-  "The schema proof visible in this immutable backend snapshot, or nil before
+  "The schema generation visible in this immutable backend snapshot, or nil before
   the first supported schema write."
   [snapshot]
-  (backend/invoke snapshot :schema-proof))
+  (let [frame
+        (if (and *proof-frame*
+                 (identical? snapshot (:adapter *proof-frame*)))
+          *proof-frame*
+          (proof-frame/request-frame snapshot))
+        proof (proof-frame/resolve! frame [])]
+    (when (proof-frame/complete? proof)
+      (:schema-stamp proof))))
 
 (defn schema-version-stamp
   "String form of the schema proof visible in a snapshot."
@@ -524,16 +534,14 @@
   A nil proof deliberately disables derived-state latching."
   ([snapshot]
    (make-schema-cache snapshot (schema-version snapshot)))
-  ([snapshot known-schema-version]
+  ([snapshot known-schema-generation]
    {:backend-id (backend/backend-id snapshot)
     :source-scope (backend/invoke snapshot :source-scope)
     :database-id (:database-id (backend/invoke snapshot :snapshot-id))
-    :schema-version known-schema-version
-    ;; The client-visible schema proof may retain its physical assertion
-    ;; identity while the shared engine adapter normalizes the value. Bind
-    ;; routing certificates to the adapter proof so representation details
-    ;; cannot make unchanged schema semantics look stale.
-    :routing-schema-identity (schema-version snapshot)
+    :schema-version known-schema-generation
+    ;; The validated assertion generation is already the canonical routing
+    ;; identity. Reusing it avoids a semantically duplicate proof acquisition.
+    :routing-schema-identity known-schema-generation
     :permission-roots (atom {})
     :permission-paths (atom {})
     :traversal-permissions (atom {})
@@ -600,14 +608,14 @@
   ([snapshot]
    (schema-cache-key
     snapshot
-    (backend/invoke snapshot :schema-proof)))
-  ([snapshot schema-proof]
+    (schema-version snapshot)))
+  ([snapshot schema-generation]
    [engine-version
     (backend/backend-id snapshot)
     (backend/fingerprint snapshot)
     (backend/invoke snapshot :source-scope)
     (backend/invoke snapshot :source-lifecycle)
-    schema-proof]))
+    schema-generation]))
 
 (def ^:private maximum-schema-cache-generations 64)
 
@@ -628,15 +636,15 @@
   Installation is one nonblocking atomic update. A request retains its
   immutable generation even if a later install evicts it from the registry."
   [registry snapshot]
-  (let [schema-proof (backend/invoke snapshot :schema-proof)
-        key (schema-cache-key snapshot schema-proof)
+  (let [schema-generation (schema-version snapshot)
+        key (schema-cache-key snapshot schema-generation)
         existing (get @registry key)]
     (if existing
       existing
       (let [created
             (make-schema-cache
              snapshot
-             schema-proof)
+             schema-generation)
             selected (volatile! created)]
         (swap! registry
                (fn [generations]
@@ -1637,13 +1645,28 @@
              (or (:routing-schema-identity *schema-cache*)
                  (schema-version db))
              str)
+            ;; An unstamped snapshot is exact-only. No derived schema state is
+            ;; retained when `derived-cache-active?` is false, so the route
+            ;; certificate above was computed from this same immutable value.
+            ;; Give that request-local proof a non-persistent identity for the
+            ;; generated equality check; never use this escape hatch with a
+            ;; reusable derived cache.
+            exact-local-identity
+            (when (and (nil? actual-identity)
+                       (nil? certificate-identity)
+                       (not (derived-cache-active?)))
+              "exact-request-local")
             decision
             (verified/decide
              subproblem/*decision-kernel*
              :enumeration-route
-             {:schema-identity (or actual-identity "")
+             {:schema-identity (or actual-identity
+                                   exact-local-identity
+                                   "")
               :certificate-schema-identity
-              (or certificate-identity "")
+              (or certificate-identity
+                  exact-local-identity
+                  "")
               :root-defined? true
               :recursive? recursive?
               :recursive-data-active?

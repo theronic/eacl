@@ -36,7 +36,8 @@ Backends supply the validated operation map consumed through
 cache-proof, and runtime capabilities and implements normalized operations for
 snapshot identity, object ID conversion, schema definitions, adjacency,
 direct matches, recursive permission nodes, cursor frontier identity, and
-schema/relation proofs.
+ordered-generation proof frames. An adapter without certified proof support
+remains a correct exact-current adapter.
 
 The contract uses logical types and identifiers. Datoms, attribute ids,
 database values, and raw index tuples stay inside each adapter. See the
@@ -49,5 +50,5 @@ API and recursive/cache behavior for Datomic, DataScript, and Datahike and
 compares authorization sets with independent semantic oracles. Those oracles
 are test code, not selectable production engines.
 
-Application-facing module selection and upgrade notes live in the
-[v8 backend and upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
+Application-facing module selection lives in the
+[backend guide](../../docs/v8-backend-modules-and-upgrade.md).

@@ -132,7 +132,7 @@
     :EACL-FORMAL-063
     eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test
     :EACL-FORMAL-064
-    eacl.datascript.enumeration-routing-test/content-proof-cursors-use-current-basis-without-relation-scan-test
+    eacl.datascript.enumeration-routing-test/ordered-generation-cursors-avoid-relationship-content-scans-test
     :EACL-FORMAL-065
     eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test
     :EACL-FORMAL-066

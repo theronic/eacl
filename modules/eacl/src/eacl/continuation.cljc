@@ -6,9 +6,10 @@
   authenticated lineage. Cache loss is always a performance miss: callers can
   deterministically replay the public boundary."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure]))
 
-(def ^:private context-version 1)
+(def ^:private context-version 2)
 (def ^:private default-max-entries 2048)
 (def ^:private default-max-weight (* 128 1024 1024))
 
@@ -225,7 +226,8 @@
   resumable frontier within that lineage."
   ([store adapter operation query-identity]
    (private-context store adapter operation query-identity {}))
-  ([store adapter operation query-identity {:keys [snapshot-identity]}]
+  ([store adapter operation query-identity
+    {:keys [snapshot-identity request-proof-frame]}]
    (when store
      (let [scope
           (secure/canonical-digest
@@ -240,7 +242,18 @@
             :source-lifecycle (backend/invoke adapter :source-lifecycle)
             :adapter-fingerprint (backend/fingerprint adapter)
             :identity-contract (backend/identity-contract adapter)
-            :schema-proof (backend/invoke adapter :schema-proof)
+            :schema-generation
+            (let [frame
+                  (if (and request-proof-frame
+                           (identical?
+                            adapter (:adapter request-proof-frame)))
+                    request-proof-frame
+                    (proof-frame/request-frame adapter))
+                  proof
+                  (proof-frame/resolve!
+                   frame [])]
+              (when (proof-frame/complete? proof)
+                (:schema-stamp proof)))
             :snapshot-identity
             (or snapshot-identity
                 {:kind :exact

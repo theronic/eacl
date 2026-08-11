@@ -1,9 +1,8 @@
 # `eacl-datahike`
 
-Datahike adapter for EACL v8.
+Datahike adapter for EACL.
 
-The reviewed v7 port from PR #81 supplies the Datahike storage primitives.
-EACL v8 routes permission compilation, direct/arrow traversal, recursive
+EACL routes permission compilation, direct/arrow traversal, recursive
 fixed-point evaluation, Relay pagination, counts, cache validation, and common
 errors through the same backend-neutral engine used by Datomic and DataScript.
 
@@ -15,6 +14,17 @@ Responsibilities:
 - proof-equivalent authenticated Relay cursors with exact fallback
 - database-visible native schema/relation generations
 - `delete-object!` relationship cleanup
+
+Exact immutable-snapshot lookup runs first. Complete ordered-generation proof
+reuse across unrelated forward transactions is automatic; unavailable proof
+falls back to exact evaluation.
+All authorization-relevant mutations must use EACL APIs or EACL-produced
+transaction data/functions transacted intact. After unsupported raw mutation,
+quiesce callers, repair the data, and call
+`eacl.datahike.core/expire-cache!` on every affected client in every process.
+Expiry never repairs ghost tuples. Custom identity codecs are exact-only and
+client-local unless configured with a portable `:adapter-fingerprint`,
+`:adapter-deterministic? true`, and a certified injective round trip.
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:
@@ -79,18 +89,13 @@ ref is a no-op; a known numeric retracted eid repairs peer-only ghosts through
 relation-schema enumeration and exact index probes. Prefer batched
 `delete-object!` for high-degree entities to avoid monopolizing the writer.
 
-This replaces the unreleased v8 Datahike relationship-entity layout. Recreate
-pre-release Datahike databases rather than carrying both physical models; no
-rollback or dual-read migration is included.
-
 Datahike supports local `:minimize-latency`, native-revision causal at-least selection,
 and exact reconstruction from retained commits or temporal history. It
 advertises `:fully-consistent` only for a direct `:self` writer with an
 authoritative branch-head barrier; lagging/replicated sources reject it.
-Unsupported configuration/mode combinations fail before authorization.
-The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
-`:last`/`:before`; see the
-[upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
+Unsupported configuration/mode combinations fail before authorization. List
+operations use `:first`/`:after` and `:last`/`:before`; see the
+[backend guide](../../docs/v8-backend-modules-and-upgrade.md).
 
 ```clojure
 {:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
@@ -103,10 +108,4 @@ requirements. Git and `:local/root` development must first follow the explicitly
 [core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
 Maven consumers install no formal tools.
 
-Run its tests through a module-local nREPL and build it in isolation from this
-directory:
-
-```shell
-clojure -M:test:nrepl
-clojure -T:build jar
-```
+Build this module in isolation with `clojure -T:build jar`.

@@ -649,7 +649,7 @@
                 :permission :duplicate
                 :resource/type :folder})))))
 
-    (testing "demand answers are exact-generation and changed cursors fail closed"
+    (testing "demand answers reuse proved generations and changed cursors fail closed"
       (let [all-query (assoc query :first 20)
             miss (eacl/lookup-resources client all-query)
             hit (eacl/lookup-resources client all-query)]
@@ -660,8 +660,8 @@
          client denied :auditor (folder 0))
         (let [after-unrelated-write
               (eacl/lookup-resources client all-query)]
-          (is (false? (:cached? after-unrelated-write))
-              "demand mode does not perform proof reads to lift an old answer")
+          (is (true? (:cached? after-unrelated-write))
+              "an unrelated stamped write preserves the dependency frontier")
           (is (= (mapv folder (range recursive-connected-folder-count))
                  (:data after-unrelated-write))))
 

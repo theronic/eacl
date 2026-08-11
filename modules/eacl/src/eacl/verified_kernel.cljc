@@ -26,7 +26,6 @@
     :cursor-continuation
     :consistency-plan
     :consistency-validation
-    :cache-validation
     :current-cache-decision
     :subproblem-cache-decision
     :ordered-merge-step
@@ -231,10 +230,10 @@
      operation
      :input
      input
-     #{:mode :capability-supported? :managed-authority?})
+     #{:mode :capability-supported?})
     (require-value! operation :mode consistency-modes (:mode input))
-    (doseq [field [:capability-supported? :managed-authority?]]
-      (require-value! operation field boolean? (get input field)))
+    (require-value!
+     operation :capability-supported? boolean? (:capability-supported? input))
     input))
 
 (defn- validate-consistency-selection-input!
@@ -245,12 +244,12 @@
      :input
      input
      #{:kind :selection-present? :selected-adapter?
-       :same-source-scope? :anchor-satisfied?})
+       :same-source-scope? :revision-satisfied?})
     (require-value!
      operation :kind consistency-selection-kinds (:kind input))
     (doseq [field
             [:selection-present? :selected-adapter?
-             :same-source-scope? :anchor-satisfied?]]
+             :same-source-scope? :revision-satisfied?]]
       (require-value! operation field boolean? (get input field)))
     (when (and (:selected-adapter? input)
                (not (:selection-present? input)))
@@ -258,56 +257,6 @@
        "A selected adapter cannot exist without a selected value."
        {:operation operation
         :field :selected-adapter?}))
-    input))
-
-(defn- validate-cache-entry!
-  [entry]
-  (let [operation :cache-validation]
-    (exact-keys!
-     operation
-     :entry
-     entry
-     #{:status :authenticated? :key :source :graph :proof})
-    (require-value!
-     operation :entry-status #{:candidate :missing :provider-failure}
-     (:status entry))
-    (require-value!
-     operation :entry-authenticated boolean? (:authenticated? entry))
-    (doseq [field [:key :source]]
-      (require-value! operation field bounded-string? (get entry field)))
-    (require-value! operation :entry-graph safe-natural? (:graph entry))
-    (require-value!
-     operation
-     :entry-proof
-     #(or (nil? %) (bounded-string? %))
-     (:proof entry))
-    entry))
-
-(defn- validate-cache-input!
-  [input]
-  (let [operation :cache-validation
-        expected
-        #{:deterministic? :dependency-scope-nonempty?
-          :expected-key :expected-source :selected-graph
-          :ancestors :selected-proof :entry}]
-    (exact-keys! operation :input input expected)
-    (doseq [field [:deterministic? :dependency-scope-nonempty?]]
-      (require-value! operation field boolean? (get input field)))
-    (doseq [field [:expected-key :expected-source]]
-      (require-value! operation field bounded-string? (get input field)))
-    (require-value!
-     operation :selected-graph safe-natural? (:selected-graph input))
-    (require-value!
-     operation
-     :ancestors
-     #(and (set? %) (every? safe-natural? %))
-     (:ancestors input))
-    (require-value!
-     operation
-     :selected-proof
-     #(or (nil? %) (bounded-string? %))
-     (:selected-proof input))
-    (validate-cache-entry! (:entry input))
     input))
 
 (defn- validate-subproblem-cache-input!
@@ -1665,7 +1614,6 @@
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
-    :cache-validation (validate-cache-input! input)
     :current-cache-decision (validate-current-cache-input! input)
     :subproblem-cache-decision
     (validate-subproblem-cache-input! input)
@@ -1809,7 +1757,7 @@
 
 (defn- expected-consistency-selection
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (cond
     (not selection-present?)
     (if (= :exact kind)
@@ -1823,48 +1771,11 @@
     :incomparable-scope
 
     (and (#{:at-least :exact} kind)
-         (not anchor-satisfied?))
+         (not revision-satisfied?))
     :history-divergence
 
     :else
     :accept))
-
-(def cache-miss-reasons
-  #{:missing
-    :provider-failure
-    :no-proof-bypass
-    :unauthenticated
-    :scope-mismatch
-    :future-or-sibling
-    :proof-mismatch})
-
-(defn- validate-cache-result!
-  [result]
-  (let [operation :cache-validation]
-    (when-not (map? result)
-      (boundary-error!
-       "Generated cache result must be a map."
-       {:operation operation :result result}))
-    (case (:status result)
-      :hit
-      (do
-        (exact-keys!
-         operation :result result #{:status :provenance})
-        (require-value!
-         operation :provenance #{:exact-hit :causal-proof-lift}
-         (:provenance result))
-        result)
-
-      :miss
-      (do
-        (exact-keys! operation :result result #{:status :reason})
-        (require-value!
-         operation :reason cache-miss-reasons (:reason result))
-        result)
-
-      (boundary-error!
-       "Generated cache result has an unknown variant."
-       {:operation operation :result result}))))
 
 (def subproblem-cache-actions
   #{:start-independent-computation
@@ -2364,7 +2275,6 @@
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
-    :cache-validation (validate-cache-result! result)
     :current-cache-decision
     (validate-current-cache-result! result)
     :subproblem-cache-decision

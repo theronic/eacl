@@ -1,5 +1,5 @@
 (ns eacl.datomic.contract-test
-  (:require [clojure.test :refer [deftest]]
+  (:require [clojure.test :refer [deftest is]]
             [datomic.api :as d]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
@@ -16,6 +16,21 @@
               :eacl/id id})
        contract/smoke-objects)))
 
+(deftest removed-cache-coherence-options-are-unknown-test
+  (with-mem-conn [conn schema/v7-schema]
+    (doseq [[option values]
+            [[:coherence-authority [:unknown :managed]]
+             [:proof-mode [:auto :mutation :content :none]]]
+            value values]
+      (let [error
+            (try
+              (datomic/make-client conn {option value})
+              nil
+              (catch clojure.lang.ExceptionInfo cause
+                (ex-data cause)))]
+        (is (= :eacl/invalid-config (:type error)))
+        (is (= [option] (:unknown-keys error)))))))
+
 (deftest datomic-contract-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (datomic/make-client conn {:page-token-key "datomic-contract-test"})]
@@ -31,7 +46,6 @@
           (datomic/make-client
            conn
            {:page-token-key "datomic-recursive-contract-test"
-            :coherence-authority :managed
             :cache {:remember-answers true}})]
       (eacl/write-schema! client contract/recursive-schema)
       @(d/transact conn

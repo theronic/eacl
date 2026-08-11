@@ -15,9 +15,9 @@
    :page-uniqueness
    :complete-forward-walk
    :backward-page-is-exact-preceding-window
-   :content-cursor-minting-does-no-relation-proof-scan
-   :no-cache-proof-cursor-minting-does-no-relation-proof-scan
-   :only-managed-mutation-mode-requests-dependency-proof
+   :unavailable-proof-uses-exact-snapshot-without-generation-reads
+   :complete-proof-uses-managed-dependency-identity
+   :only-complete-ordered-generation-proof-uses-managed-identity
    :current-continuation-requires-equal-proof
    :exact-continuation-requires-authenticated-exact-proof
    :changed-proof-never-continues-on-current

@@ -2,21 +2,18 @@
   "Validated capability and operation contract for v8 backend snapshots.
 
   This is the sole production backend boundary for recursive traversal, Relay
-  pagination, deletion, consistency selection, and exact cache proofs."
+  pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 5)
+(def adapter-version 6)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
 (def ^:dynamic *backend-op-stats*
   "Optional atom counting backend adapter invocations by operation keyword.
 
-  Includes proof operations (:schema-proof, :relation-proof) and index
-  scans, plus :schema-proof-computations — the number of times the
-  per-adapter memoized proof actually executed (invocations of a
-  memoized proof are cheap; computations are the scans). Observation-
-  only: never influences dispatch or guard behavior."
+  Includes the `:proof-frame` operation and index scans. Observation-only:
+  counters never influence dispatch or guard behavior."
   nil)
 
 (def ^:dynamic *invoke-observer*
@@ -53,9 +50,7 @@
     :resource->subjects
     :direct-match?
     :relation-populated?
-    :all-permission-nodes
-    :schema-proof
-    :relation-proof})
+    :all-permission-nodes})
 
 (def adapter-obligations
   "Runtime-facing statement of the assumptions made by
@@ -106,12 +101,11 @@
    #{:iff-forward-prefix-nonempty :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
-   :schema-proof
-   #{:complete-dependency-scope :changes-on-relevant-schema-change
-     :stable-on-irrelevant-change :snapshot-bound}
-   :relation-proof
-   #{:complete-dependency-scope :changes-on-relevant-relationship-change
-     :stable-on-irrelevant-change :snapshot-bound}})
+   :proof-frame
+   #{:snapshot-bound :initialized-schema-generation
+     :complete-canonical-relation-generations
+     :globally-ordered-committed-generations
+     :atomic-with-supported-mutations}})
 
 (def known-consistency-modes
   #{:minimize-latency
@@ -225,38 +219,24 @@
                         {:backend id
                          :missing-operations (vec missing)
                          :required-operations required-snapshot-operations})))
+  (let [normalized (normalize-capabilities id capabilities)]
+    (when (and (contains? (:cache-proofs normalized) :ordered-generations)
+               (not (fn? (:proof-frame operations))))
+      (invalid-adapter!
+       "Backend advertises ordered generations without a proof-frame operation."
+       {:backend id :capability :ordered-generations}))
   {::adapter true
    ::version adapter-version
    ::id id
-   ::capabilities (normalize-capabilities id capabilities)
-   ::operations
-   ;; One immutable snapshot per adapter instance (the documented adapter
-   ;; contract, demanded by certification: repeated :schema-proof reads on
-   ;; one instance must be equal), so the zero-arity proof is computed at
-   ;; most once per instance. This collapses the audited duplicate content
-   ;; proofs — route validation, actual-identity, and certificate-identity
-   ;; all deref one delay per request instead of rescanning the schema.
-   ;; The scoped one-arity variant stays uncached.
-   (if-let [schema-proof-op (get operations :schema-proof)]
-     (let [memoized-proof
-           (delay
-             (when *backend-op-stats*
-               (swap! *backend-op-stats*
-                      update :schema-proof-computations (fnil inc 0)))
-             (schema-proof-op))]
-       (assoc operations
-              :schema-proof
-              (fn schema-proof
-                ([] @memoized-proof)
-                ([scope] (schema-proof-op scope)))))
-     operations)
+   ::capabilities normalized
+   ::operations operations
    ::fingerprint
    (or fingerprint
        {:backend id :adapter-version adapter-version})
    ::deterministic? (boolean deterministic?)
    ::identity-contract identity-contract
    ::runtime-guards? (boolean runtime-guards?)
-   ::state state})
+   ::state state}))
 
 (defn adapter?
   [candidate]
@@ -512,8 +492,7 @@
       ;; proofs) require paired/global certification rather than a local shape
       ;; predicate. They still pass through this dispatch so an added callback
       ;; cannot silently bypass the runtime-guard review.
-      (:internal-id->object :exact-locator :source-lifecycle
-       :schema-proof :relation-proof)
+      (:internal-id->object :exact-locator :source-lifecycle :proof-frame)
       value
 
       (contract-violation!

@@ -35,8 +35,7 @@
    (datahike/make-client
     conn
     (merge
-     {:coherence-authority :managed
-      :security-key security-key
+     {:security-key security-key
       :source-lifecycle source-lifecycle
       :consistency-sync-timeout-ms 5}
      options))))
@@ -398,14 +397,12 @@
     (d/release reader-conn)
     (d/release writer-conn)))
 
-(deftest content-proofs-are-bounded-and-cover-public-identity-test
+(deftest ordered-generations-track-only-supported-mutations-test
   (let [conn (datahike/create-conn)
         authorization
         (datahike/make-client
          conn
-         {:coherence-authority :managed
-          :proof-mode :content
-          :security-key security-key})
+         {:security-key security-key})
         _ (seed! conn authorization)
         _ (eacl/create-relationship! authorization relationship)
         before-adapter
@@ -416,16 +413,12 @@
          (first
           (backend/invoke
            before-adapter :relation-defs :document :reader)))
-        schema-proof (backend/invoke before-adapter :schema-proof)
         before-proof
-        (backend/invoke before-adapter :relation-proof [relation-id])
-        user-eid (ddb/entid (d/db conn) [:eacl/id "user"])
+        (backend/invoke before-adapter :proof-frame [relation-id])
         document-eid
         (ddb/entid (d/db conn) [:eacl/id "document"])]
-    (is (= #{:content-digest} (set (keys schema-proof))))
-    (is (= 43 (count (:content-digest schema-proof))))
-    (is (= #{:content-digest} (set (keys before-proof))))
-    (is (= 43 (count (:content-digest before-proof))))
+    (is (integer? (:schema-stamp before-proof)))
+    (is (= relation-id (ffirst (:relation-stamps before-proof))))
     (let [reverse
           (first
            (ddb/eavt-datoms
@@ -442,31 +435,25 @@
             (backend/invoke
              (datahike-backend/snapshot-adapter
               (d/db conn) (:opts authorization))
-             :relation-proof
+             :proof-frame
              [relation-id])]
-        (is (not= before-proof half-proof)
-            "a missing physical half invalidates a content-proof cache hit"))
+        (is (= before-proof half-proof)
+            "unsupported raw mutation does not claim managed coherence"))
       (eacl/write-relationship!
        authorization
        {:operation :touch
         :subject user
         :relation :reader
         :resource document})
-      (is (= before-proof
-             (backend/invoke
-              (datahike-backend/snapshot-adapter
-               (d/db conn) (:opts authorization))
-              :relation-proof
-              [relation-id]))
-          "repairing the pair restores the same content proof"))
-    (d/transact conn [[:db/retract user-eid :eacl/id "user"]
-                      [:db/add user-eid :eacl/id "renamed-user"]])
-    (let [after-adapter
-          (datahike-backend/snapshot-adapter
-           (d/db conn) (:opts authorization))
-          after-proof
-          (backend/invoke after-adapter :relation-proof [relation-id])]
-      (is (not= before-proof after-proof)))
+      (let [after-proof
+            (backend/invoke
+             (datahike-backend/snapshot-adapter
+              (d/db conn) (:opts authorization))
+             :proof-frame
+             [relation-id])]
+        (is (< (second (first (:relation-stamps before-proof)))
+               (second (first (:relation-stamps after-proof))))
+            "the supported repair advances the committed relation generation")))
     (d/release conn)))
 
 (deftest temporal-fallback-and-commit-garbage-collection-test

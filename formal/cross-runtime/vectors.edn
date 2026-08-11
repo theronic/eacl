@@ -49,19 +49,6 @@
            :exact {:graph 8 :source "source" :proof "old"}}
    :expected :divergence}]
 
- :cache
- [{:input {} :expected {:status :hit :provenance :exact-hit}}
-  {:input {:selected-graph 8 :ancestors [7] :candidate-graph 7}
-   :expected {:status :hit :provenance :causal-proof-lift}}
-  {:input {:selected-proof nil}
-   :expected {:status :miss :reason :no-proof-bypass}}
-  {:input {:selected-graph 8 :ancestors [6] :candidate-graph 7}
-   :expected {:status :miss :reason :future-or-sibling}}
-  {:input {:candidate-proof "other"}
-   :expected {:status :miss :reason :proof-mismatch}}
-  {:input {:authenticated? false}
-   :expected {:status :miss :reason :unauthenticated}}]
-
  :production-acyclic-decisions
  [{:operation :enumeration-route
    :input {:schema-identity "schema-v8"

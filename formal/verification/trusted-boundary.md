@@ -73,10 +73,14 @@ For an operation to inherit a kernel theorem, its adapter must establish:
    a pagination obligation, not a public global-order guarantee;
 5. direct match agrees exactly with membership in the corresponding scan;
 6. `all-permission-nodes` is complete;
-7. schema and relationship proofs cover the declared dependency scope;
-8. causal-anchor membership denotes ancestry, never numeric transaction order;
-9. exact selection returns the compatible immutable graph requested or fails;
-10. source scope and adapter fingerprint change whenever an
+7. equal schema semantics and normalized requests produce one deterministic,
+   complete relation dependency closure;
+8. schema and relation generations are initialized, and every supported
+   mutation atomically stamps every affected relation with a native committed
+   transaction later than every previously visible generation;
+9. at-least selection returns a native revision at or above the authenticated
+   floor, and exact selection matches both authenticated revision and locator;
+10. source lifecycle and adapter fingerprint change whenever an
     assumption-affecting implementation identity changes.
 
 Backend certification provides evidence for these assumptions. It does not
@@ -116,20 +120,19 @@ exact expression in `eacl.consistency`:
 
 - mode comes from the validated public consistency descriptor;
 - capability support comes from `backend/supports?`;
-- managed writer authority comes from the exact
-  `:coherence-authority :managed` option;
 - selection presence and adapter validity are separate observations made by
   `some?` and `backend/adapter?`;
 - source comparability is adapter identity or equality of both validated
   `source-scope` values;
-- at-least freshness is `contains-anchor?` for the authenticated graph anchor;
-- exact selection is equality between the authenticated graph anchor and the
-  selected adapter's validated `graph-head`.
+- at-least freshness compares the selected native revision with the
+  authenticated revision floor; and
+- exact selection compares both selected native revision and exact locator
+  with their authenticated values.
 
 Consequently, the consistency theorem is conditional on the adapter reporting
 capabilities and source scopes truthfully, implementing an authoritative
-barrier or failing, treating anchor membership as ancestry, and resolving an
-exact locator to the requested immutable graph or failing. Token
+barrier or failing, returning truthful native revisions, and resolving an
+exact locator to the requested immutable snapshot or failing. Token
 authentication, backend selection, host exceptions, and those adapter facts
 remain outside the pure decision theorem. Exhaustive generated-runtime tests,
 production fact-extraction tests, mutation controls, and adapter certification

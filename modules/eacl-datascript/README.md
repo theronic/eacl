@@ -2,9 +2,9 @@
 
 DataScript adapter for EACL.
 
-This module implements the EACL v8 public contract in Clojure and
+This module implements the EACL public contract in Clojure and
 ClojureScript. Permission compilation, recursive fixed-point traversal,
-direction-scoped frontiers, Relay windowing, counts, cache validation, and
+direction-scoped frontiers, Relay windowing, counts, cache proof validation, and
 common errors live in `eacl`; this adapter contains DataScript access and
 transaction mechanics.
 
@@ -16,27 +16,31 @@ Responsibilities:
 - explicit offline dangling-half detection in `eacl.datascript.integrity`
 - current immutable-snapshot selection and object/reference conversion
 - proof-equivalent authenticated Relay cursors on the selected current DB
-- database-visible native schema/relation generations plus content proofs
-- portable authenticated completed-answer caching
+- database-visible, globally ordered native schema/relation generations
+- client-private exact-first and automatic proof-backed caching
 - DataScript contract tests and adapter-specific edge cases
+
+Missing, malformed, oversized, or exceptional ordered-generation proof data
+falls back to exact immutable-snapshot evaluation. After unsupported raw authorization mutation, quiesce
+callers, repair the data, and call
+`eacl.datascript.core/expire-cache!` on every affected client in every process.
+Expiry never repairs ghost vectors. Custom identity codecs are exact-only and
+client-local unless configured with a portable `:adapter-fingerprint`,
+`:adapter-deterministic? true`, and a certified injective round trip.
 
 DataScript supports serialized connection-head `:fully-consistent`, local
 `:minimize-latency`, and connection-lifecycle causal at-least selection. It intentionally
 does not advertise `:at-exact-snapshot` or retain historical DB values;
-`:exact-snapshot-registry-size` is removed and rejected. Unsupported exact
-requests fail before cache access or authorization traversal. DataScript does
-not claim an external replication mechanism.
-DataScript defaults to `{:coherence-authority :unknown}`, so cache reuse is
-limited to the exact current immutable DB value and remains sound when callers
-write authorization-relevant datoms directly. Applications may explicitly opt
-in to `{:coherence-authority :managed}` only when every EACL schema and
-relationship mutation uses the EACL APIs. That writer contract permits
-relation-stamp reuse across unrelated forward transactions.
-Native-revision tokens are independent of cache authority and are scoped to
+Unsupported exact requests fail before cache access or authorization
+traversal. DataScript does not claim an external replication mechanism.
+Exact lookup runs first and automatic proof-backed reuse may survive unrelated
+transactions. All authorization-relevant mutations must use EACL APIs or
+documented transaction data/functions; raw mutation can leave stale cache
+state and requires repair plus expiry of every affected client.
+Native-revision tokens are independent of completed-answer caching and are scoped to
 the originating client/connection lifecycle.
-The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
-`:last`/`:before`; see the
-[upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
+List operations use `:first`/`:after` and `:last`/`:before`; see the
+[backend guide](../../docs/v8-backend-modules-and-upgrade.md).
 
 ## Relationship storage
 
@@ -93,10 +97,6 @@ targets. A missing valid lookup ref is a no-op; a known numeric retracted eid
 repairs old peer-only ghosts by enumerating relation definitions and making
 exact index probes. Use the integrity report when the old eid is unknown.
 
-The unreleased relationship-entity representation is not migrated or
-dual-read. Recreate explorer/demo databases, or reload every relationship
-through the EACL API, after upgrading to this v8 candidate.
-
 ```clojure
 {:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
@@ -108,9 +108,3 @@ requirements. Build this module in isolation with `clojure -T:build jar`; Git an
 development must first follow the explicitly opt-in
 [core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
 Maven consumers install no formal tools.
-
-Useful workspace test commands:
-
-- `clj-nrepl-eval -p <port> "(do (require 'eacl.datascript.contract-test :reload-all) (clojure.test/run-tests 'eacl.datascript.contract-test))"`
-- `clj-nrepl-eval -p <port> "(do (require '[cljs.main :as cljs] :reload) (cljs/-main \"-re\" \"node\" \"-m\" \"eacl.datascript.cljs-test-runner\"))"`
-- `clj-nrepl-eval -p <port> "(do (require 'eacl.bench.datascript-relationship-storage :reload) (eacl.bench.datascript-relationship-storage/run-benchmark!))"`

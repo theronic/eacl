@@ -702,15 +702,14 @@
     :else :history-divergence))
 
 (defn- consistency-plan-decision
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (let [consistency (.-ConsistencyDecision generated)
         outcome
         (js-invoke
          (.-__default consistency)
          "DecideSelectionPlan"
          (snapshot-consistency-mode consistency mode)
-         capability-supported?
-         managed-authority?)]
+         capability-supported?)]
     (if (.-is_Planned outcome)
       (let [action (.-dtor_action outcome)]
         (cond
@@ -746,7 +745,7 @@
 
 (defn- consistency-selection-decision
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (let [consistency (.-ConsistencyDecision generated)
         outcome
         (js-invoke
@@ -756,7 +755,7 @@
          selection-present?
          selected-adapter?
          same-source-scope?
-         anchor-satisfied?)]
+         revision-satisfied?)]
     (if (.-is_SelectionAccepted outcome)
       :accept
       (consistency-error (.-dtor_error outcome)))))
@@ -796,96 +795,14 @@
      (.toNumber (.-dtor_validationDecisions work))
      :source-scope-reads
      (.toNumber (.-dtor_sourceScopeReads work))
-     :contains-anchor-calls
-     (.toNumber (.-dtor_containsAnchorCalls work))
-     :graph-head-reads
-     (.toNumber (.-dtor_graphHeadReads work))
+     :revision-validation-calls
+     (.toNumber (.-dtor_revisionValidationCalls work))
+     :native-revision-reads
+     (.toNumber (.-dtor_nativeRevisionReads work))
      :order-hint-reads
      (.toNumber (.-dtor_orderHintReads work))
      :exact-locator-reads
      (.toNumber (.-dtor_exactLocatorReads work))}))
-
-(defn- proof-state
-  [cache proof]
-  (if (some? proof)
-    (js-invoke
-     (.-ProofState cache)
-     "create_CompleteProof"
-     (dafny-string proof))
-    (js-invoke
-     (.-ProofState cache)
-     "create_ProofUnavailable")))
-
-(defn- cache-candidate
-  [cache {:keys [status authenticated? key source graph proof]}]
-  (case status
-    :missing
-    (js-invoke (.-CacheCandidate cache) "create_NoCandidate")
-
-    :provider-failure
-    (js-invoke (.-CacheCandidate cache) "create_ProviderFailed")
-
-    (js-invoke
-     (.-CacheCandidate cache)
-     "create_Candidate"
-     authenticated?
-     (dafny-string key)
-     (dafny-string source)
-     (big-number graph)
-     (proof-state cache proof)
-     (big-number 0)
-     (js-invoke
-      (.-Telemetry cache)
-      "create_Telemetry"
-      (big-number graph)
-      (big-number 0)))))
-
-(defn- dafny-set
-  [values]
-  (.apply
-   (.-fromElements (.-Set (.-_dafny generated)))
-   (.-Set (.-_dafny generated))
-   (into-array (map big-number values))))
-
-(defn- cache-decision
-  [{:keys [deterministic?
-           dependency-scope-nonempty?
-           expected-key
-           expected-source
-           selected-graph
-           ancestors
-           selected-proof
-           entry]}]
-  (let [cache (.-CacheKernel generated)
-        decision
-        (js-invoke
-         (.-__default cache)
-         "ValidateCache"
-         deterministic?
-         dependency-scope-nonempty?
-         (dafny-string expected-key)
-         (dafny-string expected-source)
-         (big-number selected-graph)
-         (dafny-set ancestors)
-         (proof-state cache selected-proof)
-         (cache-candidate cache entry))]
-    (if (.-is_CacheHit decision)
-      {:status :hit
-       :provenance
-       (if (.-is_ExactHit (.-dtor_provenance decision))
-         :exact-hit
-         :causal-proof-lift)}
-      (let [reason (.-dtor_reason decision)]
-        {:status :miss
-         :reason
-         (cond
-           (.-is_Missing reason) :missing
-           (.-is_ProviderFailure reason) :provider-failure
-           (.-is_NoProofBypass reason) :no-proof-bypass
-           (.-is_Unauthenticated reason) :unauthenticated
-           (.-is_ScopeMismatch reason) :scope-mismatch
-           (.-is_FutureOrSibling reason) :future-or-sibling
-           :else :proof-mismatch)}))))
 
 (defn- candidate-state
   [subproblem candidate]
@@ -1822,7 +1739,6 @@
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
-      :cache-validation (cache-decision input)
       :current-cache-decision (current-cache-decision input)
       :subproblem-cache-decision
       (subproblem-cache-decision input)

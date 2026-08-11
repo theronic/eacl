@@ -2,25 +2,24 @@
  :status :pure-selection-decision-verified-production-boundary-routed
  :scope
  {:included
-  [:capability-and-writer-authority-plan-selection
-   :public-map-consistency-defaulting-and-rejection
-   :selection-presence-vs-malformed-adapter-distinction
-   :same-source-scope-rejection
-   :at-least-anchor-postcondition
-   :exact-graph-anchor-postcondition
+  [:public-consistency-normalization
+   :capability-plan-selection
+   :selection-presence-vs-malformed-adapter
+   :same-source-lifecycle
+   :native-revision-floor
+   :exact-revision-and-locator
    :successful-path-logical-call-bounds]
   :excluded
-  [:token-authentication-and-cryptography
+  [:token-cryptography
    :backend-selection-availability
    :backend-adapter-semantic-truthfulness
+   :database-engine-correctness
    :connection-or-transactor-coordination
    :host-exception-semantics
-   :jvm-or-javascript-heap
-   :cpu-time
-   :worst-case-wall-time]}
+   :heap-and-wall-time]}
  :formal
  {:source "formal/dafny/ConsistencyDecision.dfy"
-  :verified-obligations 19
+  :verified-obligations 18
   :definitions
   [ConsistencyDecision.NormalizePublicConsistency
    ConsistencyDecision.SelectionPlanDecision
@@ -34,235 +33,73 @@
    ConsistencyDecision.SuccessfulSelectionLogicalWorkIsConstantBounded
    ConsistencyDecision.CapturedCurrentNeedsNoPostSelectionDecision
    ConsistencyDecision.SelectedCurrentHasOneSelectionAndValidation
-   ConsistencyDecision.CausalSelectionPlanRequiresManagedAuthority
    ConsistencyDecision.UnsupportedExactPlanIsExactSnapshotUnavailable
-   ConsistencyDecision.AtLeastAcceptanceRequiresAncestor
-   ConsistencyDecision.ExactAcceptanceRequiresPinnedGraph
+   ConsistencyDecision.AtLeastAcceptanceRequiresRevisionFloor
+   ConsistencyDecision.ExactAcceptanceRequiresExactRevision
    ConsistencyDecision.PresentMalformedSelectionIsNotSnapshotAbsence
-   ConsistencyDecision.CurrentSelectionDoesNotRequireHistoricalAnchor]}
+   ConsistencyDecision.CurrentSelectionDoesNotRequireRevisionValidation]}
  :refinement-map
  {:formal-input-to-production-observation
-  {:public-map-consistency
-   {:sources
-    [eacl.datomic.core/Spiceomic.can?
-     eacl.datahike.core/DatahikeAuthorization.can?
-     eacl.datascript.core/DataScriptAuthorization.can?]
-    :contract
-    :pass-the-unmodified-map-value-to-the-shared-descriptor}
-   :mode
-   {:source
-    eacl.spicedb.consistency/descriptor
-    :field :mode}
-   :capability-supported
-   {:source eacl.backend.v8/supports?
-    :arguments [:source :consistency :mode]}
-   :managed-authority
-   {:source eacl.consistency/selection-plan
-    :expression [= :managed [:options :coherence-authority]]}
-   :selection-present
-   {:source eacl.consistency/selected-adapter!
-    :expression [some? :selected]}
-   :selected-adapter
-   {:source eacl.consistency/selected-adapter!
-    :expression [and :selection-present
-                 [eacl.backend.v8/adapter? :selected]]}
-   :same-source-scope
-   {:source eacl.consistency/selected-adapter!
-    :expression
-    [and :selected-adapter
-     [or [identical? :source :selected]
-      [= [eacl.consistency/source-scope :source]
-       [eacl.consistency/source-scope :selected]]]]}
-   :at-least-anchor-satisfied
-   {:source eacl.consistency/select-adapter
-    :expression
-    [eacl.backend.v8/invoke
-     :selected :contains-anchor?
-     [:authenticated-payload :graph-anchor]]}
-   :exact-anchor-satisfied
-   {:source eacl.consistency/select-adapter
-    :expression
-    [=
-     [:authenticated-payload :graph-anchor]
-     [[eacl.consistency/graph-head :selected] :graph-anchor]]}}
+  {:mode eacl.spicedb.consistency/descriptor
+   :capability-supported eacl.backend.v8/supports?
+   :selection-present [some? :selected]
+   :selected-adapter [eacl.backend.v8/adapter? :selected]
+   :same-source-scope eacl.consistency/source-scope
+   :revision-satisfied
+   {:at-least
+    [>= [:selected-native-revision :revision]
+     [:authenticated-token :revision]]
+    :exact
+    [and
+     [= [:selected-native-revision :revision]
+      [:authenticated-token :revision]]
+     [= [:selected-native-revision :exact-locator]
+      [:authenticated-token :exact-locator]]]}}
   :decision-order
-  {:plan
-   [:capability-supported :managed-authority :planned-action]
+  {:plan [:capability-supported :planned-action]
    :post-selection
    [:selection-present :selected-adapter :same-source-scope
-    :required-anchor-postcondition]}
-  :production-result-routing
-  {:planned
-   [:select-current :select-authoritative
-    :authenticate-and-select-at-least
-    :authenticate-and-select-exact]
-   :rejected
-   [:unsupported-capability :unsupported-head-barrier
-    :exact-snapshot-unavailable :invalid-selected-adapter
-    :incomparable-scope :history-divergence]}
+    :required-revision-postcondition]}
   :qualification
-  :executable-refinement-evidence-not-a-formal-proof-of-clojure-or-adapters}
+  :executable-refinement-evidence-not-a-proof-of-host-or-adapter-code}
  :generated-boundary
  {:operations [:consistency-plan :consistency-validation]
-  :plan-state-space
-  {:modes 4
-   :capability-observations 2
-   :authority-observations 2
-   :cases 16}
-  :well-formed-validation-state-space
-  {:selection-kinds 4
-   :presence-and-adapter-observations
-   [[:absent :not-adapter]
-    [:present :not-adapter]
-    [:present :adapter]]
-   :scope-observations 2
-   :anchor-observations 2
-   :cases 48}
+  :plan-cases 8
+  :well-formed-validation-cases 48
+  :input-field :revision-satisfied?
   :java :passed
   :javascript :passed
-  :strict-result-cross-check
-  :generated-result-must-equal-the-independent-portable-reference}
+  :cross-check :generated-result-equals-independent-portable-reference}
  :production
  {:source "modules/eacl/src/eacl/consistency.cljc"
-  :backend-callers
-  ["modules/eacl-datomic/src/eacl/datomic/core.clj"
-   "modules/eacl-datahike/src/eacl/datahike/core.clj"
-   "modules/eacl-datascript/src/eacl/datascript/core.cljc"]
-  :production-modes
-  {:clj-java :generated-authoritative
-   :cljs-javascript :portable-differentially-certified}
-  :runtime-engine-selection-contract :removed
-  :captured-current-specialization
-  {:selected-adapter :identical-captured-source
-   :backend-selection-calls 0
-   :post-selection-generated-decisions 0
-   :same-source-scope :reflexive
-   :qualification
-   :capabilities-are-observed-through-the-validated-source-adapter}
-  :selected-current-path
+  :captured-current
+  {:backend-selection-calls 0
+   :post-selection-decisions 0}
+  :selected-current
   {:backend-selection-calls 1
    :validation-decisions 1
-   :source-scope-reads-at-most 3
-   :graph-head-reads 1
+   :native-revision-reads 1
    :order-hint-reads 1
    :exact-locator-reads 1}
-  :selected-successful-path
+  :successful-path-bounds
   {:plan-decisions 1
-   :validation-decisions 1
+   :validation-decisions-at-most 1
    :backend-selection-calls-at-most 1
    :authentication-attempts-at-most 1
    :source-scope-reads-at-most 4
-   :contains-anchor-calls-at-most 1
-   :graph-head-reads-at-most 2
+   :revision-validation-calls-at-most 1
+   :native-revision-reads-at-most 2
    :order-hint-reads-at-most 2
    :exact-locator-reads-at-most 2}
   :source-counter-evidence
   eacl.consistency-test/consistency-selection-logical-work-matches-formal-path-bounds
-  :production-plan-refinement-evidence
-  {:shared-clj-cljs
-   eacl.consistency-test/production-plan-observations-refine-the-complete-formal-matrix
-   :generated-java
-   eacl.formal.production-kernel-test/generated-java-plan-refines-production-fact-extraction
-   :generated-javascript
-   eacl.formal.production-kernel-test/generated-javascript-plan-refines-production-fact-extraction}
-  :production-validation-refinement-evidence
-  {:shared-clj-cljs
+  :boundary-evidence
+  [eacl.consistency-test/production-plan-observations-refine-the-complete-formal-matrix
    eacl.consistency-test/production-selection-observations-refine-reachable-formal-states
-   :scenarios 24
-   :selection-shapes
-   [:absent :malformed :identical :same-scope-anchor-pass
-    :same-scope-anchor-fail :different-scope]}
-  :public-map-input-refinement-evidence
-  {:counterexamples [:EACL-FORMAL-052 :EACL-FORMAL-053]
-   :defaultable-inputs [:omitted :nil]
-   :default-mode :minimize-latency
-   :canonical-modes
-   [:minimize-latency :fully-consistent
-    :at-least-as-fresh :at-exact-snapshot]
-   :removed-pre-release-modes
-   [:local-snapshot :synchronized-head]
-   :malformed-false :eacl/unsupported-consistency
-   :token-descriptor-fields #{:consistency/mode :zed/token}
-   :unknown-token-descriptor-fields :eacl/unsupported-consistency
-   :backends [:datomic :datahike :datascript]
-   :regressions
-   [eacl.datomic.consistency-v3-test/map-can-rejects-malformed-consistency-test
-    eacl.datahike.consistency-v3-test/map-can-rejects-malformed-consistency-test
-    eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test
-    eacl.consistency-test/public-consistency-has-four-canonical-modes-test
-    eacl.consistency-test/public-consistency-descriptors-reject-unknown-fields-test]}}
- :model-fidelity-regression
- {:finding
-  :an-early-two-boolean-draft-conflated-absent-exact-selection-with-a-present-malformed-value
-  :production-contract
-  {:absent-exact-selection :exact-snapshot-unavailable
-   :present-malformed-selection :invalid-backend-adapter}
-  :fix
-  :model-selection-presence-and-adapter-validity-as-separate-observations
- :controls
-  [:consistency-malformed-exact-treated-absent
-   :malformed-present-exact-selection-is-invalid-adapter]}
- :public-input-fidelity-regression
- {:counterexample :EACL-FORMAL-052
-  :finding
-  :the-public-map-can-arity-coerced-explicit-false-to-the-then-current-default-before-the-formal-descriptor-boundary
-  :production-contract
-  {:omitted :minimize-latency
-   :nil :minimize-latency
-   :false :eacl/unsupported-consistency
-   :explicit-valid-mode :preserved}
-  :fix
-  :forward-the-raw-public-map-value-and-let-the-shared-descriptor-own-defaulting-and-rejection
-  :formal-controls
-  [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToMinimizeLatency
-   ConsistencyDecision.FalseConsistencyCannotSilentlyDefault
-   ConsistencyDecision.ExplicitConsistencyModeIsPreserved]}
- :public-token-field-fidelity-regression
- {:counterexample :EACL-FORMAL-053
-  :finding
-  :production-accepted-token-consistency-descriptors-with-fields-outside-the-modeled-language
-  :production-contract
-  {:required-fields #{:consistency/mode :zed/token}
-   :unknown-fields :eacl/unsupported-consistency}
-  :fix
-  :require-exact-field-cardinality-and-membership-before-token-selection
-  :formal-control
-  ConsistencyDecision.MalformedConsistencyCannotBeAccepted}
- :backend-capability-fidelity-regression
- {:counterexample :EACL-FORMAL-054
-  :finding
-  :connectionless-datascript-adapter-advertised-authoritative-head-selection
-  :production-contract
-  {:minimize-latency :available-on-immutable-snapshot
-   :fully-consistent :requires-live-connection}
-  :fix
-  :remove-fully-consistent-from-connectionless-adapter-capabilities
-  :control
-  eacl.datascript.consistency-v3-test/immutable-adapter-does-not-claim-authoritative-head-test}
- :resource-model-fidelity-regression
- {:finding
-  :the-first-successful-work-datatype-omitted-direct-select-current-while-modeling-the-optimized-captured-current-path
-  :production-contract
-  eacl.consistency/select
-  :fix
-  :add-selected-current-as-a-distinct-path-and-name-the-order-hint-and-exact-locator-reads-performed-by-every-validated-graph-head
-  :control
-  eacl.consistency-test/consistency-selection-logical-work-matches-formal-path-bounds}
- :resource-evidence
- {:report "formal/verification/performance-gates.edn"
-  :logical-work
-  :dafny-upper-bound-matched-by-nonidentical-selection-source-fixtures
-  :response-token-states [false true]
-  :qualification
-  :identity-preserving-backend-selection-can-use-fewer-source-scope-reads
-  :wall-time :paired-host-specific-jvm-and-node-regression-gates
-  :heap :not-established
-  :lore
-  {:analyzer-trust :none
-   :assurance-contribution :none
-   :adopted-technique :no-cross-dimensional-proof-substitution}}
- :remaining
- [:formal-refinement-of-each-backend-selection-implementation
-  :formal-authenticated-token-decoder-refinement
-  :cross-backend-authoritative-state-trace
-  :independent-review]}
+   eacl.formal.production-kernel-test/generated-java-plan-refines-production-fact-extraction]}
+ :trusted-boundary
+ [:token-decoder-and-cryptography
+  :source-lifecycle-truthfulness
+  :backend-native-revision-and-exact-locator
+  :backend-selection-implementation
+  :database-engine]}

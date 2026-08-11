@@ -70,7 +70,7 @@ for another.
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
 clj-kondo version in the toolchain lock. The ledger closes 63 named shared,
-authority-provider, and backend roots over 1,424 definitions in 55 source
+proof-provider, and backend roots over 1,380 definitions in 57 source
 files, including unattributed usages assigned to their exact containing
 `defrecord` spans. It is static completeness evidence only: it does not prove
 Clojure source or adapter semantics. `backend-dispatch.edn` additionally
@@ -100,9 +100,10 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
 | `IndexedBatching.dfy` | bounded ordered scan waves, ordered response folding, fuel-cut progress publication, crossing law |
 | `IndexedBatchCompleteness.dfy` | proof-only pending-scan ghost views and generalized batch coverage invariants |
-| `CacheKernel.dfy` | legacy cache validation and telemetry CAS laws retained for compatibility |
+| `CacheKernel.dfy` | dependency-scope completeness, forward cache acceptance, recomputation equivalence, and telemetry noninterference |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
+| `ScalarFrontierCoherence.dfy` | globally ordered native generations, scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |

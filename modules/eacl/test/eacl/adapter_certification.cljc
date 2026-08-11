@@ -494,10 +494,12 @@
         source (backend/invoke adapter :source-scope)
         lifecycle (backend/invoke adapter :source-lifecycle)
         revision (backend/invoke adapter :native-revision)
-        schema-proof (backend/invoke adapter :schema-proof)
-        relation-ids (mapv :relation-id (vals relations))
-        relation-proof
-        (backend/invoke adapter :relation-proof relation-ids)
+        relation-ids (vec (sort (map :relation-id (vals relations))))
+        ordered-generations?
+        (backend/supports? adapter :cache-proofs :ordered-generations)
+        proof-frame
+        (when ordered-generations?
+          (backend/invoke adapter :proof-frame relation-ids))
         current (backend/invoke adapter :select-current)]
     (demand (= snapshot-id (backend/invoke adapter :snapshot-id))
             "Snapshot identity changed on an immutable adapter.")
@@ -515,12 +517,15 @@
     (demand (= (:exact-locator revision)
                (backend/invoke adapter :exact-locator))
             "Native revision disagreed with the exact locator.")
-    (demand (= schema-proof (backend/invoke adapter :schema-proof))
-            "Schema proof was unstable on an immutable adapter.")
-    (demand (= relation-proof
-               (backend/invoke
-                adapter :relation-proof relation-ids))
-            "Relation proof was unstable on an immutable adapter.")
+    (when ordered-generations?
+      (demand (= #{:schema-stamp :relation-stamps}
+                 (set (keys proof-frame)))
+              "Ordered-generation frame had an unexpected shape.")
+      (demand (= relation-ids (mapv first (:relation-stamps proof-frame)))
+              "Ordered-generation frame was incomplete or noncanonical.")
+      (demand (= proof-frame
+                 (backend/invoke adapter :proof-frame relation-ids))
+              "Ordered-generation frame was unstable on an immutable adapter."))
     (when (backend/supports?
            adapter :consistency :at-exact-snapshot)
       (let [exact
@@ -542,8 +547,7 @@
      :source-scope source
      :source-lifecycle lifecycle
      :native-revision revision
-     :schema-proof-available? (some? schema-proof)
-     :relation-proof-available? (some? relation-proof)
+     :ordered-generation-proof? ordered-generations?
      :exact-selection?
      (backend/supports?
       adapter :consistency :at-exact-snapshot)}))
@@ -563,7 +567,8 @@
             (let [declared
                   (set (keys (backend/certification-obligations)))]
               (demand
-               (= backend/required-snapshot-operations declared)
+               (= (conj backend/required-snapshot-operations :proof-frame)
+                  declared)
                "Adapter obligation registry is incomplete."
                {:required backend/required-snapshot-operations
                 :declared declared})

@@ -487,14 +487,16 @@
          :relation-populated? (fn [& _] false)
          :all-permission-nodes
          (constantly (:permission-nodes fixture))
-         :schema-proof (fn ([] :schema-1) ([_] :schema-1))
-         :relation-proof
+         :proof-frame
          (fn [relation-ids]
-           [:relations (vec (sort relation-ids))])}
+           {:schema-stamp 1
+            :relation-stamps
+            (mapv (fn [relation-id] [relation-id 1])
+                  (sort relation-ids))})}
         adapter
         (backend/make-adapter
          {:id :formal-memory
-          :capabilities {}
+          :capabilities {:cache-proofs #{:ordered-generations}}
           :operations operations})]
     {:v8 adapter
      :indexed legacy

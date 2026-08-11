@@ -1,90 +1,106 @@
 {:schema-version 1
- :date "2026-08-10"
+ :date "2026-08-11"
  :status :passed
  :benchmarks
- [eacl.bench.managed-proof-cost-test/cross-backend-write-amplification-and-proof-cost-test
+ [eacl.bench.managed-proof-cost-test/cross-backend-scalar-frontier-and-request-cost-test
   eacl.bench.managed-proof-cost-test/unrelated-relation-writers-have-no-global-retry-test]
  :methodology
- {:logical-write-unit :one-public-relationship-create-or-delete
-  :write-amplification-unit
-  :committed-transaction-report-datom-events
-  :proof-work-unit :one-immutable-adapter-relation-proof-call
-  :elapsed-unit :nanoseconds-per-proof-call
-  :unrelated-growth {:relation :auditor :edges 1024}
-  :target-proof-relation :reader
-  :proof-calls-per-sample 500
+ {:proof-work-unit :one-proof-frame-read-plus-key-derivation
+  :dependency-counts [0 1 8 64 256]
+  :proof-calls-per-sample 200
   :warmup-samples 8
   :measurement-samples 31
+  :order :interleaved-scalar-and-full-vector
+  :statistics [:p50 :p95 :thread-allocated-bytes :serialized-key-bytes]
+  :request-paths
+  {:exact-hit {:calls-per-sample 100 :samples 31}
+   :managed-hit-after-unrelated-commit {:samples 31}
+   :relevant-proof-miss {:delete-create-pairs 12}}
   :concurrency
   {:writers 2
    :relations [:reader :auditor]
    :start :shared-promise-barrier
    :required-unrelated-transaction-attempts 2
-   :same-relation-contention :recorded-not-portable-gated}
-  :cardinality-gate
-  {:statistic :p50
-   :maximum-large-to-small-ratio 5.0}
-  :dimension-policy
-  [:logical-writes-not-substituted-for-datom-events
-   :datom-events-not-substituted-for-bytes-or-storage-cost
-   :unrelated-database-cardinality-not-substituted-for-proof-calls
-   :elapsed-time-not-substituted-for-abstract-operation-count
-   :transaction-attempts-measured-separately-from-latency]}
- :results
+   :same-relation-contention :recorded-not-portable-gated}}
+ :dependency-256-results
  [{:backend :datomic
-   :logical-relationship-writes 2
-   :create-committed-datom-events 6
-   :delete-committed-datom-events 4
-   :small-proof-p50-ns-per-call 1018.584
-   :large-proof-p50-ns-per-call 1053.25
-   :large-to-small-p50-ratio 1.0340335210449016}
+   :scalar-p50-ns 74043.125
+   :scalar-p95-ns 81536.045
+   :full-vector-p50-ns 77607.08
+   :full-vector-p95-ns 85192.71
+   :scalar-to-full-vector-p50-ratio 0.954077
+   :scalar-allocated-bytes 311156.12
+   :full-vector-allocated-bytes 311140.12
+   :scalar-key-bytes 64
+   :full-vector-key-bytes 8242}
   {:backend :datahike
-   :logical-relationship-writes 2
-   :create-committed-datom-events 6
-   :delete-committed-datom-events 4
-   :small-proof-p50-ns-per-call 1333.25
-   :large-proof-p50-ns-per-call 1129.666
-   :large-to-small-p50-ratio 0.8473024564035252}
+   :scalar-p50-ns 175121.045
+   :scalar-p95-ns 186476.665
+   :full-vector-p50-ns 178595.205
+   :full-vector-p95-ns 182223.125
+   :scalar-to-full-vector-p50-ratio 0.980547
+   :scalar-allocated-bytes 304916.12
+   :full-vector-allocated-bytes 304900.12
+   :scalar-key-bytes 54
+   :full-vector-key-bytes 4061}
   {:backend :datascript
-   :logical-relationship-writes 2
-   :create-committed-datom-events 6
-   :delete-committed-datom-events 4
-   :small-proof-p50-ns-per-call 407.668
-   :large-proof-p50-ns-per-call 392.834
-   :large-to-small-p50-ratio 0.9636125474650942}]
+   :scalar-p50-ns 41692.5
+   :scalar-p95-ns 42144.58
+   :full-vector-p50-ns 44863.75
+   :full-vector-p95-ns 45182.08
+   :scalar-to-full-vector-p50-ratio 0.929314
+   :scalar-allocated-bytes 88732.12
+   :full-vector-allocated-bytes 88716.12
+   :scalar-key-bytes 54
+   :full-vector-key-bytes 4035}]
+ :request-results
+ [{:backend :datomic
+   :exact-p50-ns 58116.25
+   :exact-proof-frame-calls 0
+   :managed-p50-ns 90583.0
+   :managed-hits 31
+   :managed-proof-frame-calls 62
+   :relevant-miss-p50-ns 129625.0
+   :relevant-miss-proof-frame-calls 48}
+  {:backend :datahike
+   :exact-p50-ns 53804.59
+   :exact-proof-frame-calls 0
+   :managed-p50-ns 93625.0
+   :managed-hits 31
+   :managed-proof-frame-calls 62
+   :relevant-miss-p50-ns 125333.0
+   :relevant-miss-proof-frame-calls 48}
+  {:backend :datascript
+   :exact-p50-ns 46105.42
+   :exact-proof-frame-calls 0
+   :managed-p50-ns 61791.0
+   :managed-hits 31
+   :managed-proof-frame-calls 62
+   :relevant-miss-p50-ns 73792.0
+   :relevant-miss-proof-frame-calls 48}]
  :unrelated-concurrency-results
  [{:backend :datomic
    :unrelated-logical-writes 2
    :unrelated-transaction-attempts 2
    :same-relation-logical-writes 2
    :same-relation-transaction-attempts 3
-   :global-graph-or-journal-ops 0
-   :unrelated-elapsed-ns 2221833
-   :same-relation-elapsed-ns 2007833}
+   :global-graph-or-journal-ops 0}
   {:backend :datahike
    :unrelated-logical-writes 2
    :unrelated-transaction-attempts 2
    :same-relation-logical-writes 2
    :same-relation-transaction-attempts 2
-   :global-graph-or-journal-ops 0
-   :unrelated-elapsed-ns 5931292
-   :same-relation-elapsed-ns 1394250}
+   :global-graph-or-journal-ops 0}
   {:backend :datascript
    :unrelated-logical-writes 2
    :unrelated-transaction-attempts 2
    :same-relation-logical-writes 2
    :same-relation-transaction-attempts 2
-   :global-graph-or-journal-ops 0
-   :unrelated-elapsed-ns 1965583
-   :same-relation-elapsed-ns 588208}]
+   :global-graph-or-journal-ops 0}]
  :qualification
- {:write-amplification
-  :counts-committed-datom-events-not-bytes-or-storage-price
-  :proof-cost
-  :isolates-proof-provider-not-complete-public-managed-hit-latency
-  :concurrency
-  :same-process-two-writer-attempt-count-not-production-throughput
-  :latency
-  :same-process-microbenchmark-regression-evidence-not-portable-sla
-  :complexity
-  :cardinality-falsification-evidence-not-an-asymptotic-host-runtime-proof}}
+ {:correctness :all-benchmark-denotation-and-cache-state-assertions-passed
+  :latency :same-process-microbenchmark-regression-evidence-not-portable-sla
+  :p95 :reported-but-not-used-to-claim-universal-improvement
+  :allocation :scalar-reduction-adds-16-transient-bytes-per-proof-call
+  :key-size :serialized-size-proxy-for-retained-identity-size
+  :complexity :backend-operation-count-plus-formal-proof-not-host-runtime-asymptotic-proof}}

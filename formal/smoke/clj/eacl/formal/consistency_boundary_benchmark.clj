@@ -59,8 +59,7 @@
 (defn- run-batch
   [adapter repetitions]
   (let [options
-        {:coherence-authority :managed
-         :decision-kernel production/default-selection}
+        {:decision-kernel production/default-selection}
         started (System/nanoTime)]
     (loop [iteration 0
            checksum 0]
@@ -114,8 +113,8 @@
        :backend-selection-calls 0
        :validation-decisions 0
        :source-scope-reads 0
-       :contains-anchor-calls 0
-       :graph-head-reads 0
+       :revision-validation-calls 0
+       :native-revision-reads 0
        :order-hint-reads 0
        :exact-locator-reads 0}
       :resource-qualification

@@ -82,8 +82,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client
                   conn
-                  {:coherence-authority :managed
-                   :proof-mode :content})
+                  {})
           u1     (spice-object :user "u1")
           a1     (spice-object :account "a1")]
       (eacl/write-schema! client "definition user {}
@@ -232,8 +231,7 @@
     (testing "Make a Spice client and hold onto channel for disposal later."
       (let [client (spiceomic/make-client
                     conn
-                    {:coherence-authority :managed
-                     :proof-mode :content})]
+                    {})]
         (is client)
         ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
@@ -661,8 +659,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client
                   conn
-                  {:coherence-authority :managed
-                   :proof-mode :content})]
+                  {})]
       (eacl/write-schema! client "definition user {}
          definition account { relation owner: user  permission admin = owner }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"} {:eacl/id "acct-2"} {:eacl/id "acct-3"}])

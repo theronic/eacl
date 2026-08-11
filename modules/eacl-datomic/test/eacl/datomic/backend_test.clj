@@ -35,8 +35,7 @@
               (fn [snapshot eid]
                 (:eacl/id (d/entity snapshot eid)))
               :conn conn
-              :coherence-authority :managed
-              :proof-mode :mutation})
+              })
             alice (backend/invoke
                    adapter :object-id->internal "alice")
             account (backend/invoke
@@ -77,20 +76,12 @@
               adapter
               :direct-match?
               :user alice relation-id :account account)))
-        (let [schema-proof (backend/invoke adapter :schema-proof)]
-          (is (= 2 (count schema-proof)))
-          (is (integer? (first schema-proof)))
-          (is (string? (second schema-proof))))
-        (is (= relation-id
-               (ffirst
-                (backend/invoke
-                 adapter :relation-proof [relation-id]))))
-        (let [[_relation-id assertion-t generation]
-              (first
-               (backend/invoke
-                adapter :relation-proof [relation-id]))]
-          (is (integer? assertion-t))
-          (is (integer? generation)))
+        (let [proof (backend/invoke adapter :proof-frame [relation-id])]
+          (is (= #{:schema-stamp :relation-stamps}
+                 (set (keys proof))))
+          (is (integer? (:schema-stamp proof)))
+          (is (= relation-id (ffirst (:relation-stamps proof))))
+          (is (integer? (second (first (:relation-stamps proof))))))
         (testing "the adapter advertises Datomic's existing guarantees"
           (doseq [mode [:fully-consistent
                         :minimize-latency

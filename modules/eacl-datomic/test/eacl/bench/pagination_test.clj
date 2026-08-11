@@ -207,9 +207,7 @@
     ;; proof cost explicitly.
     (spiceomic/make-client
      conn
-     {:coherence-authority :managed
-      :proof-mode :mutation
-      :cache {:remember-answers false}})))
+     {:cache {:remember-answers false}})))
 
 (defn seed-recursive-chain!
   [conn {:keys [chain-length unrelated-count]}]
@@ -240,9 +238,7 @@
     ;; behavior rather than whole-graph content-proof hashing.
     (spiceomic/make-client
      conn
-     {:coherence-authority :managed
-      :proof-mode :mutation
-      :cache {:remember-answers false}})))
+     {:cache {:remember-answers false}})))
 
 (deftest ^:benchmark benchmark-seeders-initialize-empty-database-test
   (testing "multi-path seeder initializes an empty database before constructing a client"
@@ -671,9 +667,7 @@
           (let [live-acl
                 (spiceomic/make-client
                  conn
-                 {:coherence-authority :managed
-                  :proof-mode :mutation
-                  :cache {:remember-answers true}})
+                 {:cache {:remember-answers true}})
                 count-resources-query (dissoc base-query :first)
                 first-server
                 (first (:data (eacl/lookup-resources live-acl base-query)))
@@ -784,8 +778,6 @@
                          :unrelated-count 0})
                      client-opts
                      {:page-token-key "recursive-scaling-benchmark"
-                      :coherence-authority :managed
-                      :proof-mode :mutation
                       ;; measures the continuation/page layer, not answers
                       :cache {:remember-answers false}}
                      query {:subject (->user "user-1")
@@ -866,8 +858,7 @@
                 :unrelated-count 0})
             client-opts
             {:page-token-key "recursive-page-size-benchmark"
-             :coherence-authority :managed
-             :proof-mode :mutation}
+             }
             measurements
             (mapv
              (fn [page-size]
@@ -933,8 +924,6 @@
                 :unrelated-count 0})
             client-opts
             {:page-token-key "recursive-cost-breakdown"
-             :coherence-authority :managed
-             :proof-mode :mutation
              ;; This breaks down the cost of the recursive PAGE path, where a
              ;; completed page is read back and nothing new is published.
              ;; Remembering answers adds its own publications on top and would
@@ -1097,9 +1086,7 @@
             live-acl
             (spiceomic/make-client
              conn
-             {:coherence-authority :managed
-              :proof-mode :mutation
-              :cache {:kind-max-weight {:can? (* 2 1024 1024)}
+             {:cache {:kind-max-weight {:can? (* 2 1024 1024)}
                       :two-hit-kinds #{:can?}
                       :remember-answers true}})
             live-check #(eacl/can? live-acl subject :view server)]
@@ -1197,9 +1184,7 @@
       (let [acl
             (spiceomic/make-client
              conn
-             {:coherence-authority :managed
-              :proof-mode :mutation
-              :cache cache/no-cache})
+             {:cache cache/no-cache})
             subject (eacl/spice-object :user "scale-user")
             documents
             (fn [start amount]
@@ -1287,8 +1272,6 @@
               (spiceomic/make-client
                conn
                (assoc common
-                      :coherence-authority :managed
-                      :proof-mode :mutation
                       :cache cache-option)))
             mutation-client (managed {:remember-answers true})
             writer mutation-client
@@ -1296,8 +1279,6 @@
             (spiceomic/make-client
              conn
              (assoc common
-                    :coherence-authority :unknown
-                    :proof-mode :content
                     :cache {:remember-answers true}))
             global-client (managed {:remember-answers true})
             no-cache-client (managed shared-cache/no-cache)

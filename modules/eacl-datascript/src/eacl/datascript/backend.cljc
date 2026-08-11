@@ -4,9 +4,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.datascript.db :as ddb]
             [eacl.datascript.impl :as impl]
-            [eacl.relationships.endpoint-pair :as endpoint-pair]
-            [eacl.relationships.storage :as relationship-storage]
-            [eacl.secure-format :as secure])
+            [eacl.relationships.storage :as relationship-storage])
   #?(:clj (:import [java.util WeakHashMap])))
 
 (defonce ^:private connection-source-ids
@@ -39,7 +37,7 @@
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
    :cursor #{:forward :reverse :opaque}
    :transactions #{:schema :relationships :object-deletion}
-   :cache-proofs #{:schema :relations :snapshot-bound :database-visible}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj :cljs}})
 
 (defn- freshness-timeout!
@@ -95,112 +93,25 @@
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
 
-(defn- schema-proof-records
-  [db {:keys [permission-nodes relation-ids] :as scope}]
-  (let [{:keys [relation-defs permission-defs]}
-        (impl/build-schema-catalog db)
-        relation-ids (set relation-ids)
-        scoped-relations
-        (cond->> (mapcat identity (vals relation-defs))
-          scope (filter #(contains? relation-ids (:relation-id %))))
-        scoped-permissions
-        (if scope
-          (mapcat #(get permission-defs % []) permission-nodes)
-          (mapcat identity (vals permission-defs)))]
-    (concat
-     (->> scoped-relations
-          (map (fn [relation]
-                 [:relation
-                  (:relation-id relation)
-                  (:resource-type relation)
-                  (:relation-name relation)
-                  (:subject-type relation)]))
-          sort)
-     (->> scoped-permissions
-          (map normalized-permission)
-          (map (fn [permission]
-                 [:permission
-                  (:permission-id permission)
-                  (:resource-type permission)
-                  (:permission-name permission)
-                  (:source-relation-name permission)
-                  (:target-type permission)
-                  (:target-name permission)]))
-          sort))))
-
-(defn- content-schema-proof
-  [db scope]
-  {:content-digest
-   (secure/canonical-records-digest
-    "eacl/datascript/schema-content-proof/v3"
-    (schema-proof-records db scope))})
-
-(defn- content-relation-proof
-  [db relation-ids external-id]
-  (let [wanted (set relation-ids)
-        forward
-        (when (seq wanted)
-          (for [{subject-eid :e value :v}
-                (ddb/avet-datoms
-                 db relationship-storage/forward-attribute)
-                :let [decoded
-                      (endpoint-pair/decode-forward subject-eid value)]
-                :when (contains? wanted (:relation-eid decoded))]
-            [:forward
-             (:relation-eid decoded)
-             (:subject-type decoded)
-             subject-eid
-             (external-id db subject-eid)
-             (:resource-type decoded)
-             (:resource-eid decoded)
-             (external-id db (:resource-eid decoded))
-             (count value)]))
-        reverse
-        (when (seq wanted)
-          (for [{resource-eid :e value :v}
-                (ddb/avet-datoms
-                 db relationship-storage/reverse-attribute)
-                :let [decoded
-                      (endpoint-pair/decode-reverse resource-eid value)]
-                :when (contains? wanted (:relation-eid decoded))]
-            [:reverse
-             (:relation-eid decoded)
-             (:subject-type decoded)
-             (:subject-eid decoded)
-             (external-id db (:subject-eid decoded))
-             (:resource-type decoded)
-             resource-eid
-             (external-id db resource-eid)
-             (count value)]))]
-    {:content-digest
-     (secure/canonical-records-digest
-      "eacl/datascript/relationship-content-proof/v3"
-      (sort (concat forward reverse)))}))
-
-(defn- mutation-schema-proof
-  [db]
-  (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
-    (when-let [datom (first (ds/datoms db :eavt schema-eid
-                                       :eacl/schema-generation))]
-      [(:tx datom) (:v datom)])))
-
-(defn- mutation-relation-proof
+(defn- ordered-generation-frame
   [db relation-ids]
-  (let [proof
-        (mapv (fn [relation-id]
-                (when-let [datom
-                           (first (ds/datoms db :eavt relation-id
-                                             :eacl/relation-version))]
-                  [relation-id (:tx datom) (:v datom)]))
-              (sort relation-ids))]
-    (when (every? some? proof)
-      proof)))
+  {:schema-stamp
+   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
+     (some-> (first (ds/datoms db :eavt schema-eid
+                                :eacl/schema-generation))
+             :tx))
+   :relation-stamps
+   (mapv
+    (fn [relation-id]
+      [relation-id
+       (some-> (first (ds/datoms db :eavt relation-id
+                                  :eacl/relation-version))
+               :tx)])
+    relation-ids)})
 
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable DataScript db value."
-  [db {:keys [object-id->entid entid->object-id conn
-              proof-mode]
-       :or {proof-mode :content}
+  [db {:keys [object-id->entid entid->object-id conn]
        :as opts}]
   (let [source-lifecycle
         (or (some-> (:source-lifecycle-state opts) deref)
@@ -324,22 +235,6 @@
               (map :v)
               set))
 
-       :schema-proof
-       (fn
-         ([]
-          (case proof-mode
-            :mutation (mutation-schema-proof db)
-            :content (content-schema-proof db nil)
-            nil))
-         ([scope]
-          (case proof-mode
-            :mutation (mutation-schema-proof db)
-            :content (content-schema-proof db scope)
-            nil)))
-
-       :relation-proof
+       :proof-frame
        (fn [relation-ids]
-         (case proof-mode
-           :mutation (mutation-relation-proof db relation-ids)
-           :content (content-relation-proof db relation-ids entid->object-id)
-           nil))}})))
+         (ordered-generation-frame db relation-ids))}})))

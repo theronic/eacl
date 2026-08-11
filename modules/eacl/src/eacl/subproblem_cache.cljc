@@ -532,28 +532,13 @@
      :cached? false
      :cache-tier nil}))
 
-(defn- proof-component?
-  [value]
-  (or (and (integer? value) (not (neg? value)))
-      (string? value)
-      (keyword? value)))
-
 (defn proof-stamp?
-  "True for the bounded portable scalar/vector identities admitted into
-  managed projection keys."
+  "True for a portable non-negative scalar transaction generation."
   [value]
-  (or
-   (proof-component? value)
-   (and (vector? value)
-        (<= (count value) 4096)
-        (every?
-         #(or
-           (proof-component? %)
-           (and (vector? %)
-                (seq %)
-                (<= (count %) 4)
-                (every? proof-component? %)))
-         value))))
+  (and
+   #?(:clj (integer? value)
+      :cljs (and (number? value) (js/Number.isSafeInteger value)))
+   (not (neg? value))))
 
 (defn- valid-managed-descriptor?
   [descriptor]

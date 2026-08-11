@@ -216,7 +216,7 @@
           relationship (eacl/->Relationship user :owner account)
           setup-client (core/make-client conn {})]
       (eacl/create-relationship! setup-client relationship)
-      (let [client (core/make-client conn {:coherence-authority :managed})]
+      (let [client (core/make-client conn {})]
         (is (true? (eacl/can? client user :admin account)))
         (is (true? (eacl/can? client user :admin account)))
         @(d/transact conn

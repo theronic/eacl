@@ -13,46 +13,13 @@
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
             [eacl.datahike.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.relationships.storage :as relationship-storage]))
 
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
 
 (def default-internal-cursor->spice orchestration/default-internal-cursor->spice)
 (def default-spice-cursor->internal orchestration/default-spice-cursor->internal)
-
-(defn- datom-proof
-  [db entity attribute]
-  (when-let [datom (first (ddb/eavt-datoms db entity attribute))]
-    [(:tx datom) (:v datom)]))
-
-(defn- managed-cache-descriptor
-  [db relation-ids]
-  (let [relation-ids (vec (sort (distinct relation-ids)))
-        schema-eid
-        (ddb/entid db [:eacl/id "schema-string"])
-        schema-stamp
-        (when schema-eid
-          (datom-proof
-           db schema-eid :eacl/schema-generation))
-        relation-stamps
-        (keep (fn [relation-id]
-                (when-let [[tx generation]
-                           (datom-proof db relation-id
-                                        :eacl/relation-version)]
-                  [relation-id tx generation]))
-              relation-ids)]
-    (when (and (subproblem/proof-stamp? schema-stamp)
-               (= (count relation-ids)
-                  (count relation-stamps))
-               (every?
-                (fn [[_ tx generation]]
-                  (subproblem/proof-stamp? [tx generation]))
-                relation-stamps))
-      {:schema-stamp schema-stamp
-       :dependency-stamp
-       (mapv vec relation-stamps)})))
 
 (defn- relationship-retraction-count
   [db tx-data]
@@ -78,7 +45,6 @@
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
    :snapshot-adapter datahike-backend/snapshot-adapter
-   :managed-cache-descriptor managed-cache-descriptor
    :relationship-retraction-count relationship-retraction-count
    :transact! transact-native!
    ;; Vars, not values: late binding keeps instrumentation (with-redefs in
@@ -148,7 +114,10 @@
    (orchestration/expire-cache! client source-lifecycle)))
 
 (def prepare-cache-coherence!
-  "Prepares native managed-cache generations on an upgraded connection."
+  "Initializes missing native cache generations on a quiesced connection.
+
+  This does not detect or repair earlier unsupported unstamped mutations and
+  is not a cache flush."
   schema/prepare-cache-coherence!)
 
 (defn cache-stats
@@ -166,12 +135,9 @@
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
   - :cache - omitted creates a bounded client-private current-generation
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    :coherence-authority defaults to :unknown on every backend: cached
-    entries are reused only for the exact immutable database value they
-    were computed on, which stays correct under out-of-band writes. Pass
-    :coherence-authority :managed - an explicit writer contract that every
-    schema and relationship mutation goes through EACL's APIs - to let
-    unchanged cache portions survive unrelated transactions.
+    Exact hits are snapshot-local; complete native generation proofs let
+    unchanged answers survive unrelated forward transactions. Authorization
+    mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn config-opts]

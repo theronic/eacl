@@ -57,8 +57,7 @@
     (let [client
           (core/make-client
            conn
-           {:proof-mode :none
-            :page-token-key "proofless-exact-fallback"})
+           {:page-token-key "proofless-exact-fallback"})
           alice (spice-object :user "alice")
           account #(spice-object :account %)
           query {:subject alice

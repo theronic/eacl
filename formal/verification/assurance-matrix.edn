@@ -4,9 +4,9 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 56
+  :source-files 57
   :public-roots 63
-  :reachable-definitions 1420
+  :reachable-definitions 1380
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -32,7 +32,7 @@
   {:source "formal/dafny/CacheKernel.dfy"
    :class :proof-only-generated-boundary
    :consumer []
-   :reason :no-live-production-call-site-for-cache-validation}
+   :reason :no-runtime-operation}
   {:source "formal/dafny/ConsistencyDecision.dfy"
    :class :generated-production
    :consumer ['eacl.consistency]}
@@ -41,6 +41,11 @@
    :consumer ['eacl.cache
               'eacl.subproblem-cache
               'eacl.relationships.safe-retraction]}
+  {:source "formal/dafny/ScalarFrontierCoherence.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.proof-frame
+              'eacl.cache
+              'eacl.subproblem-cache]}
   {:source "formal/dafny/CurrentCache.dfy"
    :class :generated-production
    :consumer ['eacl.cache/current-generation-decision]}
@@ -268,8 +273,7 @@
     'eacl.consistency/captured-current-selection
     'eacl.consistency/select]
    :theorems
-   [:causal-selection-plan-requires-managed-authority
-    :unsupported-exact-plan-is-exact-snapshot-unavailable
+   [:unsupported-exact-plan-is-exact-snapshot-unavailable
     :at-least-acceptance-requires-ancestor
     :exact-acceptance-requires-pinned-graph
     :present-malformed-selection-is-not-snapshot-absence
@@ -283,7 +287,7 @@
     :same-source-selection
     :authoritative-or-fails-closed
     :at-least-anchor-completeness
-    :exact-locator-and-graph-anchor-identity]
+    :exact-locator-and-snapshot-identity]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
    {:clj-java :generated-only
@@ -302,9 +306,9 @@
                   'eacl.relay]
    :theorems [:cursor-scope-before-influence
               :single-permitted-graph
-              :content-cursor-minting-does-no-relation-proof-scan
-              :no-cache-proof-cursor-minting-does-no-relation-proof-scan
-              :only-managed-mutation-mode-requests-dependency-proof
+              :cursor-minting-does-no-relationship-content-scan
+              :no-cache-cursor-minting-does-no-generation-scan
+              :automatic-current-requests-use-ordered-generation-proofs
               :current-continuation-requires-equal-proof
               :exact-continuation-requires-authenticated-exact-proof
               :changed-proof-never-continues-on-current
@@ -318,7 +322,7 @@
     :exact-selection
     :source-fingerprint
     :exact-snapshot-identity-collision-resistance
-    :managed-mutation-stamp-completeness
+    :ordered-generation-proof-completeness
     :complete-dependency-and-order-proof]
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
@@ -476,7 +480,7 @@
                   'eacl.subproblem-cache]
    :theorems [:exact-current-same-snapshot
               :managed-atomic-relation-projection-frame
-              :managed-source-schema-relation-proof-key-separation
+              :managed-source-schema-scalar-frontier-key-separation
               :changed-relation-slice-requires-changed-stamp
               :forward-scalar-stamp-invalidation
               :late-publication-unreachable

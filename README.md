@@ -46,11 +46,9 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL uses a bounded, client-private, multi-tier cache. Repeated operations
   can reuse complete answers, while different operations can share compiled
   schema plans and unchanged relationship projections where their graph paths
-  overlap. The default mode reuses data only on the identical immutable
-  database value. Applications in which every authorization-relevant write
-  goes through EACL can opt into managed reuse across unrelated transactions.
-  The cache never changes authorization semantics and can be disabled globally
-  or per request. See [Caching](#caching) and the
+  overlap. Exact reuse is checked first; proof-backed reuse across unrelated
+  transactions is automatic. The cache never changes authorization semantics
+  and can be disabled globally or per request. See [Caching](#caching) and the
   [cache architecture guide](docs/cache.md).
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates already known to be irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
@@ -100,7 +98,7 @@ caller already handles for expiry.
 
 The repository is a workspace with four independently consumable modules:
 
-- `modules/eacl`: public protocol and records, schema model/parser, consistency descriptors, shared authorization engine, and six-function backend SPI.
+- `modules/eacl`: public protocol and records, schema model/parser, consistency descriptors, shared authorization engine, and validated backend SPI.
 - `modules/eacl-datomic`: the Datomic adapter, including consistency, encrypted cursors, object deletion, and authorization caching.
 - `modules/eacl-datascript`: the CLJ/CLJS DataScript adapter and its backend contract tests.
 - `modules/eacl-datahike`: the CLJ Datahike adapter, including both keyword and numeric attribute-reference representations.
@@ -185,16 +183,6 @@ full, explicitly bounded formal verification suite. When building or installing
 an older-target artifact, pass the same `:java-release` value to `prep` and the
 subsequent `jar` or `install` task so the bytecode audit checks the intended
 target.
-
-> [!WARNING]
-> The following maintainer command bootstraps the same checksum-verified
-> Dafny/Boogie/Z3, Apalache, and TLA+ toolchain and writes verification output
-> under `target/formal-tools` and `target/formal`. It can consume substantial
-> disk space and run for a long time.
-
-```bash
-bin/formal verify
-```
 
 Tool versions and archive checksums are pinned in
 `formal/toolchain.lock.json`. Formal downloads are reused from
@@ -773,19 +761,64 @@ Each EACL client owns a bounded, private, multi-tier cache:
 - compiled schema paths and recursive plans are shared across queries using
   the same schema generation.
 
-Every backend defaults to the conservative `:coherence-authority :unknown`:
-entries are reused only for the exact immutable database value on which they
-were computed, which stays correct even when authorization data is written
-outside EACL (a raw `transact!`, a fixture load, another library). Pass
-`:coherence-authority :managed` — an explicit contract that every schema and
-relationship mutation goes through EACL's client APIs — to let unchanged
-cache portions survive unrelated transactions. Managed keys contain the
-selected source lifecycle, physical schema generation, and complete sorted
-vector of physical generations for the query's relation dependency closure.
-A relevant relation write changes exactly its relation generation; a schema
-change rotates the managed schema generation. No transaction listener,
-transaction-log scan, mutation journal, or global graph-head CAS participates
-in cache validity.
+Lookup is exact-first. An answer for the selected immutable database value is
+returned without acquiring a coherence proof. After an exact miss, EACL may
+reuse a completed answer from an older forward snapshot when one complete
+ordered-generation proof establishes the same source lifecycle, normalized
+request, result shape, schema generation, and scalar frontier over every
+relationship relation on which the request depends. A supported relevant
+mutation stamps every affected relation with its globally later committed
+transaction; an unrelated transaction leaves the frontier unchanged.
+
+Proof-backed reuse is automatic, all-or-nothing, and request-scoped. Missing, malformed,
+non-canonical, oversized, unsupported, or exceptional evidence produces a
+typed `:proof-unavailable` cache statistic and safe exact-snapshot evaluation;
+it is not an authorization error. Historical, filtered, speculative, and
+caller-constructed database values do not have a managed-cache availability
+guarantee. A long-running ordinary request may continue using cache segments
+valid for the immutable database value it selected. A dependency closure over
+4,096 relations is exact-only rather than truncated.
+
+The built-in `:eacl/id` codec is proof-eligible. A custom
+`:entid->object-id`/`:object-id->lookup-ref` codec remains client-local and
+exact-only unless the client also supplies a portable `:adapter-fingerprint`
+and `:adapter-deterministic? true` and the codec is injective and round-trips
+every permissioned identity. Use the same fingerprint and codec in every
+process that exchanges cursors. Without that contract, another client rejects
+the cursor even when signing keys and source lifecycle match.
+
+This guarantee requires every authorization-relevant mutation to use EACL:
+
+- schema changes use `eacl/write-schema!`;
+- relationship additions, retractions, repairs, and object cleanup use EACL
+  mutation APIs or EACL-produced transaction data transacted intact; and
+- permissioned identity/liveness changes use a documented EACL deletion or
+  safe-retraction path.
+
+Application datoms that are not authorization dependencies are unrestricted.
+Splitting EACL transaction data, directly changing relationship tuples,
+directly changing EACL schema or permissioned identity, or calling native
+entity retraction on a permissioned entity is unsupported. Such a mutation can
+leave a managed answer stale because it did not advance the required relation
+generation.
+
+Recovery from an unsupported authorization mutation is operational, not a
+cache heuristic:
+
+1. Quiesce or drain authorization requests in every affected process.
+2. Repair invalid data through a supported EACL deletion, repair, schema-write,
+   or safe-retraction path. Cache expiry never repairs ghost tuples.
+3. Expire or recreate every affected EACL client in every process. When
+   processes exchange tokens, pass the same new bounded lifecycle value to
+   each backend's `expire-cache!` call.
+4. Resume traffic only after repair and lifecycle rotation are complete.
+
+`prepare-cache-coherence!` only initializes missing generation state; it
+cannot discover an earlier unstamped mutation. Re-submitting an identical
+schema with `write-schema!` may be a database no-op. Neither operation is a
+cache flush, so lifecycle rotation remains required after an unsupported
+mutation. No transaction listener, transaction-log scan, content scan,
+mutation journal, or database-global graph-head CAS participates in validity.
 
 Most applications need no cache configuration. To set a completed-answer
 weight budget (answers are byte-weight bounded with least-recently-used
@@ -837,12 +870,17 @@ implementations remain compatible; unless they implement the optional
 `IDetailedAuthorization` protocol, `check-permission` delegates to `can?` and
 reports an uncached decision.
 
-DataScript and Datahike keep completed answers in a client-private native
-cache. Inspect or expire that exact cache through the backend API:
+Inspect or expire a client's cache through its backend API:
 
 ```clojure
+(eacl.datomic.core/cache-stats acl)
+(eacl.datomic.core/expire-cache! acl)
+
 (eacl.datascript.core/cache-stats acl)
 (eacl.datascript.core/expire-cache! acl)
+
+(eacl.datahike.core/cache-stats acl)
+(eacl.datahike.core/expire-cache! acl)
 ```
 
 Cache data is never written to the application's database.
@@ -860,7 +898,7 @@ eviction, concurrency, metrics, tuning, and performance guidance, read the
 Authorization defaults to the immutable DB currently visible to the local
 backend. It does not synchronize and does not select history. Mutation
 responses return an authenticated backend-native revision token independently
-of cache authority. Reads accept these descriptors:
+of completed-answer caching. Reads accept these descriptors:
 
 ```clojure
 (require '[eacl.spicedb.consistency :as consistency])
@@ -894,9 +932,7 @@ At-least waits and exact/cursor reconstruction are bounded by
 error; it never falls back to an older or incomparable lifecycle. DataScript and
 Datahike advertise only the modes their configured source can establish.
 
-Version-3 graph-anchor tokens are rejected with
-`:eacl/zed-token-upgrade-required`; their numeric hints are never treated as
-v4 revision authority. A native revision proves freshness only within the
+A native revision proves freshness only within the
 authenticated backend/source/branch/lifecycle scope. Rotate that lifecycle
 whenever the source's numeric revision history can be replaced or regress.
 
@@ -914,8 +950,7 @@ doing arithmetic on `t`:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:coherence-authority :managed
-    :cache {:checkpoints true}}))
+   {:cache {:checkpoints true}}))
 
 (def lower-bound
   (eacl-datomic/zed-token-at-least-seconds-ago acl 30))
@@ -944,8 +979,7 @@ backend:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
-           {:coherence-authority :managed
-            :security-key "32+ bytes of shared secret key material"
+           {:security-key "32+ bytes of shared secret key material"
             :security-kid :cursor-2026-07
             :zed-token-keyring {:zed-2026-06 old-zed-root
                                 :zed-2026-07 current-zed-root}
@@ -965,8 +999,7 @@ The canonical construction options shared by all backends are
 `:cursor-ttl-seconds`, `:entid->object-id`, and
 `:object-id->lookup-ref`. Datomic additionally accepts `:zed-token-key`,
 `:zed-token-keyring`, `:zed-token-kid`, and
-`:consistency-sync-timeout-ms`. The old Datomic `:page-token-*` names and
-`:object-id->ident` remain non-mixable legacy aliases.
+`:consistency-sync-timeout-ms`.
 
 ### Unknown object IDs
 
@@ -1163,20 +1196,6 @@ EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema
    }")
 ```
 
-### Internal Definition Records
-
-`eacl.datomic.impl/Relation` and `Permission` are implementation records used
-internally and by tests. Transacting them directly is not a supported schema
-API: it bypasses validation, the
-schema-generation stamp, and client cache replacement. Use `eacl/write-schema!` for every schema
-change. If an operational tool bypasses that boundary, recreate every affected client.
-
-`Permission` supports the following spec syntax:
-- `{:relation some_relation}` - direct permission via relation
-- `{:permission some_permission}` - permission via another permission  
-- `{:arrow source :permission via_permission}` - arrow to permission
-- `{:arrow source :relation via_relation}` - arrow to relation
-
 ## Example Schema
 
 Here's a complete example of defining a schema with `eacl/write-schema!`:
@@ -1208,7 +1227,6 @@ This schema defines:
 - `platform` resources can have `super_admin` users
 - `account` resources can have a `platform` and `owner`, with `admin` permission granted to owners and platform super_admins
 - `server` resources belong to an `account` and can have `shared_admin` users, with `reboot` permission granted to account admins and shared_admins
-```
 
 Now you can transact relationships. The usual way is `eacl/create-relationships!` against existing entities (see Quickstart). To create entities and relationships **in the same transaction**, use `eacl.datomic.impl/tx-relationship` with `{:allow-tempids? true}` — tempid pass-through is opt-in because a typo'd ID would otherwise silently create a ghost entity:
 
@@ -1244,14 +1262,12 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
 - `expand-permission-tree` is not implemented yet.
-- *Managed-current caching requires complete writer authority:* managed EACL
-  writes atomically update the affected relation transaction stamps.
-  Every backend defaults to `:coherence-authority :unknown`; select managed
-  authority explicitly only when every schema, relationship, caveat, and
-  future authorization-dependency writer follows that protocol. Unknown
-  authority safely retains only answers from the identical immutable DB
-  generation. Raw `:db.fn/retractEntity` is outside the managed contract;
-  `:eacl.fn/retractEntity` is inside it.
+- *Cache coherence requires supported authorization writers:* EACL writes
+  atomically update every affected relation generation. Bypassing EACL for
+  schema, relationship, permissioned identity/liveness, or entity-deletion
+  mutations can leave managed cache entries stale. Quiesce, repair data, and
+  expire every affected client before resuming. Raw `:db.fn/retractEntity` is
+  outside the contract; `:eacl.fn/retractEntity` is inside it.
 - *Deleting entities:* Datomic and Datahike entity retraction does not remove
   peer relationship tuples. Consumers should delete relationships first;
   `delete-object!` is a convenience helper, and the backend integrity
@@ -1272,68 +1288,6 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   sufficient for a cursor walk with no movement or duplicates; sort by a
   domain key after reading if presentation order matters. SpiceDB likewise
   returns results in discovery or schema order.
-
-## Maintainer Clojars releases
-
-Publication uses the Clojure CLI throughout: `tools.build` creates each JAR and
-POM, and `deps-deploy` runs through `clojure -X:deploy`. EACL does not use
-Leiningen or Boot for publication.
-
-One root-controlled version builds all four JAR/POM pairs. Ordinary publication
-is push-triggered only from a branch whose complete name is
-`vMAJOR.MINOR.PATCH`: for example, branch `v8.1.0` publishes immutable version
-`8.1.0`. `main`, `release/v8.0`, arbitrary branches, pull requests, and tags
-never publish. The gate accepts only the explicit Tests and Formal verification
-checks for the exact release commit and rechecks provenance in the protected
-deployment job.
-
-The initial `8.0.0-SNAPSHOT` integration release was published from commit
-`381bfe07ec2de097a654ed7ea5c3127dce90b9a1`. Its one-time manual-dispatch path
-has been removed; only the ordinary green `vMAJOR.MINOR.PATCH` path remains.
-
-Repository publication configuration:
-
-- Keep the apex `eacl.dev` TXT record `clojars theronic` in authoritative DNS.
-  It verifies the reverse-domain Maven group `dev.eacl`; Clojars user
-  `theronic` has administrator and all-project deploy access to that group.
-- In the GitHub `clojars` environment, allow only selected branch pattern
-  `v*`, with no `main`, arbitrary-branch, or tag rule. Keep the required
-  reviewer and keep administrator bypass disabled.
-- Set `CLOJARS_USERNAME` to the Clojars username `theronic`, not the sign-in
-  email. Set `CLOJARS_DEPLOY_TOKEN` to a reusable token scoped to
-  `dev.eacl/*`. No additional long-lived GitHub secret is required; the
-  workflow's built-in token has only read access.
-
-All four artifacts are built, audited, clean-installed, and smoke-tested before
-the first upload; deployment is serialized in core, Datomic, Datahike,
-DataScript order. If validation fails, nothing is uploaded. Never overwrite a
-partial immutable release: inspect Clojars, correct the problem, and publish a
-new patch version from a new guarded `vMAJOR.MINOR.PATCH` branch.
-
-## How to Run All Tests
-
-```shell
-clj -X:test
-```
-## Run Test for One Namespace
-
-```bash
-clj -M:test -n eacl.datomic.impl.indexed_test
-```
-
-## Run Tests for Multiple Namespaces
-
-```bash
-clj -X:test :nses '["my-namespace1" "my-namespace2"]'
-```
-
-Note difference between `-M` & `-X` switches.
-
-## Run a single test (under deftest)
-
-```bash
-clojure -M:test -v my.namespace/test-name
-```
 
 ## Funding
 

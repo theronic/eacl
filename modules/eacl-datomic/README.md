@@ -7,14 +7,32 @@ Responsibilities:
 - Datomic physical schema and schema installation
 - Datomic tuple/index storage implementation
 - Datomic relationship write planning and transaction execution
-- v8 consistency descriptors, Zed tokens, encrypted Relay-style pagination, and historical reads
-- v8 authenticated result cache with native schema/relation generations
-- v6-to-v7 migration and v8 object-deletion/integrity helpers
+- consistency descriptors, Zed tokens, encrypted Relay-style pagination, and historical reads
+- automatic exact-first/proof-backed caching with native ordered generations
+- object-deletion and integrity helpers
 - Datomic compatibility namespaces preserving the existing public surface
 - Datomic-only regression and storage-mechanics tests
 
 Depending on this module keeps existing `eacl.core` and `eacl.datomic.*`
 require forms unchanged.
+
+## Cache coherence
+
+The client checks exact immutable-snapshot answers first, then automatically
+uses complete ordered-generation proofs to reuse completed answers across
+unrelated forward transactions. Missing, malformed, oversized, or exceptional
+proof data falls back to exact evaluation.
+
+Every authorization-relevant mutation must use EACL APIs or EACL-produced
+transaction data/functions transacted intact. After unsupported raw mutation,
+quiesce callers, repair the data, and call
+`eacl.datomic.core/expire-cache!` on every affected client in every process.
+When processes exchange tokens, pass the same new lifecycle as the optional
+second argument. Expiry never repairs ghost tuples.
+
+Custom object-ID codecs are exact-only and client-local unless configured with
+a portable `:adapter-fingerprint`, `:adapter-deterministic? true`, and an
+application-certified injective round trip.
 
 ## Optional atomic entity retraction
 
@@ -46,7 +64,7 @@ For a live target, the function computes the native component closure, reads
 the two EACL endpoint attributes on every closure entity, retracts each exact
 peer half, stamps every distinct affected relation with the current
 transaction, and finally delegates deletion to `:db.fn/retractEntity`. The
-relation stamps are the managed-cache invalidation mechanism; the function
+relation stamps are the cache-coherence evidence; the function
 does not modify an in-memory cache and contains no global CAS.
 
 Multiple and repeated invocations compose in one transaction:
@@ -86,4 +104,4 @@ Maven consumers install no formal tools.
 
 For the cross-backend capability matrix, recursive controls, and cache
 mutation rules, see the
-[v8 backend and upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
+[backend guide](../../docs/v8-backend-modules-and-upgrade.md).

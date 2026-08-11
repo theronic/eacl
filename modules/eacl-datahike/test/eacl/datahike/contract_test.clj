@@ -42,6 +42,21 @@
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
+(deftest removed-cache-coherence-options-are-unknown-test
+  (let [conn (datahike/create-conn)]
+    (doseq [[option values]
+            [[:coherence-authority [:unknown :managed]]
+             [:proof-mode [:auto :mutation :content :none]]]
+            value values]
+      (let [error
+            (try
+              (datahike/make-client conn {option value})
+              nil
+              (catch clojure.lang.ExceptionInfo cause
+                (ex-data cause)))]
+        (is (= :eacl/invalid-config (:type error)))
+        (is (= [option] (:unknown-keys error)))))))
+
 (defn- run-contract!
   [config]
   (let [conn   (datahike/create-conn nil config)
@@ -62,7 +77,7 @@
         client
         (datahike/make-client
          conn
-         {:coherence-authority :managed})]
+         {})]
     (eacl/write-schema! client contract/recursive-schema)
     (d/transact
      conn

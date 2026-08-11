@@ -20,7 +20,6 @@ module.exports = {
   EaclKernel,
   Semantics,
   AcyclicEngine,
-  CacheKernel,
   ConsistencyDecision,
   CurrentCache,
   IndexedBatching,

@@ -18,13 +18,18 @@
                                 :eacl/id id})
                              contract/smoke-objects)))
 
+(def ^:private custom-codec-cache-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission view = reader
+   }")
+
 (deftest one-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
         default-selection
         (get-in default-client [:opts :decision-kernel])
-        unknown-client
-        (datascript/make-client conn {:coherence-authority :unknown})
         error
         (try
           (datascript/make-client conn {:engine-selection :anything})
@@ -32,31 +37,11 @@
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-    (is (= :unknown
-           (get-in default-client [:opts :coherence-authority]))
-        "managed reuse is an explicit writer contract, never the default")
-    (is (= :content
-           (get-in default-client [:opts :proof-mode])))
-    (is (= :unknown
-           (get-in unknown-client [:opts :coherence-authority])))
-    (is (= :content
-           (get-in unknown-client [:opts :proof-mode])))
-    (let [managed-client
-          (datascript/make-client
-           conn {:coherence-authority :managed})]
-      (is (= :managed
-             (get-in managed-client [:opts :coherence-authority])))
-      (is (= :mutation
-             (get-in managed-client [:opts :proof-mode]))))
+    (is (true? (get-in default-client [:opts :managed-cache-enabled?])))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
-(deftest raw-retraction-on-default-client-must-deny-test
-  ;; D-5 pinning regression (the audited stale-ALLOW): under the old
-  ;; :coherence-authority :managed default, one raw ds/transact! retraction
-  ;; left every relation stamp untouched, so the next identical check served
-  ;; the cached allow. The :unknown default reuses answers only on the exact
-  ;; immutable database value they were computed on.
+(deftest raw-retraction-requires-explicit-cache-expiry-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})
         user (eacl/spice-object :user "raw-write-user")
@@ -88,8 +73,212 @@
                  relationship-storage/reverse-attribute])]
       (is (seq retractions))
       (ds/transact! conn retractions))
+    (datascript/expire-cache! client)
     (is (false? (eacl/can? client user :view document))
-        "a raw out-of-contract retraction must deny on a default client")))
+        "unsupported raw mutation is safe after every affected client expires")))
+
+(deftest unsupported-mutation-recovery-requires-every-client-and-data-repair-test
+  (let [conn (datascript/create-conn)
+        client-a (datascript/make-client conn {})
+        client-b (datascript/make-client conn {})
+        user (eacl/spice-object :user "recovery-user")
+        document (eacl/spice-object :document "recovery-document")
+        relationship (eacl/->Relationship user :reader document)]
+    (eacl/write-schema! client-a custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document)}])
+    (eacl/create-relationship! client-a relationship)
+    (doseq [client [client-a client-b]]
+      (is (true? (eacl/can? client user :view document)))
+      (is (true? (eacl/can? client user :view document))))
+
+    (let [db (ds/db conn)
+          raw-retractions
+          (into []
+                (mapcat
+                 (fn [attribute]
+                   (map (fn [datom]
+                          [:db/retract (:e datom) attribute (:v datom)])
+                        (ds/datoms db :aevt attribute))))
+                [relationship-storage/forward-attribute
+                 relationship-storage/reverse-attribute])]
+      (ds/transact! conn raw-retractions))
+
+    (testing "preparation and an identical schema write are not cache flushes"
+      (is (false? (:changed?
+                   (datascript/prepare-cache-coherence! conn))))
+      (eacl/write-schema! client-a custom-codec-cache-schema)
+      (is (true? (eacl/can? client-a user :view document)))
+      (is (true? (eacl/can? client-b user :view document))))
+
+    (testing "every process-local client must rotate after quiescence"
+      (datascript/expire-cache! client-a)
+      (is (false? (eacl/can? client-a user :view document)))
+      (is (true? (eacl/can? client-b user :view document)))
+      (datascript/expire-cache! client-b)
+      (is (false? (eacl/can? client-b user :view document))))
+
+    (testing "cache rotation does not repair a surviving peer tuple"
+      (eacl/create-relationship! client-a relationship)
+      (let [before (ds/db conn)
+            user-eid (ds/entid before [:eacl/id (:id user)])
+            document-eid (ds/entid before [:eacl/id (:id document)])]
+        (ds/transact! conn [[:db.fn/retractEntity user-eid]])
+        (datascript/expire-cache! client-a)
+        (datascript/expire-cache! client-b)
+        (is (seq (ds/datoms (ds/db conn) :eavt document-eid
+                            relationship-storage/reverse-attribute)))
+        (eacl/delete-object!
+         client-a (eacl/spice-object :user user-eid))
+        (is (empty? (ds/datoms (ds/db conn) :eavt document-eid
+                               relationship-storage/reverse-attribute)))))))
+
+(deftest removed-cache-coherence-options-are-unknown-test
+  (let [conn (datascript/create-conn)]
+    (doseq [[option values]
+            [[:coherence-authority [:unknown :managed]]
+             [:proof-mode [:auto :mutation :content :none]]]
+            value values]
+      (let [error
+            (try
+              (datascript/make-client conn {option value})
+              nil
+              (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) cause
+                (ex-data cause)))]
+        (is (= :eacl/invalid-config (:type error)))
+        (is (= [option] (:unknown-keys error)))))))
+
+(defn- custom-codec-options
+  ([basis-observations]
+   (custom-codec-options basis-observations {}))
+  ([basis-observations extra]
+   (merge
+    {:security-key "01234567890123456789012345678901"
+     :object-id->lookup-ref (fn [object-id] [:eacl/id object-id])
+     :entid->object-id
+     (fn [db eid]
+       (swap! basis-observations conj (:max-tx db))
+       (:eacl/id (ds/entity db eid)))}
+    extra)))
+
+(deftest custom-codec-cache-isolation-and-selected-snapshot-rendering-test
+  (let [conn (datascript/create-conn)
+        observations (atom [])
+        local-client
+        (datascript/make-client conn (custom-codec-options observations))
+        user (eacl/spice-object :user "codec-user")
+        document-1 (eacl/spice-object :document "codec-document-1")
+        document-2 (eacl/spice-object :document "codec-document-2")
+        relationship-1 (eacl/->Relationship user :reader document-1)
+        relationship-2 (eacl/->Relationship user :reader document-2)
+        demand {:subject user :permission :view :resource document-1}]
+    (eacl/write-schema! local-client custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document-1)}
+                        {:eacl/id (:id document-2)}])
+    (eacl/create-relationships!
+     local-client [relationship-1 relationship-2])
+
+    (testing "an unfingerprinted codec keeps safe client-local exact caching"
+      (is (false? (get-in local-client [:opts :managed-cache-enabled?])))
+      (is (some? (get-in local-client [:opts :current-cache-store])))
+      (is (true? (:allowed? (eacl/check-permission local-client demand))))
+      (is (true? (:cached? (eacl/check-permission local-client demand))))
+      (let [before (datascript/cache-stats local-client)]
+        (ds/transact! conn [{:application/unrelated :one}])
+        (is (true? (:allowed? (eacl/check-permission local-client demand))))
+        (let [after (datascript/cache-stats local-client)]
+          (is (= (:managed-hits before) (:managed-hits after)))
+          (is (= (inc (:misses before)) (:misses after))))))
+
+    (testing "a stable deterministic codec gets managed reuse and re-renders"
+      (let [stable-observations (atom [])
+            stable-client
+            (datascript/make-client
+             conn
+             (custom-codec-options
+              stable-observations
+              {:adapter-fingerprint {:codec :eacl-id :version 1}
+               :adapter-deterministic? true}))
+            query {:subject user
+                   :permission :view
+                   :resource/type :document
+                   :first 10}
+            first-page (eacl/lookup-resources stable-client query)
+            before (datascript/cache-stats stable-client)]
+        (is (true? (get-in stable-client [:opts :managed-cache-enabled?])))
+        (is (= #{"codec-document-1" "codec-document-2"}
+               (set (map :id (:data first-page)))))
+        (ds/transact! conn [{:application/unrelated :two}])
+        (reset! stable-observations [])
+        (let [selected-basis (:max-tx (ds/db conn))
+              second-page (eacl/lookup-resources stable-client query)
+              after (datascript/cache-stats stable-client)]
+          (is (= (:data first-page) (:data second-page)))
+          (is (= (inc (:managed-hits before)) (:managed-hits after)))
+          (is (seq @stable-observations))
+          (is (every? #{selected-basis} @stable-observations)
+              "managed semantic results are externalized from the selected DB"))))
+
+    (testing "the declared codec round-trips injectively on visible objects"
+      (let [db (ds/db conn)
+            eids (mapv #(ds/entid db [:eacl/id %])
+                       [(:id user) (:id document-1) (:id document-2)])
+            externalize (get-in local-client [:opts :entid->object-id])
+            external-ids (mapv #(externalize db %) eids)
+            internalize (get-in local-client [:opts :object-id->entid])]
+        (is (= (count external-ids) (count (distinct external-ids))))
+        (is (= eids (mapv #(internalize db %) external-ids)))))))
+
+(deftest custom-codec-cursors-require-a-stable-shared-fingerprint-test
+  (let [conn (datascript/create-conn)
+        setup (datascript/make-client conn {})
+        user (eacl/spice-object :user "cursor-codec-user")
+        documents [(eacl/spice-object :document "cursor-codec-doc-1")
+                   (eacl/spice-object :document "cursor-codec-doc-2")]
+        _ (eacl/write-schema! setup custom-codec-cache-schema)
+        _ (ds/transact! conn (into [{:eacl/id (:id user)}]
+                                   (map (fn [document]
+                                          {:eacl/id (:id document)}))
+                                   documents))
+        _ (eacl/create-relationships!
+           setup
+           (mapv #(eacl/->Relationship user :reader %) documents))
+        shared {:source-lifecycle "custom-codec-cursor-lifecycle"
+                :security-key "01234567890123456789012345678901"}
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 1}
+        local-a (datascript/make-client
+                 conn (custom-codec-options (atom []) shared))
+        local-b (datascript/make-client
+                 conn (custom-codec-options (atom []) shared))
+        local-cursor (get-in (eacl/lookup-resources local-a query)
+                             [:page-info :end-cursor])
+        local-error
+        (try
+          (eacl/lookup-resources local-b (assoc query :after local-cursor))
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+            (ex-data error)))
+        stable-options
+        (merge shared
+               {:adapter-fingerprint {:codec :eacl-id :version 1}
+                :adapter-deterministic? true})
+        stable-a (datascript/make-client
+                  conn (custom-codec-options (atom []) stable-options))
+        stable-b (datascript/make-client
+                  conn (custom-codec-options (atom []) stable-options))
+        stable-cursor (get-in (eacl/lookup-resources stable-a query)
+                              [:page-info :end-cursor])
+        resumed (eacl/lookup-resources
+                 stable-b (assoc query :after stable-cursor))]
+    (is (some? local-error)
+        "a client-local opaque codec identity cannot cross client lifecycles")
+    (is (= 1 (count (:data resumed))))
+    (is (not= (:id (first (:data (eacl/lookup-resources stable-a query))))
+              (:id (first (:data resumed)))))))
 
 (defn- reusable-denotation-hits
   [stats]
@@ -182,8 +371,7 @@
           client
           (datascript/make-client
            conn
-           {:coherence-authority :managed
-            :security-key "01234567890123456789012345678901"})
+           {:security-key "01234567890123456789012345678901"})
           alice (eacl/spice-object :user "shared-user")
           bob (eacl/spice-object :user "other-user")
           primary (eacl/spice-object :group "primary")
@@ -298,7 +486,7 @@
         client
         (datascript/make-client
          conn
-         {:coherence-authority :managed})]
+         {})]
     (eacl/write-schema! client contract/recursive-schema)
     (ds/transact! conn
                   (map-indexed
@@ -322,7 +510,7 @@
         client
         (datascript/make-client
          conn
-         {:coherence-authority :managed})
+         {})
         subject (contract/->user "recursive-user")
         last-folder
         (eacl/spice-object
@@ -424,7 +612,7 @@
         client
         (datascript/make-client
          conn
-         {:coherence-authority :managed})
+         {})
         subject (contract/->user "recursive-user")
         folder
         #(eacl/spice-object :folder (str "folder-" %))]
@@ -466,7 +654,7 @@
         client
         (datascript/make-client
          conn
-         {:coherence-authority :managed})
+         {})
         user (eacl/spice-object :user "shared-user")
         other-user (eacl/spice-object :user "other-user")
         group (eacl/spice-object :group "shared-group")
@@ -574,7 +762,7 @@
 (deftest datascript-large-relationship-cursor-skips-item-proof-test
   ;; Pinned to the managed/mutation-proof regime: the assertion is that the
   ;; v10 cursor design performs ZERO record-digest work per page. The
-  ;; :unknown default (D-5) selects content proofs, which pay one schema
+  ;; Automatic managed coherence reads ordered generations, never relationship
   ;; content digest per page - a separate, deliberate trade of the fail-safe
   ;; default, not a cursor property.
   (let [relationship-count 1505
@@ -582,7 +770,7 @@
         client (datascript/make-client
                 conn
                 {:cache cache/no-cache
-                 :coherence-authority :managed})
+                 })
         user-ids (mapv #(str "bulk-user-" %) (range relationship-count))
         server-ids (mapv #(str "bulk-server-" %) (range relationship-count))
         object-ids (into user-ids server-ids)]

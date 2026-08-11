@@ -73,8 +73,7 @@
               impl.indexed/*recursive-traversal-stats* rts
               engine/*request-shape-stats* shape]
       (f))
-    {:schema-proof (get @bops :schema-proof 0)
-     :schema-proof-computations (get @bops :schema-proof-computations 0)
+    {:proof-frame (get @bops :proof-frame 0)
      :plan-compiles (get @rts :compiled-recursive-plans 0)
      :key-builds (get @shape :denotation-key-builds 0)
      :dep-calcs (get @shape :denotation-dependency-calcs 0)
@@ -109,12 +108,8 @@
     (testing "recursion active (suite self-check)"
       (is (pos? (:stream-fills m)) (pr-str m))
       (is (pos? (:derived-grants m)) (pr-str m)))
-    (testing "schema proofs per raw list request (:schema-proof)"
-      (is (<= (:schema-proof m) (:maximum-schema-proof-reads e)) (pr-str m)))
-    (testing "memoized proof computations per raw list request"
-      (is (<= (:schema-proof-computations m)
-              (:maximum-schema-proof-computations e))
-          (pr-str m)))
+    (testing "ordered-generation frames per raw list request"
+      (is (<= (:proof-frame m) (:maximum-proof-frame-reads e)) (pr-str m)))
     (testing "recursive plan compiles per raw request (:compiled-recursive-plans)"
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "denotation cache-key work against a nil store"
@@ -135,8 +130,8 @@
                           {:type :account :id deep-child-eid}))]
     (doseq [[label m] [[:positive pos] [:negative neg]]]
       (testing (str label " raw point check")
-        (is (<= (:schema-proof m) (:maximum-schema-proof-reads e))
-            (str label " :schema-proof " (pr-str m)))
+        (is (<= (:proof-frame m) (:maximum-proof-frame-reads e))
+            (str label " :proof-frame " (pr-str m)))
         (is (<= (:plan-compiles m) (:maximum-plan-compiles e))
             (str label " :compiled-recursive-plans " (pr-str m)))
         (is (zero? (:key-builds m))

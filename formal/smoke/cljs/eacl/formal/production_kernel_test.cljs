@@ -51,7 +51,7 @@
 
 (defn- expected-consistency-validation
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (cond
     (not selection-present?)
     (if (= :exact kind)
@@ -60,7 +60,7 @@
     (not selected-adapter?) :invalid-selected-adapter
     (not same-source-scope?) :incomparable-scope
     (and (#{:at-least :exact} kind)
-         (not anchor-satisfied?))
+         (not revision-satisfied?))
     :history-divergence
     :else :accept))
 
@@ -76,11 +76,9 @@
   (doseq [mode
           [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
-          capability-supported? [false true]
-          managed-authority? [false true]]
+          capability-supported? [false true]]
     (let [input {:mode mode
-                 :capability-supported? capability-supported?
-                 :managed-authority? managed-authority?}]
+                 :capability-supported? capability-supported?}]
       (is (= (expected-consistency-plan input)
              (verified/decide
               selection
@@ -91,12 +89,12 @@
           selected-adapter? [false true]
           :when (or selection-present? (not selected-adapter?))
           same-source-scope? [false true]
-          anchor-satisfied? [false true]]
+          revision-satisfied? [false true]]
     (let [input {:kind kind
                  :selection-present? selection-present?
                  :selected-adapter? selected-adapter?
                  :same-source-scope? same-source-scope?
-                 :anchor-satisfied? anchor-satisfied?}]
+                 :revision-satisfied? revision-satisfied?}]
       (is (= (expected-consistency-validation input)
              (verified/decide
               selection
@@ -112,8 +110,8 @@
          :authentication-attempts 0
          :backend-selection-calls 1
          :validation-decisions 1
-         :contains-anchor-calls 0
-         :graph-head-reads 1
+         :revision-validation-calls 0
+         :native-revision-reads 1
          :order-hint-reads 1
          :exact-locator-reads 1}]
     (case path
@@ -124,8 +122,8 @@
        :backend-selection-calls 0
        :validation-decisions 0
        :source-scope-reads 0
-       :contains-anchor-calls 0
-       :graph-head-reads 0
+       :revision-validation-calls 0
+       :native-revision-reads 0
        :order-hint-reads 0
        :exact-locator-reads 0}
       (:selected-current :authoritative)
@@ -134,12 +132,16 @@
       (assoc common
              :authentication-attempts 1
              :source-scope-reads (+ 3 response-scope)
-             :contains-anchor-calls 1)
+             :revision-validation-calls 1
+             :native-revision-reads 2
+             :order-hint-reads 2
+             :exact-locator-reads 2)
       :exact
       (assoc common
              :authentication-attempts 1
              :source-scope-reads (+ 3 response-scope)
-             :graph-head-reads 2
+             :revision-validation-calls 1
+             :native-revision-reads 2
              :order-hint-reads 2
              :exact-locator-reads 2))))
 
@@ -183,15 +185,13 @@
       :exact-locator (constantly 1)})}))
 
 (defn- observed-generated-plan
-  [source mode managed-authority?]
+  [source mode]
   (try
     [:planned
      (consistency/selection-plan
       source
       {:mode mode}
-      {:coherence-authority
-       (if managed-authority? :managed :unknown)
-       :decision-kernel selection})]
+      {:decision-kernel selection})]
     (catch cljs.core.ExceptionInfo error
       [:rejected (:type (ex-data error))])))
 
@@ -216,18 +216,15 @@
   (doseq [mode
           [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
-          capability-supported? [false true]
-          managed-authority? [false true]]
+          capability-supported? [false true]]
     (let [input
           {:mode mode
-           :capability-supported? capability-supported?
-           :managed-authority? managed-authority?}]
+           :capability-supported? capability-supported?}]
       (is (=
            (expected-production-plan input)
            (observed-generated-plan
             (consistency-plan-adapter mode capability-supported?)
-            mode
-            managed-authority?))))))
+            mode))))))
 
 (defn- power-set
   [values]
@@ -567,7 +564,7 @@
                :native-revision :order-hint :exact-locator}
      :cursor #{:forward :backward}
      :transactions #{}
-     :cache-proofs #{:schema :relations}
+     :cache-proofs #{:ordered-generations}
      :runtime #{:cljs}}
     :fingerprint {:adapter :formal-production-test}
     :identity-contract :formal-production-test/v1
@@ -590,10 +587,11 @@
       #(case % "document-1" 1 "document-2" 2 nil)
       :internal-id->object
       #(case % 1 "document-1" 2 "document-2" nil)
-      :schema-proof (constantly "schema-proof")
-      :relation-proof
+      :proof-frame
       (fn [relation-ids]
-        (zipmap relation-ids (repeat "relation-proof")))})}))
+        {:schema-stamp 1
+         :relation-stamps
+         (mapv (fn [relation-id] [relation-id 1]) relation-ids)})})}))
 
 (defn- recursive-plan-test-adapter
   []
@@ -652,7 +650,7 @@
                  :native-revision :order-hint :exact-locator}
        :cursor #{:forward :backward}
        :transactions #{}
-       :cache-proofs #{:schema :relations}
+       :cache-proofs #{:ordered-generations}
        :runtime #{:cljs}}
       :operations
       (merge
@@ -671,10 +669,11 @@
         (constantly {:revision 1 :exact-locator 1})
         :order-hint (constantly 1)
         :exact-locator (constantly 1)
-        :schema-proof
-        (fn
-          ([] :schema-proof)
-          ([_] :schema-proof))
+        :proof-frame
+        (fn [relation-ids]
+          {:schema-stamp 1
+           :relation-stamps
+           (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
         :relation-defs
         (fn [resource-type relation-name]
           (get relations [resource-type relation-name] []))
@@ -738,7 +737,7 @@
 
 (deftest generated-javascript-certifies-production-recursive-plan
   (let [adapter (recursive-plan-test-adapter)
-        schema-cache (engine/make-schema-cache adapter :schema-proof)
+        schema-cache (engine/make-schema-cache adapter 1)
         stats (atom {})]
     (binding [engine/*schema-cache* schema-cache
               engine/*recursive-traversal-stats* stats
@@ -770,7 +769,7 @@
                     subproblem/*decision-kernel* selection]
             (engine/lookup-resources adapter query')))
         generated-cache
-        (engine/make-schema-cache adapter :schema-proof)
+        (engine/make-schema-cache adapter 1)
         generated-first
         (run-forward generated-cache query)
         after (get-in generated-first [:page-info :end-cursor])
@@ -787,11 +786,11 @@
                     subproblem/*decision-kernel* selection]
             (engine/lookup-subjects adapter reverse-query)))
         generated-reverse
-        (run-reverse (engine/make-schema-cache adapter :schema-proof))
+        (run-reverse (engine/make-schema-cache adapter 1))
         run-operation
         (fn [operation]
           (binding [engine/*schema-cache*
-                    (engine/make-schema-cache adapter :schema-proof)
+                    (engine/make-schema-cache adapter 1)
                     subproblem/*decision-kernel* selection]
             (operation)))
         can-operation
@@ -878,23 +877,7 @@
            :cursor-proof "old"
            :cursor-graph 0
            :exact nil})))
-  (is (= {:status :miss :reason :future-or-sibling}
-         (verified/decide
-          selection
-          :cache-validation
-          {:deterministic? true
-           :dependency-scope-nonempty? true
-           :expected-key "key"
-           :expected-source "source"
-           :selected-graph 0
-           :ancestors #{1}
-           :selected-proof "proof"
-           :entry {:status :candidate
-                   :authenticated? true
-                   :key "key"
-                   :source "source"
-                   :graph 2
-                   :proof "proof"}}))))
+  )
 
 (deftest generated-javascript-materialized-queue-limit-is-instantaneous
   (let [result

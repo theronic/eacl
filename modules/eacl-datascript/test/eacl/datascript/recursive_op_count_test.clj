@@ -71,8 +71,7 @@
                            engine/*request-shape-stats* shape]
                    (f))]
       {:result result
-       :schema-proof (get @bops :schema-proof 0)
-       :schema-proof-computations (get @bops :schema-proof-computations 0)
+       :proof-frame (get @bops :proof-frame 0)
        :plan-compiles (get @rts :compiled-recursive-plans 0)
        :path-calcs (get @shape :permission-path-calcs 0)
        :key-builds (get @shape :denotation-key-builds 0)
@@ -371,12 +370,8 @@
              (raw-adapter)
              {:subject {:type :user :id (:user-1-eid @state)}
               :permission :view :resource/type :account :first 50}))]
-    (testing "schema proofs per raw list request (:schema-proof)"
-      (is (<= (:schema-proof m) (:maximum-schema-proof-reads e)) (pr-str m)))
-    (testing "memoized proof computations per raw list request"
-      (is (<= (:schema-proof-computations m)
-              (:maximum-schema-proof-computations e))
-          (pr-str m)))
+    (testing "ordered-generation frames per raw list request"
+      (is (<= (:proof-frame m) (:maximum-proof-frame-reads e)) (pr-str m)))
     (testing "recursive plan compiles per raw request (:compiled-recursive-plans)"
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "denotation cache-key work against a nil store"
@@ -401,8 +396,8 @@
                            {:type :account :id (:deep-child-eid @state)}))]
     (doseq [[label m] [[:positive pos] [:negative neg]]]
       (testing (str label " raw point check")
-        (is (<= (:schema-proof m) (:maximum-schema-proof-reads e))
-            (str label " :schema-proof " (pr-str m)))
+        (is (<= (:proof-frame m) (:maximum-proof-frame-reads e))
+            (str label " :proof-frame " (pr-str m)))
         (is (<= (:plan-compiles m) (:maximum-plan-compiles e))
             (str label " :compiled-recursive-plans " (pr-str m)))
         (is (zero? (:key-builds m))
@@ -416,12 +411,8 @@
         m (measured
            #(eacl/lookup-resources (:client @state)
                                    (rf/resource-query config rf/user-1)))]
-    (testing "schema proofs per client list request (:schema-proof)"
-      (is (<= (:schema-proof m) (:maximum-schema-proof-reads e)) (pr-str m)))
-    (testing "memoized proof computations per client list request"
-      (is (<= (:schema-proof-computations m)
-              (:maximum-schema-proof-computations e))
-          (pr-str m)))
+    (testing "ordered-generation frames per client list request"
+      (is (<= (:proof-frame m) (:maximum-proof-frame-reads e)) (pr-str m)))
     (testing "plan compiles amortized by the client schema cache"
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "scan envelope (:stream-fills)"
@@ -441,7 +432,7 @@
                    (assoc (rf/count-query config rf/user-1)
                           :count-limit 1000)))]
     (testing "cache-enabled recursive point checks remain target-anchored"
-      (is (<= (:schema-proof can-m) (:maximum-schema-proof-reads e)) (pr-str can-m))
+      (is (<= (:proof-frame can-m) (:maximum-proof-frame-reads e)) (pr-str can-m))
       (is (<= (:drive can-m) (:maximum-kernel-drives e)) (pr-str can-m))
       (is (< (:backend-operations can-m) 16) (pr-str can-m))
       (assert-crossing-law! can-m))

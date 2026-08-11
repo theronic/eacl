@@ -97,7 +97,7 @@
    "(defn- packaged-class-major []\n"
    "  (with-open [input (DataInputStream.\n"
    "                     (io/input-stream\n"
-   "                      (io/resource \"CacheKernel/CacheCandidate.class\")))]\n"
+   "                      (io/resource \"CurrentCache/__default.class\")))]\n"
    "    (.readInt input)\n"
    "    (.readUnsignedShort input)\n"
    "    (.readUnsignedShort input)))\n\n"

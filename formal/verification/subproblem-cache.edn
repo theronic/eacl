@@ -64,7 +64,7 @@
    :configuration "formal/tla/EaclManagedProjectionCache.cfg"
    :models
    [:completed-artifact-only-store
-    :managed-hit-current-source-schema-relation-proof]
+    :managed-hit-current-source-schema-scalar-frontier]
    :mutation-controls [:managed-proof-bypass]
    :status :typechecked}]
  :executable-conformance

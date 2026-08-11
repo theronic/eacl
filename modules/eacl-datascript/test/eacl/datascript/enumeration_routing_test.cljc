@@ -258,7 +258,7 @@
     (is (= :eacl.pagination/stale-cursor (:type data)))
     (is (= :dependency-proof-changed (:reason data)))))
 
-(deftest content-proof-cursors-use-current-basis-without-relation-scan-test
+(deftest ordered-generation-cursors-avoid-relationship-content-scans-test
   (let [{:keys [conn client]} (seed-client! small-shape)
         query (fixture/resource-query fixture/user-1 :view 7)
         backend-stats (atom {})
@@ -272,15 +272,14 @@
     (testing "cursor minting is constant in relationship-graph size"
       (is (= 7 (count (:data first-page))))
       (is (= (:data first-page) (:data bypass-page)))
-      (is (zero? (get @backend-stats :relation-proof 0)))
+      (is (<= (get @backend-stats :proof-frame 0) 4))
       (is (pos? (get @backend-stats :snapshot-id 0))))
-    (testing "current-only DataScript rejects every later basis"
+    (testing "an unrelated later basis reuses the scalar cursor proof"
       (ds/transact! conn [{:eacl/id "unrelated-after-cursor"}])
-      (let [data
-            (error-data
-             #(eacl/lookup-resources client (assoc query :after cursor)))]
-        (is (= :eacl.pagination/stale-cursor (:type data)))
-        (is (= :dependency-proof-changed (:reason data)))))))
+      (let [second-page
+            (eacl/lookup-resources client (assoc query :after cursor))]
+        (is (= 7 (count (:data second-page))))
+        (is (not= (:data first-page) (:data second-page)))))))
 
 (deftest pure-permission-aliases-share-one-acyclic-frontier-test
   (let [{:keys [client]} (seed-client! small-shape)

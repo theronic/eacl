@@ -13,9 +13,6 @@
     :default-entid->object-id   (fn [db eid] external-id-or-nil)
     :snapshot-adapter           (fn [db opts] v8-adapter)
     :native-source-id           optional (fn [conn] stable source identity)
-    :managed-cache-descriptor   (fn [db relation-ids]
-                                  {:schema-stamp s :dependency-stamp v})
-                                or nil pieces when stamps are unavailable
     :relationship-retraction-count (fn [db tx-data] n)
     :schema  {:read-schema    (fn [db] ...)
               :write-schema!  (fn [conn schema-string opts] ...)}
@@ -42,6 +39,7 @@
                                         ->RelationshipUpdate]]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
+            [eacl.proof-frame :as proof-frame]
             #?(:clj
                [eacl.formal.production-kernel :as production-kernel]
                :cljs
@@ -143,7 +141,6 @@
                 "Evaluate an application-owned immutable DataScript DB value directly."}})))
         selection-options
         {:format-options (:format-options opts)
-         :coherence-authority (:coherence-authority opts)
          :decision-kernel (:decision-kernel opts)
          :issue-token? false
          :timeout-ms
@@ -179,24 +176,39 @@
      {:permission-nodes
       (engine/permission-schema-nodes
        adapter resource-type permission)
-      :relation-ids relation-ids}}))
+     :relation-ids relation-ids}}))
+
+(defn- new-request-proof-frame
+  [adapter opts]
+  (proof-frame/request-frame
+   adapter
+   {:diagnostic-fn
+    (fn [diagnostic]
+      (cache/record-proof-unavailable!
+       (:current-cache-store opts)
+       diagnostic))}))
 
 (defn- cursor-options
   "Request options for relay cursor handling.
 
   One shared derived-schema-cache delay serves the engine evaluation, the
   cursor scope's schema stamp, and the cursor dependency closure, so the
-  dependency-scoped cursor contexts add no schema-proof reads beyond the
+  dependency-scoped cursor contexts add no schema-generation reads beyond the
   request's own resolution. All three delays are forced only when a cursor
   is actually minted or resumed."
   [adapter opts selection resource-type permission]
   (let [contract (:execution-contract opts)
+        request-proof-frame
+        (or (:request-proof-frame opts)
+            (new-request-proof-frame adapter opts))
         schema-cache
         (delay
-          (engine/schema-cache-for!
-           (:derived-schema-caches opts)
-           adapter))]
+          (binding [engine/*proof-frame* request-proof-frame]
+            (engine/schema-cache-for!
+             (:derived-schema-caches opts)
+             adapter)))]
     (assoc opts
+           :request-proof-frame request-proof-frame
            :cursor-consistency-mode
            (get-in selection [:descriptor :mode])
            :cursor-request-token (:request-token selection)
@@ -214,19 +226,12 @@
            {:adapter adapter
             :stamp (delay (:schema-version @schema-cache))}
            :cursor-dependency-relation-ids
-           ;; Content proofs are linear in the relationship graph. Paying
-           ;; that cost merely to mint a cursor made a demand-bounded page
-           ;; hundreds of times slower when answer caching was bypassed.
-           ;; Dependency-scoped reuse is therefore reserved for managed
-           ;; mutation stamps, whose cost is bounded by the compiled relation
-           ;; closure. Other modes bind the cursor to the selected immutable
-           ;; snapshot identity. Datomic/Datahike can select that exact
-           ;; snapshot on resume; current-only DataScript rejects the cursor
-           ;; after any basis change instead of scanning content or yielding a
-           ;; hybrid page.
-           (when (and resource-type
-                      permission
-                      (= :mutation (:proof-mode opts)))
+           ;; Cursor reuse uses the same compiled dependency closure as the
+           ;; request proof frame. If proof is unavailable, the cursor remains
+           ;; bound to exact immutable snapshot identity. Datomic/Datahike may
+           ;; select that exact snapshot on resume; current-only DataScript
+           ;; fails closed after a relevant basis change.
+           (when (and resource-type permission)
              (delay
                (try
                  (binding [engine/*schema-cache* @schema-cache]
@@ -268,20 +273,28 @@
      :query (:query prepared)}))
 
 (defn- cached-engine-result
-  [api adapter opts operation query resource-type permission
+  [adapter opts operation query resource-type permission
    valid-value? compute]
   (let [contract (:execution-contract opts)
+        request-proof-frame
+        (let [candidate (:request-proof-frame opts)]
+          (if (and candidate
+                   (identical? adapter (:adapter candidate)))
+            candidate
+            (new-request-proof-frame adapter opts)))
         schema-cache
         (or (:request-schema-cache opts)
             (delay
-              (engine/schema-cache-for!
-               (:derived-schema-caches opts)
-               adapter)))
+              (binding [engine/*proof-frame* request-proof-frame]
+                (engine/schema-cache-for!
+                 (:derived-schema-caches opts)
+                 adapter))))
         evaluate
         #(do
            (execution/check! contract :schema-plan)
            (let [value
                  (binding [engine/*schema-cache* @schema-cache
+                           engine/*proof-frame* request-proof-frame
                            engine/*recursive-traversal-limits*
                            (:recursive-traversal-limits opts)
                            engine/*evaluation-mode*
@@ -307,9 +320,15 @@
          :cache-basis nil})
       (let [dependencies
             (delay
-              (binding [engine/*schema-cache* @schema-cache]
+              (binding [engine/*schema-cache* @schema-cache
+                        engine/*proof-frame* request-proof-frame]
                 (permission-dependencies
                  adapter resource-type permission)))
+            complete-proof
+            (delay
+              (proof-frame/resolve!
+               request-proof-frame
+               (:relation-ids @dependencies)))
             db (:db (backend/state adapter))
             semantic-key
             {:operation operation
@@ -318,7 +337,7 @@
              :demand (:demand contract)
              :engine-version engine/engine-version
              :source-lifecycle
-             (backend/invoke adapter :source-lifecycle)
+             (proof-frame/source-lifecycle request-proof-frame)
              :adapter-fingerprint (:adapter-fingerprint opts)
              :recursive-traversal-limits
              (:recursive-traversal-limits opts)}]
@@ -337,24 +356,14 @@
           :same-snapshot? identical?
           :cache-basis (backend/invoke adapter :snapshot-id)
           :decision-kernel (:decision-kernel opts)
-          :managed-descriptor-key-fn
-          (when (and (:managed-cache-enabled? opts)
-                     (= :complete-denotation (:evaluation contract)))
-            #(vec (sort (distinct (:relation-ids @dependencies)))))
           :managed-key-fn
-          (when (and (:managed-cache-enabled? opts)
-                     (= :complete-denotation (:evaluation contract)))
-            #((:managed-cache-descriptor api)
-              db (:relation-ids @dependencies)))
+          (when (:managed-cache-enabled? opts)
+            #(proof-frame/descriptor @complete-proof))
           :managed-subproblem-key-fn
-          (when (and (:managed-cache-enabled? opts)
-                     (= :complete-denotation (:evaluation contract)))
+          (when (:managed-cache-enabled? opts)
             (fn [dependency]
-              ((:managed-cache-descriptor api)
-               db
-               (if (vector? dependency)
-                 dependency
-                 [dependency]))))
+              (proof-frame/subset-descriptor
+               @complete-proof dependency)))
                 :managed-subproblem-scope
                 (consistency-v3/source-scope adapter)}
                semantic-key
@@ -403,7 +412,8 @@
      {:query (continuation-query-identity query)
       :evaluation (get-in opts [:execution-contract :evaluation])
       :recursive-traversal-limits
-      (:recursive-traversal-limits opts)})))
+      (:recursive-traversal-limits opts)}
+     {:request-proof-frame (:request-proof-frame opts)})))
 
 (defn read-relationships
   [api db
@@ -565,7 +575,7 @@
        :evaluation (get-in opts [:execution-contract :evaluation])}
       (let [answer
             (cached-engine-result
-             api adapter opts :can?
+             adapter opts :can?
              {:public [subject permission resource]
               :internal
               [internal-subject permission internal-resource]}
@@ -611,7 +621,7 @@
                  (assoc :subject internal-subject))
              answer
              (cached-engine-result
-              api adapter cursor-opts :lookup-resources
+              adapter cursor-opts :lookup-resources
               (cache/lookup-page-query-identity query internal-query)
               (:resource/type internal-query)
               (:permission internal-query)
@@ -657,7 +667,7 @@
                 (dissoc :consistency :cache? :evaluation :timeout-ms))
             answer
             (cached-engine-result
-             api adapter opts :count-resources
+             adapter opts :count-resources
              {:public (dissoc query :consistency :cache?)
               :internal internal-query}
              (:resource/type internal-query)
@@ -697,7 +707,7 @@
                  (assoc :resource internal-resource))
              answer
              (cached-engine-result
-              api adapter cursor-opts :lookup-subjects
+              adapter cursor-opts :lookup-subjects
               (cache/lookup-page-query-identity query internal-query)
               (:type (:resource internal-query))
               (:permission internal-query)
@@ -744,7 +754,7 @@
                 (dissoc :consistency :cache? :evaluation :timeout-ms))
             answer
             (cached-engine-result
-             api adapter opts :count-subjects
+             adapter opts :count-subjects
              {:public (dissoc query :consistency :cache?)
               :internal internal-query}
              (:type (:resource internal-query))
@@ -948,8 +958,6 @@
     :security-kid
     :token-ttl-seconds
     :source-lifecycle
-    :coherence-authority
-    :proof-mode
     :adapter-fingerprint
     :adapter-deterministic?
     :consistency-sync-timeout-ms
@@ -959,10 +967,11 @@
 (defn make-client
   "Builds the shared IAuthorization client over one backend api map.
 
-  Validates the uniform option surface, applies the fail-safe
-  :coherence-authority :unknown default (D-5), assembles the client-private
-  caches, and returns a ClientAuthorization. Backend make-client wrappers
-  supply `api` and document their :extra-client-opt-keys."
+  Validates the uniform option surface, assembles the client-private caches,
+  and returns a ClientAuthorization. Managed reuse is automatic when the
+  selected immutable snapshot supplies a complete native-generation proof.
+  Backend make-client wrappers supply `api` and document their
+  :extra-client-opt-keys."
   [api conn
    {:as   config-opts
     :keys [entid->object-id
@@ -977,8 +986,6 @@
            security-kid
            token-ttl-seconds
            source-lifecycle
-           coherence-authority
-           proof-mode
            adapter-fingerprint
            adapter-deterministic?
            consistency-sync-timeout-ms
@@ -1000,22 +1007,6 @@
     (throw (ex-info "EACL Config Error: supply only one of :security-key or :security-keyring."
                     {:type :eacl/invalid-config
                      :conflicting-keys [:security-key :security-keyring]})))
-  (when-not (contains? #{nil :unknown :managed} coherence-authority)
-    (throw (ex-info "EACL Config Error: :coherence-authority must be :managed or :unknown."
-                    {:type :eacl/invalid-config
-                     :key :coherence-authority
-                     :value coherence-authority})))
-  (when-not (contains? #{nil :auto :mutation :content :none} proof-mode)
-    (throw (ex-info "EACL Config Error: unsupported :proof-mode."
-                    {:type :eacl/invalid-config
-                     :key :proof-mode
-                     :value proof-mode})))
-  (when (and (= :mutation proof-mode)
-             (not= :managed coherence-authority))
-    (throw (ex-info "EACL Config Error: mutation proof requires managed writer authority."
-                    {:type :eacl/invalid-config
-                     :key :proof-mode
-                     :value proof-mode})))
   (when (and (contains? config-opts :adapter-deterministic?)
              (not (boolean? adapter-deterministic?)))
     (throw (ex-info "EACL Config Error: :adapter-deterministic? must be boolean."
@@ -1067,20 +1058,13 @@
        :key :execution-timeout-ms
        :value execution-timeout-ms
        :maximum-timeout-ms execution/maximum-execution-timeout-ms})))
-  (let [;; Fail-safe default (D-5): managed reuse is an explicit writer
-        ;; contract, never a silent default one raw transact can violate.
-        coherence-authority (or coherence-authority :unknown)
-        source-lifecycle (or source-lifecycle (str (random-uuid)))
+  (let [source-lifecycle (or source-lifecycle (str (random-uuid)))
         source-lifecycle-state (atom source-lifecycle)
+        codec-instance-id (str (random-uuid))
         native-source-id
         (if-let [native-source-id-fn (:native-source-id api)]
           (native-source-id-fn conn)
           (str (random-uuid)))
-        proof-mode (case (or proof-mode :auto)
-                     :auto (if (= :managed coherence-authority)
-                             :mutation
-                             :content)
-                     proof-mode)
         current-kid (or security-kid :default)
         root-keyring
         (cond
@@ -1112,12 +1096,12 @@
         (boolean
          (or entid->object-id
              (contains? config-opts :object-id->lookup-ref)))
-        cache-eligible? (or (not custom-codec?)
-                            (and (some? adapter-fingerprint)
-                                 (true? adapter-deterministic?)))
+        managed-cache-eligible?
+        (or (not custom-codec?)
+            (and (some? adapter-fingerprint)
+                 (true? adapter-deterministic?)))
         current-cache-store
-        (when cache-eligible?
-          (cache/current-cache-for-option cache))
+        (cache/current-cache-for-option cache)
         cursor-codec-cache
         (when current-cache-store
           (cursor/codec-cache
@@ -1143,12 +1127,11 @@
                           (or adapter-fingerprint
                               {:backend (:backend-id api)
                                :adapter-version backend/adapter-version
-                               :proof-mode proof-mode
                                :recursive-traversal-limits
                                recursive-traversal-limits
                                :codec
                                (if custom-codec?
-                                 :custom-unfingerprinted
+                                 [:custom-unfingerprinted codec-instance-id]
                                  :eacl-id-immutable-v1)})
                           :adapter-deterministic?
                           (if custom-codec?
@@ -1162,8 +1145,6 @@
                           :source-lifecycle-state source-lifecycle-state
                           :native-source-id native-source-id
                           :decision-kernel production-kernel/default-selection
-                          :coherence-authority coherence-authority
-                          :proof-mode proof-mode
                           :consistency-sync-timeout-ms
                           (or consistency-sync-timeout-ms 30000)
                           :execution-timeout-ms
@@ -1187,10 +1168,7 @@
                           :cursor-codec-cache cursor-codec-cache
                           :page-navigation-cache
                           page-navigation-cache
-                          :managed-cache-enabled?
-                          (and cache-eligible?
-                               (not custom-codec?)
-                               (= :managed coherence-authority))
+                          :managed-cache-enabled? managed-cache-eligible?
                           :recursive-traversal-limits
                           (engine/normalize-recursive-traversal-limits
                            recursive-traversal-limits)

@@ -21,7 +21,6 @@ globalThis.EaclFormal = {
   EaclKernel,
   Semantics,
   AcyclicEngine,
-  CacheKernel,
   ConsistencyDecision,
   CurrentCache,
   IndexedCertification,

@@ -26,8 +26,7 @@
   [conn]
   (datomic/make-client
    conn
-   {:coherence-authority :managed
-    :zed-token-key security-key
+   {:zed-token-key security-key
     :source-lifecycle source-lifecycle
     :consistency-sync-timeout-ms 5}))
 
@@ -161,8 +160,7 @@
     (let [authorization
           (datomic/make-client
            conn
-           {:coherence-authority :managed
-            :zed-token-key security-key
+           {:zed-token-key security-key
             :cache {:remember-answers true}})
           _ (seed! conn authorization)
           _ (eacl/create-relationship! authorization relationship)

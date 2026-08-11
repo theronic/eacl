@@ -160,7 +160,7 @@
       (not (:same-source-scope? input)) :incomparable-scope
       (and
        (#{:at-least :exact} (:kind input))
-       (not (:anchor-satisfied? input)))
+       (not (:revision-satisfied? input)))
       :history-divergence
       :else :accept)))
 
@@ -198,7 +198,6 @@
                   :selected-at-least current-ref
                   :selected-exact exact-ref})
         options {:format-options format-options
-                 :coherence-authority :managed
                  :issue-token? true
                  :timeout-ms 1000}]
     (testing "fully consistent uses the authoritative barrier"
@@ -271,7 +270,6 @@
                   :selected-at-least current-ref})
         calls (atom [])
         options {:format-options format-options
-                 :coherence-authority :managed
                  :timeout-ms 1000
                  :decision-kernel
                  {:kernel (->RecordingKernel calls)}}]
@@ -335,8 +333,7 @@
   (doseq [mode
           [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
-          capability-supported? [false true]
-          managed-authority? [false true]]
+          capability-supported? [false true]]
     (let [source
           (adapter
            {:source-id "source"
@@ -348,12 +345,9 @@
             :modes (if capability-supported? #{mode} #{})})
           input
           {:mode mode
-           :capability-supported? capability-supported?
-           :managed-authority? managed-authority?}
+           :capability-supported? capability-supported?}
           expected (expected-plan-outcome input)
-          options
-          {:coherence-authority
-           (if managed-authority? :managed :unknown)}
+          options {}
           calls (atom [])
           verified-options
           (assoc
@@ -430,7 +424,6 @@
             calls (atom [])
             options
             {:format-options format-options
-             :coherence-authority :managed
              :issue-token? false
              :timeout-ms 1000
              :decision-kernel
@@ -442,7 +435,7 @@
              candidate)
             same-source-scope?
             (and selected-adapter? (not= :different candidate))
-            anchor-satisfied?
+            revision-satisfied?
             (if (causal-kind? kind)
               (and same-source-scope?
                    (not= :same-fail candidate))
@@ -452,7 +445,7 @@
              :selection-present? selection-present?
              :selected-adapter? selected-adapter?
              :same-source-scope? same-source-scope?
-             :anchor-satisfied? anchor-satisfied?}]
+             :revision-satisfied? revision-satisfied?}]
         (try
           (consistency/select
            source
@@ -501,7 +494,6 @@
                   :counts backend-calls})
         kernel-calls (atom [])
         options {:format-options format-options
-                 :coherence-authority :managed
                  :timeout-ms 1000
                  :decision-kernel
                  {:kernel (->RecordingKernel kernel-calls)}}
@@ -608,7 +600,6 @@
                   :selected-at-least selected-ref
                   :selected-exact ::unavailable})
         options {:format-options format-options
-                 :coherence-authority :managed
                  :timeout-ms 1000}]
     (testing "a selected revision below the requested revision diverges"
       (is (= :eacl.consistency/history-divergence
@@ -670,14 +661,14 @@
                    (public-consistency/at-exact-snapshot
                     (token "current" 20 20))
                    options)))))))
-    (testing "native revision selection is independent of cache authority"
+    (testing "native revision selection accepts a valid request"
       (is (backend/adapter?
            (:adapter
             (consistency/select
              source
              (public-consistency/at-least-as-fresh
               (token "current" 20 20))
-             (assoc options :coherence-authority :unknown))))))))
+             options)))))))
 
 (deftest capability-matrix-test
   (doseq [[mode descriptor]
@@ -697,8 +688,7 @@
                     :locator 1
                     :anchors #{"head"}
                     :modes #{mode}})
-          options {:format-options format-options
-                   :coherence-authority :managed}]
+          options {:format-options format-options}]
       (is (backend/adapter?
            (:adapter
             (consistency/select only-mode descriptor options))))
@@ -736,8 +726,7 @@
                   :selected-at-least selected-ref
                   :selected-exact selected-ref})
         request (token "head" 1 1)
-        options {:format-options format-options
-                 :coherence-authority :managed}]
+        options {:format-options format-options}]
     (testing "backend freshness deadlines remain distinguishable"
       (let [timeout-source
             (assoc-in

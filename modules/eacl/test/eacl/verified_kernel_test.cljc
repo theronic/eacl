@@ -3,21 +3,6 @@
    [clojure.test :refer [deftest is testing]]
    [eacl.verified-kernel :as verified]))
 
-(def valid-cache-input
-  {:deterministic? true
-   :dependency-scope-nonempty? true
-   :expected-key "key"
-   :expected-source "source"
-   :selected-graph 0
-   :ancestors #{1}
-   :selected-proof "proof"
-   :entry {:status :candidate
-           :authenticated? true
-           :key "key"
-           :source "source"
-           :graph 1
-           :proof "proof"}})
-
 (def valid-authorization-input
   {:objects [{:type "user" :id "u1"}
              {:type "document" :id "d1"}]
@@ -68,38 +53,6 @@
   (-decide [_ operation input]
     (f operation input)))
 
-(deftest strict-boundary-rejects-unknown-and-unsafe-values
-  (let [kernel
-        (->FunctionKernel
-         (fn [_ _]
-           {:status :hit :provenance :exact-hit}))]
-    (doseq [input
-            [(assoc valid-cache-input :unknown true)
-             (assoc valid-cache-input
-                    :selected-graph 9007199254740992)
-             (assoc-in valid-cache-input [:entry :proof] 7)]]
-      (is (thrown-with-msg?
-           #?(:clj clojure.lang.ExceptionInfo
-              :cljs cljs.core.ExceptionInfo)
-           #"boundary"
-           (verified/decide
-            {:kernel kernel}
-            :cache-validation
-            input)))))
-  (let [kernel
-        (->FunctionKernel
-         (fn [_ _]
-           {:status :hit
-            :provenance :exact-hit
-            :unknown true}))]
-    (is (thrown?
-         #?(:clj clojure.lang.ExceptionInfo
-            :cljs cljs.core.ExceptionInfo)
-         (verified/decide
-          {:kernel kernel}
-          :cache-validation
-          valid-cache-input)))))
-
 (deftest routing-certificate-result-is-bound-to-its-input
   (let [accepted
         {:status :accepted
@@ -144,17 +97,6 @@
            #?(:clj clojure.lang.ExceptionInfo
               :cljs cljs.core.ExceptionInfo)
            (decide result))))))
-
-(deftest generated-kernel-result-is-authoritative
-  (let [kernel
-        (->FunctionKernel
-         (fn [_ _]
-           {:status :miss :reason :proof-mismatch}))]
-    (is (= {:status :miss :reason :proof-mismatch}
-           (verified/decide
-            {:kernel kernel}
-            :cache-validation
-            valid-cache-input)))))
 
 (deftest current-cache-stage-boundary-is-strict
   (let [input {:stage :exact-entry :available? true}
@@ -202,7 +144,7 @@
 
 (defn- expected-consistency-validation
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (cond
     (not selection-present?)
     (if (= :exact kind)
@@ -212,7 +154,7 @@
     (not selected-adapter?) :invalid-selected-adapter
     (not same-source-scope?) :incomparable-scope
     (and (#{:at-least :exact} kind)
-         (not anchor-satisfied?))
+         (not revision-satisfied?))
     :history-divergence
     :else :accept))
 
@@ -221,11 +163,9 @@
     (doseq [mode
             [:minimize-latency :fully-consistent
              :at-least-as-fresh :at-exact-snapshot]
-            capability-supported? [false true]
-            managed-authority? [false true]]
+            capability-supported? [false true]]
       (let [input {:mode mode
-                   :capability-supported? capability-supported?
-                   :managed-authority? managed-authority?}
+                   :capability-supported? capability-supported?}
             expected (expected-consistency-plan input)]
         (is (= expected
                (verified/decide
@@ -239,12 +179,12 @@
             selected-adapter? [false true]
             :when (or selection-present? (not selected-adapter?))
             same-source-scope? [false true]
-            anchor-satisfied? [false true]]
+            revision-satisfied? [false true]]
       (let [input {:kind kind
                    :selection-present? selection-present?
                    :selected-adapter? selected-adapter?
                    :same-source-scope? same-source-scope?
-                   :anchor-satisfied? anchor-satisfied?}
+                   :revision-satisfied? revision-satisfied?}
             expected (expected-consistency-validation input)]
         (is (= expected
                (verified/decide
@@ -257,7 +197,7 @@
                   :selection-present? false
                   :selected-adapter? false
                   :same-source-scope? false
-                  :anchor-satisfied? false}
+                  :revision-satisfied? false}
           malformed (assoc absent
                            :selection-present? true)]
       (is (= :exact-snapshot-unavailable
@@ -266,13 +206,12 @@
              (expected-consistency-validation malformed)))))
   (testing "unknown fields, impossible observations, and lying kernels fail"
     (let [plan {:mode :minimize-latency
-                :capability-supported? true
-                :managed-authority? false}
+                :capability-supported? true}
           validation {:kind :exact
                       :selection-present? true
                       :selected-adapter? true
                       :same-source-scope? true
-                      :anchor-satisfied? true}
+                      :revision-satisfied? true}
           decide
           (fn [operation input result]
             (verified/decide

@@ -11,7 +11,7 @@ the generated release manifest.
 - `dafny/` contains the executable mathematical semantics, verified kernels,
   and proof lemmas.
 - `tla/` contains bounded temporal models used to discover hostile cache,
-  cursor, snapshot, continuation, subproblem-publication, relation-proof, and
+  cursor, snapshot, continuation, subproblem-publication, proof-frame, and
   source-switch histories.
 - `counterexamples/` retains minimized witnesses and their bug ledger.
 - `verification/` records the decision inventory, trusted boundary, assurance
@@ -44,6 +44,17 @@ component-safe deletion, stale endpoint guards, and source-lifecycle
 isolation. Older graph-oriented temporal artifacts remain bounded legacy
 regression models; they are not authority for the v4 cache or token protocol.
 
+`dafny/ScalarFrontierCoherence.dfy` refines that complete relation-generation
+frame to a scalar dependency frontier. It retains the independently monotone
+maximum collision as a checked counterexample, then proves soundness under the
+stronger supported-writer obligation that every affected relation is stamped
+atomically with the globally later committed transaction. The proof also binds
+the frontier to deterministic complete dependency extraction, immutable
+adapter/lifecycle-scoped proof frames, normalized demand, completed-only
+publication, exact fallback for incomplete evidence, and selected-snapshot
+identity. Backend certification remains the trusted boundary for native
+transaction ordering and atomic stamp publication.
+
 The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in
 [`../docs/formal-verification.md`](../docs/formal-verification.md). Behavior
@@ -65,9 +76,9 @@ full-kernel growth bound. A source or class byte count is not a proxy for
 allocation, retained heap, solver effort, or latency.
 
 `bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
-ledger for 62 named shared, generated-provider, and backend roots. The ledger
-is deliberately marked verification-incomplete: enumerating 1,505 reachable
-definitions in 53 source files (including source-span attribution for inline
+ledger for 63 named shared, generated-provider, and backend roots. The ledger
+is deliberately marked verification-incomplete: enumerating 1,380 reachable
+definitions in 57 source files (including source-span attribution for inline
 `defrecord` methods) prevents silent omissions but does not establish source
 refinement or adapter semantics. `backend-dispatch.edn` separately checks that
 every CLJ and CLJS dispatch site uses one of exactly the 21 required literal

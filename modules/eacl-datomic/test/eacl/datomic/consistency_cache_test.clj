@@ -24,8 +24,7 @@
   [conn]
   (core/make-client
    conn
-   {:coherence-authority :managed
-    :zed-token-key "consistency-cache-test-key"
+   {:zed-token-key "consistency-cache-test-key"
     :source-lifecycle source-lifecycle
     :cache {:checkpoints true
             :remember-answers true}}))
@@ -272,8 +271,7 @@
     (let [client
           (core/make-client
            conn
-           {:coherence-authority :managed
-            :cache {:remember-answers true}})
+           {:cache {:remember-answers true}})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           relationship (->Relationship alice :owner account)
@@ -290,7 +288,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:coherence-authority :managed})
+                  {})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           {created-token :zed/token} (seed! conn client)]
@@ -527,24 +525,21 @@
           new-key "new-stable-zed-token-key"
           old-client
           (core/make-client conn
-                            {:coherence-authority :managed
-                             :source-lifecycle source-lifecycle
+                            {:source-lifecycle source-lifecycle
                              :zed-token-keyring {:old old-key}
                              :zed-token-kid :old})
           _ (seed! conn old-client)
           old-token (core/current-zed-token old-client)
           overlap-client
           (core/make-client conn
-                            {:coherence-authority :managed
-                             :source-lifecycle source-lifecycle
+                            {:source-lifecycle source-lifecycle
                              :zed-token-keyring {:old old-key
                                                  :new new-key}
                              :zed-token-kid :new})
           new-token (core/current-zed-token overlap-client)
           new-only-client
           (core/make-client conn
-                            {:coherence-authority :managed
-                             :source-lifecycle source-lifecycle
+                            {:source-lifecycle source-lifecycle
                              :zed-token-keyring {:new new-key}
                              :zed-token-kid :new})
           demand [(spice-object :user "alice")
@@ -786,8 +781,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:coherence-authority :managed
-                   :cache {:remember-answers true}})
+                  {:cache {:remember-answers true}})
           {token :zed/token} (seed! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")

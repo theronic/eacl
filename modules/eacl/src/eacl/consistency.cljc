@@ -164,19 +164,14 @@
 (defn selection-plan
   "Returns the validated selection action for one normalized descriptor.
 
-  The capability observation and writer-authority observation remain adapter
-  boundary facts. The finite decision over those facts is made by the
-  generated kernel."
+  The capability observation remains an adapter boundary fact. The finite
+  decision over that fact is made by the generated kernel."
   [source {:keys [mode]} options]
   (let [capability-supported?
         (backend/supports? source :consistency mode)
         input
         {:mode mode
-         :capability-supported? capability-supported?
-         ;; Retained in the generated-kernel input schema during the v4 wire
-         ;; cutover, but no longer influences native revision selection.
-         :managed-authority?
-         (= :managed (:coherence-authority options))}
+         :capability-supported? capability-supported?}
         decision
         (decide
          options
@@ -218,7 +213,7 @@
          :selection-present? selection-present?
          :selected-adapter? selected-adapter?
          :same-source-scope? same-source-scope?
-         :anchor-satisfied? (boolean (:satisfied? revision-observation))}
+         :revision-satisfied? (boolean (:satisfied? revision-observation))}
         decision
         (decide
          options

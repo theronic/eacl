@@ -83,7 +83,7 @@
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
   {:status :passed
-   :verified-obligations 19
+   :verified-obligations 18
    :source "formal/dafny/ConsistencyDecision.dfy"
    :report "formal/verification/consistency-decision.edn"
    :integration-status
@@ -95,8 +95,8 @@
    :verified-obligations 17
    :source "formal/dafny/CacheKernel.dfy"
    :report "formal/verification/cache-kernel.edn"
-   :classification :proof-only-generated-boundary
-   :integration-status :no-live-production-consumer
+   :classification :proof-only-model
+   :integration-status :no-runtime-operation
    :production-assurance-contribution :none}
   :current-generation-cache
   {:status :passed
@@ -136,7 +136,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8642
+   :verified-obligations 8723
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -317,8 +317,8 @@
   :complete-public-routing true}
  :proof-only-exclusions
  [{:source "formal/dafny/CacheKernel.dfy"
-   :operation :cache-validation
-   :reason :no-live-production-consumer
+   :runtime-operation :none
+   :reason :proof-only-model
    :production-assurance-contribution :none}]
  :release-gate
  {:verified-status-allowed? false

@@ -5,6 +5,7 @@
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
+            [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
@@ -92,12 +93,20 @@
   derived-schema cache through `:cursor-schema-stamp` (an
   `{:adapter a :stamp delay}` pair); the pair is honored only for the very
   adapter it was resolved against, so recovery-path adapters read their own
-  stamp. The `:schema-proof` invocation is memoized per adapter instance."
+  ordered-generation frame."
   [adapter opts]
   (let [shared (:cursor-schema-stamp opts)]
     (if (and shared (identical? (:adapter shared) adapter))
       (force (:stamp shared))
-      (backend/invoke adapter :schema-proof))))
+      (let [frame
+            (let [candidate (:request-proof-frame opts)]
+              (if (and candidate
+                       (identical? adapter (:adapter candidate)))
+                candidate
+                (proof-frame/request-frame adapter)))
+            proof (proof-frame/resolve! frame [])]
+        (when (proof-frame/complete? proof)
+          (:schema-stamp proof))))))
 
 (defn- plain-scope-object
   [object]
@@ -309,12 +318,11 @@
   Returns nil when the schema stamp or any relation stamp is unreadable, so
   the caller falls back to the exact-snapshot proof (never wrong, at most a
   recovery instead of a continuation hit)."
-  [adapter schema-stamp relation-ids]
+  [request-proof-frame relation-ids]
   (let [relation-ids (vec relation-ids)
-        relation-stamps
-        (backend/invoke adapter :relation-proof relation-ids)]
-    (when (and (some? schema-stamp)
-               (some? relation-stamps))
+        proof (proof-frame/resolve! request-proof-frame relation-ids)
+        descriptor (proof-frame/descriptor proof)]
+    (when descriptor
       {:dependency-scope-digest
        (secure/canonical-digest
         "eacl/cursor/dependency-scope/v4"
@@ -323,11 +331,10 @@
        :proof-digest
        (secure/canonical-digest
         "eacl/cursor/dependency-proof/v1"
-        {:schema-stamp schema-stamp
-         :relation-stamps relation-stamps})})))
+        descriptor)})))
 
 (defn- build-dependency-context
-  [adapter schema-stamp relation-ids]
+  [adapter request-proof-frame relation-ids]
   (let [native-revision (consistency/native-revision adapter)
         base
         {:source-scope (consistency/source-scope adapter)
@@ -336,7 +343,7 @@
          :identity-contract (backend/identity-contract adapter)}
         dependency-digests
         (when (some? relation-ids)
-          (dependency-stamp-digests adapter schema-stamp relation-ids))]
+          (dependency-stamp-digests request-proof-frame relation-ids))]
     (if dependency-digests
       (merge base dependency-digests)
       (assoc base
@@ -344,7 +351,10 @@
              :proof-digest
              (secure/canonical-digest
               "eacl/cursor/exact-snapshot/v4"
-              {:snapshot-id (backend/invoke adapter :snapshot-id)
+              {:snapshot-id
+               (if request-proof-frame
+                 (proof-frame/snapshot-id request-proof-frame)
+                 (backend/invoke adapter :snapshot-id))
                :native-revision native-revision})))))
 
 (defn dependency-context
@@ -353,7 +363,7 @@
   Without `relation-ids` the proof pins the exact snapshot identity
   (relationship-index cursors keep this arity). With a sorted vector of
   relation-definition eids — the query's compiled dependency closure — the
-  proof becomes the schema stamp plus the per-relation stamps, so a
+  proof becomes the schema stamp plus the scalar dependency frontier, so a
   transaction touching no relation in the closure leaves the proof equal and
   the continuation reusable. Unreadable stamps fall back to the
   exact-snapshot proof."
@@ -363,7 +373,7 @@
    (build-dependency-context
     adapter
     (when (some? relation-ids)
-      (backend/invoke adapter :schema-proof))
+      (proof-frame/request-frame adapter))
     relation-ids)))
 
 (defn- request-relation-ids
@@ -375,10 +385,13 @@
 (defn- request-dependency-context
   [adapter opts]
   (if-let [relation-ids (request-relation-ids opts)]
-    (build-dependency-context
-     adapter
-     (request-schema-stamp adapter opts)
-     relation-ids)
+    (let [candidate (:request-proof-frame opts)
+          frame
+          (if (and candidate
+                   (identical? adapter (:adapter candidate)))
+            candidate
+            (proof-frame/request-frame adapter))]
+      (build-dependency-context adapter frame relation-ids))
     (dependency-context adapter)))
 
 (defn- transform-edge-ids
