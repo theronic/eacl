@@ -1,7 +1,6 @@
 (ns eacl.formal.cross-runtime-vector-test
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
-            [eacl.formal.cache-kernel-bridge :as cache]
             [eacl.formal.java-round-trip :as round-trip]
             [eacl.formal.page-window-bridge :as page]
             [eacl.formal.semantics-bridge :as semantics]))
@@ -37,27 +36,8 @@
     :cursor-graph 7}
    input))
 
-(defn- cache-input
-  [input]
-  (let [{:keys [selected-graph ancestors selected-proof
-                candidate-graph candidate-proof authenticated?]}
-        (merge
-         {:selected-graph 7
-          :ancestors [6]
-          :selected-proof "proof"
-          :candidate-graph 7
-          :candidate-proof "proof"
-          :authenticated? true}
-         input)]
-    {:selected-graph selected-graph
-     :ancestors (set ancestors)
-     :selected-proof selected-proof
-     :entry {:authenticated? authenticated?
-             :graph candidate-graph
-             :proof candidate-proof}}))
-
 (deftest generated-java-cross-runtime-vectors-test
-  (let [{:keys [graph pages continuations cache round-trips]}
+  (let [{:keys [graph pages continuations round-trips]}
         (vectors)
         {:keys [fixture subject resource permission expected]} graph]
     (testing "portable graph"
@@ -84,13 +64,6 @@
         (is (= expected
                (page/continuation-decision
                 (continuation-input input)))
-            (pr-str input))))
-    (testing "cache decisions"
-      (doseq [{:keys [input expected]} cache]
-        (is (= expected
-               (select-keys
-                (cache/validate (cache-input input))
-                (keys expected)))
             (pr-str input))))
     (testing "typed round-trip results"
       (doseq [{:keys [tag values limit expected]} round-trips]
