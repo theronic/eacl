@@ -4,14 +4,14 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 57
+  :source-files 58
   :public-roots 63
-  :reachable-definitions 1380
+  :reachable-definitions 1404
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
-   :clj-invoke-sites 49
-   :cljs-invoke-sites 49
+   :clj-invoke-sites 43
+   :cljs-invoke-sites 43
    :literal-operation-keys 21
    :status :static-operation-key-closure-established
    :assurance :not-adapter-semantic-proof}
@@ -102,6 +102,11 @@
               'eacl.engine.relationships/execute-page
               'eacl.client.orchestration/cursor-options
               'eacl.relay]}
+  {:source "formal/dafny/PermissionTree.dfy"
+   :class :proof-only-host-control-and-semantic-model
+   :consumer ['eacl.permission-tree]
+   :reason
+   :immutable-snapshot-mathematical-kernel-not-mechanical-clojure-extraction}
   {:source "formal/dafny/RecursiveEngine.dfy"
    :class :generated-production
    :consumer ['eacl.engine.v8]}
@@ -156,6 +161,41 @@
    :ci [:generated-production-kernel
         :execution-contract
         :deadline-fake-clock]}
+  {:operation :expand-permission-tree
+   :entry-points ['eacl.permission-tree/expand]
+   :theorems
+   [:tree-node-oneof-and-annotation-well-formedness
+    :direct-leaf-exactness
+    :union-denotation-and-child-permutation-invariance
+    :absent-resource-empty-topology
+    :active-path-cycle-rejection
+    :budget-addition-monotonicity
+    :successful-limit-preservation
+    :failure-carries-no-partial-tree
+    :typed-object-identity
+    :sum-typed-relation-declaration-exactness
+    :every-emitted-child-consumes-depth]
+   :dafny ["formal/dafny/PermissionTree.dfy"]
+   :adapter-obligations
+   [:immutable-snapshot
+    :complete-and-well-formed-normalized-schema
+    :complete-direct-relationship-scans
+    :typed-identity-round-trip
+    :selected-snapshot-rendering
+    :selected-snapshot-causal-token]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   {:mathematical-kernel :proof-only
+    :handwritten-clj-cljs-source-refinement :not-claimed
+    :runtime-correspondence :bounded-differential-tests-passed}
+   :remaining
+   [:adapter-query-and-codec-source-refinement
+    :deadline-and-host-integer-platform-contracts
+    :causal-token-authentication
+    :independent-review]
+   :ci [:locked-dafny-verification
+        :permission-tree-reference-differential
+        :cross-backend-permission-tree]}
   {:operation :can?
    :entry-points ['eacl.core/can?]
    :theorems [:authorization-membership-iff

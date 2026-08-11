@@ -34,6 +34,13 @@ Custom object-ID codecs are exact-only and client-local unless configured with
 a portable `:adapter-fingerprint`, `:adapter-deterministic? true`, and an
 application-certified injective round trip.
 
+`expand-permission-tree` routes Datomic's selected immutable DB through the
+same portable shallow-expansion kernel used by DataScript and Datahike. The
+returned `:expanded-at` is issued from that selected adapter without re-reading
+the connection; `at-exact-snapshot` can replay it while the required Datomic
+history remains available. Native child/subject order is not semantic.
+Configure structural ceilings with client-level `:permission-tree-limits`.
+
 ## Optional atomic entity retraction
 
 Ordinary Datomic `:db.fn/retractEntity` cannot follow the peer eid embedded in

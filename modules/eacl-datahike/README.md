@@ -97,6 +97,13 @@ Unsupported configuration/mode combinations fail before authorization. List
 operations use `:first`/`:after` and `:last`/`:before`; see the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
 
+`expand-permission-tree` uses the shared portable shallow-expansion kernel in
+both keyword and numeric attribute-reference modes. The returned
+`:expanded-at` names the same selected immutable DB as the tree. Exact replay
+is available only when the configured store retains the named commit/history;
+native child/subject order is not semantic. Configure structural ceilings with
+client-level `:permission-tree-limits`.
+
 ```clojure
 {:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```

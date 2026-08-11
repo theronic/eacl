@@ -1,7 +1,9 @@
 (ns eacl.datascript.contract-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.causal-token :as causal-token]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
@@ -9,6 +11,177 @@
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.verified-kernel :as verified]))
+
+(def ^:private permission-tree-schema
+  "definition user {}
+   definition folder {
+     relation reader: user
+     permission view = reader
+   }
+   definition team {
+     relation reader: user
+     permission view = reader
+   }
+   definition document {
+     relation viewer: user
+     relation parent: folder | team
+     permission base = viewer
+     permission view = base + parent->view
+   }")
+
+(defn- seed-permission-tree!
+  [conn client]
+  (eacl/write-schema! client permission-tree-schema)
+  (ds/transact! conn
+                (mapv (fn [id] {:eacl/id id})
+                      ["alice" "bob" "carol" "d1" "f1" "t1"]))
+  (eacl/create-relationships!
+   client
+   [(eacl/->Relationship
+     (eacl/spice-object :user "alice") :viewer
+     (eacl/spice-object :document "d1"))
+    (eacl/->Relationship
+     (eacl/spice-object :folder "f1") :parent
+     (eacl/spice-object :document "d1"))
+    (eacl/->Relationship
+     (eacl/spice-object :team "t1") :parent
+     (eacl/spice-object :document "d1"))
+    (eacl/->Relationship
+     (eacl/spice-object :user "bob") :reader
+     (eacl/spice-object :folder "f1"))
+    (eacl/->Relationship
+     (eacl/spice-object :user "carol") :reader
+     (eacl/spice-object :team "t1"))]))
+
+(deftest permission-tree-expansion-and-selected-snapshot-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client
+                conn
+                {:security-key "01234567890123456789012345678901"})
+        _ (seed-permission-tree! conn client)
+        resource (eacl/spice-object :document "d1")
+        response
+        (eacl/expand-permission-tree
+         client {:resource resource :permission :view})
+        root (:tree-root response)
+        [base arrow] (get-in root [:intermediate :children])]
+    (is (string? (:expanded-at response)))
+    (is (= resource (:expanded-object root)))
+    (is (= :view (:expanded-relation root)))
+    (is (= :base (:expanded-relation base)))
+    (is (= [(eacl/spice-object :user "alice")]
+           (get-in base
+                   [:intermediate :children 0 :leaf :subjects])))
+    (is (= :view (:expanded-relation arrow)))
+    (is (= #{(eacl/spice-object :folder "f1")
+             (eacl/spice-object :team "t1")}
+           (set (map :expanded-object
+                     (get-in arrow [:intermediate :children])))))
+    (is (= {:expanded-object
+            (eacl/spice-object :document "missing")
+            :expanded-relation :view
+            :intermediate
+            {:operation :union
+             :children
+             [{:expanded-object
+               (eacl/spice-object :document "missing")
+               :expanded-relation :base
+               :intermediate
+               {:operation :union
+                :children
+                [{:expanded-object
+                  (eacl/spice-object :document "missing")
+                  :expanded-relation :viewer
+                  :leaf {:subjects []}}]}}
+              {:expanded-object
+               (eacl/spice-object :document "missing")
+               :expanded-relation :view
+               :intermediate {:operation :union :children []}}]}}
+           (:tree-root
+            (eacl/expand-permission-tree
+             client
+             {:resource (eacl/spice-object :document "missing")
+              :permission :view}))))
+
+    (testing "a concurrent write cannot mix the selected tree and token"
+      (let [mutated? (atom false)
+            late-user (eacl/spice-object :user "late")
+            _ (ds/transact! conn [{:eacl/id "late"}])
+            captured
+            (binding [backend/*invoke-observer*
+                      (fn [{:keys [phase operation]}]
+                        (when (and (= :before phase)
+                                   (= :relation-defs operation)
+                                   (compare-and-set! mutated? false true))
+                          (eacl/create-relationship!
+                           client late-user :viewer resource)))]
+              (eacl/expand-permission-tree
+               client {:resource resource :permission :base}))
+            first-subjects
+            (get-in captured
+                    [:tree-root :intermediate :children 0 :leaf :subjects])
+            token-data
+            (causal-token/token-data
+             (get-in client [:opts :format-options])
+             (:expanded-at captured))]
+        (is (= [(eacl/spice-object :user "alice")] first-subjects))
+        (is (< (:revision token-data) (:max-tx (ds/db conn))))
+        (is (= #{(eacl/spice-object :user "alice") late-user}
+               (set
+                (get-in
+                 (eacl/expand-permission-tree
+                  client {:resource resource :permission :base})
+                 [:tree-root :intermediate :children 0 :leaf :subjects]))))))))
+
+(deftest pinned-spicedb-permission-tree-golden-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (eacl/write-schema! client contract/permission-tree-golden-schema)
+    (ds/transact!
+     conn
+     (map-indexed
+      (fn [index {:keys [id]}]
+        {:db/id (- (inc index)) :eacl/id id})
+      contract/permission-tree-golden-objects))
+    (eacl/create-relationships!
+     client contract/permission-tree-golden-relationships)
+    (contract/assert-pinned-permission-tree-golden! client)))
+
+(deftest permission-tree-schema-mutation-stays-on-selected-snapshot-test
+  (let [old-schema
+        "definition user {}
+         definition document {
+           relation viewer: user
+           permission view = viewer
+         }"
+        new-schema
+        "definition user {}
+         definition document {
+           relation viewer: user
+           relation editor: user
+           permission view = viewer + editor
+         }"
+        conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        resource (eacl/spice-object :document "d1")
+        _ (eacl/write-schema! client old-schema)
+        _ (ds/transact! conn [{:eacl/id "d1"}])
+        mutated? (atom false)
+        captured
+        (binding [backend/*invoke-observer*
+                  (fn [{:keys [phase operation]}]
+                    (when (and (= :before phase)
+                               (= :relation-defs operation)
+                               (compare-and-set! mutated? false true))
+                      (eacl/write-schema! client new-schema)))]
+          (eacl/expand-permission-tree
+           client {:resource resource :permission :view}))]
+    (is (= 1 (count (get-in captured
+                            [:tree-root :intermediate :children]))))
+    (is (= 2 (count (get-in
+                     (eacl/expand-permission-tree
+                      client {:resource resource :permission :view})
+                     [:tree-root :intermediate :children]))))))
 
 (defn- seed-objects!
   [conn]
@@ -477,6 +650,7 @@
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))

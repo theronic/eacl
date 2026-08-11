@@ -25,6 +25,7 @@
             [eacl.formal.production-kernel :as production-kernel]
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.proof-frame :as proof-frame]
+            [eacl.permission-tree :as permission-tree]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
@@ -2023,6 +2024,26 @@
              #(impl/count-subjects db query'))]
         (with-cache-info (:result answer) answer)))))
 
+(defn spiceomic-expand-permission-tree
+  [conn opts query]
+  (let [{:keys [adapter]}
+        (capture-basic-result-context
+         conn opts (:consistency query))
+        contract (:execution-contract opts)
+        tree
+        (permission-tree/expand
+         adapter
+         {:limits (:permission-tree-limits opts)
+          :execution-contract contract}
+         (:resource query)
+         (:permission query))]
+    (execution/check! contract :permission-tree-token-issuance)
+    (let [token
+          (permission-tree/selected-adapter-token adapter opts)]
+      (execution/check! contract :permission-tree-token-issued)
+      {:expanded-at token
+       :tree-root tree})))
+
 (defrecord Spiceomic [conn opts]
   IAuthorization
   (can? [_ subject permission resource]
@@ -2146,10 +2167,11 @@
        conn (request-cache-opts % (:cache? query))
        (dissoc query :evaluation :timeout-ms))))
 
-  (expand-permission-tree [_ _]
-    (throw (ex-info "expand-permission-tree is not implemented yet."
-             {:type :eacl/not-implemented
-              :method 'expand-permission-tree})))
+  (expand-permission-tree [_ query]
+    (permission-tree/validate-request! query)
+    (execute-request
+     opts :expand-permission-tree query
+     #(spiceomic-expand-permission-tree conn % query)))
 
   IDetailedAuthorization
   (-check-permission
@@ -2225,6 +2247,7 @@
     :execution-timeout-ms
     :cache-attempt
     :recursive-traversal-limits
+    :permission-tree-limits
     :auto-migrate-v6})
 
 (def ^:private canonical-security-opt-keys
@@ -2535,6 +2558,7 @@
            execution-timeout-ms
            cache-attempt
            recursive-traversal-limits
+           permission-tree-limits
            auto-migrate-v6]}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
@@ -2851,7 +2875,10 @@
                             ;; disable the limits it does not mention
                             :recursive-traversal-limits
                             (merge impl.indexed/default-recursive-traversal-limits
-                                   recursive-traversal-limits)}]
+                                   recursive-traversal-limits)
+                            :permission-tree-limits
+                            (permission-tree/normalize-limits
+                             permission-tree-limits)}]
     (->Spiceomic conn opts)))
 
 (defn current-zed-token

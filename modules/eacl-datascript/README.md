@@ -42,6 +42,13 @@ the originating client/connection lifecycle.
 List operations use `:first`/`:after` and `:last`/`:before`; see the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
 
+`expand-permission-tree` uses the shared portable shallow-expansion kernel and
+returns a token for the same selected immutable DataScript DB as the tree.
+DataScript CLJ and CLJS have identical topology/error contracts. Native scan
+order is not semantic, and exact historical replay remains unsupported; use a
+returned token as a causal floor within its connection lifecycle. Configure
+structural ceilings with client-level `:permission-tree-limits`.
+
 ## Relationship storage
 
 DataScript stores a relationship as two cardinality-many indexed ordinary

@@ -102,6 +102,39 @@ Exceeding a ceiling throws `:eacl.recursive-traversal/limit-exceeded`. Use
 `:count-limit` for bounded counts and raise traversal limits only after
 representative heap and load testing.
 
+## Permission-tree expansion
+
+All bundled adapters implement `expand-permission-tree` through one portable
+CLJ/CLJS kernel. The strict request is `{:resource object :permission keyword}`
+plus optional `:consistency` and `:timeout-ms`; the response is
+`{:expanded-at token :tree-root node}`. The token and every definition,
+relationship, and rendered ID in the tree come from one selected immutable
+adapter. Datomic can replay the exact token while history is retained;
+Datahike can do so only in configurations with retained exact selection;
+DataScript supplies current/causal selection but no arbitrary historical
+reconstruction.
+
+The tree is a shallow structural explanation, not a flattened authorization
+answer. It preserves union, permission, and arrow boundaries, empty branches,
+and duplicate multiplicity. Child/subject order is deliberately unspecified.
+Use `can?` for membership decisions and compare normalized tree topology with
+multisets when order is irrelevant.
+
+Clients accept `:permission-tree-limits` with positive portable exact integers:
+
+```clojure
+{:max-depth 50
+ :max-schema-components 100000
+ :max-relationship-values 100000
+ :max-tree-nodes 100000
+ :max-leaf-subjects 100000}
+```
+
+These are construction-time ceilings; requests cannot override them. Limit,
+deadline, cycle, codec, adapter-contract, unknown-root, and consistency
+failures are typed and return no partial tree. This feature adds no schema,
+stored attribute, dependency, or database migration.
+
 ## Backend extension boundary
 
 The adapter operation map validates snapshot/source identity, consistency,

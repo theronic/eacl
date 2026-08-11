@@ -102,7 +102,15 @@
   ; Mirrors count-resources for lookup-subjects. Pass :count-limit to bound
   ; work and receive :truncated? in the result.
 
-  (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
+  (expand-permission-tree [this {:as query :keys [resource permission consistency]}])
+  ; expand-permission-tree accepts exactly :resource, :permission, optional
+  ; :consistency and :timeout-ms. It returns
+  ; {:expanded-at causal-token :tree-root PermissionRelationshipTree-map}.
+  ; Every tree node has :expanded-object, :expanded-relation and exactly one
+  ; of {:intermediate {:operation :union :children [...]}} or
+  ; {:leaf {:subjects [...]}}. Child and subject vector order is non-semantic.
+  ; Expansion is shallow: direct subjects remain terminal leaves.
+  )
 
 (defprotocol IDetailedAuthorization
   "Optional authorization extension for callers that need cache provenance."

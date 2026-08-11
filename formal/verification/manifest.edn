@@ -115,6 +115,16 @@
    :atomic-managed-datascript-and-all-backend-contracts-passed
    :claim
    :conditional-exact-and-managed-atomic-projection-refinement}
+  :permission-tree-expansion
+  {:status :passed
+   :verified-obligations 62
+   :source "formal/dafny/PermissionTree.dfy"
+   :integration-status
+   :proof-model-with-bounded-clj-cljs-and-cross-backend-correspondence
+   :claim
+   :conditional-mathematical-shallow-tree-topology-cycle-and-limit-model
+   :qualification
+   :no-mechanical-clojure-extraction-adapter-codec-clock-token-and-host-runtime-remain-trusted-boundaries}
   :indexed-recursive-public-engine
   {:status :passed
    :verified-obligations 7979
@@ -136,7 +146,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8723
+   :verified-obligations 8785
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed

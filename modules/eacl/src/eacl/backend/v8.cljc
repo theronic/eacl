@@ -512,3 +512,109 @@
     (catch #?(:clj Throwable :cljs :default) error
       (observe-invocation! :failed adapter operation-key)
       (throw error))))
+
+(defn reduce-definitions
+  "Incrementally consumes one schema-definition sequence.
+
+  This boundary exists so callers can meter and deadline-check lazy adapter
+  results without first realizing the complete sequence. Existing definition
+  operation arities and the ordinary `invoke` behavior remain unchanged."
+  [adapter operation-key args init
+   {:keys [before-realize! after-realize! step]
+    :or {before-realize! (constantly nil)
+         after-realize! (constantly nil)}}]
+  (when-not (contains? #{:relation-defs :permission-defs} operation-key)
+    (invalid-adapter! "Incremental definition reduction requires a schema operation."
+                      {:operation operation-key}))
+  (when-not (fn? step)
+    (invalid-adapter! "Incremental definition reduction requires a step function."
+                      {:operation operation-key}))
+  (when *backend-op-stats*
+    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+  (observe-invocation! :before adapter operation-key)
+  (try
+    (let [value (apply (operation adapter operation-key) args)]
+      (observe-invocation! :after adapter operation-key)
+      (when-not (sequential? value)
+        (contract-violation!
+         (::id adapter) operation-key :finite-definition-sequence :redacted))
+      (loop [remaining value
+             accumulator init]
+        (before-realize!)
+        (let [items (seq remaining)]
+          (after-realize!)
+          (if-not items
+            accumulator
+            (let [item (first items)]
+              (when (and (runtime-guards? adapter) (not (map? item)))
+                (contract-violation!
+                 (::id adapter) operation-key
+                 :finite-definition-sequence :redacted))
+              (recur (rest items) (step accumulator item)))))))
+    (catch #?(:clj Throwable :cljs :default) error
+      (observe-invocation! :failed adapter operation-key)
+      (throw error))))
+
+(defn reduce-scan
+  "Incrementally consumes one ordered backend scan without materializing it.
+
+  `args` is the adapter operation argument vector. `before-realize!` and
+  `after-realize!` bracket each potentially blocking sequence realization;
+  `step` receives the accumulator and one validated internal id. Existing
+  adapter operation arities remain unchanged."
+  [adapter operation-key args init
+   {:keys [before-realize! after-realize! step]
+    :or {before-realize! (constantly nil)
+         after-realize! (constantly nil)}}]
+  (when-not (contains? #{:subject->resources :resource->subjects}
+                       operation-key)
+    (invalid-adapter! "Incremental reduction requires an ordered scan operation."
+                      {:operation operation-key}))
+  (when-not (fn? step)
+    (invalid-adapter! "Incremental reduction requires a step function."
+                      {:operation operation-key}))
+  (when *backend-op-stats*
+    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+  (observe-invocation! :before adapter operation-key)
+  (try
+    (let [value (apply (operation adapter operation-key) args)
+          options (or (last args) {})
+          direction (or (:direction options) :asc)
+          bound (:bound-eid options)
+          inclusive? (true? (:inclusive-bound? options))]
+      (observe-invocation! :after adapter operation-key)
+      (when-not (sequential? value)
+        (contract-violation!
+         (::id adapter) operation-key :finite-sequential-result :redacted))
+      (when (and (runtime-guards? adapter)
+                 (not (contains? #{:asc :desc} direction)))
+        (contract-violation!
+         (::id adapter) operation-key :known-direction :redacted))
+      (loop [remaining value
+             previous nil
+             accumulator init]
+        (before-realize!)
+        (let [items (seq remaining)]
+          (after-realize!)
+          (if-not items
+            accumulator
+            (let [item (first items)]
+              (when (runtime-guards? adapter)
+                (when-not (exact-natural? item)
+                  (contract-violation!
+                   (::id adapter) operation-key :exact-natural :redacted))
+                (when (and (some? previous)
+                           (not ((if (= :desc direction) > <)
+                                 previous item)))
+                  (contract-violation!
+                   (::id adapter) operation-key :strict-order :redacted))
+                (when (and (some? bound)
+                           (not (within-bound?
+                                 direction bound inclusive? item)))
+                  (contract-violation!
+                   (::id adapter) operation-key
+                   :inclusive-exclusive-bound :redacted)))
+              (recur (rest items) item (step accumulator item)))))))
+    (catch #?(:clj Throwable :cljs :default) error
+      (observe-invocation! :failed adapter operation-key)
+      (throw error))))

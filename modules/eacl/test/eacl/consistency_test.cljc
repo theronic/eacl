@@ -133,6 +133,28 @@
      :revision order
      :exact-locator locator})))
 
+(deftest selected-adapter-token-never-reselects-live-state
+  (let [counts (atom {})
+        selected (adapter {:source-id "source"
+                           :source-lifecycle "test-lifecycle"
+                           :branch nil
+                           :order 41
+                           :locator 41
+                           :counts counts})
+        issued (consistency/selected-adapter-token
+                selected {:format-options format-options})
+        payload (causal-token/token-data format-options issued)]
+    (is (= 41 (:revision payload)))
+    (is (= 41 (:exact-locator payload)))
+    (is (= 1 (:source-scope @counts)))
+    (is (= 1 (:source-lifecycle @counts)))
+    (is (= 1 (:native-revision @counts)))
+    (is (= 1 (:order-hint @counts)))
+    (is (= 1 (:exact-locator @counts)))
+    (is (not-any? #(contains? @counts %)
+                  [:select-current :select-authoritative
+                   :select-at-least :select-exact]))))
+
 (defn- expected-kernel-decision
   [operation input]
   (case operation
