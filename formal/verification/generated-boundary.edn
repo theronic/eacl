@@ -194,7 +194,7 @@
             "formal/dafny/IndexedRootDenotation.dfy"]
   :verified-obligations
   {:transition-state-machine 565
-   :scan-batching 20
+   :scan-batching 26
    :batch-completeness 12
    :semantic-soundness-refinement 1643
    :forward-least-fixed-point-completeness 1119
@@ -203,7 +203,7 @@
    :source-plan-and-seed-certification 48
    :semantic-root-denotation-equivalence 33
    :indexed-root-denotation-compiler-bridge 137
-   :total 7979}
+   :total 7985}
   :generated-state-shape true
   :generated-forward-transitions true
   :generated-reverse-transitions true
@@ -221,7 +221,14 @@
   :generated-bounded-ordered-scan-waves true
   :generated-ordered-batch-response-folding true
   :generated-fuel-cut-wave-publication true
+  :generated-render-owned-scan-batch-selection true
+  :generated-production-driver-host-batch-argument false
   :generated-default-scan-batch-size 64
+  :generated-page-scan-batch-size 1
+  :generated-page-scan-size-independence-lemma
+  IndexedBatching.PageScanSchedulingIsIndependentOfRequestedSize
+  :generated-page-scan-batch-rationale
+  :one-outstanding-scan-makes-page-boundaries-quiescent-and-replayable
   :generated-batched-crossing-law
   {:unsplit-independent-streams
    "2 * ceil(scans / batch-size) + 1"
@@ -274,16 +281,16 @@
   :production-routing
   {:clj-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 29
-   :assertions 8426
+   :tests 30
+   :assertions 8427
     :leapfrog-reseek-side-and-target-trace :exact
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407}
  :cljs-javascript
    {:namespace-tests 35
-    :suite-tests 46
-    :suite-assertions 9983
+    :suite-tests 44
+    :suite-assertions 9978
     :acyclic-arrow-boolean-and-logical-work-trace :exact
     :permission-path-materialization-fixtures 99
     :acyclic-outer-path-fold-fixtures 407
@@ -297,15 +304,15 @@
     :resource-counters :whole-graph-model-only}
   :clj-java
    {:namespace eacl.formal.production-kernel-test
-    :namespace-tests 29
-    :namespace-assertions 8426
+    :namespace-tests 30
+    :namespace-assertions 8427
     :qualification :namespace-also-covers-indexed-and-production-routing
     :status :passed}
   :cljs-javascript
    {:namespace eacl.formal.production-kernel-test
     :namespace-tests 35
-    :suite-tests 46
-    :suite-assertions 9983
+    :suite-tests 44
+    :suite-assertions 9978
     :leapfrog-reseek-side-and-target-trace :exact
     :qualification :suite-total-spans-both-generated-javascript-namespaces
     :status :passed}}

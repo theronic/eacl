@@ -341,17 +341,20 @@ the 50k recursive-schema exact count without recursive-limit or retained
 snapshot errors. Full evidence is recorded in
 `formal/verification/explorer-v8-release.edn`.
 
-Recursive indexed traversal now groups independent backend requests into
-request-ordered waves of at most 64 scans. The JVM generated kernel and the
-portable ClojureScript authority fold responses in the same order. If fuel ends
+Recursive indexed traversal now selects request-ordered scan waves by render
+mode. Page renders admit exactly one outstanding scan independent of requested
+page size; order-insensitive Boolean and count renders admit up to 64. The JVM
+generated kernel owns that policy, and the portable ClojureScript authority is
+kept differentially aligned. Both fold responses in request order. If fuel ends
 with pending scans, both publish the current verified state and that nonempty
 bounded wave; they never roll back and repeat the same prefix. A pending-empty
 fuel cut yields current state. Independent streams not split by fuel use
-exactly `2 × ceil(streams / 64) + 1` kernel crossings; general recursion records
+exactly `2 × ceil(streams / render-batch-size) + 1` kernel crossings; general recursion records
 fuel-cut wave overhead separately. The generalized pending-work coverage and
 crossing law are proved in `IndexedBatchCompleteness.dfy` and
 `IndexedBatching.dfy`. EACL-FORMAL-066 retains the broad-fanout livelock
-counterexample that forced this correction.
+counterexample, and EACL-FORMAL-067 retains the page-size-dependent ordering
+counterexample that forced render-owned batch selection.
 
 ## Correctness findings closed
 

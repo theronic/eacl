@@ -8,9 +8,11 @@
             [eacl.schema.model :as model]))
 
 ;      primary-expr = identifier | <'('> permission-expr <')'>
-;; Whitespace parser used by the comment-aware whitespace parser below.
-(def ^:private whitespace
-  (insta/parser "whitespace = #'\\s+'"))
+;; SpiceDB declarations are line-oriented: a relation or permission must end
+;; before the next declaration or the definition's closing brace. Keep line
+;; endings out of auto-whitespace so the grammar can enforce that boundary.
+(def ^:private horizontal-whitespace
+  (insta/parser "horizontal-whitespace = #'[ \\t\\f]+'"))
 
 ;; SpiceDB schemas may contain // line comments and /* */ block comments
 ;; anywhere whitespace is legal. Modelled as auto-whitespace per the
@@ -21,8 +23,8 @@
     "ws-or-comments = ws | comments
      comments = comment+
      comment = #'//[^\\n\\r]*' | #'/\\*[\\s\\S]*?\\*/'
-     ws = #'\\s+'"
-    :auto-whitespace whitespace))
+     ws = #'[ \\t\\f]+'"
+    :auto-whitespace horizontal-whitespace))
 
 ;; Define the SpiceDB grammar with auto-whitespace
 ;; Full SpiceDB grammar - parses the complete official syntax.
@@ -30,11 +32,12 @@
 (def spicedb-parser
   (insta/parser
     "(* Top-level schema *)
-      schema = definition+
+      schema = line-end* definition (line-end* definition)* line-end*
 
       (* Definition block *)
-      definition = <'definition'> type-path <'{'> definition-body <'}'>
-      definition-body = (relation | permission)*
+      definition = <'definition'> type-path <'{'> line-end* definition-body line-end* <'}'>
+      definition-body = ((relation | permission) line-end+)*
+      <line-end> = <#'\\r\\n|\\n|\\r'>
 
       (* Type paths support namespacing: docs/document *)
       type-path = identifier (<'/'> identifier)*
@@ -236,7 +239,7 @@
 
 ;; Helper to parse expressions
 (defn parse-permission-expression [expr-str]
-  (let [full-schema (str "definition temp { permission test = " expr-str " }")
+  (let [full-schema (str "definition temp { permission test = " expr-str "\n}")
         parsed      (spicedb-parser full-schema)]
     (if (insta/failure? parsed)
       ;; Library fn: return nil for the caller to handle rather than

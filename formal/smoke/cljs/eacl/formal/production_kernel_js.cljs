@@ -1534,13 +1534,13 @@
           (js-invoke
            (.-__default batching)
            "DriveForwardScans"
-           state (indexed-limits limits) (dafny-fuel fuel) (big-number 64))
+           state (indexed-limits limits) (dafny-fuel fuel))
 
           :reverse
           (js-invoke
            (.-__default batching)
            "DriveReverseScans"
-           state (indexed-limits limits) (dafny-fuel fuel) (big-number 64)))]
+           state (indexed-limits limits) (dafny-fuel fuel)))]
     (cond
       (case direction
         :forward (.-is_ForwardNeedScans outcome)

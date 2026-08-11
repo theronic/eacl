@@ -32,11 +32,13 @@
 ;; --- arrow to a permission whose paths are all plain relations --------------
 
 (def ^:private exhaustive-schema
-  "definition user {}
+   "definition user {}
    definition team { relation member: user
-                     permission access = member }
+                     permission access = member
+   }
    definition doc  { relation team: team
-                     permission view = team->access }")
+                     permission view = team->access
+   }")
 
 (deftest arrow-to-all-relation-permission-test
   (doseq [fan-out [1 2 50]]
@@ -71,9 +73,11 @@
   "definition user {}
    definition group { relation member: user
                       relation parent: group
-                      permission access = member + parent->access }
+                      permission access = member + parent->access
+   }
    definition doc   { relation grp: group
-                      permission view = grp->access }")
+                      permission view = grp->access
+   }")
 
 (deftest arrow-to-permission-with-its-own-arrows-test
   ;; doc -grp-> {gN, decoy...}, gN's parent chain ends at g0, alice is a member
@@ -126,11 +130,13 @@
 ;; --- arrow whose target is a relation, not a permission ---------------------
 
 (def ^:private arrow-to-relation-schema
-  "definition user {}
+   "definition user {}
    definition team { relation member: user
-                     relation guest: user }
+                     relation guest: user
+   }
    definition doc  { relation team: team
-                     permission view = team->member }")
+                     permission view = team->member
+   }")
 
 (deftest arrow-to-relation-test
   (with-mem-conn [conn schema/v7-schema]
@@ -152,11 +158,14 @@
 ;; --- multi-subject-type relations -------------------------------------------
 
 (def ^:private multi-subject-schema
-  "definition user {}
+   "definition user {}
    definition robot {}
-   definition team { relation member: user | robot }
+   definition team {
+     relation member: user | robot
+   }
    definition doc  { relation team: team
-                     permission view = team->member }")
+                     permission view = team->member
+   }")
 
 (deftest multi-subject-type-arrow-test
   (with-mem-conn [conn schema/v7-schema]
@@ -176,13 +185,15 @@
 ;; --- path ordering ----------------------------------------------------------
 
 (def ^:private union-schema
-  "definition user {}
+   "definition user {}
    definition team { relation member: user
-                     permission access = member }
+                     permission access = member
+   }
    definition doc  { relation team: team
                      relation owner: user
                      permission arrow_written_first = team->access + owner
-                     permission relation_written_first = owner + team->access }")
+                     permission relation_written_first = owner + team->access
+   }")
 
 (deftest union-paths-are-ordered-cheapest-first-test
   ;; Path order used to come out of a clojure.set/difference in write-schema!,

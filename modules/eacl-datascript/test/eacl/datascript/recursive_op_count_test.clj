@@ -340,9 +340,14 @@
 
 (defn- assert-crossing-law!
   "Ordered scan-wave crossing law for the populated star fixture."
-  [{:keys [drive resume stream-fills advanced]}]
-  (let [{:keys [batch-size constant fuel]}
+  [render-kind {:keys [drive resume stream-fills advanced]}]
+  (let [{default-batch-size :batch-size
+         page-batch-size :page-batch-size
+         :keys [constant fuel]}
         (:crossing-law envelopes)
+        batch-size (if (= :page render-kind)
+                     page-batch-size
+                     default-batch-size)
         batches (quot (+ stream-fills (dec batch-size)) batch-size)
         fuel-yields (quot advanced fuel)]
     (is (<= resume stream-fills)
@@ -351,7 +356,8 @@
         ":indexed-traversal-drive bounded by response waves + completion + fuel yields")
     (is (<= (+ drive resume)
             (+ (* 2 batches) constant fuel-yields))
-        "star crossings <= 2*ceil(streams/batch)+recorded constant")))
+        (str (name render-kind)
+             " crossings <= 2*ceil(streams/batch)+recorded constant"))))
 
 (deftest recursion-actually-exercised-test
   (testing "the fixture drives the genuinely recursive engine (suite self-check)"
@@ -381,7 +387,7 @@
       (is (<= (:path-calcs m) (:maximum-permission-path-calcs e)) (pr-str m)))
     (testing "streaming early-stop scan envelope (:stream-fills)"
       (is (<= (:stream-fills m) (:maximum-backend-scans e)) (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :page m)))
 
 (deftest raw-can-op-count-test
   (let [e (:raw-can envelopes)
@@ -404,7 +410,7 @@
             (str label " raw can? builds no denotation keys " (pr-str m)))
         (is (<= (:stream-fills m) (:maximum-backend-scans e))
             (str label " bounded reverse point check " (pr-str m)))
-        (assert-crossing-law! m)))))
+        (assert-crossing-law! :order-independent m)))))
 
 (deftest client-lookup-op-count-test
   (let [e (:client-lookup-first-50 envelopes)
@@ -417,7 +423,7 @@
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "scan envelope (:stream-fills)"
       (is (<= (:stream-fills m) (:maximum-backend-scans e)) (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :page m)))
 
 (deftest client-can-and-bounded-count-remain-demand-bounded-test
   ;; Fresh client so this test owns its cache lifecycle.
@@ -435,7 +441,7 @@
       (is (<= (:proof-frame can-m) (:maximum-proof-frame-reads e)) (pr-str can-m))
       (is (<= (:drive can-m) (:maximum-kernel-drives e)) (pr-str can-m))
       (is (< (:backend-operations can-m) 16) (pr-str can-m))
-      (assert-crossing-law! can-m))
+      (assert-crossing-law! :order-independent can-m))
     (testing "bounded count performs only its own L+1 demand"
       (is (= {:count 1000 :limit 1000 :truncated? true}
              (select-keys (:result count-m) [:count :limit :truncated?])))
@@ -459,7 +465,7 @@
       (is (<= (:stream-fills m)
               (+ accounts (:maximum-backend-scans-slack e)))
           (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :order-independent m)))
 
 (deftest demand-page-continuation-test
   (let [{:keys [client]} (seed-star!)

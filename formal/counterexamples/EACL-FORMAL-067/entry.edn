@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-067
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "spicedb-differential/generated-seed-5/page-sizes-[1-2-4]"
+ :minimized-fixture "fixture.edn"
+ :impact :wrong-order
+ :affected-versions
+ ["v8.0 pre-release before render-owned scan scheduling"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Recursive page rendering allowed multiple indexed scans to remain speculative. A short page reached lookahead and folded the outstanding wave at a different FIFO point than a larger page, so page size changed logical result order and invalidated an authenticated ordinal-plus-result cursor."
+ :fix
+ "Make render-aware scan scheduling executable Dafny authority: every page render uses exactly one outstanding scan independent of requested size, while Boolean and count renders retain 64-command waves. Route generated JVM/JavaScript drivers through the no-batch-argument entry point and keep the portable CLJS policy aligned."
+ :closing-evidence
+ ["IndexedBatching.PageScanSchedulingIsIndependentOfRequestedSize"
+  "IndexedBatching.DriveForwardScans"
+  "IndexedBatching.DriveReverseScans"
+  "eacl.formal.production-kernel-test/generated-java-page-scan-policy-is-render-owned"
+  "eacl.formal.production-kernel-test/portable-and-generated-javascript-page-scan-policy-is-render-owned"
+  "eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test"]}

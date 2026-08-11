@@ -16,7 +16,10 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.portable-decisions :as portable-decisions]
+            [eacl.engine.portable-indexed :as portable-indexed]
             [eacl.execution :as execution]
+            [eacl.formal.production-kernel :as production-kernel]
             [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
 
@@ -27,6 +30,19 @@
      relation reader: user
      relation auditor: user
      permission read = reader + parent->read
+   }")
+
+(def ^:private recursive-document-schema
+  "definition user {}
+   definition folder {
+     relation reader: user
+     relation parent: folder
+     permission view = reader + parent->view
+   }
+   definition document {
+     relation reader: user
+     relation parent: folder
+     permission view = reader + parent->view
    }")
 
 (def ^:private portable-source-lifecycle
@@ -83,6 +99,59 @@
       (if (get-in page [:page-info :has-next-page?])
         (recur (page-end-cursor page) data' derived')
         {:data data' :derived-grants derived'}))))
+
+(defn- collect-forward-varying-pages
+  [client query page-sizes]
+  (loop [after nil
+         sizes (cycle page-sizes)
+         data []]
+    (let [page
+          (eacl/lookup-resources
+           client
+           (cond-> (assoc query :first (first sizes))
+             after (assoc :after after)))
+          data' (into data (:data page))]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (page-end-cursor page) (rest sizes) data')
+        data'))))
+
+(defn- seed-page-boundary-scan-wave-regression!
+  [conn client]
+  (let [object (fn [type index]
+                 (spice-object type (str (name type) "-" index)))
+        user-1 (object :user 1)
+        folder #(object :folder %)
+        document #(object :document %)]
+    (eacl/write-schema! client recursive-document-schema)
+    ;; Preserve the reduced generated counterexample's object-EID layout.
+    ;; The unused objects are intentional: logical traversal order is over
+    ;; backend identities, so removing them would no longer exercise the
+    ;; scan-wave/page-boundary interleaving found by differential seed 5.
+    @(d/transact
+      conn
+      (mapv (fn [id] {:eacl/id id})
+            (concat (map #(str "user-" %) (range 3))
+                    (map #(str "folder-" %) (range 6))
+                    (map #(str "document-" %) (range 10)))))
+    (eacl/create-relationships!
+     client
+     [(->Relationship user-1 :reader (folder 0))
+      (->Relationship user-1 :reader (folder 3))
+      (->Relationship user-1 :reader (folder 4))
+      ;; This disconnected edge is part of the reduced scheduling
+      ;; counterexample: it changes indexed work interleaving without changing
+      ;; the permission denotation.
+      (->Relationship (folder 2) :parent (folder 5))
+      (->Relationship (folder 4) :parent (document 0))
+      (->Relationship (folder 0) :parent (document 5))
+      (->Relationship (folder 0) :parent (document 7))
+      (->Relationship user-1 :reader (document 1))
+      (->Relationship user-1 :reader (document 2))
+      (->Relationship user-1 :reader (document 3))
+      (->Relationship user-1 :reader (document 9))])
+    {:subject user-1
+     :permission :view
+     :resource/type :document}))
 
 (defn- collect-reverse
   [client query]
@@ -182,6 +251,42 @@
             "a cold cache does not expand demand")
         (is (<= 30 (stat complete-work :derived-grants))
             "only explicit completion authorizes full-denotation work")))))
+
+(deftest recursive-page-order-is-stable-across-scan-wave-boundaries-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [token-key "page-boundary-scan-wave"
+          lifecycle "page-boundary-scan-wave-source"
+          cached-client
+          (core/make-client conn {:page-token-key token-key
+                                  :source-lifecycle lifecycle})
+          query (seed-page-boundary-scan-wave-regression! conn cached-client)
+          uncached-client
+          (core/make-client conn {:page-token-key token-key
+                                  :source-lifecycle lifecycle
+                                  :cache cache/no-cache})
+          portable-client
+          (with-redefs
+           [production-kernel/default-selection
+            {:kernel
+             (portable-indexed/portable-indexed-kernel
+              portable-decisions/portable-decision-kernel)}]
+            (core/make-client conn {:page-token-key token-key
+                                    :source-lifecycle lifecycle
+                                    :cache cache/no-cache}))
+          clients [[:cached-generated cached-client]
+                   [:uncached-generated uncached-client]
+                   [:portable portable-client]]]
+      (doseq [[label client] clients]
+        (let [expected
+              (:data (eacl/lookup-resources client (assoc query :first 100)))
+              actual (collect-forward-varying-pages client query [3 4 1])]
+          (is (= 7 (count expected))
+              (str (name label) " reduced fixture remains discriminating"))
+          (is (= expected actual)
+              (str (name label)
+                   " continuation preserves the one-page logical order"))
+          (is (= (count actual) (count (set (map :id actual))))
+              (str (name label) " continuation emits every result once")))))))
 
 (deftest complete-point-membership-uses-generated-logical-not-numeric-order-test
   (with-mem-conn [conn schema/v7-schema]

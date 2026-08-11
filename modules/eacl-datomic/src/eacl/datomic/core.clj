@@ -29,6 +29,7 @@
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]
@@ -1029,6 +1030,9 @@
         (capture-result-context
          conn opts (:consistency filters)
          (fn [db _decoded]
+           (schema-errors/validate-relationship-read!
+            (schema/read-schema db)
+            filters)
            (let [relation-ids
                  (impl/relationship-relation-ids db filters)]
              {:db db
@@ -1758,6 +1762,12 @@
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts consistency-value)
+        _ (schema-errors/validate-permission-request!
+           (schema/read-schema db)
+           (or (get-in opts [:execution-contract :operation]) :can?)
+           {:resource-type (:type resource)
+            :subject-type (:type subject)
+            :permission permission})
         internal-subject
         (spice-object
          (:type subject)
@@ -1809,6 +1819,12 @@
                  opts :lookup-resources query-shape page-req)
         prepare
         (fn [db decoded-bound]
+          (schema-errors/validate-permission-request!
+           (schema/read-schema db)
+           :lookup-resources
+           {:resource-type (:resource/type query)
+            :subject-type (:type subject)
+            :permission (:permission query)})
           (let [internal-subject (spice-object->internal db subject)
                 query' (assoc query :subject internal-subject)]
             {:db db
@@ -1899,6 +1915,12 @@
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts (:consistency query))
+        _ (schema-errors/validate-permission-request!
+           (schema/read-schema db)
+           :count-resources
+           {:resource-type (:resource/type query)
+            :subject-type (:type subject)
+            :permission (:permission query)})
         subject-ent (spice-object->internal db subject)
         query' (-> query
                    (assoc :subject subject-ent)
@@ -1928,6 +1950,12 @@
                  opts :lookup-subjects query-shape page-req)
         prepare
         (fn [db decoded-bound]
+          (schema-errors/validate-permission-request!
+           (schema/read-schema db)
+           :lookup-subjects
+           {:resource-type (:type (:resource query))
+            :subject-type (:subject/type query)
+            :permission (:permission query)})
           (let [internal-resource
                 (spice-object->internal db (:resource query))
                 query' (assoc query :resource internal-resource)]
@@ -2006,6 +2034,12 @@
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts (:consistency query))
+        _ (schema-errors/validate-permission-request!
+           (schema/read-schema db)
+           :count-subjects
+           {:resource-type (:type (:resource query))
+            :subject-type (:subject/type query)
+            :permission (:permission query)})
         resource-ent
         (spice-object->internal db (:resource query))
         query' (-> query
@@ -2026,9 +2060,14 @@
 
 (defn spiceomic-expand-permission-tree
   [conn opts query]
-  (let [{:keys [adapter]}
+  (let [{:keys [adapter db]}
         (capture-basic-result-context
          conn opts (:consistency query))
+        _ (schema-errors/validate-expansion-request!
+           (schema/read-schema db)
+           :expand-permission-tree
+           (:type (:resource query))
+           (:permission query))
         contract (:execution-contract opts)
         tree
         (permission-tree/expand
@@ -2182,7 +2221,7 @@
      #(spiceomic-check-permission
        conn (request-cache-opts % cache?)
        subject permission resource
-       (or consistency consistency/fully-consistent)))))
+       (or consistency consistency/minimize-latency)))))
 
 (defn expire-cache!
   "Rotates the complete local cache/token lifecycle for one Datomic client.

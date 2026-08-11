@@ -741,8 +741,18 @@
         (is (= :eacl.pagination/invalid-cursor
                (:type (ex-data error))))
         (is (= :query-mismatch (:reason (ex-data error))))
-        (is (empty? (:data (eacl/lookup-resources client query)))
-            "a fresh enumeration evaluates the replacement schema")))))
+        (let [fresh-error
+              (try
+                (eacl/lookup-resources client query)
+                nil
+                (catch clojure.lang.ExceptionInfo thrown
+                  (ex-data thrown)))]
+          (is (= :eacl/unknown-relation-or-permission
+                 (:type fresh-error))
+              "a fresh enumeration validates the replacement schema")
+          (is (= :lookup-resources (:operation fresh-error)))
+          (is (= :document (:definition fresh-error)))
+          (is (= :view (:relation-or-permission fresh-error))))))))
 
 (defn- assert-recursive-generated!
   [client limited-clients]

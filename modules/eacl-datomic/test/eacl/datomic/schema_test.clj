@@ -83,7 +83,7 @@
         (is (empty? (:retractions (:permissions deltas))))))
 
     (testing "Update schema (add relation)"
-      (let [new-schema (str example-schema-string "\ndefinition new_res { relation new_rel: user }")
+      (let [new-schema (str example-schema-string "\ndefinition new_res {\nrelation new_rel: user\n}")
             deltas     (schema/write-schema! conn new-schema)
             db         (d/db conn)
             schema     (schema/read-schema db)]
@@ -116,8 +116,12 @@
 
       ;; Try to remove 'relation owner: user' from account
       (let [unsafe-schema "definition user {}
-                           definition platform { relation super_admin: user }
-                           definition account { relation platform: platform }"] ; removed owner
+                           definition platform {
+                             relation super_admin: user
+                           }
+                           definition account {
+                             relation platform: platform
+                           }"] ; removed owner
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Cannot delete relation :owner because it is used by 1 relationships"
               (schema/write-schema! conn unsafe-schema)))))))
 
@@ -136,7 +140,9 @@
   (testing "arrow permission with invalid target is rejected"
     (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
-                        definition account { relation owner: user }
+                        definition account {
+                          relation owner: user
+                        }
                         definition server {
                           relation account: account
                           permission view = account->nonexistent
@@ -156,7 +162,9 @@
   (testing "arrow permission with missing source relation is rejected"
     (with-mem-conn [conn schema/v7-schema]
       (let [bad-schema "definition user {}
-                        definition account { relation owner: user }
+                        definition account {
+                          relation owner: user
+                        }
                         definition server {
                           permission view = missing_relation->admin
                         }"]
@@ -167,7 +175,9 @@
   (testing "valid schema is accepted"
     (with-mem-conn [conn schema/v7-schema]
       (let [good-schema "definition user {}
-                         definition platform { relation super_admin: user }
+                         definition platform {
+                           relation super_admin: user
+                         }
                          definition account {
                            relation platform: platform
                            relation owner: user
@@ -216,10 +226,14 @@
     (schema/write-schema! conn "definition user {}")
     (let [schema-left
           "definition user {}
-           definition account { relation left: user }"
+           definition account {
+             relation left: user
+           }"
           schema-right
           "definition user {}
-           definition account { relation right: user }"
+           definition account {
+             relation right: user
+           }"
           ready (java.util.concurrent.CountDownLatch. 2)
           transact d/transact
           schema-transaction?
@@ -261,7 +275,9 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [with-owner
           "definition user {}
-           definition account { relation owner: user }"
+           definition account {
+             relation owner: user
+           }"
           without-owner
           "definition user {}
            definition account {}"]
@@ -304,7 +320,9 @@
     (schema/write-schema!
      conn
      "definition user {}
-      definition account { relation owner: user }")
+      definition account {
+        relation owner: user
+      }")
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
     @(d/transact
       conn
@@ -324,7 +342,9 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [with-owner
           "definition user {}
-           definition account { relation owner: user }"
+           definition account {
+             relation owner: user
+           }"
           without-owner
           "definition user {}
            definition account {}"]
@@ -349,7 +369,9 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [with-owner
           "definition user {}
-           definition account { relation owner: user }"
+           definition account {
+             relation owner: user
+           }"
           without-owner
           "definition user {}
            definition account {}"]
@@ -425,10 +447,15 @@
 
 (deftest arrow-validation-order-independence-test
   (let [schema-with-owner-types (fn [types]
-                                  (str "definition user { relation boss: user  permission mgmt = boss }
+                                  (str "definition user {
+                                          relation boss: user
+                                          permission mgmt = boss
+                                        }
                                         definition group {}
-                                        definition account { relation owner: " types "
-                                          permission admin = owner->mgmt }"))]
+                                        definition account {
+                                          relation owner: " types "
+                                          permission admin = owner->mgmt
+                                        }"))]
     (testing "arrow targets are validated against ALL subject types, regardless of declaration order"
       ;; mgmt exists on user but not group: both orders must be rejected identically.
       (doseq [types ["user | group" "group | user"]]
@@ -440,10 +467,18 @@
     (testing "accepted when the target exists on every subject type"
       (with-mem-conn [conn schema/v7-schema]
         (is (schema/write-schema! conn
-              "definition user { relation boss: user  permission mgmt = boss }
-               definition group { relation lead: user  permission mgmt = lead }
-               definition account { relation owner: user | group
-                                    permission admin = owner->mgmt }"))))))
+              "definition user {
+                 relation boss: user
+                 permission mgmt = boss
+               }
+               definition group {
+                 relation lead: user
+                 permission mgmt = lead
+               }
+               definition account {
+                 relation owner: user | group
+                 permission admin = owner->mgmt
+               }"))))))
 
 (deftest fixtures-schema-round-trip-test
   "Tests that fixtures.schema can be written and read back correctly.

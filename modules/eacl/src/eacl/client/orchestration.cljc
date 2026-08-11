@@ -47,6 +47,7 @@
                [eacl.formal.production-kernel-cljs :as production-kernel])
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
             [eacl.spicedb.consistency :as consistency]))
@@ -430,6 +431,9 @@
          page-query :query}
         (page-context
          opts selection :read-relationships filters nil nil)
+        _ (schema-errors/validate-relationship-read!
+           ((get-in api [:schema :read-schema]) page-db)
+           filters)
         base-filters (apply dissoc filters
                             [:first :last :after :before :consistency :cache?])
         subject-id (:subject/id base-filters)
@@ -567,6 +571,12 @@
          completed-cache? :completed-cache?}
         (selected-context api db opts consistency)
         opts (assoc opts :completed-cache? completed-cache?)
+        _ (schema-errors/validate-permission-request!
+           ((get-in api [:schema :read-schema]) selected-db)
+           (or (:request-operation opts) :can?)
+           {:resource-type (:type resource)
+            :subject-type (:type subject)
+            :permission permission})
         internal-subject (spice-object->internal selected-db subject)
         internal-resource (spice-object->internal selected-db resource)]
     (if-not (and (:id internal-subject) (:id internal-resource))
@@ -608,6 +618,12 @@
         (page-context
          opts selection :lookup-resources query
          (:resource/type query) (:permission query))
+        _ (schema-errors/validate-permission-request!
+           ((get-in api [:schema :read-schema]) selected-db)
+           :lookup-resources
+           {:resource-type (:resource/type query)
+            :subject-type (:type subject)
+            :permission (:permission query)})
         internal-subject (spice-object->internal selected-db subject)]
     (if (nil? (:id internal-subject))
       (if (cursor-request? query)
@@ -656,6 +672,12 @@
          completed-cache? :completed-cache?}
         (selected-context api db opts (:consistency query))
         opts (assoc opts :completed-cache? completed-cache?)
+        _ (schema-errors/validate-permission-request!
+           ((get-in api [:schema :read-schema]) selected-db)
+           :count-resources
+           {:resource-type (:resource/type query)
+            :subject-type (:type subject)
+            :permission (:permission query)})
         internal-subject (spice-object->internal selected-db subject)]
     (if-not (:id internal-subject)
       (assoc
@@ -689,6 +711,12 @@
         (page-context
          opts selection :lookup-subjects query
          (:type (:resource query)) (:permission query))
+        _ (schema-errors/validate-permission-request!
+           ((get-in api [:schema :read-schema]) selected-db)
+           :lookup-subjects
+           {:resource-type (:type (:resource query))
+            :subject-type (:subject/type query)
+            :permission (:permission query)})
         internal-resource
         (spice-object->internal selected-db (:resource query))]
     (when (contains? query :subject/relation)
@@ -742,6 +770,12 @@
          completed-cache? :completed-cache?}
         (selected-context api db opts (:consistency query))
         opts (assoc opts :completed-cache? completed-cache?)
+        _ (schema-errors/validate-permission-request!
+           ((get-in api [:schema :read-schema]) selected-db)
+           :count-subjects
+           {:resource-type (:type (:resource query))
+            :subject-type (:subject/type query)
+            :permission (:permission query)})
         internal-resource
         (spice-object->internal selected-db (:resource query))]
     (if-not (:id internal-resource)
@@ -770,8 +804,13 @@
   (let [opts (ensure-execution-contract
               opts :expand-permission-tree query)
         contract (:execution-contract opts)
-        {:keys [adapter]}
+        {:keys [adapter db]}
         (selected-context api db opts (:consistency query))
+        _ (schema-errors/validate-expansion-request!
+           ((get-in api [:schema :read-schema]) db)
+           :expand-permission-tree
+           (:type (:resource query))
+           (:permission query))
         tree (permission-tree/expand
               adapter
               {:limits (:permission-tree-limits opts)
@@ -793,15 +832,20 @@
 (defrecord ClientAuthorization [conn opts api]
   IAuthorization
   (can? [_ subject permission resource]
-    (can? api ((:db api) conn) (assoc opts :completed-cache-request? true)
+    (can? api ((:db api) conn) (assoc opts
+                                     :request-operation :can?
+                                     :completed-cache-request? true)
           subject permission resource consistency/minimize-latency))
   (can? [_ subject permission resource consistency]
-    (can? api ((:db api) conn) (assoc opts :completed-cache-request? true)
+    (can? api ((:db api) conn) (assoc opts
+                                     :request-operation :can?
+                                     :completed-cache-request? true)
           subject permission resource consistency))
   (can? [_ {:keys [subject permission resource consistency]
             cache? :cache? :as demand}]
     (can? api ((:db api) conn)
           (assoc opts
+                 :request-operation :can?
                  :execution-request demand
                  :completed-cache-request?
                  (request-cache-enabled? cache?))
@@ -912,11 +956,12 @@
      api
      ((:db api) conn)
      (assoc opts
+            :request-operation :check-permission
             :execution-request demand
             :completed-cache-request?
             (request-cache-enabled? cache?))
      subject permission resource
-     (or consistency consistency/fully-consistent))))
+     (or consistency consistency/minimize-latency))))
 
 (defn client?
   "True when `client` is a shared-orchestration client for `backend-id`."

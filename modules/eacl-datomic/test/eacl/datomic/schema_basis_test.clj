@@ -19,19 +19,22 @@
 (def ^:private schema-v1
   "definition user {}
    definition account { relation owner: user
-                        permission admin = owner }")
+                        permission admin = owner
+   }")
 
 (def ^:private schema-v2
   "definition user {}
    definition account { relation owner: user
                         relation viewer: user
-                        permission admin = owner + viewer }")
+                        permission admin = owner + viewer
+   }")
 
 (def ^:private schema-viewer-only
   "definition user {}
    definition account { relation owner: user
                         relation viewer: user
-                        permission admin = viewer }")
+                        permission admin = viewer
+   }")
 
 (defn- seed-owner!
   [conn]
@@ -152,7 +155,14 @@
         (let [speculative (:db-after
                            (d/with db [(Permission :account :view {:relation :owner})]))]
           (is (true? (idx/can? speculative internal-u :view internal-a)))
-          (is (false? (eacl/can? acl public-u :view public-a)))))
+          (let [error
+                (try
+                  (eacl/can? acl public-u :view public-a)
+                  nil
+                  (catch clojure.lang.ExceptionInfo thrown
+                    (ex-data thrown)))]
+            (is (= :eacl/unknown-relation-or-permission (:type error)))
+            (is (= :view (:permission error))))))
 
       (testing "a speculative retraction cannot narrow the client generation"
         (let [permission-eid
@@ -174,7 +184,14 @@
           u   (spice-object :user "u")
           a   (spice-object :account "a")]
       (is (nil? (idx/schema-version (d/db conn))))
-      (is (false? (eacl/can? acl u :admin a)))
+      (let [error
+            (try
+              (eacl/can? acl u :admin a)
+              nil
+              (catch clojure.lang.ExceptionInfo thrown
+                (ex-data thrown)))]
+        (is (= :eacl/unknown-relation-or-permission (:type error)))
+        (is (= :admin (:permission error))))
 
       @(d/transact conn [(Permission :account :admin {:relation :owner})])
       (is (true? (eacl/can? acl u :admin a))

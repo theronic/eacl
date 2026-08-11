@@ -5,7 +5,10 @@ EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_ac
 _Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
 2. One less external dependency to deploy & sync relationships.
-3. Fully consistent queries – an external authz system necessitates eventual consistency.
+3. No relationship-sync lag between the application database and authorization
+   data. Minimize-latency reads use the current database basis visible to the
+   local Peer; that is locally consistent, not a claim of global full
+   consistency.
 
 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eye on permissions.
 
@@ -347,10 +350,10 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
 
 Forward and backward pages return results in the same order for one fixed query
 and cursor-pinned snapshot. Acyclic lookup uses backend internal-ID order,
-recursive lookup uses the same canonical ascending internal-ID order, and
-relationship reads use backend tuple-index order. These are pagination orders,
-not a global, cross-backend, or domain sort order. Backward pagination returns
-the previous window; it does not reverse the result order.
+recursive lookup uses deterministic traversal order that is stable across page
+sizes, and relationship reads use backend tuple-index order. These are
+pagination orders, not a global, cross-backend, or domain sort order. Backward
+pagination returns the previous window; it does not reverse the result order.
 
 ## Datomic Pro Quickstart
 
@@ -978,6 +981,9 @@ adapter guides:
 ## Schema Syntax
 
 EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema:
+Like SpiceDB, each `relation` or `permission` declaration ends at a newline;
+put the next declaration and the definition's closing brace on a later line.
+Empty definitions may still use the compact `definition user {}` form.
 
 ```clojure
 (eacl/write-schema! acl
@@ -1082,6 +1088,33 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   sufficient for a cursor walk with no movement or duplicates; sort by a
   domain key after reading if presentation order matters. SpiceDB likewise
   returns results in discovery or schema order.
+
+## Differences from SpiceDB
+
+EACL follows SpiceDB's schema vocabulary and shared authorization semantics,
+but it is not a byte-for-byte or operational clone:
+
+- Result order is backend-defined. Compare lookup and relationship results as
+  sets unless your application explicitly sorts them; never compare EACL and
+  SpiceDB page membership or cursor bytes.
+- EACL cursors pin the database snapshot selected by page one. Later writes do
+  not appear midway through an EACL cursor walk. In verified SpiceDB v1.56.0
+  behavior, native minimize-latency lookup cursors can admit later writes;
+  EACL deliberately does not reproduce that behavior.
+- Omitted consistency means `:minimize-latency`. For EACL's current Peer
+  backend that is the current basis visible to the local Peer. SpiceDB may use
+  an optimized cached revision, so freshness can differ. Use each backend's
+  own causal token with `at-least-as-fresh` or `at-exact-snapshot` when the
+  distinction matters; tokens and cursors are backend-local.
+- EACL provides `count-resources`, `count-subjects`, a controllable EACL result
+  cache, and atomic logical `delete-object!` behavior on supported situated
+  backends. These do not have direct SpiceDB API equivalents.
+- EACL currently supports a smaller schema subset: unions and its documented
+  arrow forms, but not caveats, wildcard subjects, expiration, intersections,
+  exclusions, or subject relations.
+- A relationship filter containing `:subject/id` must also contain
+  `:subject/type`. This fails closed instead of interpreting one external ID
+  across every subject definition.
 
 ## Funding
 

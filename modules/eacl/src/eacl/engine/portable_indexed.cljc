@@ -578,7 +578,19 @@
         :register-consumer
         (add-reverse-consumer state (:consumer-key work) (:consumer work))))))
 
-(def ^:private scan-batch-size 64)
+(def ^:private default-scan-batch-size 64)
+
+(defn- scan-batch-size
+  [state]
+  ;; Page order must not depend on when a requested page reaches lookahead.
+  ;; With multiple speculative scans outstanding, a short page can flush a
+  ;; wave earlier than a long page and thereby reorder response work in the
+  ;; FIFO.  One outstanding scan makes an emitted page edge a quiescent,
+  ;; replayable continuation point.  Order-insensitive Boolean/count renders
+  ;; retain scan batching.
+  (if (= :page (get-in state [:render :kind]))
+    1
+    default-scan-batch-size))
 
 (defn- pending-outcome
   [state pending]
@@ -594,44 +606,45 @@
 
 (defn drive
   [_direction state limits fuel]
-  (loop [state (dissoc state :pending-scans)
-         fuel fuel
-         pending []]
-    (cond
-      (and (seq pending)
-           (or (:complete? state) (empty? (:queue state))))
-      (pending-outcome state pending)
-
-      (:render-error state)
-      {:status :render-rejected
-       :state state
-       :error (:render-error state)}
-
-      (:complete? state)
-      {:status :complete :state state}
-
-      (limit-kind state limits)
-      {:status :limit-exceeded
-       :state state
-       :limit-kind (limit-kind state limits)}
-
-      (zero? fuel)
-      (if (seq pending)
-        ;; Preserve progress: every issued request is published in a bounded
-        ;; wave instead of being discarded and repeated by the next quantum.
+  (let [batch-size (scan-batch-size state)]
+    (loop [state (dissoc state :pending-scans)
+           fuel fuel
+           pending []]
+      (cond
+        (and (seq pending)
+             (or (:complete? state) (empty? (:queue state))))
         (pending-outcome state pending)
-        {:status :yielded :state state})
 
-      :else
-      (let [outcome (drive-step state)]
-        (if (and (map? outcome) (= :need-scan (:status outcome)))
-          (let [next-pending
-                (conj pending (get-in outcome [:state :pending-scan]))
-                next-state (assoc (:state outcome) :pending-scan nil)]
-            (if (= scan-batch-size (count next-pending))
-              (pending-outcome next-state next-pending)
-              (recur next-state (dec fuel) next-pending)))
-          (recur outcome (dec fuel) pending))))))
+        (:render-error state)
+        {:status :render-rejected
+         :state state
+         :error (:render-error state)}
+
+        (:complete? state)
+        {:status :complete :state state}
+
+        (limit-kind state limits)
+        {:status :limit-exceeded
+         :state state
+         :limit-kind (limit-kind state limits)}
+
+        (zero? fuel)
+        (if (seq pending)
+          ;; Preserve progress: every issued request is published in a bounded
+          ;; wave instead of being discarded and repeated by the next quantum.
+          (pending-outcome state pending)
+          {:status :yielded :state state})
+
+        :else
+        (let [outcome (drive-step state)]
+          (if (and (map? outcome) (= :need-scan (:status outcome)))
+            (let [next-pending
+                  (conj pending (get-in outcome [:state :pending-scan]))
+                  next-state (assoc (:state outcome) :pending-scan nil)]
+              (if (= batch-size (count next-pending))
+                (pending-outcome next-state next-pending)
+                (recur next-state (dec fuel) next-pending)))
+            (recur outcome (dec fuel) pending)))))))
 
 (defn- scan-rejection
   [command response]

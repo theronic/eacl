@@ -83,7 +83,9 @@
 
 (def permission-tree-golden-schema
   "definition user {}
-   definition folder { relation viewer: user }
+   definition folder {
+     relation viewer: user
+   }
    definition document {
      relation folder: folder
      permission view = folder->viewer
@@ -290,6 +292,12 @@
                         :first 5})]
       (is (= :eacl.filters/missing-anchor (:eacl/error data)))
       (is (= [:subject/id] (:nil-anchor-keys data)))))
+  (testing "a concrete subject id requires its subject type"
+    (let [data (read-relationships-error-data
+                client {:subject/id "user-1" :first 5})]
+      (is (= :eacl.filters/missing-subject-type (:eacl/error data)))
+      (is (= :subject/id (:filter data)))
+      (is (= :subject/type (:required-filter data)))))
   (testing "an anchorless read names no nil keys but still fails closed"
     (let [data (read-relationships-error-data client {})]
       (is (= :eacl.filters/missing-anchor (:eacl/error data)))

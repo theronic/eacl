@@ -584,6 +584,13 @@
    :killed-by
    {:proof :fuel-cut-wave-publishes-current-progress-without-request-loss
     :test :generated-portable-and-public-fanout-fuel-cut-regressions}}
+  {:id :page-scan-wave-is-host-selectable
+   :mechanism
+   :let-the-host-pass-a-multi-command-scan-wave-for-page-rendering
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :page-scan-scheduling-is-independent-of-requested-size
+    :test :generated-portable-and-public-page-order-regressions}}
   {:id :managed-proof-bypass
    :mechanism :reuse-managed-projection-with-mismatched-relation-proof
    :control

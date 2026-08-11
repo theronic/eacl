@@ -521,7 +521,8 @@
 
       (testing "Now let's delete all :server/owner Relationships for :test/user2"
         (let [db-for-delete (d/db *conn*)
-              rels (:data (impl/read-relationships db-for-delete {:subject/id :test/user2
+              rels (:data (impl/read-relationships db-for-delete {:subject/type :user
+                                                                  :subject/id :test/user2
                                                                   :resource/relation :owner}))
               txes (mapcat #(impl/tx-update-relationship db-for-delete
                                                          {:operation :delete
@@ -1301,15 +1302,22 @@
   ;; (or uncached through the low-level API).
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn "definition user {}
-       definition account { relation owner: user  relation viewer: user
-                            permission view = owner + viewer }")
+       definition account {
+         relation owner: user
+         relation viewer: user
+         permission view = owner + viewer
+       }")
     (let [db-before    (d/db conn)
           cache-before (impl.indexed/make-schema-cache db-before)
           before-paths (binding [impl.indexed/*schema-cache* cache-before]
                          (impl.indexed/get-permission-paths db-before :account :view))]
       (schema/write-schema! conn "definition user {}
-         definition account { relation owner: user  relation viewer: user  relation auditor: user
-                              permission view = owner + viewer + auditor }")
+         definition account {
+           relation owner: user
+           relation viewer: user
+           relation auditor: user
+           permission view = owner + viewer + auditor
+         }")
       (let [db-after         (d/db conn)
             cache-after      (impl.indexed/make-schema-cache db-after)
             after-paths      (binding [impl.indexed/*schema-cache* cache-after]

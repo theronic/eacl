@@ -5,6 +5,33 @@ module IndexedBatching {
 
   const DefaultScanBatchSize: nat := 64
 
+  // Page size is a rendering concern, not a traversal scheduling input.
+  // Letting the host choose a scan-wave size allowed a short page to stop in
+  // the middle of a speculative wave while a larger page folded the whole
+  // wave, changing the relative FIFO position of response work.  The
+  // generated authority therefore owns this policy: page renders admit one
+  // outstanding scan; order-insensitive renders retain the default wave.
+  function RenderScanBatchSize(mode: Indexed.RenderMode): nat
+    ensures 0 < RenderScanBatchSize(mode)
+    ensures mode.RenderPage? ==> RenderScanBatchSize(mode) == 1
+    ensures !mode.RenderPage? ==>
+              RenderScanBatchSize(mode) == DefaultScanBatchSize
+  {
+    if mode.RenderPage? then 1 else DefaultScanBatchSize
+  }
+
+  lemma PageScanSchedulingIsIndependentOfRequestedSize(
+    leftSize: nat,
+    rightSize: nat
+  )
+    requires 0 < leftSize
+    requires 0 < rightSize
+    ensures
+      RenderScanBatchSize(Indexed.RenderPage(leftSize)) ==
+      RenderScanBatchSize(Indexed.RenderPage(rightSize)) == 1
+  {
+  }
+
   datatype ForwardBatchState = ForwardBatchState(
     state: Indexed.ForwardState,
     pending: seq<Indexed.ForwardPending>
@@ -284,7 +311,7 @@ module IndexedBatching {
   {
   }
 
-  method DriveForwardScans(
+  method DriveForwardScansWithBatchSize(
     state: Indexed.ForwardState,
     limits: Indexed.IndexedLimits,
     fuel: nat,
@@ -397,7 +424,7 @@ module IndexedBatching {
     return ForwardBatchYielded(current);
   }
 
-  method DriveReverseScans(
+  method DriveReverseScansWithBatchSize(
     state: Indexed.ReverseState,
     limits: Indexed.IndexedLimits,
     fuel: nat,
@@ -505,6 +532,67 @@ module IndexedBatching {
       return ReverseNeedScans(batch, ReverseCommands(pending));
     }
     return ReverseBatchYielded(current);
+  }
+
+  // Production entry points deliberately omit a host-supplied batch size.
+  // This makes the page-order scheduling rule part of generated executable
+  // authority rather than a documented convention in Clojure/JavaScript.
+  method DriveForwardScans(
+    state: Indexed.ForwardState,
+    limits: Indexed.IndexedLimits,
+    fuel: nat
+  ) returns (outcome: ForwardBatchStep)
+    requires Indexed.ForwardStateInvariant(state)
+    requires Indexed.CountersWithinLimits(state.counters, limits)
+    requires state.pending.NoForwardPending?
+    requires Indexed.ValidForwardQueuedEids(state.queue)
+    ensures outcome.ForwardBatchYielded? ==>
+              Indexed.ForwardStateInvariant(outcome.state)
+    ensures outcome.ForwardNeedScans? ==>
+              ForwardBatchInvariant(outcome.batch) &&
+              outcome.commands == ForwardCommands(outcome.batch.pending) &&
+              0 < |outcome.commands| <=
+              RenderScanBatchSize(state.render.mode)
+    ensures state.render.mode.RenderPage? && outcome.ForwardNeedScans? ==>
+              |outcome.commands| == 1
+    ensures outcome.ForwardBatchComplete? ==>
+              Indexed.ForwardStateInvariant(outcome.state)
+  {
+    outcome := DriveForwardScansWithBatchSize(
+      state,
+      limits,
+      fuel,
+      RenderScanBatchSize(state.render.mode)
+    );
+  }
+
+  method DriveReverseScans(
+    state: Indexed.ReverseState,
+    limits: Indexed.IndexedLimits,
+    fuel: nat
+  ) returns (outcome: ReverseBatchStep)
+    requires Indexed.ReverseStateInvariant(state)
+    requires Indexed.CountersWithinLimits(state.counters, limits)
+    requires state.pending.NoReversePending?
+    requires Indexed.ValidReverseQueuedEids(state.queue)
+    ensures outcome.ReverseBatchYielded? ==>
+              Indexed.ReverseStateInvariant(outcome.state)
+    ensures outcome.ReverseNeedScans? ==>
+              ReverseBatchInvariant(outcome.batch) &&
+              outcome.commands == ReverseCommands(outcome.batch.pending) &&
+              0 < |outcome.commands| <=
+              RenderScanBatchSize(state.render.mode)
+    ensures state.render.mode.RenderPage? && outcome.ReverseNeedScans? ==>
+              |outcome.commands| == 1
+    ensures outcome.ReverseBatchComplete? ==>
+              Indexed.ReverseStateInvariant(outcome.state)
+  {
+    outcome := DriveReverseScansWithBatchSize(
+      state,
+      limits,
+      fuel,
+      RenderScanBatchSize(state.render.mode)
+    );
   }
 
   method ResumeForwardScans(

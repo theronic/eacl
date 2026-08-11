@@ -1178,6 +1178,38 @@
    :terminal? true
    :fetched-values 0})
 
+(defn- first-page-scan-outcome
+  [selection direction page-size]
+  (let [stream-count 4
+        rules
+        (mapv
+         (fn [relation-eid]
+           (assoc indexed-direct-rule :relation-eid relation-eid))
+         (range 1 (inc stream-count)))
+        compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules rules
+          :seed-rules-by-subject-type {"user" rules}})
+        initialization
+        (merge
+         {:compiled-plan compiled-plan
+          :request-scope 72
+          :subject-type "user"
+          :root-node {:resource-type "folder" :permission "read"}
+          :result-type (if (= :forward direction) "folder" "user")
+          :render {:kind :page :size page-size :bound nil}
+          :chunk-size 2
+          :limits indexed-limits}
+         (case direction
+           :forward {:subject-eid 7}
+           :reverse {:root-resource-eid 10}))
+        initialized
+        (verified/initialize-indexed
+         selection direction initialization)]
+    (verified/drive-indexed
+     selection direction (:state initialized) indexed-limits 256)))
+
 (defn- batched-forward-crossing-trace
   ([selection stream-count]
    (batched-forward-crossing-trace selection stream-count 256))
@@ -1320,6 +1352,22 @@
             "crossings <= 2*ceil(streams/batch)+1")
         (is (= {:status :count :count 0 :truncated? false}
                (select-keys result [:status :count :truncated?])))))))
+
+(deftest portable-and-generated-javascript-page-scan-policy-is-render-owned
+  (doseq [[label kernel-selection]
+          [[:portable selection]
+           [:generated-javascript generated-selection]]
+          direction [:forward :reverse]
+          page-size [1 2 100]]
+    (testing (str (name label) " " (name direction) " page " page-size)
+      (let [outcome
+            (first-page-scan-outcome
+             kernel-selection direction page-size)]
+        (is (= :need-scan (:status outcome)))
+        (is (map? (:command outcome))
+            "the page driver publishes exactly one command")
+        (is (nil? (:commands outcome))
+            "no host-selected speculative page wave is exposed")))))
 
 (deftest portable-and-generated-javascript-publish-fuel-cut-scan-waves
   (doseq [[label kernel-selection]

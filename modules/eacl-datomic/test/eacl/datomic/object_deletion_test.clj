@@ -26,7 +26,8 @@
 (def ^:private test-schema
   "definition user {}
    definition account { relation owner: user
-                        permission admin = owner }")
+                        permission admin = owner
+   }")
 
 (defn- seed!
   "user u owns account a."
@@ -214,7 +215,7 @@
       (is (empty? (:data
                    (impl/read-relationships
                     (d/db conn)
-                    {:subject/id "f" :first 10})))))))
+                    {:subject/type :folder :subject/id "f" :first 10})))))))
 
 (deftest orphan-detection-and-repair-test
   (with-mem-conn [conn schema/v7-schema]

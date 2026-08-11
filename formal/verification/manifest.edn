@@ -127,7 +127,7 @@
    :no-mechanical-clojure-extraction-adapter-codec-clock-token-and-host-runtime-remain-trusted-boundaries}
   :indexed-recursive-public-engine
   {:status :passed
-   :verified-obligations 7979
+   :verified-obligations 7985
    :sources
    ["formal/dafny/IndexedTraversal.dfy"
     "formal/dafny/IndexedBatching.dfy"
@@ -146,7 +146,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8785
+   :verified-obligations 8791
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -192,7 +192,7 @@
   :seeded-campaigns true
   :typed-errors-compared true}
  :counterexample-corpus-revision
- {:latest :EACL-FORMAL-066
+ {:latest :EACL-FORMAL-067
   :fixed [:EACL-FORMAL-001
           :EACL-FORMAL-002
           :EACL-FORMAL-003
@@ -258,11 +258,12 @@
           :EACL-FORMAL-063
           :EACL-FORMAL-064
           :EACL-FORMAL-065
-          :EACL-FORMAL-066]}
+          :EACL-FORMAL-066
+          :EACL-FORMAL-067]}
  :counterexample-replay
  {:status :passed
   :report "formal/verification/counterexample-replay.edn"
-  :entries 66}
+  :entries 67}
  :conversion-boundary
  {:status :passed
   :report "formal/verification/conversion-boundary.edn"

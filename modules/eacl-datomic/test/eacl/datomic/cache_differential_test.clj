@@ -36,14 +36,17 @@
 (def ^:private acyclic-schema
   "definition user {}
    definition group { relation member: user
-                      permission access = member }
+                      permission access = member
+   }
    definition team  { relation lead: user
                       relation grp: group
-                      permission access = lead + grp->access }
+                      permission access = lead + grp->access
+   }
    definition doc   { relation owner: user
                       relation team: team
                       relation grp: group
-                      permission view = owner + team->access + grp->access }")
+                      permission view = owner + team->access + grp->access
+   }")
 
 (defn- cache-configurations
   "Every shape the store can take, including one that evicts constantly so the

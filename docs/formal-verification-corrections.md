@@ -211,6 +211,23 @@ no verified-release claim existed.
   generated JavaScript, and portable CLJS; the public DataScript regression
   covers broad fan-out with cache enabled and disabled.
 
+### EACL-FORMAL-067 — speculative scan waves changed recursive page order
+
+- **Affected:** generated JVM and portable ClojureScript recursive resource
+  and subject pagination on every backend.
+- **Impact:** wrong order. Complete result sets remained correct, but changing
+  page size could move a resource to another ordinal and make a valid
+  authenticated continuation fail as stale.
+- **Root cause:** page rendering shared the 64-command speculative scan policy
+  used by order-insensitive operations. A short page reached lookahead and
+  folded the wave at a different FIFO position than a larger page.
+- **Correction:** `IndexedBatching.RenderScanBatchSize` is generated executable
+  authority. Every `RenderPage` uses batch size one independent of requested
+  size, and the production driver no longer accepts a host batch argument.
+  Boolean/count rendering retains batch size 64. Dafny, generated JVM/JS,
+  portable CLJS, mutation, and reduced cached/cacheless Datomic controls cover
+  the policy and public continuation sequence.
+
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with
 `EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay`.

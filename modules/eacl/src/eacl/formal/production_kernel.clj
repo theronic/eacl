@@ -1472,15 +1472,13 @@
           (IndexedBatching.__default/DriveForwardScans
            ^ForwardState state
            (indexed-limits limits)
-           (dafny-fuel fuel)
-           (dafny-nat 64))
+           (dafny-fuel fuel))
 
           :reverse
           (IndexedBatching.__default/DriveReverseScans
            ^ReverseState state
            (indexed-limits limits)
-           (dafny-fuel fuel)
-           (dafny-nat 64)))
+           (dafny-fuel fuel)))
         prefix
         (case direction
           :forward "Forward"

@@ -84,9 +84,14 @@
      :derived-grants (get @rts :derived-grants 0)}))
 
 (defn- assert-crossing-law!
-  [{:keys [drive resume stream-fills advanced]}]
-  (let [{:keys [batch-size constant fuel]}
+  [render-kind {:keys [drive resume stream-fills advanced]}]
+  (let [{default-batch-size :batch-size
+         page-batch-size :page-batch-size
+         :keys [constant fuel]}
         (:crossing-law envelopes)
+        batch-size (if (= :page render-kind)
+                     page-batch-size
+                     default-batch-size)
         batches (quot (+ stream-fills (dec batch-size)) batch-size)
         fuel-yields (quot advanced fuel)]
     (is (<= resume stream-fills)
@@ -95,7 +100,8 @@
         ":indexed-traversal-drive bounded by response waves + completion + fuel yields")
     (is (<= (+ drive resume)
             (+ (* 2 batches) constant fuel-yields))
-        "star crossings <= 2*ceil(streams/batch)+recorded constant")))
+        (str (name render-kind)
+             " crossings <= 2*ceil(streams/batch)+recorded constant"))))
 
 (deftest raw-lookup-op-count-test
   (let [e (:raw-lookup-first-50 envelopes)
@@ -117,7 +123,7 @@
       (is (<= (:dep-calcs m) (:maximum-denotation-dependency-calcs e)) (pr-str m)))
     (testing "streaming early-stop scan envelope (:stream-fills)"
       (is (<= (:stream-fills m) (:maximum-backend-scans e)) (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :page m)))
 
 (deftest raw-can-op-count-test
   (let [e (:raw-can envelopes)
@@ -138,7 +144,7 @@
             (str label " raw can? builds no denotation keys " (pr-str m)))
         (is (<= (:stream-fills m) (:maximum-backend-scans e))
             (str label " bounded reverse point check " (pr-str m)))
-        (assert-crossing-law! m)))))
+        (assert-crossing-law! :order-independent m)))))
 
 (deftest raw-count-linearity-test
   (let [e (:count-full envelopes)
@@ -157,7 +163,7 @@
       (is (<= (:stream-fills m)
               (+ accounts (:maximum-backend-scans-slack e)))
           (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :order-independent m)))
 
 (deftest interned-empty-response-immutability-test
   ;; 4.2 pin: the interned empty scan-response payload must stay empty

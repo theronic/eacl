@@ -135,7 +135,7 @@
     :status :passed}
    :cross-target-correctness
    {:cljs-generated-smoke
-    {:tests 46 :assertions 9983 :failures 0 :errors 0}
+    {:tests 44 :assertions 9978 :failures 0 :errors 0}
     :cljs-verified-authority
     {:tests 172 :assertions 4682 :failures 0 :errors 0}
     :jvm-verified-authority
@@ -205,7 +205,7 @@
   :median-ratio 0.7790506004048436
   :absolute-ceiling-ns-per-result 15000.0
   :semantic-parity
-  {:formal-oracle-cljs {:tests 46 :assertions 9983}
+  {:formal-oracle-cljs {:tests 44 :assertions 9978}
    :full-datascript-cljs {:tests 176 :assertions 9693}
    :injected-authority-cljs {:tests 172 :assertions 4682}}
   :qualification
@@ -242,8 +242,8 @@
   :status :passed}
 
  :formal-pipeline
- {:scope :all-29-dafny-modules
-  :proof-efforts 8723
+ {:scope :all-30-dafny-modules
+  :proof-efforts 8791
   :last-observed-local-wall-seconds 686
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
@@ -251,7 +251,7 @@
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3124170150
+  :total-observed-resource-count 3131977122
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -761,7 +761,7 @@
    :generated-java
    {:tests 36 :assertions 10395 :status :passed}
    :generated-javascript
-   {:tests 46 :assertions 9983 :status :passed}
+   {:tests 44 :assertions 9978 :status :passed}
    :state-trace-differential
    {:tests 9 :assertions 196 :status :passed}
    :verified-authority-heavy

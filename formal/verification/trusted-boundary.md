@@ -230,8 +230,11 @@ and worst-case latency remain unproved unless separately named.
 The generated indexed traversal now has a narrower target-cost refinement
 gate. `IndexedTraversal.StrictlyIncreasingIffAdjacent` proves that the linear
 executable adjacent-order scan implements the pairwise mathematical contract.
-`IndexedBatching` bounds a wave at 64 request-ordered scans and folds its
-responses in the same order. `IndexedBatchCompleteness` maps every pending scan
+`IndexedBatching` makes scan-wave selection part of generated executable
+authority: page renders admit exactly one outstanding scan independent of
+requested page size, while Boolean and count renders admit up to 64
+request-ordered scans. The production driver has no host batch-size argument,
+and responses fold in request order. `IndexedBatchCompleteness` maps every pending scan
 to the existing virtual FIFO work view and proves the generalized forward and
 reverse coverage invariants. When fuel ends with pending scans, the authority
 publishes the current verified state and that nonempty bounded wave; only a

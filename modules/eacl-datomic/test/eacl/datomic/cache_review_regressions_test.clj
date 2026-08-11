@@ -178,9 +178,11 @@
           (is (= ["acct2" "acct3"] (mapv :id (:data page-2))))))
 
       (testing "read-relationships"
-        (let [page-1 (eacl/read-relationships early {:subject/id "alice" :first 2})
+        (let [page-1 (eacl/read-relationships early {:subject/type :user
+                                                      :subject/id "alice" :first 2})
               page-2 (eacl/read-relationships
-                      early {:subject/id "alice"
+                      early {:subject/type :user
+                             :subject/id "alice"
                              :first 2
                              :after (get-in page-1 [:page-info :end-cursor])})]
           (is (= 2 (count (:data page-1))))
@@ -200,7 +202,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [acl (core/make-client conn {:page-token-key token-key})]
       (is (nil? (:schema-state acl)))
-      (let [page-1 (eacl/read-relationships acl {:subject/id "alice" :first 2})]
+      (let [page-1 (eacl/read-relationships acl {:resource/id "absent" :first 2})]
         (is (= [] (:data page-1))
             "an unstamped database has no relationships to read")))))
 
@@ -400,10 +402,12 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [acl (core/make-client conn {:page-token-key token-key})
           _ (seed-direct! conn acl 4)
-          cursor (get-in (eacl/read-relationships acl {:subject/id "alice" :first 2})
+          cursor (get-in (eacl/read-relationships acl {:subject/type :user
+                                                       :subject/id "alice" :first 2})
                          [:page-info :end-cursor])
           result (ex-data-of
-                  #(eacl/read-relationships acl {:subject/id "does-not-exist"
+                  #(eacl/read-relationships acl {:subject/type :user
+                                                 :subject/id "does-not-exist"
                                                  :first 2
                                                  :after cursor}))]
       (is (= :eacl.pagination/invalid-cursor (:eacl/error result))

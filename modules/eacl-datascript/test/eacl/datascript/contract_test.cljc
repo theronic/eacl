@@ -334,6 +334,34 @@
        (:eacl/id (ds/entity db eid)))}
     extra)))
 
+(deftest shared-detailed-check-defaults-to-minimize-latency-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client
+                conn
+                {:cache cache/no-cache
+                 :security-key "01234567890123456789012345678901"})
+        user (eacl/spice-object :user "consistency-user")
+        document (eacl/spice-object :document "consistency-document")
+        demand {:subject user :permission :view :resource document}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation reader: user
+        permission view = reader
+      }")
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document)}])
+    (let [default-stats (atom {})]
+      (binding [backend/*backend-op-stats* default-stats]
+        (eacl/check-permission client demand))
+      (is (zero? (get @default-stats :select-authoritative 0))))
+    (let [explicit-stats (atom {})]
+      (binding [backend/*backend-op-stats* explicit-stats]
+        (eacl/check-permission
+         client (assoc demand :consistency :fully-consistent)))
+      (is (pos? (get @explicit-stats :select-authoritative 0))))))
+
 (deftest custom-codec-cache-isolation-and-selected-snapshot-rendering-test
   (let [conn (datascript/create-conn)
         observations (atom [])
@@ -530,8 +558,17 @@
             "a cursor from another schema generation must not resume the walk")
         (is (= :eacl.pagination/invalid-cursor (:type (ex-data error))))
         (is (= :query-mismatch (:reason (ex-data error))))
-        (is (empty? (:data (eacl/lookup-resources client query)))
-            "a fresh enumeration evaluates the new schema generation")))))
+        (let [fresh-error
+              (try
+                (eacl/lookup-resources client query)
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                       thrown
+                  (ex-data thrown)))]
+          (is (= :eacl/unknown-relation-or-permission
+                 (:type fresh-error))
+              "a fresh enumeration validates against the new schema generation")
+          (is (= :view (:permission fresh-error))))))))
 
 (deftest semantic-root-denotation-key-is-cross-target-exact-test
   (testing "equal root bodies share and distinct indexed bodies stay separate"
@@ -925,7 +962,8 @@
                              (contract/->server "server-1"))))
       (is (= []
              (:data
-              (eacl/read-relationships client {:subject/id "user-1"})))))
+              (eacl/read-relationships client {:subject/type :user
+                                               :subject/id "user-1"})))))
 
     (testing "unrelated grants remain intact"
       (is (true? (eacl/can? client

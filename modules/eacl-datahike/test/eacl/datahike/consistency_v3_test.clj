@@ -529,7 +529,7 @@
         (mapv #(eacl/->Relationship user :reader %) documents)
         _ (doseq [value relationships]
             (eacl/create-relationship! authorization value))
-        query {:subject/id "user" :first 1}
+        query {:subject/type :user :subject/id "user" :first 1}
         page-1 (eacl/read-relationships authorization query)
         cursor (get-in page-1 [:page-info :end-cursor])
         cursor-data

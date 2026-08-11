@@ -1188,8 +1188,8 @@
         (slurp
          (repo/file "formal" "dafny" "IndexedBatching.dfy"))]
     (and
-     (str/includes? portable
-                    "(zero? fuel)\n      (if (seq pending)")
+     (re-find #"(?s)\(zero\? fuel\)\s+\(if \(seq pending\).*?\(pending-outcome state pending\)"
+              portable)
      (str/includes? portable "(pending-outcome state pending)")
      (not (str/includes? portable
                          "(if (seq pending) original state)"))
@@ -1198,6 +1198,48 @@
      (str/includes? batching
                     "return ReverseNeedScans(batch, ReverseCommands(pending));")
      (not (str/includes? batching "BatchYielded(original)")))))
+
+(defn- page-scan-wave-is-host-selectable-killed?
+  []
+  (let [batching
+        (slurp
+         (repo/file "formal" "dafny" "IndexedBatching.dfy"))
+        jvm-boundary
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "formal"
+                    "production_kernel.clj"))
+        js-boundary
+        (slurp
+         (repo/file "formal" "smoke" "cljs" "eacl" "formal"
+                    "production_kernel_js.cljs"))
+        portable
+        (slurp
+         (repo/file "modules" "eacl" "src" "eacl" "engine"
+                    "portable_indexed.cljc"))]
+    (boolean
+     (and
+      (str/includes? batching
+                     "function RenderScanBatchSize(mode: Indexed.RenderMode)")
+      (str/includes? batching
+                     "PageScanSchedulingIsIndependentOfRequestedSize")
+      (str/includes? batching
+                     "RenderScanBatchSize(state.render.mode)")
+      (re-find
+       #"(?s)method DriveForwardScans\(\s*state: Indexed\.ForwardState,\s*limits: Indexed\.IndexedLimits,\s*fuel: nat\s*\)"
+       batching)
+      (re-find
+       #"(?s)method DriveReverseScans\(\s*state: Indexed\.ReverseState,\s*limits: Indexed\.IndexedLimits,\s*fuel: nat\s*\)"
+       batching)
+      (not (str/includes? jvm-boundary "indexed-scan-batch-size"))
+      (not (str/includes?
+            jvm-boundary
+            "(dafny-fuel fuel)\n           (dafny-nat 64)"))
+      (not (str/includes?
+            js-boundary
+            "state (indexed-limits limits) (dafny-fuel fuel) (big-number 64)"))
+      (re-find
+       #"(?s)\(if \(= :page \(get-in state \[:render :kind\]\)\)\s+1\s+default-scan-batch-size\)"
+       portable)))))
 
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
@@ -1370,7 +1412,9 @@
    :pure-permission-alias-keeps-duplicate-frontier
    pure-permission-alias-keeps-duplicate-frontier-killed?
    :fuel-cut-wave-rolls-back-original-state
-   fuel-cut-wave-rolls-back-original-state-killed?})
+   fuel-cut-wave-rolls-back-original-state-killed?
+   :page-scan-wave-is-host-selectable
+   page-scan-wave-is-host-selectable-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

@@ -17,13 +17,15 @@
 (def ^:private acyclic-schema
   "definition user {}
    definition account { relation owner: user
-                        permission admin = owner }")
+                        permission admin = owner
+   }")
 
 (def ^:private recursive-schema
   "definition user {}
    definition folder { relation parent: folder
                        relation reader: user
-                       permission read = reader + parent->read }")
+                       permission read = reader + parent->read
+   }")
 
 (defn- ents [ids] (mapv (fn [id] {:eacl/id id}) ids))
 

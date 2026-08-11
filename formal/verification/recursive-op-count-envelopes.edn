@@ -53,10 +53,15 @@
   :crossing-law
   {:protocol-version 2
    :batch-size 64
+   :page-batch-size 1
    :constant 40
-   :fuel 256}}                     ; star: crossings <= 2*ceil(scans/B)+C+fuel yields
+   :fuel 256}}                     ; star: crossings <= 2*ceil(scans/B)+C+fuel yields;
+                                   ; B=1 for order-stable pages, 64 otherwise
  :notes
  ["Point, bounded count, and page envelopes are independent demands. A cache
    miss never widens any of them to a complete denotation."
-  "Continued pages use retained private generated state when present and
-   deterministic authenticated-prefix replay when absent."]}
+ "Continued pages use retained private generated state when present and
+   deterministic authenticated-prefix replay when absent. Page rendering
+   permits only one outstanding scan so a page boundary is a quiescent,
+   replayable checkpoint; Boolean and count rendering retain scan waves of
+   64 because their results are order-independent."]}

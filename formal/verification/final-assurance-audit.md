@@ -96,10 +96,13 @@ abstract snapshot-oracle contract:
    the same authorization relation;
 6. generated forward/reverse worklists are sound, complete, duplicate-free,
    terminating within configured limits, and fail closed on limit exhaustion;
-7. pending scans are exposed as bounded, request-ordered waves; responses fold
-   in that same order; a fuel cut publishes every nonempty pending wave from
-   current state without rollback or request loss; and unsplit independent
-   streams use `2 × ceil(scans / batch-size) + 1` crossings;
+7. pending scans are exposed as bounded, request-ordered waves; render-aware
+   scheduling is generated authority, with exactly one outstanding scan for
+   every page size and up to 64 for order-insensitive Boolean/count renders;
+   responses fold in request order; a fuel cut publishes every nonempty
+   pending wave from current state without rollback or request loss; and
+   unsplit independent streams use
+   `2 × ceil(scans / render-batch-size) + 1` crossings;
 8. typed SCC routing and the proof-carrying routing certificate classify
    recursive roots and their transitive ancestors;
 9. ordered merge, pagination windows, keyset page decisions, and
@@ -210,6 +213,7 @@ highest-value findings.
 | 058 | assurance-workflow availability | Ordinary parity CI eagerly loaded a former engine namespace after it moved to the formal-only classpath; the broader local classpath masked the failure. | Remove eager formal-oracle loads, resolve closing regressions lazily, and test the entrypoint source against all retained former-engine namespaces. |
 | 059 | assurance-harness correctness | A clean generated-JavaScript rebuild exposed obsolete six-field page-request test arguments and a CLJS recursive-page expectation that disagreed with the equivalent JVM fixture. Cached local generated artifacts had masked both. | Align the direct JS bridge with the current four-field datatype, keep removed API rejection at the host boundary, make JVM/JS consume one shared recursive-page vector, and retain a clean-build source regression. |
 | 060–063 | routing, continuation, and execution-contract fidelity | Production either routed all enumeration recursively, dropped DataScript/Datahike private continuation state, treated inactive recursive syntax as active recursion, or ignored explicit completion on acyclic roots. The last defect also exposed a completed-artifact ordering/cache-key mismatch. | Route from the generated certificate plus snapshot-local cycle guards, wire bounded private continuation through shared core, override every defined root to fixed-point evaluation only for explicit completion, preserve the certified public order/cursor ABI, bind that order in version-5 artifact keys, and kill the regressions in CLJ/CLJS plus model/source mutation controls. |
+| 064–067 | cursor cost, progress, and page-order fidelity | Cursor proof scans could scale with relationship content, pure aliases duplicated traversal streams, fuel-cut waves could livelock, and page size could change recursive traversal order by flushing speculative scans at different FIFO positions. | Exact-current cursor binding, alias canonicalization, lossless fuel-cut publication, and render-owned generated scheduling: page renders admit one scan independent of size while Boolean/count renders retain 64-command waves. |
 
 These findings also expose defects in the verification program itself. Findings
 024–025, 028–034, 040–045, 048–050, and 056–059 are especially important: they

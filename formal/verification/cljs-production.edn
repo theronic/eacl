@@ -72,8 +72,8 @@
  :certification
  {:cross-runtime-and-randomized-oracle
   {:seeds [820084 820116]
-   :tests 46
-   :assertions 9983
+   :tests 44
+   :assertions 9978
    :failures 0
    :errors 0}
   :full-datascript-core

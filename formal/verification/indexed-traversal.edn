@@ -13,7 +13,7 @@
   "formal/dafny/IndexedRootDenotation.dfy"]
  :verified-obligations
  {:indexed-transition-state-machine 565
-  :indexed-scan-batching 20
+  :indexed-scan-batching 26
   :indexed-batch-completeness 12
   :indexed-semantic-soundness-refinement 1643
   :forward-least-fixed-point-completeness 1119
@@ -22,7 +22,7 @@
   :source-plan-and-seed-certification 48
   :semantic-root-denotation-equivalence 33
   :indexed-root-denotation-compiler-bridge 137
-  :total 7979}
+  :total 7985}
  :generated-targets [:java :javascript-formal-oracle]
  :production-authoritative
  {:scope :recursive-permission-roots-only
@@ -86,13 +86,20 @@
    :fallback :deterministic-pinned-snapshot-replay}
   :scan-batching
   {:status :target-authoritative-mode-routed
-   :batch-size 64
+   :default-batch-size 64
+   :page-batch-size 1
+   :batch-selection-authority :generated-render-owned
+   :production-driver-host-batch-argument :removed
+   :page-size-independence-lemma
+   IndexedBatching.PageScanSchedulingIsIndependentOfRequestedSize
+   :page-rationale
+   :one-outstanding-scan-makes-page-boundaries-quiescent-and-replayable
    :command-order :request-id-order
    :response-fold :same-order-as-command-wave
    :fuel-cut
    :publish-current-nonempty-bounded-wave-without-request-loss-or-rollback
    :crossing-law
-   {:unsplit-independent-streams "2 * ceil(scans / 64) + 1"
+   {:unsplit-independent-streams "2 * ceil(scans / render-batch-size) + 1"
     :general-recursion
     :base-wave-crossings-plus-separately-counted-fuel-cut-waves}}
   :source-plan-and-seed-certification
@@ -160,6 +167,8 @@
    :forward-batch-coverage-invariant
    :reverse-batch-coverage-invariant
    :ordered-batch-waves-preserve-request-identity
+   :render-owned-page-scan-batch-selection
+   :page-scan-scheduling-independent-of-requested-size
    :batched-crossing-law
    :forward-exhaustion-is-least-fixed-point-complete
    :reverse-exhaustion-is-least-fixed-point-complete
@@ -238,8 +247,8 @@
     {:obligations 565
      :maximum-resource-count 8047431}
     :indexed-scan-batching
-    {:obligations 20
-     :maximum-resource-count 2493002}
+    {:obligations 26
+     :maximum-resource-count 1908153}
     :indexed-batch-completeness
     {:obligations 12
      :maximum-resource-count 341795}
@@ -260,8 +269,8 @@
     {:obligations 137
      :maximum-resource-count 694159}}
    :aggregate
-   {:indexed-obligations 7979
-    :whole-formal-tree-obligations 8723
+   {:indexed-obligations 7985
+    :whole-formal-tree-obligations 8791
     :deterministic-proof-effort-resource-limit 50000000
     :whole-tree-maximum-resource-count 24106086
     :machine-readable-report "target/formal/dafny-verification.json"
@@ -270,14 +279,14 @@
    :module-wall-and-cpu-are-not-engine-runtime-or-logical-proof-cost}
  :generated-java
   {:namespace eacl.formal.production-kernel-test
-   :tests 29
-   :assertions 8426
+   :tests 30
+   :assertions 8427
    :qualification :namespace-includes-non-indexed-production-decisions
    :status :passed}
  :generated-javascript
   {:runner "formal/smoke/cljs/run"
-   :suite-tests 46
-   :suite-assertions 9983
+   :suite-tests 44
+   :suite-assertions 9978
    :datascript-public-recursive-cache-mode-differential true
    :status :passed}
   :production-recursive-contract

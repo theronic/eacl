@@ -86,7 +86,10 @@
           u1     (spice-object :user "u1")
           a1     (spice-object :account "a1")]
       (eacl/write-schema! client "definition user {}
-         definition account { relation owner: user  permission admin = owner }")
+         definition account {
+           relation owner: user
+           permission admin = owner
+         }")
       @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
 
       (testing "write-relationship! (positional arity) creates and returns a token"
@@ -130,7 +133,10 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client conn {})]
       (eacl/write-schema! client "definition user {}
-         definition account { relation owner: user  permission admin = owner }")
+         definition account {
+           relation owner: user
+           permission admin = owner
+         }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "bob"} {:eacl/id "acct-1"} {:eacl/id "acct-2"}])
       (eacl/create-relationships! client
         [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
@@ -138,8 +144,10 @@
 
       (testing "read-relationships with a nonexistent subject returns [], not ALL relationships (audit §4)"
         (is (= [] (:data (eacl/read-relationships client {:resource/type :account
+                                                          :subject/type :user
                                                           :subject/id    "i-do-not-exist"}))))
         (is (= 1 (count (:data (eacl/read-relationships client {:resource/type :account
+                                                                :subject/type :user
                                                                 :subject/id    "alice"}))))))
 
       (testing "lookups and counts return empty results for unknown objects (SpiceDB-consistent, D9)"
@@ -167,7 +175,10 @@
     (with-mem-conn [conn schema/v7-schema]
       (let [setup (spiceomic/make-client conn {})]
         (eacl/write-schema! setup "definition user {}
-           definition account { relation owner: user  permission admin = owner }")
+           definition account {
+             relation owner: user
+             permission admin = owner
+           }")
         @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
         (eacl/create-relationships! setup
           [(->Relationship (spice-object :user "u1") :owner (spice-object :account "a1"))])
@@ -628,7 +639,10 @@
                   conn
                   {})]
       (eacl/write-schema! client "definition user {}
-         definition account { relation owner: user  permission admin = owner }")
+         definition account {
+           relation owner: user
+           permission admin = owner
+         }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"} {:eacl/id "acct-2"} {:eacl/id "acct-3"}])
       (eacl/create-relationships! client
         [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
