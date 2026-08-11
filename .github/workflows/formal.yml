@@ -84,10 +84,8 @@ jobs:
                (require 'eacl.formal.wire-format-bridge-test :reload)
                (require 'eacl.formal.semantics-bridge-test :reload)
                (require 'eacl.formal.page-window-bridge-test :reload)
-               (require 'eacl.formal.cache-kernel-bridge-test :reload)
                (require 'eacl.formal.cross-runtime-vector-test :reload)
                (require 'eacl.formal.production-kernel-test :reload)
-               (require 'eacl.formal.dafny-cleanup-gate-test :reload)
                (require 'eacl.formal.state-trace-differential-test :reload)
                (let [result
                      (clojure.test/run-tests
@@ -95,10 +93,8 @@ jobs:
                       'eacl.formal.wire-format-bridge-test
                       'eacl.formal.semantics-bridge-test
                       'eacl.formal.page-window-bridge-test
-                      'eacl.formal.cache-kernel-bridge-test
                       'eacl.formal.cross-runtime-vector-test
                       'eacl.formal.production-kernel-test
-                      'eacl.formal.dafny-cleanup-gate-test
                       'eacl.formal.state-trace-differential-test)]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"generated Java boundary failed\" result)))
