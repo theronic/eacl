@@ -44,12 +44,13 @@ no verified-release claim existed.
   decision or client-visible recovery marker, producing unexplained omissions
   or new items.
 - **Correction:** every cursor is authenticated to its complete semantic query
-  before its resume state can influence traversal. Non-exact recovery
-  re-evaluates against one selected current graph; it never treats proof
-  equivalence as sufficient authorization. Exact mode remains graph-pinned.
-- **Migration:** ordinary continuation reports `:rebased` or `:restarted`
-  instead of failing when history is unavailable. Consumers requiring a stable
-  walk must request `at-exact-snapshot`.
+  before its resume state can influence traversal. Current continuation
+  requires an equal complete dependency/order proof. A changed proof requires
+  verified exact-snapshot reconstruction and never selects current.
+- **Migration:** rebase/restart recovery markers are removed. A changed proof
+  returns an exact historical page on history-capable backends, or a typed
+  stale-cursor/snapshot-expired/consistency-conflict error. DataScript is
+  current-basis-only and therefore fails a relevant changed-proof continuation.
 
 ## EACL-FORMAL-005 — inconsistent cursor expiry boundary
 
@@ -193,6 +194,39 @@ no verified-release claim existed.
   forward recovery so the accepted raw-EID ghost behavior remains compatible
   when a consumer bypasses the EACL deletion API. Shadow mode compares the
   Boolean result, not the non-equivalent directional work counters.
+
+### EACL-FORMAL-066 — partial fuel-wave rollback could livelock
+
+- **Affected:** generated JVM and portable ClojureScript forward/reverse
+  recursive traversal on every backend.
+- **Impact:** availability. A broad recursive fan-out could repeat one fuel
+  quantum forever, so bounded page/count work failed to reach its sentinel and
+  instead ended only at an outer request timeout.
+- **Root cause:** fuel exhaustion with a nonempty wave below the 64-command
+  maximum returned the quantum's original state and discarded every pending
+  scan. The next quantum deterministically recreated the same discarded wave.
+- **Correction:** forward and reverse authorities publish every nonempty
+  fuel-cut wave from current verified state and yield current state only when
+  no scan is pending. Direct low-fuel regressions cover generated Java,
+  generated JavaScript, and portable CLJS; the public DataScript regression
+  covers broad fan-out with cache enabled and disabled.
+
+### EACL-FORMAL-067 — speculative scan waves changed recursive page order
+
+- **Affected:** generated JVM and portable ClojureScript recursive resource
+  and subject pagination on every backend.
+- **Impact:** wrong order. Complete result sets remained correct, but changing
+  page size could move a resource to another ordinal and make a valid
+  authenticated continuation fail as stale.
+- **Root cause:** page rendering shared the 64-command speculative scan policy
+  used by order-insensitive operations. A short page reached lookahead and
+  folded the wave at a different FIFO position than a larger page.
+- **Correction:** `IndexedBatching.RenderScanBatchSize` is generated executable
+  authority. Every `RenderPage` uses batch size one independent of requested
+  size, and the production driver no longer accepts a host batch argument.
+  Boolean/count rendering retains batch size 64. Dafny, generated JVM/JS,
+  portable CLJS, mutation, and reduced cached/cacheless Datomic controls cover
+  the policy and public continuation sequence.
 
 The authoritative minimized fixtures and closing evidence are under
 `formal/counterexamples/`. Run them with

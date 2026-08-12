@@ -68,4 +68,13 @@
                    " index.")
               {:eacl/error :eacl.filters/missing-anchor
                :nil-anchor-keys []}))))
+  (when (and (some? (:subject/id filters))
+             (not (some? (:subject/type filters))))
+    (throw (ex-info
+            ":subject/id requires :subject/type in read-relationships filters."
+            {:type :eacl.filters/missing-subject-type
+             :eacl/error :eacl.filters/missing-subject-type
+             :operation :read-relationships
+             :filter :subject/id
+             :required-filter :subject/type})))
   filters)

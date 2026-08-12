@@ -6,14 +6,15 @@
   authenticated lineage. Cache loss is always a performance miss: callers can
   deterministically replay the public boundary."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure]))
 
-(def ^:private context-version 1)
+(def ^:private context-version 2)
 (def ^:private default-max-entries 2048)
 (def ^:private default-max-weight (* 128 1024 1024))
 
 (defrecord BoundedContinuationStore
-  [state metrics max-entries max-weight])
+  [state metrics max-entries max-weight max-entry-weight])
 
 (defn store?
   [value]
@@ -22,9 +23,10 @@
 (defn make-store
   ([]
    (make-store {}))
-  ([{:keys [max-entries max-weight]
+  ([{:keys [max-entries max-weight max-entry-weight]
      :or {max-entries default-max-entries
           max-weight default-max-weight}}]
+   (let [max-entry-weight (or max-entry-weight max-weight)]
    (when-not (and (integer? max-entries) (pos? max-entries))
      (throw
       (ex-info
@@ -36,6 +38,15 @@
       (ex-info
        "Continuation :max-weight must be a positive integer."
        {:type :eacl/invalid-config
+        :max-weight max-weight})))
+   (when-not (and (integer? max-entry-weight)
+                  (pos? max-entry-weight)
+                  (<= max-entry-weight max-weight))
+     (throw
+      (ex-info
+       "Continuation :max-entry-weight must be a positive integer no larger than :max-weight."
+       {:type :eacl/invalid-config
+        :max-entry-weight max-entry-weight
         :max-weight max-weight})))
    (->BoundedContinuationStore
     (atom {:entries {}
@@ -49,7 +60,8 @@
            :errors 0
            :by-kind {}})
     max-entries
-    max-weight)))
+    max-weight
+    max-entry-weight))))
 
 (defn- metric!
   [store kind metric]
@@ -112,7 +124,7 @@
   (try
     (if-not (and (integer? entry-weight)
                  (not (neg? entry-weight))
-                 (<= entry-weight (:max-weight store)))
+                 (<= entry-weight (:max-entry-weight store)))
       (do
         (metric! store kind :rejections)
         false)
@@ -184,7 +196,8 @@
            :entries (count entries)
            :weight weight
            :max-entries (:max-entries store)
-           :max-weight (:max-weight store))))
+           :max-weight (:max-weight store)
+           :max-entry-weight (:max-entry-weight store))))
 
 (defn validate-context!
   [context]
@@ -211,22 +224,44 @@
   The store itself supplies client isolation. The digest commits to every
   cross-request semantic input, while the final edge/page key identifies the
   resumable frontier within that lineage."
-  [store adapter operation query-identity]
-  (when store
-    (let [scope
+  ([store adapter operation query-identity]
+   (private-context store adapter operation query-identity {}))
+  ([store adapter operation query-identity
+    {:keys [snapshot-identity request-proof-frame]}]
+   (when store
+     (let [scope
           (secure/canonical-digest
            "eacl/client-private-continuation/v1"
            {:version context-version
             :backend (backend/backend-id adapter)
             :source-scope (backend/invoke adapter :source-scope)
+            ;; The store is cleared during explicit lifecycle rotation, but
+            ;; an in-flight request may finish after that clear.  Including
+            ;; the lifecycle in the address makes any such late publication
+            ;; unreachable to requests in the replacement lifecycle.
+            :source-lifecycle (backend/invoke adapter :source-lifecycle)
             :adapter-fingerprint (backend/fingerprint adapter)
             :identity-contract (backend/identity-contract adapter)
-            :schema-proof (backend/invoke adapter :schema-proof)
-            :snapshot-id (backend/invoke adapter :snapshot-id)
+            :schema-generation
+            (let [frame
+                  (if (and request-proof-frame
+                           (identical?
+                            adapter (:adapter request-proof-frame)))
+                    request-proof-frame
+                    (proof-frame/request-frame adapter))
+                  proof
+                  (proof-frame/resolve!
+                   frame [])]
+              (when (proof-frame/complete? proof)
+                (:schema-stamp proof)))
+            :snapshot-identity
+            (or snapshot-identity
+                {:kind :exact
+                 :snapshot-id (backend/invoke adapter :snapshot-id)})
             :operation operation
             :query query-identity})
           key-for (fn [kind key] [scope kind key])]
-      (validate-context!
+       (validate-context!
        {:required? false
         :opaque-values? true
         :get
@@ -261,4 +296,4 @@
           (put!
            store :acyclic-continuation
            (key-for :acyclic-continuation edge)
-           value weight))}))))
+           value weight))})))))

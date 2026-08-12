@@ -1,0 +1,11 @@
+{:direct-kernel
+ {:forward-wave-sizes [10 8]
+  :reverse-wave-sizes [9 9]
+  :relation-command-order [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18]
+  :result {:status :count :count 0 :truncated? false}}
+ :public-datascript
+ {:cache-disabled {:count 100 :limit 100 :truncated? true}
+  :cache-enabled {:count 100 :limit 100 :truncated? true}
+  :maximum-backend-commands 512}
+ :progress-law
+ :nonempty-pending-wave-is-published-from-current-state-never-rolled-back}

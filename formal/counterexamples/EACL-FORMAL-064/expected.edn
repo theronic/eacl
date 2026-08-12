@@ -1,0 +1,9 @@
+{:content-or-none
+ {:cursor-proof :exact-selected-snapshot
+  :relation-proof-commands 0
+  :later-datascript-basis :stale-cursor}
+ :managed-mutation
+ {:cursor-proof :bounded-dependency-stamps
+  :proof-equivalent-current-basis :may-continue
+  :changed-dependency :stale-cursor}
+ :historical-datascript-selection false}

@@ -18,10 +18,7 @@
             :fixture {:shape :star :accounts 2000}}
  :work-envelopes
  {:raw-lookup-first-50
-  {:maximum-schema-proof-reads 3   ; memoized invocations (cheap): route
-                                   ; validation + actual + certificate
-                                   ; identities all deref one delay
-   :maximum-schema-proof-computations 1 ; 3.1 ratchet: one scan per request
+  {:maximum-proof-frame-reads 3
    :maximum-plan-compiles 1        ; 3.3 ratchet: nil-store lookup deleted the duplicate
    :maximum-denotation-key-builds 0    ; 3.3 ratchet: no key work without a store
    :maximum-denotation-dependency-calcs 0 ; 3.3 ratchet
@@ -35,42 +32,36 @@
                                        ; walk per engine-direct compile;
                                        ; memoized to zero under any schema
                                        ; cache)
-   :maximum-backend-scans 2100}    ; keyset semantics (5.x): a first page
-                                   ; whose result exceeds the page size
-                                   ; materializes the closure once via
-                                   ; probe-then-continue (closure + slack);
-                                   ; results that fit one page keep the
-                                   ; probe's early-stop economics
+   :maximum-backend-scans 64}      ; demand semantics: first 50 plus sentinel
   :raw-can
-  {:maximum-schema-proof-reads 0
+  {:maximum-proof-frame-reads 0
    :maximum-plan-compiles 1
    :maximum-denotation-key-builds 0
    :maximum-denotation-dependency-calcs 0
    :maximum-backend-scans 8}       ; bounded reverse point check
   :client-lookup-first-50
-  {:maximum-schema-proof-reads 5   ; memoized invocations (cheap)
-   :maximum-schema-proof-computations 1 ; 3.1 ratchet: one scan per request
+  {:maximum-proof-frame-reads 5
    :maximum-plan-compiles 1
-   :maximum-backend-scans 2100     ; keyset pay-once: the first store-bound
-                                   ; page resolves AND PUBLISHES the full
-                                   ; denotation; every later page/count/
-                                   ; check is a zero-scan slice (asserted)
-   :maximum-later-page-scans 0}
+   :maximum-backend-scans 64       ; first 50 plus sentinel
+   :maximum-later-page-scans 64}   ; retained continuation: next 50 + sentinel
   :client-can
-  {:maximum-schema-proof-reads 2   ; cold client (fresh schema-cache registry);
-                                   ; a warmed client reads 1
-   :maximum-kernel-drives 2100}    ; full forward denotation today (~N+33);
-                                   ; drops to O(log n) membership after 5.6
+  {:maximum-proof-frame-reads 2
+   :maximum-kernel-drives 8}       ; target-anchored reverse Boolean demand
   :count-full
   {:maximum-derived-grants-factor 2 ; derived-grants <= factor * accounts
    :maximum-backend-scans-slack 50} ; scans <= accounts + slack
   :crossing-law
-  {:fuel 256}}                     ; drive <= scans + 1 + (advanced / fuel)
+  {:protocol-version 2
+   :batch-size 64
+   :page-batch-size 1
+   :constant 40
+   :fuel 256}}                     ; star: crossings <= 2*ceil(scans/B)+C+fuel yields;
+                                   ; B=1 for order-stable pages, 64 otherwise
  :notes
- ["client-can documents the audited full-materialization behavior: a
-   cache-enabled recursive point check materializes the complete forward
-   denotation (P1-8/V3). The envelope is an upper bound so the keyset
-   fix only tightens it."
-  "count-after-can zero-crossing reuse is asserted structurally in the
-   test (no envelope): a compatible published denotation must satisfy a
-   subsequent count with zero indexed kernel crossings."]}
+ ["Point, bounded count, and page envelopes are independent demands. A cache
+   miss never widens any of them to a complete denotation."
+ "Continued pages use retained private generated state when present and
+   deterministic authenticated-prefix replay when absent. Page rendering
+   permits only one outstanding scan so a page boundary is a quiescent,
+   replayable checkpoint; Boolean and count rendering retain scan waves of
+   64 because their results are order-independent."]}

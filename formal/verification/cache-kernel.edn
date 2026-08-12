@@ -1,6 +1,7 @@
 {:schema-version 1
  :semantics-version 1
- :status :proof-and-generated-tests-passed
+ :status :proof-only-model-passed
+ :classification :proof-only-no-runtime-operation
  :proof
  {:source "formal/dafny/CacheKernel.dfy"
   :verified-obligations 17
@@ -13,13 +14,13 @@
    :proof-mismatch
    :no-proof-bypass
    :unauthenticated-rejection
-   :provider-failure-miss
+   :abstract-read-failure-miss
    :accepted-value-equals-recomputation-under-proof-contract
    :telemetry-is-separate-from-authorization
    :compare-and-set-race-preserves-chosen-value]}
  :current-generation-proof
  {:source "formal/dafny/CurrentCache.dfy"
-  :verified-obligations 28
+  :verified-obligations 30
   :claims
   [:cache-eligibility-does-not-select-engine-authority
    :generated-current-cache-stage-selection
@@ -34,14 +35,6 @@
    :direct-self-and-arrow-rule-derivation-frame
    :least-fixed-point-managed-cache-frame
    :selected-snapshot-public-result-rendering]}
- :generated-targets
- {:java
-  {:decision-matrix :passed
-   :dependency-scope-fixtures :passed}
-  :javascript
-  {:tests 6
-   :assertions 562
-   :status :passed}}
  :production-regression
  {:namespaces
   [eacl.cache-test
@@ -54,18 +47,6 @@
   :tests 85
   :assertions 5705
   :status :passed}
- :production-generated-routing
- {:clj-java
-  {:namespace eacl.formal.production-kernel-test
-   :status :passed}
-  :cljs-javascript
-  {:namespace eacl.formal.production-kernel-test
-   :status :passed}
-  :authoritative-rejection-regression
-  {:namespace eacl.cache-test
-   :status :passed}
-  :claim
-  :cache-and-current-generation-selection-cannot-return-a-hit-after-generated-rejection}
  :formal-spec-findings
  [{:id :EACL-FORMAL-SPEC-001
    :classification :specification-bug
@@ -87,4 +68,5 @@
   :tests 1
   :assertions 105
   :status :passed}
- :remaining []}
+ :remaining
+ [:live-production-consumer-or-removal-of-the-unused-generated-operation]}

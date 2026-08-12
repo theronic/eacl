@@ -82,7 +82,9 @@
              (eacl/write-schema!
               client
               "definition user {}
-               definition platform { relation super_admin: user }
+               definition platform {
+                 relation super_admin: user
+               }
                definition account {
                  relation platform: platform
                  permission admin = platform->super_admin
@@ -109,7 +111,9 @@
         (eacl/write-schema!
          client
          "definition user {}
-          definition platform { relation super_admin: user }
+          definition platform {
+            relation super_admin: user
+          }
           definition account {
             relation platform: platform
             relation owner: user

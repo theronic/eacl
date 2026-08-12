@@ -59,6 +59,10 @@
   [db]
   (some-> (schema-version db) str))
 
+(defn database-id
+  [db]
+  (str (.id ^datomic.Database db)))
+
 (defn make-schema-cache
   ([db]
    (make-schema-cache db (schema-version db)))
@@ -67,7 +71,7 @@
     (engine/make-schema-cache
      (backend/snapshot-adapter db)
      known-schema-version)
-    :database-id (str (.id ^datomic.Database db)))))
+    :database-id (database-id db))))
 
 (defn evict-permission-paths-cache!
   ([]

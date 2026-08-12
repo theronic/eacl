@@ -15,7 +15,8 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]))
 
 (def ^:private differential-schema
   "Exercises direct relations, arrow->permission, arrow->relation,
@@ -79,8 +80,9 @@
   [lookup-fn db query page-size]
   (loop [before nil
          acc    ()]
-    (let [page (lookup-fn db (cond-> (assoc query :last page-size)
-                               before (assoc :before before)))
+    (let [page (binding [engine/*evaluation-mode* :complete-denotation]
+                 (lookup-fn db (cond-> (assoc query :last page-size)
+                                 before (assoc :before before))))
           acc' (concat (map :id (:data page)) acc)]
       (if (get-in page [:page-info :has-previous-page?])
         (recur (get-in page [:page-info :start-cursor]) acc')

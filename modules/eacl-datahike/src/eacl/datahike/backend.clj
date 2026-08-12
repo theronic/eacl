@@ -4,12 +4,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.mutation :as journal]
             [eacl.datahike.schema :as schema]
-            [eacl.mutation :as mutation]
-            [eacl.relationships.endpoint-pair :as endpoint-pair]
-            [eacl.relationships.storage :as relationship-storage]
-            [eacl.secure-format :as secure])
+            [eacl.relationships.storage :as relationship-storage])
   (:import [java.util UUID]))
 
 (def capabilities
@@ -18,10 +14,10 @@
                   :at-least-as-fresh
                   :at-exact-snapshot}
    :snapshots #{:current :authoritative :causal :exact}
-   :source #{:stable-scope :graph-head :anchor-membership :order-hint}
+   :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
    :cursor #{:forward :reverse :opaque}
    :transactions #{:schema :relationships :object-deletion}
-   :cache-proofs #{:schema :relations :snapshot-bound :database-visible}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
 (defn- direct-writer?
@@ -52,19 +48,24 @@
        sort
        vec))
 
+(defn- db-revision
+  "Returns the revision carried by an ordinary or temporal Datahike value."
+  [db]
+  (or (:time-point db) (:max-tx db)))
+
 (defn- freshness-timeout!
   [token-data timeout-ms observed]
   (throw
    (ex-info
-    "Datahike branch did not acquire the requested mutation anchor."
+    "Datahike branch did not acquire the requested native revision."
     {:type :eacl.consistency/freshness-unavailable
      :eacl/error :eacl.consistency/freshness-unavailable
      :reason :freshness-timeout
-     :requested-order-hint (:order-hint token-data)
+     :requested-order-hint (:revision token-data)
      :observed-order-hint (:max-tx observed)
      :timeout-ms timeout-ms})))
 
-(defn- await-anchor-db
+(defn- await-revision-db
   [conn fallback token-data timeout-ms]
   (let [timeout-ms (or timeout-ms 30000)
         deadline (+ (System/nanoTime)
@@ -72,8 +73,7 @@
     (loop []
       (let [candidate (if conn (d/db conn) fallback)]
         (cond
-          (journal/contains-anchor?
-           candidate (:graph-anchor token-data))
+          (>= (:max-tx candidate) (:revision token-data))
           candidate
 
           (>= (System/nanoTime) deadline)
@@ -94,110 +94,42 @@
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
 
-(defn- schema-proof-records
-  [db {:keys [permission-nodes relation-ids] :as scope}]
-  (let [{:keys [relation-defs permission-defs]}
-        (impl/build-schema-catalog db)
-        relation-ids (set relation-ids)
-        scoped-relations
-        (cond->> (mapcat identity (vals relation-defs))
-          scope (filter #(contains? relation-ids (:relation-id %))))
-        scoped-permissions
-        (if scope
-          (mapcat #(get permission-defs % []) permission-nodes)
-          (mapcat identity (vals permission-defs)))]
-    (concat
-     (->> scoped-relations
-          (map (fn [relation]
-                 [:relation
-                  (:relation-id relation)
-                  (:resource-type relation)
-                  (:relation-name relation)
-                  (:subject-type relation)]))
-          sort)
-     (->> scoped-permissions
-          (map normalized-permission)
-          (map (fn [permission]
-                 [:permission
-                  (:permission-id permission)
-                  (:resource-type permission)
-                  (:permission-name permission)
-                  (:source-relation-name permission)
-                  (:target-type permission)
-                  (:target-name permission)]))
-          sort))))
-
-(defn- content-schema-proof
-  [db scope]
-  {:content-digest
-   (secure/canonical-records-digest
-    "eacl/datahike/schema-content-proof/v3"
-    (schema-proof-records db scope))})
-
-(defn- content-relation-proof
-  [db relation-ids external-id]
-  (let [wanted (set relation-ids)
-        forward
-        (when (seq wanted)
-          (for [{subject :e value :v}
-                (ddb/avet-datoms
-                 db relationship-storage/forward-attribute)
-                :let [decoded
-                      (endpoint-pair/decode-forward subject value)]
-                :when (contains? wanted (:relation-eid decoded))]
-            [:forward (:relation-eid decoded)
-             (:subject-type decoded) subject (external-id db subject)
-             (:resource-type decoded) (:resource-eid decoded)
-             (external-id db (:resource-eid decoded))]))
-        reverse
-        (when (seq wanted)
-          (for [{resource :e value :v}
-                (ddb/avet-datoms
-                 db relationship-storage/reverse-attribute)
-                :let [decoded
-                      (endpoint-pair/decode-reverse resource value)]
-                :when (contains? wanted (:relation-eid decoded))]
-            [:reverse (:relation-eid decoded)
-             (:subject-type decoded) (:subject-eid decoded)
-             (external-id db (:subject-eid decoded))
-             (:resource-type decoded) resource (external-id db resource)]))]
-    {:content-digest
-     (secure/canonical-records-digest
-      "eacl/datahike/relationship-content-proof/v3"
-      (sort (concat forward reverse)))}))
-
-(defn- mutation-schema-proof
-  [db]
-  (some-> (d/entity db [:eacl/id mutation/schema-entity-id])
-          (get mutation/schema-mutation-id-attr)))
-
-(defn- mutation-relation-proof
+(defn- ordered-generation-frame
   [db relation-ids]
-  (let [proof
-        (mapv (fn [relation-id]
-                [relation-id
-                 (get (d/entity db relation-id)
-                      mutation/relation-mutation-id-attr)])
-              (sort relation-ids))]
-    (when (every? (comp some? second) proof)
-      proof)))
+  {:schema-stamp
+   (when-let [schema-eid (ddb/entid db [:eacl/id "schema-string"])]
+     (some-> (first (ddb/eavt-datoms
+                     db schema-eid :eacl/schema-generation))
+             :tx))
+   :relation-stamps
+   (mapv
+    (fn [relation-id]
+      [relation-id
+       (some-> (first (ddb/eavt-datoms
+                       db relation-id :eacl/relation-version))
+               :tx)])
+    relation-ids)})
 
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable Datahike db value."
   [db {:keys [object-id->entid entid->object-id conn
-              coherence-authority proof-mode]
-       :or {proof-mode :content}
+              selected-order-hint selected-exact-locator]
        :as opts}]
-  (let [graph-state (journal/graph-state db)
+  (let [source-lifecycle
+        (or (some-> (:source-lifecycle-state opts) deref)
+            (:source-lifecycle opts)
+            (str (UUID/randomUUID)))
         source-scope
         (or (:source-scope opts)
             (let [{:keys [backend id]} (get-in db [:config :store])]
               {:source-id
                {:store-backend backend
-                :store-id (str id)
-                :family-id (:family-id graph-state)}
+                :store-id (str id)}
                :branch (get-in db [:config :branch])}))
-        opts' (assoc opts :source-scope source-scope)]
+        opts' (-> opts
+                  (dissoc :source-lifecycle-state)
+                  (assoc :source-lifecycle source-lifecycle
+                         :source-scope source-scope))]
     (backend/make-adapter
      {:id :datahike
       :fingerprint (:adapter-fingerprint opts)
@@ -207,12 +139,12 @@
                           :selected-internal/current-external-v1)
       :capabilities
       (cond-> capabilities
-        (not= :managed coherence-authority)
-        (update :consistency disj :at-least-as-fresh :at-exact-snapshot)
-
         (or (nil? conn)
             (not (direct-writer? db)))
         (update :consistency disj :fully-consistent)
+
+        (nil? conn)
+        (update :consistency disj :at-least-as-fresh)
 
         (or (nil? conn)
             (not (exact-reconstruction? db)))
@@ -228,22 +160,21 @@
            (update (:store (:config db)) :id str)}
           :attribute-refs? (boolean
                             (:attribute-refs? (:config db)))
-          :basis-t (:max-tx db)})
+          :basis-t (or (db-revision db) selected-order-hint)})
 
        :source-scope
        (fn [] source-scope)
 
-       :graph-head
+       :source-lifecycle
+       (fn [] source-lifecycle)
+
+       :native-revision
        (fn []
-         {:graph-anchor (:head-id graph-state)
-          :order-hint (:max-tx db)
-          :exact-locator (commit-locator db)})
+         {:revision (or (db-revision db) selected-order-hint)
+          :exact-locator (or (commit-locator db)
+                             selected-exact-locator)})
 
-       :contains-anchor?
-       (fn [anchor]
-         (journal/contains-anchor? db anchor))
-
-       :order-hint (fn [] (:max-tx db))
+       :order-hint (fn [] (or (db-revision db) selected-order-hint))
 
        :select-current
        (fn []
@@ -265,18 +196,22 @@
        :select-at-least
        (fn [token-data timeout-ms]
          (snapshot-adapter
-          (await-anchor-db conn db token-data timeout-ms)
+          (await-revision-db conn db token-data timeout-ms)
           opts'))
 
-       :exact-locator (fn [] (commit-locator db))
+       :exact-locator
+       (fn [] (or (commit-locator db) selected-exact-locator))
 
        :select-exact
        (fn [token-data _timeout-ms]
          (when (and conn
-                    (:exact-locator token-data))
+                    (or (:exact-locator token-data)
+                        (and (temporal-history? db)
+                             (integer? (:revision token-data)))))
            (try
              (let [commit-db
-                   (when (exact-commits? db)
+                   (when (and (exact-commits? db)
+                              (:exact-locator token-data))
                      (d/commit-as-db
                       conn
                       (UUID/fromString
@@ -284,13 +219,18 @@
                    temporal-db
                    (when (and (nil? commit-db)
                               (temporal-history? db)
-                              (integer? (:order-hint token-data))
-                              (<= (:order-hint token-data)
+                              (integer? (:revision token-data))
+                              (<= (:revision token-data)
                                   (:max-tx (d/db conn))))
                      (d/as-of (d/db conn)
-                              (:order-hint token-data)))]
-               (some-> (or commit-db temporal-db)
-                       (snapshot-adapter opts')))
+                              (:revision token-data)))]
+               (when-let [selected-db (or commit-db temporal-db)]
+                 (snapshot-adapter
+                  selected-db
+                  (assoc opts'
+                         :selected-order-hint (:revision token-data)
+                         :selected-exact-locator
+                         (:exact-locator token-data)))))
              (catch Throwable _
                nil))))
 
@@ -351,22 +291,6 @@
               (map :v)
               set))
 
-       :schema-proof
-       (fn
-         ([]
-          (case proof-mode
-            :mutation (mutation-schema-proof db)
-            :content (content-schema-proof db nil)
-            nil))
-         ([scope]
-          (case proof-mode
-            :mutation (mutation-schema-proof db)
-            :content (content-schema-proof db scope)
-            nil)))
-
-       :relation-proof
+       :proof-frame
        (fn [relation-ids]
-         (case proof-mode
-           :mutation (mutation-relation-proof db relation-ids)
-           :content (content-relation-proof db relation-ids entid->object-id)
-           nil))}})))
+         (ordered-generation-frame db relation-ids))}})))

@@ -187,9 +187,7 @@
        (make-client
         connection
         (merge
-         {:coherence-authority :managed
-          :proof-mode :mutation
-          :cache (cache-config mode datomic?)}
+         {:cache (cache-config mode datomic?)}
          (if datomic?
            {:page-token-key "cross-backend-workload-page"
             :zed-token-key "cross-backend-workload-zed"}

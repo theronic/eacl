@@ -30,9 +30,9 @@
 (defn- live-client
   "A client that retains results. This used to need an explicit coordinator
   plus :live-results? true; it is now just :remember-answers."
-  [conn context]
+  [conn]
   (core/make-client conn {:page-token-key token-key
-                          :cache (assoc context :remember-answers true)}))
+                          :cache {:remember-answers true}}))
 
 (defn- seed-direct!
   [conn boot n-accounts]
@@ -52,13 +52,12 @@
 
 ;; --- Follow-up review -------------------------------------------------------
 
-(deftest proofless-cursor-recovers-on-current-snapshot-test
+(deftest proofless-cursor-falls-back-to-exact-snapshot-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client
           (core/make-client
            conn
-           {:proof-mode :none
-            :page-token-key "proofless-exact-fallback"})
+           {:page-token-key "proofless-exact-fallback"})
           alice (spice-object :user "alice")
           account #(spice-object :account %)
           query {:subject alice
@@ -86,10 +85,9 @@
                       :after
                       (get-in page-1
                               [:page-info :end-cursor])))]
-          (is (= ["a2"] (mapv :id (:data page-2))))
-          (is (= :rebased
-                 (get-in page-2
-                         [:page-info :cursor-recovery]))))))))
+          (is (= ["a3"] (mapv :id (:data page-2))))
+          (is (nil? (get-in page-2
+                            [:page-info :cursor-recovery]))))))))
 
 (deftest explicit-cache-true-does-not-fragment-answer-keys-test
   ;; :cache? selects how to obtain an answer, not which answer was requested.
@@ -160,17 +158,11 @@
 ;; --- H2 ---------------------------------------------------------------------
 
 (deftest client-built-before-the-first-schema-write-can-paginate-test
-  ;; make-client latches :eacl/schema-version once. A client constructed before
-  ;; the database was stamped kept a nil generation for life, minted page-one
-  ;; tokens carrying :schema-version nil, and then rejected its own page two
-  ;; with :eacl.pagination/stale-schema — because the historical branch derives
-  ;; the real stamp from the d/as-of database. can? kept working, so the
-  ;; breakage was invisible until the first paginated read.
   (with-mem-conn [conn schema/v7-schema]
     (let [early (core/make-client conn {:page-token-key token-key})
           admin (core/make-client conn {:page-token-key token-key})]
-      (is (nil? (:schema-version @(:schema-state early)))
-          "the early client latched an unstamped database")
+      (is (nil? (:schema-state early))
+          "the client has no mutable schema correctness latch")
       (seed-direct! conn admin 6)                ;; schema written by ANOTHER client
       (is (some? (idx/schema-version (d/db conn))))
 
@@ -186,9 +178,11 @@
           (is (= ["acct2" "acct3"] (mapv :id (:data page-2))))))
 
       (testing "read-relationships"
-        (let [page-1 (eacl/read-relationships early {:subject/id "alice" :first 2})
+        (let [page-1 (eacl/read-relationships early {:subject/type :user
+                                                      :subject/id "alice" :first 2})
               page-2 (eacl/read-relationships
-                      early {:subject/id "alice"
+                      early {:subject/type :user
+                             :subject/id "alice"
                              :first 2
                              :after (get-in page-1 [:page-info :end-cursor])})]
           (is (= 2 (count (:data page-1))))
@@ -197,8 +191,8 @@
                        (set (map (comp :id :resource) (:data page-1)))
                        (set (map (comp :id :resource) (:data page-2))))))))
 
-      (testing "the client adopts the stamp, so result caching becomes available"
-        (is (some? (:schema-version @(:schema-state early))))))))
+      (testing "schema derivation comes from each selected immutable snapshot"
+        (is (seq @(:derived-schema-caches (:opts early))))))))
 
 (deftest cursor-minted-on-an-unstamped-database-still-paginates-test
   ;; The other half: when the database genuinely has no stamp at page-one time,
@@ -207,8 +201,8 @@
   ;; validation the moment the client later adopted a stamp.
   (with-mem-conn [conn schema/v7-schema]
     (let [acl (core/make-client conn {:page-token-key token-key})]
-      (is (nil? (:schema-version @(:schema-state acl))))
-      (let [page-1 (eacl/read-relationships acl {:subject/id "alice" :first 2})]
+      (is (nil? (:schema-state acl)))
+      (let [page-1 (eacl/read-relationships acl {:resource/id "absent" :first 2})]
         (is (= [] (:data page-1))
             "an unstamped database has no relationships to read")))))
 
@@ -339,9 +333,7 @@
   ;; Non-exact cursor validation recovers on the current snapshot and may
   ;; publish only after re-evaluation there.
   (with-mem-conn [conn schema/v7-schema]
-    (let [store (cache/local-store)
-          context {:store store}
-          acl (live-client conn context)
+    (let [acl (live-client conn)
           _ (seed-direct! conn acl 9)
           query {:subject (spice-object :user "alice")
                  :permission :admin
@@ -386,17 +378,16 @@
             recovered-1 (eacl/lookup-resources acl page-2-query)
             recovered-2 (eacl/lookup-resources acl page-2-query)
             after-recovery (core/cache-stats acl)]
-        (is (= ["acct4" "acct5" "acct6"]
+        (is (= ["acct3" "acct4" "acct5"]
                (mapv :id (:data recovered-1))))
         (is (= (:data recovered-1) (:data recovered-2)))
-        (is (= :rebased
-               (get-in recovered-1
-                       [:page-info :cursor-recovery])))
+        (is (nil? (get-in recovered-1
+                          [:page-info :cursor-recovery])))
         (is (false? (:cached? recovered-1)))
-        (is (true? (:cached? recovered-2)))
-        (is (= (:bypasses before-recovery)
+        (is (false? (:cached? recovered-2)))
+        (is (= (+ 2 (:bypasses before-recovery))
                (:bypasses after-recovery)))
-        (is (= (inc (:exact-hits before-recovery))
+        (is (= (:exact-hits before-recovery)
                (:exact-hits after-recovery)))))))
 
 ;; --- L2 ---------------------------------------------------------------------
@@ -411,10 +402,12 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [acl (core/make-client conn {:page-token-key token-key})
           _ (seed-direct! conn acl 4)
-          cursor (get-in (eacl/read-relationships acl {:subject/id "alice" :first 2})
+          cursor (get-in (eacl/read-relationships acl {:subject/type :user
+                                                       :subject/id "alice" :first 2})
                          [:page-info :end-cursor])
           result (ex-data-of
-                  #(eacl/read-relationships acl {:subject/id "does-not-exist"
+                  #(eacl/read-relationships acl {:subject/type :user
+                                                 :subject/id "does-not-exist"
                                                  :first 2
                                                  :after cursor}))]
       (is (= :eacl.pagination/invalid-cursor (:eacl/error result))

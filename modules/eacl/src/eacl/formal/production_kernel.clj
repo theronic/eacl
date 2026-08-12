@@ -1,8 +1,8 @@
 (ns eacl.formal.production-kernel
   "Released generated-Java implementation of EACL's strict decision SPI."
-  (:require [eacl.verified-kernel :as verified])
+  (:require [eacl.formal.generated-runtime]
+            [eacl.verified-kernel :as verified])
   (:import
-   (CacheKernel CacheCandidate ProofState Telemetry)
    (ConsistencyDecision
     ConsistencyError
     SelectionKind
@@ -11,14 +11,17 @@
    (CurrentCache CurrentCacheStage)
    (dafny DafnySequence DafnySet Tuple2 Tuple3 Tuple5 Tuple6 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
+   (IndexedBatching
+    ForwardBatchState
+    ForwardBatchStep
+    ReverseBatchState
+    ReverseBatchStep)
    (IndexedRefinement RelationBinding)
    (IndexedTraversal
-    CursorBound
     ForwardInit
     ForwardPageContinuation
     ForwardResume
     ForwardState
-    ForwardStep
     IndexedLimits
     IndexedLimitKind
     IndexedRule
@@ -33,21 +36,18 @@
     ReversePageContinuation
     ReverseResume
     ReverseState
-    ReverseStep
     ScanError
     ScanCommand
     ScanResponse)
    (OrderedMerge MergeChunk MergeDirection OptionalHead)
    (PageWindow
-    ConsistencyMode
-    CursorBoundRebase
+    Direction
     ExactSelection
     NormalizedPageRequest
     Page
     PageError
     Presence
     RawPageRequest)
-   (Pagination Direction)
    (RecursiveEngine
     BooleanOutcome
     CountOutcome
@@ -724,7 +724,6 @@
            cursor-source
            current-proof
            cursor-proof
-           mode
            cursor-graph
            exact]}]
   (let [decision
@@ -736,14 +735,10 @@
          (dafny-string cursor-source)
          (dafny-string current-proof)
          (dafny-string cursor-proof)
-         (if (= :exact-snapshot mode)
-           (ConsistencyMode/create_ExactSnapshotMode)
-           (ConsistencyMode/create_RecoverCurrent))
          (dafny-nat cursor-graph)
          (exact-selection exact))]
     (cond
       (.is_UseCurrent decision) :current
-      (.is_RebaseCurrent decision) :rebase-current
       (.is_UseExact decision) :exact
       (.is_InvalidAuthentication (.dtor_reason decision))
       :invalid-authentication
@@ -780,12 +775,11 @@
     :else :history-divergence))
 
 (defn- consistency-plan-decision
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (let [outcome
         (ConsistencyDecision.__default/DecideSelectionPlan
          (snapshot-consistency-mode mode)
-         capability-supported?
-         managed-authority?)]
+         capability-supported?)]
     (if (.is_Planned outcome)
       (let [action (.dtor_action outcome)]
         (cond
@@ -806,14 +800,14 @@
 
 (defn- consistency-selection-decision
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (let [outcome
         (ConsistencyDecision.__default/ValidateSelectedSnapshot
          (consistency-selection-kind kind)
          selection-present?
          selected-adapter?
          same-source-scope?
-         anchor-satisfied?)]
+         revision-satisfied?)]
     (if (.is_SelectionAccepted outcome)
       :accept
       (consistency-error (.dtor_error outcome)))))
@@ -849,79 +843,14 @@
      (.longValueExact (.dtor_validationDecisions work))
      :source-scope-reads
      (.longValueExact (.dtor_sourceScopeReads work))
-     :contains-anchor-calls
-     (.longValueExact (.dtor_containsAnchorCalls work))
-     :graph-head-reads
-     (.longValueExact (.dtor_graphHeadReads work))
+     :revision-validation-calls
+     (.longValueExact (.dtor_revisionValidationCalls work))
+     :native-revision-reads
+     (.longValueExact (.dtor_nativeRevisionReads work))
      :order-hint-reads
      (.longValueExact (.dtor_orderHintReads work))
      :exact-locator-reads
      (.longValueExact (.dtor_exactLocatorReads work))}))
-
-(defn- proof-state
-  [proof]
-  (if (some? proof)
-    (ProofState/create_CompleteProof (dafny-string proof))
-    (ProofState/create_ProofUnavailable)))
-
-(defn- cache-candidate
-  [{:keys [status authenticated? key source graph proof]}]
-  (case status
-    :missing
-    (CacheCandidate/create_NoCandidate TypeDescriptor/BIG_INTEGER)
-
-    :provider-failure
-    (CacheCandidate/create_ProviderFailed TypeDescriptor/BIG_INTEGER)
-
-    (CacheCandidate/create_Candidate
-     TypeDescriptor/BIG_INTEGER
-     authenticated?
-     (dafny-string key)
-     (dafny-string source)
-     (dafny-nat graph)
-     (proof-state proof)
-     (dafny-nat 0)
-     (Telemetry/create (dafny-nat graph) (dafny-nat 0)))))
-
-(defn- cache-decision
-  [{:keys [deterministic?
-           dependency-scope-nonempty?
-           expected-key
-           expected-source
-           selected-graph
-           ancestors
-           selected-proof
-           entry]}]
-  (let [decision
-        (CacheKernel.__default/ValidateCache
-         TypeDescriptor/BIG_INTEGER
-         deterministic?
-         dependency-scope-nonempty?
-         (dafny-string expected-key)
-         (dafny-string expected-source)
-         (dafny-nat selected-graph)
-         (DafnySet.
-          ^java.util.Collection
-          (mapv dafny-nat ancestors))
-         (proof-state selected-proof)
-         (cache-candidate entry))]
-    (if (.is_CacheHit decision)
-      {:status :hit
-       :provenance
-       (if (.is_ExactHit (.dtor_provenance decision))
-         :exact-hit
-         :causal-proof-lift)}
-      (let [reason (.dtor_reason decision)]
-        {:status :miss
-         :reason
-         (cond
-           (.is_Missing reason) :missing
-           (.is_ProviderFailure reason) :provider-failure
-           (.is_NoProofBypass reason) :no-proof-bypass
-           (.is_Unauthenticated reason) :unauthenticated
-           (.is_ScopeMismatch reason) :scope-mismatch
-           (.is_FutureOrSibling reason) :future-or-sibling
-           :else :proof-mismatch)}))))
 
 (defn- candidate-state
   [candidate]
@@ -937,24 +866,21 @@
     :lookup
     (let [action
           (SubproblemCache.__default/DecideLookup
-           (:recursive-self? input)
            (candidate-state (:candidate input)))]
       (cond
-        (.is_BypassRecursiveSelf action) :bypass-recursive-self
-        (.is_StartComputation action) :start-computation
-        (.is_JoinComputation action) :join-computation
+        (.is_StartIndependentComputation action)
+        :start-independent-computation
         :else :use-completed-value))
 
     :admission
     (let [action
           (SubproblemCache.__default/DecideAdmission
            (:candidate-present? input)
-           (dafny-nat (:represented-candidates input))
-           (dafny-nat (:maximum-candidates input)))]
-      (cond
-        (.is_JoinExisting action) :join-existing
-        (.is_AdmitComputation action) :admit-computation
-        :else :compute-without-admission))
+           (dafny-nat (:attempted-publications input))
+           (dafny-nat (:maximum-attempts input)))]
+      (if (.is_AttemptPublication action)
+        :attempt-publication
+        :skip-publication))
 
     :publication
     (let [action
@@ -1380,26 +1306,11 @@
 
 
 
-(defn- indexed-cursor-bound
-  [bound]
-  (if bound
-    (CursorBound/create_AfterCursor
-     (dafny-nat (:ordinal bound))
-     (dafny-nat (:eid bound)))
-    (CursorBound/create_NoCursorBound)))
-
 (defn- indexed-render-mode
-  [{:keys [kind size bound limit target-eid]}]
+  [{:keys [kind size limit target-eid]}]
   (case kind
     :page
-    (RenderMode/create_RenderPage
-     (dafny-nat size)
-     (indexed-cursor-bound bound))
-
-    :backward-page
-    (RenderMode/create_RenderBackwardPage
-     (dafny-nat size)
-     (indexed-cursor-bound bound))
+    (RenderMode/create_RenderPage (dafny-nat size))
 
     :count
     (RenderMode/create_RenderCount (dafny-nat limit))
@@ -1558,76 +1469,87 @@
   (let [outcome
         (case direction
           :forward
-          (IndexedTraversal.__default/DriveForwardIterative
-           state (indexed-limits limits) (dafny-fuel fuel))
+          (IndexedBatching.__default/DriveForwardScans
+           ^ForwardState state
+           (indexed-limits limits)
+           (dafny-fuel fuel))
 
           :reverse
-          (IndexedTraversal.__default/DriveReverseIterative
-           state (indexed-limits limits) (dafny-fuel fuel)))
+          (IndexedBatching.__default/DriveReverseScans
+           ^ReverseState state
+           (indexed-limits limits)
+           (dafny-fuel fuel)))
         prefix
         (case direction
           :forward "Forward"
           :reverse "Reverse")]
     (cond
       (case direction
-        :forward (.is_ForwardNeedScan ^ForwardStep outcome)
-        :reverse (.is_ReverseNeedScan ^ReverseStep outcome))
-      {:status :need-scan
-       :state
-       (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))
-       :command
-       (indexed-command-value
-        (case direction
-          :forward (.dtor_command ^ForwardStep outcome)
-          :reverse (.dtor_command ^ReverseStep outcome)))}
+        :forward (.is_ForwardNeedScans ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseNeedScans ^ReverseBatchStep outcome))
+      (let [commands
+            (mapv
+             indexed-command-value
+             (case direction
+               :forward (.dtor_commands ^ForwardBatchStep outcome)
+               :reverse (.dtor_commands ^ReverseBatchStep outcome)))
+            state
+            (case direction
+              :forward (.dtor_batch ^ForwardBatchStep outcome)
+              :reverse (.dtor_batch ^ReverseBatchStep outcome))]
+        (if (= 1 (count commands))
+          {:status :need-scan
+           :state state
+           :command (first commands)}
+          {:status :need-scans
+           :state state
+           :commands commands}))
 
       (case direction
-        :forward (.is_ForwardComplete ^ForwardStep outcome)
-        :reverse (.is_ReverseComplete ^ReverseStep outcome))
+        :forward (.is_ForwardBatchComplete ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchComplete ^ReverseBatchStep outcome))
       {:status :complete
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))}
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))}
 
       (case direction
-        :forward (.is_ForwardYielded ^ForwardStep outcome)
-        :reverse (.is_ReverseYielded ^ReverseStep outcome))
+        :forward (.is_ForwardBatchYielded ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchYielded ^ReverseBatchStep outcome))
       {:status :yielded
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))}
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))}
 
       (case direction
-        :forward (.is_ForwardRenderRejected ^ForwardStep outcome)
-        :reverse (.is_ReverseRenderRejected ^ReverseStep outcome))
+        :forward (.is_ForwardBatchRenderRejected ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchRenderRejected ^ReverseBatchStep outcome))
       {:status :render-rejected
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))
        :error
        (indexed-render-error
         (case direction
-          :forward (.dtor_error ^ForwardStep outcome)
-          :reverse (.dtor_error ^ReverseStep outcome)))}
+          :forward (.dtor_error ^ForwardBatchStep outcome)
+          :reverse (.dtor_error ^ReverseBatchStep outcome)))}
 
       (case direction
-        :forward (.is_ForwardStepLimitExceeded ^ForwardStep outcome)
-        :reverse (.is_ReverseStepLimitExceeded ^ReverseStep outcome))
+        :forward (.is_ForwardBatchLimitExceeded ^ForwardBatchStep outcome)
+        :reverse (.is_ReverseBatchLimitExceeded ^ReverseBatchStep outcome))
       {:status :limit-exceeded
        :state
        (case direction
-         :forward (.dtor_state ^ForwardStep outcome)
-         :reverse (.dtor_state ^ReverseStep outcome))
+         :forward (.dtor_state ^ForwardBatchStep outcome)
+         :reverse (.dtor_state ^ReverseBatchStep outcome))
        :limit-kind
        (indexed-limit-kind
         (case direction
-          :forward (.dtor_kind ^ForwardStep outcome)
-          :reverse (.dtor_kind ^ReverseStep outcome)))}
+          :forward (.dtor_kind ^ForwardBatchStep outcome)
+          :reverse (.dtor_kind ^ReverseBatchStep outcome)))}
 
       :else
       (throw
@@ -1636,27 +1558,55 @@
         {:direction direction
          :variant prefix})))))
 
+(defn- indexed-response
+  [response]
+  (ScanResponse/create
+   (dafny-nat (:request-scope response))
+   (dafny-nat (:request-id response))
+   (let [values (:values response)]
+     (if (seq values)
+       (dafny-sequence values)
+       @empty-values-sequence))
+   (:terminal? response)
+   (dafny-nat (:fetched-values response))))
+
 (defn- indexed-resume
   [direction state response limits]
-  (let [response'
-        (ScanResponse/create
-         (dafny-nat (:request-scope response))
-         (dafny-nat (:request-id response))
-         (let [values (:values response)]
-           (if (seq values)
-             (dafny-sequence values)
-             @empty-values-sequence))
-         (:terminal? response)
-         (dafny-nat (:fetched-values response)))
+  (let [batch-state?
+        (case direction
+          :forward (instance? ForwardBatchState state)
+          :reverse (instance? ReverseBatchState state))
+        batch? (or batch-state? (vector? response))
+        responses (if (vector? response) response [response])
+        response'
+        (if batch?
+          (typed-sequence
+           (ScanResponse/_typeDescriptor)
+           (mapv indexed-response responses))
+          (indexed-response response))
         outcome
         (case direction
           :forward
-          (IndexedTraversal.__default/ResumeForwardScan
-           state response' (indexed-limits limits))
+          (if batch?
+            (IndexedBatching.__default/ResumeForwardScans
+             ^ForwardBatchState state
+             ^DafnySequence response'
+             (indexed-limits limits))
+            (IndexedTraversal.__default/ResumeForwardScan
+             ^ForwardState state
+             ^ScanResponse response'
+             (indexed-limits limits)))
 
           :reverse
-          (IndexedTraversal.__default/ResumeReverseScan
-           state response' (indexed-limits limits)))]
+          (if batch?
+            (IndexedBatching.__default/ResumeReverseScans
+             ^ReverseBatchState state
+             ^DafnySequence response'
+             (indexed-limits limits))
+            (IndexedTraversal.__default/ResumeReverseScan
+             ^ReverseState state
+             ^ScanResponse response'
+             (indexed-limits limits))))]
     (cond
       (case direction
         :forward (.is_ForwardScanResumed ^ForwardResume outcome)
@@ -1784,7 +1734,6 @@
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
-      :cache-validation (cache-decision input)
       :current-cache-decision (current-cache-decision input)
       :subproblem-cache-decision
       (subproblem-cache-decision input)

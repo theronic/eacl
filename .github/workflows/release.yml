@@ -1,0 +1,146 @@
+name: Clojars release
+
+on:
+  push:
+    branches:
+      - 'v*'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: eacl-clojars-release
+  cancel-in-progress: false
+
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Derive and guard release version
+        id: guard
+        run: |
+          branch_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test -n "$branch_sha"
+          version="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  required_checks:
+    needs: provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Wait for exact-SHA Tests and Formal verification checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/release
+          deadline=$((SECONDS + 5400))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              > target/release/check-runs.json
+            status="$(clojure -M:release-guard checks target/release/check-runs.json false)"
+            if [ "$status" = ready ]; then
+              exit 0
+            fi
+            sleep 30
+          done
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+            > target/release/check-runs.json
+          clojure -M:release-guard checks target/release/check-runs.json true
+
+  deploy:
+    if: >-
+      always() &&
+      needs.provenance.result == 'success' &&
+      needs.required_checks.result == 'success'
+    needs:
+      - provenance
+      - required_checks
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    environment: clojars
+    env:
+      EACL_JAVA_RELEASE: '26'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Repeat release provenance guard
+        run: |
+          branch_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test -n "$branch_sha"
+          actual="$(EACL_BRANCH_SHA="$branch_sha" clojure -M:release-guard ordinary)"
+          test "$actual" = "${{ needs.provenance.outputs.version }}"
+
+      - name: Cache checksum-locked formal tools and JavaScript dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.npm
+          key: release-formal-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'formal/smoke/js/package-lock.json') }}
+
+      - name: Build generated release runtimes explicitly
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+          bin/formal browser-bundle
+
+      - name: Build, audit, cold-smoke, and deploy the four artifacts
+        env:
+          EACL_VERSION: ${{ needs.provenance.outputs.version }}
+          CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
+        run: clojure -X:deploy

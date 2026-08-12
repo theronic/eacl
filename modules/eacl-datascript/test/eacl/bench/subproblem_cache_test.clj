@@ -55,7 +55,8 @@
   {:subject (eacl/spice-object :user "shared-user")
    :permission permission
    :resource (eacl/spice-object :server "server-0")
-   :cache? cache?})
+   :cache? cache?
+   :evaluation :complete-denotation})
 
 (defn- denotation-key-separation-schema
   []
@@ -76,8 +77,7 @@
    }")
 
 (def benchmark-client-options
-  {:coherence-authority :managed
-   :security-key "01234567890123456789012345678901"})
+  {:security-key "01234567890123456789012345678901"})
 
 (defn- seed-shared-arrow!
   [conn writer permission-names depth server-count]
@@ -464,8 +464,8 @@
           (str "cache-hit maintenance appears entry-count-linear: "
                report)))))
 
-(deftest ^:benchmark miss-finalization-does-not-regress-linearly-with-entry-count
-  (testing "flight removal and publication do not scan represented entries"
+(deftest ^:benchmark miss-publication-does-not-regress-linearly-with-entry-count
+  (testing "bounded publication does not scan represented entries"
     (let [small-count 64
           large-count 4096
           batch-size 20
@@ -506,9 +506,8 @@
            :latency-ratio ratio}]
       (println "EACL subproblem miss-finalization benchmark"
                (pr-str report))
-      ;; This covers the store-lock acquisition added to make flight removal
-      ;; share the lifecycle-selection linearization point. A 64x increase in
-      ;; represented entries must not induce an entry scan on the miss path.
+      ;; A 64x increase in represented entries must not induce an entry scan
+      ;; in independent miss accounting or bounded CAS publication.
       (is (<= ratio 4.0)
           (str "cache-miss finalization appears entry-count-linear: "
                report)))))
@@ -516,20 +515,22 @@
 (defn- render-recursive-page-batch
   [values repetitions]
   (dotimes [_ repetitions]
-    (let [window
-          (#'engine/keyset-window values :asc nil 20)]
-      (when-not (= 21 (count window))
+    (let [page
+          (#'engine/complete-logical-page
+           values :forward :folder :asc 20 nil)]
+      (when-not (and (= 20 (count (:data page)))
+                     (true? (get-in page [:page-info :has-next-page?])))
         (throw
-         (ex-info "Unexpected recursive denotation window."
-                  {:window window})))))
+         (ex-info "Unexpected completed recursive logical page."
+                  {:page page})))))
   nil)
 
-(deftest ^:benchmark keyset-recursive-page-cost-is-page-bounded
-  (testing "slicing a keyset page does not materialize the full closure"
+(deftest ^:benchmark completed-recursive-page-cost-is-page-bounded
+  (testing "slicing an already completed logical page is page bounded"
     (let [small-count 64
           large-count 131072
-          small-values (vec (range small-count))
-          large-values (vec (range large-count))
+          small-values (vec (range 1 (inc small-count)))
+          large-values (vec (range 1 (inc large-count)))
           batches
           (paired-samples
            #(render-recursive-page-batch small-values 25)

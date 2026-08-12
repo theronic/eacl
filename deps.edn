@@ -32,18 +32,38 @@
                                "modules/eacl-datomic/test"
                                "modules/eacl-datascript/test"
                                "modules/eacl-datahike/test"]}
-           :build-eacl {:extra-paths ["modules/eacl"]
+           :build-eacl {:extra-paths ["modules/eacl" "src-build"]
                         :ns-default build
                         :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
-           :build-eacl-datomic {:extra-paths ["modules/eacl-datomic"]
+           :build-eacl-datomic {:extra-paths ["modules/eacl-datomic" "src-build"]
                                 :ns-default build
                                 :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
-           :build-eacl-datahike {:extra-paths ["modules/eacl-datahike"]
+           :build-eacl-datahike {:extra-paths ["modules/eacl-datahike" "src-build"]
                                  :ns-default build
                                  :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
-           :build-eacl-datascript {:extra-paths ["modules/eacl-datascript"]
+           :build-eacl-datascript {:extra-paths ["modules/eacl-datascript" "src-build"]
                                    :ns-default build
                                    :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
+           :build-test {:extra-paths ["src-build"]
+                        :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}}
+           :release-guard
+           {:extra-paths ["src-build"]
+            :extra-deps {org.clojure/data.json {:mvn/version "2.5.1"}}
+            :main-opts ["-m" "eacl.release-guard"]}
+           :release
+           {:extra-paths ["src-build"]
+            :extra-deps
+            {io.github.clojure/tools.build {:mvn/version "0.10.8"}
+             org.clojure/data.json {:mvn/version "2.5.1"}
+             slipset/deps-deploy {:mvn/version "0.2.5"}}
+            :exec-fn eacl.build.release/build-install-smoke}
+           :deploy
+           {:extra-paths ["src-build"]
+            :extra-deps
+            {io.github.clojure/tools.build {:mvn/version "0.10.8"}
+             org.clojure/data.json {:mvn/version "2.5.1"}
+             slipset/deps-deploy {:mvn/version "0.2.5"}}
+            :exec-fn eacl.build.release/deploy}
            :cljs-test {:extra-paths ["modules/eacl/test"
                                      "modules/eacl-datascript/test"]
                        :extra-deps {org.clojure/clojurescript {:mvn/version "1.12.42"}}}
@@ -58,20 +78,24 @@
            :test {:extra-paths ["modules/eacl/test"
                                 "modules/eacl-datomic/test"
                                 "modules/eacl-datascript/test"
-                                "modules/eacl-datahike/test"]
+                                "modules/eacl-datahike/test"
+                                "src-build"]
                   :extra-deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                               io.github.clojure/tools.build {:mvn/version "0.10.8"}
                                criterium/criterium {:mvn/version "0.4.6"}}
                   :main-opts ["-m" "cognitect.test-runner"
                               "-d" "modules/eacl/test"
                               "-d" "modules/eacl-datomic/test"
                               "-d" "modules/eacl-datascript/test"
-                              "-d" "modules/eacl-datahike/test"]
+                              "-d" "modules/eacl-datahike/test"
+                              "-d" "src-build"]
                   :exec-fn cognitect.test-runner.api/test
                   ;; Scan module test dirs only.
                   :exec-args {:dirs ["modules/eacl/test"
                                      "modules/eacl-datomic/test"
                                      "modules/eacl-datascript/test"
-                                     "modules/eacl-datahike/test"]}}
+                                     "modules/eacl-datahike/test"
+                                     "src-build"]}}
            :nrepl {:extra-paths ["modules/eacl/test"
                                  "modules/eacl-datomic/test"
                                  "modules/eacl-datascript/test"

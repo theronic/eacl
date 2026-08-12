@@ -14,16 +14,15 @@ clojure -M:dev -e "
   (require 'eacl.core 'eacl.cache 'eacl.subproblem-cache 'eacl.relay
            'eacl.cursor 'eacl.continuation 'eacl.engine.v8
            'eacl.verified-kernel 'eacl.secure-format 'eacl.causal-token
-           'eacl.consistency 'eacl.mutation 'eacl.client.orchestration
+           'eacl.consistency 'eacl.client.orchestration
            'eacl.relationships.filters 'eacl.relationships.storage
            'eacl.relationships.endpoint-pair 'eacl.engine.relationships
-           'eacl.backend.v8
+           'eacl.backend.v8 'eacl.permission-tree
            'eacl.datascript.core 'eacl.datascript.impl
            'eacl.datascript.backend
            'eacl.datahike.core 'eacl.datahike.impl 'eacl.datahike.backend
            'eacl.datomic.core 'eacl.datomic.impl 'eacl.datomic.backend
-           'eacl.datomic.cache 'eacl.datomic.consistency
-           :reload-all))
+           'eacl.datomic.cache 'eacl.datomic.consistency))
 (println :reflection-gate-compiled)" >"$log" 2>&1
 compile_status=$?
 

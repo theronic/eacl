@@ -1,0 +1,99 @@
+{:schema-version 2
+ :runtime :cljs-portable-cljc
+ :production-default
+ "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs"
+ :generated-oracle
+ {:adapter "formal/smoke/cljs/eacl/formal/production_kernel_js.cljs"
+  :runtime "target/formal/browser/EaclKernel.browser.js"
+  :production-classpath false}
+ :performance
+ {:runner "formal/smoke/cljs/eacl/formal/indexed_traversal_benchmark.cljs"
+  :optimization :advanced
+  :reference-size 16384
+  :observation-method :median-of-three-fresh-node-processes
+  :observed-reference-p50-samples-ns-per-result
+  [5335.207641601558 5281.517028808594 5537.040710449221]
+  :observed-p50-ns-per-result 5335.207641601558
+  :maximum-p50-ns-per-result 15000.0
+  :maximum-largest-to-smallest-normalized-p50-per-result-ratio 1.5
+  :observed-normalized-ratio-samples
+  [0.807352378313475 0.8040945847978802 0.8340738374124281]
+  :observed-largest-to-smallest-normalized-p50-per-result-ratio
+  0.807352378313475
+  :status :passed}
+ :bundle
+ {:optimization :advanced
+  :representation-policy
+  {:cross-platform-byte-equality false
+   :reason
+   [:advanced-output-representation-variance
+    :gzip-output-representation-variance]
+   :release-invariants
+   [:absolute-payload-ceilings
+    :incremental-engine-ceilings
+    :forbidden-production-runtime-markers]}
+  :reference-observations
+  [{:environment
+    {:source :local-clean-rebuild
+     :os :macos
+     :jdk "21.0.2"
+     :clojurescript "1.12.42"
+     :clean-output-directories true}
+    :empty-runtime-bytes 97122
+    :empty-runtime-gzip-bytes 21279
+    :portable-kernel-bytes 112457
+    :portable-kernel-gzip-bytes 24688
+    :incremental-engine-bytes 15335
+    :incremental-engine-gzip-bytes 3409}
+   {:environment
+    {:source :github-actions-run-31285905988
+     :os :ubuntu-22.04.5
+     :runner-image "20260720.234.2"
+     :jdk "21.0.11+10"
+     :clojurescript "1.12.42"
+     :clean-output-directories true}
+    :empty-runtime-bytes 97124
+    :empty-runtime-gzip-bytes 21281
+    :portable-kernel-bytes 112459
+    :portable-kernel-gzip-bytes 24689
+    :incremental-engine-bytes 15335
+    :incremental-engine-gzip-bytes 3408}]
+  :maximum-empty-runtime-bytes 98304
+  :maximum-empty-runtime-gzip-bytes 22528
+  :maximum-portable-kernel-bytes 114688
+  :maximum-portable-kernel-gzip-bytes 25600
+  :maximum-incremental-engine-bytes 32768
+  :maximum-incremental-engine-gzip-bytes 8192
+  :retired-generated-iife-bytes 591497
+  :retired-generated-iife-gzip-bytes 96000
+  :forbidden-production-bundle-markers
+  ["BigNumber" "EaclFormal" "production_kernel_js" "generated.runtime"]
+  :status :passed}
+ :certification
+ {:cross-runtime-and-randomized-oracle
+  {:seeds [820084 820116]
+   :tests 44
+   :assertions 9978
+   :failures 0
+   :errors 0}
+  :full-datascript-core
+  {:tests 176 :assertions 9693 :failures 0 :errors 0}
+  :injected-portable-authority
+  {:tests 172 :assertions 4682 :failures 0 :errors 0
+   :all-required-indexed-operations-observed true}
+  :mutation-registry
+  {:mutants 95 :killed 95 :survived 0}}
+ :trust-posture
+ {:browser-authorization :advisory
+  :server-recheck-required true
+  :reason
+  "The portable CLJC implementation is differentially certified rather than mechanically extracted from Dafny. Deployments must treat browser answers as advisory and re-check authorization on the server."}
+ :recorded-alternative
+ {:when :single-mechanically-generated-engine-is-required-on-all-targets
+  :mechanism :dafny-native-number-esm
+  :steps
+  ["widen {:nativeType} across traversal integer datatypes"
+   "retain the verified safe-integer host boundary"
+   "replace the Proxy rope with explicit accessors"
+   "emit tree-shakeable ESM with checked extern/property boundaries"]}
+ :status :passed}

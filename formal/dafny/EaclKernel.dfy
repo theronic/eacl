@@ -4,11 +4,12 @@ include "CacheKernel.dfy"
 include "ConsistencyDecision.dfy"
 include "CurrentCache.dfy"
 include "IndexedTraversal.dfy"
+include "IndexedBatching.dfy"
+include "IndexedBatchCompleteness.dfy"
 include "IndexedCertification.dfy"
 include "IndexedRootDenotation.dfy"
 include "OrderedMerge.dfy"
 include "PageWindow.dfy"
-include "Pagination.dfy"
 include "RecursiveEngine.dfy"
 include "RootDenotation.dfy"
 include "RoutingCertificate.dfy"
@@ -20,7 +21,6 @@ module EaclKernel {
   import Semantics
   import AcyclicEngine
   import OrderedMerge
-  import Pagination
   import TemporalSafety
   import WireFormat
 

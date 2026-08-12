@@ -5,7 +5,10 @@ EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_ac
 _Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
 1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
 2. One less external dependency to deploy & sync relationships.
-3. Fully consistent queries – an external authz system necessitates eventual consistency.
+3. No relationship-sync lag between the application database and authorization
+   data. Minimize-latency reads use the current database basis visible to the
+   local Peer; that is locally consistent, not a claim of global full
+   consistency.
 
 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eye on permissions.
 
@@ -46,45 +49,15 @@ Situated AuthZ offers some advantages for typical use-cases:
 - EACL uses a bounded, client-private, multi-tier cache. Repeated operations
   can reuse complete answers, while different operations can share compiled
   schema plans and unchanged relationship projections where their graph paths
-  overlap. The default mode reuses data only on the identical immutable
-  database value. Applications in which every authorization-relevant write
-  goes through EACL can opt into managed reuse across unrelated transactions.
-  The cache never changes authorization semantics and can be disabled globally
-  or per request. See [Caching](#caching) and the
-  [cache architecture guide](docs/cache.md).
+  overlap. The cache never changes authorization semantics and can be disabled
+  globally or per request. See [Caching](#caching).
 - Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates already known to be irrelevant.
 - Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-EACL page tokens bind database/source identity, graph head and exact locator,
-operation, query, ordering, and configuration. A walk remains pinned to the
-cursor's exact snapshot. If current has advanced, EACL reconstructs the
-authenticated original exact value; a missing value or incompatible freshness
-floor returns a typed failure.
-
-Relationship pages seek directly through the backend's immutable tuple indexes
-with an authenticated physical keyset edge and read at most the requested page
-plus one lookahead row. EACL does not promise one global, lexical, or
-cross-backend result order. It promises that a fixed query and cursor-pinned
-snapshot have one deterministic backend sequence: following its cursors does
-not move items between pages and emits no item twice.
-
-The authenticated database identity is checked before EACL selects a cursor basis or resolves
-query inputs. Sharing a stable page-token key across backend instances does not make a cursor
-portable to another logical Datomic database, even when a cloned database has matching schema,
-basis revisions, internal EIDs, and query shape.
-
-The internal functions in `eacl.datomic.impl.indexed` continue to accept a `db` directly. This is
-the escape hatch for deliberate `d/as-of`, `d/with`, or prospective database evaluation:
-construct the DB yourself, apply the EACL schema to a prospective DB when needed, keep one DB value
-for the operation, and perform the internal EID coercion yourself. Those calls do not publish into
-a connection-backed client's schema or result cache.
-
-Public `eacl4_` cursors are string-safe AES-GCM envelopes. Authentication is required so a caller cannot alter a result boundary, query binding, basis, or per-path frontier. Encryption is not required for pagination correctness, but it prevents internal Datomic eids and basis metadata from leaking through an otherwise merely Base64-encoded token. Token cryptography runs once when a page cursor is encoded or decoded; it is not part of each relationship-index traversal.
-
-The payload uses a compact binary encoding (`eacl.datomic.codec`) rather than EDN. Cursors are
-opaque and short-lived (5 minutes by default), so the format is not a compatibility surface:
-a token EACL does not recognise is rejected as `:eacl.pagination/invalid-cursor`, which every
-caller already handles for expiry.
+Public cursors are opaque, authenticated, and tied to the query and database
+snapshot that created them. A cursor walk stays on that snapshot even when the
+current database advances. If the backend can no longer reconstruct it, EACL
+returns a typed cursor-expired or snapshot-unavailable error.
 
 ## Project Status
 
@@ -92,47 +65,69 @@ caller already handles for expiry.
 > EACL is under active development.
 > I try hard not to introduce breaking changes, but if data structures change, the major version will increment.
 > The current version is the EACL 8.0 release candidate.
-> Releases are not tagged yet, so pin the Git SHA.
+> The four `8.0.0-SNAPSHOT` artifacts are available from Clojars under the
+> verified `dev.eacl` group.
 
 ## Modules
 
-The repository is a workspace with four independently consumable modules:
-
-- `modules/eacl`: public protocol and records, schema model/parser, consistency descriptors, shared authorization engine, and six-function backend SPI.
-- `modules/eacl-datomic`: the Datomic adapter, including consistency, encrypted cursors, object deletion, and authorization caching.
-- `modules/eacl-datascript`: the CLJ/CLJS DataScript adapter and its backend contract tests.
-- `modules/eacl-datahike`: the CLJ Datahike adapter, including both keyword and numeric attribute-reference representations.
-
-Choose the adapter you use:
+Choose the adapter for your backend. It brings in the shared EACL module at
+the same version:
 
 ```clojure
-{:deps
- {theronic/eacl-datomic
-  {:git/url "git@github.com:theronic/eacl.git"
-   :git/sha "REPLACE_WITH_SHA"
-   :deps/root "modules/eacl-datomic"}
+;; Datomic Pro
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-  ;; Or, for DataScript:
-  ;; theronic/eacl-datascript
-  ;; {:git/url "git@github.com:theronic/eacl.git"
-  ;;  :git/sha "REPLACE_WITH_SHA"
-  ;;  :deps/root "modules/eacl-datascript"}
+;; Datahike
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-  ;; Or, for Datahike:
-  ;; theronic/eacl-datahike
-  ;; {:git/url "git@github.com:theronic/eacl.git"
-  ;;  :git/sha "REPLACE_WITH_SHA"
-  ;;  :deps/root "modules/eacl-datahike"}
+;; DataScript
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-  ;; Core-only/backend authors:
-  ;; theronic/eacl
-  ;; {:git/url "git@github.com:theronic/eacl.git"
-  ;;  :git/sha "REPLACE_WITH_SHA"
-  ;;  :deps/root "modules/eacl"}
-  }}
+;; Core-only consumers and backend authors
+{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
-The root `deps.edn` is a development workspace, not the consumer artifact boundary. Build or install modules independently with `clojure -T:build-eacl install`, `clojure -T:build-eacl-datomic install`, `clojure -T:build-eacl-datascript install`, or `clojure -T:build-eacl-datahike install`.
+For Git-based development, pin a commit and select the module root:
+
+```clojure
+{:deps {dev.eacl/eacl-datomic
+        {:git/url "https://github.com/theronic/eacl.git"
+         :git/sha "REPLACE_WITH_FULL_SHA"
+         :deps/root "modules/eacl-datomic"}}}
+```
+
+For a full local checkout, keep the same library coordinate and use
+`:local/root`; the backend module resolves the sibling core module:
+
+```clojure
+{:deps {dev.eacl/eacl-datomic
+        {:local/root "/absolute/path/to/eacl/core/modules/eacl-datomic"}}}
+```
+
+<a id="source-dependencies-and-formal-tooling"></a>
+
+### Development from source
+
+Source consumers who compile the EACL kernel locally need the Clojure CLI,
+Node.js, and the repository-pinned Dafny, Apalache, and TLA+ tools. Prepare the
+generated JVM and browser runtimes before using a Git or `:local/root`
+dependency:
+
+```bash
+cd modules/eacl
+
+# Default Java target
+clojure -T:build prep
+
+# Example Java 17 target
+clojure -T:build prep :java-release 17
+clojure -T:build jar :java-release 17
+```
+
+Pass the same `:java-release` to `prep` and `jar` or `install`. The default is
+Java 26; source builds may target Java 8 through Java 26, subject to their
+backend and application dependencies. See [formal/README.md](formal/README.md)
+for tool versions and the full verification commands.
 
 EACL does not select a logging implementation. Applications remain responsible for their own logging backend and configuration.
 
@@ -167,17 +162,17 @@ To create a Relationship, first define your schema using `eacl/write-schema!`:
 ```clojure
 (eacl/write-schema! acl
   "definition user {}
-  
+
    definition account {
      relation owner: user
      relation viewer: user
-     
+
      permission admin = owner
    }
-   
+
    definition product {
      relation account: account
-     
+
      permission edit = account->admin
      permission view = account->admin + account->viewer
    }")
@@ -200,6 +195,9 @@ The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/
 - `(eacl/lookup-resources acl filters) => {:data [resources...] :page-info {...}}`
 - `(eacl/count-resources acl filters) => {:keys [count limit]}` counts the full result set.
 - `(eacl/count-subjects acl filters) => {:keys [count limit]}` counts the full subject result set.
+- `(eacl/expand-permission-tree acl filters) => {:expanded-at token :tree-root node}`
+  returns the shallow SpiceDB-compatible expansion for one resource and
+  relation or permission.
 
 Pass `:count-limit n` to either count operation to bound work. The result then includes
 `:truncated?`; `true` means at least one additional result exists.
@@ -225,12 +223,74 @@ All list APIs use the v8 Relay pagination contract:
 
 - `(eacl/write-schema! acl schema-string)` parses a SpiceDB schema DSL string, validates it, computes deltas against existing schema, checks for orphaned relationships, and transacts changes atomically.
 - `(eacl/read-schema acl)` returns the current schema as a map of `{:relations [...] :permissions [...]}`.
-- `(eacl/expand-permission-tree acl filters)` is not impl. yet. It is a low priority to implement.
 
-All schema changes must use `eacl/write-schema!`. EACL clients deliberately do not detect raw
-definition transactions on every authorization call. After an out-of-band schema write, recreate
-other clients (or call `eacl.datomic.integrity/client-schema-status` explicitly to detect the
-generation mismatch).
+All schema changes must use `eacl/write-schema!`. If an application changes
+the authorization schema directly, follow the recovery procedure in
+[Caching](#caching) before resuming authorization traffic.
+
+### Permission-tree expansion
+
+Expansion accepts exactly `:resource`, `:permission`, and the optional
+`:consistency` and `:timeout-ms` keys:
+
+```clojure
+(eacl/expand-permission-tree
+ acl
+ {:resource (eacl/spice-object :document "readme")
+  :permission :view
+  :consistency consistency/fully-consistent
+  :timeout-ms 5000})
+;; =>
+;; {:expanded-at "eacl_z3_..."
+;;  :tree-root
+;;  {:expanded-object {:type :document :id "readme"}
+;;   :expanded-relation :view
+;;   :intermediate
+;;   {:operation :union
+;;    :children
+;;    [{:expanded-object {:type :document :id "readme"}
+;;      :expanded-relation :viewer
+;;      :leaf {:subjects [{:type :user :id "alice"}]}}]}}}
+```
+
+A node contains exactly one of `:leaf` or `:intermediate`. Permission and
+arrow boundaries remain visible; expansion is shallow in the SpiceDB sense,
+so leaves contain subjects found by direct relation scans rather than a
+flattened effective-membership set. To decide whether a subject has the
+permission, use `can?`; do not infer authorization by flattening a tree.
+
+Child and subject vector order is non-semantic and may differ by backend.
+Empty branches and duplicate paths are preserved. Compare trees as annotated
+topology with child/subject multisets when order is irrelevant. The exact
+supplied root ID is retained, while scanned IDs are converted with the
+selected client's object-ID codec.
+
+The response tree and `:expanded-at` token are derived from the same selected
+immutable snapshot. Replay the token with
+`(consistency/at-exact-snapshot (:expanded-at response))` only on a backend
+that advertises exact historical selection; otherwise use it as an
+at-least-as-fresh causal floor. Unsupported consistency, unavailable history,
+deadlines, unknown roots, cycles, codec failures, adapter-contract failures,
+and structural limits produce typed all-or-error failures—no lazy or partial
+tree is returned.
+
+Clients accept positive exact-integer `:permission-tree-limits` overrides.
+They are configuration-only, not request keys:
+
+```clojure
+(eacl.datascript.core/make-client
+ conn
+ {:permission-tree-limits
+  {:max-depth 50
+   :max-schema-components 100000
+   :max-relationship-values 100000
+   :max-tree-nodes 100000
+   :max-leaf-subjects 100000}})
+```
+
+Every bundled backend uses the same portable expansion kernel. Their only
+observable differences are supported consistency modes, historical retention,
+native scan order, and configured identity conversion.
 
 ### Example Queries
 
@@ -290,12 +350,10 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
 
 Forward and backward pages return results in the same order for one fixed query
 and cursor-pinned snapshot. Acyclic lookup uses backend internal-ID order,
-recursive lookup uses deterministic traversal order, and relationship reads use
-backend tuple-index order. These are pagination orders, not a global,
-cross-backend, or domain sort order. Backward pagination returns the previous
-window; it does not reverse the result order. Bare `:last` without `:before` is
-not supported for recursive lookup because it requires traversing the full
-closure.
+recursive lookup uses deterministic traversal order that is stable across page
+sizes, and relationship reads use backend tuple-index order. These are
+pagination orders, not a global, cross-backend, or domain sort order. Backward
+pagination returns the previous window; it does not reverse the result order.
 
 ## Datomic Pro Quickstart
 
@@ -304,10 +362,7 @@ The following example is contained in [eacl-example](https://github.com/theronic
 Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {theronic/eacl-datomic
-        {:git/url "git@github.com:theronic/eacl.git"
-         :git/sha "REPLACE_WITH_SHA"
-         :deps/root "modules/eacl-datomic"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -331,23 +386,23 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:object-id->ident (fn [obj-id] [:eacl/id obj-id])
+   {:object-id->lookup-ref (fn [obj-id] [:eacl/id obj-id])
     :entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))}))
 
 ; Write your permission schema using SpiceDB schema DSL:
 (eacl/write-schema! acl
   "definition user {}
-   
+
    definition account {
      relation owner: user
-     
+
      permission admin = owner
      permission update = admin
    }
-   
+
    definition product {
      relation account: account
-     
+
      permission edit = account->admin
    }")
 
@@ -355,9 +410,9 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 @(d/transact conn
   [{:eacl/id "user-1"}
    {:eacl/id "user-2"}
-   
+
    {:eacl/id "account-1"}
-   
+
    {:eacl/id "product-1"}
    {:eacl/id "product-2"}])
 
@@ -367,7 +422,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))
 (def ->product (partial spice-object :product))
-  
+
 ; Write some Relationships to EACL (you can also transact this with your entities):
 (eacl/create-relationships! acl
   [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))
@@ -403,10 +458,7 @@ For Clojure/JVM applications backed by Datahike, add the Datahike adapter
 dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {theronic/eacl-datahike
-        {:git/url "git@github.com:theronic/eacl.git"
-         :git/sha "REPLACE_WITH_SHA"
-         :deps/root "modules/eacl-datahike"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -454,10 +506,7 @@ dependency to your `deps.edn` file:
 For server-side or browser demos, use the DataScript adapter:
 
 ```clojure
-{:deps {theronic/eacl-datascript
-        {:git/url "git@github.com:theronic/eacl.git"
-         :git/sha "REPLACE_WITH_SHA"
-         :deps/root "modules/eacl-datascript"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -493,12 +542,6 @@ For server-side or browser demos, use the DataScript adapter:
 ; => true
 ```
 
-Run the shared CLJS contract suite with:
-
-```clojure
-clojure -M:datascript-cljs-test
-```
-
 ## EACL Schema
 
 EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/write-schema!` to parse, validate, and transact your schema:
@@ -509,14 +552,14 @@ EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/w
 
    definition account {
      relation owner: user
-     
+
      permission admin = owner
      permission update = admin
    }
-   
+
    definition product {
      relation account: account
-     
+
      permission edit = account->admin
    }")
 ```
@@ -534,7 +577,7 @@ EACL uses the SpiceDB schema DSL to define your authorization model. Use `eacl/w
 
 When you call `write-schema!` with a modified schema, EACL:
 1. Parses the new schema
-2. Computes deltas (additions/retractions) against existing schema  
+2. Computes deltas (additions/retractions) against existing schema
 3. Validates retractions won't orphan existing relationships
 4. Transacts changes atomically
 
@@ -550,7 +593,7 @@ definition account {
 }
 ```
 
-We define two resource types, `user` & `account`, where any `user` subject can be the `:owner` of an `account` resource. 
+We define two resource types, `user` & `account`, where any `user` subject can be the `:owner` of an `account` resource.
 
 A Relationship is just a 3-tuple of `[subject relation resource]`:
 ```clojure
@@ -596,7 +639,7 @@ Now let's create a Relationship between a `user` subject and an `account` resour
 
 *Note*: `eacl/create-relationships!` is just a wrapper over `eacl/write-relationships!` with the `:create` operation. It will throw if there is an existing relationship that matches input.
 
-### Permission Checks 
+### Permission Checks
 
 Now that we have created a Relationship between a user and an account, we call `eacl/can?` to check if a user has the `:update` permission on the ACME account, e.g. "can Alice `:update` the ACME account?"
 ```clojure
@@ -623,14 +666,14 @@ Arrow permissions imply a graph hop. Arrows are designated by `->` in the SpiceD
 
    definition account {
      relation owner: user
-     
+
      permission admin = owner
      permission update = admin
    }
 
    definition product {
      relation account: account
-     
+
      permission edit = account->admin
    }")
 ```
@@ -649,11 +692,8 @@ Now you can use `can?` to check those arrow permissions:
 => false ; if Bob is not the :owner of the Account for that Product.
 ```
 
-Internally, EACL models relation and permission definitions as entities.
-Relationships are two endpoint-local datoms: a forward value on the subject
-and a reverse value on the resource. Datomic Pro and Datahike declare
-heterogeneous tuples; DataScript indexes ordinary vectors with the same
-component order.
+Internally, EACL stores relation and permission definitions as entities and
+stores each relationship in both directions for efficient traversal.
 
 ## EACL ID Configuration
 
@@ -662,7 +702,7 @@ SpiceDB uses strings for all external subject & resource IDs, whereas EACL uses 
 *Note*: internal Datomic eids should not be exposed to consumers, because those eids are not guaranteed to be stable after a DB rebuild.
 
 `eacl.datomic.core/make-client` accepts a Datomic connection and
-`:entid->object-id`/`:object-id->ident` functions for converting between
+`:entid->object-id`/`:object-id->lookup-ref` functions for converting between
 internal entity IDs and external object IDs.
 
 It is common to attach a unique UUID to permissioned entities for exposing them externally, or you can convert external->internal at your call sites. Here is how you can configure EACL to convert to/from a unique attribute named `:your/id`:
@@ -670,78 +710,86 @@ It is common to attach a unique UUID to permissioned entities for exposing them 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [db eid] (:your/id (d/entity db eid)))
-            :object-id->ident (fn [obj-id] [:your/id obj-id])}))
+            :object-id->lookup-ref (fn [obj-id] [:your/id obj-id])}))
 ```
 
-Note that this attribute should have property `:db/unique :db.unique/identity`. 
+Note that this attribute should have property `:db/unique :db.unique/identity`.
 
 The default options are to use the built-in EACL string attr `:eacl/id`, but you can use the internal Datomic eids with the following "identity" functions:
 ```clojure
 (def acl (eacl.datomic.core/make-client conn
            {:entid->object-id (fn [_db eid] eid)
-            :object-id->ident (fn [obj-id] obj-id)}))
+            :object-id->lookup-ref (fn [obj-id] obj-id)}))
 ```
 
 `make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
 Page tokens expire after 5 minutes by default; tune with
-`:page-token-ttl-seconds`.
+`:cursor-ttl-seconds`.
 
 ### Caching
 
-Each EACL client owns a bounded, private, multi-tier cache:
+Caching is automatic, bounded, and private to each EACL client. Cache data is
+never written to the application database. EACL first looks for an answer from
+the exact immutable database value selected by the request. It may reuse an
+older answer only when it can establish that the relevant schema and
+relationships have not changed. If it cannot establish that safely, it runs the
+authorization query normally.
 
-- complete answers accelerate repeated identical authorization operations;
-- shared relationship projections and membership probes let different queries
-  reuse overlapping graph work;
-- completed graph denotations are reused by compatible operations on the same
-  immutable snapshot; and
-- compiled schema paths and recursive plans are shared across queries using
-  the same schema generation.
+A long-running request can continue using the immutable database value it
+started with while newer requests see newer data. EACL does not promise cache
+reuse for arbitrary `as-of`, `since`, filtered, speculative, or
+caller-constructed database values.
 
-Every backend defaults to the conservative `:coherence-authority :unknown`:
-entries are reused only for the exact immutable database value on which they
-were computed, which stays correct even when authorization data is written
-outside EACL (a raw `transact!`, a fixture load, another library). Pass
-`:coherence-authority :managed` — an explicit contract that every schema and
-relationship mutation goes through EACL's client APIs — to let unchanged
-cache portions survive unrelated transactions; a schema change invalidates
-the managed generation.
+Cache coherence is guaranteed only when authorization mutations use EACL's
+supported paths:
 
-Most applications need no cache configuration. To set a completed-answer
-weight budget (answers are byte-weight bounded with least-recently-used
-eviction; default 16 MiB):
+- Change schemas with `eacl/write-schema!`.
+- Add and remove relationships with EACL relationship APIs, or transact
+  EACL-produced transaction data intact.
+- Delete permissioned entities with the documented
+  [safe deletion flow](#deleting-a-permissioned-entity).
 
-```clojure
-(def acl
-  (eacl.datomic.core/make-client
-   conn
-   {:cache {:subproblem-cache {:answer-max-weight (* 32 1024 1024)}}}))
-```
+Ordinary application datoms that do not affect authorization are unrestricted.
+If an application changes EACL schema or relationship storage directly, splits
+EACL transaction data, changes the identity of a permissioned object outside
+the documented contract, or leaves relationships behind during deletion,
+cached authorization results may be stale.
 
-Disable caching for a client without changing authorization semantics:
+To recover after an unsupported authorization mutation:
+
+1. Stop affected authorization traffic in every process.
+2. Repair the schema, identity, or relationship data through a supported EACL
+   path.
+3. Expire or recreate every affected EACL client in every process.
+4. Resume traffic only after repair and cache rotation are complete.
+
+Cache expiry removes remembered answers; it does not repair ghost
+relationships. Rewriting an unchanged schema is also not a cache flush.
+
+Most applications need no cache configuration. Disable caching for one client
+with `eacl.cache/no-cache`:
 
 ```clojure
 (require '[eacl.cache :as eacl-cache])
 
-(def acl (eacl.datomic.core/make-client conn {:cache eacl-cache/no-cache}))
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:cache eacl-cache/no-cache}))
 ```
 
-Or bypass lookup and publication for one request:
+Or bypass the cache for one request:
 
 ```clojure
-(eacl/can? acl {:subject alice :permission :view :resource doc :cache? false})
-
-(eacl/lookup-resources acl {:subject alice
-                            :permission :view
-                            :resource/type :doc
-                            :cache? false})
+(eacl/can? acl
+           {:subject alice
+            :permission :view
+            :resource doc
+            :cache? false})
 ```
 
-`:cache?` is accepted by the map arity of `can?` and by
-`lookup-resources`, `lookup-subjects`, `count-resources`, `count-subjects`, and
-`read-relationships`. Lookups and counts expose `:cached?` and `:cache-basis`;
-`can?` returns only a Boolean. Call `check-permission` when the caller also
-needs provenance:
+Use `eacl/check-permission` when a caller needs cache provenance in addition
+to the Boolean decision:
 
 ```clojure
 (eacl/check-permission
@@ -752,124 +800,92 @@ needs provenance:
 ;; => {:allowed? true, :cached? false, :cache-basis ...}
 ```
 
-The detailed API is additive. Existing third-party `IAuthorization`
-implementations remain compatible; unless they implement the optional
-`IDetailedAuthorization` protocol, `check-permission` delegates to `can?` and
-reports an uncached decision.
-
-DataScript and Datahike keep completed answers in a client-private native
-cache. Inspect or expire that exact cache through the backend API:
+Inspect or expire a client through its backend API:
 
 ```clojure
+(eacl.datomic.core/cache-stats acl)
+(eacl.datomic.core/expire-cache! acl)
+
+(eacl.datahike.core/cache-stats acl)
+(eacl.datahike.core/expire-cache! acl)
+
 (eacl.datascript.core/cache-stats acl)
 (eacl.datascript.core/expire-cache! acl)
 ```
 
-Cache data is never written to the application's database.
+After a database restore, reset, branch replacement, or other operation that
+can replace history, expire or replace every affected client before serving
+requests. Multi-process deployments that exchange cursors or tokens must
+coordinate the source-lifecycle rotation described in the
+[cache guide](docs/cache.md).
 
-Call the backend's `expire-cache!` to clear a client's in-memory cache on
-demand. For cache tiers, validity rules, eviction, concurrency, metrics,
-tuning, and performance guidance, read the
-[cache architecture guide](docs/cache.md).
+Custom ID converters remain local to one client unless every participating
+process uses the same deterministic converter and stable adapter fingerprint.
+
+For cache tuning, custom identity codecs, metrics, proof availability, and the
+full recovery and correctness model, read
+[Cache behavior and coherence](docs/cache.md).
 
 ### Consistency and Zed tokens
 
-Authorization defaults to the immutable DB currently visible to the local
-backend. It does not synchronize and does not select history. Mutation
-responses under managed authority return an authenticated Zed token for
-explicit at-least/exact workflows. Reads accept these descriptors:
+Authorization defaults to the immutable database value currently visible to
+the local backend. Mutation responses include an authenticated revision token.
+Reads can request stronger behavior when the backend supports it:
 
 ```clojure
 (require '[eacl.spicedb.consistency :as consistency])
-(require '[eacl.datomic.core :as eacl-datomic])
 
-;; Default: current immutable DB visible to this Peer/connection.
-(eacl/can? acl subject :view resource consistency/minimize-latency)
+;; Default: current local database value.
+(eacl/can? acl subject :view resource
+           consistency/minimize-latency)
 
-;; Explicit authoritative synchronization barrier. On Datomic this performs
-;; bounded zero-argument (d/sync conn).
-(eacl/can? acl subject :view resource consistency/fully-consistent)
+;; Synchronize before selecting the database value.
+(eacl/can? acl subject :view resource
+           consistency/fully-consistent)
 
-;; Select a snapshot containing the token's mutation anchor. Datomic may use
-;; targeted (d/sync conn T) as a bounded waiting hint.
+;; Read at least as new as an earlier EACL mutation.
 (eacl/can? acl subject :view resource
            (consistency/at-least-as-fresh write-token))
 
-;; Exact historical snapshot. Completed-answer caching is bypassed; Datomic
-;; reconstructs the authenticated basis with d/as-of.
+;; Read the exact historical snapshot named by a token, if available.
 (eacl/can? acl subject :view resource
            (consistency/at-exact-snapshot prior-token))
-
-;; Construct lower-bound tokens without synchronizing.
-(def now-token (eacl-datomic/current-zed-token acl))
 ```
 
-Datomic `fully-consistent` performs a bounded zero-argument `d/sync` barrier.
-The default does not.
-At-least waits and exact/cursor reconstruction are bounded by
-`:consistency-sync-timeout-ms` (30,000 ms by default). Failure returns a typed
-error; it never falls back to an older or incomparable graph. DataScript and
-Datahike advertise only the modes their configured source can establish.
+Datomic supports synchronization and exact historical reconstruction while the
+required history remains available. Datahike advertises only the guarantees
+supported by its configured store and writer. DataScript does not provide
+general historical snapshot reconstruction. If a backend cannot satisfy the
+requested guarantee, EACL returns a typed error rather than silently selecting
+a different snapshot.
 
-Zed-token authentication prevents a frontend from changing the database or revision, but it does
-not make a valid token single-use, bind it to an end user, prevent replay, or authorize historical
-access. For a token echoed through an untrusted frontend, the backend should normally choose
-`at-least-as-fresh`. Selecting `at-exact-snapshot` permits historical evaluation and must be a
-backend-controlled, independently authorized decision; do not let the frontend choose the
-consistency descriptor.
+Treat Zed tokens as opaque. A token proves freshness only for its original
+backend, database, branch, and lifecycle. For a token returned through an
+untrusted frontend, the backend should normally choose
+`at-least-as-fresh`. Do not let a frontend request exact historical
+authorization without a separate authorization decision.
 
-Optional bounded checkpoints let callers request "at least as fresh as N seconds ago" without
-doing arithmetic on `t`:
+Multi-process deployments must configure the same cursor and Zed-token
+verification keys on every instance that accepts the same tokens:
 
 ```clojure
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:coherence-authority :managed
-    :cache {:checkpoints true}}))
-
-(def lower-bound
-  (eacl-datomic/zed-token-at-least-seconds-ago acl 30))
-
-(eacl/can? acl subject :view resource
-           (consistency/at-least-as-fresh lower-bound))
+   {:security-key "32+ bytes of shared secret key material"
+    :security-kid :cursor-2026-07
+    :zed-token-keyring {:zed-2026-06 old-zed-root
+                        :zed-2026-07 current-zed-root}
+    :zed-token-kid :zed-2026-07}))
 ```
 
-Checkpoints contain only sampled monotonic capture times and observed Long revisions. They retain
-no DB values, start no timer, are disabled by default, and never call `d/sync`.
+Retain old verification keys for the intended token lifetime during key
+rotation. The default keys are client-local, so default cursors and tokens do
+not survive restarts or load balancing.
 
-`:recursive-traversal-limits` tunes hard safety ceilings on recursive permission traversal (see [Limitations](#limitations-deficiencies--gotchas)):
-
-```clojure
-(def acl (eacl.datomic.core/make-client conn
-           {:recursive-traversal-limits {:max-derived-grants 1000000}}))
-```
-
-Keys you omit keep their defaults (`eacl.datomic.impl.indexed/default-recursive-traversal-limits`), so a partial override cannot silently disable the limits it does not mention.
-These are heap-protection limits, not ordinary page-size controls. Prefer `:count-limit` for
-situated authorization counts; raise traversal ceilings only after load-testing the host JVM.
-
-For multi-peer deployments, configure stable shared page- and Zed-token keys so `eacl4_...`
-cursors and frontend-returned `eacl_z3_...` tokens survive restarts and can be verified by every
-backend:
-
-```clojure
-(def acl (eacl.datomic.core/make-client conn
-           {:coherence-authority :managed
-            :page-token-key "32+ bytes of shared secret key material"
-            :page-token-kid :page-2026-07
-            :zed-token-keyring {:zed-2026-06 old-zed-root
-                                :zed-2026-07 current-zed-root}
-            :zed-token-kid :zed-2026-07
-            :consistency-sync-timeout-ms 10000}))
-```
-
-New Zed tokens are signed only with `:zed-token-kid`; all keys explicitly retained in
-`:zed-token-keyring` remain verification keys during a rotation overlap. Remove an old key only
-after the intended outstanding-token lifetime. A single `:zed-token-key` is shorthand for a
-one-key ring. If no dedicated Zed key is configured, EACL derives domain-separated signing keys
-from the page-token keyring. The default page key is random per client instance, so the derived
-default is fail-closed but not portable across clients, restarts, or backend instances.
+See the [backend guide](docs/v8-backend-modules-and-upgrade.md) for exact
+capabilities, synchronization timeouts, checkpoints, key rotation, and
+recursive traversal controls.
 
 ### Unknown object IDs
 
@@ -889,93 +905,100 @@ ID so it can be repaired.
 ### Deleting a permissioned entity
 
 > [!IMPORTANT]
-> `:db.fn/retractEntity` does **not** remove an entity's EACL relationships. Delete those relationships first; `eacl/delete-object!` is a convenience helper for doing so.
+> Do not call the backend's ordinary entity-retraction operation on a
+> permissioned entity before removing its EACL relationships.
 
-A Datomic or Datahike relationship is two datoms living on two different
-entities, each naming its peer *inside a tuple value*:
+EACL stores both directions of a relationship. A native entity retraction
+removes the half stored on the target, but it cannot follow the peer ID stored
+inside the other endpoint's tuple or vector. The surviving half is a **ghost
+relationship** and can continue granting access.
 
-```
-[<subject-eid>  :eacl.v7.relationship/subject-type+relation+resource-type+resource  [subject-type relation-eid resource-type <resource-eid>]]
-[<resource-eid> :eacl.v7.relationship/resource-type+relation+subject-type+subject   [resource-type relation-eid subject-type <subject-eid>]]
-```
-
-Datomic's `:db.fn/retractEntity` follows `:db.type/ref` *attributes*; it does not follow ref-typed *components of a heterogeneous tuple* (and a heterogeneous tuple cannot be `:db/isComponent`). So retracting a permissioned entity directly removes only the half stored on that entity and leaves the peer's half behind, where it keeps answering queries — a deleted resource still passes `can?`, a deleted subject still appears in `lookup-subjects` — and the survivor is unreachable through `write-relationships!`, because resolving either endpoint now throws `:eacl/unknown-object`.
-
-The expected workflow is to call `eacl/delete-relationships!` for relationships known by the
-consumer, then retract the entity. `delete-object!` is a convenient catch-all:
+The portable deletion sequence is:
 
 ```clojure
-(eacl/delete-object! acl (->account "acme"))   ; removes both halves of every relationship touching it
+;; Remove every relationship touching the object in both directions.
+(eacl/delete-object! acl (->account "acme"))
+
+;; Then delete the application entity with the backend's normal operation.
 @(d/transact conn [[:db.fn/retractEntity account-eid]])
 ```
 
-Or in one application transaction, using the tx-data directly:
+`delete-object!` removes relationships but does not delete the application
+entity. It is idempotent and batches high-degree cleanup.
+
+Backends that support transaction functions also provide an optional atomic
+`:eacl.fn/retractEntity`. It removes both relationship halves and the target
+entity in one transaction. The function is not installed by the normal EACL
+schema; enabling it is an explicit deployment step.
+
+| Backend/configuration | Safe-retraction support |
+| --- | --- |
+| Datomic Peer/Pro | Named `:eacl.fn/retractEntity` |
+| DataScript CLJ/CLJS | Named or direct in-process function |
+| Datahike with an in-process writer | Named or direct, depending on schema configuration |
+| Datahike remote/function-unsafe writer | Use `delete-object!` and ordinary deletion |
+
+Datomic example:
 
 ```clojure
-(require '[eacl.datomic.impl :as impl])
+(require '[datomic.api :as d]
+         '[eacl.datomic.safe-retraction :as safe-retraction])
 
-@(d/transact conn (conj (impl/tx-delete-object (d/db conn) account-eid)
-                        [:db.fn/retractEntity account-eid]))
+;; Privileged, idempotent deployment step.
+(safe-retraction/install! conn)
+
+@(d/transact
+  conn
+  (safe-retraction/retract-entity-tx-data [:eacl/id "acme"]))
 ```
 
-`delete-object!` retracts relationships only — retracting the entity itself stays your call. It is idempotent, and it also accepts the raw eid of an entity you already retracted, which is how you clean up after the fact.
-
-EACL does not prevent direct `:db.fn/retractEntity` calls or add existence probes to every read.
-To detect and repair relationship halves left by such calls, use the explicit offline integrity
-API (it scans both relationship indexes):
+The target can be a numeric entity ID or a valid lookup ref. Multiple and
+repeated invocations compose in one transaction:
 
 ```clojure
-(require '[eacl.datomic.integrity :as integrity])
-
-(integrity/dangling-relationship-report (d/db conn) {:sample-size 20})
-
-(doseq [tx-data (integrity/repair-tx-batches (d/db conn) {:batch-size 1000})]
-  @(d/transact conn tx-data))
+@(d/transact conn [[:eacl.fn/retractEntity 1]
+                   [:eacl.fn/retractEntity 2]
+                   [:eacl.fn/retractEntity 1]])
 ```
 
-Datahike uses the same two endpoint tuple datoms and therefore has the same
-deletion contract. Its offline detector is
-`eacl.datahike.integrity/dangling-relationship-report`; repair a reported
-endpoint through `eacl/delete-object!` with its raw eid so the v3 mutation
-journal and cache dependencies are advanced atomically.
+A numeric entity ID can repair peer-side ghosts after an earlier native
+retraction. A lookup ref that no longer resolves cannot reveal the former
+entity ID, so it cannot perform that repair.
 
-DataScript uses the same two endpoint values as indexed ordinary vectors, so
-its embedded peer eid is not a ref and has the same deletion contract. Its
-read-only detector is
-`eacl.datascript.integrity/dangling-relationship-report`.
+Do not add relationships involving a target in the same application
+transaction that safely retracts it. Prefer `delete-object!` for very
+high-degree targets so cleanup can be batched.
+
+Use the backend's `safe-retraction/support-descriptor` before choosing a
+Datahike or DataScript deployment mode. Installation, direct-mode examples,
+restore behavior, integrity reports, and repair tools are documented in the
+adapter guides:
+
+- [Datomic](modules/eacl-datomic/README.md#optional-atomic-entity-retraction)
+- [Datahike](modules/eacl-datahike/README.md#optional-atomic-entity-retraction)
+- [DataScript](modules/eacl-datascript/README.md#optional-atomic-entity-retraction)
 
 ## Schema Syntax
 
 EACL uses the SpiceDB schema DSL. Use `eacl/write-schema!` to define your schema:
+Like SpiceDB, each `relation` or `permission` declaration ends at a newline;
+put the next declaration and the definition's closing brace on a later line.
+Empty definitions may still use the compact `definition user {}` form.
 
 ```clojure
 (eacl/write-schema! acl
   "definition user {}
-   
+
    definition account {
      relation owner: user
      permission admin = owner
    }
-   
+
    definition server {
      relation account: account
      permission admin = account->admin
    }")
 ```
-
-### Internal Definition Records
-
-`eacl.datomic.impl/Relation` and `Permission` are implementation records used
-internally and by tests. Transacting them directly is not a supported schema
-API: it bypasses validation, the
-schema-generation stamp, and client cache replacement. Use `eacl/write-schema!` for every schema
-change. If an operational tool bypasses that boundary, recreate every affected client.
-
-`Permission` supports the following spec syntax:
-- `{:relation some_relation}` - direct permission via relation
-- `{:permission some_permission}` - permission via another permission  
-- `{:arrow source :permission via_permission}` - arrow to permission
-- `{:arrow source :relation via_relation}` - arrow to relation
 
 ## Example Schema
 
@@ -992,14 +1015,14 @@ Here's a complete example of defining a schema with `eacl/write-schema!`:
    definition account {
      relation platform: platform
      relation owner: user
-     
+
      permission admin = owner + platform->super_admin
    }
 
    definition server {
      relation account: account
      relation shared_admin: user
-     
+
      permission reboot = account->admin + shared_admin
    }")
 ```
@@ -1008,7 +1031,6 @@ This schema defines:
 - `platform` resources can have `super_admin` users
 - `account` resources can have a `platform` and `owner`, with `admin` permission granted to owners and platform super_admins
 - `server` resources belong to an `account` and can have `shared_admin` users, with `reboot` permission granted to account admins and shared_admins
-```
 
 Now you can transact relationships. The usual way is `eacl/create-relationships!` against existing entities (see Quickstart). To create entities and relationships **in the same transaction**, use `eacl.datomic.impl/tx-relationship` with `{:allow-tempids? true}` — tempid pass-through is opt-in because a typo'd ID would otherwise silently create a ghost entity:
 
@@ -1031,9 +1053,10 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 
 ## Limitations, Deficiencies & Gotchas:
 
-- *Exact snapshots require Datomic history:* `at-exact-snapshot` and continued cursors reconstruct
-  a historical DB while bypassing completed-answer caching. If the authenticated basis is no longer reconstructable, EACL
-  returns a typed snapshot-unavailable/cursor-expired error rather than falling forward.
+- *Exact snapshots require backend history:* `at-exact-snapshot` and continued
+  cursors require the backend to reconstruct the selected database value. If
+  it is unavailable, EACL returns a typed snapshot-unavailable or
+  cursor-expired error rather than silently using a newer value.
 - *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
   - `permission admin = owner + shared_admin` is valid,
   - but `permission admin = owner - banned_member` is not (note the `-` Negation operator).
@@ -1043,28 +1066,21 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   - but `permission arrow = relation->subrelation->permission` is not. To implement this would require anonymous shadow relations. May require schema changes.
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
-- `expand-permission-tree` is not implemented yet.
-- *Managed-current caching requires complete writer authority:* managed EACL
-  writes atomically update the affected relation transaction stamps.
-  DataScript assumes this contract by default; mixed or hand-written
-  DataScript authorization writers must select `:coherence-authority :unknown`.
-  Datomic and Datahike select managed authority explicitly only when every
-  schema, relationship, caveat, and future authorization-dependency writer
-  follows that protocol. Unknown authority safely retains only answers from
-  the identical immutable DB generation.
-- *Deleting entities:* Datomic and Datahike entity retraction does not remove
-  peer relationship tuples. Consumers should delete relationships first;
-  `delete-object!` is a convenience helper, and the backend integrity
-  namespaces provide explicit detection — see
+- *Expansion is structural, not a membership proof:* permission trees preserve
+  relation, permission, union, and arrow boundaries. Use `can?` for an
+  authorization decision.
+- *Cache coherence requires EACL authorization writers:* Bypassing EACL for
+  schema, relationship, permissioned identity, or deletion mutations can
+  leave cached answers stale. Stop affected traffic, repair the data, and
+  expire every affected client before resuming.
+- *Deleting entities:* Native entity retraction does not remove the
+  relationship stored at the other endpoint. Delete relationships first with
+  `delete-object!`, or use the optional safe-retraction function — see
   [Deleting a permissioned entity](#deleting-a-permissioned-entity).
-- *Recursive cursors benefit from their continuation:* a permission that transitively depends on itself
-  (`permission read = reader + parent->read`) is evaluated in traversal order. Sequential cache
-  hits resume the traversal and avoid `O(N²/page-size)` enumeration. An evicted, expired, rejected,
-  or unavailable continuation replays against the cursor's historical DB and schema, including
-  after a relevant live write.
-  Recursive work retains hard heap-protection ceilings, and counts use one traversal. Use
-  `:count-limit` to bound count work; do not raise `:recursive-traversal-limits` without JVM load
-  tests.
+- *Recursive permissions have safety limits:* use `:count-limit` to bound
+  counts, and raise recursive traversal limits only after load testing. If a
+  cached continuation is unavailable, EACL may replay earlier traversal work
+  to continue a cursor.
 - *Return order:* EACL makes no global, lexical, or cross-backend ordering
   promise. For a fixed query and cursor-pinned snapshot, acyclic lookups use
   backend internal-ID order, relationship reads use backend tuple-index order,
@@ -1073,30 +1089,32 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   domain key after reading if presentation order matters. SpiceDB likewise
   returns results in discovery or schema order.
 
-## How to Run All Tests
+## Differences from SpiceDB
 
-```shell
-clj -X:test
-```
-## Run Test for One Namespace
+EACL follows SpiceDB's schema vocabulary and shared authorization semantics,
+but it is not a byte-for-byte or operational clone:
 
-```bash
-clj -M:test -n eacl.datomic.impl.indexed_test
-```
-
-## Run Tests for Multiple Namespaces
-
-```bash
-clj -X:test :nses '["my-namespace1" "my-namespace2"]'
-```
-
-Note difference between `-M` & `-X` switches.
-
-## Run a single test (under deftest)
-
-```bash
-clojure -M:test -v my.namespace/test-name
-```
+- Result order is backend-defined. Compare lookup and relationship results as
+  sets unless your application explicitly sorts them; never compare EACL and
+  SpiceDB page membership or cursor bytes.
+- EACL cursors pin the database snapshot selected by page one. Later writes do
+  not appear midway through an EACL cursor walk. In verified SpiceDB v1.56.0
+  behavior, native minimize-latency lookup cursors can admit later writes;
+  EACL deliberately does not reproduce that behavior.
+- Omitted consistency means `:minimize-latency`. For EACL's current Peer
+  backend that is the current basis visible to the local Peer. SpiceDB may use
+  an optimized cached revision, so freshness can differ. Use each backend's
+  own causal token with `at-least-as-fresh` or `at-exact-snapshot` when the
+  distinction matters; tokens and cursors are backend-local.
+- EACL provides `count-resources`, `count-subjects`, a controllable EACL result
+  cache, and atomic logical `delete-object!` behavior on supported situated
+  backends. These do not have direct SpiceDB API equivalents.
+- EACL currently supports a smaller schema subset: unions and its documented
+  arrow forms, but not caveats, wildcard subjects, expiration, intersections,
+  exclusions, or subject relations.
+- A relationship filter containing `:subject/id` must also contain
+  `:subject/type`. This fails closed instead of interpreting one external ID
+  across every subject definition.
 
 ## Funding
 

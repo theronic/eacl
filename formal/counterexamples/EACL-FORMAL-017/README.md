@@ -12,8 +12,7 @@ flight compare-and-set discovered the existing flight and silently changed the
 outcome to `join-computation`. The generated transition remained observational
 rather than fully authoritative for that state.
 
-Resolution selection now observes the represented entry and coordinator flight
-under the same lifecycle-stable store lock. A registered flight is
-`computing` whether or not tier admission represented it, so generated
-`join-computation` is selected before the host joins it. The collision path
-also re-dispatches the generated `computing` decision defensively.
+The final v8 simplification removes coordinator flights and join behavior.
+Unrepresented misses compute independently; a compatible completed value may
+win bounded publication, but no request waits for or changes its result to
+another request's in-flight computation.

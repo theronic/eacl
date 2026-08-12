@@ -10,16 +10,18 @@ reused.
 | Schema path normalization and compilation | `eacl.engine.v8/calc-permission-paths`, `get-permission-paths`, `frontier-permission-paths` | `can?`, forward/reverse lookup, count |
 | Permission dependency closure and recursion routing | `permission-relationship-eids`, `permission-schema-nodes`, `permission-schema-components`, `traversal-permission?` | lookup/count cache keys, cursor proofs, acyclic vs recursive engine selection |
 | Direct and arrow path matching | `direct-match-datoms-in-relationship-index`, `arrow-via-intermediates`, path evaluators in `eacl.engine.v8` | `can?`, lookup, count |
-| Recursive rule compilation and worklists | `compile-recursive-rules`, recursive forward/reverse traversal functions | recursive `can?`, forward/reverse lookup, count |
-| Recursive work limits | `normalize-recursive-traversal-limits`, `increment-counter`, `enqueue-work` | all recursive operations; limit errors must abort the whole result |
-| Recursive continuation and page reuse | `cached-continuation`, `store-continuation!`, `cached-recursive-request-page`, `cached-recursive-previous-page`, `store-recursive-page!` | recursive lookup/count pagination |
-| Page-bound validation, current-answer identity rebase, and window assembly | cursor-bound validators, generated `PageWindow.RebaseCursorBound`, and page constructors in `eacl.engine.v8` | lookup/count page data, order, flags, start/end cursors, rebound vs restarted recovery |
+| Execution normalization and deadline | `eacl.execution/normalize`, deadline checks in orchestration, relay, engine, and backend invocation | evaluation mode, bounded demand, timeout stage/error, whether another command may begin |
+| Recursive rule compilation, demand, and worklists | `compile-recursive-rules`, target-anchored point evaluation, generated forward/reverse traversal | recursive `can?`, bounded/exact count, demand/complete lookup |
+| Recursive stopping and work limits | generated demand target, `normalize-recursive-traversal-limits`, `increment-counter`, `enqueue-work` | Boolean proof/exhaustion, `L+1` count, `N+1` page, typed limit/deadline errors |
+| Recursive continuation and page reuse | `cached-recursive-generated-continuation`, `store-recursive-generated-continuation!`, deterministic replay | recursive lookup pagination; retained state never answers another semantic request |
+| Page-bound validation and window assembly | authenticated logical ordinal/external identity, ordering ABI validation, generated replay/page constructors | lookup page data, order, flags, cursors, stale-cursor rejection |
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
 | Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
 | Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
-| Semantic cache key and entry eligibility | `eacl.cache` request keys, execution/source identity, exact/causal/proof validation | `can?`, lookup, count cache-enabled responses |
-| Cache provider failure/tamper handling | `eacl.cache` read, authentication, proof-provider, and validation paths | whether a cached authorization result may be returned |
+| Semantic cache key and entry eligibility | exact generated command/snapshot/ABI keys and completed typed artifact validation | `can?`, lookup, count cache-enabled responses; eligibility has zero backend-command authority |
+| Cache miss ownership and publication | `eacl.subproblem-cache/resolve-independent!`, generation-qualified bounded `publish!` | misses compute independently; compatible winners are retained and losing/late candidates are discarded without changing authorization |
+| Local cache failure and invalid-entry handling | `eacl.cache` current-generation decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
 
 Recursive routing now has a typed semantic oracle:
@@ -38,9 +40,9 @@ remain open source/platform refinements and are not implied by the
 differential campaign.
 
 Consistency selection now has a separate generated decision boundary.
-`ConsistencyDecision.dfy` distinguishes capability failure, missing managed
-writer authority, absent exact history, a present malformed adapter,
-cross-source selection, and failed causal/exact anchor postconditions. The
+`ConsistencyDecision.dfy` distinguishes capability failure, absent exact
+history, a present malformed adapter, cross-source selection, and failed
+native-revision/exact-locator postconditions. The
 16 plan states and 48 well-formed validation states are exhaustively compared
 through generated Java and JavaScript. Datomic, Datahike, and DataScript pass
 their configured engine selection into this boundary. The zero-coordination
@@ -49,7 +51,7 @@ already-captured immutable adapter; scope equality is reflexive and therefore
 does not justify a second FFI call or backend scope read.
 
 This verifies the finite decision over observed facts. It does not prove that
-an adapter's source scope, ancestry predicate, exact reconstruction, or
+an adapter's source scope, native revision, exact reconstruction, or
 authoritative barrier is truthful, and it does not prove token cryptography.
 Those remain explicit adapter and cryptographic refinement obligations.
 
@@ -134,10 +136,11 @@ does not imply a global, lexical, domain, or cross-backend order.
 ## Machine-enforced source closure
 
 `public-source-closure.json` is generated from both CLJ and CLJS analysis of
-53 shared and backend EACL source files. It currently closes the
-cross-namespace call graph from 62 engine, relationship-pagination, relay,
-cursor, cache, subproblem-cache, consistency, causal-token, generated-provider,
-and named Datomic/Datahike/DataScript roots over 1,505 definitions.
+shared and backend EACL source files. It closes the cross-namespace call graph
+from engine, relationship-pagination, relay, cursor, cache, subproblem-cache,
+consistency, causal-token, authority-provider, and named
+Datomic/Datahike/DataScript roots. Exact counts and digests are release-artifact
+data and MUST be regenerated after this change; prose does not pin stale counts.
 Unattributed clj-kondo usages inside exact `defrecord` spans are assigned to
 their containing protocol implementation, so those public client and generated
 kernel methods are included. CI checks the exact

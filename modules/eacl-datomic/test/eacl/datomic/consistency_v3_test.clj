@@ -20,12 +20,14 @@
 (def document (eacl/spice-object :document "document"))
 (def relationship (eacl/->Relationship user :reader document))
 
+(def ^:private source-lifecycle "datomic-consistency-v4-test")
+
 (defn- client
   [conn]
   (datomic/make-client
    conn
-   {:coherence-authority :managed
-    :zed-token-key security-key
+   {:zed-token-key security-key
+    :source-lifecycle source-lifecycle
     :consistency-sync-timeout-ms 5}))
 
 (defn- seed!
@@ -99,17 +101,18 @@
           token
           (:zed/token
            (eacl/create-relationship! writer relationship))]
-      (testing "a second Peer connection waits for and verifies the anchor"
+      (testing "a second Peer connection waits for the native revision"
         (is (true?
              (eacl/can?
               reader user :view document
               (consistency/at-least-as-fresh token)))))
       (eacl/delete-relationship! writer relationship)
-      (testing "as-of reconstruction is accepted only with the old graph head"
+      (testing "as-of reconstruction must match the exact native revision"
         (is (true?
              (eacl/can?
               reader user :view document
               (consistency/at-exact-snapshot token))))
+        @(d/sync reader-conn)
         (with-redefs [d/as-of (fn [db _basis] db)]
           (is (= :eacl.consistency/history-divergence
                  (:type
@@ -157,14 +160,14 @@
     (let [authorization
           (datomic/make-client
            conn
-           {:coherence-authority :managed
-            :zed-token-key security-key
+           {:zed-token-key security-key
             :cache {:remember-answers true}})
           _ (seed! conn authorization)
           _ (eacl/create-relationship! authorization relationship)
           query {:subject user
                  :permission :view
                  :resource/type :document
+                 :evaluation :complete-denotation
                  :first 10}
           first-page (eacl/lookup-resources authorization query)
           exact-hit (eacl/lookup-resources authorization query)]
@@ -236,14 +239,13 @@
               authorization
               (eacl/->Relationship
                user :reader (second documents))))]
-        (testing "a relationship change resumes on the current graph"
+        (testing "a relationship change resumes on the exact cursor snapshot"
           (let [page
                 (eacl/lookup-resources
                  authorization
                  (assoc query :after fresh-cursor))]
-            (is (= ["doc-c"] (mapv :id (:data page))))
-            (is (= :rebased
-                   (get-in page [:page-info :cursor-recovery])))))
+            (is (= ["doc-b"] (mapv :id (:data page))))
+            (is (nil? (get-in page [:page-info :cursor-recovery])))))
         (testing "a changed causal floor is a different query scope"
           (is (= :eacl.pagination/invalid-cursor
                  (:type

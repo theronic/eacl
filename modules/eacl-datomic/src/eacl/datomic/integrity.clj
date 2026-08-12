@@ -9,14 +9,15 @@
 
 (defn client-schema-status
   "Reads the connection's current :eacl/schema-version once and compares it
-  with the generation captured when `client` was created (or last changed via
-  that client's write-schema!).
+  with the diagnostic generation captured when `client` was created (or last
+  changed through that client's write-schema!).
 
   This is an explicit diagnostic for detecting out-of-band schema writes. EACL
   deliberately does not perform this read for every authorization operation.
-  Recreate an :outdated client; do not reuse its cached permission paths."
+  Authorization correctness does not depend on this diagnostic: each request
+  derives its proof-keyed schema generation from its selected immutable DB."
   [client]
-  (let [cached-version  (some-> client :schema-state deref :schema-version)
+  (let [cached-version  (some-> client :opts :diagnostic-schema-version deref)
         current-version (some-> client :conn d/db indexed/schema-version)
         status          (cond
                           (and (nil? cached-version) (nil? current-version)) :unstamped

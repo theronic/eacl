@@ -492,54 +492,62 @@
   [adapter relations]
   (let [snapshot-id (backend/invoke adapter :snapshot-id)
         source (backend/invoke adapter :source-scope)
-        head (backend/invoke adapter :graph-head)
-        schema-proof (backend/invoke adapter :schema-proof)
-        relation-ids (mapv :relation-id (vals relations))
-        relation-proof
-        (backend/invoke adapter :relation-proof relation-ids)
+        lifecycle (backend/invoke adapter :source-lifecycle)
+        revision (backend/invoke adapter :native-revision)
+        relation-ids (vec (sort (map :relation-id (vals relations))))
+        ordered-generations?
+        (backend/supports? adapter :cache-proofs :ordered-generations)
+        proof-frame
+        (when ordered-generations?
+          (backend/invoke adapter :proof-frame relation-ids))
         current (backend/invoke adapter :select-current)]
     (demand (= snapshot-id (backend/invoke adapter :snapshot-id))
             "Snapshot identity changed on an immutable adapter.")
     (demand (= source (backend/invoke adapter :source-scope)
                (backend/invoke current :source-scope))
             "Current selection changed source identity.")
-    (demand (= head (backend/invoke adapter :graph-head))
-            "Graph head changed on an immutable adapter.")
-    (demand
-     (true?
-      (backend/invoke
-       adapter :contains-anchor? (:graph-anchor head)))
-     "An adapter did not contain its own graph head."
-     {:head head})
-    (demand (= schema-proof (backend/invoke adapter :schema-proof))
-            "Schema proof was unstable on an immutable adapter.")
-    (demand (= relation-proof
-               (backend/invoke
-                adapter :relation-proof relation-ids))
-            "Relation proof was unstable on an immutable adapter.")
+    (demand (= lifecycle
+               (backend/invoke adapter :source-lifecycle)
+               (backend/invoke current :source-lifecycle))
+            "Current selection changed source lifecycle.")
+    (demand (= revision (backend/invoke adapter :native-revision))
+            "Native revision changed on an immutable adapter.")
+    (demand (= (:revision revision) (backend/invoke adapter :order-hint))
+            "Native revision disagreed with the order hint.")
+    (demand (= (:exact-locator revision)
+               (backend/invoke adapter :exact-locator))
+            "Native revision disagreed with the exact locator.")
+    (when ordered-generations?
+      (demand (= #{:schema-stamp :relation-stamps}
+                 (set (keys proof-frame)))
+              "Ordered-generation frame had an unexpected shape.")
+      (demand (= relation-ids (mapv first (:relation-stamps proof-frame)))
+              "Ordered-generation frame was incomplete or noncanonical.")
+      (demand (= proof-frame
+                 (backend/invoke adapter :proof-frame relation-ids))
+              "Ordered-generation frame was unstable on an immutable adapter."))
     (when (backend/supports?
            adapter :consistency :at-exact-snapshot)
       (let [exact
-            (backend/invoke adapter :select-exact head 1000)]
+            (backend/invoke adapter :select-exact revision 1000)]
         (demand (backend/adapter? exact)
                 "Advertised exact selection returned no adapter."
-                {:head head})
+                {:native-revision revision})
         (demand (= source (backend/invoke exact :source-scope))
                 "Exact selection changed source identity.")
+        (demand (= lifecycle (backend/invoke exact :source-lifecycle))
+                "Exact selection changed source lifecycle.")
         (demand
-         (= (:exact-locator head)
+         (= (:exact-locator revision)
             (backend/invoke exact :exact-locator))
          "Exact selection returned a different locator.")
-        (demand
-         (= (:graph-anchor head)
-            (:graph-anchor
-             (backend/invoke exact :graph-head)))
-         "Exact selection returned a different graph anchor.")))
+        (demand (= revision (backend/invoke exact :native-revision))
+                "Exact selection returned a different native revision.")))
     {:snapshot-id snapshot-id
      :source-scope source
-     :graph-head head
-     :schema-proof-available? (some? schema-proof)
-     :relation-proof-available? (some? relation-proof)
+     :source-lifecycle lifecycle
+     :native-revision revision
+     :ordered-generation-proof? ordered-generations?
      :exact-selection?
      (backend/supports?
       adapter :consistency :at-exact-snapshot)}))
@@ -559,7 +567,8 @@
             (let [declared
                   (set (keys (backend/certification-obligations)))]
               (demand
-               (= backend/required-snapshot-operations declared)
+               (= (conj backend/required-snapshot-operations :proof-frame)
+                  declared)
                "Adapter obligation registry is incomplete."
                {:required backend/required-snapshot-operations
                 :declared declared})

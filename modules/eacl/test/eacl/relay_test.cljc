@@ -14,17 +14,18 @@
          (map (fn [operation]
                 [operation (fn [& _] nil)]))
          backend/required-snapshot-operations)
-   {:snapshot-id (constantly snapshot-id)
-    :source-scope (constantly {:source :relay-test})
-    :graph-head
+   {:snapshot-id (constantly {:revision snapshot-id})
+    :source-scope
+    (constantly {:source-id "relay-source" :branch nil})
+    :source-lifecycle (constantly "relay-lifecycle")
+    :native-revision
     (constantly
-     {:graph-anchor snapshot-id
-      :order-hint snapshot-id
+     {:revision snapshot-id
       :exact-locator snapshot-id})
+    :order-hint (constantly snapshot-id)
+    :exact-locator (constantly snapshot-id)
     :object-id->internal identity
-    :internal-id->object identity
-    :schema-proof (fn [& _] proof)
-    :relation-proof (fn [_] proof)}))
+    :internal-id->object identity}))
 
 (defn- adapter
   [snapshot-id proof deterministic?]
@@ -39,7 +40,7 @@
   [snapshot-id exact]
   (backend/make-adapter
    {:id :relay-test
-    :capabilities {}
+    :capabilities {:snapshots #{:historical}}
     :fingerprint {:adapter :relay-test}
     :deterministic? true
     :operations
@@ -97,10 +98,10 @@
     :has-previous-page? false}})
 
 (deftest page-externalization-builds-one-snapshot-context-test
-  ;; Every context build reads :graph-head exactly once, so the op count is
+  ;; Every context build reads :native-revision exactly once, so the op count is
   ;; the context-build count — portable across CLJ and CLJS, unlike
   ;; re-rooting a multi-arity var.
-  (let [graph-head-calls (atom 0)
+  (let [native-revision-calls (atom 0)
         snapshot
         (backend/make-adapter
          {:id :relay-test
@@ -110,18 +111,17 @@
           :operations
           (merge
            (operation-map 1 nil)
-           {:graph-head
+           {:native-revision
             (fn []
-              (swap! graph-head-calls inc)
-              {:graph-anchor 1
-               :order-hint 1
+              (swap! native-revision-calls inc)
+              {:revision 1
                :exact-locator 1})})})
         page
         (relay/externalize-page
          snapshot {} :lookup-resources lookup-query lookup-page)]
     (is (string? (get-in page [:page-info :start-cursor])))
     (is (string? (get-in page [:page-info :end-cursor])))
-    (is (= 1 @graph-head-calls)
+    (is (= 1 @native-revision-calls)
         "both boundary tokens must reuse one immutable snapshot proof")))
 
 (deftest prepared-continuation-authenticates-token-once-test
@@ -165,35 +165,52 @@
                  (:reason (ex-data error)))))
           (pr-str changed-query)))))
 
-(deftest non-exact-continuation-recovers-on-current-graph-test
+(deftest cursor-is-bound-to-normalized-traversal-limits-test
+  (let [snapshot (adapter 1 nil true)
+        original-limits {:max-derived-grants 100
+                         :max-advanced-datoms 200
+                         :max-queued-work 300}
+        changed-limits (assoc original-limits :max-derived-grants 99)
+        first-page
+        (relay/externalize-page
+         snapshot
+         {:recursive-traversal-limits original-limits}
+         :lookup-resources
+         lookup-query
+         lookup-page)
+        token (get-in first-page [:page-info :end-cursor])]
+    (is (= :query-mismatch
+           (try
+             (relay/prepare-page-query
+              snapshot
+              {:recursive-traversal-limits changed-limits}
+              :lookup-resources
+              (assoc lookup-query :after token))
+             nil
+             (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+               (:reason (ex-data error))))))))
+
+(deftest changed-proof-without-history-is-stale-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         first-page
         (relay/externalize-page
          original {} :lookup-resources lookup-query lookup-page)
         token (get-in first-page [:page-info :end-cursor])
-        prepared
-        (relay/prepare-page-query
-         current
-         {:cursor-consistency-mode :fully-consistent}
-         :lookup-resources
-         (assoc lookup-query :after token))]
-    (is (identical? current (:adapter prepared)))
-    (is (= :rebased (:recovery prepared)))
-    (is (= (assoc (:end-cursor (:page-info lookup-page))
-                  :rebase? true)
-           (get-in prepared [:query :after])))
-    (is (= :rebased
-           (get-in
-            (relay/externalize-page
-             current
-             {:cursor-recovery (:recovery prepared)}
-             :lookup-resources
-             lookup-query
-             lookup-page)
-            [:page-info :cursor-recovery])))))
+        data
+        (try
+          (relay/prepare-page-query
+           current
+           {:cursor-consistency-mode :fully-consistent}
+           :lookup-resources
+           (assoc lookup-query :after token))
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+            (ex-data error)))]
+    (is (= :eacl.pagination/stale-cursor (:type data)))
+    (is (= :dependency-proof-changed (:reason data)))))
 
-(deftest recursive-continuation-rebases-by-result-after-graph-change-test
+(deftest recursive-continuation-does-not-rebase-after-graph-change-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         recursive-page
@@ -206,18 +223,20 @@
         first-page
         (relay/externalize-page
          original {} :lookup-resources lookup-query recursive-page)
-        prepared
-        (relay/prepare-page-query
-         current
-         {:cursor-consistency-mode :minimize-latency}
-         :lookup-resources
-         (assoc lookup-query
-                :after
-                (get-in first-page [:page-info :end-cursor])))]
-    (is (= :rebased (:recovery prepared)))
-    (is (= (-> (get-in recursive-page [:page-info :end-cursor])
-               (assoc :rebase? true))
-           (get-in prepared [:query :after])))))
+        data
+        (try
+          (relay/prepare-page-query
+           current
+           {:cursor-consistency-mode :minimize-latency}
+           :lookup-resources
+           (assoc lookup-query
+                  :after
+                  (get-in first-page [:page-info :end-cursor])))
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+            (ex-data error)))]
+    (is (= :eacl.pagination/stale-cursor (:type data)))
+    (is (= :dependency-proof-changed (:reason data)))))
 
 (deftest expired-cursor-reaches-the-kernel-decision-test
   ;; cursor-dependency-validity: the TTL check result is a computed input of
@@ -265,16 +284,19 @@
         prepared
         (relay/prepare-page-query
          current
-         {:cursor-consistency-mode :at-exact-snapshot}
+         {:cursor-consistency-mode :at-exact-snapshot
+          :cursor-request-token
+          {:revision 1
+           :exact-locator 1}}
          :lookup-resources
          (assoc exact-query
                 :after
                 (get-in page [:page-info :end-cursor])))]
     (is (identical? exact (:adapter prepared)))
-    (is (nil? (:recovery prepared)))))
+    (is (not (contains? prepared :recovery)))))
 
 (deftest one-page-builds-one-snapshot-context-test
-  (let [graph-head-calls (atom 0)
+  (let [native-revision-calls (atom 0)
         snapshot-id-calls (atom 0)
         test-adapter
         (backend/make-adapter
@@ -285,11 +307,10 @@
           :operations
           (merge
            (operation-map 1 nil)
-           {:graph-head
+           {:native-revision
             (fn []
-              (swap! graph-head-calls inc)
-              {:graph-anchor 1
-               :order-hint 1
+              (swap! native-revision-calls inc)
+              {:revision 1
                :exact-locator 1})
             :snapshot-id
             (fn []
@@ -317,7 +338,7 @@
          test-adapter {} :read-relationships
          {:subject/type :user :first 1}
          page)]
-    (is (= 1 @graph-head-calls))
+    (is (= 1 @native-revision-calls))
     (is (= 1 @snapshot-id-calls))
     (is (string? (get-in external [:page-info :start-cursor])))
     (is (string? (get-in external [:page-info :end-cursor])))))

@@ -26,7 +26,6 @@
     :cursor-continuation
     :consistency-plan
     :consistency-validation
-    :cache-validation
     :current-cache-decision
     :subproblem-cache-decision
     :ordered-merge-step
@@ -204,14 +203,12 @@
         expected
         #{:authenticated? :scope-matches? :expired?
           :source :cursor-source :current-proof :cursor-proof
-          :mode :cursor-graph :exact}]
+          :cursor-graph :exact}]
     (exact-keys! operation :input input expected)
     (doseq [field [:authenticated? :scope-matches? :expired?]]
       (require-value! operation field boolean? (get input field)))
     (doseq [field [:source :cursor-source :current-proof :cursor-proof]]
       (require-value! operation field bounded-string? (get input field)))
-    (require-value!
-     operation :mode #{:recover-current :exact-snapshot} (:mode input))
     (require-value!
      operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
@@ -233,10 +230,10 @@
      operation
      :input
      input
-     #{:mode :capability-supported? :managed-authority?})
+     #{:mode :capability-supported?})
     (require-value! operation :mode consistency-modes (:mode input))
-    (doseq [field [:capability-supported? :managed-authority?]]
-      (require-value! operation field boolean? (get input field)))
+    (require-value!
+     operation :capability-supported? boolean? (:capability-supported? input))
     input))
 
 (defn- validate-consistency-selection-input!
@@ -247,12 +244,12 @@
      :input
      input
      #{:kind :selection-present? :selected-adapter?
-       :same-source-scope? :anchor-satisfied?})
+       :same-source-scope? :revision-satisfied?})
     (require-value!
      operation :kind consistency-selection-kinds (:kind input))
     (doseq [field
             [:selection-present? :selected-adapter?
-             :same-source-scope? :anchor-satisfied?]]
+             :same-source-scope? :revision-satisfied?]]
       (require-value! operation field boolean? (get input field)))
     (when (and (:selected-adapter? input)
                (not (:selection-present? input)))
@@ -260,56 +257,6 @@
        "A selected adapter cannot exist without a selected value."
        {:operation operation
         :field :selected-adapter?}))
-    input))
-
-(defn- validate-cache-entry!
-  [entry]
-  (let [operation :cache-validation]
-    (exact-keys!
-     operation
-     :entry
-     entry
-     #{:status :authenticated? :key :source :graph :proof})
-    (require-value!
-     operation :entry-status #{:candidate :missing :provider-failure}
-     (:status entry))
-    (require-value!
-     operation :entry-authenticated boolean? (:authenticated? entry))
-    (doseq [field [:key :source]]
-      (require-value! operation field bounded-string? (get entry field)))
-    (require-value! operation :entry-graph safe-natural? (:graph entry))
-    (require-value!
-     operation
-     :entry-proof
-     #(or (nil? %) (bounded-string? %))
-     (:proof entry))
-    entry))
-
-(defn- validate-cache-input!
-  [input]
-  (let [operation :cache-validation
-        expected
-        #{:deterministic? :dependency-scope-nonempty?
-          :expected-key :expected-source :selected-graph
-          :ancestors :selected-proof :entry}]
-    (exact-keys! operation :input input expected)
-    (doseq [field [:deterministic? :dependency-scope-nonempty?]]
-      (require-value! operation field boolean? (get input field)))
-    (doseq [field [:expected-key :expected-source]]
-      (require-value! operation field bounded-string? (get input field)))
-    (require-value!
-     operation :selected-graph safe-natural? (:selected-graph input))
-    (require-value!
-     operation
-     :ancestors
-     #(and (set? %) (every? safe-natural? %))
-     (:ancestors input))
-    (require-value!
-     operation
-     :selected-proof
-     #(or (nil? %) (bounded-string? %))
-     (:selected-proof input))
-    (validate-cache-entry! (:entry input))
     input))
 
 (defn- validate-subproblem-cache-input!
@@ -327,9 +274,7 @@
          operation
          :input
          input
-         #{:decision :recursive-self? :candidate})
-        (require-value!
-         operation :recursive-self? boolean? (:recursive-self? input))
+         #{:decision :candidate})
         (require-value!
          operation
          :candidate
@@ -343,13 +288,13 @@
          :input
          input
          #{:decision :candidate-present?
-           :represented-candidates :maximum-candidates})
+           :attempted-publications :maximum-attempts})
         (require-value!
          operation
          :candidate-present?
          boolean?
          (:candidate-present? input))
-        (doseq [field [:represented-candidates :maximum-candidates]]
+        (doseq [field [:attempted-publications :maximum-attempts]]
           (require-value!
            operation field safe-natural? (get input field))))
 
@@ -1014,7 +959,6 @@
         expected
         (case kind
           :page #{:kind :size :bound}
-          :backward-page #{:kind :size :bound}
           :count #{:kind :limit}
           :all-count #{:kind}
           :boolean #{:kind :target-eid}
@@ -1027,7 +971,7 @@
         :kind kind}))
     (exact-keys! operation :render render expected)
     (case kind
-      (:page :backward-page)
+      :page
       (do
         (require-value!
          operation [:render :size]
@@ -1035,10 +979,9 @@
          (:size render))
         (validate-indexed-bound!
          operation [:render :bound] (:bound render))
-        (when (and (= :backward-page kind)
-                   (nil? (:bound render)))
+        (when (some? (:bound render))
           (boundary-error!
-           "Backward indexed rendering requires an exact cursor bound."
+           "Initial indexed page rendering does not accept a cursor bound; use the verified page-continuation operation."
            {:operation operation
             :field [:render :bound]})))
 
@@ -1229,6 +1172,22 @@
         (validate-indexed-state! operation (:state result))
         (validate-indexed-scan-command!
          operation :command (:command result)))
+
+      :need-scans
+      (do
+        (exact-keys!
+         operation :result result #{:status :state :commands})
+        (validate-indexed-state! operation (:state result))
+        (let [commands
+              (bounded-vector!
+               operation :commands (:commands result))]
+          (when-not (seq commands)
+            (boundary-error!
+             "Generated indexed drive returned an empty scan wave."
+             {:operation operation :field :commands}))
+          (doseq [[index command] (map-indexed vector commands)]
+            (validate-indexed-scan-command!
+             operation [:commands index] command))))
 
       (:complete :yielded)
       (do
@@ -1655,7 +1614,6 @@
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
-    :cache-validation (validate-cache-input! input)
     :current-cache-decision (validate-current-cache-input! input)
     :subproblem-cache-decision
     (validate-subproblem-cache-input! input)
@@ -1736,7 +1694,6 @@
 
 (def continuation-decisions
   #{:current
-    :rebase-current
     :exact
     :invalid-authentication
     :scope-mismatch
@@ -1780,7 +1737,7 @@
    result))
 
 (defn- expected-consistency-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (cond
     (not capability-supported?)
     (case mode
@@ -1791,10 +1748,6 @@
 
       :unsupported-head-barrier)
 
-    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
-
     :else
     (case mode
       :minimize-latency :select-current
@@ -1804,7 +1757,7 @@
 
 (defn- expected-consistency-selection
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (cond
     (not selection-present?)
     (if (= :exact kind)
@@ -1818,57 +1771,17 @@
     :incomparable-scope
 
     (and (#{:at-least :exact} kind)
-         (not anchor-satisfied?))
+         (not revision-satisfied?))
     :history-divergence
 
     :else
     :accept))
 
-(def cache-miss-reasons
-  #{:missing
-    :provider-failure
-    :no-proof-bypass
-    :unauthenticated
-    :scope-mismatch
-    :future-or-sibling
-    :proof-mismatch})
-
-(defn- validate-cache-result!
-  [result]
-  (let [operation :cache-validation]
-    (when-not (map? result)
-      (boundary-error!
-       "Generated cache result must be a map."
-       {:operation operation :result result}))
-    (case (:status result)
-      :hit
-      (do
-        (exact-keys!
-         operation :result result #{:status :provenance})
-        (require-value!
-         operation :provenance #{:exact-hit :causal-proof-lift}
-         (:provenance result))
-        result)
-
-      :miss
-      (do
-        (exact-keys! operation :result result #{:status :reason})
-        (require-value!
-         operation :reason cache-miss-reasons (:reason result))
-        result)
-
-      (boundary-error!
-       "Generated cache result has an unknown variant."
-       {:operation operation :result result}))))
-
 (def subproblem-cache-actions
-  #{:bypass-recursive-self
-    :start-computation
-    :join-computation
+  #{:start-independent-computation
     :use-completed-value
-    :join-existing
-    :admit-computation
-    :compute-without-admission
+    :attempt-publication
+    :skip-publication
     :retain-publication
     :drop-publication})
 
@@ -1884,19 +1797,16 @@
   [{:keys [decision] :as input}]
   (case decision
     :lookup
-    (cond
-      (:recursive-self? input) :bypass-recursive-self
-      (= :missing (:candidate input)) :start-computation
-      (= :computing (:candidate input)) :join-computation
-      (= :complete (:candidate input)) :use-completed-value
-      :else :start-computation)
+    (if (= :complete (:candidate input))
+      :use-completed-value
+      :start-independent-computation)
 
     :admission
-    (cond
-      (:candidate-present? input) :join-existing
-      (< (:represented-candidates input)
-         (:maximum-candidates input)) :admit-computation
-      :else :compute-without-admission)
+    (if (and (not (:candidate-present? input))
+             (< (:attempted-publications input)
+                (:maximum-attempts input)))
+      :attempt-publication
+      :skip-publication)
 
     :publication
     (if (and (:ticket-current? input)
@@ -2365,7 +2275,6 @@
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
-    :cache-validation (validate-cache-result! result)
     :current-cache-decision
     (validate-current-cache-result! result)
     :subproblem-cache-decision
@@ -2654,12 +2563,21 @@
        validate-indexed-drive-result!))))
 
 (defn resume-indexed
-  "Resumes opaque generated state with one portable ordered scan response."
+  "Resumes opaque authority state with one response or one ordered scan wave."
   [selection direction state response limits]
   (let [operation :indexed-traversal-resume]
     (require-value! operation :direction indexed-directions direction)
     (validate-indexed-state! operation state)
-    (validate-indexed-response! response)
+    (if (vector? response)
+      (do
+        (bounded-vector! operation :responses response)
+        (when-not (seq response)
+          (boundary-error!
+           "Generated indexed resume received an empty scan wave."
+           {:operation operation :field :responses}))
+        (doseq [item response]
+          (validate-indexed-response! item)))
+      (validate-indexed-response! response))
     (validate-indexed-limits! operation limits)
     (let [kernel (indexed-kernel selection operation)]
       (invoke-indexed-kernel
@@ -2701,4 +2619,3 @@
   [selection operation input]
   (let [{:keys [kernel]} (normalize-selection selection)]
     (invoke-kernel kernel operation input)))
-

@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
             [eacl.engine.v8 :as engine]
+            [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.spicedb.consistency :as consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -29,10 +30,17 @@
     (throw (ex-info "not used by this recording kernel" {}))))
 
 (defn- operation-map []
-  (into {}
-        (map (fn [operation]
-               [operation (fn [& args] [operation (vec args)])]))
-        backend/required-snapshot-operations))
+  (assoc
+   (into {}
+         (map (fn [operation]
+                [operation (fn [& args] [operation (vec args)])]))
+         backend/required-snapshot-operations)
+   :proof-frame
+   (fn [relation-ids]
+     {:schema-stamp 1
+      :relation-stamps (mapv (fn [relation-id]
+                               [relation-id 1])
+                             relation-ids)})))
 
 (defn- test-adapter []
   (backend/make-adapter
@@ -41,9 +49,29 @@
                    :snapshots #{:current}
                    :cursor #{:forward :reverse}
                    :transactions #{}
-                   :cache-proofs #{:schema :relations :snapshot-bound}
+                   :cache-proofs #{:ordered-generations :snapshot-bound}
                    :runtime #{#?(:clj :clj :cljs :cljs)}}
     :operations (operation-map)}))
+
+(defn- generation-adapter [generation]
+  (backend/make-adapter
+   {:id :test
+    :capabilities {:consistency #{:fully-consistent}
+                   :snapshots #{:current}
+                   :cursor #{:forward :reverse}
+                   :transactions #{}
+                   :cache-proofs #{:ordered-generations :snapshot-bound}
+                   :runtime #{#?(:clj :clj :cljs :cljs)}}
+    :operations
+    (assoc (operation-map)
+           :proof-frame
+           (fn [relation-ids]
+             {:schema-stamp generation
+              :relation-stamps
+              (mapv (fn [relation-id]
+                      [relation-id generation])
+                    relation-ids)})
+           :source-scope (constantly {:source-id :one}))}))
 
 (defn- error-data [f]
   (try
@@ -51,6 +79,40 @@
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
+
+(deftest descending-merge-retains-maximum-eid-test
+  (let [maximum-eid #?(:clj Long/MAX_VALUE
+                       :cljs js/Number.MAX_SAFE_INTEGER)]
+    (is (= [maximum-eid 9 8]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc
+             identity
+             [[maximum-eid 9]
+              [8]]))))
+    (is (= [maximum-eid 9 8]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by-desc
+             identity
+             [[maximum-eid 9]
+              [maximum-eid 8]]))))))
+
+(deftest generic-merge-retains-nil-key-test
+  (let [left-nil {:key nil :source :left}
+        right-nil {:key nil :source :right}
+        one {:key 1}
+        two {:key 2}]
+    (is (= [left-nil one two]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+             :key
+             [[left-nil one]
+              [two]]))))
+    (is (= [left-nil one two]
+           (vec
+            (lazy-sort/lazy-fold2-merge-dedupe-sorted-by
+             :key
+             [[left-nil one]
+              [right-nil two]]))))))
 
 (deftest unusable-generated-continuation-is-a-recoverable-cache-miss-test
   (let [calls (atom [])
@@ -88,8 +150,8 @@
     (is (= {:mode :fully-consistent}
            (backend/require-consistency!
             adapter consistency/fully-consistent)))
-    (is (= [:schema-proof []]
-           (backend/invoke adapter :schema-proof)))
+    (is (= {:schema-stamp 1 :relation-stamps []}
+           (backend/invoke adapter :proof-frame [])))
     (testing "unsupported guarantees fail before execution"
       (is (= {:type :eacl/unsupported-capability
               :capability :consistency
@@ -109,6 +171,17 @@
                #(backend/invoke adapter :delete-object-tx 1))
               [:type :capability :requested]))))))
 
+(deftest schema-generation-registry-is-bounded-test
+  (let [registry (atom {})]
+    (doseq [generation (range 100)]
+      (let [cache
+            (engine/schema-cache-for!
+             registry (generation-adapter generation))]
+        (is (= generation (:schema-version cache)))))
+    (is (= 64 (count @registry)))
+    (is (every? #(= :one (get-in % [3 :source-id]))
+                (keys @registry)))))
+
 (deftest invalid-v8-adapter-test
   (is (= :eacl/invalid-backend-adapter
          (:type
@@ -126,7 +199,7 @@
               :operations (operation-map)}))))))
 
 (deftest adapter-obligation-registry-test
-  (is (= backend/required-snapshot-operations
+  (is (= (conj backend/required-snapshot-operations :proof-frame)
          (set
           (keys
            (backend/certification-obligations)))))
@@ -205,15 +278,13 @@
                   [] :exact-integer]
                  [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
                  [:source-scope (fn [& _] nil) [] :map-shape]
-                 [:graph-head (fn [& _] []) [] :map-shape]
+                 [:native-revision (fn [& _] []) [] :map-shape]
                  [:relation-defs (fn [& _] [:not-a-map])
                   [:document :reader] :finite-definition-sequence]
                  [:permission-defs (fn [& _] [nil])
                   [:document :view] :finite-definition-sequence]
                  [:all-permission-nodes (fn [& _] [])
                   [] :finite-node-set]
-                 [:contains-anchor? (fn [& _] :yes)
-                  ["anchor"] :boolean-result]
                  [:direct-match? (fn [& _] nil)
                   [:user 1 2 :document 3] :boolean-result]
                  [:select-current (fn [& _] {})
@@ -310,9 +381,11 @@
          (operation-map)
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
           :source-scope (fn [] {:source-id :test :branch nil})
-          :schema-proof (fn
-                          ([] :schema-proof)
-                          ([_] :schema-proof))
+          :proof-frame
+          (fn [relation-ids]
+            {:schema-stamp 1
+             :relation-stamps
+             (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
           :object-id->internal identity
           :internal-id->object identity
           :permission-defs
@@ -349,10 +422,10 @@
            :snapshots #{:current}
            :cursor #{:forward :reverse}
            :transactions #{}
-           :cache-proofs #{:schema :relations :snapshot-bound}
+           :cache-proofs #{:ordered-generations :snapshot-bound}
            :runtime #{#?(:clj :clj :cljs :cljs)}}
           :operations operations})
-        schema-cache (engine/make-schema-cache adapter :schema-proof)]
+        schema-cache (engine/make-schema-cache adapter 1)]
     (binding [engine/*schema-cache* schema-cache]
       (is (true? (engine/traversal-permission? adapter :node :read)))
       (let [analysis-delay @(:traversal-analysis schema-cache)
@@ -467,7 +540,7 @@
            :snapshots #{:current}
            :cursor #{:forward :reverse}
            :transactions #{}
-           :cache-proofs #{:schema :relations :snapshot-bound}
+           :cache-proofs #{:ordered-generations :snapshot-bound}
            :runtime #{#?(:clj :clj :cljs :cljs)}}
           :operations
           (merge
@@ -476,10 +549,11 @@
             (constantly {:database-id :test :basis-t 1})
             :source-scope
             (constantly {:source-id :test :branch nil})
-            :schema-proof
-            (fn
-              ([] :schema-proof)
-              ([_] :schema-proof))
+            :proof-frame
+            (fn [relation-ids]
+              {:schema-stamp 1
+               :relation-stamps
+               (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
             :permission-defs
             (fn [resource-type permission-name]
               (get permissions
@@ -490,7 +564,7 @@
               (get relations [resource-type relation-name] []))
             :all-permission-nodes
             (fn [] (set (keys permissions)))})})
-        schema-cache (engine/make-schema-cache adapter :schema-proof)
+        schema-cache (engine/make-schema-cache adapter 1)
         calls (atom [])
         kernel
         (->RecordingKernel
@@ -582,7 +656,7 @@
      :snapshots #{:current}
      :cursor #{:forward :reverse}
      :transactions #{}
-     :cache-proofs #{:schema :relations :snapshot-bound}
+     :cache-proofs #{:ordered-generations :snapshot-bound}
      :runtime #{#?(:clj :clj :cljs :cljs)}}
     :operations
     (merge
@@ -597,7 +671,7 @@
       (fn [_subject-type _subject-eid _relation-eid _resource-type resource-eid]
         (even? resource-eid))})}))
 
-(deftest exact-projection-prefix-cache-test
+(deftest direct-projections-never-use-cache-owned-chunking-test
   (let [adapter (projection-test-adapter)
         store (subproblem/store)
         work (atom {})]
@@ -610,32 +684,32 @@
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
         (is (= 1 (:subject->resources-scans @work)))
-        (is (= 32 (:fetched-projection-values
+        (is (= 0 (:fetched-projection-values
                    (subproblem/stats store)))))
-      (testing "a distinct consumer reuses the prefix without a backend call"
+      (testing "a distinct consumer issues the same exact adapter request"
         (is (= (vec (range 1 21))
                (vec
                 (take 20
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
-        (is (= 1 (:subject->resources-scans @work)))
-        (is (= 1 (:projection-hits (subproblem/stats store))))
-        (is (= 1 (:avoided-backend-operations
+        (is (= 2 (:subject->resources-scans @work)))
+        (is (= 0 (:projection-hits (subproblem/stats store))))
+        (is (= 0 (:avoided-backend-operations
                   (subproblem/stats store)))))
-      (testing "consuming beyond the retained prefix resumes exclusively"
+      (testing "host demand does not create or widen cache chunks"
         (is (= (vec (range 1 41))
                (vec
                 (take 40
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
-        (is (= 2 (:subject->resources-scans @work)))
-        (testing "the lazily demanded successor chunk is retained too"
+        (is (= 3 (:subject->resources-scans @work)))
+        (testing "a repeated demand remains one direct adapter invocation"
           (is (= (vec (range 1 41))
                  (vec
                   (take 40
                         (engine/subject->resources
                          adapter :user 1 10 :document nil)))))
-          (is (= 2 (:subject->resources-scans @work)))))
+          (is (= 4 (:subject->resources-scans @work)))))
       (testing "inclusive and exclusive bounds are distinct semantic keys"
         (is (= [40 41 42]
                (vec
@@ -674,7 +748,7 @@
                    adapter :user 1 10 :document
                    {:direction :asc
                     :bound-eid 99}))))
-          (is (= before (:subject->resources-scans @work))))
+          (is (= (inc before) (:subject->resources-scans @work))))
         (is (= []
                (vec
                 (engine/subject->resources
@@ -688,8 +762,8 @@
                    adapter :user 1 10 :document
                    {:direction :asc
                     :bound-eid 100}))))
-          (is (= before (:subject->resources-scans @work)))))
-      (testing "direct positive and negative probes are shared"
+          (is (= (inc before) (:subject->resources-scans @work)))))
+      (testing "completed exact Boolean probes are reusable"
         (is (= [true]
                (engine/direct-match-datoms-in-relationship-index
                 adapter :user 1 10 :document 2)))
@@ -733,7 +807,7 @@
              :snapshots #{:current}
              :cursor #{:forward :reverse}
              :transactions #{}
-             :cache-proofs #{:schema :relations :snapshot-bound}
+             :cache-proofs #{:ordered-generations :snapshot-bound}
              :runtime #{#?(:clj :clj :cljs :cljs)}}
             :runtime-guards? true
             :operations
@@ -779,5 +853,8 @@
                      (vec
                       (engine/resource->subjects
                        adapter :document seed 10 :user opts))))
-              (is (= before @calls)
-                  "the fully demanded generated trace is retained"))))))))
+              (is (= (-> before
+                         (update :forward inc)
+                         (update :reverse inc))
+                     @calls)
+                  "direct projection helpers do not retain host-owned scan chunks"))))))))

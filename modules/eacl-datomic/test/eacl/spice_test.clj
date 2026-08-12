@@ -82,12 +82,14 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client
                   conn
-                  {:coherence-authority :managed
-                   :proof-mode :content})
+                  {})
           u1     (spice-object :user "u1")
           a1     (spice-object :account "a1")]
       (eacl/write-schema! client "definition user {}
-         definition account { relation owner: user  permission admin = owner }")
+         definition account {
+           relation owner: user
+           permission admin = owner
+         }")
       @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
 
       (testing "write-relationship! (positional arity) creates and returns a token"
@@ -112,18 +114,29 @@
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl/unsupported-consistency (:type (ex-data e)))))))
 
-      (testing "expand-permission-tree throws a typed not-implemented error"
-        (try
-          (eacl/expand-permission-tree client {:resource a1 :permission :admin})
-          (is false "should have thrown")
-          (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl/not-implemented (:type (ex-data e))))))))))
+      (testing "expand-permission-tree returns the documented explicit tree"
+        (let [response
+              (eacl/expand-permission-tree
+               client {:resource a1 :permission :admin})]
+          (is (string? (:expanded-at response)))
+          (is (= {:expanded-object a1
+                  :expanded-relation :admin
+                  :intermediate
+                  {:operation :union
+                   :children
+                   [{:expanded-object a1
+                     :expanded-relation :owner
+                     :leaf {:subjects []}}]}}
+                 (:tree-root response))))))))
 
 (deftest strict-object-id-resolution-tests
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client conn {})]
       (eacl/write-schema! client "definition user {}
-         definition account { relation owner: user  permission admin = owner }")
+         definition account {
+           relation owner: user
+           permission admin = owner
+         }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "bob"} {:eacl/id "acct-1"} {:eacl/id "acct-2"}])
       (eacl/create-relationships! client
         [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))
@@ -131,8 +144,10 @@
 
       (testing "read-relationships with a nonexistent subject returns [], not ALL relationships (audit §4)"
         (is (= [] (:data (eacl/read-relationships client {:resource/type :account
+                                                          :subject/type :user
                                                           :subject/id    "i-do-not-exist"}))))
         (is (= 1 (count (:data (eacl/read-relationships client {:resource/type :account
+                                                                :subject/type :user
                                                                 :subject/id    "alice"}))))))
 
       (testing "lookups and counts return empty results for unknown objects (SpiceDB-consistent, D9)"
@@ -160,7 +175,10 @@
     (with-mem-conn [conn schema/v7-schema]
       (let [setup (spiceomic/make-client conn {})]
         (eacl/write-schema! setup "definition user {}
-           definition account { relation owner: user  permission admin = owner }")
+           definition account {
+             relation owner: user
+             permission admin = owner
+           }")
         @(d/transact conn [{:eacl/id "u1"} {:eacl/id "a1"}])
         (eacl/create-relationships! setup
           [(->Relationship (spice-object :user "u1") :owner (spice-object :account "a1"))])
@@ -232,8 +250,7 @@
     (testing "Make a Spice client and hold onto channel for disposal later."
       (let [client (spiceomic/make-client
                     conn
-                    {:coherence-authority :managed
-                     :proof-mode :content})]
+                    {})]
         (is client)
         ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
@@ -541,7 +558,7 @@
 	                                          :resource/type :server
 	                                          :first         2}))))
 
-	    (testing "non-exact page tokens recover against live changes"
+	    (testing "non-exact page tokens use exact fallback after relevant changes"
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -561,12 +578,11 @@
 	               (assoc base-query
 	                      :first 100
 	                      :after page1-end-cursor))]
-	          (is (not= (:data expected-page2)
-	                    (:data recovered)))
-	          (is (some #(= new-server %) (:data recovered)))
-	          (is (= :rebased
-	                 (get-in recovered
-	                         [:page-info :cursor-recovery])))))
+	          (is (= (:data expected-page2)
+	                 (:data recovered)))
+	          (is (not-any? #(= new-server %) (:data recovered)))
+	          (is (nil? (get-in recovered
+	                            [:page-info :cursor-recovery])))))
 	      (let [base-query {:resource/type :server
 	                        :permission :view
 	                        :subject (->user "super-user")}
@@ -592,10 +608,9 @@
 	               (assoc base-query
 	                      :first 2
 	                      :after page1-end-cursor))]
-	          (is (not-any? #(= victim %) (:data recovered)))
-	          (is (= :rebased
-	                 (get-in recovered
-	                         [:page-info :cursor-recovery]))))))
+	          (is (some #(= victim %) (:data recovered)))
+	          (is (nil? (get-in recovered
+	                            [:page-info :cursor-recovery]))))))
 
 	    (testing "spice-read-relationships results are constrained by filters for resource type & ID"
 	      (testing "transact the test entities we are about to use"
@@ -616,57 +631,18 @@
 	                                                      :subject/type      :account
 	                                                      :subject/id        "test-account"})))))))
 
-; expand-permission-tree not impl. yet.
-;; FIXME: These tests fail because expand-permission-tree is not implemented yet
-#_(testing "We can expand permissions hierarchy for (->server 123)."
-    (is (= [[[[{:object   (->account "operativa")
-                :relation :owner
-                :subjects [{:object   (->user "ben")
-                            :relation nil}]}
-               [{:object   (->platform "sample-platform")
-                 :relation :super_admin
-                 :subjects [{:object   (->user "andre")
-                             :relation nil}]}]]]
-
-             ; no shared_admin subjects:
-             []                                             ; don't know what this empty vector is about.
-             {:object   (update (->server 123) :id str)
-              :relation :shared_admin
-              :subjects []}]
-
-            ; no shared_member subjects:
-            {:object   (update (->server 123) :id str)
-             :relation :shared_member
-             :subjects []}] (eacl/expand-permission-tree *client {:resource   (->server 123)
-                                                                  :permission :reboot}))))
-
-#_(testing "Expand permissions hierarchy for joe's-server shows team member"
-    ; Note: numeric IDs are not coerced back from strings yet.
-    (is (= [[[[{:object   (->account "acme")
-                :subjects [{:object joe's-user :relation nil}],
-                :relation :owner}
-               [{:object   (->platform "sample-platform"),
-                 :subjects [{:object (->user "andre"), :relation nil}],
-                 :relation :super_admin}]]]
-             []
-             {:object   (->server "not-my-server"),
-              :subjects [],
-              :relation :shared_admin}]
-            {:object   (->server "not-my-server"),
-             :subjects [],
-             :relation :shared_member}] (eacl/expand-permission-tree *client {:resource   joe's-server
-                                                                              :permission :reboot}))))
-
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
 
 (deftest consistency-selection-tests
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client
                   conn
-                  {:coherence-authority :managed
-                   :proof-mode :content})]
+                  {})]
       (eacl/write-schema! client "definition user {}
-         definition account { relation owner: user  permission admin = owner }")
+         definition account {
+           relation owner: user
+           permission admin = owner
+         }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"} {:eacl/id "acct-2"} {:eacl/id "acct-3"}])
       (eacl/create-relationships! client
         [(->Relationship (spice-object :user "alice") :owner (spice-object :account "acct-1"))

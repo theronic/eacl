@@ -20,11 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 21
+      - name: Set up Temurin JDK 26
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '26'
 
       - name: Set up Clojure CLI
         uses: DeLaGuardo/setup-clojure@13.6.1
@@ -84,7 +84,6 @@ jobs:
                (require 'eacl.formal.wire-format-bridge-test :reload)
                (require 'eacl.formal.semantics-bridge-test :reload)
                (require 'eacl.formal.page-window-bridge-test :reload)
-               (require 'eacl.formal.cache-kernel-bridge-test :reload)
                (require 'eacl.formal.cross-runtime-vector-test :reload)
                (require 'eacl.formal.production-kernel-test :reload)
                (require 'eacl.formal.state-trace-differential-test :reload)
@@ -94,7 +93,6 @@ jobs:
                       'eacl.formal.wire-format-bridge-test
                       'eacl.formal.semantics-bridge-test
                       'eacl.formal.page-window-bridge-test
-                      'eacl.formal.cache-kernel-bridge-test
                       'eacl.formal.cross-runtime-vector-test
                       'eacl.formal.production-kernel-test
                       'eacl.formal.state-trace-differential-test)]
@@ -102,7 +100,7 @@ jobs:
                    (throw (ex-info \"generated Java boundary failed\" result)))
                  result))"
 
-      - name: Run generated JavaScript differential boundaries
+      - name: Run generated JavaScript and indexed-engine differential boundaries
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
@@ -116,7 +114,72 @@ jobs:
                  :output-to \"target/formal/cljs-smoke.js\"}))"
           node target/formal/cljs-smoke.js
 
-      - name: Gate generated JavaScript indexed traversal scaling
+      - name: Run advanced-optimized CLJS production and differential suites
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.cljs-test-runner
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :warnings {:private-var-access false}
+                 :output-dir \"target/formal/cljs-advanced-out\"
+                 :output-to \"target/formal/cljs-advanced.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+               {:main 'eacl.datascript.cljs-test-runner
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :warnings {:private-var-access false}
+                 :output-dir \"target/formal/datascript-cljs-advanced-out\"
+                 :output-to \"target/formal/datascript-cljs-advanced.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+                {:main 'eacl.formal.empty-bundle-entry
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir \"target/formal/cljs-empty-bundle-out\"
+                 :output-to \"target/formal/cljs-empty-bundle.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+                {:main 'eacl.formal.portable-kernel-bundle-entry
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir \"target/formal/cljs-portable-kernel-bundle-out\"
+                 :output-to \"target/formal/cljs-portable-kernel-bundle.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+                {:main 'eacl.datascript.production-bundle-entry
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir \"target/formal/cljs-production-bundle-out\"
+                 :output-to \"target/formal/cljs-production-bundle.js\"
+                 :pretty-print false}))"
+          node target/formal/cljs-advanced.js
+          node target/formal/datascript-cljs-advanced.js
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.cljs-production-gate-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.formal.cljs-production-gate-test)]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"CLJS production bundle gate failed\"
+                                   result)))
+                 result))"
+
+      - name: Gate portable CLJS indexed traversal scaling and ceiling
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
@@ -125,7 +188,8 @@ jobs:
                 nil
                 {:main 'eacl.formal.indexed-traversal-benchmark
                  :target :nodejs
-                 :optimizations :none
+                 :optimizations :advanced
+                 :warnings-as-errors true
                  :output-dir
                  \"target/formal/cljs-indexed-traversal-out\"
                  :output-to
@@ -357,11 +421,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 21
+      - name: Set up Temurin JDK 26
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '26'
+
+      - name: Set up Babashka
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          bb: '1.12.213'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -402,11 +471,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 21
+      - name: Set up Temurin JDK 26
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '26'
 
       - name: Set up Clojure CLI
         uses: DeLaGuardo/setup-clojure@13.6.1
@@ -496,11 +565,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 21
+      - name: Set up Temurin JDK 26
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '26'
 
       - name: Set up Clojure CLI and Node
         uses: DeLaGuardo/setup-clojure@13.6.1

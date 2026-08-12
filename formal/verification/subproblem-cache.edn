@@ -1,257 +1,110 @@
-{:schema-version 2
- :semantics-version 1
- :status :conditional-root-denotation-and-lifecycle-refinement-passed
- :historical-prompt-and-independent-reproduction
- {:source "https://github.com/theronic/lore/commit/dabb5634b0d44e196e2b6ec63003917b3d445bec"
-  :analyser-status :outdated-untrusted
-  :lore-assurance :none
-  :subject-pr 101
-  :subject-revision "c5f8adb3b42d7e463a6449f78f9b9d34eb784423"
-  :result :prior-production-resource-claim-refuted
-  :assurance-provenance :independent-eacl-model-test-and-mutation
-  :witness :weighted-a-b-a-incomplete-eviction
-  :independent-evidence
-  {:jvm-regression
-   eacl.subproblem-cache-test/weighted-eviction-cannot-duplicate-a-running-key-test
-   :temporal-model "formal/tla/EaclTieredSubproblemCache.tla"
-   :mutant :incomplete-flight-eviction
-   :mutant-outcome :required-counterexample-produced
-   :proof "formal/dafny/SubproblemCache.dfy"}
-  :corrective-action
-  :flight-ownership-separated-from-evictable-admission-and-shared-execution-semaphore}
- :proof
- {:source "formal/dafny/SubproblemCache.dfy"
-  :verified-obligations 99
-  :claims
-  [:projection-key-field-separation
-   :lifecycle-qualified-recursive-self-detection
-   :different-lifecycle-self-wait-separation
-   :linearized-lifecycle-entry-and-flight-selection
-   :generated-lookup-action-precedes-flight-mutation
-   :registered-unrepresented-flight-is-computing
-   :missing-entry-and-flight-starts-computation
-   :managed-source-schema-relation-proof-key-separation
-   :same-transaction-different-mutation-value-proof-separation
-   :unchanged-managed-relation-stamp-preserves-projection
-   :changed-managed-relation-slice-requires-changed-stamp
-   :bounded-exact-projection-slice
-   :adjacent-projection-concatenation
-   :incomplete-exact-candidate-rejection
-   :different-generation-rejection
-   :exact-hit-refinement-under-candidate-contract
-   :complete-exact-hit-skips-value-dependent-callbacks
-   :candidate-callback-cost-is-constant
-   :atomic-managed-proof-read-cost-is-graph-size-independent
-   :acyclic-subproblem-call-stack-independence
-   :expired-lifecycle-publication-rejection
-   :partial-invalid-and-oversized-publication-rejection
-   :admitted-weight-bound
-   :represented-candidate-admission-bound-preservation
-   :full-represented-candidate-store-distinct-admission-rejection
-   :running-flight-not-eviction-eligible
-   :actual-callback-execution-bound
-   :recursive-bypass-reuses-only-the-owner-execution-context
-   :distinct-context-recursive-bypass-acquires-a-permit
-   :lifecycle-detachment-preserves-actual-callback-accounting
-   :partial-recursive-publication-rejection
-   :completed-worklist-least-fixed-point-publication]}
- :root-denotation-proof
- {:sources
-  ["formal/dafny/RootDenotation.dfy"
-   "formal/dafny/IndexedRootDenotation.dfy"]
-  :verified-obligations
-  {:semantic-equivalence 33
-   :indexed-compiler-bridge 137}
-  :claim
-  :equal-exact-indexed-root-rule-bodies-have-equal-least-fixed-point-grants
-  :runtime-key-boundary
-  eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies
-  :cross-target-runtime-key-boundary
-  eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test
-  :qualification
-  :exact-generated-certification-rule-maps-are-the-runtime-key-with-cross-target-regression-while-host-collection-equality-remains-trusted}
- :temporal-models
- [{:source "formal/tla/EaclSubproblemCache.tla"
-   :configuration "formal/tla/EaclSubproblemCache.cfg"
-   :bounded-length 8
-   :status :passed
-   :invariants
-   [:continuous-reserved-weight-bound
-    :complete-current-hit-only
-    :single-flight-join-current-computing-only
-    :partial-state-never-hits
-    :one-inflight-state-per-key
-    :global-inflight-bound
-    :late-orphan-publication-unreachable-from-active-generation]}
-  {:source "formal/tla/EaclManagedProjectionCache.tla"
-   :configuration "formal/tla/EaclManagedProjectionCache.cfg"
-   :bounded-length 8
-   :status :passed
-   :invariants
-   [:managed-hit-requires-current-source-schema-and-relation-proof
-    :managed-single-flight-join-requires-current-proof
-    :managed-global-inflight-bound]
-   :histories
-   [:unrelated-generation-advance
-    :relation-mutation
-    :schema-mutation
-    :source-switch
-    :late-publication
-    :failure]}
-  {:source "formal/tla/EaclTieredSubproblemCache.tla"
-   :configuration "formal/tla/EaclTieredSubproblemCache.cfg"
-   :bounded-length 5
-   :inductive-invariant :passed
-   :status :passed
-   :invariants
-   [:separate-tier-weight-bounds
-    :represented-candidates-current
-    :complete-current-hit-only
-    :partial-denotation-never-hits
-    :lifecycle-qualified-flight-ownership
-    :one-actual-callback-per-lifecycle-qualified-address
-    :global-actual-callback-execution-bound
-    :late-orphan-publication-rejected]
-   :mutation-controls
-   [:partial-denotation-hit
-    :stale-generation-hit
-    :duplicate-flight-start
-    :late-orphan-publication
-    :coupled-tier-budgets
-    :incomplete-flight-eviction
-    :obsolete-lifecycle-flight-join]}]
+{:schema-version 3
+ :semantics-version 2
+ :status :conditional-independent-computation-model-verified
+ :claim-id :EACL-V8-CACHE-COORDINATION-001
  :production
  {:sources
   ["modules/eacl/src/eacl/subproblem_cache.cljc"
    "modules/eacl/src/eacl/cache.cljc"
-   "modules/eacl/src/eacl/engine/v8.cljc"]
-  :exact-generation-only false
-  :managed-forward-revision-subproblems :atomic-relation-projections
-  :managed-forward-revision-derived-denotations
-  :conditional-on-certified-root-body-and-complete-managed-dependency-frame
-  :partial-recursive-publication false
-  :recursive-self-wait-identity :lifecycle-tier-semantic-key
-  :recursive-self-execution
-  :context-aware-slot-reuse-or-distinct-context-acquisition
-  :flight-removal-linearization :shared-store-lock
-  :cache-disabled-bypass true
-  :resource-measures
-  {:represented-tier-weight :bounded
-   :represented-candidates-per-store :bounded
-   :actual-top-level-callbacks-per-client :bounded
-   :registered-flights :observable-not-independently-bounded
-   :waiting-callers :external-caller-concurrency
-   :jvm-live-heap :not-established
-   :cpu-time :not-established
-   :wall-time :not-established
-   :general-backend-operations :not-established}}
- :adversarial-boundaries
- {:portable-test
-  eacl.subproblem-cache-test/managed-proof-adversarial-boundaries-test
-  :covered
-  [:unrelated-write
-   :missing-stamp-exact-only
-   :delete-recreate-mutation-identity
-   :same-endpoints-different-relation
-   :branch-scope
-   :restored-source-scope
-   :reset-lifecycle-expiry
-   :out-of-band-write-content-proof-change]
-  :trusted-assumption
-  :unstamped-raw-write-is-undetectable-by-mutation-proof
-  :backend-evidence
-  {:datomic
-   [eacl.datomic.lookup-cache-test/recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
-    eacl.datomic.object-deletion-test]
-   :datahike
-   [eacl.datahike.consistency-v3-test/content-proofs-are-bounded-and-cover-public-identity-test
-    eacl.datahike.consistency-v3-test/branch-refresh-exact-and-force-rewind-test]
-   :datascript
-   [eacl.datascript.consistency-v3-test/content-proofs-are-bounded-and-cover-public-identity-test
-    eacl.datascript.consistency-v3-test/causal-anchor-survives-restart-and-detects-reset-test]}}
- :differential-tests
- {:projection-generated-seeds 40
-  :projection-assertions 2560
-  :recursive-public-operations
-  [:can? :lookup-resources :lookup-subjects
-   :count-resources :count-subjects :cursor-forward :cursor-backward]
-  :backends-smoke-passed [:datomic :datahike :datascript]
-  :latest-validation
-  {:date "2026-08-06"
-   :verified-authority-clj
-   {:backends [:datomic :datahike :datascript]
-    :tests 509 :assertions 34773}
-   :verified-authority-heavy
-   {:backends [:datomic :datahike :datascript]
-    :tests 17 :assertions 4062}
-   :verified-authority-datascript-cljs
-   {:tests 155 :assertions 4419}
-   :heavy-pagination {:tests 9 :assertions 3405}
-   :heavy-subproblem-cache {:tests 6 :assertions 20}
-   :failures 0
-   :errors 0}}
- :performance
- {:fixture
-  {:depth 48
-   :distinct-top-level-queries 80
-   :unrelated-write-between-warmup-and-measurement true
-   :completed-answer-hits 0
-   :baseline-backend-operations 3920}
-  :repeated-runs 5
-  :backend-operation-reduction-ratio 1.0
-  :p50-improvement-range [0.4399612747075434 0.5018338461538462]
-  :latest-run
-  {:date "2026-08-05"
-   :completed-answer-only-p50-ms 0.68425
-   :layered-subproblem-p50-ms 0.181959
-   :p50-latency-ratio 0.2659247351114359
-   :p50-improvement-ratio 0.7340752648885641
-   :completed-answer-only-backend-operations 3920
-   :layered-subproblem-backend-operations 0
-   :completed-answer-hits 0
-   :denotation-hits 158
-   :managed-denotation-hits 1
-   :acyclic-denotation-hits 79
-   :new-generation-proof-reads 1}
-  :hit-cardinality-scaling
-  {:small-entries 64
-   :large-entries 4096
-   :entry-count-ratio 64
-   :p50-latency-ratio 1.01186}
-  :miss-finalization-scaling
-  {:resource-dimension :actual-host-computation-lifecycle
-   :small-entries 64
-   :large-entries 4096
-   :entry-count-ratio 64
-   :misses-per-batch 20
-   :p50-latency-ratio 1.0164}
-  :cached-recursive-page-scaling
-  {:small-closure-items 64
-   :large-closure-items 131072
-   :closure-size-ratio 2048
-   :page-size 20
-   :p50-latency-ratio 0.996876}
-  :hot-hit-regression-ratio 0.99895
-  :cache-disabled-regression-ratio 0.99929}
- :managed-proof-resource-benchmark
- {:report "formal/verification/managed-proof-cost.edn"
-  :status :passed
-  :backends [:datomic :datahike :datascript]
-  :unrelated-edge-count 1024
-  :maximum-observed-p50-ratio 1.0264659340659341
-  :committed-datom-events
-  {:datomic {:create 16 :delete 17}
-   :datahike {:create 13 :delete 13}
-   :datascript {:create 14 :delete 14}}
-  :suite {:tests 1 :assertions 13 :failures 0 :errors 0}}
- :claim-boundary
- {:complete-public-engine :conditional-generated-authority-composition
-  :localized-managed-proof
-  :atomic-relation-projections-and-certified-root-denotations
-  :managed-derived-denotation-proof
-  :certified-root-body-plus-complete-managed-frame
-  :generated-production-decision-kernel :generated-only
-  :production-source-refinement false
-  :whole-engine-resource-safety false
-  :independent-review false
-  :release-verification-claim :withheld}}
+   "modules/eacl/src/eacl/continuation.cljc"
+   "modules/eacl-datomic/src/eacl/datomic/cache.clj"]
+  :represented-entry-kinds :completed-immutable-values-only
+  :cold-miss-ownership :initiating-request
+  :identical-miss-policy :compute-independently
+  :caller-waiting-coordination false
+  :cache-computation-semaphore false
+  :publication
+  {:kind :bounded-best-effort-cas
+   :compatible-existing-winner :retained
+   :losing-candidate :discarded
+   :authorization-result-dependency false}
+  :lifecycle
+  {:replacement :atomic-generation-detachment
+   :late-old-generation-publication :unreachable}
+  :partial-semantic-state-answering false}
+ :dafny
+ {:source "formal/dafny/SubproblemCache.dfy"
+  :verified-obligations 73
+  :claims
+  [:exact-command-key-field-separation
+   :recursive-denotation-key-matches-production-semantic-identity-and-public-order
+   :completed-candidate-only-hit
+   :incomplete-candidate-independent-computation
+   :bounded-publication-attempt
+   :current-complete-valid-weight-bounded-publication
+   :lifecycle-qualified-lookup-and-publication-address
+   :late-generation-publication-rejection
+   :one-request-owns-at-most-one-miss-computation
+   :concurrent-requests-have-independent-computation-state
+   :partial-recursive-publication-rejection
+   :completed-worklist-least-fixed-point-publication]}
+ :temporal-models
+ [{:source "formal/tla/EaclSubproblemCache.tla"
+   :configuration "formal/tla/EaclSubproblemCache.cfg"
+   :models
+   [:request-owned-independent-misses
+    :completed-entry-only-store
+    :bounded-capacity
+    :atomic-lifecycle-detachment
+    :late-publication-discard]
+   :status :typechecked}
+  {:source "formal/tla/EaclTieredSubproblemCache.tla"
+   :configuration "formal/tla/EaclTieredSubproblemCache.cfg"
+   :models
+   [:separate-tier-budgets
+    :request-owned-independent-misses
+    :partial-artifact-nonanswering
+    :late-publication-discard]
+   :mutation-controls
+   [:partial-denotation-hit
+    :late-orphan-publication
+    :coupled-tier-budgets]
+   :status :typechecked}
+  {:source "formal/tla/EaclManagedProjectionCache.tla"
+   :configuration "formal/tla/EaclManagedProjectionCache.cfg"
+   :models
+   [:completed-artifact-only-store
+    :managed-hit-current-source-schema-scalar-frontier]
+   :mutation-controls [:managed-proof-bypass]
+   :status :typechecked}]
+ :executable-conformance
+ {:generated-production-boundary
+  eacl.formal.production-kernel/subproblem-cache-decision
+  :portable-boundary
+  eacl.engine.portable-decisions/subproblem-cache-decision
+  :input-contract
+  eacl.verified-kernel/validate-subproblem-cache-input!
+  :result-contract
+  eacl.verified-kernel/validate-subproblem-cache-result!
+  :production-state-machine-tests
+  [eacl.subproblem-cache-test
+   eacl.cache-test]
+  :adversarial-trace-test
+  eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test}
+ :negative-source-assertions
+ {:forbidden-production-mechanisms
+  ["single-flight" "Semaphore" "ReentrantReadWriteLock" "(locking"]
+  :test
+  eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test}
+ :assurance-classification
+ {:dafny-decisions :generated-production-authority
+  :tla-models :proof-only-temporal-models
+  :clj-cache-state-machine :differential-and-source-closure-conformance
+  :cljs-cache-state-machine :differential-conformance
+  :mechanized-source-refinement false
+  :external-certification-status :qualified-not-certified
+  :reason
+  :mechanized-refinement-from-shipped-clj-cljs-cache-transitions-remains-open}
+ :excluded-properties
+ [:hard-wall-clock-bound
+  :jvm-heap-bound
+  :gc-scheduling-bound
+  :external-cache-provider-execution-not-in-v8-target
+  :backend-command-cancellation]
+ :latest-verification
+ {:date "2026-08-08"
+  :dafny {:verified 73 :errors 0}
+  :tla-typecheck :passed
+  :generated-java-smoke
+  {:status :passed :tests 51 :assertions 16176 :failures 0 :errors 0}
+  :source-refinement :not-established}}

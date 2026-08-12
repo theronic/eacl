@@ -55,36 +55,24 @@
 (defn lookup-page-query-identity
   "Builds the semantic cache identity for an authenticated lookup page.
 
-  Public cursors are signed transport envelopes whose snapshot metadata can
-  change when the same logical boundary is recovered on a newer current
-  snapshot. The authenticated internal boundary is the semantic position.
-  `:rebase?` is likewise an execution instruction, not part of that position.
+  Public cursors are signed transport envelopes. The authenticated internal
+  ordinal/result boundary is the semantic position, while transport bytes are
+  deliberately excluded.
 
   Call only after the public cursor has been authenticated and internalized."
   [public-query internal-query]
-  (let [semantic-bound
-        (fn [bound]
-          (if (map? bound)
-            (dissoc bound :rebase?)
-            bound))]
-    {:public
-     (dissoc public-query
-             :consistency :cache? :after :before)
-     :internal
-     (cond-> (dissoc internal-query :consistency :cache?)
-       (contains? internal-query :after)
-       (update :after semantic-bound)
-
-       (contains? internal-query :before)
-       (update :before semantic-bound))}))
+  {:public
+   (dissoc public-query
+           :consistency :cache? :after :before)
+   :internal
+   (dissoc internal-query :consistency :cache?)})
 
 (defrecord ExactGeneration [snapshot order subproblems])
 (defrecord ManagedGeneration
   [schema-stamp installed-order subproblems])
 (defrecord CacheLifecycle [exact managed])
 (defrecord CurrentGenerationCache [lifecycle metrics max-entries admissions
-                                   admit-on-repeat? subproblem-options
-                                   subproblem-coordinator])
+                                   admit-on-repeat? subproblem-options])
 
 (defn- new-lifecycle
   []
@@ -207,28 +195,23 @@
      (throw (ex-info "Current cache subproblem :enabled? must be boolean."
                      {:type :eacl/invalid-config
                       :subproblem-cache subproblem-cache})))
-   ;; Validate budgets before a request attempts to install a generation, then
-   ;; keep the execution coordinator above exact/schema generation replacement.
-   ;; Old detached work and new-generation work therefore consume one client
-   ;; lifecycle-wide concurrency budget.
-   (let [validated
-         (subproblem/store (dissoc subproblem-cache :enabled?))
-         coordinator
-         (subproblem/computation-coordinator (:max-inflight validated))]
-     (->CurrentGenerationCache
-      (atom (new-lifecycle))
-      (atom {:exact-hits 0
-             :managed-hits 0
-             :misses 0
-             :bypasses 0
-             :stamp-failures 0
-             :puts 0
-             :expirations 0})
-      max-entries
-      (atom empty-answer-sightings)
-      admit-on-repeat?
-      subproblem-cache
-      coordinator))))
+   ;; Validate budgets before a request attempts to install a generation.
+   (subproblem/store (dissoc subproblem-cache :enabled?))
+   (->CurrentGenerationCache
+    (atom (new-lifecycle))
+    (atom {:exact-hits 0
+           :managed-hits 0
+           :misses 0
+           :bypasses 0
+           :stamp-failures 0
+           :proof-unavailable 0
+           :proof-unavailable-reasons {}
+           :puts 0
+           :expirations 0})
+    max-entries
+    (atom empty-answer-sightings)
+    admit-on-repeat?
+    subproblem-cache)))
 
 (defn current-cache?
   [value]
@@ -278,10 +261,6 @@
            (get-in exact-stats [:tiers :answer :entries] 0)
            :managed-entries
            (get-in managed-stats [:tiers :answer :entries] 0)
-           :active-subproblem-computations
-           @(:active (:subproblem-coordinator store))
-           :max-subproblem-computations
-           (:maximum (:subproblem-coordinator store))
            :admission-entries
            (count (:seen @(:admissions store)))
            :subproblems
@@ -303,6 +282,39 @@
                        :cache store})))
     (swap! (:metrics store) update :bypasses inc))
   nil)
+
+(defn record-proof-unavailable!
+  "Records a typed, optimization-only proof diagnostic.
+
+  Proof availability never changes authorization availability: callers still
+  evaluate and publish only against the selected exact snapshot."
+  [store {:keys [reason]}]
+  (when store
+    (when-not (current-cache? store)
+      (throw (ex-info "Expected an EACL current-generation cache."
+                      {:type :eacl/invalid-config
+                       :cache store})))
+    (swap! (:metrics store)
+           (fn [metrics]
+             (-> metrics
+                 (update :proof-unavailable inc)
+                 (update-in [:proof-unavailable-reasons reason]
+                            (fnil inc 0))))))
+  nil)
+
+(defn capture-current-lifecycle
+  "Captures the cache lifecycle object at a public request boundary.
+
+  Passing this object back to `resolve-current!` prevents a request that was
+  already in flight during `expire-current!` from attaching its work to the
+  replacement lifecycle, even when expiry happens before cache lookup."
+  [store]
+  (when store
+    (when-not (current-cache? store)
+      (throw (ex-info "Expected an EACL current-generation cache."
+                      {:type :eacl/invalid-config
+                       :cache store})))
+    @(:lifecycle store)))
 
 (defn expire-current!
   "Atomically makes every exact and managed entry unreachable.
@@ -326,7 +338,7 @@
   now also carries the completed-answer `:answer` tier, so `:subproblem-cache
   {:enabled? false}` disables traversal-subproblem bindings without disabling
   completed-answer storage."
-  [exact snapshot order same-snapshot? subproblem-options coordinator]
+  [exact snapshot order same-snapshot? subproblem-options]
   (loop []
     (let [current @exact]
       (cond
@@ -340,8 +352,7 @@
               (->ExactGeneration
                snapshot order
                (subproblem/store
-                (assoc (dissoc subproblem-options :enabled?)
-                       :computation-coordinator coordinator)))]
+                (dissoc subproblem-options :enabled?)))]
           (if (compare-and-set! exact current created)
             {:generation created :active? true}
             (recur)))
@@ -352,7 +363,7 @@
         {:generation nil :active? false}))))
 
 (defn- install-managed-generation!
-  [managed schema-stamp order subproblem-options coordinator]
+  [managed schema-stamp order subproblem-options]
   (loop []
     (let [current @managed]
       (cond
@@ -366,8 +377,7 @@
                schema-stamp
                order
                (subproblem/store
-                (assoc (dissoc subproblem-options :enabled?)
-                       :computation-coordinator coordinator)))]
+                (dissoc subproblem-options :enabled?)))]
           (if (compare-and-set! managed current created)
             created
             (recur)))
@@ -384,22 +394,10 @@
          (subproblem/proof-stamp? dependency-stamp))))
 
 (defn- managed-descriptor
-  [store subproblem-store descriptor-key-fn managed-key-fn]
+  [store managed-key-fn]
   (when managed-key-fn
     (try
-      (let [descriptor-key
-            (when descriptor-key-fn (descriptor-key-fn))
-            descriptor
-            (if (and subproblem-store descriptor-key)
-              (:value
-               (subproblem/resolve!
-                subproblem-store
-                :denotation
-                [:managed-descriptor 1 descriptor-key]
-                {:valid? valid-managed-descriptor?
-                 :weight-fn (constantly 160)}
-                managed-key-fn))
-              (managed-key-fn))]
+      (let [descriptor (managed-key-fn)]
         (when (valid-managed-descriptor? descriptor)
           descriptor))
       (catch #?(:clj Exception :cljs :default) _
@@ -426,15 +424,17 @@
   omitted, a conservative page-size default applies.
 
   Completed answers live in the `:answer` tier of the lifecycle's exact and
-  managed subproblem stores: weight-bounded, least-recently-used, oversized
-  rejecting, and single-flighted. Exact keying is the semantic key plus kind
+  managed subproblem stores: weight-bounded, least-recently-used, and
+  oversized-rejecting. Identical misses compute independently and race a
+  bounded nonblocking publication. Exact keying is the semantic key plus kind
   on the selected generation's store; managed keying adds the dependency
   stamp on the schema-generation store.
 
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
-           managed-descriptor-key-fn managed-key-fn
+           cache-lifecycle
+           managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
            decision-kernel remember-answer? answer-weight-fn]
     :or {same-snapshot? =
@@ -474,13 +474,12 @@
         (throw (ex-info "Invalid current-cache snapshot context."
                         {:type :eacl/invalid-config
                          :snapshot-order snapshot-order})))
-      (let [lifecycle @(:lifecycle store)
+      (let [lifecycle (or cache-lifecycle @(:lifecycle store))
             {:keys [generation active?]}
             (install-exact-generation!
-             (:exact lifecycle)
+            (:exact lifecycle)
              snapshot snapshot-order same-snapshot?
-             (:subproblem-options store)
-             (:subproblem-coordinator store))
+             (:subproblem-options store))
             entry-key [semantic-key kind]]
         (if (= :bypass-current-cache
                (current-cache-action
@@ -519,15 +518,13 @@
                :subproblem-store answer-store})
             (let [{:keys [schema-stamp dependency-stamp]}
                   (managed-descriptor
-                   store answer-store
-                   managed-descriptor-key-fn managed-key-fn)
+                   store managed-key-fn)
                   managed-generation
                   (when (some? schema-stamp)
                     (install-managed-generation!
                      (:managed lifecycle)
                      schema-stamp snapshot-order
-                     (:subproblem-options store)
-                     (:subproblem-coordinator store)))
+                     (:subproblem-options store)))
                   managed-store (:subproblems managed-generation)
                   managed-entry-key
                   (when managed-generation
@@ -546,7 +543,7 @@
                   ;; Promote the still-valid managed answer into the selected
                   ;; exact generation so the next identical request hits
                   ;; without dependency-stamp extraction.
-                  (subproblem/resolve!
+                  (subproblem/resolve-independent!
                    answer-store :answer entry-key answer-options
                    (fn [] managed-entry))
                   (swap! (:metrics store) update :puts inc)
@@ -580,21 +577,20 @@
                       (fn []
                         (if managed-entry-key
                           (:value
-                           (subproblem/resolve!
+                           (subproblem/resolve-independent!
                             managed-store :answer managed-entry-key
                             answer-options compute-entry))
                           (compute-entry)))]
                   (if (and remember-answer?
                            (admit-answer? store entry-key))
                     (let [resolved
-                          (subproblem/resolve!
+                          (subproblem/resolve-independent!
                            answer-store :answer entry-key
                            answer-options layered-compute)
                           entry (:value resolved)]
                       (if (:cached? resolved)
-                        ;; A concurrent identical request published or
-                        ;; single-flighted this answer first; serve it as the
-                        ;; exact hit it is.
+                        ;; A compatible completed value was already visible
+                        ;; at lookup time; serve it as the exact hit it is.
                         (do
                           (swap! (:metrics store) update :exact-hits inc)
                           {:value (:value entry)
@@ -620,4 +616,3 @@
                        :cache-tier nil
                        :cache-basis cache-basis
                        :subproblem-store answer-store}))))))))))))
-

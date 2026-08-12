@@ -52,7 +52,7 @@
              #(public-consistency/descriptor removed-mode)))))))
 
 (defn- adapter
-  [{:keys [backend-id source-id branch head order locator anchors modes
+  [{:keys [backend-id source-id source-lifecycle branch head order locator modes
            selected-current selected-authoritative selected-at-least
            selected-exact counts]}]
   (let [self (atom nil)
@@ -71,12 +71,11 @@
          {:snapshot-id (fn [] [source-id branch order])
           :source-scope
           (fn [] {:source-id source-id :branch branch})
-          :graph-head
-          (fn [] {:graph-anchor head
-                  :order-hint order
+          :source-lifecycle
+          (fn [] (or source-lifecycle "test-lifecycle"))
+          :native-revision
+          (fn [] {:revision order
                   :exact-locator locator})
-          :contains-anchor? (fn [anchor]
-                              (contains? anchors anchor))
           :order-hint (fn [] order)
           :exact-locator (fn [] locator)
           :select-current
@@ -111,8 +110,8 @@
                               :at-least-as-fresh
                               :at-exact-snapshot})
            :snapshots #{:current :authoritative :causal :exact}
-           :source #{:stable-scope :graph-head
-                     :anchor-membership :order-hint :exact-locator}
+           :source #{:stable-scope :source-lifecycle
+                     :native-revision :order-hint :exact-locator}
            :cursor #{}
            :transactions #{}
            :cache-proofs #{}
@@ -122,17 +121,39 @@
     result))
 
 (defn- token
-  ([anchor order locator]
-   (token "source" nil anchor order locator))
-  ([source-id branch anchor order locator]
+  ([_anchor order locator]
+   (token "source" nil nil order locator))
+  ([source-id branch _anchor order locator]
    (causal-token/issue
     format-options
     {:backend :test
      :source-id source-id
+     :source-lifecycle "test-lifecycle"
      :branch branch
-     :graph-anchor anchor
-     :order-hint order
+     :revision order
      :exact-locator locator})))
+
+(deftest selected-adapter-token-never-reselects-live-state
+  (let [counts (atom {})
+        selected (adapter {:source-id "source"
+                           :source-lifecycle "test-lifecycle"
+                           :branch nil
+                           :order 41
+                           :locator 41
+                           :counts counts})
+        issued (consistency/selected-adapter-token
+                selected {:format-options format-options})
+        payload (causal-token/token-data format-options issued)]
+    (is (= 41 (:revision payload)))
+    (is (= 41 (:exact-locator payload)))
+    (is (= 1 (:source-scope @counts)))
+    (is (= 1 (:source-lifecycle @counts)))
+    (is (= 1 (:native-revision @counts)))
+    (is (= 1 (:order-hint @counts)))
+    (is (= 1 (:exact-locator @counts)))
+    (is (not-any? #(contains? @counts %)
+                  [:select-current :select-authoritative
+                   :select-at-least :select-exact]))))
 
 (defn- expected-kernel-decision
   [operation input]
@@ -144,10 +165,6 @@
         :minimize-latency :unsupported-capability
         :at-exact-snapshot :exact-snapshot-unavailable
         :unsupported-head-barrier)
-      (and
-       (#{:at-least-as-fresh :at-exact-snapshot} (:mode input))
-       (not (:managed-authority? input)))
-      :unsupported-head-barrier
       :else
       (case (:mode input)
         :minimize-latency :select-current
@@ -165,7 +182,7 @@
       (not (:same-source-scope? input)) :incomparable-scope
       (and
        (#{:at-least :exact} (:kind input))
-       (not (:anchor-satisfied? input)))
+       (not (:revision-satisfied? input)))
       :history-divergence
       :else :accept)))
 
@@ -203,7 +220,6 @@
                   :selected-at-least current-ref
                   :selected-exact exact-ref})
         options {:format-options format-options
-                 :coherence-authority :managed
                  :issue-token? true
                  :timeout-ms 1000}]
     (testing "fully consistent uses the authoritative barrier"
@@ -211,8 +227,8 @@
             (consistency/select
              source public-consistency/fully-consistent options)]
         (is (identical? current (:adapter selection)))
-        (is (= "current" (get-in selection
-                                 [:graph-head :graph-anchor])))))
+        (is (= {:revision 20 :exact-locator 20}
+               (:native-revision selection)))))
     (testing "minimize latency selects the local complete snapshot"
       (is (identical?
            current
@@ -227,9 +243,9 @@
              (public-consistency/at-least-as-fresh request)
              options)]
         (is (identical? current (:adapter selection)))
-        (is (= "old"
+        (is (= 10
                (get-in selection
-                       [:request-token :graph-anchor])))))
+                       [:request-token :revision])))))
     (testing "exact selection verifies the resolved graph identity"
       (let [request (token "exact" 10 10)]
         (is (identical?
@@ -249,10 +265,11 @@
              format-options
              {:backend :test
               :source-id "source"
+              :source-lifecycle "test-lifecycle"
               :branch nil}
              response)]
-        (is (= "current" (:graph-anchor payload)))
-        (is (= 20 (:order-hint payload)))))))
+        (is (= "test-lifecycle" (:source-lifecycle payload)))
+        (is (= 20 (:revision payload)))))))
 
 (deftest verified-consistency-decisions-route-production-selection
   (let [current (adapter {:source-id "source"
@@ -275,7 +292,6 @@
                   :selected-at-least current-ref})
         calls (atom [])
         options {:format-options format-options
-                 :coherence-authority :managed
                  :timeout-ms 1000
                  :decision-kernel
                  {:kernel (->RecordingKernel calls)}}]
@@ -339,8 +355,7 @@
   (doseq [mode
           [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
-          capability-supported? [false true]
-          managed-authority? [false true]]
+          capability-supported? [false true]]
     (let [source
           (adapter
            {:source-id "source"
@@ -352,12 +367,9 @@
             :modes (if capability-supported? #{mode} #{})})
           input
           {:mode mode
-           :capability-supported? capability-supported?
-           :managed-authority? managed-authority?}
+           :capability-supported? capability-supported?}
           expected (expected-plan-outcome input)
-          options
-          {:coherence-authority
-           (if managed-authority? :managed :unknown)}
+          options {}
           calls (atom [])
           verified-options
           (assoc
@@ -382,8 +394,8 @@
         (adapter {:source-id "source"
                   :branch nil
                   :head "different"
-                  :order 20
-                  :locator 20
+                  :order 19
+                  :locator 19
                   :anchors #{}})
         different
         (adapter {:source-id "different"
@@ -434,7 +446,6 @@
             calls (atom [])
             options
             {:format-options format-options
-             :coherence-authority :managed
              :issue-token? false
              :timeout-ms 1000
              :decision-kernel
@@ -446,7 +457,7 @@
              candidate)
             same-source-scope?
             (and selected-adapter? (not= :different candidate))
-            anchor-satisfied?
+            revision-satisfied?
             (if (causal-kind? kind)
               (and same-source-scope?
                    (not= :same-fail candidate))
@@ -456,7 +467,7 @@
              :selection-present? selection-present?
              :selected-adapter? selected-adapter?
              :same-source-scope? same-source-scope?
-             :anchor-satisfied? anchor-satisfied?}]
+             :revision-satisfied? revision-satisfied?}]
         (try
           (consistency/select
            source
@@ -505,7 +516,6 @@
                   :counts backend-calls})
         kernel-calls (atom [])
         options {:format-options format-options
-                 :coherence-authority :managed
                  :timeout-ms 1000
                  :decision-kernel
                  {:kernel (->RecordingKernel kernel-calls)}}
@@ -542,7 +552,8 @@
             :expected-kernel-operations
             [:consistency-plan :consistency-validation]
             :source-scope (+ 2 response-scope)
-            :graph-head 1
+            :source-lifecycle (+ 2 response-scope)
+            :native-revision 1
             :order-hint 1
             :exact-locator 1}))
         (testing
@@ -555,7 +566,8 @@
             :expected-kernel-operations
             [:consistency-plan :consistency-validation]
             :source-scope (+ 2 response-scope)
-            :graph-head 1
+            :source-lifecycle (+ 2 response-scope)
+            :native-revision 1
             :order-hint 1
             :exact-locator 1}))
         (testing
@@ -567,13 +579,13 @@
              (public-consistency/at-least-as-fresh request-token)
              run-options)
            {:source-scope (+ 3 response-scope)
+            :source-lifecycle (+ 3 response-scope)
             :expected-kernel-operations
             [:consistency-plan :consistency-validation]
             :select-at-least 1
-            :contains-anchor? 1
-            :graph-head 1
-            :order-hint 1
-            :exact-locator 1}))
+            :native-revision 2
+            :order-hint 2
+            :exact-locator 2}))
         (testing
          (str "exact path, response token " issue-response-token?)
           (run!
@@ -582,10 +594,11 @@
              (public-consistency/at-exact-snapshot request-token)
              run-options)
            {:source-scope (+ 3 response-scope)
+            :source-lifecycle (+ 3 response-scope)
             :expected-kernel-operations
             [:consistency-plan :consistency-validation]
             :select-exact 1
-            :graph-head 2
+            :native-revision 2
             :order-hint 2
             :exact-locator 2}))))))
 
@@ -609,16 +622,15 @@
                   :selected-at-least selected-ref
                   :selected-exact ::unavailable})
         options {:format-options format-options
-                 :coherence-authority :managed
                  :timeout-ms 1000}]
-    (testing "an absent causal anchor is history divergence, not freshness"
+    (testing "a selected revision below the requested revision diverges"
       (is (= :eacl.consistency/history-divergence
              (:type
               (error-data
                #(consistency/select
                  source
                  (public-consistency/at-least-as-fresh
-                  (token "missing" 10 10))
+                  (token "ignored" 30 30))
                  options))))))
     (testing "source and branch mismatch is incomparable"
       (is (= :eacl.consistency/incomparable-scope
@@ -635,9 +647,9 @@
              format-options
              {:backend :test
               :source-id "source"
+              :source-lifecycle "test-lifecycle"
               :branch nil
-              :graph-anchor "current"
-              :order-hint 20
+              :revision 20
               :exact-locator 20
               :issued-at 1
               :expires-at 2})]
@@ -671,16 +683,14 @@
                    (public-consistency/at-exact-snapshot
                     (token "current" 20 20))
                    options)))))))
-    (testing "unknown writer authority fails before causal selection"
-      (is (= :eacl.consistency/unsupported-head-barrier
-             (:type
-              (error-data
-               #(consistency/select
-                 source
-                 (public-consistency/at-least-as-fresh
-                  (token "current" 20 20))
-                 (assoc options
-                        :coherence-authority :unknown)))))))))
+    (testing "native revision selection accepts a valid request"
+      (is (backend/adapter?
+           (:adapter
+            (consistency/select
+             source
+             (public-consistency/at-least-as-fresh
+              (token "current" 20 20))
+             options)))))))
 
 (deftest capability-matrix-test
   (doseq [[mode descriptor]
@@ -700,8 +710,7 @@
                     :locator 1
                     :anchors #{"head"}
                     :modes #{mode}})
-          options {:format-options format-options
-                   :coherence-authority :managed}]
+          options {:format-options format-options}]
       (is (backend/adapter?
            (:adapter
             (consistency/select only-mode descriptor options))))
@@ -739,8 +748,7 @@
                   :selected-at-least selected-ref
                   :selected-exact selected-ref})
         request (token "head" 1 1)
-        options {:format-options format-options
-                 :coherence-authority :managed}]
+        options {:format-options format-options}]
     (testing "backend freshness deadlines remain distinguishable"
       (let [timeout-source
             (assoc-in

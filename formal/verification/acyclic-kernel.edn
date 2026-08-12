@@ -1,7 +1,21 @@
 {:schema-version 1
  :semantics-version 1
- :status :source-control-model-proved-runtime-correspondence-passed-review-pending
+ :status :generated-decisions-routed-source-specializations-conditionally-refined-review-pending
  :scope :direct-and-acyclic-kernel
+ :production-routing
+ {:generated-decisions
+  [:enumeration-route :acyclic-page :acyclic-continuation
+   :acyclic-count :acyclic-work]
+  :host-source-specializations
+  [:permission-path-materialization
+   :inclusive-exact-eid-bound-point-probe
+   :ordered-lazy-merge
+   :leapfrog-intersection
+   :arrow-path-selection
+   :outer-path-fold]
+  :recursive-indexed-state-machine :not-used-for-certified-acyclic-roots
+  :classification
+  :mixed-generated-decision-and-digest-locked-source-specialization}
  :proofs
  [{:source "formal/dafny/AcyclicEngine.dfy"
    :verified-obligations 95
@@ -59,13 +73,7 @@
     :production-two-stream-comparison-iterations-are-linear
     :balanced-ascending-fold-preserves-strict-order-and-complete-union
     :balanced-descending-fold-preserves-strict-order-and-complete-union]}
-  {:source "formal/dafny/Pagination.dfy"
-   :verified-obligations 16
-   :claims
-   [:exclusive-frontier
-    :inclusive-boundary-conversion
-    :exhaustion
-    :direction-reversal]}]
+  ]
  :generated-targets
  {:java
   {:status :passed
@@ -240,7 +248,7 @@
   :formal-source-refinement
   :source-shaped-dispatch-result-and-root-lookup-count-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
  :limitations
- [:generated-kernel-is-not-yet-production-authoritative
+ [:complete-acyclic-host-engine-is-not-generated-production-authority
   :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
   :ordered-merge-independent-source-refinement-review-is-not-recorded
   :leapfrog-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement

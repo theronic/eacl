@@ -248,7 +248,7 @@ module SchemaPlanCost {
   // These are generated-certifier comparison budgets, not elapsed time,
   // allocation counts, verifier obligations, or retained heap. The split
   // mirrors production: canonical source-plan compilation runs once per
-  // schema-proof/root plan, while each subject-type seed bucket is checked by
+  // schema-generation/root plan, while each subject-type seed bucket is checked by
   // the smaller partition certifier.
   function FullPlanCertificationCalls(): nat {
     1
@@ -321,5 +321,261 @@ module SchemaPlanCost {
               rules
             ) == rules * rules * rules
   {
+  }
+
+  // The acyclic frontier builder follows only an exact single
+  // self-permission body. Every other permission body is terminal. This is
+  // the production canonical-permission-alias decision, including its cycle
+  // guard; it is not a general schema rewrite.
+  datatype PermissionBody =
+    | PureSelfPermission(targetPermission: int)
+    | CompositePermission
+
+  function CanonicalPermissionAlias(
+    bodies: map<int, PermissionBody>,
+    current: int,
+    seen: set<int>
+  ): int
+    decreases bodies.Keys - seen
+  {
+    if current in seen || current !in bodies
+    then current
+    else
+      match bodies[current]
+      case CompositePermission => current
+      case PureSelfPermission(targetPermission) =>
+        CanonicalPermissionAlias(
+          bodies,
+          targetPermission,
+          seen + {current}
+        )
+  }
+
+  predicate PureAliasesPreserveDenotation(
+    bodies: map<int, PermissionBody>,
+    denotations: map<int, set<int>>
+  ) {
+    forall permission ::
+      permission in bodies && bodies[permission].PureSelfPermission? ==>
+        permission in denotations &&
+        bodies[permission].targetPermission in denotations &&
+        denotations[permission] ==
+        denotations[bodies[permission].targetPermission]
+  }
+
+  lemma CanonicalPermissionAliasPreservesDenotation(
+    bodies: map<int, PermissionBody>,
+    denotations: map<int, set<int>>,
+    current: int,
+    seen: set<int>
+  )
+    requires current in denotations
+    requires PureAliasesPreserveDenotation(bodies, denotations)
+    ensures CanonicalPermissionAlias(bodies, current, seen) in denotations
+    ensures denotations[CanonicalPermissionAlias(bodies, current, seen)] ==
+            denotations[current]
+    decreases bodies.Keys - seen
+  {
+    if current !in seen && current in bodies &&
+       bodies[current].PureSelfPermission?
+    {
+      CanonicalPermissionAliasPreservesDenotation(
+        bodies,
+        denotations,
+        bodies[current].targetPermission,
+        seen + {current}
+      );
+    }
+  }
+
+  datatype ArrowFrontier = ArrowFrontier(
+    relation: int,
+    targetType: int,
+    targetPermission: int
+  )
+
+  function CanonicalArrowFrontier(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    path: ArrowFrontier
+  ): ArrowFrontier {
+    if path.targetType in bodiesByType
+    then ArrowFrontier(
+           path.relation,
+           path.targetType,
+           CanonicalPermissionAlias(
+             bodiesByType[path.targetType],
+             path.targetPermission,
+             {}
+           )
+         )
+    else path
+  }
+
+  function DeduplicateCanonicalFrontiers(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>,
+    seen: set<ArrowFrontier>
+  ): seq<ArrowFrontier>
+    decreases |paths|
+  {
+    if |paths| == 0 then
+      []
+    else if CanonicalArrowFrontier(bodiesByType, paths[0]) in seen then
+      DeduplicateCanonicalFrontiers(
+        bodiesByType,
+        paths[1..],
+        seen
+      )
+    else
+      [CanonicalArrowFrontier(bodiesByType, paths[0])] +
+      DeduplicateCanonicalFrontiers(
+        bodiesByType,
+        paths[1..],
+        seen + {CanonicalArrowFrontier(bodiesByType, paths[0])}
+      )
+  }
+
+  function CanonicalFrontierSequence(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>
+  ): seq<ArrowFrontier> {
+    DeduplicateCanonicalFrontiers(bodiesByType, paths, {})
+  }
+
+  predicate UniqueFrontiers(paths: seq<ArrowFrontier>) {
+    forall i, j ::
+      0 <= i < j < |paths| ==> paths[i] != paths[j]
+  }
+
+  lemma DeduplicateCanonicalFrontiersExcludesSeen(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>,
+    seen: set<ArrowFrontier>
+  )
+    ensures forall index ::
+              0 <= index <
+              |DeduplicateCanonicalFrontiers(bodiesByType, paths, seen)| ==>
+                DeduplicateCanonicalFrontiers(
+                  bodiesByType,
+                  paths,
+                  seen
+                )[index] !in seen
+    decreases |paths|
+  {
+    if |paths| > 0 {
+      var canonical := CanonicalArrowFrontier(bodiesByType, paths[0]);
+      if canonical in seen {
+        DeduplicateCanonicalFrontiersExcludesSeen(
+          bodiesByType,
+          paths[1..],
+          seen
+        );
+      } else {
+        DeduplicateCanonicalFrontiersExcludesSeen(
+          bodiesByType,
+          paths[1..],
+          seen + {canonical}
+        );
+      }
+    }
+  }
+
+  lemma DeduplicateCanonicalFrontiersAreUnique(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>,
+    seen: set<ArrowFrontier>
+  )
+    ensures UniqueFrontiers(
+              DeduplicateCanonicalFrontiers(
+                bodiesByType,
+                paths,
+                seen
+              )
+            )
+    decreases |paths|
+  {
+    if |paths| > 0 {
+      var canonical := CanonicalArrowFrontier(bodiesByType, paths[0]);
+      if canonical in seen {
+        DeduplicateCanonicalFrontiersAreUnique(
+          bodiesByType,
+          paths[1..],
+          seen
+        );
+      } else {
+        DeduplicateCanonicalFrontiersExcludesSeen(
+          bodiesByType,
+          paths[1..],
+          seen + {canonical}
+        );
+        DeduplicateCanonicalFrontiersAreUnique(
+          bodiesByType,
+          paths[1..],
+          seen + {canonical}
+        );
+      }
+    }
+  }
+
+  lemma DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>,
+    seen: set<ArrowFrontier>
+  )
+    ensures |DeduplicateCanonicalFrontiers(
+              bodiesByType,
+              paths,
+              seen
+            )| <= |paths|
+    decreases |paths|
+  {
+    if |paths| > 0 {
+      var canonical := CanonicalArrowFrontier(bodiesByType, paths[0]);
+      if canonical in seen {
+        DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
+          bodiesByType,
+          paths[1..],
+          seen
+        );
+      } else {
+        DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
+          bodiesByType,
+          paths[1..],
+          seen + {canonical}
+        );
+      }
+    }
+  }
+
+  lemma CanonicalFrontierDeduplicationCannotAddTraversalStreams(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>
+  )
+    ensures |CanonicalFrontierSequence(bodiesByType, paths)| <= |paths|
+  {
+    DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
+      bodiesByType,
+      paths,
+      {}
+    );
+  }
+
+  lemma CanonicalFrontierSequenceIsUniqueAndKeepsFirstPath(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    paths: seq<ArrowFrontier>
+  )
+    ensures UniqueFrontiers(
+              CanonicalFrontierSequence(bodiesByType, paths)
+            )
+    ensures |paths| > 0 ==>
+              |CanonicalFrontierSequence(bodiesByType, paths)| > 0 &&
+              CanonicalFrontierSequence(bodiesByType, paths)[0] ==
+              CanonicalArrowFrontier(bodiesByType, paths[0])
+  {
+    DeduplicateCanonicalFrontiersAreUnique(
+      bodiesByType,
+      paths,
+      {}
+    );
   }
 }

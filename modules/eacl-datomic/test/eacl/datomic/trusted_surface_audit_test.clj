@@ -43,6 +43,23 @@
     (let [relay-source (slurp (io/resource "eacl/relay.cljc"))]
       (is (not (re-find #":path-frontiers" relay-source))
           "the relay edge coercion must not resurrect frontier transport")))
+  (testing "changed-proof cursor rebase and restart machinery is gone"
+    (doseq [resource ["eacl/relay.cljc"
+                      "eacl/engine/v8.cljc"
+                      "eacl/datomic/core.clj"]
+            :let [source (slurp (io/resource resource))]]
+      (is (not (re-find #":rebase\?|:cursor-recovery|mark-recursive-restart|restart-unroutable-rebase|keyset-rebase|rebase-acyclic-query"
+                        source))
+          (str resource " must fail closed instead of rebasing or restarting cursors"))))
+  (testing "EACL authorization owns no blocking coordinator"
+    (doseq [resource ["eacl/datomic/core.clj"
+                      "eacl/datomic/cache.clj"
+                      "eacl/cache.cljc"
+                      "eacl/subproblem_cache.cljc"]
+            :let [source (slurp (io/resource resource))]]
+      (is (not (re-find #"\(locking\b|schema-lock|ReentrantReadWriteLock|Semaphore|single[- ]flight"
+                        source))
+          (str resource " must stay free of EACL-owned blocking coordination"))))
   (testing "the vestigial :latest-result answer kind is gone"
     (is (= #{:can? :lookup-page :count}
            @(resolve 'eacl.datomic.core/answer-cache-kinds))))

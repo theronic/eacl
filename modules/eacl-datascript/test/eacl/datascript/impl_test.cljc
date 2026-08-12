@@ -5,7 +5,6 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as impl]
-            [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]))
 
@@ -356,7 +355,10 @@
                                             {:subject/type :user
                                              :first 20})
         token (get-in first-page [:page-info :end-cursor])
-        continuation-client (datascript/make-client conn {})
+        continuation-client
+        (datascript/make-client
+         conn
+         {:source-lifecycle (get-in client [:opts :source-lifecycle])})
         work (atom {})]
     (binding [cursor/*codec-work* work]
       (let [page (eacl/read-relationships continuation-client

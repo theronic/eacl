@@ -12,8 +12,7 @@ CONSTANTS
   Sources,
   \* @type: Set(Int);
   Keys,
-  \* @type: Int;
-  InflightBound,
+  \* Mutation control: ignoring relation proof must violate Safety.
   \* @type: Bool;
   IgnoreRelationProof
 
@@ -28,19 +27,14 @@ ASSUME
   /\ 0 \in RelationStamps
   /\ 0 \in Sources
   /\ 0 \in Keys
-  /\ 0 < InflightBound
-
-Absent == 0
-Computing == 1
-Complete == 2
-Failed == 3
-EntryStates == {Absent, Computing, Complete, Failed}
 
 NoOutcome == 0
 CacheHit == 1
 CacheMiss == 2
-SingleFlightJoin == 3
-Outcomes == {NoOutcome, CacheHit, CacheMiss, SingleFlightJoin}
+PublicationRetained == 3
+PublicationDropped == 4
+Outcomes ==
+  {NoOutcome, CacheHit, CacheMiss, PublicationRetained, PublicationDropped}
 
 VARIABLES
   \* @type: Int;
@@ -51,8 +45,9 @@ VARIABLES
   activeRelationStamp,
   \* @type: Int;
   activeSource,
-  \* @type: Int -> Int;
-  entryState,
+  \* Completed immutable values only; misses compute outside cache state.
+  \* @type: Set(Int);
+  entries,
   \* @type: Int -> Int;
   capturedGeneration,
   \* @type: Int -> Int;
@@ -68,7 +63,7 @@ VARIABLES
 
 vars ==
   <<activeGeneration, activeSchemaStamp, activeRelationStamp, activeSource,
-    entryState, capturedGeneration, capturedSchemaStamp,
+    entries, capturedGeneration, capturedSchemaStamp,
     capturedRelationStamp, capturedSource, chosenKey, outcome>>
 
 TypeOK ==
@@ -76,7 +71,7 @@ TypeOK ==
   /\ activeSchemaStamp \in SchemaStamps
   /\ activeRelationStamp \in RelationStamps
   /\ activeSource \in Sources
-  /\ entryState \in [Keys -> EntryStates]
+  /\ entries \in SUBSET Keys
   /\ capturedGeneration \in [Keys -> Generations]
   /\ capturedSchemaStamp \in [Keys -> SchemaStamps]
   /\ capturedRelationStamp \in [Keys -> RelationStamps]
@@ -84,41 +79,27 @@ TypeOK ==
   /\ chosenKey \in Keys
   /\ outcome \in Outcomes
 
-InflightKeys ==
-  {key \in Keys: entryState[key] = Computing}
-
-InflightIsBounded ==
-  Cardinality(InflightKeys) <= InflightBound
-
 HitIsCompleteAtCurrentProof ==
   outcome # CacheHit \/
-    /\ entryState[chosenKey] = Complete
+    /\ chosenKey \in entries
     /\ capturedSchemaStamp[chosenKey] = activeSchemaStamp
     /\ capturedRelationStamp[chosenKey] = activeRelationStamp
     /\ capturedSource[chosenKey] = activeSource
 
-SingleFlightJoinIsComputingAtCurrentProof ==
-  outcome # SingleFlightJoin \/
-    /\ entryState[chosenKey] = Computing
-    /\ capturedSchemaStamp[chosenKey] = activeSchemaStamp
-    /\ capturedRelationStamp[chosenKey] = activeRelationStamp
-    /\ capturedSource[chosenKey] = activeSource
+OnlyCompletedArtifactsAreStored == entries \in SUBSET Keys
 
 Safety ==
-  /\ InflightIsBounded
   /\ HitIsCompleteAtCurrentProof
-  /\ SingleFlightJoinIsComputingAtCurrentProof
+  /\ OnlyCompletedArtifactsAreStored
 
-InductiveInvariant ==
-  /\ TypeOK
-  /\ Safety
+InductiveInvariant == /\ TypeOK /\ Safety
 
 Init ==
   /\ activeGeneration = 0
   /\ activeSchemaStamp = 0
   /\ activeRelationStamp = 0
   /\ activeSource = 0
-  /\ entryState = [key \in Keys |-> Absent]
+  /\ entries = {}
   /\ capturedGeneration = [key \in Keys |-> 0]
   /\ capturedSchemaStamp = [key \in Keys |-> 0]
   /\ capturedRelationStamp = [key \in Keys |-> 0]
@@ -126,68 +107,37 @@ Init ==
   /\ chosenKey = 0
   /\ outcome = NoOutcome
 
-BeginMiss ==
-  \E key \in Keys:
-    /\ entryState[key] \in {Absent, Failed}
-    /\ Cardinality(InflightKeys) < InflightBound
-    /\ entryState' = [entryState EXCEPT ![key] = Computing]
-    /\ capturedGeneration' =
-      [capturedGeneration EXCEPT ![key] = activeGeneration]
-    /\ capturedSchemaStamp' =
-      [capturedSchemaStamp EXCEPT ![key] = activeSchemaStamp]
-    /\ capturedRelationStamp' =
-      [capturedRelationStamp EXCEPT ![key] = activeRelationStamp]
-    /\ capturedSource' =
-      [capturedSource EXCEPT ![key] = activeSource]
-    /\ chosenKey' = key
-    /\ outcome' = CacheMiss
-    /\ UNCHANGED
-      <<activeGeneration, activeSchemaStamp, activeRelationStamp,
-        activeSource>>
-
-JoinOrRead ==
+Lookup ==
   \E key \in Keys:
     /\ chosenKey' = key
     /\ outcome' =
-      IF /\ entryState[key] = Complete
-         /\ capturedSchemaStamp[key] = activeSchemaStamp
-         /\ \/ IgnoreRelationProof
-            \/ capturedRelationStamp[key] = activeRelationStamp
-         /\ capturedSource[key] = activeSource
-      THEN CacheHit
-      ELSE IF /\ entryState[key] = Computing
-              /\ capturedSchemaStamp[key] = activeSchemaStamp
-              /\ \/ IgnoreRelationProof
-                 \/ capturedRelationStamp[key] = activeRelationStamp
-              /\ capturedSource[key] = activeSource
-           THEN SingleFlightJoin
-      ELSE CacheMiss
+         IF /\ key \in entries
+            /\ capturedSchemaStamp[key] = activeSchemaStamp
+            /\ \/ IgnoreRelationProof
+               \/ capturedRelationStamp[key] = activeRelationStamp
+            /\ capturedSource[key] = activeSource
+         THEN CacheHit
+         ELSE CacheMiss
     /\ UNCHANGED
-      <<activeGeneration, activeSchemaStamp, activeRelationStamp, activeSource,
-        entryState, capturedGeneration, capturedSchemaStamp,
-        capturedRelationStamp, capturedSource>>
+         <<activeGeneration, activeSchemaStamp, activeRelationStamp,
+           activeSource, entries, capturedGeneration, capturedSchemaStamp,
+           capturedRelationStamp, capturedSource>>
 
-PublishComplete ==
+PublishCompleted ==
   \E key \in Keys:
-    /\ entryState[key] = Computing
-    /\ entryState' = [entryState EXCEPT ![key] = Complete]
+    /\ entries' = entries \union {key}
+    /\ capturedGeneration' =
+         [capturedGeneration EXCEPT ![key] = activeGeneration]
+    /\ capturedSchemaStamp' =
+         [capturedSchemaStamp EXCEPT ![key] = activeSchemaStamp]
+    /\ capturedRelationStamp' =
+         [capturedRelationStamp EXCEPT ![key] = activeRelationStamp]
+    /\ capturedSource' = [capturedSource EXCEPT ![key] = activeSource]
     /\ chosenKey' = key
-    /\ outcome' = NoOutcome
+    /\ outcome' = PublicationRetained
     /\ UNCHANGED
-      <<activeGeneration, activeSchemaStamp, activeRelationStamp, activeSource,
-        capturedGeneration, capturedSchemaStamp,
-        capturedRelationStamp, capturedSource>>
-
-Fail ==
-  \E key \in Keys:
-    /\ entryState[key] = Computing
-    /\ entryState' = [entryState EXCEPT ![key] = Failed]
-    /\ chosenKey' = key
-    /\ outcome' = NoOutcome
-    /\ UNCHANGED
-      <<activeGeneration, activeSchemaStamp, activeRelationStamp, activeSource,
-        capturedGeneration, capturedSchemaStamp,
-        capturedRelationStamp, capturedSource>>
+         <<activeGeneration, activeSchemaStamp, activeRelationStamp,
+           activeSource>>
 
 AdvanceUnrelatedGeneration ==
   \E generation \in Generations:
@@ -195,9 +145,9 @@ AdvanceUnrelatedGeneration ==
     /\ activeGeneration' = generation
     /\ outcome' = NoOutcome
     /\ UNCHANGED
-      <<activeSchemaStamp, activeRelationStamp, activeSource, entryState,
-        capturedGeneration, capturedSchemaStamp,
-        capturedRelationStamp, capturedSource, chosenKey>>
+         <<activeSchemaStamp, activeRelationStamp, activeSource, entries,
+           capturedGeneration, capturedSchemaStamp, capturedRelationStamp,
+           capturedSource, chosenKey>>
 
 MutateRelation ==
   \E generation \in Generations:
@@ -208,9 +158,9 @@ MutateRelation ==
       /\ activeRelationStamp' = stamp
       /\ outcome' = NoOutcome
       /\ UNCHANGED
-        <<activeSchemaStamp, activeSource, entryState, capturedGeneration,
-          capturedSchemaStamp, capturedRelationStamp, capturedSource,
-          chosenKey>>
+           <<activeSchemaStamp, activeSource, entries, capturedGeneration,
+             capturedSchemaStamp, capturedRelationStamp, capturedSource,
+             chosenKey>>
 
 SwitchSource ==
   \E generation \in Generations:
@@ -221,9 +171,9 @@ SwitchSource ==
       /\ activeSource' = source
       /\ outcome' = NoOutcome
       /\ UNCHANGED
-        <<activeSchemaStamp, activeRelationStamp, entryState,
-          capturedGeneration, capturedSchemaStamp,
-          capturedRelationStamp, capturedSource, chosenKey>>
+           <<activeSchemaStamp, activeRelationStamp, entries,
+             capturedGeneration, capturedSchemaStamp,
+             capturedRelationStamp, capturedSource, chosenKey>>
 
 MutateSchema ==
   \E generation \in Generations:
@@ -232,29 +182,21 @@ MutateSchema ==
       /\ stamp # activeSchemaStamp
       /\ activeGeneration' = generation
       /\ activeSchemaStamp' = stamp
-      /\ entryState' = [key \in Keys |-> Absent]
-      /\ capturedGeneration' =
-        [key \in Keys |-> activeGeneration']
-      /\ capturedSchemaStamp' =
-        [key \in Keys |-> activeSchemaStamp']
-      /\ capturedRelationStamp' =
-        [key \in Keys |-> activeRelationStamp]
-      /\ capturedSource' =
-        [key \in Keys |-> activeSource]
+      /\ entries' = {}
       /\ outcome' = NoOutcome
-      /\ UNCHANGED <<activeRelationStamp, activeSource, chosenKey>>
+      /\ UNCHANGED
+           <<activeRelationStamp, activeSource, capturedGeneration,
+             capturedSchemaStamp, capturedRelationStamp, capturedSource,
+             chosenKey>>
 
 Next ==
-  \/ BeginMiss
-  \/ JoinOrRead
-  \/ PublishComplete
-  \/ Fail
+  \/ Lookup
+  \/ PublishCompleted
   \/ AdvanceUnrelatedGeneration
   \/ MutateRelation
   \/ SwitchSource
   \/ MutateSchema
 
-Spec ==
-  Init /\ [][Next]_vars
+Spec == Init /\ [][Next]_vars
 
 ====================================================================

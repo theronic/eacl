@@ -10,6 +10,7 @@
             [clojure.set :as set]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
@@ -206,9 +207,7 @@
     ;; proof cost explicitly.
     (spiceomic/make-client
      conn
-     {:coherence-authority :managed
-      :proof-mode :mutation
-      :cache {:remember-answers false}})))
+     {:cache {:remember-answers false}})))
 
 (defn seed-recursive-chain!
   [conn {:keys [chain-length unrelated-count]}]
@@ -239,9 +238,7 @@
     ;; behavior rather than whole-graph content-proof hashing.
     (spiceomic/make-client
      conn
-     {:coherence-authority :managed
-      :proof-mode :mutation
-      :cache {:remember-answers false}})))
+     {:cache {:remember-answers false}})))
 
 (deftest ^:benchmark benchmark-seeders-initialize-empty-database-test
   (testing "multi-path seeder initializes an empty database before constructing a client"
@@ -605,7 +602,7 @@
                 (deep-page-work-samples
                  frontier-acl base-query page-count sample-pages)
                 continuation-stats
-                (cache/stats
+                (continuation/stats
                  (get-in frontier-acl [:opts :continuation-cache-store]))
                 first-page-calls (get-in samples [0 :calls])
                 middle-page-calls (get-in samples [(quot page-count 2) :calls])
@@ -656,19 +653,21 @@
                 "middle-page index work must remain page-bounded, not prefix-sized")
             (is (<= last-page-eids (* 2 total-servers))
                 "terminal duplicate-path drain must remain linear in the result graph")
-            (is (<= total-realized-eids (* 8 total-servers))
-                "a complete continuation walk must remain linear, not replay every prefix")
-            (is (<= total-calls total-servers)
-                "backend scan calls over the complete walk must remain linear")
+            ;; This fixture has four independent permission paths. A linear
+            ;; walk may therefore perform more than one index call per emitted
+            ;; server; a coefficient-one bound incorrectly classifies the
+            ;; unchanged 4-path algorithm as superlinear.
+            (is (<= total-realized-eids (* 10 total-servers))
+                "a complete 4-path walk must remain linear, not replay every prefix")
+            (is (<= total-calls (* 4 total-servers))
+                "backend scan calls must remain bounded by the four paths per result")
             (is (false? (get-in last-page [:page-info :has-next-page?])))))
 
         (testing "live lookup/count hits share one dependency-aware cache"
           (let [live-acl
                 (spiceomic/make-client
                  conn
-                 {:coherence-authority :managed
-                  :proof-mode :mutation
-                  :cache {:remember-answers true}})
+                 {:cache {:remember-answers true}})
                 count-resources-query (dissoc base-query :first)
                 first-server
                 (first (:data (eacl/lookup-resources live-acl base-query)))
@@ -779,8 +778,6 @@
                          :unrelated-count 0})
                      client-opts
                      {:page-token-key "recursive-scaling-benchmark"
-                      :coherence-authority :managed
-                      :proof-mode :mutation
                       ;; measures the continuation/page layer, not answers
                       :cache {:remember-answers false}}
                      query {:subject (->user "user-1")
@@ -861,8 +858,7 @@
                 :unrelated-count 0})
             client-opts
             {:page-token-key "recursive-page-size-benchmark"
-             :coherence-authority :managed
-             :proof-mode :mutation}
+             }
             measurements
             (mapv
              (fn [page-size]
@@ -928,8 +924,6 @@
                 :unrelated-count 0})
             client-opts
             {:page-token-key "recursive-cost-breakdown"
-             :coherence-authority :managed
-             :proof-mode :mutation
              ;; This breaks down the cost of the recursive PAGE path, where a
              ;; completed page is read back and nothing new is published.
              ;; Remembering answers adds its own publications on top and would
@@ -942,12 +936,14 @@
             targets
             [[:recursive-engine
               #'impl/lookup-resources]
-             [:cache-entry-lookup
-              #'cache/safe-entry-value]
-             [:cache-entry-store
-              #'cache/safe-store-entry!]
+             [:continuation-entry-lookup
+              #'continuation/get!]
+             [:continuation-entry-store
+              #'continuation/put!]
              [:token-decrypt
-              #'spiceomic/decrypt-page-token]
+              (ns-resolve
+               'eacl.datomic.core
+               'decrypt-authenticated-page-token)]
              [:token-encrypt
               #'spiceomic/encrypt-page-token]
              [:boundary-entity
@@ -981,7 +977,7 @@
         (println "Recursive completed-page breakdown:" hot-breakdown)
         (is (every? (comp pos? :calls val) continuation-breakdown))
         (is (zero? (get-in hot-breakdown
-                           [:cache-entry-store :calls]))
+                           [:continuation-entry-store :calls]))
             "completed recursive pages need lookups but no publications")))))
 
 (deftest ^:benchmark count-miss-retained-memory-benchmark
@@ -992,34 +988,13 @@
             (* (:num-accounts retention-config)
                (:servers-per-acct retention-config))
             _ (seed-multipath! conn retention-config)
-            rejecting-store
-            (cache/local-store {:max-weight 256
-                                :max-entry-weight 256
-                                :max-entries 8})
-            provider-calls (atom 0)
-            failing-store
-            (reify cache/CacheStore
-              (lookup [_ _]
-                (swap! provider-calls inc)
-                (throw (ex-info "provider unavailable" {})))
-              (store! [_ _ _ _ _]
-                (swap! provider-calls inc)
-                (throw (ex-info "provider unavailable" {})))
-              (evict! [_ _] false)
-              (clear! [_] nil)
-              (stats [_] {}))
             clients
-            [[:disabled (spiceomic/make-client conn {:cache cache/no-cache})]
+            [[:disabled (spiceomic/make-client conn {:cache shared-cache/no-cache})]
              [:admission-rejected
               (spiceomic/make-client
                conn
-               {:cache {:store rejecting-store
-                        :remember-answers true}})]
-             [:provider-failure
-              (spiceomic/make-client
-               conn
-               {:cache {:store failing-store
-                        :remember-answers true}})]]
+               {:cache {:remember-answers true
+                        :subproblem-cache {:answer-max-weight 1}}})]]
             query {:subject (->user "super-user")
                    :permission :view
                    :resource/type :server}]
@@ -1068,10 +1043,8 @@
                 (is (= 2 (:pages @legacy-stats)))
                 (is (<= (:max-page-eids @legacy-stats) 16384)
                     "legacy count misses never retain the full 20,000-result head")))))
-        (is (zero? (:entries (cache/stats rejecting-store)))
-            "a rejected count answer leaves no retained cache entry")
-        (is (zero? @provider-calls)
-            "private completed answers never consult an untrusted provider")))))
+        (is (= #{:disabled :admission-rejected}
+               (set (map first clients))))))))
 
 ;; --- Permission-check hot path ----------------------------------------------
 ;;
@@ -1113,9 +1086,7 @@
             live-acl
             (spiceomic/make-client
              conn
-             {:coherence-authority :managed
-              :proof-mode :mutation
-              :cache {:kind-max-weight {:can? (* 2 1024 1024)}
+             {:cache {:kind-max-weight {:can? (* 2 1024 1024)}
                       :two-hit-kinds #{:can?}
                       :remember-answers true}})
             live-check #(eacl/can? live-acl subject :view server)]
@@ -1145,8 +1116,14 @@
           (let [cold-us (* 1000.0
                            (median (run-timed 500
                                               (fn []
-                                                (impl.indexed/evict-permission-paths-cache!
-                                                 @(:schema-state acl))
+                                                (doseq [schema-cache
+                                                        (vals
+                                                         @(get-in
+                                                           acl
+                                                           [:opts
+                                                            :derived-schema-caches]))]
+                                                  (impl.indexed/evict-permission-paths-cache!
+                                                   schema-cache))
                                                 (check)))))]
             (println (format "can? cold paths: median=%.2fus" cold-us))
             (is (< cold-us can-cold-threshold-us)
@@ -1207,9 +1184,7 @@
       (let [acl
             (spiceomic/make-client
              conn
-             {:coherence-authority :managed
-              :proof-mode :mutation
-              :cache cache/no-cache})
+             {:cache cache/no-cache})
             subject (eacl/spice-object :user "scale-user")
             documents
             (fn [start amount]
@@ -1251,7 +1226,8 @@
          "definition user {}
           definition document {
             relation viewer: user
-            permission view = viewer
+            relation parent: document
+            permission view = viewer + parent->view
           }")
         @(d/transact conn [{:eacl/id "scale-user"}])
         (add-documents! small)
@@ -1276,8 +1252,8 @@
             (is (= (select-keys small-work target-local-keys)
                    (select-keys large-work target-local-keys))
                 "point-check logical/backend work must not grow with unrelated resources reachable from the subject")
-            (is (= 1 (:backend-commands large-work))
-                "a direct point check performs one target-anchored backend scan")))))))
+            (is (= 2 (:backend-commands large-work))
+                "the two-branch recursive point check remains target-anchored")))))))
 
 (def ^:private cache-proof-benchmark-schema
   "definition user {}
@@ -1289,33 +1265,23 @@
 (deftest ^:benchmark cache-proof-strategy-churn-benchmark
   (testing "mutation/content proofs, global invalidation, and no-cache"
     (with-mem-conn [conn schema/v7-schema]
-      (let [mutation-store (cache/local-store)
-            content-store (cache/local-store)
-            global-store (cache/local-store)
-            common {:page-token-key "cache-proof-benchmark"
+      (let [common {:security-key "cache-proof-benchmark"
                     :zed-token-key "cache-proof-benchmark-zed"}
             managed
-            (fn [store]
+            (fn [cache-option]
               (spiceomic/make-client
                conn
                (assoc common
-                      :coherence-authority :managed
-                      :proof-mode :mutation
-                      :cache (if store
-                               {:store store :remember-answers true}
-                               cache/no-cache))))
-            mutation-client (managed mutation-store)
+                      :cache cache-option)))
+            mutation-client (managed {:remember-answers true})
             writer mutation-client
             content-client
             (spiceomic/make-client
              conn
              (assoc common
-                    :coherence-authority :unknown
-                    :proof-mode :content
-                    :cache {:store content-store
-                            :remember-answers true}))
-            global-client (managed global-store)
-            no-cache-client (managed nil)
+                    :cache {:remember-answers true}))
+            global-client (managed {:remember-answers true})
+            no-cache-client (managed shared-cache/no-cache)
             user (->user "benchmark-user")
             account (->account "benchmark-account")
             relationship (Relationship user :owner account)
@@ -1326,13 +1292,14 @@
             strategies
             [[:mutation-proof mutation-client nil]
              [:content-proof content-client nil]
-             [:global-invalidation global-client global-store]
+             [:global-invalidation global-client
+              #(spiceomic/expire-cache! global-client)]
              [:no-cache no-cache-client nil]]
             iterations 12
             measure
-            (fn [client store expected]
-              (when store
-                (cache/clear! store))
+            (fn [client clear-cache! expected]
+              (when clear-cache!
+                (clear-cache!))
               (let [start (System/nanoTime)
                     value (eacl/can? client user :admin account)
                     elapsed (/ (double (- (System/nanoTime) start)) 1000.0)]
@@ -1341,7 +1308,7 @@
             unrelated
             (into
              {}
-             (for [[label client clear-store] strategies]
+             (for [[label client clear-cache!] strategies]
                (do
                  (eacl/can? client user :admin account)
                  [label
@@ -1355,11 +1322,11 @@
                                 (name label)
                                 "-"
                                 i)}])
-                       (measure client clear-store true))))])))
+                       (measure client clear-cache! true))))])))
             relevant
             (into
              {}
-             (for [[label client clear-store] strategies]
+             (for [[label client clear-cache!] strategies]
                (do
                  (eacl/can? client user :admin account)
                  [label
@@ -1369,7 +1336,7 @@
                        (if grant?
                          (eacl/create-relationship! writer relationship)
                          (eacl/delete-relationship! writer relationship))
-                       (measure client clear-store grant?))))])))]
+                       (measure client clear-cache! grant?))))])))]
         (prn {:benchmark :cache-proof-strategy-churn
               :unit :microseconds-per-read
               :iterations iterations

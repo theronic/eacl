@@ -18,12 +18,14 @@
      permission admin = owner
    }")
 
+(def ^:private source-lifecycle "datomic-consistency-cache-v4-test")
+
 (defn- cached-client
   [conn]
   (core/make-client
    conn
-   {:coherence-authority :managed
-    :zed-token-key "consistency-cache-test-key"
+   {:zed-token-key "consistency-cache-test-key"
+    :source-lifecycle source-lifecycle
     :cache {:checkpoints true
             :remember-answers true}}))
 
@@ -41,7 +43,7 @@
     (causal-token/issue
      format-options
      (assoc payload
-            :order-hint order-hint
+            :revision order-hint
             :exact-locator order-hint))))
 
 (defn- seed!
@@ -269,8 +271,7 @@
     (let [client
           (core/make-client
            conn
-           {:coherence-authority :managed
-            :cache {:remember-answers true}})
+           {:cache {:remember-answers true}})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           relationship (->Relationship alice :owner account)
@@ -287,7 +288,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:coherence-authority :managed})
+                  {})
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
           {created-token :zed/token} (seed! conn client)]
@@ -422,8 +423,8 @@
              (core/zed-token-at-least-seconds-ago client 30)])
           current-payload (token-payload client current-token)
           age-payload (token-payload client age-token)]
-      (is (integer? (:order-hint current-payload)))
-      (is (integer? (:order-hint age-payload)))
+      (is (integer? (:revision current-payload)))
+      (is (integer? (:revision age-payload)))
       (is (= (:source-id current-payload)
              (:source-id age-payload)))
       (is (true?
@@ -524,21 +525,21 @@
           new-key "new-stable-zed-token-key"
           old-client
           (core/make-client conn
-                            {:coherence-authority :managed
+                            {:source-lifecycle source-lifecycle
                              :zed-token-keyring {:old old-key}
                              :zed-token-kid :old})
           _ (seed! conn old-client)
           old-token (core/current-zed-token old-client)
           overlap-client
           (core/make-client conn
-                            {:coherence-authority :managed
+                            {:source-lifecycle source-lifecycle
                              :zed-token-keyring {:old old-key
                                                  :new new-key}
                              :zed-token-kid :new})
           new-token (core/current-zed-token overlap-client)
           new-only-client
           (core/make-client conn
-                            {:coherence-authority :managed
+                            {:source-lifecycle source-lifecycle
                              :zed-token-keyring {:new new-key}
                              :zed-token-kid :new})
           demand [(spice-object :user "alice")
@@ -776,41 +777,24 @@
             (is (= future-t
                    (:requested-order-hint (ex-data e))))))))))
 
-(deftest exact-request-bypasses-completed-provider-test
+(deftest exact-request-bypasses-completed-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [delegate (cache/local-store)
-          fail? (atom false)
-          store
-          (reify
-            cache/CacheStore
-            (lookup [_ k]
-              (if @fail?
-                (throw (ex-info "provider unavailable" {}))
-                (cache/lookup delegate k)))
-            (store! [_ k value weight ttl]
-              (cache/store! delegate k value weight ttl))
-            (evict! [_ k] (cache/evict! delegate k))
-            (clear! [_] (cache/clear! delegate))
-            (stats [_] (cache/stats delegate))
-
-            cache/CacheProvider
-            (capabilities [_] (cache/capabilities delegate))
-            (clear-namespace! [_ namespace]
-              (cache/clear-namespace! delegate namespace))
-            (record-provider-error! [_ operation kind]
-              (cache/record-provider-error! delegate operation kind)))
-          client (core/make-client
+    (let [client (core/make-client
                   conn
-                  {:coherence-authority :managed
-                   :cache {:store store
-                           :remember-answers true}})
+                  {:cache {:remember-answers true}})
           {token :zed/token} (seed! conn client)
           alice (spice-object :user "alice")
-          account (spice-object :account "acct")]
+          account (spice-object :account "acct")
+          demand {:subject alice
+                  :permission :admin
+                  :resource account}]
       (is (true? (eacl/can? client alice :admin account)))
-      (reset! fail? true)
-      (is (true?
-           (eacl/can? client alice :admin account
-                      (consistency/at-exact-snapshot token))))
-      (is (zero? (:provider-errors (cache/stats delegate)))
-          "exact selection does not consult the completed-answer provider"))))
+      (let [result
+            (eacl/check-permission
+             client
+             (assoc demand
+                    :consistency
+                    (consistency/at-exact-snapshot token)))]
+        (is (true? (:allowed? result)))
+        (is (false? (:cached? result))
+            "exact selection bypasses the completed-answer cache")))))

@@ -9,6 +9,8 @@
    [eacl.core :as eacl :refer [spice-object]]
    [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
+   [eacl.engine.portable-indexed :as indexed]
+   [eacl.engine.portable-decisions :as decisions]
    [eacl.engine.v8 :as engine]
    [eacl.engine.relationships :as relationship-engine]
    [eacl.formal.differential-runner :as differential]
@@ -19,6 +21,11 @@
    [eacl.verified-kernel :as verified]))
 
 (def selection
+  {:kernel
+   (indexed/portable-indexed-kernel
+    decisions/portable-decision-kernel)})
+
+(def generated-selection
   {:kernel production/generated-javascript-kernel})
 
 (defn- cross-runtime-vectors
@@ -28,16 +35,13 @@
       reader/read-string))
 
 (defn- expected-consistency-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (cond
     (not capability-supported?)
     (case mode
       :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
-    (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
     :else
     (case mode
       :minimize-latency :select-current
@@ -47,7 +51,7 @@
 
 (defn- expected-consistency-validation
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (cond
     (not selection-present?)
     (if (= :exact kind)
@@ -56,7 +60,7 @@
     (not selected-adapter?) :invalid-selected-adapter
     (not same-source-scope?) :incomparable-scope
     (and (#{:at-least :exact} kind)
-         (not anchor-satisfied?))
+         (not revision-satisfied?))
     :history-divergence
     :else :accept))
 
@@ -72,11 +76,9 @@
   (doseq [mode
           [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
-          capability-supported? [false true]
-          managed-authority? [false true]]
+          capability-supported? [false true]]
     (let [input {:mode mode
-                 :capability-supported? capability-supported?
-                 :managed-authority? managed-authority?}]
+                 :capability-supported? capability-supported?}]
       (is (= (expected-consistency-plan input)
              (verified/decide
               selection
@@ -87,12 +89,12 @@
           selected-adapter? [false true]
           :when (or selection-present? (not selected-adapter?))
           same-source-scope? [false true]
-          anchor-satisfied? [false true]]
+          revision-satisfied? [false true]]
     (let [input {:kind kind
                  :selection-present? selection-present?
                  :selected-adapter? selected-adapter?
                  :same-source-scope? same-source-scope?
-                 :anchor-satisfied? anchor-satisfied?}]
+                 :revision-satisfied? revision-satisfied?}]
       (is (= (expected-consistency-validation input)
              (verified/decide
               selection
@@ -108,8 +110,8 @@
          :authentication-attempts 0
          :backend-selection-calls 1
          :validation-decisions 1
-         :contains-anchor-calls 0
-         :graph-head-reads 1
+         :revision-validation-calls 0
+         :native-revision-reads 1
          :order-hint-reads 1
          :exact-locator-reads 1}]
     (case path
@@ -120,8 +122,8 @@
        :backend-selection-calls 0
        :validation-decisions 0
        :source-scope-reads 0
-       :contains-anchor-calls 0
-       :graph-head-reads 0
+       :revision-validation-calls 0
+       :native-revision-reads 0
        :order-hint-reads 0
        :exact-locator-reads 0}
       (:selected-current :authoritative)
@@ -130,12 +132,16 @@
       (assoc common
              :authentication-attempts 1
              :source-scope-reads (+ 3 response-scope)
-             :contains-anchor-calls 1)
+             :revision-validation-calls 1
+             :native-revision-reads 2
+             :order-hint-reads 2
+             :exact-locator-reads 2)
       :exact
       (assoc common
              :authentication-attempts 1
              :source-scope-reads (+ 3 response-scope)
-             :graph-head-reads 2
+             :revision-validation-calls 1
+             :native-revision-reads 2
              :order-hint-reads 2
              :exact-locator-reads 2))))
 
@@ -155,30 +161,37 @@
     :capabilities
     {:consistency (if capability-supported? #{mode} #{})
      :snapshots #{:current}
-     :source #{:stable-scope :graph-head
-               :anchor-membership :order-hint :exact-locator}
+     :source #{:stable-scope :source-lifecycle
+               :native-revision :order-hint :exact-locator}
      :cursor #{}
      :transactions #{}
      :cache-proofs #{}
      :runtime #{:cljs}}
     :operations
-    (into
-     {}
-     (map
-      (fn [operation]
-        [operation (fn [& _] nil)]))
-     backend/required-snapshot-operations)}))
+    (merge
+     (into
+      {}
+      (map
+       (fn [operation]
+         [operation (fn [& _] nil)]))
+      backend/required-snapshot-operations)
+     {:snapshot-id (constantly {:revision 1})
+      :source-scope
+      (constantly {:source-id "generated-plan" :branch nil})
+      :source-lifecycle (constantly "generated-plan-lifecycle")
+      :native-revision
+      (constantly {:revision 1 :exact-locator 1})
+      :order-hint (constantly 1)
+      :exact-locator (constantly 1)})}))
 
 (defn- observed-generated-plan
-  [source mode managed-authority?]
+  [source mode]
   (try
     [:planned
      (consistency/selection-plan
       source
       {:mode mode}
-      {:coherence-authority
-       (if managed-authority? :managed :unknown)
-       :decision-kernel selection})]
+      {:decision-kernel selection})]
     (catch cljs.core.ExceptionInfo error
       [:rejected (:type (ex-data error))])))
 
@@ -203,18 +216,15 @@
   (doseq [mode
           [:minimize-latency :fully-consistent
            :at-least-as-fresh :at-exact-snapshot]
-          capability-supported? [false true]
-          managed-authority? [false true]]
+          capability-supported? [false true]]
     (let [input
           {:mode mode
-           :capability-supported? capability-supported?
-           :managed-authority? managed-authority?}]
+           :capability-supported? capability-supported?}]
       (is (=
            (expected-production-plan input)
            (observed-generated-plan
             (consistency-plan-adapter mode capability-supported?)
-            mode
-            managed-authority?))))))
+            mode))))))
 
 (defn- power-set
   [values]
@@ -487,7 +497,7 @@
     request (:limits public-recursive-authorization-input)))
   ([request limits]
    (verified/decide
-    selection
+    generated-selection
     :authorization-evaluation
     (assoc public-recursive-authorization-input
            :request request
@@ -550,10 +560,11 @@
     :capabilities
     {:consistency #{:minimize-latency}
      :snapshots #{:current :exact}
-     :source #{:scoped}
+     :source #{:stable-scope :source-lifecycle
+               :native-revision :order-hint :exact-locator}
      :cursor #{:forward :backward}
      :transactions #{}
-     :cache-proofs #{:schema :relations}
+     :cache-proofs #{:ordered-generations}
      :runtime #{:cljs}}
     :fingerprint {:adapter :formal-production-test}
     :identity-contract :formal-production-test/v1
@@ -564,24 +575,23 @@
                   [operation (fn [& _] nil)]))
            backend/required-snapshot-operations)
      {:snapshot-id (constantly {:basis 1})
-      :source-scope (constantly {:source "source"})
-      :graph-head
-      (constantly
-       {:graph-anchor "graph-1"
-        :order-hint 1
-        :exact-locator "graph-1"})
-      :contains-anchor? #(= "graph-1" %)
+      :source-scope
+      (constantly {:source-id "source" :branch nil})
+      :source-lifecycle (constantly "formal-production-lifecycle")
+      :native-revision
+      (constantly {:revision 1 :exact-locator 1})
       :order-hint (constantly 1)
-      :exact-locator (constantly "graph-1")
+      :exact-locator (constantly 1)
       :select-exact (fn [& _] nil)
       :object-id->internal
       #(case % "document-1" 1 "document-2" 2 nil)
       :internal-id->object
       #(case % 1 "document-1" 2 "document-2" nil)
-      :schema-proof (constantly "schema-proof")
-      :relation-proof
+      :proof-frame
       (fn [relation-ids]
-        (zipmap relation-ids (repeat "relation-proof")))})}))
+        {:schema-stamp 1
+         :relation-stamps
+         (mapv (fn [relation-id] [relation-id 1]) relation-ids)})})}))
 
 (defn- recursive-plan-test-adapter
   []
@@ -636,10 +646,11 @@
       :capabilities
       {:consistency #{:minimize-latency}
        :snapshots #{:current}
-       :source #{:scoped}
+       :source #{:stable-scope :source-lifecycle
+                 :native-revision :order-hint :exact-locator}
        :cursor #{:forward :backward}
        :transactions #{}
-       :cache-proofs #{:schema :relations}
+       :cache-proofs #{:ordered-generations}
        :runtime #{:cljs}}
       :operations
       (merge
@@ -652,10 +663,17 @@
         (constantly {:database-id :formal :basis-t 1})
         :source-scope
         (constantly {:source-id :formal :branch nil})
-        :schema-proof
-        (fn
-          ([] :schema-proof)
-          ([_] :schema-proof))
+        :source-lifecycle
+        (constantly "formal-recursive-plan-lifecycle")
+        :native-revision
+        (constantly {:revision 1 :exact-locator 1})
+        :order-hint (constantly 1)
+        :exact-locator (constantly 1)
+        :proof-frame
+        (fn [relation-ids]
+          {:schema-stamp 1
+           :relation-stamps
+           (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
         :relation-defs
         (fn [resource-type relation-name]
           (get relations [resource-type relation-name] []))
@@ -719,7 +737,7 @@
 
 (deftest generated-javascript-certifies-production-recursive-plan
   (let [adapter (recursive-plan-test-adapter)
-        schema-cache (engine/make-schema-cache adapter :schema-proof)
+        schema-cache (engine/make-schema-cache adapter 1)
         stats (atom {})]
     (binding [engine/*schema-cache* schema-cache
               engine/*recursive-traversal-stats* stats
@@ -751,7 +769,7 @@
                     subproblem/*decision-kernel* selection]
             (engine/lookup-resources adapter query')))
         generated-cache
-        (engine/make-schema-cache adapter :schema-proof)
+        (engine/make-schema-cache adapter 1)
         generated-first
         (run-forward generated-cache query)
         after (get-in generated-first [:page-info :end-cursor])
@@ -768,11 +786,11 @@
                     subproblem/*decision-kernel* selection]
             (engine/lookup-subjects adapter reverse-query)))
         generated-reverse
-        (run-reverse (engine/make-schema-cache adapter :schema-proof))
+        (run-reverse (engine/make-schema-cache adapter 1))
         run-operation
         (fn [operation]
           (binding [engine/*schema-cache*
-                    (engine/make-schema-cache adapter :schema-proof)
+                    (engine/make-schema-cache adapter 1)
                     subproblem/*decision-kernel* selection]
             (operation)))
         can-operation
@@ -846,7 +864,7 @@
            :size 20
            :bound? false
            :realized-count 21})))
-  (is (= :rebase-current
+  (is (= :snapshot-unavailable
          (verified/decide
           selection
           :cursor-continuation
@@ -857,26 +875,9 @@
            :cursor-source "source"
            :current-proof "new"
            :cursor-proof "old"
-           :mode :recover-current
            :cursor-graph 0
            :exact nil})))
-  (is (= {:status :miss :reason :future-or-sibling}
-         (verified/decide
-          selection
-          :cache-validation
-          {:deterministic? true
-           :dependency-scope-nonempty? true
-           :expected-key "key"
-           :expected-source "source"
-           :selected-graph 0
-           :ancestors #{1}
-           :selected-proof "proof"
-           :entry {:status :candidate
-                   :authenticated? true
-                   :key "key"
-                   :source "source"
-                   :graph 2
-                   :proof "proof"}}))))
+  )
 
 (deftest generated-javascript-materialized-queue-limit-is-instantaneous
   (let [result
@@ -900,16 +901,15 @@
           selection
           :subproblem-cache-decision
           {:decision :lookup
-           :recursive-self? false
            :candidate :complete})))
-  (is (= :compute-without-admission
+  (is (= :skip-publication
          (verified/decide
           selection
           :subproblem-cache-decision
           {:decision :admission
            :candidate-present? false
-           :represented-candidates 8
-           :maximum-candidates 8})))
+           :attempted-publications 8
+           :maximum-attempts 8})))
   (is (= :drop-publication
          (verified/decide
           selection
@@ -1169,6 +1169,225 @@
   {:max-derived-grants 100
    :max-advanced-datoms 100
    :max-queued-work 100})
+
+(defn- empty-scan-response
+  [command]
+  {:request-scope (:request-scope command)
+   :request-id (:request-id command)
+   :values []
+   :terminal? true
+   :fetched-values 0})
+
+(defn- first-page-scan-outcome
+  [selection direction page-size]
+  (let [stream-count 4
+        rules
+        (mapv
+         (fn [relation-eid]
+           (assoc indexed-direct-rule :relation-eid relation-eid))
+         (range 1 (inc stream-count)))
+        compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules rules
+          :seed-rules-by-subject-type {"user" rules}})
+        initialization
+        (merge
+         {:compiled-plan compiled-plan
+          :request-scope 72
+          :subject-type "user"
+          :root-node {:resource-type "folder" :permission "read"}
+          :result-type (if (= :forward direction) "folder" "user")
+          :render {:kind :page :size page-size :bound nil}
+          :chunk-size 2
+          :limits indexed-limits}
+         (case direction
+           :forward {:subject-eid 7}
+           :reverse {:root-resource-eid 10}))
+        initialized
+        (verified/initialize-indexed
+         selection direction initialization)]
+    (verified/drive-indexed
+     selection direction (:state initialized) indexed-limits 256)))
+
+(defn- batched-forward-crossing-trace
+  ([selection stream-count]
+   (batched-forward-crossing-trace selection stream-count 256))
+  ([selection stream-count fuel]
+   (let [limits (assoc indexed-limits :max-queued-work (+ stream-count 64))
+         rules
+         (mapv
+          (fn [relation-eid]
+            (assoc indexed-direct-rule :relation-eid relation-eid))
+          (range 1 (inc stream-count)))
+         compiled-plan
+         (verified/compile-indexed-plan
+          selection
+          {:indexed-rules rules
+           :seed-rules-by-subject-type {"user" rules}})
+         initialized
+         (verified/initialize-indexed
+          selection
+          :forward
+          {:compiled-plan compiled-plan
+           :request-scope 73
+           :subject-type "user"
+           :subject-eid 7
+           :root-node {:resource-type "folder" :permission "read"}
+           :result-type "folder"
+           :render {:kind :all-count}
+           :chunk-size 2
+           :limits limits})]
+     (loop [state (:state initialized)
+            crossings 0
+            waves []]
+       (when (> crossings (+ (* 4 stream-count) 16))
+         (throw
+          (ex-info "Forward fuel-cut trace did not make progress."
+                   {:stream-count stream-count
+                    :fuel fuel
+                    :crossings crossings})))
+       (let [driven
+             (verified/drive-indexed
+              selection :forward state limits fuel)]
+         (case (:status driven)
+           :need-scans
+           (let [commands (:commands driven)
+                 resumed
+                 (verified/resume-indexed
+                  selection :forward (:state driven)
+                  (mapv empty-scan-response commands)
+                  limits)]
+             (recur (:state resumed)
+                    (+ crossings 2)
+                    (conj waves commands)))
+
+           :yielded
+           (recur (:state driven) (inc crossings) waves)
+
+           :complete
+           {:crossings (inc crossings)
+            :waves waves
+            :result
+            (verified/read-indexed-result
+             selection :forward (:state driven))}))))))
+
+(defn- batched-reverse-crossing-trace
+  [selection stream-count fuel]
+  (let [limits (assoc indexed-limits :max-queued-work (+ stream-count 64))
+        rules
+        (mapv
+         (fn [relation-eid]
+           (assoc indexed-direct-rule :relation-eid relation-eid))
+         (range 1 (inc stream-count)))
+        compiled-plan
+        (verified/compile-indexed-plan
+         selection
+         {:indexed-rules rules
+          :seed-rules-by-subject-type {"user" rules}})
+        initialized
+        (verified/initialize-indexed
+         selection
+         :reverse
+         {:compiled-plan compiled-plan
+          :request-scope 74
+          :subject-type "user"
+          :root-node {:resource-type "folder" :permission "read"}
+          :root-resource-eid 10
+          :result-type "user"
+          :render {:kind :all-count}
+          :chunk-size 2
+          :limits limits})]
+    (loop [state (:state initialized)
+           crossings 0
+           waves []]
+      (when (> crossings (+ (* 4 stream-count) 16))
+        (throw
+         (ex-info "Reverse fuel-cut trace did not make progress."
+                  {:stream-count stream-count
+                   :fuel fuel
+                   :crossings crossings})))
+      (let [driven
+            (verified/drive-indexed
+             selection :reverse state limits fuel)]
+        (case (:status driven)
+          :need-scans
+          (let [commands (:commands driven)
+                resumed
+                (verified/resume-indexed
+                 selection :reverse (:state driven)
+                 (mapv empty-scan-response commands)
+                 limits)]
+            (recur (:state resumed)
+                   (+ crossings 2)
+                   (conj waves commands)))
+
+          :yielded
+          (recur (:state driven) (inc crossings) waves)
+
+          :complete
+          {:crossings (inc crossings)
+           :waves waves
+           :result
+           (verified/read-indexed-result
+            selection :reverse (:state driven))})))))
+
+(deftest portable-and-generated-javascript-batch-independent-scan-waves
+  (doseq [[label kernel-selection]
+          [[:portable selection]
+           [:generated-javascript generated-selection]]]
+    (testing (name label)
+      (let [stream-count 128
+            batch-size 64
+            {:keys [crossings waves result]}
+            (batched-forward-crossing-trace kernel-selection stream-count)]
+        (is (= [64 64] (mapv count waves)))
+        (is (= (vec (range 1 (inc stream-count)))
+               (mapv #(get-in % [:projection :relation-eid])
+                     (mapcat identity waves)))
+            "ordered response folding preserves deterministic command emission")
+        (is (<= crossings
+                (inc (* 2 (quot (+ stream-count (dec batch-size))
+                                batch-size))))
+            "crossings <= 2*ceil(streams/batch)+1")
+        (is (= {:status :count :count 0 :truncated? false}
+               (select-keys result [:status :count :truncated?])))))))
+
+(deftest portable-and-generated-javascript-page-scan-policy-is-render-owned
+  (doseq [[label kernel-selection]
+          [[:portable selection]
+           [:generated-javascript generated-selection]]
+          direction [:forward :reverse]
+          page-size [1 2 100]]
+    (testing (str (name label) " " (name direction) " page " page-size)
+      (let [outcome
+            (first-page-scan-outcome
+             kernel-selection direction page-size)]
+        (is (= :need-scan (:status outcome)))
+        (is (map? (:command outcome))
+            "the page driver publishes exactly one command")
+        (is (nil? (:commands outcome))
+            "no host-selected speculative page wave is exposed")))))
+
+(deftest portable-and-generated-javascript-publish-fuel-cut-scan-waves
+  (doseq [[label kernel-selection]
+          [[:portable selection]
+           [:generated-javascript generated-selection]]
+          [direction trace expected-wave-sizes]
+          [[:forward batched-forward-crossing-trace [10 8]]
+           [:reverse batched-reverse-crossing-trace [9 9]]]]
+    (testing (str (name label) " " (name direction))
+      (let [stream-count 18
+            fuel 10
+            {:keys [waves result]}
+            (trace kernel-selection stream-count fuel)]
+        (is (= expected-wave-sizes (mapv count waves)))
+        (is (= (vec (range 1 (inc stream-count)))
+               (mapv #(get-in % [:projection :relation-eid])
+                     (mapcat identity waves)))
+            "fuel cuts preserve command order and progress")
+        (is (= {:status :count :count 0 :truncated? false}
+               (select-keys result [:status :count :truncated?])))))))
 
 (deftest generated-javascript-all-count-retains-no-rendered-results
   (let [compiled-plan
@@ -1512,8 +1731,7 @@
 
 (deftest production-subproblem-store-uses-generated-javascript-decisions
   (let [store (subproblem/store {:projection-max-weight 1024
-                                 :denotation-max-weight 1024
-                                 :max-inflight 1})
+                                 :denotation-max-weight 1024})
         computes (atom 0)]
     (binding [subproblem/*decision-kernel* selection]
       (is (= 7
@@ -1895,13 +2113,20 @@
                    (engine/lookup-resources
                     changed-adapter
                     (assoc page-query :first 10))))
-            resumed
-            (engine/lookup-resources
-             changed-adapter
-             (assoc page-query :after raw-bound))]
-        (is (= (filterv #(> % (:result-eid raw-bound)) current-ids)
-               (mapv :id (:data resumed)))
-            "a raw keyset bound resumes exclusively after its eid on the current graph"))
+            resume-error
+            (try
+              (engine/lookup-resources
+               changed-adapter
+               (assoc page-query :after raw-bound))
+              nil
+              (catch :default error
+                error))]
+        (is (= {:current-ids []
+                :error-data
+                {:eacl/error :eacl.pagination/stale-cursor}}
+               {:current-ids current-ids
+                :error-data (ex-data resume-error)})
+            "a changed recursive boundary is stale rather than rebased on DataScript's current DB"))
       (let [render-rejected
             (try
               (engine/generated-traversal-error!

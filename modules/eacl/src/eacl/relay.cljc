@@ -4,6 +4,8 @@
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
+            [eacl.execution :as execution]
+            [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
@@ -65,13 +67,24 @@
   caller-controlled so one boundary cursor can support forward and backward
   navigation. Consistency, principal, permission, filters, and resource type
   remain part of the authenticated semantic scope."
-  #{:first :last :after :before :cache?})
+  #{:first :last :after :before :cache? :timeout-ms})
+
+(def cursor-emission-order-version
+  "Version of the traversal emission order committed by Relay cursor digests.
+
+  Version 2 activates bounded, ordered scan waves. The batched protocol is
+  extensionally equivalent to the sequential protocol, but pinning the
+  protocol order here prevents a cursor minted by a different emission
+  schedule from being accepted accidentally."
+  2)
 
 (defn- normalized-cursor-query
   [query]
   (-> (apply dissoc query cursor-transport-keys)
       (assoc :consistency
-             (public-consistency/descriptor (:consistency query)))))
+             (select-keys
+              (public-consistency/descriptor (:consistency query))
+              [:mode]))))
 
 (defn- request-schema-stamp
   "The selected snapshot's schema stamp for one request.
@@ -80,12 +93,20 @@
   derived-schema cache through `:cursor-schema-stamp` (an
   `{:adapter a :stamp delay}` pair); the pair is honored only for the very
   adapter it was resolved against, so recovery-path adapters read their own
-  stamp. The `:schema-proof` invocation is memoized per adapter instance."
+  ordered-generation frame."
   [adapter opts]
   (let [shared (:cursor-schema-stamp opts)]
     (if (and shared (identical? (:adapter shared) adapter))
       (force (:stamp shared))
-      (backend/invoke adapter :schema-proof))))
+      (let [frame
+            (let [candidate (:request-proof-frame opts)]
+              (if (and candidate
+                       (identical? adapter (:adapter candidate)))
+                candidate
+                (proof-frame/request-frame adapter)))
+            proof (proof-frame/resolve! frame [])]
+        (when (proof-frame/complete? proof)
+          (:schema-stamp proof))))))
 
 (defn- plain-scope-object
   [object]
@@ -105,29 +126,32 @@
   mode included."
   [adapter opts operation query]
   (secure/canonical-digest
-   "eacl/cursor/query-scope/v6"
-   [operation
-    {:schema-stamp (request-schema-stamp adapter opts)}
+   "eacl/cursor/query-scope/v7"
+   [cursor-emission-order-version
+    operation
+    {:schema-stamp (request-schema-stamp adapter opts)
+     :recursive-traversal-limits (:recursive-traversal-limits opts)}
     (scoped-query-form query)]))
 
 (defn- navigation-boundary-scope
   "Boundary-alias scope for the client-private page-navigation cache.
 
   The navigation `generation` already pins the exact immutable snapshot
-  (graph head included), so this digest deliberately omits the schema stamp:
+  (native revision included), so this digest deliberately omits the schema stamp:
   it correlates adjacent pages within one generation and carries no
   validation authority."
   [operation query]
   (secure/canonical-digest
-   "eacl/cursor/query-scope/v5"
-   [operation
+   "eacl/cursor/query-scope/v6"
+   [cursor-emission-order-version
+    operation
     (scoped-query-form query)]))
 
 (defn- page-generation
   [adapter]
   {:backend (backend/backend-id adapter)
-   :source-scope (backend/invoke adapter :source-scope)
-   :graph-head (backend/invoke adapter :graph-head)
+   :source-scope (consistency/source-scope adapter)
+   :native-revision (consistency/native-revision adapter)
    :adapter-fingerprint (backend/fingerprint adapter)
    :identity-contract (backend/identity-contract adapter)})
 
@@ -184,6 +208,7 @@
   therefore reuses computation, not consistency or trust decisions."
   [adapter opts operation query]
   (let [cache (:page-navigation-cache opts)]
+    (execution/check! (:execution-contract opts) :page-cache-lookup)
     (when (page-cache-enabled? cache opts)
       (when-not (instance? PageNavigationCache cache)
         (throw
@@ -204,6 +229,7 @@
   "Stores one current page and learns any adjacent opposite-direction alias."
   [adapter opts operation query page]
   (let [cache (:page-navigation-cache opts)]
+    (execution/check! (:execution-contract opts) :page-cache-publication)
     (when (page-cache-enabled? cache opts)
       (when-not (instance? PageNavigationCache cache)
         (throw
@@ -292,12 +318,11 @@
   Returns nil when the schema stamp or any relation stamp is unreadable, so
   the caller falls back to the exact-snapshot proof (never wrong, at most a
   recovery instead of a continuation hit)."
-  [adapter schema-stamp relation-ids]
+  [request-proof-frame relation-ids]
   (let [relation-ids (vec relation-ids)
-        relation-stamps
-        (backend/invoke adapter :relation-proof relation-ids)]
-    (when (and (some? schema-stamp)
-               (some? relation-stamps))
+        proof (proof-frame/resolve! request-proof-frame relation-ids)
+        descriptor (proof-frame/descriptor proof)]
+    (when descriptor
       {:dependency-scope-digest
        (secure/canonical-digest
         "eacl/cursor/dependency-scope/v4"
@@ -306,22 +331,19 @@
        :proof-digest
        (secure/canonical-digest
         "eacl/cursor/dependency-proof/v1"
-        {:schema-stamp schema-stamp
-         :relation-stamps relation-stamps})})))
+        descriptor)})))
 
 (defn- build-dependency-context
-  [adapter schema-stamp relation-ids]
-  (let [graph-head (backend/invoke adapter :graph-head)
+  [adapter request-proof-frame relation-ids]
+  (let [native-revision (consistency/native-revision adapter)
         base
-        {:source-scope
-         {:backend (backend/backend-id adapter)
-          :scope (backend/invoke adapter :source-scope)}
-         :graph-head graph-head
+        {:source-scope (consistency/source-scope adapter)
+         :native-revision native-revision
          :adapter-fingerprint (backend/fingerprint adapter)
          :identity-contract (backend/identity-contract adapter)}
         dependency-digests
         (when (some? relation-ids)
-          (dependency-stamp-digests adapter schema-stamp relation-ids))]
+          (dependency-stamp-digests request-proof-frame relation-ids))]
     (if dependency-digests
       (merge base dependency-digests)
       (assoc base
@@ -329,8 +351,11 @@
              :proof-digest
              (secure/canonical-digest
               "eacl/cursor/exact-snapshot/v4"
-              {:snapshot-id (backend/invoke adapter :snapshot-id)
-               :graph-head graph-head})))))
+              {:snapshot-id
+               (if request-proof-frame
+                 (proof-frame/snapshot-id request-proof-frame)
+                 (backend/invoke adapter :snapshot-id))
+               :native-revision native-revision})))))
 
 (defn dependency-context
   "Builds bounded continuation metadata for one immutable snapshot.
@@ -338,7 +363,7 @@
   Without `relation-ids` the proof pins the exact snapshot identity
   (relationship-index cursors keep this arity). With a sorted vector of
   relation-definition eids — the query's compiled dependency closure — the
-  proof becomes the schema stamp plus the per-relation stamps, so a
+  proof becomes the schema stamp plus the scalar dependency frontier, so a
   transaction touching no relation in the closure leaves the proof equal and
   the continuation reusable. Unreadable stamps fall back to the
   exact-snapshot proof."
@@ -348,7 +373,7 @@
    (build-dependency-context
     adapter
     (when (some? relation-ids)
-      (backend/invoke adapter :schema-proof))
+      (proof-frame/request-frame adapter))
     relation-ids)))
 
 (defn- request-relation-ids
@@ -360,10 +385,13 @@
 (defn- request-dependency-context
   [adapter opts]
   (if-let [relation-ids (request-relation-ids opts)]
-    (build-dependency-context
-     adapter
-     (request-schema-stamp adapter opts)
-     relation-ids)
+    (let [candidate (:request-proof-frame opts)
+          frame
+          (if (and candidate
+                   (identical? adapter (:adapter candidate)))
+            candidate
+            (proof-frame/request-frame adapter))]
+      (build-dependency-context adapter frame relation-ids))
     (dependency-context adapter)))
 
 (defn- transform-edge-ids
@@ -373,7 +401,7 @@
   ;; deleted by trusted-surface-hygiene 11.1).
   [f edge]
   (case (:kind edge)
-    :lookup-eid
+    (:lookup-eid :recursive-logical)
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
@@ -387,15 +415,19 @@
 (defn- encode-page-edge
   [adapter opts scope context edge]
   (when edge
-    (cursor/cursor->token
-     (merge
-      {:v 11
-       :scope scope
-       :edge (transform-edge-ids
-              #(backend/invoke adapter :internal-id->object %)
-              edge)}
-      context)
-     opts)))
+    (execution/check! (:execution-contract opts) :cursor-encode)
+    (let [token
+          (cursor/cursor->token
+           (merge
+            {:v 11
+             :scope scope
+             :edge (transform-edge-ids
+                    #(backend/invoke adapter :internal-id->object %)
+                    edge)}
+            context)
+           opts)]
+      (execution/check! (:execution-contract opts) :cursor-encoded)
+      token)))
 
 (defn- invalid-cursor!
   [message data cause]
@@ -416,6 +448,7 @@
   decision, which reproduces the historical public errors."
   [adapter opts operation query token]
   (when token
+    (execution/check! (:execution-contract opts) :cursor-decode)
     (let [decoded
           (try
             (cursor/token->authenticated-cursor token opts)
@@ -424,7 +457,8 @@
                "Invalid Relay cursor."
                {:reason (:reason (ex-data error))}
                error)))
-          envelope (:cursor decoded)]
+          envelope (:cursor decoded)
+          _ (execution/check! (:execution-contract opts) :cursor-decoded)]
       (when-not (and (= 11 (:v envelope))
                      (map? (:edge envelope)))
         (invalid-cursor! "Invalid Relay cursor envelope."
@@ -456,24 +490,21 @@
        field))
    execution-identity-fields))
 
-(defn- graph-code
-  "Graph-anchor code in the numbering shared by one continuation decision:
-  0 = the current selection's graph, 1 = the cursor's (different) graph,
-  2 = any other graph. The kernel's exact arm compares codes, so an exact
-  selection is accepted only when it resolves the cursor's own graph."
+(defn- revision-code
+  "Native-revision code in the numbering shared by one continuation decision:
+  0 = the current selection, 1 = the cursor's different revision, and 2 = any
+  other revision. The generated kernel still calls this scalar `graph`; the
+  value now represents exact native revision identity, never ancestry."
   [current envelope context]
-  (let [anchor
-        (secure/canonicalize
-         (get-in context [:graph-head :graph-anchor]))]
+  (let [revision
+        (secure/canonicalize (:native-revision context))]
     (cond
-      (= anchor
-         (secure/canonicalize
-          (get-in current [:graph-head :graph-anchor])))
+      (= revision
+         (secure/canonicalize (:native-revision current)))
       0
 
-      (= anchor
-         (secure/canonicalize
-          (get-in envelope [:graph-head :graph-anchor])))
+      (= revision
+         (secure/canonicalize (:native-revision envelope)))
       1
 
       :else 2)))
@@ -491,14 +522,9 @@
         cursor-source (execution-identity envelope)
         current-proof (continuation-proof current)
         cursor-proof (continuation-proof envelope)
-        mode
-        (if (= :at-exact-snapshot
-               (:cursor-consistency-mode opts))
-          :exact-snapshot
-          :recover-current)
         exact-decision
         (when exact
-          {:graph (graph-code current envelope exact)
+          {:graph (revision-code current envelope exact)
            :source (execution-identity exact)
            :proof (continuation-proof exact)})]
     (verified/decide
@@ -512,8 +538,7 @@
       :cursor-source cursor-source
       :current-proof current-proof
       :cursor-proof cursor-proof
-      :mode mode
-      :cursor-graph (graph-code current envelope envelope)
+      :cursor-graph (revision-code current envelope envelope)
       :exact exact-decision})))
 
 (defn- stale-context!
@@ -525,11 +550,39 @@
      :eacl/error :eacl.pagination/stale-cursor
      :reason reason})))
 
+(defn- history-capable?
+  [adapter]
+  (or (backend/supports? adapter :snapshots :historical)
+      (backend/supports? adapter :snapshots :exact)))
+
+(defn- ensure-cursor-satisfies-request!
+  [opts envelope]
+  (when-let [floor (:cursor-freshness-floor opts)]
+    (let [cursor-order (get-in envelope [:native-revision :revision])
+          floor-order (:revision floor)]
+      (when (or (not (integer? cursor-order))
+                (not (integer? floor-order))
+                (< cursor-order floor-order))
+        (consistency/cursor-conflict!
+         {:cursor-order-hint cursor-order
+          :requested-order-hint floor-order}))))
+  (when (= :at-exact-snapshot (:cursor-consistency-mode opts))
+    (let [requested (:cursor-request-token opts)
+          cursor-revision (:native-revision envelope)]
+      (when (or (not= (:revision requested)
+                      (:revision cursor-revision))
+                (not= (:exact-locator requested)
+                      (:exact-locator cursor-revision)))
+        (consistency/cursor-conflict!
+         {:cursor-revision (:revision cursor-revision)
+          :requested-revision (:revision requested)
+          :cursor-exact-locator (:exact-locator cursor-revision)
+          :requested-exact-locator (:exact-locator requested)})))))
+
 (defn- apply-continuation-decision!
   [adapter current envelope decision]
   (case decision
     :current adapter
-    :rebase-current adapter
     :exact adapter
 
     :expired
@@ -559,10 +612,10 @@
 
     :conflict
     (consistency/cursor-conflict!
-     {:cursor-graph-anchor
-      (get-in envelope [:graph-head :graph-anchor])
-      :selected-graph-anchor
-      (get-in current [:graph-head :graph-anchor])})
+     {:cursor-revision
+      (get-in envelope [:native-revision :revision])
+      :selected-revision
+      (get-in current [:native-revision :revision])})
 
     :snapshot-unavailable
     (stale-context!
@@ -575,7 +628,7 @@
     :history-divergence
     (throw
      (ex-info
-      "The cursor exact locator resolved to another graph."
+      "The cursor exact locator resolved to another native revision."
       {:type :eacl.consistency/history-divergence
        :eacl/error :eacl.consistency/history-divergence}))
 
@@ -601,61 +654,61 @@
 (defn- select-envelope-adapter
   [adapter opts envelope]
   (if-not envelope
-    {:adapter adapter
-     :recovery nil}
+    adapter
     (let [current (current-context adapter opts)
           initial
           (continuation-decision opts current envelope nil)]
       (case initial
         :snapshot-unavailable
-        (let [exact
-              (backend/invoke
-               adapter
-               :select-exact
-               {:graph-anchor
-                (get-in envelope [:graph-head :graph-anchor])
-                :order-hint
-                (get-in envelope [:graph-head :order-hint])
-                :exact-locator
-                (get-in envelope [:graph-head :exact-locator])}
-               (:timeout-ms opts))]
-          (when-not exact
-            (throw
-             (ex-info
-              "The cursor's exact snapshot is no longer retained."
-              {:type :eacl.consistency/snapshot-expired
-               :eacl/error
-               :eacl.consistency/snapshot-expired})))
-          (let [exact-context
-                (request-dependency-context exact opts)
-                decision
-                (continuation-decision
-                 opts current envelope exact-context)]
-            (apply-continuation-decision!
-             exact exact-context envelope decision)
-            {:adapter exact
-             :recovery nil}))
+        (do
+          (ensure-cursor-satisfies-request! opts envelope)
+          (when-not (history-capable? adapter)
+            (stale-context!
+             "The backend cannot reconstruct the cursor's changed proof."
+             :dependency-proof-changed))
+          (let [exact
+                (do
+                  (execution/check!
+                   (:execution-contract opts)
+                   :cursor-exact-selection)
+                (backend/invoke
+                 adapter
+                 :select-exact
+                 {:revision
+                  (get-in envelope [:native-revision :revision])
+                  :exact-locator
+                  (get-in envelope [:native-revision :exact-locator])}
+                 (:timeout-ms opts)))]
+            (execution/check!
+             (:execution-contract opts)
+             :cursor-exact-selected)
+            (when-not exact
+              (throw
+               (ex-info
+                "The cursor's exact snapshot is no longer retained."
+                {:type :eacl.consistency/snapshot-expired
+                 :eacl/error
+                 :eacl.consistency/snapshot-expired})))
+            (let [exact-context
+                  (request-dependency-context exact opts)
+                  decision
+                  (continuation-decision
+                   opts current envelope exact-context)]
+              (apply-continuation-decision!
+               exact exact-context envelope decision)
+              exact)))
 
-        :rebase-current
         (do
           (apply-continuation-decision!
            adapter current envelope initial)
-          {:adapter adapter
-           :recovery :rebased})
-
-        (do
-          (apply-continuation-decision!
-           adapter current envelope initial)
-          {:adapter adapter
-           :recovery nil})))))
+          adapter)))))
 
 (defn select-continuation-adapter
-  "Uses an equal current proof, recovers non-exact reads on current, and
-  reconstructs history only for explicit exact-snapshot requests."
+  "Uses an equal current proof or a verified exact historical fallback."
   [adapter opts operation query]
   (let [token (or (:after query) (:before query))
         envelope (decode-envelope adapter opts operation query token)]
-    (:adapter (select-envelope-adapter adapter opts envelope))))
+    (select-envelope-adapter adapter opts envelope)))
 
 (defn- internalize-tracked-edge
   [adapter edge]
@@ -673,38 +726,25 @@
     {:edge transformed
      :missing? @missing?}))
 
-(defn- internalize-rebased-edge
-  [adapter edge]
-  (let [{:keys [edge missing?]}
-        (internalize-tracked-edge adapter edge)]
-    (if missing?
-      {:edge nil
-       :recovery :restarted}
-      {:edge
-       (cond-> edge
-         (#{:lookup-eid} (:kind edge))
-         (assoc :rebase? true))
-       :recovery :rebased})))
-
 (defn- internalize-continued-edge
   "Internalizes a resume edge for an equal-proof continuation.
 
-  A dependency-scoped equal proof spans transactions outside the query's
-  closure, so the boundary object can have been retracted raw while its
-  relationship tuples survive. That identity loss cannot be a silent bound
-  drop: restart honestly, exactly like the rebase path."
+  A dependency-scoped equal proof may span transactions outside the query's
+  relationship closure. If the boundary identity disappeared, continuing
+  would drop the authenticated bound and create a hybrid walk, so reject it
+  as stale rather than silently restarting."
   [adapter edge]
   (let [{:keys [edge missing?]}
         (internalize-tracked-edge adapter edge)]
     (if missing?
-      {:edge nil
-       :recovery :restarted}
-      {:edge edge
-       :recovery nil})))
+      (stale-context!
+       "Relay cursor boundary identity is no longer available."
+       :boundary-identity-changed)
+      edge)))
 
 (defn prepare-page-query
-  "Authenticates each page token once, selects the consistency-mode snapshot,
-  and converts or safely restarts its resume edge in that identity space."
+  "Authenticates each page token once, selects one safe snapshot, and
+  internalizes its resume edge without rebase or restart states."
   [adapter opts operation query]
   (let [envelopes
         (->> [:after :before]
@@ -716,40 +756,23 @@
                     adapter opts operation query (get query field))])))
              vec)
         primary-envelope (some second envelopes)
-        selection
+        page-adapter
         (select-envelope-adapter adapter opts primary-envelope)
-        page-adapter (:adapter selection)
-        selected-recovery (:recovery selection)
-        prepared
+        prepared-query
         (reduce
-         (fn [{:keys [query recovery]} [field envelope]]
+         (fn [query [field envelope]]
            (if-not envelope
-             {:query (assoc query field nil)
-              :recovery recovery}
+             (assoc query field nil)
              (do
                (when-not (identical? envelope primary-envelope)
                  (validate-context! page-adapter opts envelope))
-               (let [{internal-edge :edge
-                      edge-recovery :recovery}
-                     (if selected-recovery
-                       (internalize-rebased-edge
-                        page-adapter (:edge envelope))
-                       (internalize-continued-edge
-                        page-adapter (:edge envelope)))]
-                 {:query
-                  (if internal-edge
-                    (assoc query field internal-edge)
-                    (dissoc query field))
-                  :recovery
-                  (if (= :restarted edge-recovery)
-                    :restarted
-                    (or recovery edge-recovery))}))))
-         {:query query
-          :recovery selected-recovery}
+               (assoc query field
+                      (internalize-continued-edge
+                       page-adapter (:edge envelope))))))
+         query
          envelopes)]
     {:adapter page-adapter
-     :query (:query prepared)
-     :recovery (:recovery prepared)}))
+     :query prepared-query}))
 
 (defn- decode-page-edge
   [adapter opts operation query token]
@@ -779,18 +802,15 @@
            adapter opts scope
            (when edge @context)
            edge))]
-    (cond-> (-> page
-                (update-in [:page-info :start-cursor] encode-edge)
-                (update-in [:page-info :end-cursor] encode-edge))
-      (:cursor-recovery opts)
-      (update-in
-       [:page-info :cursor-recovery]
-       #(or % (:cursor-recovery opts))))))
+    (-> page
+        (update-in [:page-info :start-cursor] encode-edge)
+        (update-in [:page-info :end-cursor] encode-edge))))
 
 (def ^:private identity-key-version 1)
 
 (defn- cached-internal-id->object
-  [adapter internal-id]
+  [adapter opts internal-id]
+  (execution/check! (:execution-contract opts) :render-identity)
   (let [resolved
         (subproblem/resolve-bound!
          :projection
@@ -807,6 +827,7 @@
                  (* 2 (count value))
                  160)))}
          #(backend/invoke adapter :internal-id->object internal-id))]
+    (execution/check! (:execution-contract opts) :rendered-identity)
     (when (:cached? resolved)
       (subproblem/record-avoided-backend-operation!))
     (:value resolved)))
@@ -822,7 +843,7 @@
        (fn [{:keys [type id]}]
          (spice-object
           type
-          (cached-internal-id->object adapter id)))
+          (cached-internal-id->object adapter opts id)))
        objects)))))
 
 (defn externalize-relationship-page
@@ -839,10 +860,10 @@
           {:subject
            (update
             subject :id
-            #(cached-internal-id->object adapter %))
+            #(cached-internal-id->object adapter opts %))
            :relation relation
            :resource
            (update
             resource :id
-            #(cached-internal-id->object adapter %))}))
+            #(cached-internal-id->object adapter opts %))}))
        relationships)))))

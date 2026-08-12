@@ -7,10 +7,13 @@
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
-            [eacl.mutation-test]
+            [eacl.execution-test]
+            [eacl.proof-frame-test]
+            [eacl.permission-tree-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.secure-format-test]
+            [eacl.spicedb.parser-portability-test]
             [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
             [eacl.formal.cache-strategy-adversarial-test]
@@ -22,7 +25,7 @@
             [eacl.datascript.contract-test]
             [eacl.datascript.enumeration-routing-test]
             [eacl.datascript.impl-test]
-            [eacl.datascript.mutation-test]
+            [eacl.datascript.safe-retraction-test]
             [eacl.datascript.storage-test]))
 
 (nodejs/enable-util-print!)
@@ -43,10 +46,13 @@
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test
-               'eacl.mutation-test
+               'eacl.execution-test
+               'eacl.proof-frame-test
+               'eacl.permission-tree-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.secure-format-test
+               'eacl.spicedb.parser-portability-test
                'eacl.subproblem-cache-test
                'eacl.verified-kernel-test
                'eacl.formal.cache-strategy-adversarial-test
@@ -58,7 +64,7 @@
                'eacl.datascript.contract-test
                'eacl.datascript.enumeration-routing-test
                'eacl.datascript.impl-test
-               'eacl.datascript.mutation-test
+               'eacl.datascript.safe-retraction-test
                'eacl.datascript.storage-test))
 
 (set! *main-cli-fn* -main)

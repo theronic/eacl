@@ -8,12 +8,12 @@
   "modules/eacl-datascript/src"]
  :runtime-passes
  {:clj
-  {:invoke-call-count 63
+  {:invoke-call-count 43
    :operations
    #{:snapshot-id
      :source-scope
-     :graph-head
-     :contains-anchor?
+	     :source-lifecycle
+	     :native-revision
      :order-hint
      :select-current
      :select-authoritative
@@ -29,15 +29,14 @@
      :direct-match?
      :relation-populated?
      :all-permission-nodes
-     :schema-proof
-     :relation-proof}}
+     :proof-frame}}
   :cljs
-  {:invoke-call-count 63
+  {:invoke-call-count 43
    :operations
    #{:snapshot-id
      :source-scope
-     :graph-head
-     :contains-anchor?
+	     :source-lifecycle
+	     :native-revision
      :order-hint
      :select-current
      :select-authoritative
@@ -53,8 +52,7 @@
      :direct-match?
      :relation-populated?
      :all-permission-nodes
-     :schema-proof
-     :relation-proof}}}
+     :proof-frame}}}
  :requirements
  {:every-invoke-operation-is-a-literal-keyword true
   :observed-equals-required-snapshot-operations true

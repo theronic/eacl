@@ -182,9 +182,6 @@ VARIABLES
   cursorProof,
   \* @type: Int;
   cursorSource,
-  \* @type: Bool;
-  \* TRUE means non-exact continuation may recover on the selected head.
-  cursorLiftable,
   \* @type: Int;
   cursorOffset,
   \* @type: Int;
@@ -224,7 +221,7 @@ vars ==
     telemetry,
     cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
     cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-    cursorProof, cursorSource, cursorLiftable, cursorOffset,
+    cursorProof, cursorSource, cursorOffset,
     cursorExpiresAt,
     continuationPresent, continuationGraph, continuationOffset,
     pagePresent, pageGraph, pageOffset, decisionGraph, decisionOffset,
@@ -275,7 +272,6 @@ TypeOK ==
   /\ cursorScope \in Scopes
   /\ cursorProof \in Proofs
   /\ cursorSource \in Sources
-  /\ cursorLiftable \in BOOLEAN
   /\ cursorOffset \in Nat
   /\ cursorExpiresAt \in Times
   /\ continuationPresent \in BOOLEAN
@@ -321,7 +317,8 @@ CursorCurrentSafe ==
     /\ cursorResultKind = selectedResultKind
     /\ cursorScope = dependencyScope
     /\ now < cursorExpiresAt
-    /\ (cursorGraph = head \/ cursorLiftable)
+    /\ proofAvailable[head][dependencyScope]
+    /\ cursorProof = proof[head][dependencyScope]
     /\ (selectedConflict # AtLeastConflict \/
         cursorGraph \in ancestors[head] \union {head})
     /\ selectedGraph = head
@@ -420,7 +417,6 @@ Init ==
   /\ cursorScope = 0
   /\ cursorProof = 0
   /\ cursorSource = 0
-  /\ cursorLiftable = FALSE
   /\ cursorOffset = 0
   /\ cursorExpiresAt = 0
   /\ continuationPresent = FALSE
@@ -467,7 +463,7 @@ PublishSnapshot(newWriter, newWrite, newProof, newAvailability) ==
         telemetry,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -523,7 +519,7 @@ MoveHead(moveKind) ==
         telemetry,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -556,7 +552,7 @@ ExpireRetained ==
         telemetry,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -584,7 +580,7 @@ AdvanceTime ==
         telemetry,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -618,7 +614,7 @@ CachePut ==
         telemetry,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -652,7 +648,7 @@ TamperCache ==
         telemetry,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -690,7 +686,7 @@ CacheRead ==
         cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -718,7 +714,7 @@ CacheProviderFailure ==
         cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -747,7 +743,7 @@ TelemetryCAS ==
         cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorOffset,
+        cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset, decisionOffset>>
@@ -755,7 +751,7 @@ TelemetryCAS ==
 CursorMint ==
   \E operation \in Operations, query \in Queries,
      direction \in Directions, resultKind \in ResultKinds,
-     scope \in Scopes, expiry \in Times, liftable \in BOOLEAN:
+     scope \in Scopes, expiry \in Times:
     /\ now < expiry
     /\ cursorPresent' = TRUE
     /\ cursorAuthenticated' = TRUE
@@ -767,7 +763,6 @@ CursorMint ==
     /\ cursorScope' = scope
     /\ cursorProof' = proof[head][scope]
     /\ cursorSource' = source
-    /\ cursorLiftable' = liftable
     /\ cursorOffset' = 0
     /\ cursorExpiresAt' = expiry
     /\ selectedGraph' = head
@@ -806,7 +801,6 @@ TamperCursor ==
     /\ cursorScope' = scope
     /\ cursorProof' = candidateProof
     /\ cursorSource' = candidateSource
-    /\ cursorLiftable' = TRUE
     /\ cursorOffset' = 0
     /\ cursorExpiresAt' = expiry
     /\ selectedGraph' = head
@@ -851,7 +845,8 @@ CursorResume ==
           /\ scopeMatches
           /\ unexpired
           /\ conflictAllows
-          /\ (cursorGraph = head \/ cursorLiftable)
+          /\ proofAvailable[head][scope]
+          /\ cursorProof = proof[head][scope]
         exactEligible ==
           /\ scopeMatches
           /\ unexpired
@@ -903,7 +898,7 @@ CursorResume ==
         cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-        cursorProof, cursorSource, cursorLiftable, cursorExpiresAt,
+        cursorProof, cursorSource, cursorExpiresAt,
         continuationPresent, continuationGraph, continuationOffset,
         pagePresent, pageGraph, pageOffset>>
 
@@ -932,7 +927,7 @@ PublishContinuation ==
       telemetry,
       cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
       cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorLiftable, cursorOffset,
+      cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt,
       pagePresent, pageGraph, pageOffset>>
 
@@ -961,7 +956,7 @@ PublishPage ==
       telemetry,
       cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
       cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorLiftable, cursorOffset,
+      cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt,
       continuationPresent, continuationGraph, continuationOffset>>
 
@@ -993,7 +988,7 @@ RetryPublication ==
       telemetry,
       cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
       cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorLiftable, cursorOffset,
+      cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt>>
 
 EvictContinuation ==
@@ -1019,7 +1014,7 @@ EvictContinuation ==
       telemetry,
       cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
       cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorLiftable, cursorOffset,
+      cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt,
       continuationGraph, continuationOffset, pageGraph, pageOffset>>
 
@@ -1057,7 +1052,7 @@ ContinuationFetch ==
       telemetry,
       cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
       cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorLiftable, cursorOffset,
+      cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt,
       continuationPresent, continuationGraph, continuationOffset,
       pagePresent, pageGraph, pageOffset, decisionGraph, decisionOffset>>

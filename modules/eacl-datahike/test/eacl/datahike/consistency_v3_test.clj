@@ -26,13 +26,19 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
+(def ^:private source-lifecycle "datahike-consistency-v4-test")
+
 (defn- client
-  [conn]
-  (datahike/make-client
-   conn
-   {:coherence-authority :managed
-    :security-key security-key
-    :consistency-sync-timeout-ms 5}))
+  ([conn]
+   (client conn {}))
+  ([conn options]
+   (datahike/make-client
+    conn
+    (merge
+     {:security-key security-key
+      :source-lifecycle source-lifecycle
+      :consistency-sync-timeout-ms 5}
+     options))))
 
 (defn- seed!
   [conn authorization]
@@ -131,7 +137,7 @@
       (is (= [(first documents)] (:data previous-page)))
       (is (true? (:cached? previous-page)))
       (is (true? (:cached? previous-hit))))
-    (testing "current recovery becomes cacheable after re-evaluation"
+    (testing "changed proof falls back to the exact cursor snapshot"
       (eacl/delete-relationship! authorization (second relationships))
       (let [before (datahike/cache-stats authorization)
             historical-1
@@ -139,13 +145,12 @@
             historical-2
             (eacl/lookup-resources authorization page-2-query)
             after (datahike/cache-stats authorization)]
-        (is (= [(last documents)] (:data historical-1)))
+        (is (= [(second documents)] (:data historical-1)))
         (is (= (:data historical-1) (:data historical-2)))
-        (is (= :rebased
-               (get-in historical-1 [:page-info :cursor-recovery])))
+        (is (nil? (get-in historical-1 [:page-info :cursor-recovery])))
         (is (false? (:cached? historical-1)))
-        (is (true? (:cached? historical-2)))
-        (is (= (:bypasses before) (:bypasses after)))))))
+        (is (false? (:cached? historical-2)))
+        (is (= (+ 2 (:bypasses before)) (:bypasses after)))))))
 
 (deftest repeated-relationship-page-uses-client-private-navigation-cache-test
   (let [conn (datahike/create-conn)
@@ -279,9 +284,12 @@
       ;; Reconnect before advancing the replacement history.
       (d/release conn)
       (let [rewound-conn (d/connect (:config pre-write))
-            rewound-authorization (client rewound-conn)]
+            rewound-authorization
+            (client rewound-conn
+                    {:source-lifecycle
+                     "datahike-consistency-rewound-v4-test"})]
         (d/transact rewound-conn [{:eacl/id "unrelated"}])
-        (is (= :eacl.consistency/freshness-unavailable
+        (is (= :eacl.consistency/incomparable-scope
                (:type
                 (error-data
                  #(eacl/can?
@@ -389,14 +397,12 @@
     (d/release reader-conn)
     (d/release writer-conn)))
 
-(deftest content-proofs-are-bounded-and-cover-public-identity-test
+(deftest ordered-generations-track-only-supported-mutations-test
   (let [conn (datahike/create-conn)
         authorization
         (datahike/make-client
          conn
-         {:coherence-authority :managed
-          :proof-mode :content
-          :security-key security-key})
+         {:security-key security-key})
         _ (seed! conn authorization)
         _ (eacl/create-relationship! authorization relationship)
         before-adapter
@@ -407,16 +413,12 @@
          (first
           (backend/invoke
            before-adapter :relation-defs :document :reader)))
-        schema-proof (backend/invoke before-adapter :schema-proof)
         before-proof
-        (backend/invoke before-adapter :relation-proof [relation-id])
-        user-eid (ddb/entid (d/db conn) [:eacl/id "user"])
+        (backend/invoke before-adapter :proof-frame [relation-id])
         document-eid
         (ddb/entid (d/db conn) [:eacl/id "document"])]
-    (is (= #{:content-digest} (set (keys schema-proof))))
-    (is (= 43 (count (:content-digest schema-proof))))
-    (is (= #{:content-digest} (set (keys before-proof))))
-    (is (= 43 (count (:content-digest before-proof))))
+    (is (integer? (:schema-stamp before-proof)))
+    (is (= relation-id (ffirst (:relation-stamps before-proof))))
     (let [reverse
           (first
            (ddb/eavt-datoms
@@ -433,31 +435,25 @@
             (backend/invoke
              (datahike-backend/snapshot-adapter
               (d/db conn) (:opts authorization))
-             :relation-proof
+             :proof-frame
              [relation-id])]
-        (is (not= before-proof half-proof)
-            "a missing physical half invalidates a content-proof cache hit"))
+        (is (= before-proof half-proof)
+            "unsupported raw mutation does not claim managed coherence"))
       (eacl/write-relationship!
        authorization
        {:operation :touch
         :subject user
         :relation :reader
         :resource document})
-      (is (= before-proof
-             (backend/invoke
-              (datahike-backend/snapshot-adapter
-               (d/db conn) (:opts authorization))
-              :relation-proof
-              [relation-id]))
-          "repairing the pair restores the same content proof"))
-    (d/transact conn [[:db/retract user-eid :eacl/id "user"]
-                      [:db/add user-eid :eacl/id "renamed-user"]])
-    (let [after-adapter
-          (datahike-backend/snapshot-adapter
-           (d/db conn) (:opts authorization))
-          after-proof
-          (backend/invoke after-adapter :relation-proof [relation-id])]
-      (is (not= before-proof after-proof)))
+      (let [after-proof
+            (backend/invoke
+             (datahike-backend/snapshot-adapter
+              (d/db conn) (:opts authorization))
+             :proof-frame
+             [relation-id])]
+        (is (< (second (first (:relation-stamps before-proof)))
+               (second (first (:relation-stamps after-proof))))
+            "the supported repair advances the committed relation generation")))
     (d/release conn)))
 
 (deftest temporal-fallback-and-commit-garbage-collection-test
@@ -533,27 +529,26 @@
         (mapv #(eacl/->Relationship user :reader %) documents)
         _ (doseq [value relationships]
             (eacl/create-relationship! authorization value))
-        query {:subject/id "user" :first 1}
+        query {:subject/type :user :subject/id "user" :first 1}
         page-1 (eacl/read-relationships authorization query)
         cursor (get-in page-1 [:page-info :end-cursor])
         cursor-data
         (datahike/token->cursor cursor (:opts authorization))]
     (try
       (d/transact conn [{:eacl/id "unrelated-cursor-churn"}])
-      (testing "an unrelated write rebases continuation to the current commit"
+      (testing "an exact-proof relationship cursor falls back to its commit"
         (let [page-2
               (eacl/read-relationships
                authorization
                (assoc query :after cursor))
-              rebased
+              exact-cursor-data
               (datahike/token->cursor
                (get-in page-2 [:page-info :end-cursor])
                (:opts authorization))]
           (is (= [(second relationships)] (:data page-2)))
-          (is (= :rebased
-                 (get-in page-2 [:page-info :cursor-recovery])))
-          (is (not= (get-in cursor-data [:graph-head :exact-locator])
-                    (get-in rebased [:graph-head :exact-locator])))))
+          (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
+          (is (= (get-in cursor-data [:graph-head :exact-locator])
+                 (get-in exact-cursor-data [:graph-head :exact-locator])))))
       (let [fresh-page-1
             (eacl/read-relationships authorization query)
             fresh-cursor
@@ -563,14 +558,13 @@
              (eacl/delete-relationship!
               authorization
               (second relationships)))]
-        (testing "a relationship change resumes on the current commit"
+        (testing "a relationship change retains the exact cursor commit"
           (let [page
                 (eacl/read-relationships
                  authorization
                  (assoc query :after fresh-cursor))]
-            (is (= [(last relationships)] (:data page)))
-            (is (= :rebased
-                   (get-in page [:page-info :cursor-recovery])))))
+            (is (= [(second relationships)] (:data page)))
+            (is (nil? (get-in page [:page-info :cursor-recovery])))))
         (testing "a changed consistency contract is a different query scope"
           (is (= :eacl.pagination/invalid-cursor
                  (:type

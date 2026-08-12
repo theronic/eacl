@@ -8,7 +8,6 @@
   :reverse-lookup
   :page-windows
   :cursor-decisions
-  :cache-decisions
   :typed-recursive-scc-routing
   :typed-wire-results]
  :clj-java {:tests 1 :assertions 22}

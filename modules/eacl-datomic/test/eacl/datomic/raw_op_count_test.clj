@@ -7,7 +7,6 @@
   truth: two schema proofs and two plan compiles per raw list request;
   zero proofs per raw point check). Per-push, no wall-clock assertions."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [datomic.api :as d]
             [eacl.backend.v8 :as backend]
@@ -18,10 +17,11 @@
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as dschema]
             [eacl.engine.v8 :as engine]
+            [eacl.test-support.repo :as repo]
             [eacl.verified-kernel :as verified]))
 
 (def ^:private envelopes
-  (-> (io/file "formal/verification/recursive-op-count-envelopes.edn")
+  (-> (repo/file "formal" "verification" "recursive-op-count-envelopes.edn")
       slurp
       edn/read-string
       :work-envelopes))
@@ -73,8 +73,7 @@
               impl.indexed/*recursive-traversal-stats* rts
               engine/*request-shape-stats* shape]
       (f))
-    {:schema-proof (get @bops :schema-proof 0)
-     :schema-proof-computations (get @bops :schema-proof-computations 0)
+    {:proof-frame (get @bops :proof-frame 0)
      :plan-compiles (get @rts :compiled-recursive-plans 0)
      :key-builds (get @shape :denotation-key-builds 0)
      :dep-calcs (get @shape :denotation-dependency-calcs 0)
@@ -85,12 +84,24 @@
      :derived-grants (get @rts :derived-grants 0)}))
 
 (defn- assert-crossing-law!
-  [{:keys [drive resume stream-fills advanced]}]
-  (let [fuel (get-in envelopes [:crossing-law :fuel])]
-    (is (= resume stream-fills)
-        "every NeedScan resumes exactly once (:indexed-traversal-resume = :stream-fills)")
-    (is (<= drive (+ stream-fills 1 (quot advanced fuel)))
-        ":indexed-traversal-drive bounded by scans + 1 + fuel-yield allowance")))
+  [render-kind {:keys [drive resume stream-fills advanced]}]
+  (let [{default-batch-size :batch-size
+         page-batch-size :page-batch-size
+         :keys [constant fuel]}
+        (:crossing-law envelopes)
+        batch-size (if (= :page render-kind)
+                     page-batch-size
+                     default-batch-size)
+        batches (quot (+ stream-fills (dec batch-size)) batch-size)
+        fuel-yields (quot advanced fuel)]
+    (is (<= resume stream-fills)
+        "one ordered response wave resumes one or more backend scans")
+    (is (<= drive (+ resume 1 fuel-yields))
+        ":indexed-traversal-drive bounded by response waves + completion + fuel yields")
+    (is (<= (+ drive resume)
+            (+ (* 2 batches) constant fuel-yields))
+        (str (name render-kind)
+             " crossings <= 2*ceil(streams/batch)+recorded constant"))))
 
 (deftest raw-lookup-op-count-test
   (let [e (:raw-lookup-first-50 envelopes)
@@ -103,12 +114,8 @@
     (testing "recursion active (suite self-check)"
       (is (pos? (:stream-fills m)) (pr-str m))
       (is (pos? (:derived-grants m)) (pr-str m)))
-    (testing "schema proofs per raw list request (:schema-proof)"
-      (is (<= (:schema-proof m) (:maximum-schema-proof-reads e)) (pr-str m)))
-    (testing "memoized proof computations per raw list request"
-      (is (<= (:schema-proof-computations m)
-              (:maximum-schema-proof-computations e))
-          (pr-str m)))
+    (testing "ordered-generation frames per raw list request"
+      (is (<= (:proof-frame m) (:maximum-proof-frame-reads e)) (pr-str m)))
     (testing "recursive plan compiles per raw request (:compiled-recursive-plans)"
       (is (<= (:plan-compiles m) (:maximum-plan-compiles e)) (pr-str m)))
     (testing "denotation cache-key work against a nil store"
@@ -116,7 +123,7 @@
       (is (<= (:dep-calcs m) (:maximum-denotation-dependency-calcs e)) (pr-str m)))
     (testing "streaming early-stop scan envelope (:stream-fills)"
       (is (<= (:stream-fills m) (:maximum-backend-scans e)) (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :page m)))
 
 (deftest raw-can-op-count-test
   (let [e (:raw-can envelopes)
@@ -129,15 +136,15 @@
                           {:type :account :id deep-child-eid}))]
     (doseq [[label m] [[:positive pos] [:negative neg]]]
       (testing (str label " raw point check")
-        (is (<= (:schema-proof m) (:maximum-schema-proof-reads e))
-            (str label " :schema-proof " (pr-str m)))
+        (is (<= (:proof-frame m) (:maximum-proof-frame-reads e))
+            (str label " :proof-frame " (pr-str m)))
         (is (<= (:plan-compiles m) (:maximum-plan-compiles e))
             (str label " :compiled-recursive-plans " (pr-str m)))
         (is (zero? (:key-builds m))
             (str label " raw can? builds no denotation keys " (pr-str m)))
         (is (<= (:stream-fills m) (:maximum-backend-scans e))
             (str label " bounded reverse point check " (pr-str m)))
-        (assert-crossing-law! m)))))
+        (assert-crossing-law! :order-independent m)))))
 
 (deftest raw-count-linearity-test
   (let [e (:count-full envelopes)
@@ -156,7 +163,7 @@
       (is (<= (:stream-fills m)
               (+ accounts (:maximum-backend-scans-slack e)))
           (pr-str m)))
-    (assert-crossing-law! m)))
+    (assert-crossing-law! :order-independent m)))
 
 (deftest interned-empty-response-immutability-test
   ;; 4.2 pin: the interned empty scan-response payload must stay empty

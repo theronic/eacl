@@ -231,7 +231,8 @@
              (concat users accounts))))
           (eacl/create-relationships! client relationships)
           (doseq [[base-query expected-count]
-                  [[{:subject/id "anchor-user"} relationship-count]
+                  [[{:subject/type :user :subject/id "anchor-user"}
+                    relationship-count]
                    [{:resource/id "account"} relationship-count]
                    [{:subject/type :user} (* 2 relationship-count)]
                    [{:resource/type :account} (* 2 relationship-count)]]]

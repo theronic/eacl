@@ -1,0 +1,11 @@
+{:operation :lookup-resources
+ :backend :datascript
+ :proof-mode :content
+ :cache? false
+ :page-size 7
+ :before
+ {:cursor-proof :relationship-content-digest
+  :relation-proof-commands 1
+  :cost :linear-in-relationship-graph}
+ :risk
+ :small-demand-page-was-dominated-by-unrequested-full-graph-proof-work}

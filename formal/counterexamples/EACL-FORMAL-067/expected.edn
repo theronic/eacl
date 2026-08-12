@@ -1,0 +1,7 @@
+{:page-render-scan-wave-size 1
+ :order-independent-of-requested-page-size true
+ :continuation-replays-one-page-logical-order true
+ :duplicates 0
+ :order-insensitive-render-scan-wave-size 64
+ :dafny-obligation
+ :page-scan-scheduling-is-independent-of-requested-size}

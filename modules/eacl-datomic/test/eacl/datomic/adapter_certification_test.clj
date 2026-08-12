@@ -35,8 +35,7 @@
                     (:eacl/id
                      (d/entity snapshot internal-id)))
                   :conn conn
-                  :coherence-authority :managed
-                  :proof-mode :content})
+                  })
                 report
                 (certification/certify
                  {:adapter adapter

@@ -6,6 +6,7 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->group ->server ->account ->vpc ->nic ->network ->lease ->backup ->backup-schedule]]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.datomic.impl :as impl
              :refer [Relation Relationship Permission
@@ -91,7 +92,7 @@
 
 (defn- relationship-sort-key
   [{:keys [subject relation resource]}]
-  [(:type subject) (:id subject) (:type resource) relation (:id resource)])
+  [(:type resource) relation (:type subject) (:id resource) (:id subject)])
 
 (def recursive-parent-schema-string
   "definition user {}
@@ -350,7 +351,7 @@
                                    (:data (read-relationships db {:resource/type :server
                                                                   :resource/relation :account})))))))
 
-    (testing "read-relationships returns storage order instead of sorting decoded relationships"
+    (testing "read-relationships follows the shared relationship planner order"
       (is @(d/transact *conn*
                        (concat
                         (impl/tx-relationship db
@@ -362,29 +363,15 @@
                                                             :owner
                                                             (->account :test/account1))))))
       (let [db' (d/db *conn*)
-            attr-eid (d/entid db' relationship-storage/forward-attribute)
-            relation-eids (set (d/q '[:find [?relation ...]
-                                      :in $ ?relation-name ?subject-type
-                                      :where
-                                      [?relation :eacl.relation/relation-name ?relation-name]
-                                      [?relation :eacl.relation/subject-type ?subject-type]]
-                                    db' :owner :user))
             page (read-relationships db' {:subject/type :user
                                           :resource/relation :owner
-                                          :first 20})
-            expected-storage-order (->> (d/seek-datoms db' :avet attr-eid [:user])
-                                        (take-while #(= :user (first (:v %))))
-                                        (filter #(contains? relation-eids (nth (:v %) 1)))
-                                        (map (fn [datom]
-                                               [(:e datom) (nth (:v datom) 3)]))
-                                        vec)
-            actual-order (mapv relationship-eid-pair (:data page))
-            synthetic-sorted-order (->> (:data page)
-                                        (sort-by relationship-sort-key)
-                                        (mapv relationship-eid-pair))]
-        (is (= expected-storage-order actual-order))
-        (is (not= synthetic-sorted-order actual-order))
-        (is (= :global-forward (get-in page [:page-info :start-cursor :scan])))))))
+                                          :first 20})]
+        (is (= (:data page)
+               (vec (sort-by relationship-sort-key (:data page)))))
+        (is (= :relationship-index
+               (get-in page [:page-info :start-cursor :kind])))
+        (is (= #{:kind :v :scan-index :subject-id :resource-id}
+               (set (keys (get-in page [:page-info :start-cursor])))))))))
 
 (deftest lookup-subjects-tests
   (let [db (d/db *conn*)]
@@ -534,7 +521,8 @@
 
       (testing "Now let's delete all :server/owner Relationships for :test/user2"
         (let [db-for-delete (d/db *conn*)
-              rels (:data (impl/read-relationships db-for-delete {:subject/id :test/user2
+              rels (:data (impl/read-relationships db-for-delete {:subject/type :user
+                                                                  :subject/id :test/user2
                                                                   :resource/relation :owner}))
               txes (mapcat #(impl/tx-update-relationship db-for-delete
                                                          {:operation :delete
@@ -1125,18 +1113,21 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [db   (load-recursive-out-of-eid-order-db! conn)
           user (recursive-user-ref "user-1")]
-      (testing "recursive lookup-resources returns the canonical eid-ordered denotation"
+      (testing "recursive lookup-resources returns generated logical order"
         (let [page (lookup-resources db {:subject       user
                                          :permission    :read
                                          :resource/type :account
                                          :first         10})
               eids (map :id (:data page))]
-          (is (= [(spice-object :account "child")
-                  (spice-object :account "grandchild")
-                  (spice-object :account "root")]
+          (is (= [(spice-object :account "root")
+                  (spice-object :account "child")
+                  (spice-object :account "grandchild")]
                  (paginated->spice db page)))
-          (is (= (sort eids) eids))
-          (is (= :lookup-eid (get-in page [:page-info :start-cursor :kind])))
+          (is (not= (sort eids) eids)
+              "logical traversal order is intentionally independent of EID order")
+          (is (= :recursive-logical
+                 (get-in page [:page-info :start-cursor :kind])))
+          (is (zero? (get-in page [:page-info :start-cursor :ordinal])))
           (is (= (first eids)
                  (get-in page [:page-info :start-cursor :result-eid])))))
 
@@ -1148,18 +1139,19 @@
                                                        :resource/type :account
                                                        :first         2})))))))
 
-      (testing "bare recursive :last serves the canonical denotation tail"
-        (let [full (lookup-resources db {:subject       user
-                                         :permission    :read
-                                         :resource/type :account
-                                         :first         10})
-              last-page (lookup-resources db {:subject       user
-                                              :permission    :read
-                                              :resource/type :account
-                                              :last          2})]
-          (is (= (take-last 2 (:data full)) (:data last-page)))
-          (is (true? (get-in last-page [:page-info :has-previous-page?])))
-          (is (false? (get-in last-page [:page-info :has-next-page?])))))
+      (testing "bare recursive :last requires explicit complete evaluation"
+        (binding [engine/*evaluation-mode* :complete-denotation]
+          (let [full (lookup-resources db {:subject       user
+                                           :permission    :read
+                                           :resource/type :account
+                                           :first         10})
+                last-page (lookup-resources db {:subject       user
+                                                :permission    :read
+                                                :resource/type :account
+                                                :last          2})]
+            (is (= (take-last 2 (:data full)) (:data last-page)))
+            (is (true? (get-in last-page [:page-info :has-previous-page?])))
+            (is (false? (get-in last-page [:page-info :has-next-page?]))))))
 
       (testing "wrong cursor kind is rejected by recursive lookup"
         (is (= :eacl.pagination/wrong-cursor-kind
@@ -1172,14 +1164,21 @@
                                         :after         {:kind :recursive-traversal
                                                         :ordinal 0}}))))))
 
-      (testing "a keyset bound at the final result yields the empty tail"
-        (is (= []
-               (:data (lookup-resources db {:subject       user
-                                            :permission    :read
-                                            :resource/type :account
-                                            :first         2
-                                            :after         {:kind :lookup-eid
-                                                            :result-eid (d/entid db [:eacl/id "root"])}})))))
+      (testing "a logical bound at the final result yields the empty tail"
+        (let [full (lookup-resources db {:subject       user
+                                         :permission    :read
+                                         :resource/type :account
+                                         :first         10})]
+          (is (= []
+                 (:data
+                  (lookup-resources
+                   db
+                   {:subject       user
+                    :permission    :read
+                    :resource/type :account
+                    :first         2
+                    :after         (get-in full
+                                           [:page-info :end-cursor])}))))))
 
       (testing "recursive traversal guardrails throw typed errors"
         (binding [impl.indexed/*recursive-traversal-limits*
@@ -1303,15 +1302,22 @@
   ;; (or uncached through the low-level API).
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn "definition user {}
-       definition account { relation owner: user  relation viewer: user
-                            permission view = owner + viewer }")
+       definition account {
+         relation owner: user
+         relation viewer: user
+         permission view = owner + viewer
+       }")
     (let [db-before    (d/db conn)
           cache-before (impl.indexed/make-schema-cache db-before)
           before-paths (binding [impl.indexed/*schema-cache* cache-before]
                          (impl.indexed/get-permission-paths db-before :account :view))]
       (schema/write-schema! conn "definition user {}
-         definition account { relation owner: user  relation viewer: user  relation auditor: user
-                              permission view = owner + viewer + auditor }")
+         definition account {
+           relation owner: user
+           relation viewer: user
+           relation auditor: user
+           permission view = owner + viewer + auditor
+         }")
       (let [db-after         (d/db conn)
             cache-after      (impl.indexed/make-schema-cache db-after)
             after-paths      (binding [impl.indexed/*schema-cache* cache-after]

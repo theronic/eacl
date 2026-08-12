@@ -19,6 +19,10 @@
   ; Omitted or nil consistency defaults to :minimize-latency. The positional
   ; consistency arity and the map arity accept every mode advertised by the
   ; configured backend.
+  ; Unknown definitions and unknown permissions throw structured ex-info with
+  ; :type :eacl/unknown-definition or
+  ; :eacl/unknown-relation-or-permission. Missing object ids under valid schema
+  ; names remain ordinary denials.
   ;
   ; Records used liberally to avoid typos in subject/object types.
   ; Accepts any map-like with {:keys [type id]}.
@@ -36,11 +40,14 @@
   ;  :resource/keys [type id relation]}
   ;
   ; at least one anchor filter is required: :resource/type, :subject/type,
-  ; :resource/relation, :subject/id or :resource/id. Unknown filter keys are
-  ; rejected (a silently dropped filter would broaden the result set).
+  ; :resource/relation, :subject/id or :resource/id. :subject/id requires a
+  ; non-nil :subject/type. Unknown filter keys are rejected (a silently dropped
+  ; filter would broaden the result set).
   ;
   ; :subject/relation and :resource/id-prefix are not supported and throw
   ; :eacl.pagination/unsupported-filter.
+  ; A supplied unknown definition or relation throws the same structured
+  ; schema-name errors used by permission operations.
 
   (write-relationships! [this updates])
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
@@ -102,10 +109,19 @@
   ; Mirrors count-resources for lookup-subjects. Pass :count-limit to bound
   ; work and receive :truncated? in the result.
 
-  (expand-permission-tree [this {:as query :keys [resource permission consistency]}]))
+  (expand-permission-tree [this {:as query :keys [resource permission consistency]}])
+  ; expand-permission-tree accepts exactly :resource, :permission, optional
+  ; :consistency and :timeout-ms. It returns
+  ; {:expanded-at causal-token :tree-root PermissionRelationshipTree-map}.
+  ; Every tree node has :expanded-object, :expanded-relation and exactly one
+  ; of {:intermediate {:operation :union :children [...]}} or
+  ; {:leaf {:subjects [...]}}. Child and subject vector order is non-semantic.
+  ; Expansion is shallow: direct subjects remain terminal leaves.
+  )
 
 (defprotocol IDetailedAuthorization
-  "Optional authorization extension for callers that need cache provenance."
+  "Optional authorization extension for callers that need cache provenance.
+  Omitted or nil consistency defaults to :minimize-latency."
   (-check-permission [this demand]))
 
 (defn check-permission
@@ -113,7 +129,8 @@
 
   Existing IAuthorization implementations remain compatible: implementations
   that do not opt into IDetailedAuthorization are evaluated through can? and
-  reported as an uncached decision."
+  reported as an uncached decision. Omitted or nil consistency defaults to
+  :minimize-latency; fully consistent behavior must be requested explicitly."
   ([authorization demand]
    (if (satisfies? IDetailedAuthorization authorization)
      (-check-permission authorization demand)

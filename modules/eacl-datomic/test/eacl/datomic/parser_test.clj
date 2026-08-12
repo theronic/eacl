@@ -124,41 +124,95 @@
 
   (testing "multi-level arrow is rejected during validation"
     ;; Grammar now parses multi-arrows, but validation rejects them
-    (let [schema "definition a { relation b: b }
-                  definition b { relation c: c }
-                  definition c { permission p = b->c->x }"]
+    (let [schema "definition a {
+                    relation b: b
+                  }
+                  definition b {
+                    relation c: c
+                  }
+                  definition c {
+                    permission p = b->c->x
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Multi-level arrows"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "wildcard relations are rejected during validation"
-    (let [schema "definition doc { relation viewer: user:* }"]
+    (let [schema "definition doc {
+                    relation viewer: user:*
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Wildcard relation"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "subject relations are rejected during validation"
-    (let [schema "definition doc { relation owner: group#member }"]
+    (let [schema "definition doc {
+                    relation owner: group#member
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Subject relation"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "caveats are rejected during validation"
-    (let [schema "definition doc { relation viewer: user with ip_check }"]
+    (let [schema "definition doc {
+                    relation viewer: user with ip_check
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported feature: Caveat"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "nil keyword is rejected during validation"
-    (let [schema "definition doc { permission p = nil }"]
+    (let [schema "definition doc {
+                    permission p = nil
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'nil'"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing "self keyword is rejected during validation"
-    (let [schema "definition user { permission view = self }"]
+    (let [schema "definition user {
+                    permission view = self
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported keyword: 'self'"
             (parser/->eacl-schema (parser/parse-schema schema))))))
 
   (testing ".all() arrow function is rejected during validation"
-    (let [schema "definition doc { relation group: group permission view = group.all(member) }"]
+    (let [schema "definition doc {
+                    relation group: group
+                    permission view = group.all(member)
+                  }"]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported function: \.all\(\)"
             (parser/->eacl-schema (parser/parse-schema schema)))))))
+
+(deftest declaration-line-termination-tests
+  (testing "empty definitions retain SpiceDB's compact form"
+    (is (not (insta/failure? (parser/parse-schema "definition user {}")))))
+
+  (testing "a declaration may share the opening-brace line"
+    (is (not (insta/failure?
+               (parser/parse-schema "definition user {}
+                                     definition folder { relation viewer: user
+                                     }")))))
+
+  (testing "a declaration cannot share its line with the closing brace"
+    (doseq [schema ["definition user {}
+                    definition folder { relation viewer: user }"
+                   "definition user {}
+                    definition folder {
+                      relation viewer: user
+                      permission view = viewer }"]]
+      (is (insta/failure? (parser/parse-schema schema)))
+      (is (= :eacl.schema/parse-error
+             (ex-type #(parser/->eacl-schema (parser/parse-schema schema)))))))
+
+  (testing "separate declarations require separate lines"
+    (is (insta/failure?
+          (parser/parse-schema "definition user {}
+                                definition folder {
+                                  relation viewer: user permission view = viewer
+                                }"))))
+
+  (testing "a trailing line comment still terminates at its newline"
+    (is (not (insta/failure?
+               (parser/parse-schema "definition user {}
+                                     definition folder {
+                                       relation viewer: user // owner access
+                                     }"))))))
 
 (deftest parse-failure-safety-tests
   (testing "a failed parse throws a typed error and never coerces to an empty schema"
@@ -203,72 +257,109 @@
     (is (= :eacl.schema/duplicate-definition
            (ex-type #(parser/->eacl-schema
                        (parser/parse-schema "definition user {}
-                                             definition account { relation owner: user }
-                                             definition account { relation viewer: user }"))))))
+                                             definition account {
+                                               relation owner: user
+                                             }
+                                             definition account {
+                                               relation viewer: user
+                                             }"))))))
 
   (testing "duplicate relation declarations within a definition are rejected"
     (is (= :eacl.schema/duplicate-relation
            (ex-type #(parser/->eacl-schema
                        (parser/parse-schema "definition user {}
-                                             definition doc { relation owner: user relation owner: user }"))))))
+                                             definition doc {
+                                               relation owner: user
+                                               relation owner: user
+                                             }"))))))
 
   (testing "a multi-type relation declared once with | is not a duplicate"
     (is (= 2 (count (:relations (parser/->eacl-schema
                                   (parser/parse-schema "definition user {}
                                                         definition group {}
-                                                        definition doc { relation owner: user | group }")))))))
+                                                        definition doc {
+                                                          relation owner: user | group
+                                                        }")))))))
 
   (testing "a permission sharing a name with a relation on the same definition is rejected"
     (is (= :eacl.schema/name-collision
            (ex-type #(parser/->eacl-schema
                        (parser/parse-schema "definition user {}
-                                             definition doc { relation x: user permission x = x }")))))))
+                                             definition doc {
+                                               relation x: user
+                                               permission x = x
+                                             }")))))))
 
 (deftest paren-expression-tests
   (testing "parenthesized union operands flatten to their components"
     (let [parse #(parser/->eacl-schema (parser/parse-schema %))
           paren (parse "definition user {}
-                        definition d { relation owner: user relation editor: user
-                                       permission manage = (owner + editor) }")
+                        definition d {
+                          relation owner: user
+                          relation editor: user
+                          permission manage = (owner + editor)
+                        }")
           plain (parse "definition user {}
-                        definition d { relation owner: user relation editor: user
-                                       permission manage = owner + editor }")]
+                        definition d {
+                          relation owner: user
+                          relation editor: user
+                          permission manage = owner + editor
+                        }")]
       (is (= (set (:permissions plain)) (set (:permissions paren))))
       (testing "nested parens and mixed operands also flatten"
         (is (= (set (:permissions plain))
                (set (:permissions (parse "definition user {}
-                                          definition d { relation owner: user relation editor: user
-                                                         permission manage = ((owner)) + (editor) }"))))))))
+                                          definition d {
+                                            relation owner: user
+                                            relation editor: user
+                                            permission manage = ((owner)) + (editor)
+                                          }"))))))))
 
   (testing "parenthesized arrow bases are rejected with a clear validation error, not an AssertionError"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Parenthesized expressions"
           (parser/->eacl-schema
             (parser/parse-schema "definition user {}
-                                  definition d { relation a: user relation b: user
-                                                 permission p = (a + b)->c }"))))))
+                                  definition d {
+                                    relation a: user
+                                    relation b: user
+                                    permission p = (a + b)->c
+                                  }"))))))
 
 (deftest arrow-target-kind-tests
   (testing "arrow target resolving to mixed kinds across subject types is rejected"
     ;; mgmt is a RELATION on user but a PERMISSION on group.
     (is (= :eacl.schema/mixed-arrow-target
            (ex-type #(parser/->eacl-schema
-                       (parser/parse-schema "definition user { relation mgmt: user }
-                                             definition group { relation lead: user permission mgmt = lead }
-                                             definition account { relation owner: user | group
-                                                                  permission admin = owner->mgmt }")))))))
+                       (parser/parse-schema "definition user {
+                                               relation mgmt: user
+                                             }
+                                             definition group {
+                                               relation lead: user
+                                               permission mgmt = lead
+                                             }
+                                             definition account {
+                                               relation owner: user | group
+                                               permission admin = owner->mgmt
+                                             }")))))))
 (deftest keyword-prefix-identifier-tests
   (testing "identifiers that merely START with a reserved word parse (SpiceDB-compatible)"
     (doseq [permission-name ["allowed" "anytime" "selfie" "nilable" "without_x" "definitely"]]
       (is (not (insta/failure?
                  (parser/parse-schema
                    (str "definition user {}
-                         definition doc { relation owner: user permission " permission-name " = owner }"))))
+                         definition doc {
+                           relation owner: user
+                           permission " permission-name " = owner
+                         }"))))
           (str "permission '" permission-name "' should parse")))
     (doseq [relation-name ["allocation" "relationship" "anywhere" "self_serve"]]
       (is (not (insta/failure?
                  (parser/parse-schema
                    (str "definition user {}
-                         definition doc { relation " relation-name ": user permission view = " relation-name " }"))))
+                         definition doc {
+                           relation " relation-name ": user
+                           permission view = " relation-name "
+                         }"))))
           (str "relation '" relation-name "' should parse"))))
 
   (testing "exact reserved words are still rejected as identifiers"
@@ -276,7 +367,10 @@
       (is (insta/failure?
             (parser/parse-schema
               (str "definition user {}
-                    definition doc { relation owner: user permission " reserved " = owner }")))
+                    definition doc {
+                      relation owner: user
+                      permission " reserved " = owner
+                    }")))
           (str "reserved word '" reserved "' should not parse as a permission name")))))
 
 (deftest duplicate-permission-declaration-tests
@@ -295,5 +389,11 @@
     (is (some? (parser/->eacl-schema
                  (parser/parse-schema
                    "definition user {}
-                    definition doc { relation owner: user permission view = owner }
-                    definition folder { relation owner: user permission view = owner }"))))))
+                    definition doc {
+                      relation owner: user
+                      permission view = owner
+                    }
+                    definition folder {
+                      relation owner: user
+                      permission view = owner
+                    }"))))))

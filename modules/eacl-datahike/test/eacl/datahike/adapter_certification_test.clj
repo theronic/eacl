@@ -30,8 +30,7 @@
         (fn [snapshot internal-id]
           (:eacl/id (d/entity snapshot internal-id)))
         :conn conn
-        :coherence-authority :managed
-        :proof-mode :content}))))
+        }))))
 
 (deftest datahike-adapter-certification-test
   (doseq [[label config]

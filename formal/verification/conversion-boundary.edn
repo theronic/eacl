@@ -14,7 +14,6 @@
   [authorization-inputs
    traversal-limits
    page-presence
-   indexed-cursor-bound
    indexed-render-mode]
   :adapter-callbacks
   [indexed-projection
@@ -35,9 +34,6 @@
   :cache-and-cursors
   [exact-selection
    continuation-decision
-   proof-state
-   cache-candidate
-   cache-decision
    candidate-state
    subproblem-cache-decision
    current-cache-stage
@@ -71,7 +67,7 @@
    ["eacl.formal.production-kernel-test"
     "eacl.verified-kernel-test"]}
   :cljs-javascript
-  {:source "modules/eacl/src/eacl/formal/production_kernel_js.cljs"
+  {:source "formal/smoke/cljs/eacl/formal/production_kernel_js.cljs"
    :provider eacl.formal.production-kernel-js/GeneratedJavaScriptKernel
    :tests
    ["eacl.formal.production-kernel-test"

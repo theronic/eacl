@@ -417,10 +417,9 @@
           (pr-str {:n n :request request})))))
 
 (defn- generated-continuation-decision
-  [{:keys [current-proof cursor-proof mode exact expired?]
+  [{:keys [current-proof cursor-proof exact expired?]
     :or {current-proof "proof"
          cursor-proof "proof"
-         mode :exact-snapshot
          expired? false}}]
   (let [page-window (.-PageWindow generated)
         exact-selection
@@ -434,14 +433,7 @@
           (js-invoke
            (.-ExactSelection page-window)
            "create_ExactUnavailable"))
-        consistency-mode
-        (if (= :exact-snapshot mode)
-          (js-invoke
-           (.-ConsistencyMode page-window)
-           "create_ExactSnapshotMode")
-          (js-invoke
-           (.-ConsistencyMode page-window)
-           "create_RecoverCurrent"))]
+        ]
     (js-invoke
      (.-__default page-window)
      "DecideContinuation"
@@ -452,7 +444,6 @@
      (dafny-string "source")
      (dafny-string current-proof)
      (dafny-string cursor-proof)
-     consistency-mode
      (big-number 7)
      exact-selection)))
 
@@ -468,10 +459,10 @@
                   :source "source"
                   :proof "proof"}}))))
   (is (true?
-       (.-is_RebaseCurrent
-        (generated-continuation-decision
-         {:current-proof "changed"
-          :mode :recover-current}))))
+       (.-is_SnapshotUnavailable
+        (.-dtor_reason
+         (generated-continuation-decision
+          {:current-proof "changed"})))))
   (is (true?
        (.-is_CursorExpired
         (.-dtor_reason
@@ -486,106 +477,10 @@
                    :source "source"
                    :proof "proof"}}))))))
 
-(defn- generated-cache-decision
-  [{:keys [selected-graph
-           ancestors
-           selected-proof
-           candidate-graph
-           candidate-proof
-           authenticated?]
-    :or {selected-graph 7
-         ancestors [6]
-         selected-proof "proof"
-         candidate-graph 7
-         candidate-proof "proof"
-         authenticated? true}}]
-  (let [cache (.-CacheKernel generated)
-        proof-state
-        (if selected-proof
-          (js-invoke
-           (.-ProofState cache)
-           "create_CompleteProof"
-           (dafny-string selected-proof))
-          (js-invoke
-           (.-ProofState cache)
-           "create_ProofUnavailable"))
-        candidate-state
-        (if candidate-proof
-          (js-invoke
-           (.-ProofState cache)
-           "create_CompleteProof"
-           (dafny-string candidate-proof))
-          (js-invoke
-           (.-ProofState cache)
-           "create_ProofUnavailable"))
-        telemetry
-        (js-invoke
-         (.-Telemetry cache)
-         "create_Telemetry"
-         (big-number candidate-graph)
-         (big-number 0))
-        candidate
-        (js-invoke
-         (.-CacheCandidate cache)
-         "create_Candidate"
-         authenticated?
-         (dafny-string "key")
-         (dafny-string "source")
-         (big-number candidate-graph)
-         candidate-state
-         (big-number 42)
-         telemetry)
-        ancestor-set
-        (.apply
-         (.-fromElements (.-Set (.-_dafny generated)))
-         (.-Set (.-_dafny generated))
-         (into-array (map big-number ancestors)))]
-    (js-invoke
-     (.-__default cache)
-     "ValidateCache"
-     true
-     true
-     (dafny-string "key")
-     (dafny-string "source")
-     (big-number selected-graph)
-     ancestor-set
-     proof-state
-     candidate)))
-
-(deftest generated-javascript-cache-decision-parity
-  (is (true?
-       (.-is_ExactHit
-        (.-dtor_provenance
-         (generated-cache-decision {})))))
-  (is (true?
-       (.-is_CausalProofLift
-        (.-dtor_provenance
-         (generated-cache-decision
-          {:selected-graph 8
-           :ancestors [7]})))))
-  (is (true?
-       (.-is_NoProofBypass
-        (.-dtor_reason
-         (generated-cache-decision
-          {:selected-proof nil})))))
-  (is (true?
-       (.-is_FutureOrSibling
-        (.-dtor_reason
-         (generated-cache-decision
-          {:selected-graph 8
-           :ancestors [6]
-           :candidate-graph 7})))))
-  (is (true?
-       (.-is_ProofMismatch
-       (.-dtor_reason
-         (generated-cache-decision
-          {:candidate-proof "other"}))))))
-
 (defn- continuation-status
   [decision]
   (cond
     (.-is_UseCurrent decision) :current
-    (.-is_RebaseCurrent decision) :rebase-current
     (.-is_UseExact decision) :exact
     (.-is_CursorConflict (.-dtor_reason decision)) :conflict
     (.-is_CursorExpired (.-dtor_reason decision)) :expired
@@ -596,28 +491,8 @@
     :invalid-authentication
     :else :scope-mismatch))
 
-(defn- cache-status
-  [decision]
-  (if (.-is_CacheHit decision)
-    {:status :hit
-     :provenance
-     (if (.-is_ExactHit (.-dtor_provenance decision))
-       :exact-hit
-       :causal-proof-lift)}
-    (let [reason (.-dtor_reason decision)]
-      {:status :miss
-       :reason
-       (cond
-         (.-is_NoProofBypass reason) :no-proof-bypass
-         (.-is_Unauthenticated reason) :unauthenticated
-         (.-is_FutureOrSibling reason) :future-or-sibling
-         (.-is_ProofMismatch reason) :proof-mismatch
-         (.-is_ProviderFailure reason) :provider-failure
-         (.-is_ScopeMismatch reason) :scope-mismatch
-         :else :missing)})))
-
 (deftest generated-javascript-cross-runtime-vectors
-  (let [{:keys [graph pages continuations cache round-trips]}
+  (let [{:keys [graph pages continuations round-trips]}
         (cross-runtime-vectors)
         {:keys [fixture subject resource permission expected]} graph
         generated-objects
@@ -681,11 +556,6 @@
       (is (= expected
              (continuation-status
               (generated-continuation-decision input)))
-          (pr-str input)))
-    (doseq [{:keys [input expected]} cache]
-      (is (= expected
-             (cache-status
-              (generated-cache-decision input)))
           (pr-str input)))
     (doseq [{:keys [tag values limit expected]} round-trips]
       (let [result (round-trip tag values limit)

@@ -96,9 +96,51 @@
                  (count calls)))
           (is (= (:operations expected)
                  observed))
-          (is (= backend/required-snapshot-operations
+          (is (= (conj backend/required-snapshot-operations :proof-frame)
                  observed))
           (is (empty?
                (set/difference
-                observed
-                (set (keys backend/adapter-obligations))))))))))
+                 observed
+                 (set (keys backend/adapter-obligations))))))))))
+
+(deftest external-certification-gate-names-every-open-refinement-test
+  (let [root (repository-root)
+        manifest
+        (edn/read-string
+         (slurp
+          (io/file root "formal/verification/manifest.edn")))
+        unmet
+        (set
+         (get-in manifest
+                 [:release-gate :unmet-required-obligations]))
+        generated-boundary
+        (edn/read-string
+         (slurp
+          (io/file root "formal/verification/generated-boundary.edn")))
+        required-open-obligations
+        #{:mechanized-host-control-source-refinement
+          :mechanized-clj-cache-transition-source-refinement
+          :mechanized-cljs-production-authority-refinement
+          :mechanized-backend-adapter-conversion-refinement
+          :independent-security-formal-review}]
+    (is (false?
+         (get-in manifest
+                 [:release-gate :verified-status-allowed?])))
+    (is (= {:status :unsigned
+            :procedure
+            "formal/verification/external-certifier-procedure.md"}
+           (:external-certification manifest)))
+    (is (.isFile
+         (io/file root
+                  (get-in manifest
+                          [:external-certification :procedure]))))
+    (is (set/subset? required-open-obligations unmet))
+    (is (= {:source "formal/dafny/CacheKernel.dfy"
+            :runtime-operation :none
+            :reason :proof-only-model
+            :production-assurance-contribution :none}
+           (first (:proof-only-exclusions manifest))))
+    (is (not (some #{:cache-validation}
+                   (:production-routed-decisions generated-boundary))))
+    (is (empty? (:proof-only-generated-decisions generated-boundary)))
+    (is (= :conditionally-verified (:assurance-status manifest)))))

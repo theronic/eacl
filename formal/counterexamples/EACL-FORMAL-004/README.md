@@ -17,7 +17,7 @@ Reproduce through nREPL:
 (do
   (require 'eacl.datomic.cache-review-regressions-test :reload)
   (clojure.test/test-var
-   #'eacl.datomic.cache-review-regressions-test/proofless-cursor-recovers-on-current-snapshot-test))
+   #'eacl.datomic.cache-review-regressions-test/proofless-cursor-falls-back-to-exact-snapshot-test))
 ```
 
 Fixed in the shared CLJC relay and Datomic runtime: cursor authentication binds

@@ -2,10 +2,10 @@
 
 All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). Every performance task tightens a recorded gate envelope; every correctness task adds or un-skips a pinning test. Task numbers reference design decisions (D-1…D-10) and specs.
 
-> **PROGRESS — 48/54 done (all of groups 1–8, 9.1/9.2-core/9.4, 11.1–11.3, 12.1). Read `HANDOFF.md` first for full context, gotchas, and next-agent instructions.**
-> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6), 8 (managed cert + fail-safe default/R9), 9.1+9.2-core+9.4 (filter contract + DS/DH fork collapse/R7), 11.1–11.3 (hygiene deletions, reflection gate, warning dedup/R10), 12.1 (batching trigger recorded **:triggered**).
+> **PROGRESS — 54/54 primary tasks and all triggered follow-ons done (groups 1–12, except the explicitly deferred 6.4). Read `HANDOFF.md` first for full context and validation evidence.**
+> - **Done:** groups 1 (gates), 2 (deadlock/R3), 3 (raw waste/R4), 4 (marshalling/R5), 5 (keyset recursion/R2 — the HIGH correctness fix), 6.1–6.3+6.5 (dependency-scoped cursors/R1), 7 (answer-cache fold-in/R6), 8 (managed cert + fail-safe default/R9), 9 (filter contract + backend de-fork + Datomic shared relationship engine and construction options/R7), 10 (portable CLJS production authority/R8), 11 (trusted-surface hygiene and Dafny cleanup/R10), 12 (trigger evaluation and wave-batched scan protocol).
 > - **Deferred with cause:** 6.4 (AEAD portable codec — sync CLJS GCM; see design D-4 note); Datahike provider-store port (would copy the dead surface 11.1 deleted).
-> - **Remaining:** 9.2-tail (Datomic relationship pages onto `eacl.engine.relationships`) + 9.3-Datomic (option-family unification), 10 (CLJS engine/R8 — multi-session effort, see HANDOFF §Next), 11.4 (Dafny cleanup pass — may trail indefinitely), 12.2–12.3 (wave batching — triggered, 6–10 week Dafny effort, separate track).
+> - **Remaining only if its prerequisite changes:** deferred 6.4, when a synchronous vetted CLJS GCM exists.
 
 ## 1. Gates and counters first (D-10, recursion-performance-gates)
 
@@ -37,7 +37,13 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 - [x] 4.3 Remove the host per-value response walk in favor of the certified kernel validator, JVM and CLJS in lockstep; document the boundary-contract change
 - [x] 4.4 Tighten the crossing-cost envelope and rerun the populated-recursion latency scenarios; record the new truth
 
-## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — after group 2
+## 5. Keyset recursive pagination (D-2, keyset-recursive-pagination) — superseded by demand-bounded authorization
+
+> These completed tasks record the intermediate sorted-keyset implementation.
+> The later `demand-bounded-authorization-execution` change replaces it with
+> route-specific public order, incremental recursive cursors, and explicit
+> completion. They are historical implementation evidence, not current release
+> requirements.
 
 - [x] 5.1 Sort in the two denotation completers with permutation guard; strict-ascending `valid-recursive-denotation?`; bump the denotation key version
 - [x] 5.2 Extract the shared certified-keyset-page helper (realized slice → `DecideAcyclicPage` → work gate → lookup-items) from the acyclic path
@@ -73,26 +79,26 @@ All implementation targets the v8 lineage (`release/v8.0` / PR #104 successor). 
 ## 9. Backend de-fork (D-7, backend-unification)
 
 - [x] 9.1 Write the unified filter-validation and error-contract tests first (value-presence anchors incl. nil type/relation throws, `:nil-anchor-keys`, pagination-option parity) — red on current DS/DH
-- [x] 9.2 Move shared orchestration into core (the nine operations, snapshot context, cursor plumbing, cache wiring, integrity) parameterized by SPI + options; convert Datahike and DataScript cores to thin construction shims (`eacl.client.orchestration`, one `ClientAuthorization` record + one `make-client`; DS core 1,098→175 lines, DH 1,074→180; api holds vars for late-bound instrumentation). REMAINING SUB-ITEM: move Datomic relationship pages onto `eacl.engine.relationships` (changes the Datomic relationship cursor edge format + its private token plumbing — deliberately deferred behind groups 10–12, not forgotten)
-- [ ] 9.3 Unify the option map across Datomic vs DS/DH (one token-key family, one cursor-TTL name, uniform unknown-option errors) and document per-backend extensions (DS/DH now share one option surface + `:extra-client-opt-keys` extension point; Datomic pending). DROPPED with cause: "port the weighted provider-store tier to Datahike" — the Datomic provider-store path it would copy is the write-only dead `:shared-cache-store`/`:lookup-cache-store` surface that 11.1 deletes; porting it would add dead code. Datahike already consumes the shared endpoint-pair codec.
+- [x] 9.2 Move shared orchestration into core (the nine operations, snapshot context, cursor plumbing, cache wiring, integrity) parameterized by SPI + options; convert Datahike and DataScript cores to thin construction shims (`eacl.client.orchestration`, one `ClientAuthorization` record + one `make-client`; DS core 1,098→175 lines, DH 1,074→180; api holds vars for late-bound instrumentation); move Datomic relationship pages onto `eacl.engine.relationships` with the shared `:relationship-index` cursor edge and bump the Datomic page-token version
+- [x] 9.3 Unify the option map across Datomic vs DS/DH (Datomic now accepts canonical `:security-key(ring)/(kid)`, `:cursor-ttl-seconds`, and `:object-id->lookup-ref`; the old Datomic spellings are non-mixable legacy aliases; unknown-option ex-data matches the shared orchestrator; Datomic Zed-token extensions are documented). The decorative Datomic provider-store option is now rejected with `:unsupported-provider-store`, while `eacl.cache/no-cache` controls the real private stores. DROPPED with cause: "port the weighted provider-store tier to Datahike" — the Datomic provider-store path it would copy is the write-only dead `:shared-cache-store`/`:lookup-cache-store` surface that 11.1 deletes; porting it would add dead code. Datahike already consumes the shared endpoint-pair codec.
 - [x] 9.4 Delete the superseded per-backend copies (both forked filter validators, both forked orchestration layers, both per-backend Authorization records); adapter certification, contract-support, cache-model, consistency, and op-count suites green on all three backends; surviving per-backend module totals recorded: eacl-datascript src 1,693 lines, eacl-datahike src 1,933 — both under the ~2,100 target
 
 ## 10. CLJS production engine (D-8, cljs-production-engine)
 
-- [ ] 10.1 Promote the CLJC oracle engine to the CLJS production kernel (the `:cljs` kernel-default branch); keep the generated JS kernel available to the differential rig as the oracle
-- [ ] 10.2 Run the full certification rig against the CLJS engine in CI: cross-runtime vectors, counterexample replay, mutation controls, randomized differential oracle
-- [ ] 10.3 Add the CI `:advanced` build job (compiles + runs the CLJS suite); fix or extern any surviving foreign-lib property accesses; re-anchor the artifact-size gate baselines (browser baseline stale by 43%; JS-with-runtime headroom 0.87%)
-- [ ] 10.4 Add the absolute CLJS ns/result ceiling gate; record bundle-size budget and verify no BigNumber on the hot path; document the browser trust posture and the recorded nativeType alternative
+- [x] 10.1 Promote the CLJC oracle engine to the CLJS production kernel (the `:cljs` kernel-default branch); keep the generated JS kernel available to the differential rig as the oracle
+- [x] 10.2 Run the full certification rig against the CLJS engine in CI: cross-runtime vectors, counterexample replay, mutation controls, randomized differential oracle
+- [x] 10.3 Add the CI `:advanced` build job (compiles + runs the full DataScript/core and generated-oracle CLJS suites with warnings-as-errors); fix the 433-name foreign-lib property boundary with checked-in Closure externs; re-anchor all rebuilt artifact-size gate baselines (browser 591,497 bytes; JS-with-runtime 949,688 bytes)
+- [x] 10.4 Add the absolute CLJS ns/result ceiling gate; record bundle-size budget and verify no BigNumber on the hot path; document the browser trust posture and the recorded nativeType alternative
 
 ## 11. Trusted-surface hygiene (trusted-surface-hygiene)
 
 - [x] 11.1 Delete dead code: authenticated-envelope completed-cache path + `:shared-cache-store`/`:lookup-cache-store` options, `watermark.clj`, zed-v2 constructors, relay `:path-frontiers` branch, `:latest-result` kind; audit test asserting absence (`eacl.datomic.trusted-surface-audit-test`; EACL-FORMAL-003's pin retargeted to it since its defective adapter no longer exists; two lookup-cache tests re-goldened onto the live native-answer/current-cache probes)
 - [x] 11.2 Enable `*warn-on-reflection*` with warnings-as-errors for core + backends in CI (`bin/reflection-gate`, wired into test.yml); hinted the surviving sites (schema-lock macros — syntax-quote drops meta on unquotes, so hints ride let-bound locals — SecureRandom nextBytes, backend digest getBytes, datahike migration sleep; the consistency.clj warnings died with zed-v2)
 - [x] 11.3 Rate-limit/optionalize the schema-resolution warning (schema warn; parser prints deferred) (once per generation or via reporter); remove parser REPL prints from shipped namespaces
-- [ ] 11.4 Dafny cleanup pass (Phase B, may trail): delete the ordinal rebase family + backward-render mode + `AfterCursor` arm; retarget or delete `Pagination.dfy`; update the assurance matrix so every model maps to shipped code; regenerate kernels, vectors, and manifests
+- [x] 11.4 Dafny cleanup pass: deleted the ordinal rebase family, backward-render mode, and `AfterCursor`; deleted `Pagination.dfy` and moved the retained window/continuation laws into `PageWindow.dfy`; mapped all 26 models to shipped or explicit spec-only consumers; regenerated Java/JavaScript/browser artifacts, cross-runtime vector gates, source closure, artifact baselines, and the release manifest
 
 ## 12. Conditional: wave-batched scan protocol (D-9 phase 2, kernel-boundary-efficiency)
 
 - [x] 12.1 Evaluate the trigger: with groups 3–5 landed, does the populated-recursion latency gate meet 2.0×? Record the decision in the gate EDN either way (**:triggered** — recorded in `explorer-v8-recursive-performance.edn` `:batching-trigger-decision` with basis and scope; groups 6–9 do not change crossing counts, so the post-group-5 medians remain the truth: counts 3.7–5.9×, deep checks 5.7–56×)
-- [ ] 12.2 (If triggered) Implement `AwaitingForwardScans`/`ResumeForwardScans` + batched drive exit per the recorded proof plan (ghost-view coverage generalization; Yielded-on-partial-batch for order determinism); regenerate kernels; version the emission order into cursor digests; re-golden order-dependent tests
-- [ ] 12.3 (If triggered) Batched-crossings gate (2×⌈streams/batch⌉ + constant) and full differential/replay suites against the regenerated kernel
+- [x] 12.2 Implement bounded forward/reverse scan waves (`Drive*Scans`/`Resume*Scans`) with a 64-command default, ordered response folding, and nonempty fuel-cut wave publication from current state; prove exact pending-scan ghost views and generalized coverage invariants; regenerate both kernels; version emission order 2 into cursor digests; re-golden ordered generated/portable tests
+- [x] 12.3 Enforce exact independent-stream crossings `2×⌈streams/64⌉+1` when fuel does not split a wave and a separately counted fuel-cut overhead for general recursion; regenerated JVM differential, CLJS portable/generated differential, focused crossing, counterexample replay, and mutation-control suites must all pass
