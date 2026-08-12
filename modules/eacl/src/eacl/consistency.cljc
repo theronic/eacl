@@ -384,6 +384,17 @@
      :response-token response-token
      :native-revision revision}))
 
+(defn selected-adapter-token
+  "Issues a causal token from an already selected immutable adapter.
+
+  This helper never selects from, synchronizes, or re-reads a live connection;
+  the response token therefore names the same snapshot used by the caller."
+  [adapter {:keys [format-options]}]
+  (causal-token/issue
+   format-options
+   (merge (source-scope adapter)
+          (native-revision adapter))))
+
 (defn cursor-conflict!
   [data]
   (fail! :cursor-consistency-conflict

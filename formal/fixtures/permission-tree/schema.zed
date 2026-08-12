@@ -1,0 +1,10 @@
+definition user {}
+
+definition folder {
+  relation viewer: user
+}
+
+definition document {
+  relation folder: folder
+  permission view = folder->viewer
+}

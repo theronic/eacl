@@ -39,6 +39,7 @@
                                         ->RelationshipUpdate]]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
+            [eacl.permission-tree :as permission-tree]
             [eacl.proof-frame :as proof-frame]
             #?(:clj
                [eacl.formal.production-kernel :as production-kernel]
@@ -763,6 +764,27 @@
              #(engine/count-subjects adapter internal-query))]
         (with-cache-info (:value answer) answer)))))
 
+(defn expand-permission-tree
+  [api db opts query]
+  (permission-tree/validate-request! query)
+  (let [opts (ensure-execution-contract
+              opts :expand-permission-tree query)
+        contract (:execution-contract opts)
+        {:keys [adapter]}
+        (selected-context api db opts (:consistency query))
+        tree (permission-tree/expand
+              adapter
+              {:limits (:permission-tree-limits opts)
+               :execution-contract contract}
+              (:resource query)
+              (:permission query))]
+    (execution/check! contract :permission-tree-token-issuance)
+    (let [token
+          (permission-tree/selected-adapter-token adapter opts)]
+      (execution/check! contract :permission-tree-token-issued)
+      {:expanded-at token
+       :tree-root tree})))
+
 (defn- request-cache-enabled?
   [cache-option]
   (cache/validate-request-cache-option! cache-option)
@@ -878,10 +900,9 @@
             (request-cache-enabled? (:cache? query)))
      (dissoc query :cache?)))
 
-  (expand-permission-tree [_ _]
-    (throw (ex-info "expand-permission-tree is not implemented yet."
-                    {:type :eacl/not-implemented
-                     :method (quote expand-permission-tree)})))
+  (expand-permission-tree [_ query]
+    (expand-permission-tree
+     api ((:db api) conn) opts query))
 
   IDetailedAuthorization
   (-check-permission
@@ -953,6 +974,7 @@
     :cursor-ttl-seconds
     :cache
     :recursive-traversal-limits
+    :permission-tree-limits
     :security-key
     :security-keyring
     :security-kid
@@ -981,6 +1003,7 @@
            cursor-ttl-seconds
            cache
            recursive-traversal-limits
+           permission-tree-limits
            security-key
            security-keyring
            security-kid
@@ -1172,6 +1195,9 @@
                           :recursive-traversal-limits
                           (engine/normalize-recursive-traversal-limits
                            recursive-traversal-limits)
+                          :permission-tree-limits
+                          (permission-tree/normalize-limits
+                           permission-tree-limits)
                           :object->entid (fn [db {:keys [id]}]
                                            (object-id->entid db id))
                           :internal-object->spice (fn [db {:keys [type id]}]

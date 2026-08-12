@@ -9,6 +9,7 @@
             [eacl.engine.relationships-test]
             [eacl.execution-test]
             [eacl.proof-frame-test]
+            [eacl.permission-tree-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.secure-format-test]
@@ -46,6 +47,7 @@
                'eacl.engine.relationships-test
                'eacl.execution-test
                'eacl.proof-frame-test
+               'eacl.permission-tree-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.secure-format-test

@@ -70,7 +70,7 @@ for another.
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
 clj-kondo version in the toolchain lock. The ledger closes 63 named shared,
-proof-provider, and backend roots over 1,380 definitions in 57 source
+proof-provider, and backend roots over 1,404 definitions in 58 source
 files, including unattributed usages assigned to their exact containing
 `defrecord` spans. It is static completeness evidence only: it does not prove
 Clojure source or adapter semantics. `backend-dispatch.edn` additionally
@@ -107,12 +107,36 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
+| `PermissionTree.dfy` | typed shallow expansion topology, denotation, active-path cycles, structural budgets, and all-or-error outcomes |
 
 `formal/verification/assurance-matrix.edn` maps public operations to theorems,
 adapter assumptions, runtime targets, and CI evidence. A passing proof file is
 not by itself a public assurance claim. `formal/verification/manifest.edn` is
 the release gate and must continue to refuse verified status while any required
 obligation is incomplete.
+
+### Permission-tree assurance boundary
+
+`PermissionTree.dfy` contributes 62 locked obligations. The theorem map covers
+node oneof and annotation well-formedness, direct-leaf exactness, union
+denotation and child-permutation invariance, absent-resource topology,
+active-path cycle rejection, additive-budget monotonicity, successful limit
+preservation, failure non-publication, typed identity, sum-typed relation
+declarations, and emitted-child depth accounting. Executable witnesses
+also reject unsound flattening, global-visited cycle detection, type-erasing
+identity, partial success, and over-limit success.
+
+The formal model is proof-only. Production
+`modules/eacl/src/eacl/permission_tree.cljc` is handwritten and has no claimed
+mechanical Dafny-to-Clojure refinement. Correspondence evidence lives in
+`modules/eacl/test/eacl/permission_tree_test.cljc` (independent evaluator,
+bounded generators, permutation and hostile-realization checks),
+`modules/eacl/test/eacl/contract_support.cljc` plus each backend contract, and
+`formal/fixtures/permission-tree/` (version-pinned black-box Docker topology).
+CLJ and CLJS run the same portable kernel. Adapter schema/scan completeness,
+codec round trips, immutable selection, causal-token authentication,
+monotonic-clock behavior, host exact-integer/runtime semantics, and arbitrary
+source states remain trusted or empirically certified rather than proved.
 
 ## Temporal models
 

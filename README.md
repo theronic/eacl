@@ -192,6 +192,9 @@ The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/
 - `(eacl/lookup-resources acl filters) => {:data [resources...] :page-info {...}}`
 - `(eacl/count-resources acl filters) => {:keys [count limit]}` counts the full result set.
 - `(eacl/count-subjects acl filters) => {:keys [count limit]}` counts the full subject result set.
+- `(eacl/expand-permission-tree acl filters) => {:expanded-at token :tree-root node}`
+  returns the shallow SpiceDB-compatible expansion for one resource and
+  relation or permission.
 
 Pass `:count-limit n` to either count operation to bound work. The result then includes
 `:truncated?`; `true` means at least one additional result exists.
@@ -217,11 +220,74 @@ All list APIs use the v8 Relay pagination contract:
 
 - `(eacl/write-schema! acl schema-string)` parses a SpiceDB schema DSL string, validates it, computes deltas against existing schema, checks for orphaned relationships, and transacts changes atomically.
 - `(eacl/read-schema acl)` returns the current schema as a map of `{:relations [...] :permissions [...]}`.
-- `(eacl/expand-permission-tree acl filters)` is not impl. yet. It is a low priority to implement.
 
 All schema changes must use `eacl/write-schema!`. If an application changes
 the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
+
+### Permission-tree expansion
+
+Expansion accepts exactly `:resource`, `:permission`, and the optional
+`:consistency` and `:timeout-ms` keys:
+
+```clojure
+(eacl/expand-permission-tree
+ acl
+ {:resource (eacl/spice-object :document "readme")
+  :permission :view
+  :consistency consistency/fully-consistent
+  :timeout-ms 5000})
+;; =>
+;; {:expanded-at "eacl_z3_..."
+;;  :tree-root
+;;  {:expanded-object {:type :document :id "readme"}
+;;   :expanded-relation :view
+;;   :intermediate
+;;   {:operation :union
+;;    :children
+;;    [{:expanded-object {:type :document :id "readme"}
+;;      :expanded-relation :viewer
+;;      :leaf {:subjects [{:type :user :id "alice"}]}}]}}}
+```
+
+A node contains exactly one of `:leaf` or `:intermediate`. Permission and
+arrow boundaries remain visible; expansion is shallow in the SpiceDB sense,
+so leaves contain subjects found by direct relation scans rather than a
+flattened effective-membership set. To decide whether a subject has the
+permission, use `can?`; do not infer authorization by flattening a tree.
+
+Child and subject vector order is non-semantic and may differ by backend.
+Empty branches and duplicate paths are preserved. Compare trees as annotated
+topology with child/subject multisets when order is irrelevant. The exact
+supplied root ID is retained, while scanned IDs are converted with the
+selected client's object-ID codec.
+
+The response tree and `:expanded-at` token are derived from the same selected
+immutable snapshot. Replay the token with
+`(consistency/at-exact-snapshot (:expanded-at response))` only on a backend
+that advertises exact historical selection; otherwise use it as an
+at-least-as-fresh causal floor. Unsupported consistency, unavailable history,
+deadlines, unknown roots, cycles, codec failures, adapter-contract failures,
+and structural limits produce typed all-or-error failures—no lazy or partial
+tree is returned.
+
+Clients accept positive exact-integer `:permission-tree-limits` overrides.
+They are configuration-only, not request keys:
+
+```clojure
+(eacl.datascript.core/make-client
+ conn
+ {:permission-tree-limits
+  {:max-depth 50
+   :max-schema-components 100000
+   :max-relationship-values 100000
+   :max-tree-nodes 100000
+   :max-leaf-subjects 100000}})
+```
+
+Every bundled backend uses the same portable expansion kernel. Their only
+observable differences are supported consistency modes, historical retention,
+native scan order, and configured identity conversion.
 
 ### Example Queries
 
@@ -994,7 +1060,9 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   - but `permission arrow = relation->subrelation->permission` is not. To implement this would require anonymous shadow relations. May require schema changes.
 - You need to specify a `Permission` for each relation in a sum-type permission. In future this can be shortened.
 - `subject.relation` is not currently supported. It's useful for group memberships.
-- `expand-permission-tree` is not implemented yet.
+- *Expansion is structural, not a membership proof:* permission trees preserve
+  relation, permission, union, and arrow boundaries. Use `can?` for an
+  authorization decision.
 - *Cache coherence requires EACL authorization writers:* Bypassing EACL for
   schema, relationship, permissioned identity, or deletion mutations can
   leave cached answers stale. Stop affected traffic, repair the data, and

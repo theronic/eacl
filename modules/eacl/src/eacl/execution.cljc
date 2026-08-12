@@ -156,9 +156,11 @@
         _ (when-let [forbidden
                      (seq
                       (filter #(contains? request %)
-                              [:cache-attempt :recursive-traversal-limits]))]
+                              [:cache-attempt
+                               :recursive-traversal-limits
+                               :permission-tree-limits]))]
             (invalid-request!
-             "Cache-attempt and traversal safety envelopes are client configuration, not per-request demand controls."
+             "Cache-attempt and structural safety envelopes are client configuration, not per-request demand controls."
              {:forbidden-keys (vec forbidden)}))
         evaluation (normalize-evaluation (:evaluation request))
         timeout-ms

@@ -59,6 +59,32 @@ closure without a listener, transaction-log read, or database-global CAS.
 
 ## Consistency
 
+`expand-permission-tree` is now implemented on Datomic, Datahike, DataScript
+CLJ, and DataScript CLJS. It is an additive protocol behavior change: the
+existing method no longer throws `:eacl/not-implemented`. Requests accept
+`:resource`, `:permission`, optional `:consistency`, and optional
+`:timeout-ms`; responses contain `:expanded-at` and a shallow annotated
+`:tree-root`. The tree and token are bound to one selected immutable snapshot.
+
+Expansion preserves empty branches, nested permission/arrow boundaries, and
+duplicate multiplicity. Vector order is not semantic. Client construction now
+accepts `:permission-tree-limits` for depth, schema-component,
+relationship-value, node, and leaf-subject work. Typed failures are
+all-or-error and do not expose a partial tree or internal backend identity.
+
+Compatibility was checked as black-box behavior against a live SpiceDB v1.56.0
+Docker image pinned by digest. This is a scoped topology claim for EACL's
+supported union/direct/single-arrow schema subset, not a claim of full SpiceDB
+feature or byte-order equivalence. The Dafny model proves the backend-neutral
+shallow topology, denotation, cycle, and limit properties; the handwritten
+CLJ/CLJS implementation is differentially tested rather than mechanically
+extracted.
+
+No database migration or persisted attribute is required. Rollback by first
+stopping callers that depend on successful expansion, then deploy the prior
+code and remove `:permission-tree-limits` from client configuration. Existing
+schemas, relationships, caches, and tokens require no rewrite.
+
 - The default authorization mode is `:minimize-latency`.
 - The redundant pre-release names `:local-snapshot` and
   `:synchronized-head` are no longer accepted.
@@ -470,7 +496,7 @@ counterexample that forced this correction.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 8,642 proof efforts across 28 source-project
+The locked Dafny run completes 8,785 proof efforts across 30 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes
