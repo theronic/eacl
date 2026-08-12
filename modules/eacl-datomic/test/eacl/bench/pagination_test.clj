@@ -1059,7 +1059,7 @@
 ;; Current-generation hits include snapshot selection and native key lookup,
 ;; but no proof construction, canonicalization, provider I/O, or crypto.
 (def ^:private can-warm-threshold-us 1000)
-(def ^:private can-cold-threshold-us 1500)
+(def ^:private can-cold-vs-warm-threshold 3.0)
 (def ^:private can-completed-cache-threshold-us 1000)
 (def ^:private can-warmup-calls 15000)
 (def ^:private can-warm-measurement-batches 3)
@@ -1110,25 +1110,40 @@
             warm-us
             (pr-str (mapv #(* 1000.0 %) batch-medians-ms))))
           (is (< warm-us can-warm-threshold-us)
-              (format "REGRESSION: warm can? median %.2fus exceeds %dus" warm-us can-warm-threshold-us)))
+              (format "REGRESSION: warm can? median %.2fus exceeds %dus" warm-us can-warm-threshold-us))
 
-        (testing "with permission paths forced cold on every call"
-          (let [cold-us (* 1000.0
-                           (median (run-timed 500
-                                              (fn []
-                                                (doseq [schema-cache
-                                                        (vals
-                                                         @(get-in
-                                                           acl
-                                                           [:opts
-                                                            :derived-schema-caches]))]
-                                                  (impl.indexed/evict-permission-paths-cache!
-                                                   schema-cache))
-                                                (check)))))]
-            (println (format "can? cold paths: median=%.2fus" cold-us))
-            (is (< cold-us can-cold-threshold-us)
-                (format "REGRESSION: cold can? median %.2fus exceeds %dus; path calculation got more expensive"
-                        cold-us can-cold-threshold-us))))
+          (testing "with permission paths forced cold on every call"
+            (let [cold-us (* 1000.0
+                             (median (run-timed 500
+                                                (fn []
+                                                  (doseq [schema-cache
+                                                          (vals
+                                                           @(get-in
+                                                             acl
+                                                             [:opts
+                                                              :derived-schema-caches]))]
+                                                    (impl.indexed/evict-permission-paths-cache!
+                                                     schema-cache))
+                                                  (check)))))
+                  cold-vs-warm (/ cold-us warm-us)]
+              (println
+               (format
+                "can? cold paths: median=%.2fus, cold/warm=%.2fx"
+                cold-us
+                cold-vs-warm))
+              ;; GitHub-hosted runners vary materially in raw service time.
+              ;; The warm ceiling still catches an overall throughput
+              ;; regression; this ratio isolates the extra path-resolution
+              ;; work on the same JVM and host.
+              (is (< cold-vs-warm can-cold-vs-warm-threshold)
+                  (format
+                   (str "REGRESSION: cold can? median %.2fus is %.2fx the "
+                        "warm median %.2fus; exceeds %.2fx, so path "
+                        "calculation got more expensive")
+                   cold-us
+                   cold-vs-warm
+                   warm-us
+                   can-cold-vs-warm-threshold)))))
 
         (testing "completed Boolean cache"
           (let [calls (atom 0)
