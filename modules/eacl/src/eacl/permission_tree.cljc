@@ -13,7 +13,8 @@
    :max-leaf-subjects 100000})
 
 (def ^:private query-keys
-  #{:resource :permission :consistency :timeout-ms})
+  #{:resource :permission :consistency :timeout-ms
+    :cancellation-token})
 
 (defn- portable-positive-integer?
   [value]

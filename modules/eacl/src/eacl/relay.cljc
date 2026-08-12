@@ -60,14 +60,16 @@
   nil)
 
 (def ^:private relay-page-keys
-  #{:first :last :after :before :consistency :cache?})
+  #{:first :last :after :before :consistency :cache?
+    :cancellation-token})
 
 (def ^:private cursor-transport-keys
   "Relay window controls do not define the authorized result set. They remain
   caller-controlled so one boundary cursor can support forward and backward
   navigation. Consistency, principal, permission, filters, and resource type
   remain part of the authenticated semantic scope."
-  #{:first :last :after :before :cache? :timeout-ms})
+  #{:first :last :after :before :cache? :timeout-ms
+    :cancellation-token})
 
 (def cursor-emission-order-version
   "Version of the traversal emission order committed by Relay cursor digests.
@@ -157,7 +159,8 @@
 
 (defn- page-request-key
   [generation operation query]
-  [generation operation (dissoc query :consistency)])
+  [generation operation
+   (dissoc query :consistency :cancellation-token)])
 
 (defn- page-boundary-key
   [generation operation query token]
