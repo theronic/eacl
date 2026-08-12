@@ -178,7 +178,7 @@
 
 (deftest managed-reuse-is-complete-proof-scoped-test
   (let [managed (subproblem/store)
-        dependency-stamp (atom [[1 10 "mutation-a"]])
+        dependency-stamp (atom 10)
         computations (atom 0)
         resolve-in-generation
         (fn [exact computed]
@@ -187,7 +187,7 @@
                     subproblem/*managed-scope* {:source-id :primary}
                     subproblem/*managed-key-fn*
                     (fn [_]
-                      {:schema-stamp [7 "schema-a"]
+                      {:schema-stamp 7
                        :dependency-stamp @dependency-stamp})]
             (:value
              (subproblem/resolve-layered-bound!
@@ -198,7 +198,7 @@
     (is (= 42 (resolve-in-generation (subproblem/store) 42)))
     (is (= 42 (resolve-in-generation (subproblem/store) 0)))
     (is (= 1 @computations))
-    (reset! dependency-stamp [[1 10 "mutation-b"]])
+    (reset! dependency-stamp 11)
     (is (= 99 (resolve-in-generation (subproblem/store) 99)))
     (is (= 2 @computations))))
 

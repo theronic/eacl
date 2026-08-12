@@ -12,7 +12,7 @@
   "Checks that one generated class is present without installing or running
   any tool. Throws an actionable source-consumer error when it is absent."
   ([]
-   (assert-available! "CacheKernel.CacheCandidate"))
+   (assert-available! "CurrentCache.__default"))
   ([class-name]
    (try
      (Class/forName class-name false

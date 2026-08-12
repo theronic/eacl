@@ -56,17 +56,17 @@
              (select-keys
               (resolve
                (context
-                snapshot-1 1
-                [10 "schema-a"]
-                [[1 20 "relation-a"]]))
+                 snapshot-1 1
+                 10
+                 20))
               [:value :cached? :cache-tier])))
       (is (= {:value true :cached? true :cache-tier :exact-current}
              (select-keys
               (resolve
                (context
-                snapshot-1 1
-                [10 "schema-a"]
-                [[1 20 "relation-a"]]))
+                 snapshot-1 1
+                 10
+                 20))
               [:value :cached? :cache-tier])))
       (is (= 1 @computations))
       (is (= 1 @stamp-reads)))
@@ -76,9 +76,9 @@
              (select-keys
               (resolve
                (context
-                snapshot-2 2
-                [10 "schema-a"]
-                [[1 20 "relation-a"]]))
+                 snapshot-2 2
+                 10
+                 20))
               [:value :cached? :cache-tier])))
       (is (= 1 @computations))
       (is (= 2 @stamp-reads))
@@ -86,9 +86,9 @@
              (:cache-tier
               (resolve
                (context
-                snapshot-2 2
-                [10 "schema-a"]
-                [[1 20 "relation-a"]])))))
+                 snapshot-2 2
+                 10
+                 20)))))
       (is (= 2 @stamp-reads)
           "promotion makes the next hit independent of stamp extraction"))
 
@@ -97,16 +97,16 @@
       (is (false? (:cached?
                    (resolve
                     (context
-                     snapshot-3 3
-                     [10 "schema-a"]
-                     [[1 20 "relation-b"]])))))
+                      snapshot-3 3
+                      10
+                      21)))))
       (reset! answer true)
       (is (false? (:cached?
                    (resolve
                     (context
-                     snapshot-4 4
-                     [10 "schema-b"]
-                     [[1 20 "relation-b"]])))))
+                      snapshot-4 4
+                      22
+                      22)))))
       (is (= 3 @computations)))
 
     (testing "explicit bypass neither reads nor publishes"
@@ -297,6 +297,38 @@
        (is (= 1 (get-in (cache/current-cache-stats store)
                         [:subproblems :projection-hits]))))))
 
+(deftest request-boundary-capture-prevents-pre-lookup-expiry-reattachment-test
+  (let [store (cache/current-cache)
+        captured (cache/capture-current-lifecycle store)
+        context {:snapshot 7
+                 :snapshot-order 7
+                 :same-snapshot? =
+                 :cache-basis 7}
+        resolve-projection
+        (fn [request-context top-level-key value]
+          (:value
+           (cache/resolve-current!
+            store request-context top-level-key :decision integer?
+            (fn []
+              (:value
+               (subproblem/resolve-bound!
+                :projection :shared-projection {}
+                (constantly value)))))))]
+    ;; Model expiry after a request selected its source snapshot but before it
+    ;; reached resolve-current!.  Reusing the numeric revision after a restore
+    ;; must not let that old request populate the replacement lifecycle.
+    (cache/expire-current! store)
+    (is (= 41
+           (resolve-projection
+            (assoc context :cache-lifecycle captured)
+            :old-request
+            41)))
+    (is (= 42
+           (resolve-projection context :new-request-a 42)))
+    (is (= 42
+           (resolve-projection context :new-request-b 99))
+        "new requests share only the replacement lifecycle's projection")))
+
 #?(:clj
    (deftest generation-expiry-detaches-old-publication-without-blocking-test
      (let [store (cache/current-cache)
@@ -400,18 +432,17 @@
     (is (zero? (get-in (cache/current-cache-stats store)
                        [:subproblems :projection-hits])))))
 
-(deftest managed-descriptor-is-compiled-once-per-exact-generation-test
+(deftest managed-descriptor-is-lazy-after-exact-lookup-test
   (let [store (cache/current-cache)
         snapshot-1 (snapshot-object)
         snapshot-2 (snapshot-object)
         descriptor-reads (atom 0)
         context
-        (fn [snapshot order descriptor-key]
+        (fn [snapshot order]
           {:snapshot snapshot
            :snapshot-order order
            :same-snapshot? identical?
            :cache-basis order
-           :managed-descriptor-key-fn (constantly descriptor-key)
            :managed-key-fn
            (fn []
              (swap! descriptor-reads inc)
@@ -422,16 +453,64 @@
           (cache/resolve-current!
            store current-context semantic-key :decision integer?
            (constantly 7)))]
-    (resolve :query-a (context snapshot-1 1 [1 2 3]))
-    (resolve :query-b (context snapshot-1 1 [1 2 3]))
+    (resolve :query-a (context snapshot-1 1))
     (is (= 1 @descriptor-reads)
-        "distinct final-answer keys share proof compilation on one snapshot")
-    (resolve :query-c (context snapshot-1 1 [1 2 4]))
+        "an exact miss acquires one descriptor")
+    (resolve :query-a (context snapshot-1 1))
+    (is (= 1 @descriptor-reads)
+        "an exact hit acquires no descriptor")
+    (resolve :query-b (context snapshot-1 1))
     (is (= 2 @descriptor-reads)
-        "a different dependency set has a different descriptor key")
-    (resolve :query-d (context snapshot-2 2 [1 2 3]))
+        "another semantic miss owns another request frame")
+    (resolve :query-b (context snapshot-2 2))
     (is (= 3 @descriptor-reads)
-        "a new immutable snapshot owns a new proof-compilation store")))
+        "a new immutable snapshot must revalidate its proof")))
+
+(deftest unavailable-proof-cannot-reuse-or-publish-managed-answer-test
+  (let [store (cache/current-cache)
+        snapshot-1 (snapshot-object)
+        snapshot-2 (snapshot-object)
+        compute-calls (atom 0)
+        resolve
+        (fn [snapshot order managed-key value]
+          (cache/resolve-current!
+           store
+           {:snapshot snapshot
+            :snapshot-order order
+            :same-snapshot? identical?
+            :cache-basis order
+            :managed-key-fn (constantly managed-key)}
+           :proof-fallback
+           :decision
+           boolean?
+           (fn []
+             (swap! compute-calls inc)
+             value)))]
+    (is (true? (:value (resolve snapshot-1 1
+                               {:schema-stamp 10
+                                :dependency-stamp 20}
+                               true))))
+    (let [fallback (resolve snapshot-2 2 nil false)]
+      (is (false? (:value fallback))
+          "an unavailable proof must not return the older managed ALLOW")
+      (is (false? (:cached? fallback)))
+      (is (nil? (:cache-tier fallback))))
+    (is (= 2 @compute-calls))
+    (is (false? (:value (resolve snapshot-2 2 nil true)))
+        "the exact result computed during fallback remains reusable")))
+
+(deftest proof-unavailable-diagnostics-are-typed-telemetry-test
+  (let [store (cache/current-cache)]
+    (cache/record-proof-unavailable!
+     store {:status :unavailable :reason :missing-generation})
+    (cache/record-proof-unavailable!
+     store {:status :unavailable :reason :provider-failure})
+    (cache/record-proof-unavailable!
+     store {:status :unavailable :reason :missing-generation})
+    (let [stats (cache/current-cache-stats store)]
+      (is (= 3 (:proof-unavailable stats)))
+      (is (= {:missing-generation 2 :provider-failure 1}
+             (:proof-unavailable-reasons stats))))))
 
 (deftest current-generation-two-hit-admission-test
   (let [store (cache/current-cache {:admit-on-repeat? true})

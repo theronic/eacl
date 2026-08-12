@@ -12,10 +12,12 @@
    failures deny permissions, so both representations remain mandatory."
   (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
+            [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
+            [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
 
 (defn- seed-objects!
@@ -42,6 +44,21 @@
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
+(deftest removed-cache-coherence-options-are-unknown-test
+  (let [conn (datahike/create-conn)]
+    (doseq [[option values]
+            [[:coherence-authority [:unknown :managed]]
+             [:proof-mode [:auto :mutation :content :none]]]
+            value values]
+      (let [error
+            (try
+              (datahike/make-client conn {option value})
+              nil
+              (catch clojure.lang.ExceptionInfo cause
+                (ex-data cause)))]
+        (is (= :eacl/invalid-config (:type error)))
+        (is (= [option] (:unknown-keys error)))))))
+
 (defn- run-contract!
   [config]
   (let [conn   (datahike/create-conn nil config)
@@ -51,6 +68,7 @@
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-unified-filter-validation! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
@@ -62,7 +80,7 @@
         client
         (datahike/make-client
          conn
-         {:coherence-authority :managed})]
+         {})]
     (eacl/write-schema! client contract/recursive-schema)
     (d/transact
      conn
@@ -89,6 +107,65 @@
 
   (testing "attributes as numeric refs (:attribute-refs?, Datomic's representation)"
     (run-contract! {:attribute-refs? true})))
+
+(deftest datahike-pinned-spicedb-permission-tree-golden-test
+  (doseq [config [nil {:attribute-refs? true}]]
+    (let [conn (datahike/create-conn nil config)
+          client (datahike/make-client conn {})]
+      (eacl/write-schema! client contract/permission-tree-golden-schema)
+      (d/transact
+       conn
+       (mapv (fn [{:keys [id]}] {:eacl/id id})
+             contract/permission-tree-golden-objects))
+      (eacl/create-relationships!
+       client contract/permission-tree-golden-relationships)
+      (contract/assert-pinned-permission-tree-golden! client)
+      (let [request {:resource (eacl/spice-object :document "testdoc")
+                     :permission :view}
+            first-response (eacl/expand-permission-tree client request)]
+        (is (= (:tree-root first-response)
+               (:tree-root
+                (eacl/expand-permission-tree
+                 client
+                 (assoc request :consistency
+                        (consistency/at-exact-snapshot
+                         (:expanded-at first-response)))))))))))
+
+(deftest datahike-permission-tree-schema-mutation-snapshot-test
+  (let [conn (datahike/create-conn)
+        client (datahike/make-client conn {})
+        resource (eacl/spice-object :document "d1")
+        old-schema
+        "definition user {}
+         definition document {
+           relation viewer: user
+           permission view = viewer
+         }"
+        new-schema
+        "definition user {}
+         definition document {
+           relation viewer: user
+           relation editor: user
+           permission view = viewer + editor
+         }"
+        _ (eacl/write-schema! client old-schema)
+        _ (d/transact conn [{:eacl/id "d1"}])
+        mutated? (atom false)
+        captured
+        (binding [backend/*invoke-observer*
+                  (fn [{:keys [phase operation]}]
+                    (when (and (= :before phase)
+                               (= :relation-defs operation)
+                               (compare-and-set! mutated? false true))
+                      (eacl/write-schema! client new-schema)))]
+          (eacl/expand-permission-tree
+           client {:resource resource :permission :view}))]
+    (is (= 1 (count (get-in captured
+                            [:tree-root :intermediate :children]))))
+    (is (= 2 (count (get-in
+                     (eacl/expand-permission-tree
+                      client {:resource resource :permission :view})
+                     [:tree-root :intermediate :children]))))))
 
 (deftest datahike-recursive-v8-contract-test
   (testing "attributes as keywords"

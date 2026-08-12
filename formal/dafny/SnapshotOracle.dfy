@@ -4,7 +4,6 @@ module SnapshotOracle {
   import Semantics
 
   datatype SnapshotId = SnapshotId(source: string, revision: string)
-  datatype GraphAnchor = GraphAnchor(value: string)
   datatype InternalObject = InternalObject(typeName: string, internalId: int)
   datatype ScanDirection = Ascending | Descending
   datatype Bound = Unbounded | Exclusive(value: int) | Inclusive(value: int)
@@ -17,8 +16,7 @@ module SnapshotOracle {
   datatype SnapshotView = SnapshotView(
     identity: SnapshotId,
     sourceIdentity: string,
-    graphHead: GraphAnchor,
-    ancestors: set<GraphAnchor>,
+    nativeRevision: nat,
     exactLocator: string,
     visibleObjects: seq<Semantics.ObjectRef>,
     objects: map<Semantics.ObjectRef, InternalObject>,
@@ -166,11 +164,11 @@ module SnapshotOracle {
     method SelectAuthoritative() returns (result: SelectionResult)
       ensures result.Selected? ==> SnapshotWellFormed(result.snapshot)
 
-    method SelectAtLeast(anchor: GraphAnchor)
+    method SelectAtLeast(revisionFloor: nat)
       returns (result: SelectionResult)
       ensures result.Selected? ==>
                 SnapshotWellFormed(result.snapshot) &&
-                anchor in result.snapshot.ancestors + {result.snapshot.graphHead}
+                result.snapshot.nativeRevision >= revisionFloor
 
     method SelectExact(source: string, locator: string)
       returns (result: SelectionResult)
@@ -189,16 +187,15 @@ module SnapshotOracle {
       requires SnapshotWellFormed(snapshot)
       ensures identity == snapshot.sourceIdentity
 
-    method GraphHead(snapshot: SnapshotView)
-      returns (anchor: GraphAnchor)
+    method NativeRevision(snapshot: SnapshotView)
+      returns (revision: nat)
       requires SnapshotWellFormed(snapshot)
-      ensures anchor == snapshot.graphHead
+      ensures revision == snapshot.nativeRevision
 
-    method ContainsAnchor(snapshot: SnapshotView, anchor: GraphAnchor)
-      returns (contains: bool)
+    method RevisionAtLeast(snapshot: SnapshotView, revisionFloor: nat)
+      returns (satisfied: bool)
       requires SnapshotWellFormed(snapshot)
-      ensures contains <==>
-              anchor in snapshot.ancestors + {snapshot.graphHead}
+      ensures satisfied <==> snapshot.nativeRevision >= revisionFloor
 
     method ObjectToInternal(
       snapshot: SnapshotView,

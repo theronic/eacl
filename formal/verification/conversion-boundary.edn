@@ -34,9 +34,6 @@
   :cache-and-cursors
   [exact-selection
    continuation-decision
-   proof-state
-   cache-candidate
-   cache-decision
    candidate-state
    subproblem-cache-decision
    current-cache-stage

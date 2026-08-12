@@ -19,14 +19,12 @@
     eacl.datahike.consistency-v3-test
     eacl.datahike.contract-test
     eacl.datahike.enumeration-routing-test
-    eacl.datahike.mutation-test
     eacl.datahike.storage-test
     eacl.datascript.adapter-certification-test
     eacl.datascript.consistency-v3-test
     eacl.datascript.contract-test
     eacl.datascript.enumeration-routing-test
     eacl.datascript.impl-test
-    eacl.datascript.mutation-test
     eacl.datascript.storage-test
     eacl.datomic.adapter-certification-test
     eacl.datomic.api-contract-test
@@ -44,7 +42,6 @@
     eacl.datomic.differential-test
     eacl.datomic.impl.indexed-test
     eacl.datomic.lookup-cache-test
-    eacl.datomic.mutation-test
     eacl.datomic.object-deletion-test
     eacl.datomic.parser-test
     eacl.datomic.permission-check-test
@@ -68,7 +65,6 @@
     eacl.formal.generators-test
     eacl.formal.mutation-control-test
     eacl.formal.public-source-closure-test
-    eacl.mutation-test
     eacl.relationships.endpoint-pair-test
     eacl.relay-test
     eacl.secure-format-test

@@ -30,8 +30,7 @@
         (fn [snapshot internal-id]
           (:eacl/id (ds/entity snapshot internal-id)))
         :conn conn
-        :coherence-authority :managed
-        :proof-mode :content}))))
+        }))))
 
 (deftest datascript-adapter-certification-test
   (doseq [fixture (certification/coherent-fixtures [820084])]

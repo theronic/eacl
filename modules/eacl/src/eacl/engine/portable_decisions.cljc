@@ -72,16 +72,13 @@
     :else :exact))
 
 (defn- consistency-plan
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (cond
     (not capability-supported?)
     (case mode
       :minimize-latency :unsupported-capability
       :at-exact-snapshot :exact-snapshot-unavailable
       :unsupported-head-barrier)
-    (and (contains? #{:at-least-as-fresh :at-exact-snapshot} mode)
-         (not managed-authority?))
-    :unsupported-head-barrier
     :else
     (case mode
       :minimize-latency :select-current
@@ -91,39 +88,15 @@
 
 (defn- consistency-validation
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (cond
     (not selection-present?)
     (if (= :exact kind) :exact-snapshot-unavailable :invalid-selected-adapter)
     (not selected-adapter?) :invalid-selected-adapter
     (not same-source-scope?) :incomparable-scope
-    (and (contains? #{:at-least :exact} kind) (not anchor-satisfied?))
+    (and (contains? #{:at-least :exact} kind) (not revision-satisfied?))
     :history-divergence
     :else :accept))
-
-(defn- cache-decision
-  [{:keys [deterministic? dependency-scope-nonempty? expected-key
-           expected-source selected-graph ancestors selected-proof entry]}]
-  (let [{:keys [status authenticated? key source graph proof]} entry]
-    (cond
-      (or (not deterministic?)
-          (not dependency-scope-nonempty?)
-          (nil? selected-proof))
-      {:status :miss :reason :no-proof-bypass}
-      (= :missing status) {:status :miss :reason :missing}
-      (= :provider-failure status) {:status :miss :reason :provider-failure}
-      (not authenticated?) {:status :miss :reason :unauthenticated}
-      (or (not= key expected-key) (not= source expected-source))
-      {:status :miss :reason :scope-mismatch}
-      (and (not= graph selected-graph) (not (contains? ancestors graph)))
-      {:status :miss :reason :future-or-sibling}
-      (or (nil? proof) (not= proof selected-proof))
-      {:status :miss :reason :proof-mismatch}
-      :else
-      {:status :hit
-       :provenance (if (= graph selected-graph)
-                     :exact-hit
-                     :causal-proof-lift)})))
 
 (defn- subproblem-cache-decision
   [{:keys [decision] :as input}]
@@ -651,7 +624,6 @@
     :cursor-continuation (continuation-decision input)
     :consistency-plan (consistency-plan input)
     :consistency-validation (consistency-validation input)
-    :cache-validation (cache-decision input)
     :current-cache-decision (current-cache-decision input)
     :subproblem-cache-decision (subproblem-cache-decision input)
     :ordered-merge-step (merge-step input)

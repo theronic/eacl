@@ -242,16 +242,16 @@
   :status :passed}
 
  :formal-pipeline
- {:scope :all-27-dafny-modules
-  :proof-efforts 8616
-  :last-observed-local-wall-seconds 1001
+ {:scope :all-29-dafny-modules
+  :proof-efforts 8723
+  :last-observed-local-wall-seconds 686
   :wall-clock-assurance :host-specific-measurement
   :github-job-timeout-seconds 3600
   :assertion-batch-time-limit-seconds 60
   :proof-effort-resource-limit 50000000
   :resource-kind :z3-rlimit
   :resource-assurance :deterministic-for-locked-toolchain-and-seed
-  :total-observed-resource-count 3122941608
+  :total-observed-resource-count 3124170150
   :maximum-observed-proof-effort
   {:source "IndexedReverseCompleteness.dfy"
    :display-name
@@ -359,8 +359,8 @@
    :backend-selection-calls 0
    :validation-decisions 0
    :source-scope-reads 0
-   :contains-anchor-calls 0
-   :graph-head-reads 0
+   :revision-validation-calls 0
+   :native-revision-reads 0
    :order-hint-reads 0
    :exact-locator-reads 0}
   :source-correspondence
@@ -371,7 +371,7 @@
    {:backend-selection-calls 1
     :validation-decisions 1
     :source-scope-reads-at-most 3
-    :graph-head-reads 1
+    :native-revision-reads 1
     :order-hint-reads 1
     :exact-locator-reads 1}
    :all-other-successful-paths
@@ -380,8 +380,8 @@
     :backend-selection-calls-at-most 1
     :authentication-attempts-at-most 1
     :source-scope-reads-at-most 4
-    :contains-anchor-calls-at-most 1
-    :graph-head-reads-at-most 2
+    :revision-validation-calls-at-most 1
+    :native-revision-reads-at-most 2
     :order-hint-reads-at-most 2
     :exact-locator-reads-at-most 2}
    :executable-evidence
@@ -417,7 +417,7 @@
   :status :passed}
 
  :indexed-plan-certification
- {:scope :schema-proof-root-plan-compilation-not-query-latency
+ {:scope :schema-generation-root-plan-compilation-not-query-latency
   :runtime :generated-java
   :fixture
   {:shape :independent-direct-seed-types
@@ -555,10 +555,7 @@
    :page-size 25
    :maximum-work-per-result 2
    :minimum-replay-to-continuation-work-ratio 50
-   :minimum-replay-to-continuation-time-ratio 10}
-  :content-proof
-  {:baseline-ms-per-page 670
-   :status :diagnostic-not-cutover-target}}
+   :minimum-replay-to-continuation-time-ratio 10}}
 
  :generated-indexed-authority
  {:scope :routed-recursive-authority-cache-disabled-warm-schema-plan
@@ -1110,7 +1107,8 @@
   :resource-dimensions
   {:logical-relationship-writes :count
    :committed-datom-events :count
-   :unrelated-graph-edges :count
+   :unrelated-database-edges :count
+   :concurrent-transaction-attempts :count
    :proof-provider-invocations :count
    :proof-provider-elapsed-time :nanoseconds-per-call
    :stored-bytes :not-measured
@@ -1124,20 +1122,38 @@
    :measurement-samples 31}
   :required
   {:unchanged-target-proof true
-   :maximum-large-to-small-p50-ratio 5.0}
+   :maximum-large-to-small-p50-ratio 5.0
+   :unrelated-writes-equal-transaction-attempts true
+   :global-graph-or-journal-ops 0}
  :observed
   {:datomic
-   {:create-datom-events 16
-    :delete-datom-events 17
-    :p50-ratio 0.4261334755472597}
+   {:create-datom-events 6
+    :delete-datom-events 4
+    :p50-ratio 1.0340335210449016}
    :datahike
-   {:create-datom-events 13
-    :delete-datom-events 13
-    :p50-ratio 0.7482752683426696}
+   {:create-datom-events 6
+    :delete-datom-events 4
+    :p50-ratio 0.8473024564035252}
    :datascript
-   {:create-datom-events 14
-    :delete-datom-events 14
-    :p50-ratio 1.0264659340659341}}
+   {:create-datom-events 6
+    :delete-datom-events 4
+    :p50-ratio 0.9636125474650942}}
+ :concurrency-observed
+ {:datomic {:unrelated-logical-writes 2
+            :unrelated-transaction-attempts 2
+            :same-relation-logical-writes 2
+            :same-relation-transaction-attempts 3
+            :global-graph-or-journal-ops 0}
+  :datahike {:unrelated-logical-writes 2
+             :unrelated-transaction-attempts 2
+             :same-relation-logical-writes 2
+             :same-relation-transaction-attempts 2
+             :global-graph-or-journal-ops 0}
+  :datascript {:unrelated-logical-writes 2
+               :unrelated-transaction-attempts 2
+               :same-relation-logical-writes 2
+               :same-relation-transaction-attempts 2
+               :global-graph-or-journal-ops 0}}
   :status :passed}
 
  :authority-mode-matrix
@@ -1491,18 +1507,6 @@
     :datahike-cache-disabled-microseconds 17.647
     :datahike-completed-hit-microseconds 12.191}
    :blocking-finding nil}
-  :cache-proof-churn
-  {:unit :microseconds-per-read
-   :unrelated
-   {:mutation-proof 62.0415
-    :content-proof 260.6875
-    :global-invalidation 43.0835
-    :no-cache 60.4795}
-   :relevant
-   {:mutation-proof 264.4585
-    :content-proof 249.813
-    :global-invalidation 300.5625
-    :no-cache 119.4375}}
   :completed-hit-cost-breakdown-nanoseconds-per-operation
   {:db 65.5036
    :entid 1016.588
@@ -1545,7 +1549,7 @@
    :exact-count 100000
    :recursive-work 0}
   :logical-cutover
-  {:default-content-cursor-relation-proof-commands {:before 1 :after 0}
+  {:legacy-content-cursor-proof-commands {:before 1 :after 0}
    :canonical-permission-paths {:before 5 :after 4}
    :count-100000-backend-scans {:before 515 :after 462}}
   :qualification

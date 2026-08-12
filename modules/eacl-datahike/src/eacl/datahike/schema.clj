@@ -1,8 +1,6 @@
 (ns eacl.datahike.schema
   (:require [datahike.api :as d]
             [eacl.datahike.db :as ddb]
-            [eacl.datahike.mutation :as journal]
-            [eacl.mutation :as mutation]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
@@ -13,7 +11,9 @@
 (def permission-key-attr
   :eacl.permission/resource-type+permission-name)
 
-(def max-entid Long/MAX_VALUE)
+(def max-entid
+  "Compatibility sentinel retained for the public Datahike impl surface."
+  Long/MAX_VALUE)
 
 (def ^:private component-schema
   "The attributes schema-definition composite tuples are derived FROM.
@@ -26,6 +26,16 @@
     :db/unique      :db.unique/identity}
    {:db/ident       :eacl/schema-string
     :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident       :eacl/schema-generation
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl/schema-write-fence
+    :db/valueType   :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl/relation-version
+    :db/valueType   :db.type/ref
     :db/cardinality :db.cardinality/one}
 
    {:db/ident       :eacl.relation/resource-type
@@ -62,50 +72,7 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl.mutation/id
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity
-    :db/index       true}
-   {:db/ident       :eacl.mutation/fingerprint
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.mutation/kind
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.mutation/issued-at
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.mutation/expires-at
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.graph/family-id
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.graph/head-id
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.graph/head-order
-    :db/valueType   :db.type/ref
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.schema/mutation-id
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.relation/mutation-id
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.dependency/mutation-id
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}])
+   ])
 
 (def ^:private tuple-schema
   "Schema-definition composite tuples plus Datomic-compatible heterogeneous
@@ -225,23 +192,154 @@
   {:relations   (read-relations db)
    :permissions (read-permissions db)})
 
+(defn prepare-cache-coherence!
+  "Initializes missing native schema/relation generations and the schema
+  write fence additively."
+  [conn]
+  (let [db (d/db conn)
+        _ (when-not (and (ddb/entid db :eacl/schema-generation)
+                         (ddb/entid db :eacl/schema-write-fence)
+                         (ddb/entid db :eacl/relation-version))
+            (throw
+             (ex-info
+              "Datahike database lacks native EACL generation attributes."
+              {:type :eacl.cache/generation-schema-missing
+               :eacl/error :eacl.cache/generation-schema-missing
+               :backend :datahike})))
+        schema-eid (ddb/entid db [:eacl/id "schema-string"])
+        relation-eids
+        (into [] (map :e)
+              (ddb/avet-datoms
+               db :eacl.relation/resource-type+relation-name+subject-type))
+        missing-schema?
+        (and schema-eid
+             (empty? (ddb/eavt-datoms db schema-eid
+                                      :eacl/schema-generation)))
+        missing-schema-fence?
+        (and schema-eid
+             (empty? (ddb/eavt-datoms db schema-eid
+                                      :eacl/schema-write-fence)))
+        missing-relations
+        (filterv #(empty? (ddb/eavt-datoms db % :eacl/relation-version))
+                 relation-eids)
+        tx-data
+        (into (cond-> []
+                missing-schema?
+                (conj [:db/add schema-eid
+                       :eacl/schema-generation :db/current-tx])
+
+                missing-schema-fence?
+                (conj [:db/add schema-eid
+                       :eacl/schema-write-fence :db/current-tx]))
+              (map #(vector :db/add % :eacl/relation-version :db/current-tx))
+              missing-relations)
+        report (when (seq tx-data) (d/transact conn tx-data))
+        db-after (if report (:db-after report) db)
+        schema-missing-after?
+        (and schema-eid
+             (empty? (ddb/eavt-datoms
+                      db-after schema-eid :eacl/schema-generation)))
+        schema-fence-missing-after?
+        (and schema-eid
+             (empty? (ddb/eavt-datoms
+                      db-after schema-eid :eacl/schema-write-fence)))
+        relation-missing-after
+        (filterv #(empty? (ddb/eavt-datoms
+                           db-after % :eacl/relation-version))
+                 relation-eids)]
+    {:prepared? true
+     :changed? (boolean report)
+     :schema-generation-initialized? missing-schema?
+     :schema-write-fence-initialized? missing-schema-fence?
+     :relation-generations-initialized (count missing-relations)
+     :missing-after
+     (cond-> relation-missing-after
+       schema-missing-after? (conj :eacl/schema-generation)
+       schema-fence-missing-after? (conj :eacl/schema-write-fence))
+     :db-after db-after}))
+
 (def validate-schema-references model/validate-schema-references)
 (def calc-set-deltas model/calc-set-deltas)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
-  "Counts forward relationship tuples that reference the given relation."
+  "Counts relationships that reference the given relation.
+
+  The maximum of the two endpoint-index cardinalities is exact for healthy
+  pairs and remains positive for either one-sided ghost, so corruption cannot
+  make a relation definition appear unused."
   [db {:eacl.relation/keys [resource-type relation-name subject-type]}]
   (let [relation-id  (model/->relation-id resource-type relation-name subject-type)
         relation-eid (ddb/entid db [:eacl/id relation-id])]
     (if-not relation-eid
       0
-      (count
-       (ddb/avet-range
+      (max
+       (count
+        (ddb/avet-tuple-prefix
+         db relationship-storage/forward-attribute 4
+         [subject-type relation-eid resource-type]))
+       (count
+        (ddb/avet-tuple-prefix
+         db relationship-storage/reverse-attribute 4
+         [resource-type relation-eid subject-type]))))))
+
+(defn- current-schema-generation
+  [db]
+  (when-let [schema-eid (ddb/entid db [:eacl/id "schema-string"])]
+    (some-> (ddb/eavt-datoms db schema-eid :eacl/schema-generation)
+            first
+            :v)))
+
+(defn- current-schema-write-fence
+  [db]
+  (when-let [schema-eid (ddb/entid db [:eacl/id "schema-string"])]
+    (some-> (ddb/eavt-datoms db schema-eid :eacl/schema-write-fence)
+            first
+            :v)))
+
+(defn- ensure-schema-coherence!
+  "Bootstraps the schema singleton before its first guarded replacement."
+  [conn]
+  (loop []
+    (let [db (d/db conn)]
+      (if (and (current-schema-generation db)
+               (current-schema-write-fence db))
         db
-        relationship-storage/forward-attribute
-        [subject-type relation-eid resource-type 0]
-        [subject-type relation-eid resource-type max-entid])))))
+        (do
+          (d/transact
+           conn
+           [(cond-> {:eacl/id "schema-string"}
+              (nil? (current-schema-generation db))
+              (assoc :eacl/schema-generation :db/current-tx)
+
+              (nil? (current-schema-write-fence db))
+              (assoc :eacl/schema-write-fence :db/current-tx))])
+          (recur))))))
+
+(defn- cas-failure-data
+  [throwable]
+  (loop [cause throwable]
+    (when cause
+      (let [data (ex-data cause)]
+        (if (= :transact/cas (:error data))
+          data
+          (recur (.getCause ^Throwable cause)))))))
+
+(defn- transact-schema!
+  [conn tx-data expected-generation]
+  (try
+    (d/transact conn tx-data)
+    (catch Throwable throwable
+      (if-let [cause-data (cas-failure-data throwable)]
+        (throw
+         (ex-info
+          "The EACL schema changed concurrently; retry from the new database value."
+          {:type :eacl.schema/concurrent-write
+           :expected-generation expected-generation
+           :actual-generation (current-schema-generation (d/db conn))
+           :datahike-error cause-data}
+          throwable))
+        (throw throwable)))))
 
 (defn write-schema!
   "Parses, validates, diffs and transacts a SpiceDB schema string.
@@ -252,10 +350,21 @@
   ([conn schema-string]
    (write-schema! conn schema-string {}))
   ([conn schema-string
-    {:keys [allow-empty-schema? token-ttl-seconds retention-grace-seconds]}]
+    {:keys [allow-empty-schema?]}]
    (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
          _               (validate-schema-references new-schema-map)
-         db              (d/db conn)
+         initial-db      (d/db conn)
+         initial-schema  (read-schema initial-db)
+         _               (when (and (empty? (:definitions new-schema-map))
+                                    (not allow-empty-schema?)
+                                    (or (seq (:relations initial-schema))
+                                        (seq (:permissions initial-schema))))
+                           (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
+                                                " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+                                           {:type :eacl.schema/empty-schema-guard
+                                            :existing {:relations (count (:relations initial-schema))
+                                                       :permissions (count (:permissions initial-schema))}})))
+         db              (ensure-schema-coherence! conn)
          existing-schema (read-schema db)
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
@@ -275,11 +384,44 @@
          (when (pos? cnt)
            (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                 " because it is used by " cnt " relationships.")
-                           {:relation rel :count cnt})))))
-     (let [tx-data
+                           {:type :eacl.schema/relation-in-use
+                            :relation rel
+                            :count cnt})))))
+     (let [relation-additions
+           (mapv #(assoc % :eacl/relation-version :db/current-tx)
+                 (:additions relations))
+           schema-eid (ddb/entid db [:eacl/id "schema-string"])
+           schema-generation (current-schema-generation db)
+           schema-write-fence (current-schema-write-fence db)
+           relation-commit-guards
+           (mapv
+            (fn [relation]
+              (let [relation-eid
+                    (ddb/entid db [:eacl/id (:eacl/id relation)])
+                    relation-generation
+                    (some-> (ddb/eavt-datoms
+                             db relation-eid :eacl/relation-version)
+                            first
+                            :v)]
+                (when-not relation-generation
+                  (throw
+                   (ex-info
+                    "Relation removal requires prepared native generations."
+                    {:type :eacl.cache/generation-unprepared
+                     :backend :datahike
+                     :relation-id (:eacl/id relation)})))
+                [:db.fn/cas relation-eid
+                 (ddb/attr-repr db :eacl/relation-version)
+                 relation-generation relation-generation]))
+            relation-retractions)
+           tx-data
            (vec
             (concat
-             (:additions relations)
+             [[:db.fn/cas schema-eid
+               (ddb/attr-repr db :eacl/schema-write-fence)
+               schema-write-fence schema-write-fence]]
+             relation-commit-guards
+             relation-additions
              (:additions permissions)
              (for [rel relation-retractions
                    :let [eid (ddb/entid db [:eacl/id (:eacl/id rel)])]
@@ -289,8 +431,13 @@
                    :let [eid (ddb/entid db [:eacl/id (:eacl/id perm)])]
                    :when eid]
                [:db/retractEntity eid])
-             [{:eacl/id "schema-string"
-               :eacl/schema-string schema-string}]))
+             [{:db/id schema-eid
+               :eacl/id "schema-string"
+               :eacl/schema-string schema-string}
+              [:db/add schema-eid :eacl/schema-generation
+               :db/current-tx]
+              [:db/add schema-eid :eacl/schema-write-fence
+               :db/current-tx]]))
            stored-string
            (some-> (d/entity db [:eacl/id "schema-string"])
                    :eacl/schema-string)
@@ -301,32 +448,13 @@
                       (:retractions relations)
                       (:additions permissions)
                       (:retractions permissions)]))
-           mutation-id (mutation/new-id)
            report
            (if changed?
-             (journal/transact!
-              conn
-              {:mutation-id mutation-id
-               :calculation-db db
-               :kind :schema
-               :canonical-data
-               {:operation :write-schema
-                :schema-string schema-string
-                :deltas deltas}
-               :schema-change? true
-               :token-ttl-seconds token-ttl-seconds
-               :retention-grace-seconds retention-grace-seconds
-               :relation-ids
-               (mapv (fn [relation]
-                       [:eacl/id (:eacl/id relation)])
-                     (:additions relations))
-               :tx-data tx-data})
+             (transact-schema! conn tx-data schema-generation)
              {:db-before db
               :db-after db
               :tx-data []
-              :mutation-id (:head-id (journal/ensure-migrated! conn))
               :no-op? true})]
        (assoc deltas
-              :eacl.mutation/id (:mutation-id report)
-              :eacl.mutation/db-after (:db-after report)
-              :eacl.mutation/no-op? (boolean (:no-op? report)))))))
+              :eacl.schema/db-after (:db-after report)
+              :eacl.schema/no-op? (boolean (:no-op? report)))))))

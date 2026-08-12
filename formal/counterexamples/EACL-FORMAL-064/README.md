@@ -8,10 +8,9 @@ avoid the dominant graph-linear work. On the Explorer 10k fixture, the first
 page took hundreds of milliseconds while the exact-snapshot proof path took a
 few milliseconds.
 
-The corrected strategy reserves dependency-scoped cursor proofs for explicit
-managed mutation-stamp mode, where the writer contract maintains bounded
-stamps. Content and no-proof modes bind the exact selected immutable snapshot
-identity and issue no relationship-proof command. Because DataScript has no
-historical selection, any later basis is stale in those modes. This is both
-safer and cheaper: it cannot mix pages across bases and cannot scan the graph
-merely to mint a cursor.
+The corrected strategy uses the supported-writer ordered-generation proof
+frame. Cursor minting reads the complete dependency relation generations and
+stores their scalar frontier; it never scans relationship content. An
+unrelated later transaction preserves that proof, while a relevant relation
+write advances the frontier and rejects the cursor. This remains safe and
+keeps cursor proof identity constant-size.

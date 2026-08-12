@@ -450,53 +450,56 @@ module PageWindow {
         itemsProof: string
       )
 
-  // Production normalizes :proof-mode before cursor construction. Only the
-  // explicitly managed mutation-stamp mode may ask the adapter for a
-  // dependency-scoped relation proof. Content/no-proof modes pin the exact
-  // selected immutable snapshot instead; this keeps cursor minting
-  // independent of relationship-graph cardinality.
-  datatype NormalizedProofMode =
-    | MutationStampProof
-    | ContentProof
-    | NoCacheProof
+  // Production attempts one ordered-generation proof for an eligible current
+  // cursor. An unavailable proof binds the cursor to the exact selected
+  // immutable snapshot; there is no selectable proof algorithm.
+  datatype OrderedGenerationProofAvailability =
+    | CompleteOrderedGenerationProof
+    | OrderedGenerationProofUnavailable
 
   datatype CursorProofStrategy =
     | ManagedDependencyProof
     | ExactSnapshotProof
 
   function SelectCursorProofStrategy(
-    proofMode: NormalizedProofMode
+    availability: OrderedGenerationProofAvailability
   ): CursorProofStrategy {
-    if proofMode.MutationStampProof?
+    if availability.CompleteOrderedGenerationProof?
     then ManagedDependencyProof
     else ExactSnapshotProof
   }
 
-  function CursorRelationProofCommands(
-    proofMode: NormalizedProofMode
+  function CursorProofFrameCommands(
+    availability: OrderedGenerationProofAvailability
   ): nat {
-    if SelectCursorProofStrategy(proofMode).ManagedDependencyProof?
+    if SelectCursorProofStrategy(availability).ManagedDependencyProof?
     then 1
     else 0
   }
 
-  lemma ContentCursorMintingDoesNoRelationProofScan()
-    ensures SelectCursorProofStrategy(ContentProof).ExactSnapshotProof?
-    ensures CursorRelationProofCommands(ContentProof) == 0
+  lemma UnavailableProofUsesExactSnapshotWithoutGenerationReads()
+    ensures SelectCursorProofStrategy(
+              OrderedGenerationProofUnavailable
+            ).ExactSnapshotProof?
+    ensures CursorProofFrameCommands(
+              OrderedGenerationProofUnavailable
+            ) == 0
   {
   }
 
-  lemma NoCacheProofCursorMintingDoesNoRelationProofScan()
-    ensures SelectCursorProofStrategy(NoCacheProof).ExactSnapshotProof?
-    ensures CursorRelationProofCommands(NoCacheProof) == 0
+  lemma CompleteProofUsesManagedDependencyIdentity()
+    ensures SelectCursorProofStrategy(
+              CompleteOrderedGenerationProof
+            ).ManagedDependencyProof?
+    ensures CursorProofFrameCommands(CompleteOrderedGenerationProof) == 1
   {
   }
 
-  lemma OnlyManagedMutationModeRequestsDependencyProof(
-    proofMode: NormalizedProofMode
+  lemma OnlyCompleteOrderedGenerationProofUsesManagedIdentity(
+    availability: OrderedGenerationProofAvailability
   )
-    ensures CursorRelationProofCommands(proofMode) > 0 <==>
-            proofMode.MutationStampProof?
+    ensures CursorProofFrameCommands(availability) > 0 <==>
+            availability.CompleteOrderedGenerationProof?
   {
   }
 

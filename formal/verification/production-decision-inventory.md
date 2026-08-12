@@ -40,9 +40,9 @@ remain open source/platform refinements and are not implied by the
 differential campaign.
 
 Consistency selection now has a separate generated decision boundary.
-`ConsistencyDecision.dfy` distinguishes capability failure, missing managed
-writer authority, absent exact history, a present malformed adapter,
-cross-source selection, and failed causal/exact anchor postconditions. The
+`ConsistencyDecision.dfy` distinguishes capability failure, absent exact
+history, a present malformed adapter, cross-source selection, and failed
+native-revision/exact-locator postconditions. The
 16 plan states and 48 well-formed validation states are exhaustively compared
 through generated Java and JavaScript. Datomic, Datahike, and DataScript pass
 their configured engine selection into this boundary. The zero-coordination
@@ -51,7 +51,7 @@ already-captured immutable adapter; scope equality is reflexive and therefore
 does not justify a second FFI call or backend scope read.
 
 This verifies the finite decision over observed facts. It does not prove that
-an adapter's source scope, ancestry predicate, exact reconstruction, or
+an adapter's source scope, native revision, exact reconstruction, or
 authoritative barrier is truthful, and it does not prove token cryptography.
 Those remain explicit adapter and cryptographic refinement obligations.
 

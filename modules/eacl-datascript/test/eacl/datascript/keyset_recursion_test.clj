@@ -74,7 +74,7 @@
 
 (deftest managed-proof-equivalent-write-with-surviving-boundary-continues-test
   (let [{:keys [client]}
-        (seed! {:coherence-authority :managed})
+        (seed! {})
         page-1 (lookup client)
         _ (eacl/create-relationships!
            client

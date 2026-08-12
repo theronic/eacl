@@ -50,8 +50,7 @@
   :indexed-page-rendering
   :indexed-boolean-rendering
   :indexed-count-rendering]
- :proof-only-generated-decisions
- [:cache-validation]
+ :proof-only-generated-decisions []
  :materialized-reference-decisions
  [:can?
   :lookup-resources
@@ -158,8 +157,8 @@
   {:clj 24
    :cljs 24
    :selection-shapes
-   [:absent :malformed :identical :same-scope-anchor-pass
-    :same-scope-anchor-fail :different-scope]}
+   [:absent :malformed :identical :same-scope-revision-pass
+    :same-scope-revision-fail :different-scope]}
   :production-callers [:datomic :datahike :datascript]
   :captured-current-specialization
   {:generated-plan-decisions 1
@@ -171,7 +170,7 @@
    :generated-post-selection-decisions 1
    :backend-selection-calls 1
    :source-scope-reads-at-most 3
-   :graph-head-reads 1
+   :native-revision-reads 1
    :order-hint-reads 1
    :exact-locator-reads 1}
   :logical-work-report
@@ -336,10 +335,10 @@
    :nonportable-error-comparison-fails-observably true
    :stale-cursor-error-shape-comparison true
    :complete-public-cache-provenance-comparison true
-   :complete-public-selected-graph-comparison
+   :complete-public-selected-revision-comparison
    {:identity
-    [:source-scope :snapshot-id :graph-anchor :order-hint]
-    :client-local-exact-locator-excluded true}
+    [:source-scope :snapshot-id :native-revision :exact-locator]
+    :client-local-exact-locator-included true}
    :current-cache-generated-selection true
    :tests 7 :assertions 187 :status :passed}
   :cljs-public-state-trace

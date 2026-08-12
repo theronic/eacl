@@ -3,9 +3,8 @@
 
   Port of eacl.datomic.cache-model-test (managed-reuse-certification 8.3):
   seeded interleaved EACL-API relationship and schema writes with checks,
-  lookups, and counts compared against a no-cache client at every step, run
-  under both the fail-safe :unknown default and the explicit :managed writer
-  contract. Every write below uses an EACL writer, so managed reuse is in
+  lookups, and counts compared against a no-cache client at every step. Every
+  write below uses an EACL writer, so automatic proof-backed reuse is in
   contract and any stamped stale answer is a divergence."
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
@@ -74,18 +73,15 @@
           (str label " count-subjects")))))
 
 (deftest randomized-cache-and-mutation-differential-test
-  (doseq [[authority-label authority-options]
-          [[:unknown {}]
-           [:managed {:coherence-authority :managed}]]
-          seed (range 5)]
-    (testing (str (name authority-label) " authority, seed " seed)
+  (doseq [seed (range 5)]
+    (testing (str "automatic managed coherence, seed " seed)
       (let [conn (datascript/create-conn)
             rng (volatile! (inc seed))
             next-int! (fn [bound]
                         (mod (vswap! rng lehmer-next) bound))
             cached (datascript/make-client
                     conn
-                    (merge authority-options {:cache {}}))
+                    {:cache {}})
             uncached
             (atom (datascript/make-client conn {:cache cache/no-cache}))
             user-ids (mapv #(str "user-" %) (range 8))

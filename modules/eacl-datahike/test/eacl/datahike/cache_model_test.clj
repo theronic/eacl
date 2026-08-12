@@ -3,9 +3,8 @@
 
   Port of eacl.datomic.cache-model-test (managed-reuse-certification 8.3):
   seeded interleaved EACL-API relationship and schema writes with checks,
-  lookups, and counts compared against a no-cache client at every step, run
-  under both the fail-safe :unknown default and the explicit :managed writer
-  contract. Every write below uses an EACL writer, so managed reuse is in
+  lookups, and counts compared against a no-cache client at every step. Every
+  write below uses an EACL writer, so automatic proof-backed reuse is in
   contract and any stamped stale answer is a divergence."
   (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
@@ -70,20 +69,17 @@
           (str label " count-subjects")))))
 
 (deftest randomized-cache-and-mutation-differential-test
-  ;; Three seeds per authority: Datahike transactions are the slow step and
+  ;; Three seeds: Datahike transactions are the slow step and
   ;; the oracle's power comes from the interleaving, not the seed count.
-  (doseq [[authority-label authority-options]
-          [[:unknown {}]
-           [:managed {:coherence-authority :managed}]]
-          seed (range 3)]
-    (testing (str (name authority-label) " authority, seed " seed)
+  (doseq [seed (range 3)]
+    (testing (str "automatic managed coherence, seed " seed)
       (let [conn (datahike/create-conn)
             rng (volatile! (inc seed))
             next-int! (fn [bound]
                         (mod (vswap! rng lehmer-next) bound))
             cached (datahike/make-client
                     conn
-                    (merge authority-options {:cache {}}))
+                    {:cache {}})
             uncached
             (atom (datahike/make-client conn {:cache cache/no-cache}))
             user-ids (mapv #(str "user-" %) (range 8))

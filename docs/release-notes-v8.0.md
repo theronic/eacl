@@ -7,14 +7,17 @@ Exact snapshot pinning remains available on history-capable backends; DataScript
 is deliberately current-only and rejects `at-exact-snapshot`. These are
 deliberate pre-release breaking changes.
 
-V8 also adds the database-visible v3 mutation journal and authenticated causal
-tokens/cursors, and moves the DataScript/Datahike ports to the v8 Relay
-list/count contract. The relationship storage version stays at 7: Datomic
+V8 uses database-visible native schema/relation generations and authenticated
+v4 native-revision tokens/cursors, and moves the DataScript/Datahike ports to
+the v8 Relay list/count contract. The earlier v8 candidate's mutation graph,
+random mutation records, anchor membership, and global graph-head CAS are
+superseded and are not installed on new databases. The relationship storage
+version stays at 7: Datomic
 keeps its v7 layout, Datahike uses the same two-tuple physical layout, and
 DataScript uses the same logical two-endpoint representation with indexed
-ordinary vector values. Client construction performs an idempotent additive
-migration that creates the graph family/head, schema mutation identity, and
-identities for existing relations.
+ordinary vector values. Upgraded databases expose an explicit additive
+`prepare-cache-coherence!` step that initializes missing physical relation
+generations before managed v4 readers start.
 
 ## Modular artifacts
 
@@ -33,7 +36,7 @@ EACL v8.0 is a workspace with independently consumable modules:
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
 does not alter v7 relationship storage. Tokens, cursors, cache envelopes, and
-the additive mutation-journal schema are deliberately new v8 formats; no
+the additive native-generation schema are deliberately new v8 formats; no
 downgrade or dual-format cache/token mode is provided. The original
 six-function SPI remains compatible for third-party adapters, but it does not
 advertise v8 causal selection or proof lifting. The three built-in adapters use
@@ -48,15 +51,39 @@ cache; this is a breaking request/response change from their v7 ports. See the
 Published module dependency maps do not select Logback or another logging
 implementation. Applications own their logging backend and configuration.
 
-It adds mutation-journal, graph-head, schema-proof, and per-relation mutation
-identity attributes plus the existing transactor-side relation-removal guard.
-No authorization answers are persisted in the application database. A managed
-graph mutation appends its random mutation record and updates graph/schema/
-relation identities atomically, so answers survive writes outside their
-complete dependency closure without relying on listener state or transaction
-number equality.
+It adds physical schema/relation generations and commit-time endpoint identity
+guards. No authorization answers are persisted in the application database.
+A managed relationship mutation stamps every distinct affected relation in the
+same transaction, so answers survive writes outside their complete dependency
+closure without a listener, transaction-log read, or database-global CAS.
 
 ## Consistency
+
+`expand-permission-tree` is now implemented on Datomic, Datahike, DataScript
+CLJ, and DataScript CLJS. It is an additive protocol behavior change: the
+existing method no longer throws `:eacl/not-implemented`. Requests accept
+`:resource`, `:permission`, optional `:consistency`, and optional
+`:timeout-ms`; responses contain `:expanded-at` and a shallow annotated
+`:tree-root`. The tree and token are bound to one selected immutable snapshot.
+
+Expansion preserves empty branches, nested permission/arrow boundaries, and
+duplicate multiplicity. Vector order is not semantic. Client construction now
+accepts `:permission-tree-limits` for depth, schema-component,
+relationship-value, node, and leaf-subject work. Typed failures are
+all-or-error and do not expose a partial tree or internal backend identity.
+
+Compatibility was checked as black-box behavior against a live SpiceDB v1.56.0
+Docker image pinned by digest. This is a scoped topology claim for EACL's
+supported union/direct/single-arrow schema subset, not a claim of full SpiceDB
+feature or byte-order equivalence. The Dafny model proves the backend-neutral
+shallow topology, denotation, cycle, and limit properties; the handwritten
+CLJ/CLJS implementation is differentially tested rather than mechanically
+extracted.
+
+No database migration or persisted attribute is required. Rollback by first
+stopping callers that depend on successful expansion, then deploy the prior
+code and remove `:permission-tree-limits` from client configuration. Existing
+schemas, relationships, caches, and tokens require no rewrite.
 
 - The default authorization mode is `:minimize-latency`.
 - The redundant pre-release names `:local-snapshot` and
@@ -64,8 +91,8 @@ number equality.
 - Datomic ordinary reads call `d/db` once and do not call `d/sync` or
   `d/as-of`.
 - `:fully-consistent` explicitly requests a backend synchronization barrier.
-- `:at-least-as-fresh` performs targeted freshness selection and validates the
-  authenticated graph anchor.
+- `:at-least-as-fresh` performs targeted selection and validates the
+  authenticated native revision floor within one source lifecycle.
 - `:at-exact-snapshot` performs exact selection and bypasses completed-answer
   caching on backends that advertise it. DataScript rejects it before cache
   access because DataScript has no EACL time-travel registry.
@@ -81,30 +108,25 @@ permission check.
 
 ## Mutation discipline
 
-- Client construction idempotently establishes one causal family and mutation
-  graph when absent. Concurrent migrations converge through transactional
-  compare-and-swap.
-- `write-schema!` publishes the schema mutation identity and graph head in the
-  same committed transaction as the schema delta and expires the complete
-  client cache generation.
+- Client construction does not install or migrate a mutation journal.
+- `write-schema!` publishes the physical schema generation and initializes
+  every added relation generation in the same transaction as the schema delta.
 - `:coherence-authority :managed` means every relationship writer atomically
-  publishes the relation transaction stamps used by the cache. Unknown or
+  publishes the physical relation generations used by the cache. Unknown or
   mixed writers must remain `:unknown`, which permits exact-current reuse only.
-- Every managed relationship helper publishes one v3 mutation record, advances
-  the graph head, and stamps every affected relation in the same transaction as
-  the tuple change. Batched deletion does this separately for each committed
-  batch and mints its response token from the final `db-after`.
-- Datomic still emits `:eacl/relation-version` CAS datoms to serialize
-  competing relationship writes. The transaction component of the current
-  relation-version datom is the preferred managed cache stamp; the relation
-  mutation datom is the never-written initialization fallback.
+- Every managed relationship helper stamps each distinct affected relation in
+  the same transaction as the tuple change. There is no global graph CAS.
+- Relationship additions carry commit-time endpoint identity CAS guards, so a
+  stale plan cannot recreate a tuple after safe endpoint deletion. Cache
+  correctness itself depends on generations, not CAS.
 - `integrity/repair-tx-batches` keeps each dangling-half repair and its
   dependency stamps in one transaction. Custom repair or relationship writers
   must either use the managed mutation builder or keep
   `:coherence-authority :unknown`.
 - Consumers should call `delete-relationships!` before retracting an entity.
-  The Datomic, Datahike, and DataScript integrity reports detect ghost endpoint
-  halves left by an incorrect deletion sequence.
+  Alternatively, install/prepare the optional target-only
+  `:eacl.fn/retractEntity`; it supports multiple invocations and numeric-eid
+  ghost repair. Integrity reports detect damage when the old eid is unknown.
 - Relationship update operations are validated before endpoint resolution. `delete-object!`
   reports actual committed relationship-datom retractions across all batches.
 
@@ -143,9 +165,9 @@ writers), and one raw backend transaction outside that contract can retract
 authorization data without touching a relation stamp. The prior DataScript
 default could therefore serve a stale allow to stock consumers; a pinning
 regression test now encodes that adversarial sequence against the default
-configuration. Stock DataScript writers under `:unknown` also no longer mint
-zed tokens (managed stamps are the token authority), which fails loudly at
-the point of use rather than silently trusting unstamped writes.
+configuration. Native-revision token issuance and selection are independent of
+this cache authority; `:unknown` remains exact-cache-only but may use the
+backend's supported consistency modes.
 
 Managed reuse covers completed answers, relationship projections, AND
 completed denotations (acyclic and recursive least fixed points) under one
@@ -155,18 +177,16 @@ relation-stamp framing:
   permission, result kind, and relevant configuration.
 - A schema-generation object owns all managed entries. A real schema update
   discards the complete old generation.
-- Each entry is keyed by the complete sorted per-relation stamp vector over
-  its compiled dependency closure (transaction and mutation identity per
+- Each entry is keyed by the complete sorted per-relation generation vector over
+  its compiled dependency closure (assertion transaction and stored generation per
   relation — not a folded maximum), and plan compilation fails with a typed
   error if a compiled rule could reference a relation outside that closure.
 - Under ordinary forward transactions, a relevant write changes the vector;
   an unrelated write leaves it unchanged.
 - Missing/malformed stamps disable managed reuse rather than becoming a
   reusable zero value.
-- Datomic reads the current `:eacl/relation-version` datom transaction, with
-  the schema-created relation mutation datom as the never-written fallback.
-  Datahike and DataScript use their current relation mutation datom
-  transactions.
+- All backends read the current physical `:eacl/relation-version` assertion;
+  a missing assertion is a fail-closed miss and has no fallback.
 - Custom object-ID codecs remain exact-current-only unless they supply the
   additional deterministic dependency contract.
 - Randomized cached-versus-cache-free differential oracles run with the
@@ -179,7 +199,7 @@ relation-stamp framing:
 - `eacl.datahike.core/expire-cache!`
 - `eacl.datascript.core/expire-cache!`
 
-These atomically replace the entire client lifecycle. Use them after reset,
+These rotate source/token scope and replace the entire client lifecycle. Use them after reset,
 restore, branch force, manual history manipulation, or unstamped bulk repair.
 Async Datomic excision is outside this v8 contract.
 
@@ -208,7 +228,7 @@ single request `:timeout-ms` remains the end-to-end deadline.
 Portable cursor payloads are v10 inside the compact `eacl_c4_` authenticated
 frame. Cursors bind the backend/source, operation, complete semantic query
 (including principal and consistency), result kind, semantic/configuration
-identity, graph anchor, and exact snapshot locator. Relay window size and
+identity, source lifecycle, native revision, and exact snapshot locator. Relay window size and
 direction remain caller-controlled so the same boundary supports forward and
 backward navigation.
 
@@ -286,10 +306,8 @@ generated restoration validates it before use. A request with `:cache? false`,
 a changed query/snapshot proof or ordering ABI, or a different client cannot
 reuse the artifact.
 
-DataScript graph-head selection now reads the single managed head-order datom
-directly from EAVT. The previous general Datalog query was on every adapter
-construction path, including a relationship-page cache hit, and dominated
-browser hit latency as the database grew.
+DataScript native-revision selection reads immutable `:max-tx` directly; it
+does not query a managed graph entity on adapter construction.
 
 Default DataScript authorization cursors now use exact current-basis identity
 instead of computing a content digest over their relationship dependency
@@ -337,12 +355,10 @@ counterexample that forced this correction.
 
 ## Correctness findings closed
 
-- **Datomic raw writer stamp mismatch.** The first managed-cache implementation
-  read only `:eacl.relation/mutation-id`. The documented
-  `eacl.datomic.impl/tx-relationship` helper updates
-  `:eacl/relation-version`; a managed entry could therefore remain stale.
-  Managed Datomic validation now prefers the relation-version datom
-  transaction and uses the mutation datom only as the initialization fallback.
+- **Datomic raw writer stamp mismatch.** Managed Datomic validation now uses
+  only the physical `:eacl/relation-version` assertion written by the public
+  and documented low-level helpers. Every relation is initialized on schema
+  write/migration; there is no mutation-ID fallback.
 - **DataScript exact-snapshot ABA (superseded by the final current-only
   contract).** Numeric `max-tx` cannot identify immutable DB values across
   `reset-conn!`. Instead of retaining a second historical registry and its
@@ -480,7 +496,7 @@ counterexample that forced this correction.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 8,616 proof efforts across 27 source-project
+The locked Dafny run completes 8,785 proof efforts across 30 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Generated authority routes

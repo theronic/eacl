@@ -2,7 +2,7 @@
   "DataScript construction shim over the shared client orchestration
   (backend-unification, D-7). Everything here is genuinely
   DataScript-specific: index access for managed stamps, the snapshot
-  adapter, schema/journal installation, and transaction submission. The
+  adapter, schema installation, and transaction submission. The
   nine public operations, snapshot-context assembly, cursor plumbing, and
   cache wiring live once in eacl.client.orchestration."
   (:require [datascript.core :as ds]
@@ -10,53 +10,14 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
-            [eacl.datascript.mutation :as journal]
             [eacl.datascript.schema :as schema]
-            [eacl.mutation :as mutation]
-            [eacl.relationships.storage :as relationship-storage]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.relationships.storage :as relationship-storage]))
 
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
 
 (def default-internal-cursor->spice orchestration/default-internal-cursor->spice)
 (def default-spice-cursor->internal orchestration/default-spice-cursor->internal)
-
-(defn- datom-proof
-  [db entity attribute]
-  (when-let [datom (first (ds/datoms db :eavt entity attribute))]
-    [(:tx datom) (:v datom)]))
-
-(defn- managed-cache-descriptor
-  [db relation-ids]
-  (let [relation-ids (vec (distinct relation-ids))]
-    (when (seq relation-ids)
-      (let [schema-eid
-            (ds/entid db [:eacl/id mutation/schema-entity-id])
-            schema-stamp
-            (when schema-eid
-              (datom-proof
-               db schema-eid mutation/schema-mutation-id-attr))
-            relation-stamps
-            (keep
-             (fn [relation-id]
-               (when-let [tx
-                          (datom-proof
-                           db relation-id
-                           mutation/relation-mutation-id-attr)]
-                 [relation-id tx]))
-             relation-ids)]
-        (when (and (subproblem/proof-stamp? schema-stamp)
-                   (= (count relation-ids)
-                      (count relation-stamps))
-                   (every? (comp subproblem/proof-stamp? second)
-                           relation-stamps))
-          {:schema-stamp schema-stamp
-           :dependency-stamp
-           (mapv
-            (fn [[relation-id [tx mutation-id]]]
-              [relation-id tx mutation-id])
-            (sort-by first relation-stamps))})))))
 
 (defn- relationship-retraction-count
   [_db tx-data]
@@ -67,21 +28,24 @@
            (contains? relationship-storage/attributes a)))
     tx-data)))
 
+(defn- transact-native!
+  [conn {:keys [tx-data]}]
+  (ds/transact! conn (vec tx-data)))
+
 (def ^:private api
   {:backend-id :datascript
    :db ds/db
    :entid ds/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (ds/entity db eid)))
    :snapshot-adapter datascript-backend/snapshot-adapter
-   :managed-cache-descriptor managed-cache-descriptor
+   :native-source-id datascript-backend/connection-source-id
    :relationship-retraction-count relationship-retraction-count
+   :transact! transact-native!
    ;; Vars, not values: late binding keeps instrumentation (with-redefs in
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
             :write-schema! #'schema/write-schema!}
-   :journal {:ensure-migrated! #'journal/ensure-migrated!
-             :transact! #'journal/transact!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
           :relationship-relation-id #'impl/relationship-relation-id
@@ -135,10 +99,20 @@
                     {:type :eacl/invalid-client}))))
 
 (defn expire-cache!
-  "Expires every completed answer owned by one DataScript EACL client."
-  [client]
-  (require-datascript-client! client "expire-cache!")
-  (orchestration/expire-cache! client))
+  "Rotates one DataScript client's local cache/token lifecycle."
+  ([client]
+   (require-datascript-client! client "expire-cache!")
+   (orchestration/expire-cache! client))
+  ([client source-lifecycle]
+   (require-datascript-client! client "expire-cache!")
+   (orchestration/expire-cache! client source-lifecycle)))
+
+(def prepare-cache-coherence!
+  "Initializes missing native cache generations on a quiesced connection.
+
+  This does not detect or repair earlier unsupported unstamped mutations and
+  is not a cache flush."
+  schema/prepare-cache-coherence!)
 
 (defn cache-stats
   "Returns private completed-cache counters for one DataScript EACL client."
@@ -155,12 +129,9 @@
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
   - :cache - omitted creates a bounded client-private current-generation
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    :coherence-authority defaults to :unknown on every backend: cached
-    entries are reused only for the exact immutable database value they
-    were computed on, which stays correct under raw ds/transact! writes.
-    Pass :coherence-authority :managed - an explicit writer contract that
-    every schema and relationship mutation goes through EACL's APIs - to
-    let unchanged cache portions survive unrelated transactions.
+    Exact hits are snapshot-local; complete native generation proofs let
+    unchanged answers survive unrelated forward transactions. Authorization
+    mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides.
 

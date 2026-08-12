@@ -19,11 +19,10 @@ record:
 - the result of an independent source/model/control-flow review, not merely a
   rerun of maintainer-authored tests.
 
-The proof-only `CacheKernel.dfy` `:cache-validation` operation has no live
-production consumer and contributes no production assurance. The v8 target
-rejects caller-supplied cache providers. A reviewer MUST fail the review if
-either fact is represented otherwise in generated-boundary, assurance-matrix,
-manifest, or public claim text.
+`CacheKernel.dfy` is proof-only and exposes no runtime decision operation. The
+v8 target rejects caller-supplied cache providers. A reviewer MUST fail the
+review if either fact is represented otherwise in generated-boundary,
+assurance-matrix, manifest, or public claim text.
 
 ## Clean-checkout execution
 

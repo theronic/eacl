@@ -77,8 +77,7 @@
    }")
 
 (def benchmark-client-options
-  {:coherence-authority :managed
-   :security-key "01234567890123456789012345678901"})
+  {:security-key "01234567890123456789012345678901"})
 
 (defn- seed-shared-arrow!
   [conn writer permission-names depth server-count]

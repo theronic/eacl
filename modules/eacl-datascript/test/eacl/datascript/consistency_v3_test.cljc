@@ -7,7 +7,6 @@
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
-            [eacl.datascript.schema :as datascript-schema]
             [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.spicedb.consistency :as consistency]))
@@ -26,6 +25,8 @@
 (def relationship
   (eacl/->Relationship user :reader document))
 
+(def ^:private source-lifecycle "datascript-consistency-v4-test")
+
 (defn- reusable-subproblem-hits
   [stats]
   (+ (get-in stats [:subproblems :projection-hits] 0)
@@ -35,8 +36,8 @@
   [conn options]
   (datascript/make-client
    conn
-   (merge {:coherence-authority :managed
-           :security-key security-key
+   (merge {:security-key security-key
+           :source-lifecycle source-lifecycle
            :consistency-sync-timeout-ms 5}
           options)))
 
@@ -387,12 +388,14 @@
              (eacl/can?
               restarted user :view document
               (consistency/at-least-as-fresh token))))))
-    (testing "numeric progress cannot replace the missing anchor"
-      ;; Install a same-family predecessor and advance its transaction counter
-      ;; independently. The token mutation remains absent.
+    (testing "a connection reset requires lifecycle rotation"
+      ;; Reset reuses the connection object's source identity, so the operator
+      ;; must rotate the lifecycle before accepting work on replacement state.
       (ds/reset-conn! conn pre-write)
       (ds/transact! conn [{:eacl/id "unrelated"}])
-      (is (= :eacl.consistency/freshness-unavailable
+      (datascript/expire-cache! client
+                                "datascript-consistency-reset-v4-test")
+      (is (= :eacl.consistency/incomparable-scope
              (:type
               (error-data
                #(eacl/can?
@@ -408,22 +411,22 @@
         _ (seed! conn client)
         token
         (:zed/token
-         (eacl/create-relationship! client relationship))]
-    (let [before (datascript/cache-stats client)]
-      (let [exact-error
-            (error-data
-             #(eacl/can?
-               client user :view document
-               (consistency/at-exact-snapshot token)))
-            after (datascript/cache-stats client)]
-        (is (= :eacl/invalid-config (:type removed-option-error)))
-        (is (= [:exact-snapshot-registry-size]
-               (:unknown-keys removed-option-error)))
-        (is (= :eacl/unsupported-capability (:type exact-error)))
-        (is (= :consistency (:capability exact-error)))
-        (is (= :at-exact-snapshot (:requested exact-error)))
-        (is (= before after)
-            "unsupported exact selection must fail before cache access")))))
+         (eacl/create-relationship! client relationship))
+        before (datascript/cache-stats client)
+        exact-error
+        (error-data
+         #(eacl/can?
+           client user :view document
+           (consistency/at-exact-snapshot token)))
+        after (datascript/cache-stats client)]
+    (is (= :eacl/invalid-config (:type removed-option-error)))
+    (is (= [:exact-snapshot-registry-size]
+           (:unknown-keys removed-option-error)))
+    (is (= :eacl/unsupported-capability (:type exact-error)))
+    (is (= :consistency (:capability exact-error)))
+    (is (= :at-exact-snapshot (:requested exact-error)))
+    (is (= before after)
+        "unsupported exact selection must fail before cache access")))
 
 (deftest low-level-db-entry-point-bypasses-completed-cache-test
   (let [conn (datascript/create-conn)
@@ -445,7 +448,7 @@
       (is (= (:exact-hits before)
              (:exact-hits after))))))
 
-(deftest cloned-history-and-listener-independence-test
+(deftest cloned-connections-are-distinct-sources-and-listener-independent-test
   (let [original-listen! ds/listen!
         conn (datascript/create-conn)
         authorization (managed-client conn {})]
@@ -465,11 +468,13 @@
             (managed-client (ds/conn-from-db post-token-db) {})
             pre-token-client
             (managed-client (ds/conn-from-db pre-token-db) {})]
-        (is (true?
-             (eacl/can?
-              post-token-client user :view document
-              (consistency/at-least-as-fresh token))))
-        (is (= :eacl.consistency/freshness-unavailable
+        (is (= :eacl.consistency/incomparable-scope
+               (:type
+                (error-data
+                 #(eacl/can?
+                   post-token-client user :view document
+                   (consistency/at-least-as-fresh token))))))
+        (is (= :eacl.consistency/incomparable-scope
                (:type
                 (error-data
                  #(eacl/can?
@@ -496,7 +501,7 @@
     (ds/transact! right-conn [{:eacl/id "unrelated"}])
     (is (= (:max-tx (ds/db left-conn))
            (:max-tx (ds/db right-conn))))
-    (is (= :eacl.consistency/freshness-unavailable
+    (is (= :eacl.consistency/incomparable-scope
            (:type
             (error-data
              #(eacl/can?
@@ -534,10 +539,10 @@
                authorization user :view document
                (consistency/at-exact-snapshot token))))))))
 
-(deftest content-proofs-are-bounded-and-cover-public-identity-test
+(deftest ordered-generations-track-only-supported-mutations-test
   (let [conn (datascript/create-conn)
         authorization
-        (managed-client conn {:proof-mode :content})
+        (managed-client conn {})
         _ (seed! conn authorization)
         _ (eacl/create-relationship! authorization relationship)
         before-adapter
@@ -548,21 +553,17 @@
          (first
           (backend/invoke
            before-adapter :relation-defs :document :reader)))
-        schema-proof (backend/invoke before-adapter :schema-proof)
         before-proof
-        (backend/invoke before-adapter :relation-proof [relation-id])
-        user-eid (ds/entid (ds/db conn) [:eacl/id "user"])
+        (backend/invoke before-adapter :proof-frame [relation-id])
         document-eid (ds/entid (ds/db conn) [:eacl/id "document"])
         reverse-datom
         (first
          (ds/datoms
           (ds/db conn) :eavt document-eid
           relationship-storage/reverse-attribute))]
-    (is (= #{:content-digest} (set (keys schema-proof))))
-    (is (= 43 (count (:content-digest schema-proof))))
-    (is (= #{:content-digest} (set (keys before-proof))))
-    (is (= 43 (count (:content-digest before-proof))))
-    (testing "one out-of-band physical-half change invalidates the proof"
+    (is (integer? (:schema-stamp before-proof)))
+    (is (= relation-id (ffirst (:relation-stamps before-proof))))
+    (testing "unsupported raw mutation leaves the managed proof unchanged"
       (ds/transact!
        conn
        [[:db/retract
@@ -572,32 +573,22 @@
       (let [half-changed-adapter
             (datascript-backend/snapshot-adapter
              (ds/db conn) (:opts authorization))]
-        (is (not=
-             before-proof
-             (backend/invoke
-              half-changed-adapter :relation-proof [relation-id]))))
-      (ds/transact!
-       conn
-       [[:db/add
-         document-eid
-         relationship-storage/reverse-attribute
-         (:v reverse-datom)]])
-      (is (= before-proof
-             (backend/invoke
-              (datascript-backend/snapshot-adapter
-               (ds/db conn) (:opts authorization))
-              :relation-proof [relation-id]))))
-    ;; The stored relationship keeps the same endpoint eid. Only its public
-    ;; identity changes, so this specifically proves the identity boundary is
-    ;; part of full-content cache and cursor equivalence.
-    (ds/transact! conn [[:db/retract user-eid :eacl/id "user"]
-                        [:db/add user-eid :eacl/id "renamed-user"]])
-    (let [after-adapter
-          (datascript-backend/snapshot-adapter
-           (ds/db conn) (:opts authorization))
-          after-proof
-          (backend/invoke after-adapter :relation-proof [relation-id])]
-      (is (not= before-proof after-proof)))))
+        (is (= before-proof
+               (backend/invoke
+                half-changed-adapter :proof-frame [relation-id]))))
+      (eacl/write-relationship!
+       authorization
+       {:operation :touch
+        :subject user
+        :relation :reader
+        :resource document})
+      (let [after-proof
+            (backend/invoke
+             (datascript-backend/snapshot-adapter
+              (ds/db conn) (:opts authorization))
+             :proof-frame [relation-id])]
+        (is (< (second (first (:relation-stamps before-proof)))
+               (second (first (:relation-stamps after-proof)))))))))
 
 (deftest relationship-cursor-changed-proof-is-stale-test
   (let [conn (datascript/create-conn)

@@ -5,6 +5,7 @@
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
+            [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
@@ -92,12 +93,20 @@
   derived-schema cache through `:cursor-schema-stamp` (an
   `{:adapter a :stamp delay}` pair); the pair is honored only for the very
   adapter it was resolved against, so recovery-path adapters read their own
-  stamp. The `:schema-proof` invocation is memoized per adapter instance."
+  ordered-generation frame."
   [adapter opts]
   (let [shared (:cursor-schema-stamp opts)]
     (if (and shared (identical? (:adapter shared) adapter))
       (force (:stamp shared))
-      (backend/invoke adapter :schema-proof))))
+      (let [frame
+            (let [candidate (:request-proof-frame opts)]
+              (if (and candidate
+                       (identical? adapter (:adapter candidate)))
+                candidate
+                (proof-frame/request-frame adapter)))
+            proof (proof-frame/resolve! frame [])]
+        (when (proof-frame/complete? proof)
+          (:schema-stamp proof))))))
 
 (defn- plain-scope-object
   [object]
@@ -128,7 +137,7 @@
   "Boundary-alias scope for the client-private page-navigation cache.
 
   The navigation `generation` already pins the exact immutable snapshot
-  (graph head included), so this digest deliberately omits the schema stamp:
+  (native revision included), so this digest deliberately omits the schema stamp:
   it correlates adjacent pages within one generation and carries no
   validation authority."
   [operation query]
@@ -141,8 +150,8 @@
 (defn- page-generation
   [adapter]
   {:backend (backend/backend-id adapter)
-   :source-scope (backend/invoke adapter :source-scope)
-   :graph-head (backend/invoke adapter :graph-head)
+   :source-scope (consistency/source-scope adapter)
+   :native-revision (consistency/native-revision adapter)
    :adapter-fingerprint (backend/fingerprint adapter)
    :identity-contract (backend/identity-contract adapter)})
 
@@ -309,12 +318,11 @@
   Returns nil when the schema stamp or any relation stamp is unreadable, so
   the caller falls back to the exact-snapshot proof (never wrong, at most a
   recovery instead of a continuation hit)."
-  [adapter schema-stamp relation-ids]
+  [request-proof-frame relation-ids]
   (let [relation-ids (vec relation-ids)
-        relation-stamps
-        (backend/invoke adapter :relation-proof relation-ids)]
-    (when (and (some? schema-stamp)
-               (some? relation-stamps))
+        proof (proof-frame/resolve! request-proof-frame relation-ids)
+        descriptor (proof-frame/descriptor proof)]
+    (when descriptor
       {:dependency-scope-digest
        (secure/canonical-digest
         "eacl/cursor/dependency-scope/v4"
@@ -323,22 +331,19 @@
        :proof-digest
        (secure/canonical-digest
         "eacl/cursor/dependency-proof/v1"
-        {:schema-stamp schema-stamp
-         :relation-stamps relation-stamps})})))
+        descriptor)})))
 
 (defn- build-dependency-context
-  [adapter schema-stamp relation-ids]
-  (let [graph-head (backend/invoke adapter :graph-head)
+  [adapter request-proof-frame relation-ids]
+  (let [native-revision (consistency/native-revision adapter)
         base
-        {:source-scope
-         {:backend (backend/backend-id adapter)
-          :scope (backend/invoke adapter :source-scope)}
-         :graph-head graph-head
+        {:source-scope (consistency/source-scope adapter)
+         :native-revision native-revision
          :adapter-fingerprint (backend/fingerprint adapter)
          :identity-contract (backend/identity-contract adapter)}
         dependency-digests
         (when (some? relation-ids)
-          (dependency-stamp-digests adapter schema-stamp relation-ids))]
+          (dependency-stamp-digests request-proof-frame relation-ids))]
     (if dependency-digests
       (merge base dependency-digests)
       (assoc base
@@ -346,8 +351,11 @@
              :proof-digest
              (secure/canonical-digest
               "eacl/cursor/exact-snapshot/v4"
-              {:snapshot-id (backend/invoke adapter :snapshot-id)
-               :graph-head graph-head})))))
+              {:snapshot-id
+               (if request-proof-frame
+                 (proof-frame/snapshot-id request-proof-frame)
+                 (backend/invoke adapter :snapshot-id))
+               :native-revision native-revision})))))
 
 (defn dependency-context
   "Builds bounded continuation metadata for one immutable snapshot.
@@ -355,7 +363,7 @@
   Without `relation-ids` the proof pins the exact snapshot identity
   (relationship-index cursors keep this arity). With a sorted vector of
   relation-definition eids — the query's compiled dependency closure — the
-  proof becomes the schema stamp plus the per-relation stamps, so a
+  proof becomes the schema stamp plus the scalar dependency frontier, so a
   transaction touching no relation in the closure leaves the proof equal and
   the continuation reusable. Unreadable stamps fall back to the
   exact-snapshot proof."
@@ -365,7 +373,7 @@
    (build-dependency-context
     adapter
     (when (some? relation-ids)
-      (backend/invoke adapter :schema-proof))
+      (proof-frame/request-frame adapter))
     relation-ids)))
 
 (defn- request-relation-ids
@@ -377,10 +385,13 @@
 (defn- request-dependency-context
   [adapter opts]
   (if-let [relation-ids (request-relation-ids opts)]
-    (build-dependency-context
-     adapter
-     (request-schema-stamp adapter opts)
-     relation-ids)
+    (let [candidate (:request-proof-frame opts)
+          frame
+          (if (and candidate
+                   (identical? adapter (:adapter candidate)))
+            candidate
+            (proof-frame/request-frame adapter))]
+      (build-dependency-context adapter frame relation-ids))
     (dependency-context adapter)))
 
 (defn- transform-edge-ids
@@ -479,24 +490,21 @@
        field))
    execution-identity-fields))
 
-(defn- graph-code
-  "Graph-anchor code in the numbering shared by one continuation decision:
-  0 = the current selection's graph, 1 = the cursor's (different) graph,
-  2 = any other graph. The kernel's exact arm compares codes, so an exact
-  selection is accepted only when it resolves the cursor's own graph."
+(defn- revision-code
+  "Native-revision code in the numbering shared by one continuation decision:
+  0 = the current selection, 1 = the cursor's different revision, and 2 = any
+  other revision. The generated kernel still calls this scalar `graph`; the
+  value now represents exact native revision identity, never ancestry."
   [current envelope context]
-  (let [anchor
-        (secure/canonicalize
-         (get-in context [:graph-head :graph-anchor]))]
+  (let [revision
+        (secure/canonicalize (:native-revision context))]
     (cond
-      (= anchor
-         (secure/canonicalize
-          (get-in current [:graph-head :graph-anchor])))
+      (= revision
+         (secure/canonicalize (:native-revision current)))
       0
 
-      (= anchor
-         (secure/canonicalize
-          (get-in envelope [:graph-head :graph-anchor])))
+      (= revision
+         (secure/canonicalize (:native-revision envelope)))
       1
 
       :else 2)))
@@ -516,7 +524,7 @@
         cursor-proof (continuation-proof envelope)
         exact-decision
         (when exact
-          {:graph (graph-code current envelope exact)
+          {:graph (revision-code current envelope exact)
            :source (execution-identity exact)
            :proof (continuation-proof exact)})]
     (verified/decide
@@ -530,7 +538,7 @@
       :cursor-source cursor-source
       :current-proof current-proof
       :cursor-proof cursor-proof
-      :cursor-graph (graph-code current envelope envelope)
+      :cursor-graph (revision-code current envelope envelope)
       :exact exact-decision})))
 
 (defn- stale-context!
@@ -550,8 +558,8 @@
 (defn- ensure-cursor-satisfies-request!
   [opts envelope]
   (when-let [floor (:cursor-freshness-floor opts)]
-    (let [cursor-order (get-in envelope [:graph-head :order-hint])
-          floor-order (:order-hint floor)]
+    (let [cursor-order (get-in envelope [:native-revision :revision])
+          floor-order (:revision floor)]
       (when (or (not (integer? cursor-order))
                 (not (integer? floor-order))
                 (< cursor-order floor-order))
@@ -560,15 +568,15 @@
           :requested-order-hint floor-order}))))
   (when (= :at-exact-snapshot (:cursor-consistency-mode opts))
     (let [requested (:cursor-request-token opts)
-          cursor-head (:graph-head envelope)]
-      (when (or (not= (:graph-anchor requested)
-                      (:graph-anchor cursor-head))
+          cursor-revision (:native-revision envelope)]
+      (when (or (not= (:revision requested)
+                      (:revision cursor-revision))
                 (not= (:exact-locator requested)
-                      (:exact-locator cursor-head)))
+                      (:exact-locator cursor-revision)))
         (consistency/cursor-conflict!
-         {:cursor-graph-anchor (:graph-anchor cursor-head)
-          :requested-graph-anchor (:graph-anchor requested)
-          :cursor-exact-locator (:exact-locator cursor-head)
+         {:cursor-revision (:revision cursor-revision)
+          :requested-revision (:revision requested)
+          :cursor-exact-locator (:exact-locator cursor-revision)
           :requested-exact-locator (:exact-locator requested)})))))
 
 (defn- apply-continuation-decision!
@@ -604,10 +612,10 @@
 
     :conflict
     (consistency/cursor-conflict!
-     {:cursor-graph-anchor
-      (get-in envelope [:graph-head :graph-anchor])
-      :selected-graph-anchor
-      (get-in current [:graph-head :graph-anchor])})
+     {:cursor-revision
+      (get-in envelope [:native-revision :revision])
+      :selected-revision
+      (get-in current [:native-revision :revision])})
 
     :snapshot-unavailable
     (stale-context!
@@ -620,7 +628,7 @@
     :history-divergence
     (throw
      (ex-info
-      "The cursor exact locator resolved to another graph."
+      "The cursor exact locator resolved to another native revision."
       {:type :eacl.consistency/history-divergence
        :eacl/error :eacl.consistency/history-divergence}))
 
@@ -666,12 +674,10 @@
                 (backend/invoke
                  adapter
                  :select-exact
-                 {:graph-anchor
-                  (get-in envelope [:graph-head :graph-anchor])
-                  :order-hint
-                  (get-in envelope [:graph-head :order-hint])
+                 {:revision
+                  (get-in envelope [:native-revision :revision])
                   :exact-locator
-                  (get-in envelope [:graph-head :exact-locator])}
+                  (get-in envelope [:native-revision :exact-locator])}
                  (:timeout-ms opts)))]
             (execution/check!
              (:execution-contract opts)

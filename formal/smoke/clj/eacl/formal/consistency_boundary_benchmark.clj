@@ -35,8 +35,8 @@
           :capabilities
           {:consistency #{:minimize-latency}
            :snapshots #{:current}
-           :source #{:stable-scope :graph-head
-                     :anchor-membership :order-hint :exact-locator}
+           :source #{:stable-scope :source-lifecycle
+                     :native-revision :order-hint :exact-locator}
            :cursor #{}
            :transactions #{}
            :cache-proofs #{}
@@ -47,11 +47,9 @@
            {:snapshot-id (fn [] [:source nil 1])
             :source-scope
             (fn [] {:source-id "source" :branch nil})
-            :graph-head
-            (fn [] {:graph-anchor "head"
-                    :order-hint 1
-                    :exact-locator 1})
-            :contains-anchor? (constantly true)
+            :source-lifecycle (constantly "benchmark-lifecycle")
+            :native-revision
+            (constantly {:revision 1 :exact-locator 1})
             :order-hint (constantly 1)
             :exact-locator (constantly 1)
             :select-current (fn [] @self)})})]
@@ -61,8 +59,7 @@
 (defn- run-batch
   [adapter repetitions]
   (let [options
-        {:coherence-authority :managed
-         :decision-kernel production/default-selection}
+        {:decision-kernel production/default-selection}
         started (System/nanoTime)]
     (loop [iteration 0
            checksum 0]
@@ -116,8 +113,8 @@
        :backend-selection-calls 0
        :validation-decisions 0
        :source-scope-reads 0
-       :contains-anchor-calls 0
-       :graph-head-reads 0
+       :revision-validation-calls 0
+       :native-revision-reads 0
        :order-hint-reads 0
        :exact-locator-reads 0}
       :resource-qualification

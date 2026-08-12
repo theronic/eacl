@@ -19,13 +19,13 @@
             [eacl.datomic.consistency :as revision]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
-            [eacl.datomic.mutation :as journal]
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.formal.production-kernel :as production-kernel]
             [eacl.migrations.v6-to-v7 :as migrations]
-            [eacl.mutation :as mutation]
+            [eacl.proof-frame :as proof-frame]
+            [eacl.permission-tree :as permission-tree]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.storage :as relationship-storage]
@@ -37,7 +37,7 @@
             DataOutputStream]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest SecureRandom]
-           [java.util Arrays Base64]
+           [java.util Arrays Base64 UUID]
            [java.util.function Supplier]
            [javax.crypto Cipher]
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
@@ -72,7 +72,11 @@
   the same demand/deadline contract used by the shared clients."
   [opts operation request f]
   (let [contract (execution/normalize opts operation request)
-        opts (assoc opts :execution-contract contract)]
+        opts (assoc opts
+                    :execution-contract contract
+                    :cache-lifecycle
+                    (shared-cache/capture-current-lifecycle
+                     (:current-cache-store opts)))]
     (execution/check! contract :request-start)
     (binding [execution/*contract* contract
               engine/*evaluation-mode* (:evaluation contract)
@@ -619,7 +623,7 @@
                          :invalid-cache-scope
                          {:cache-scope (:cache-scope decoded)}))
       (doseq [field [:source-scope
-                     :graph-head
+                     :native-revision
                      :adapter-fingerprint
                      :identity-contract
                      :dependency-scope-digest
@@ -869,56 +873,12 @@
 
     result))
 
-(defn- datom-proof
-  [db entity attribute]
-  (when-let [datom (first (d/datoms db :eavt entity attribute))]
-    [(:tx datom) (:v datom)]))
-
-(defn- managed-cache-descriptor
-  [db relation-ids]
-  (let [relation-ids (vec (distinct relation-ids))]
-    (when (seq relation-ids)
-      (let [schema-eid
-            (d/entid db [:eacl/id mutation/schema-entity-id])
-            schema-stamp
-            (when schema-eid
-              (datom-proof
-               db schema-eid mutation/schema-mutation-id-attr))
-            relation-stamps
-            (keep
-             (fn [relation-id]
-               (when-let [tx
-                          (or
-                           (datom-proof
-                            db relation-id
-                            :eacl/relation-version)
-                           ;; A newly declared relation has no relationship
-                           ;; write yet. Its schema transaction still provides
-                           ;; the initial monotone stamp.
-                           (datom-proof
-                            db relation-id
-                            mutation/relation-mutation-id-attr))]
-                 [relation-id tx]))
-             relation-ids)]
-        (when (and (subproblem/proof-stamp? schema-stamp)
-                   (= (count relation-ids)
-                      (count relation-stamps))
-                   (every? (comp subproblem/proof-stamp? second)
-                           relation-stamps))
-          {:schema-stamp schema-stamp
-           :dependency-stamp
-           (mapv
-            (fn [[relation-id [tx mutation-id]]]
-              [relation-id tx mutation-id])
-            (sort-by first relation-stamps))})))))
-
 (defn- cached-authorization-result
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [contract (:execution-contract opts)
-        complete-evaluation?
-        (= :complete-denotation (:evaluation contract))
         {:keys [adapter db relationship-dependencies
-                permission-dependencies basis-t completed-cache?]}
+                permission-dependencies basis-t completed-cache?
+                request-proof-frame]}
         consistency-context
         evaluate
         #(do
@@ -948,35 +908,30 @@
                  (some-> permission-dependencies
                          deref
                          :relationship-dependencies))
+            complete-proof
+            (delay
+              (proof-frame/resolve!
+               request-proof-frame (relation-ids)))
             _ (execution/check! contract :cache-lookup)
             answer
             (shared-cache/resolve-current!
              (:current-cache-store opts)
              {:snapshot basis-t
+              :cache-lifecycle (:cache-lifecycle opts)
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
               :decision-kernel (:decision-kernel opts)
-              :managed-descriptor-key-fn
-              (when (and complete-evaluation?
-                         (:managed-cache-enabled? opts))
-                #(vec (sort (distinct (relation-ids)))))
               :managed-key-fn
-              (when (and complete-evaluation?
-                         (:managed-cache-enabled? opts))
-                #(managed-cache-descriptor
-                  db (relation-ids)))
+              (when (:managed-cache-enabled? opts)
+                #(proof-frame/descriptor @complete-proof))
               :managed-subproblem-key-fn
-              (when (and complete-evaluation?
-                         (:managed-cache-enabled? opts))
+              (when (:managed-cache-enabled? opts)
                 (fn [dependency]
-                  (managed-cache-descriptor
-                   db
-                   (if (vector? dependency)
-                     dependency
-                     [dependency]))))
+                  (proof-frame/subset-descriptor
+                   @complete-proof dependency)))
               :managed-subproblem-scope
-              (backend/invoke adapter :source-scope)
+              (consistency-v3/source-scope adapter)
               :answer-weight-fn weight-fn
               :remember-answer?
               (:cache-remember-answers? opts)}
@@ -985,6 +940,8 @@
               :evaluation (:evaluation contract)
               :demand (:demand contract)
               :engine-version engine/engine-version
+              :source-lifecycle
+              (proof-frame/source-lifecycle request-proof-frame)
               :adapter-fingerprint (backend/fingerprint adapter)
               :recursive-traversal-limits
               (:recursive-traversal-limits opts)}
@@ -1012,7 +969,8 @@
   A miss, eviction, rejected publication, or malformed value is only an
   optimization loss; the engine deterministically replays the authenticated
   prefix against the selected immutable snapshot."
-  [opts op query-identity {:keys [adapter cursor-context]}]
+  [opts op query-identity
+   {:keys [adapter cursor-context request-proof-frame]}]
   (when-let [store (and (selected-schema-version opts)
                         adapter
                         cursor-context
@@ -1039,7 +997,8 @@
          :adapter-fingerprint
          :identity-contract
          :dependency-scope-digest
-         :proof-digest])}})))
+         :proof-digest])}
+      :request-proof-frame request-proof-frame})))
 
 (def ^:private empty-page
   "Unknown objects match nothing (SpiceDB-consistent, audit D9): lookups and
@@ -1124,10 +1083,16 @@
   "Resolves both relationship endpoints to existing internal eids.
   Throws :eacl/unknown-object for either endpoint rather than letting nils or
   ghost ids reach tx-data (raw :db.error/not-an-entity) or silently no-op."
-  [db {:keys [object-id->entid]} {:keys [subject relation resource]}]
-  {:subject (resolve-existing-object db object-id->entid subject)
-   :relation relation
-   :resource (resolve-existing-object db object-id->entid resource)})
+  [db {:keys [object-id->entid object-id->ident]}
+   {:keys [subject relation resource]}]
+  (let [internalize
+        (fn [object]
+          (assoc (resolve-existing-object db object-id->entid object)
+                 :eacl.relationship/identity-guard
+                 (object-id->ident (:id object))))]
+    {:subject (internalize subject)
+     :relation relation
+     :resource (internalize resource)}))
 
 (defn- relationship-attr-eids
   [db]
@@ -1157,17 +1122,12 @@
 
 (defn- response-token
   [db opts]
-  (when (= :managed (:coherence-authority opts))
-    (let [{:keys [family-id head-id]} (journal/graph-state db)]
-      (causal-token/issue
-       (:format-options opts)
-       {:backend :datomic
-        :source-id {:database-id (:database-id opts)
-                    :family-id family-id}
-        :branch nil
-        :graph-anchor head-id
-        :order-hint (d/basis-t db)
-        :exact-locator (d/basis-t db)}))))
+  (let [adapter ((:backend-adapter-fn opts) db)]
+    (causal-token/issue
+     (:format-options opts)
+     (merge
+      (consistency-v3/source-scope adapter)
+      (consistency-v3/native-revision adapter)))))
 
 (defn- write-response
   [db opts]
@@ -1179,13 +1139,11 @@
   "Writes relationships and returns a zed token for the committed revision.
 
   There is no process-local cache bookkeeping here. The committed transaction
-  atomically carries the v3 mutation record, graph head, and affected relation
-  mutation identities. The :eacl/relation-version CAS datoms are the current
-  Datomic write-serialization mechanism for relationship updates; cache
-  validity never depends on them."
+  atomically carries endpoint guards and the affected native relation
+  generations. Relation-local CAS protects write semantics; cache validity
+  depends on the committed generation, not on CAS."
   [conn opts updates]
-  (let [updates (vec updates)
-        mutation-id (mutation/new-id)]
+  (let [updates (vec updates)]
     (doseq [{:keys [operation]} updates]
       (impl/validate-relationship-operation! operation))
     (loop [attempt 1]
@@ -1194,16 +1152,11 @@
             (S/transform [S/ALL :relationship]
                          #(spice-relationship->internal db opts %)
                          updates)
-            relation-ids
-            (->> internal-updates
-                 (map (comp #(impl/relationship-relation-id db %)
-                            :relationship))
-                 distinct
-                 vec)
             relationship-tx-data
             (->> internal-updates
                  (mapcat #(impl/tx-update-relationship db %))
                  (remove nil?)
+                 distinct
                  vec)
             tx-data
             (when (seq relationship-tx-data)
@@ -1212,19 +1165,7 @@
             submission
             (if (seq tx-data)
               (try
-                {:report
-                 (journal/transact!
-                  conn
-                  {:mutation-id mutation-id
-                   :kind :relationships
-                   :canonical-data
-                   {:operation :write-relationships
-                    :updates internal-updates}
-                   :relation-ids relation-ids
-                   :token-ttl-seconds (:token-ttl-seconds opts)
-                   :retention-grace-seconds
-                   (:retention-grace-seconds opts)
-                   :tx-data tx-data})}
+                {:report @(d/transact conn tx-data)}
                 (catch Throwable throwable
                   {:error throwable}))
               {:report {:db-before db
@@ -1251,7 +1192,7 @@
             (write-response db-after opts)))))))
 
 (defn- permission-cache-dependencies
-  [opts db resource-type permission]
+  [db resource-type permission]
   ;; The same complete closure protects both completed answers and cursors.
   ;; A cacheless client may still paginate, so cursor correctness cannot be
   ;; conditional on whether the client-private result cache is enabled.
@@ -1290,15 +1231,19 @@
     opts))
 
 (defn- selected-schema-cache!
-  [opts adapter db]
-  (let [schema-proof (backend/invoke adapter :schema-proof)
+  [opts adapter db request-proof-frame]
+  (let [proof (proof-frame/resolve! request-proof-frame [])
+        schema-generation
+        (when (proof-frame/complete? proof)
+          (:schema-stamp proof))
         key [(backend/backend-id adapter)
              (backend/invoke adapter :source-scope)
-             schema-proof]
+             (backend/invoke adapter :source-lifecycle)
+             schema-generation]
         registry (:derived-schema-caches opts)]
     (or (get @registry key)
         (let [created
-              (impl.indexed/make-schema-cache db schema-proof)]
+              (impl.indexed/make-schema-cache db schema-generation)]
           (get (swap! registry
                       #(if (contains? % key)
                          %
@@ -1321,16 +1266,13 @@
    [(:dependency-scope-digest context)
     (:proof-digest context)]))
 
-(defn- cursor-graph-code
-  "Graph-anchor code in the numbering shared by one continuation decision:
-  0 = the current selection's graph, 1 = the cursor's (different) graph,
-  2 = any other graph. The kernel's exact arm compares codes, so an exact
-  selection is accepted only when it resolves the cursor's own graph."
+(defn- cursor-revision-code
+  "Native-revision code used by the generated continuation decision."
   [current cursor-envelope context]
-  (let [anchor (get-in context [:graph-head :graph-anchor])]
+  (let [revision (:native-revision context)]
     (cond
-      (= anchor (get-in current [:graph-head :graph-anchor])) 0
-      (= anchor (get-in cursor-envelope [:graph-head :graph-anchor])) 1
+      (= revision (:native-revision current)) 0
+      (= revision (:native-revision cursor-envelope)) 1
       :else 2)))
 
 (defn- cursor-decision
@@ -1350,10 +1292,10 @@
     :cursor-proof
     (cursor-continuation-proof cursor-envelope)
     :cursor-graph
-    (cursor-graph-code current cursor-envelope cursor-envelope)
+    (cursor-revision-code current cursor-envelope cursor-envelope)
     :exact
     (when exact
-      {:graph (cursor-graph-code current cursor-envelope exact)
+      {:graph (cursor-revision-code current cursor-envelope exact)
        :source (cursor-execution-identity exact)
        :proof (cursor-continuation-proof exact)})}))
 
@@ -1361,18 +1303,19 @@
   "Cursor continuation context for one selected snapshot.
 
   Permission lookups carry the dependency-stamp descriptor the managed cache
-  already computes — schema stamp plus sorted `[relation-id tx mutation-id]`
-  stamps — so a transaction touching no relation in the query's closure
+  already computes — schema generation plus the scalar dependency frontier —
+  so a transaction touching no relation in the query's closure
   leaves the continuation proof equal and the cursor decision at `:current`.
-  This works regardless of `:coherence-authority` (the stamps live in the
-  snapshot itself). Relationship reads, unreadable stamps, and empty
-  closures keep the exact-snapshot proof."
-  [db snapshot-adapter relation-ids]
+  The generations live in the snapshot itself. Relationship reads and
+  unreadable generations keep the exact-snapshot proof; empty closures use
+  the initial frontier."
+  [snapshot-adapter request-proof-frame relation-ids]
   (let [base (relay/dependency-context snapshot-adapter)
-        descriptor
-        (when (seq relation-ids)
-          (managed-cache-descriptor
-           db (vec (sort (distinct relation-ids)))))]
+        proof
+        (when (some? relation-ids)
+          (proof-frame/resolve!
+           request-proof-frame relation-ids))
+        descriptor (proof-frame/descriptor proof)]
     (if-not descriptor
       base
       (assoc base
@@ -1384,8 +1327,17 @@
              :proof-digest
              (secure/canonical-digest
               "eacl/datomic/cursor-dependency-proof/v1"
-              {:schema-stamp (:schema-stamp descriptor)
-               :relation-stamps (:dependency-stamp descriptor)})))))
+              descriptor)))))
+
+(defn- new-request-proof-frame
+  [opts adapter]
+  (proof-frame/request-frame
+   adapter
+   {:diagnostic-fn
+    (fn [diagnostic]
+      (shared-cache/record-proof-unavailable!
+       (:current-cache-store opts)
+       diagnostic))}))
 
 (defn- snapshot-result-context
   [opts snapshot-adapter prepare decoded]
@@ -1393,9 +1345,11 @@
         ;; `d/as-of` filters visibility but retains its backing DB's basis-t.
         ;; The adapter exact locator is the selected logical revision.
         basis-t (backend/invoke snapshot-adapter :exact-locator)
+        request-proof-frame (new-request-proof-frame opts snapshot-adapter)
         schema-cache
         (delay
-          (selected-schema-cache! opts snapshot-adapter db))
+          (selected-schema-cache!
+           opts snapshot-adapter db request-proof-frame))
         {:keys [permission-dependency-key]
          :as prepared}
         (prepare db decoded)
@@ -1404,17 +1358,18 @@
           (delay
             (binding [impl.indexed/*schema-cache* @schema-cache]
               (apply permission-cache-dependencies
-                     opts db permission-dependency-key))))
+                     db permission-dependency-key))))
         cache-scope [:basis basis-t]
         cursor-context
         (dependency-cursor-context
-         db snapshot-adapter
+         snapshot-adapter request-proof-frame
          (some-> permission-dependencies
                  deref
                  :relationship-dependencies))]
     (assoc prepared
            :db db
            :adapter snapshot-adapter
+           :request-proof-frame request-proof-frame
            :basis-t basis-t
            :cache-scope cache-scope
            :cursor-scope cache-scope
@@ -1438,7 +1393,7 @@
     {:type :eacl.consistency/snapshot-expired
      :eacl/error :eacl.consistency/snapshot-expired
      :operation operation
-     :exact-locator (get-in decoded [:graph-head :exact-locator])})))
+     :exact-locator (get-in decoded [:native-revision :exact-locator])})))
 
 (defn- select-request-snapshot
   [conn opts consistency-value]
@@ -1448,7 +1403,6 @@
         source-adapter ((:backend-adapter-fn opts) (d/db conn))
         selection-options
         {:format-options (:format-options opts)
-         :coherence-authority (:coherence-authority opts)
          :decision-kernel (:decision-kernel opts)
          :issue-token? false
          :timeout-ms
@@ -1482,15 +1436,15 @@
         selected-current-basis (:basis-t selected-context)
         {:keys [mode]} (:descriptor selection)
         request-token (:request-token selection)
-        requested-t (:order-hint request-token)
+        requested-t (:revision request-token)
         _ (when (and decoded
                      (= :at-exact-snapshot mode)
                      (not= (:exact-locator request-token)
                            (get-in decoded
-                                   [:graph-head :exact-locator])))
+                                   [:native-revision :exact-locator])))
             (consistency-v3/cursor-conflict!
              {:cursor-exact-locator
-              (get-in decoded [:graph-head :exact-locator])
+              (get-in decoded [:native-revision :exact-locator])
               :requested-exact-locator
               (:exact-locator request-token)}))
         selected-context
@@ -1513,13 +1467,13 @@
                                (or (not (integer? requested-t))
                                    (not (integer?
                                          (get-in decoded
-                                                 [:graph-head :order-hint])))
+                                                 [:native-revision :revision])))
                                    (< (get-in decoded
-                                              [:graph-head :order-hint])
+                                              [:native-revision :revision])
                                       requested-t)))
                       (consistency-v3/cursor-conflict!
                        {:cursor-order-hint
-                        (get-in decoded [:graph-head :order-hint])
+                        (get-in decoded [:native-revision :revision])
                         :requested-order-hint requested-t}))
                     _ (execution/check!
                        (:execution-contract opts)
@@ -1533,12 +1487,10 @@
                     (backend/invoke
                      source-adapter
                      :select-exact
-                     {:graph-anchor
-                      (get-in decoded [:graph-head :graph-anchor])
-                      :order-hint
-                      (get-in decoded [:graph-head :order-hint])
+                     {:revision
+                      (get-in decoded [:native-revision :revision])
                       :exact-locator
-                      (get-in decoded [:graph-head :exact-locator])}
+                      (get-in decoded [:native-revision :exact-locator])}
                      exact-timeout-ms)
                     _ (when-not exact
                         (cursor-snapshot-expired! operation decoded))
@@ -1552,7 +1504,7 @@
                   (assoc exact-context :mode :at-exact-snapshot)
                   (throw
                    (ex-info
-                    "The Datomic cursor exact locator resolved to another graph."
+                    "The Datomic cursor exact locator resolved to another native revision."
                     {:type :eacl.consistency/history-divergence
                      :eacl/error
                      :eacl.consistency/history-divergence
@@ -1600,8 +1552,9 @@
     {:adapter adapter
      :db db
      :basis-t basis-t
+     :request-proof-frame (new-request-proof-frame opts adapter)
      :mode mode
-     :requested-t (:order-hint request-token)
+     :requested-t (:revision request-token)
      :selection selection
      :response-token nil}))
 
@@ -1609,11 +1562,11 @@
   [opts context op query-identity kind valid-result?
    resource-type permission compute]
   (let [contract (:execution-contract opts)
-        complete-evaluation?
-        (= :complete-denotation (:evaluation contract))
-        {:keys [adapter db basis-t mode]} context
+        {:keys [adapter db basis-t mode request-proof-frame]} context
         schema-cache
-        (delay (selected-schema-cache! opts adapter db))
+        (delay
+          (selected-schema-cache!
+           opts adapter db request-proof-frame))
         evaluate
         #(do
            (execution/check! contract :schema-plan)
@@ -1643,44 +1596,39 @@
             (delay
               (binding [impl.indexed/*schema-cache* @schema-cache]
                 (permission-cache-dependencies
-                 opts db resource-type permission)))
+                 db resource-type permission)))
+            complete-proof
+            (delay
+              (proof-frame/resolve!
+               request-proof-frame
+               (:relationship-dependencies @dependencies)))
             _ (execution/check! contract :cache-lookup)
             answer
             (shared-cache/resolve-current!
              (:current-cache-store opts)
              {:snapshot basis-t
+              :cache-lifecycle (:cache-lifecycle opts)
               :snapshot-order basis-t
               :same-snapshot? =
               :cache-basis basis-t
               :decision-kernel (:decision-kernel opts)
-              :managed-descriptor-key-fn
-              (when (and complete-evaluation?
-                         (:managed-cache-enabled? opts))
-                #(vec
-                  (sort
-                   (distinct
-                    (:relationship-dependencies @dependencies)))))
               :managed-key-fn
-              (when (and complete-evaluation?
-                         (:managed-cache-enabled? opts))
-                #(managed-cache-descriptor
-                  db (:relationship-dependencies @dependencies)))
+              (when (:managed-cache-enabled? opts)
+                #(proof-frame/descriptor @complete-proof))
               :managed-subproblem-key-fn
-              (when (and complete-evaluation?
-                         (:managed-cache-enabled? opts))
+              (when (:managed-cache-enabled? opts)
                 (fn [dependency]
-                  (managed-cache-descriptor
-                   db
-                   (if (vector? dependency)
-                     dependency
-                     [dependency]))))
+                  (proof-frame/subset-descriptor
+                   @complete-proof dependency)))
               :managed-subproblem-scope
-              (backend/invoke adapter :source-scope)}
+              (consistency-v3/source-scope adapter)}
              {:operation op
               :query query-identity
               :evaluation (:evaluation contract)
               :demand (:demand contract)
               :engine-version engine/engine-version
+              :source-lifecycle
+              (proof-frame/source-lifecycle request-proof-frame)
               :adapter-fingerprint (backend/fingerprint adapter)
               :recursive-traversal-limits
               (:recursive-traversal-limits opts)}
@@ -1736,29 +1684,15 @@
 (def ^:private delete-object-batch-size 1000)
 
 (defn- transact-delete-object-batch!
-  [conn opts batch]
-  (let [batch (vec batch)
-        mutation-id (mutation/new-id)]
+  [conn batch]
+  (let [batch (vec batch)]
     (loop [attempt 1]
       (let [db (d/db conn)
           stamped (impl/stamp-relation-versions batch)
-          relation-ids (vec (sort (impl/affected-relation-ids stamped)))
           guarded (impl/optimistic-relationship-tx-data db stamped)
           submission
           (try
-            {:report
-             (journal/transact!
-              conn
-              {:mutation-id mutation-id
-               :kind :object-deletion
-               :canonical-data
-               {:operation :delete-object-batch
-                :tx-data batch}
-               :relation-ids relation-ids
-               :token-ttl-seconds (:token-ttl-seconds opts)
-               :retention-grace-seconds
-               (:retention-grace-seconds opts)
-               :tx-data guarded})}
+            {:report @(d/transact conn guarded)}
             (catch Throwable throwable
               {:error throwable}))]
         (if-let [throwable (:error submission)]
@@ -1810,7 +1744,7 @@
           ;; without this a later batch retracts relationships while announcing
           ;; nothing.
           (let [{:keys [db-after tx-data]}
-                (transact-delete-object-batch! conn opts batch)]
+                (transact-delete-object-batch! conn batch)]
             (recur (next batches)
                    (+ retracted
                       (relationship-retraction-count db-after tx-data))
@@ -1844,18 +1778,18 @@
              :internal
              {:subject internal-subject
               :permission permission
-              :resource internal-resource}}]
-        (let [answer
-              (cached-basic-authorization-result
-               opts result-context :can? query-identity :can?
-               boolean-result?
-               (:type resource)
-               permission
-               #(impl/can? db internal-subject permission
-                           internal-resource))]
-          {:allowed? (:result answer)
-           :cached? (:cached? answer)
-           :cache-basis (:cache-basis answer)})))))
+              :resource internal-resource}}
+            answer
+            (cached-basic-authorization-result
+             opts result-context :can? query-identity :can?
+             boolean-result?
+             (:type resource)
+             permission
+             #(impl/can? db internal-subject permission
+                         internal-resource))]
+        {:allowed? (:result answer)
+         :cached? (:cached? answer)
+         :cache-basis (:cache-basis answer)}))))
 
 (defn spiceomic-can?
   [conn opts subject permission resource consistency-value]
@@ -1890,7 +1824,7 @@
          conn opts (:consistency query) prepare
          :lookup-resources decoded)
         {:keys [db internal-subject query' query-shape internal-query
-                cache-scope cursor-scope schema-version]
+                cache-scope schema-version]
          :as result-context}
         captured
         selected-opts
@@ -2010,7 +1944,7 @@
          conn opts (:consistency query) prepare
          :lookup-subjects decoded)
         {:keys [db internal-resource query' query-shape internal-query
-                cache-scope cursor-scope schema-version]
+                cache-scope schema-version]
          :as result-context}
         captured
         selected-opts
@@ -2090,6 +2024,26 @@
              #(impl/count-subjects db query'))]
         (with-cache-info (:result answer) answer)))))
 
+(defn spiceomic-expand-permission-tree
+  [conn opts query]
+  (let [{:keys [adapter]}
+        (capture-basic-result-context
+         conn opts (:consistency query))
+        contract (:execution-contract opts)
+        tree
+        (permission-tree/expand
+         adapter
+         {:limits (:permission-tree-limits opts)
+          :execution-contract contract}
+         (:resource query)
+         (:permission query))]
+    (execution/check! contract :permission-tree-token-issuance)
+    (let [token
+          (permission-tree/selected-adapter-token adapter opts)]
+      (execution/check! contract :permission-tree-token-issued)
+      {:expanded-at token
+       :tree-root tree})))
+
 (defrecord Spiceomic [conn opts]
   IAuthorization
   (can? [_ subject permission resource]
@@ -2122,21 +2076,18 @@
           expected-version (impl.indexed/schema-version base-db)
           deltas      (schema/write-schema!
                        conn schema-string
-                       (select-keys
-                        opts
-                        [:token-ttl-seconds
-                         :retention-grace-seconds])
+                       (select-keys opts [:token-ttl-seconds])
                        expected-version)
           next-version (:eacl/schema-version (meta deltas))]
       (reset! (:diagnostic-schema-version opts)
               next-version)
-      (when-not (:eacl.mutation/no-op? (meta deltas))
+      (when-not (:eacl.schema/no-op? (meta deltas))
         (reset! (:derived-schema-caches opts) {})
         (when-let [store (:current-cache-store opts)]
           (shared-cache/expire-current! store)))
       (merge deltas
              (write-response
-              (:eacl.mutation/db-after (meta deltas))
+              (:eacl.schema/db-after (meta deltas))
               opts))))
 
   (read-relationships [_ filters]
@@ -2216,10 +2167,11 @@
        conn (request-cache-opts % (:cache? query))
        (dissoc query :evaluation :timeout-ms))))
 
-  (expand-permission-tree [_ _]
-    (throw (ex-info "expand-permission-tree is not implemented yet."
-             {:type :eacl/not-implemented
-              :method 'expand-permission-tree})))
+  (expand-permission-tree [_ query]
+    (permission-tree/validate-request! query)
+    (execute-request
+     opts :expand-permission-tree query
+     #(spiceomic-expand-permission-tree conn % query)))
 
   IDetailedAuthorization
   (-check-permission
@@ -2233,17 +2185,33 @@
        (or consistency consistency/fully-consistent)))))
 
 (defn expire-cache!
-  "Expires every completed answer owned by one Datomic EACL client.
+  "Rotates the complete local cache/token lifecycle for one Datomic client.
 
-  Use this around consumer-managed restore, reset, or historical lifecycle
-  operations. Ordinary forward transactions do not require explicit expiry."
-  [client]
-  (when-not (instance? Spiceomic client)
-    (throw (ex-info "expire-cache! requires a Datomic EACL client."
-                    {:type :eacl/invalid-client})))
-  (when-let [store (get-in client [:opts :current-cache-store])]
-    (shared-cache/expire-current! store))
-  nil)
+  Pass a coordinated lifecycle identity as the optional second argument when
+  tokens are exchanged across processes after a restore."
+  ([client]
+   (expire-cache! client (str (UUID/randomUUID))))
+  ([client source-lifecycle]
+   (when-not (instance? Spiceomic client)
+     (throw (ex-info "expire-cache! requires a Datomic EACL client."
+                     {:type :eacl/invalid-client})))
+   (causal-token/validate-source-lifecycle! source-lifecycle)
+   (let [opts (:opts client)]
+     (some-> (:source-lifecycle-state opts)
+             (reset! source-lifecycle))
+     (when-let [store (:current-cache-store opts)]
+       (shared-cache/expire-current! store))
+     (some-> (:derived-schema-caches opts) (reset! {}))
+     (some-> (:continuation-cache-store opts) continuation/clear!)
+     (some-> (:revision-checkpoints opts) :state (reset! [])))
+   nil))
+
+(def prepare-cache-coherence!
+  "Initializes missing native cache generations on a quiesced connection.
+
+  This does not detect or repair earlier unsupported unstamped mutations and
+  is not a cache flush."
+  schema/prepare-cache-coherence!)
 
 (defn cache-stats
   "Returns private completed-cache counters for one Datomic EACL client."
@@ -2272,21 +2240,20 @@
     :zed-token-keyring
     :zed-token-kid
     :token-ttl-seconds
-    :retention-grace-seconds
-    :coherence-authority
-    :proof-mode
+    :source-lifecycle
     :adapter-fingerprint
     :adapter-deterministic?
     :consistency-sync-timeout-ms
     :execution-timeout-ms
     :cache-attempt
     :recursive-traversal-limits
+    :permission-tree-limits
     :auto-migrate-v6})
 
 (def ^:private canonical-security-opt-keys
   [:security-key :security-keyring :security-kid :cursor-ttl-seconds])
 
-(def ^:private legacy-page-token-opt-keys
+(def ^:private page-token-alias-opt-keys
   [:page-token-key :page-token-keyring :page-token-kid
    :page-token-ttl-seconds])
 
@@ -2477,7 +2444,7 @@
   means silently wrong ID coercion):
   - :entid->object-id  (fn [db eid] external-id) — canonical ID coercion, as documented in the README.
   - :object-id->lookup-ref (fn [external-id] ident-resolvable-by-d-entid).
-    Default: [:eacl/id id]. :object-id->ident is a legacy Datomic alias.
+    Default: [:eacl/id id]. :object-id->ident is an accepted Datomic alias.
   - :cache — controls this client's private current-generation cache.
 
       omitted     a bounded client-private cache (this is the norm)
@@ -2494,12 +2461,12 @@
     Pass cache/no-cache when the same permission check is essentially never
     asked twice — a batch job sweeping distinct resources, say — or when direct
     evaluation is cheaper than completed-answer validation. Benchmark
-    representative permissions before enabling caching for latency alone. See
-    docs/reports/2026-08-02-eacl-v8-cache-proof-cost.md.
+    representative permissions before enabling caching for latency alone.
 
     Native completed answers never come from a caller-supplied shared
     provider. Exact hits belong to the selected immutable DB generation;
-    managed hits additionally require complete current relation stamps.
+    proof-backed hits additionally require a complete ordered-generation
+    request proof.
 
     To bypass the configured cache for ONE call, pass :cache? false on the
     request — on the map arity of can?, and in the query map for lookups,
@@ -2508,7 +2475,7 @@
     decoding tokens minted by this client and is a trust-preserving
     implementation detail, not completed-answer reuse.
 
-    A configuration map may be supplied for tuning and tests. Caller-supplied
+    A configuration map may be supplied for tuning. Caller-supplied
     provider adapters are rejected because they never controlled either live
     Datomic store:
       :max-weight, :max-entry-weight, :max-entries, :ttl-ms  capacity bounds
@@ -2530,19 +2497,20 @@
     on the already-selected immutable snapshot; it never changes snapshots or
     restarts the public walk.
 
-    There is no cross-process cache coordination to configure. Managed writers
-    atomically update relation-version/mutation stamp datoms in the same
-    transaction as the authorization change. Unknown or mixed writers use
-    exact-current caching only. Reset, restore, branch/history manipulation,
-    and unstamped repair require explicit expire-cache!.
+    There is no cross-process cache coordinator. Supported EACL writers
+    atomically update every affected ordered relation generation in the same
+    transaction as the authorization change. Bypassing those writers can leave
+    proof-backed entries stale and requires quiescence, data repair, and
+    expire-cache! on every affected client. Reset, restore, or source-history
+    replacement also requires lifecycle expiry.
 
   - :security-key / :security-keyring / :security-kid —
     AES-GCM page-token key material. Default: a random per-client key, meaning
     page tokens do not survive restarts and are not portable across clients;
-    supply stable key material in production. The old :page-token-* names are
-    accepted as non-mixable legacy aliases.
-  - :cursor-ttl-seconds — overrides the default page-token expiry. The old
-    :page-token-ttl-seconds name is a non-mixable legacy alias.
+    supply stable key material in production. The :page-token-* names are
+    accepted as non-mixable aliases.
+  - :cursor-ttl-seconds — overrides the default page-token expiry.
+    :page-token-ttl-seconds is a non-mixable alias.
   - :zed-token-key / :zed-token-keyring / :zed-token-kid — HMAC key material
     for authenticated Zed tokens. When omitted, purpose-specific signing keys
     are derived from the security keyring. Supply a stable shared keyring for
@@ -2554,7 +2522,7 @@
   - :cache-attempt — finite evaluation reserve and local CAS-publication
     attempt bound. Cache work may remove evaluator commands but
     cannot enlarge request demand. Remote provider/decode controls are not
-    exposed because caller-supplied cache providers are rejected in v8.
+    exposed because caller-supplied cache providers are rejected.
   - :recursive-traversal-limits — overrides eacl.datomic.impl.indexed/default-recursive-traversal-limits
     for list calls, e.g. {:max-derived-grants 1000000 :max-advanced-datoms 1000000
     :max-queued-work 1000000}. Recursive traversal remains subject to these
@@ -2583,15 +2551,14 @@
            zed-token-keyring
            zed-token-kid
            token-ttl-seconds
-           retention-grace-seconds
-           coherence-authority
-           proof-mode
+           source-lifecycle
            adapter-fingerprint
            adapter-deterministic?
            consistency-sync-timeout-ms
            execution-timeout-ms
            cache-attempt
            recursive-traversal-limits
+           permission-tree-limits
            auto-migrate-v6]}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
@@ -2601,19 +2568,19 @@
               :known-keys known-client-opt-keys})))
   (let [canonical-keys
         (filterv #(contains? config-opts %) canonical-security-opt-keys)
-        legacy-keys
-        (filterv #(contains? config-opts %) legacy-page-token-opt-keys)]
-    (when (and (seq canonical-keys) (seq legacy-keys))
+        alias-keys
+        (filterv #(contains? config-opts %) page-token-alias-opt-keys)]
+    (when (and (seq canonical-keys) (seq alias-keys))
       (throw
        (ex-info
-        "EACL Config Error: do not mix canonical :security-*/:cursor-ttl-seconds options with legacy :page-token-* aliases."
+        "EACL Config Error: do not mix :security-*/:cursor-ttl-seconds options with their :page-token-* aliases."
         {:type :eacl/invalid-config
-         :conflicting-keys (into canonical-keys legacy-keys)}))))
+         :conflicting-keys (into canonical-keys alias-keys)}))))
   (when (and (contains? config-opts :object-id->lookup-ref)
              (contains? config-opts :object-id->ident))
     (throw
      (ex-info
-      "EACL Config Error: supply only :object-id->lookup-ref, not its legacy :object-id->ident alias too."
+      "EACL Config Error: supply only :object-id->lookup-ref, not its :object-id->ident alias too."
       {:type :eacl/invalid-config
        :conflicting-keys [:object-id->lookup-ref :object-id->ident]})))
   (when (and (contains? config-opts :security-key)
@@ -2651,22 +2618,6 @@
     (throw (ex-info "EACL Config Error: supply only one of :zed-token-key or :zed-token-keyring."
                     {:type :eacl/invalid-config
                      :conflicting-keys [:zed-token-key :zed-token-keyring]})))
-  (when-not (contains? #{nil :unknown :managed} coherence-authority)
-    (throw (ex-info "EACL Config Error: :coherence-authority must be :managed or :unknown."
-                    {:type :eacl/invalid-config
-                     :key :coherence-authority
-                     :value coherence-authority})))
-  (when-not (contains? #{nil :auto :mutation :content :none} proof-mode)
-    (throw (ex-info "EACL Config Error: unsupported :proof-mode."
-                    {:type :eacl/invalid-config
-                     :key :proof-mode
-                     :value proof-mode})))
-  (when (and (= :mutation proof-mode)
-             (not= :managed coherence-authority))
-    (throw (ex-info "EACL Config Error: mutation proof requires managed writer authority."
-                    {:type :eacl/invalid-config
-                     :key :proof-mode
-                     :value proof-mode})))
   (when (and (contains? config-opts :adapter-deterministic?)
              (not (boolean? adapter-deterministic?)))
     (throw (ex-info "EACL Config Error: :adapter-deterministic? must be boolean."
@@ -2688,13 +2639,17 @@
                     {:type :eacl/invalid-config
                      :key :token-ttl-seconds
                      :value token-ttl-seconds})))
-  (when (and retention-grace-seconds
-             (not (and (integer? retention-grace-seconds)
-                       (not (neg? retention-grace-seconds)))))
-    (throw (ex-info "EACL Config Error: :retention-grace-seconds must be non-negative."
-                    {:type :eacl/invalid-config
-                     :key :retention-grace-seconds
-                     :value retention-grace-seconds})))
+  (when source-lifecycle
+    (try
+      (causal-token/validate-source-lifecycle! source-lifecycle)
+      (catch Exception error
+        (throw
+         (ex-info
+          "EACL Config Error: :source-lifecycle must be bounded portable canonical data."
+          {:type :eacl/invalid-config
+           :key :source-lifecycle
+           :value source-lifecycle}
+          error)))))
   (when (and (contains? config-opts :execution-timeout-ms)
              (not (and (integer? execution-timeout-ms)
                        (pos? execution-timeout-ms)
@@ -2734,7 +2689,6 @@
   ;; silently answer every check with false/empty. Throws :eacl/storage-version
   ;; unless the DB is v7/fresh/stamped, or :auto-migrate-v6 opts into migration.
   (migrations/assert-storage-compatible! conn {:auto-migrate-v6 auto-migrate-v6})
-  (journal/ensure-migrated! conn)
   (let [object-id->ident (cond
                            (contains? config-opts :object-id->lookup-ref)
                            object-id->lookup-ref
@@ -2757,12 +2711,9 @@
         (if (contains? config-opts :cursor-ttl-seconds)
           cursor-ttl-seconds
           page-token-ttl-seconds)
-        coherence-authority (or coherence-authority :unknown)
-        proof-mode (case (or proof-mode :auto)
-                     :auto (if (= :managed coherence-authority)
-                             :mutation
-                             :content)
-                     proof-mode)
+        source-lifecycle (or source-lifecycle (str (UUID/randomUUID)))
+        source-lifecycle-state (atom source-lifecycle)
+        codec-instance-id (str (UUID/randomUUID))
         initial-db         (d/db conn)
         database-id       (impl.indexed/database-id initial-db)
         diagnostic-schema-version
@@ -2843,7 +2794,7 @@
                                   zed-root-keyring)
                             :token-ttl-seconds
                             (or token-ttl-seconds
-                                mutation/default-token-ttl-seconds)}
+                                causal-token/default-token-ttl-seconds)}
         opts               {:object-id->ident object-id->ident
                             :execution-timeout-ms
                             (or execution-timeout-ms
@@ -2854,6 +2805,8 @@
                             diagnostic-schema-version
                             :derived-schema-caches (atom {})
                             :database-id database-id
+                            :source-lifecycle source-lifecycle
+                            :source-lifecycle-state source-lifecycle-state
                             :backend-capabilities datomic-backend/capabilities
                             :backend-adapter-fn
                             (fn [db]
@@ -2862,18 +2815,17 @@
                                {:entid->object-id entid->object-id
                                 :conn conn
                                 :database-id database-id
-                                :coherence-authority coherence-authority
-                                :proof-mode proof-mode
+                                :source-lifecycle source-lifecycle
+                                :source-lifecycle-state source-lifecycle-state
                                 :adapter-fingerprint
                                 (or adapter-fingerprint
                                     {:backend :datomic
                                      :adapter-version backend/adapter-version
-                                     :proof-mode proof-mode
                                      :recursive-traversal-limits
                                      recursive-traversal-limits
                                      :codec
                                      (if custom-codec?
-                                       :custom-unfingerprinted
+                                       [:custom-unfingerprinted codec-instance-id]
                                        :eacl-id-immutable-v1)})
                                 :adapter-deterministic?
                                 adapter-deterministic?}))
@@ -2886,11 +2838,9 @@
                             :lookup-cache-ttl-ms (:ttl-ms cache-config)
                             :cache-namespace (:namespace cache-config)
                             :current-cache-store
-                            (when (and
-                                   (:enabled? cache-config)
-                                   adapter-deterministic?)
+                            (when (:enabled? cache-config)
                               (shared-cache/current-cache
-                              {:max-entries
+                               {:max-entries
                                 (:native-max-entries cache-config)
                                 :admit-on-repeat?
                                 (:native-admit-on-repeat? cache-config)
@@ -2900,9 +2850,7 @@
                             :managed-cache-enabled?
                             (and
                              (:remember-answers? cache-config)
-                             adapter-deterministic?
-                             (not custom-codec?)
-                             (= :managed coherence-authority))
+                             adapter-deterministic?)
                             :revision-checkpoints (:checkpoints cache-config)
                             :entid->object-id entid->object-id
                             :object-id->entid object-id->entid
@@ -2919,20 +2867,18 @@
                             :zed-token-keyring zed-keyring
                             :format-options format-options
                             :decision-kernel production-kernel/default-selection
-                            :coherence-authority coherence-authority
-                            :proof-mode proof-mode
                             :token-ttl-seconds
                             (or token-ttl-seconds
-                                mutation/default-token-ttl-seconds)
-                            :retention-grace-seconds
-                            (or retention-grace-seconds
-                                mutation/default-retention-grace-seconds)
+                                causal-token/default-token-ttl-seconds)
                             :consistency-sync-timeout-ms timeout-ms
                             ;; merged, so a partial override cannot silently
                             ;; disable the limits it does not mention
                             :recursive-traversal-limits
                             (merge impl.indexed/default-recursive-traversal-limits
-                                   recursive-traversal-limits)}]
+                                   recursive-traversal-limits)
+                            :permission-tree-limits
+                            (permission-tree/normalize-limits
+                             permission-tree-limits)}]
     (->Spiceomic conn opts)))
 
 (defn current-zed-token
@@ -2945,10 +2891,6 @@
                     {:type :eacl/invalid-client})))
   (let [db (d/db (:conn client))
         opts (:opts client)]
-    (when-not (= :managed (:coherence-authority opts))
-      (throw (ex-info
-              "Causal token issuance requires complete writer authority."
-              {:type :eacl/causal-authority-incomplete})))
     (revision/observe! (:revision-checkpoints opts) (d/basis-t db))
     (response-token db opts)))
 
@@ -2967,10 +2909,6 @@
         opts (:opts client)
         checkpoints (:revision-checkpoints opts)
         basis-t (d/basis-t db)]
-    (when-not (= :managed (:coherence-authority opts))
-      (throw (ex-info
-              "Causal token issuance requires complete writer authority."
-              {:type :eacl/causal-authority-incomplete})))
     (when-not checkpoints
       (throw (ex-info "Revision checkpoints are disabled for this EACL client."
                       {:type :eacl/checkpoints-disabled})))

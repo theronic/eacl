@@ -4,36 +4,55 @@
             [eacl.backend.v8 :as backend]
             [eacl.datascript.db :as ddb]
             [eacl.datascript.impl :as impl]
-            [eacl.datascript.mutation :as journal]
-            [eacl.mutation :as mutation]
-            [eacl.relationships.endpoint-pair :as endpoint-pair]
-            [eacl.relationships.storage :as relationship-storage]
-            [eacl.secure-format :as secure]))
+            [eacl.relationships.storage :as relationship-storage])
+  #?(:clj (:import [java.util WeakHashMap])))
+
+(defonce ^:private connection-source-ids
+  ;; A DataScript source is one connection, not merely any DB whose numeric
+  ;; :max-tx happens to match. Weak keys avoid retaining abandoned conns.
+  #?(:clj (WeakHashMap.)
+     :cljs (js/WeakMap.)))
+
+(defn connection-source-id
+  "Returns the process-local stable identity of one DataScript connection."
+  [conn]
+  (when conn
+    #?(:clj
+       (locking connection-source-ids
+         (or (.get ^WeakHashMap connection-source-ids conn)
+             (let [source-id (str (random-uuid))]
+               (.put ^WeakHashMap connection-source-ids conn source-id)
+               source-id)))
+       :cljs
+       (or (.get connection-source-ids conn)
+           (let [source-id (str (random-uuid))]
+             (.set connection-source-ids conn source-id)
+             source-id)))))
 
 (def capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
                   :at-least-as-fresh}
    :snapshots #{:current :authoritative :causal}
-   :source #{:stable-scope :graph-head :anchor-membership :order-hint}
+   :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
    :cursor #{:forward :reverse :opaque}
    :transactions #{:schema :relationships :object-deletion}
-   :cache-proofs #{:schema :relations :snapshot-bound :database-visible}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj :cljs}})
 
 (defn- freshness-timeout!
   [token-data timeout-ms observed]
   (throw
    (ex-info
-    "DataScript connection did not acquire the requested mutation anchor."
+    "DataScript connection did not acquire the requested native revision."
     {:type :eacl.consistency/freshness-unavailable
      :eacl/error :eacl.consistency/freshness-unavailable
      :reason :freshness-timeout
-     :requested-order-hint (:order-hint token-data)
+     :requested-order-hint (:revision token-data)
      :observed-order-hint (:max-tx observed)
      :timeout-ms timeout-ms})))
 
-(defn- await-anchor-db
+(defn- await-revision-db
   [conn fallback token-data timeout-ms]
   (let [timeout-ms (or timeout-ms 30000)]
     #?(:clj
@@ -42,8 +61,7 @@
          (loop []
            (let [candidate (if conn (ds/db conn) fallback)]
              (cond
-               (journal/contains-anchor?
-                candidate (:graph-anchor token-data))
+               (>= (:max-tx candidate) (:revision token-data))
                candidate
 
                (>= (System/nanoTime) deadline)
@@ -56,8 +74,7 @@
                  (recur))))))
        :cljs
        (let [candidate (if conn (ds/db conn) fallback)]
-         (if (journal/contains-anchor?
-              candidate (:graph-anchor token-data))
+         (if (>= (:max-tx candidate) (:revision token-data))
            candidate
            ;; A synchronous browser API cannot yield to an asynchronous writer
            ;; while preserving this call's return type. It therefore reports
@@ -76,112 +93,40 @@
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
 
-(defn- schema-proof-records
-  [db {:keys [permission-nodes relation-ids] :as scope}]
-  (let [{:keys [relation-defs permission-defs]}
-        (impl/build-schema-catalog db)
-        relation-ids (set relation-ids)
-        scoped-relations
-        (cond->> (mapcat identity (vals relation-defs))
-          scope (filter #(contains? relation-ids (:relation-id %))))
-        scoped-permissions
-        (if scope
-          (mapcat #(get permission-defs % []) permission-nodes)
-          (mapcat identity (vals permission-defs)))]
-    (concat
-     (->> scoped-relations
-          (map (fn [relation]
-                 [:relation
-                  (:relation-id relation)
-                  (:resource-type relation)
-                  (:relation-name relation)
-                  (:subject-type relation)]))
-          sort)
-     (->> scoped-permissions
-          (map normalized-permission)
-          (map (fn [permission]
-                 [:permission
-                  (:permission-id permission)
-                  (:resource-type permission)
-                  (:permission-name permission)
-                  (:source-relation-name permission)
-                  (:target-type permission)
-                  (:target-name permission)]))
-          sort))))
-
-(defn- content-schema-proof
-  [db scope]
-  {:content-digest
-   (secure/canonical-records-digest
-    "eacl/datascript/schema-content-proof/v3"
-    (schema-proof-records db scope))})
-
-(defn- content-relation-proof
-  [db relation-ids external-id]
-  (let [wanted (set relation-ids)
-        forward
-        (when (seq wanted)
-          (for [{subject-eid :e value :v}
-                (ddb/avet-datoms
-                 db relationship-storage/forward-attribute)
-                :let [decoded
-                      (endpoint-pair/decode-forward subject-eid value)]
-                :when (contains? wanted (:relation-eid decoded))]
-            [:forward
-             (:relation-eid decoded)
-             (:subject-type decoded)
-             subject-eid
-             (external-id db subject-eid)
-             (:resource-type decoded)
-             (:resource-eid decoded)
-             (external-id db (:resource-eid decoded))
-             (count value)]))
-        reverse
-        (when (seq wanted)
-          (for [{resource-eid :e value :v}
-                (ddb/avet-datoms
-                 db relationship-storage/reverse-attribute)
-                :let [decoded
-                      (endpoint-pair/decode-reverse resource-eid value)]
-                :when (contains? wanted (:relation-eid decoded))]
-            [:reverse
-             (:relation-eid decoded)
-             (:subject-type decoded)
-             (:subject-eid decoded)
-             (external-id db (:subject-eid decoded))
-             (:resource-type decoded)
-             resource-eid
-             (external-id db resource-eid)
-             (count value)]))]
-    {:content-digest
-     (secure/canonical-records-digest
-      "eacl/datascript/relationship-content-proof/v3"
-      (sort (concat forward reverse)))}))
-
-(defn- mutation-schema-proof
-  [db]
-  (some-> (ds/entity db [:eacl/id mutation/schema-entity-id])
-          (get mutation/schema-mutation-id-attr)))
-
-(defn- mutation-relation-proof
+(defn- ordered-generation-frame
   [db relation-ids]
-  (let [proof
-        (mapv (fn [relation-id]
-                [relation-id
-                 (get (ds/entity db relation-id)
-                      mutation/relation-mutation-id-attr)])
-              (sort relation-ids))]
-    (when (every? (comp some? second) proof)
-      proof)))
+  {:schema-stamp
+   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
+     (some-> (first (ds/datoms db :eavt schema-eid
+                                :eacl/schema-generation))
+             :tx))
+   :relation-stamps
+   (mapv
+    (fn [relation-id]
+      [relation-id
+       (some-> (first (ds/datoms db :eavt relation-id
+                                  :eacl/relation-version))
+               :tx)])
+    relation-ids)})
 
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable DataScript db value."
-  [db {:keys [object-id->entid entid->object-id conn
-              coherence-authority proof-mode]
-       :or {proof-mode :content}
+  [db {:keys [object-id->entid entid->object-id conn]
        :as opts}]
-  (let [graph-state
-        (delay (journal/graph-state db))]
+  (let [source-lifecycle
+        (or (some-> (:source-lifecycle-state opts) deref)
+            (:source-lifecycle opts)
+            (str (random-uuid)))
+        source-scope
+        (or (:source-scope opts)
+            {:source-id
+             {:connection-id
+              (or (:native-source-id opts) source-lifecycle)}
+             :branch nil})
+        opts' (-> opts
+                  (dissoc :source-lifecycle-state)
+                  (assoc :source-lifecycle source-lifecycle
+                         :source-scope source-scope))]
     (backend/make-adapter
      {:id :datascript
       :fingerprint (:adapter-fingerprint opts)
@@ -191,11 +136,9 @@
                           :selected-internal/current-external-v1)
       :capabilities
       (cond-> capabilities
-        (not= :managed coherence-authority)
-        (update :consistency disj :at-least-as-fresh)
-
         (nil? conn)
-        (update :consistency disj :fully-consistent))
+        (update :consistency disj
+                :fully-consistent :at-least-as-fresh))
       :state {:db db}
       :operations
       {:snapshot-id
@@ -204,35 +147,31 @@
           :basis-t (:max-tx db)})
 
        :source-scope
-       (fn []
-         {:source-id (:family-id @graph-state)
-          :branch nil})
+       (fn [] source-scope)
 
-       :graph-head
+       :source-lifecycle
+       (fn [] source-lifecycle)
+
+       :native-revision
        (fn []
-         {:graph-anchor (:head-id @graph-state)
-          :order-hint (:max-tx db)
+         {:revision (:max-tx db)
           :exact-locator nil})
-
-       :contains-anchor?
-       (fn [anchor]
-         (journal/contains-anchor? db anchor))
 
        :order-hint (fn [] (:max-tx db))
 
        :select-current
        (fn []
-         (snapshot-adapter db opts))
+         (snapshot-adapter db opts'))
 
        :select-authoritative
        (fn [_timeout-ms]
-         (snapshot-adapter db opts))
+         (snapshot-adapter (if conn (ds/db conn) db) opts'))
 
        :select-at-least
        (fn [token-data timeout-ms]
          (snapshot-adapter
-          (await-anchor-db conn db token-data timeout-ms)
-          opts))
+          (await-revision-db conn db token-data timeout-ms)
+          opts'))
 
        :exact-locator
        (constantly nil)
@@ -296,22 +235,6 @@
               (map :v)
               set))
 
-       :schema-proof
-       (fn
-         ([]
-          (case proof-mode
-            :mutation (mutation-schema-proof db)
-            :content (content-schema-proof db nil)
-            nil))
-         ([scope]
-          (case proof-mode
-            :mutation (mutation-schema-proof db)
-            :content (content-schema-proof db scope)
-            nil)))
-
-       :relation-proof
+       :proof-frame
        (fn [relation-ids]
-         (case proof-mode
-           :mutation (mutation-relation-proof db relation-ids)
-           :content (content-relation-proof db relation-ids entid->object-id)
-           nil))}})))
+         (ordered-generation-frame db relation-ids))}})))

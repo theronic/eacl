@@ -1,58 +1,38 @@
-# EACL v8 consistency and cache operations
+# EACL consistency and cache operations
 
 EACL selects one immutable database value at the start of an authorization
-operation. Schema resolution, query normalization, traversal, cache validation,
-result rendering, and cursor construction all use that same value.
-
-The completed-answer cache is deliberately not a historical cache. It is a
-private optimization owned by one EACL client and one connection.
+operation. Schema resolution, normalization, traversal, proof acquisition,
+result rendering, and cursor construction all use that value.
 
 ## Consistency modes
 
 | Mode | Datomic | Datahike | DataScript | Completed-answer cache |
 | --- | --- | --- | --- | --- |
-| omitted / `:minimize-latency` | current DB visible to this Peer | current connection DB | current connection DB | enabled |
-| `:fully-consistent` | bounded zero-argument `d/sync`, then selected DB | backend head barrier when supported | serialized live connection head | enabled on the selected current DB |
-| `:at-least-as-fresh` | targeted `d/sync conn t`, then anchor validation | waits/selects a descendant containing the token anchor | selects a known descendant containing the token anchor | enabled only if the selected DB is current |
-| `:at-exact-snapshot` | authenticated `d/as-of` selection | retained exact/temporal selection | unsupported; rejected before cache access | bypassed |
+| omitted / `:minimize-latency` | current DB visible to the Peer | current connection DB | current connection DB | exact-first, then automatic proof-backed reuse |
+| `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | enabled for the selected current DB |
+| `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | enabled only when selection is an ordinary current DB |
+| `:at-exact-snapshot` | authenticated `d/as-of` | retained exact/temporal selection when supported | unsupported | proof-backed completed answers bypassed |
 
-The default is `:minimize-latency`. EACL does not call `d/sync` and does not call
-`d/as-of` on the normal path. A consumer that requires the Peer to observe
-transactor head may synchronize before calling EACL, or explicitly request
-`:fully-consistent`.
+The default performs no synchronization or historical selection. Low-level
+engine functions that accept caller-supplied historical, filtered, or
+prospective database values do not have a managed-cache availability
+guarantee.
 
-`fully-consistent` cannot promise that a disconnected Peer knows about a
-transaction that it has no way to observe. Its precise v8 meaning is an
-authoritative synchronization barrier supported by the configured backend.
-It does not claim a distributed linearizability theorem beyond that backend
-barrier.
+## Automatic current cache
 
-Low-level engine functions that accept an arbitrary `db` remain available for
-prospective, filtered, or historical evaluation. Those functions bypass the
-completed-answer cache.
+Every client owns a bounded current cache. Exact answers are attached to the
+selected immutable database identity and are checked first without proof. On
+an exact miss, deterministic ordinary current requests automatically attempt a
+complete ordered-generation proof. A proof-backed answer may survive unrelated
+forward transactions when lifecycle, normalized operation, result shape,
+schema generation, and scalar dependency frontier are equal.
 
-## Current-generation cache
+Missing, malformed, partial, oversized, unsupported, or exceptional proof
+evidence falls back to evaluation
+and exact caching for the selected value. It never becomes an authorization
+error and never permits partial-proof reuse.
 
-Each client owns a bounded native cache with two tiers:
-
-1. **Exact-current.** Entries are attached to one immutable selected DB
-   generation. A hit is accepted only for that same generation. Any ordinary
-   transaction replaces the generation, so no dependency proof is needed.
-2. **Managed-current.** Entries may survive unrelated forward transactions.
-   The key contains the schema generation and the maximum last-change
-   transaction over the permission's complete relation dependency set.
-
-The answer tiers retain completed public operation results. The traversal
-cache may additionally retain exact generated-command responses and private
-continuations produced before the request's stopping boundary. Demand mode
-never widens a scan or continues traversal to warm a broader artifact.
-Completed acyclic or recursive denotations are retained only when traversal
-naturally exhausts or the caller explicitly requests
-`:evaluation :complete-denotation`. Public IDs and response metadata are
-rendered from the selected DB after lookup. Failed or timed-out work is never
-admitted as a completed answer or denial.
-
-The cache never changes authorization semantics. Disable it globally:
+Disable caching:
 
 ```clojure
 (require '[eacl.cache :as cache])
@@ -62,84 +42,24 @@ The cache never changes authorization semantics. Disable it globally:
 (datascript/make-client conn {:cache cache/no-cache})
 ```
 
-Or bypass it for one operation with `:cache? false`.
+Or pass `:cache? false` on one request. `cache-stats` reports exact and
+proof-backed hits, misses, bypasses, proof-unavailable reasons, publications,
+expirations, and bounded-store metrics.
 
-These modes branch directly to engine evaluation before semantic cache-key
-construction, dependency-stamp capture, snapshot-token calculation, cache
-resolution, canonicalization, and cache-envelope creation. Cache-free
-reference evaluation is therefore independent of the cache strategy both
-semantically and computationally.
+## Mutation contract
 
-The default private cache is mandatory in the sense that Datahike and
-DataScript create it automatically when `:cache` is omitted; callers can still
-explicitly choose `cache/no-cache` for diagnostics and cache-free reference
-evaluation.
+Cache coherence assumes that every authorization-relevant mutation uses EACL
+or documented EACL-produced transaction data/functions, transacted intact.
+This includes schema, relationships, permissioned identity/liveness, repair,
+object cleanup, and safe entity deletion. Application-domain datoms that do
+not affect authorization are unrestricted.
 
-Capacity is bounded with `{:cache {:max-entries n}}`. Datomic still accepts the
-legacy cache configuration surface, but caller-supplied portable providers are
-not an authority for completed native answers. A corrupt, stale, shared, or
-failing provider therefore cannot grant access. Cursor continuation state also
-uses a separate bounded private store.
-
-## Exact-current versus managed-current
-
-Every backend defaults to `:coherence-authority :unknown`. Unknown authority
-enables exact-current reuse only. It is sound with out-of-band writers because
-a changed immutable DB generation cannot hit the previous generation. Managed
-reuse is never a silent default: one raw backend transaction outside EACL's
-writers would otherwise leave every relation stamp untouched and let a stamped
-entry outlive the data it was computed from.
-
-Opt in to managed reuse only under this explicit contract:
-
-```clojure
-(def acl
-  (datomic/make-client
-    conn
-    {:coherence-authority :managed}))
-```
-
-`managed` means every relationship mutation that can affect EACL uses an EACL
-mutation API or the documented backend transaction helper that atomically
-updates the affected relation-version/mutation datoms. Schema changes use
-`eacl/write-schema!`. This contract may be shared by multiple EACL clients and
-processes; the stamps live in the database, not in a listener.
-
-For Datomic, the managed relation stamp is the transaction component of the
-current `:eacl/relation-version` datom, with the schema-initialized
-`:eacl.relation/mutation-id` datom as the fallback for a relation that has
-never been written. This supports the documented `tx-relationship` helper as
-well as the public EACL writers. Datahike and DataScript use the transaction
-component of the current relation mutation datom.
-
-For a dependency set `D`, EACL validates that every dependency has a stamp and
-builds the complete sorted per-relation stamp vector:
-
-```text
-dependency-stamp = sort-by relation [[relation last-change-t mutation-id] ...]
-                   for relation in D
-```
-
-Under ordinary forward transactions, changing any relevant relation writes a
-strictly newer stamp component and therefore changes the vector. An unrelated
-relation write leaves it unchanged. The complete vector (not a folded maximum)
-is the key component, so distinct histories and distinct dependency sets
-cannot collide.
-
-An actual schema change changes the schema generation and expires all managed
-answers and compiled plans. EACL intentionally does not attempt partial cache
-retention across schema updates.
-
-Custom object-ID codecs are exact-current-only unless their adapter supplies a
-stable fingerprint, deterministic behavior, and a separate dependency-frame
-contract. Future caveats or authorization-relevant attributes must likewise
-declare complete dependency classes before managed reuse is enabled.
-
-## Explicit lifecycle expiry
-
-History manipulation is outside the ordinary forward-transaction contract.
-Quiesce the client and call the backend's `expire-cache!` after reset, restore,
-branch force, manual history replacement, or an unstamped bulk repair:
+Supported writers commit tuple changes and every affected relation generation
+atomically. Raw authorization mutations can leave a proof-backed entry stale.
+After one occurs, quiesce all affected callers, repair the database, expire or
+recreate every client in every process, and only then resume. Preparation and
+an identical schema write are not cache flushes; cache expiry is not ghost
+repair.
 
 ```clojure
 (eacl.datomic.core/expire-cache! acl)
@@ -147,85 +67,36 @@ branch force, manual history replacement, or an unstamped bulk repair:
 (eacl.datascript.core/expire-cache! acl)
 ```
 
-Expiry swaps the complete cache lifecycle atomically. In-flight work retains
-only the old lifecycle and can publish only into that unreachable object, so a
-late result cannot repopulate the new lifecycle.
+Pass one shared new lifecycle as the optional second argument when processes
+exchange tokens. Also rotate after reset, restore, branch replacement, or
+another change that can reuse or regress native revision identities.
 
-`cache-stats` on the same backend namespace reports exact hits, managed hits,
-misses, bypasses, stamp failures, puts, expirations, and live entry counts.
+## Custom identity
 
-## Cache-free reference semantics
-
-The cache-free implementation is the reference evaluator:
-
-```clojure
-(eacl/can? acl
-  {:subject subject
-   :permission :view
-   :resource resource
-   :cache? false})
-```
-
-The formal cache theorem proves a cached internal result equals recomputation
-under the selected-snapshot and managed-writer premises. Differential tests
-then compare cache-enabled and cache-disabled public operations across
-Datomic, Datahike, and DataScript. This separation is intentional: the cache
-is an optimization/refinement of authorization, never part of the definition
-of authorization.
+Custom ID codecs are client-local and exact-only by default. Cross-snapshot
+reuse and cross-client cursors require a portable `:adapter-fingerprint`,
+`:adapter-deterministic? true`, and an application-certified deterministic,
+injective round trip. Every process exchanging cursors must use the same codec
+and fingerprint.
 
 ## Cursors
 
-Cursors are authenticated and scoped to backend/source, operation, query,
-engine version, graph anchor, and an exact snapshot locator. The normalized
-query scope includes the principal, permission, filters, resource type, and
-consistency contract. Relay direction and page size are resume controls, not
-authorization scope.
+Cursors bind the normalized query, principal, permission, filters, operation,
+adapter/source lifecycle, ordering, native revision, and exact/proof identity.
+On continuation EACL authenticates before traversal, continues on a
+proof-equivalent current snapshot when possible, otherwise reconstructs the
+authenticated exact snapshot on history-capable backends, and fails closed
+when neither is possible. It never drops a bound or silently restarts page one.
 
-A cursor walk follows its requested consistency contract:
-
-1. decode and authenticate the cursor before it influences traversal;
-2. continue on current only when its complete dependency and ordering proof
-   equals the cursor proof;
-3. after a changed proof, reconstruct the cursor's authenticated exact
-   snapshot on history-capable backends;
-4. reject when exact reconstruction is unavailable or violates a newer
-   freshness floor;
-5. validate ordinal and result identity before continuation; never drop the
-   bound or restart page one.
-
-EACL does not recalculate a whole-result content proof on every page. The
-dependency/order proof is scoped to the semantic query. Proof equality permits
-current continuation without history; proof inequality never permits current
-continuation.
-
-Recursive continuation state is an optional performance optimization.
-Continuation-store eviction deterministically replays the authenticated prefix
-on the already-selected immutable snapshot. It never selects another graph or
-changes the public walk.
-
-DataScript has no EACL time-travel path. It continues only on a
-proof-equivalent current DB and returns the typed stale/unsupported error when
-that is impossible; it never retains an old DB in a hidden registry.
-
-## Operational invariants
-
-- One public request selects one immutable DB exactly once.
-- Local consistency does no implicit network synchronization.
-- Normal current reads do not call `d/as-of`.
-- Exact, historical cursor, and arbitrary-DB work bypass completed answers.
-- Schema changes drop the entire managed cache generation.
-- Listener timing, TTL, wall clock, and a numeric “latest” pointer are not
-  validity evidence.
-- Cache/provider failure is a miss, never an allow.
-- A recursive limit failure is never cached as a complete deny/allow/page.
-- Async Datomic excision is outside the v8 cache contract.
+Continuation state is a private performance optimization. Eviction replays the
+authenticated prefix on the already selected snapshot and does not select a
+different lifecycle. DataScript has no arbitrary time-travel path.
 
 ## Assurance boundary
 
-The verified current-cache model proves current-only admission, exact
-same-snapshot hits, lifecycle isolation, forward scalar-stamp invalidation, a
-least-fixed-point ReBAC frame theorem for complete compiled dependencies, and
-selected-snapshot result rendering. The complete public Clojure/CLJS engine is
-not yet claimed as end-to-end formally verified; adapter behavior, boundary
-conversion, cryptography, and production routing remain explicit trusted or
-empirically certified layers.
+Dafny proves exact-first selection, lifecycle isolation, proof completeness,
+and the scalar-frontier preservation theorem under globally ordered atomic
+relation stamps and deterministic complete dependencies. Adapter certification
+tests establish those obligations for Datomic, Datahike, and DataScript. The
+database engines, adapter conversion, cryptography, and production routing
+remain explicit trusted and empirically tested layers.

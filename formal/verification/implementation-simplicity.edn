@@ -18,28 +18,30 @@
  :current-worktree
  {:source-closure "formal/verification/public-source-closure.json"
   :source-closure-sha256
-  "84595c09a5a3a3add9880c981635e1091c89771659426d7bdcf72b5e973ffedf"
+  "73115b8decc4cd0841bcbd506df25b289f91955dcfb0c064567ceb33cc2dabea"
   :public-roots 63
-  :source-files 56
-  :reachable-definitions 1420
+  :source-files 57
+  :reachable-definitions 1380
   :definitions-by-source
-  {"modules/eacl/src/eacl/subproblem_cache.cljc" 49
+  {"modules/eacl/src/eacl/subproblem_cache.cljc" 48
    "modules/eacl-datomic/src/eacl/datomic/cache.clj" 4
-   "modules/eacl-datomic/src/eacl/datomic/core.clj" 123
-   "modules/eacl/src/eacl/engine/v8.cljc" 230
-   "modules/eacl/src/eacl/execution.cljc" 21}
+   "modules/eacl-datomic/src/eacl/datomic/core.clj" 122
+   "modules/eacl/src/eacl/engine/v8.cljc" 231
+   "modules/eacl/src/eacl/execution.cljc" 21
+   "modules/eacl/src/eacl/proof_frame.cljc" 13}
   :forbidden-coordination-source-occurrences 0
   :datomic-schema-state-source-occurrences 0
   :datascript-exact-snapshot-registry-source-occurrences 0}
  :delta
  {:public-roots 0
-  :source-files 1
-  :reachable-definitions -4
-  :subproblem-cache-definitions -18
+  :source-files 2
+  :reachable-definitions -44
+  :subproblem-cache-definitions -19
   :datomic-cache-definitions -31
-  :datomic-core-definitions -5
-  :shared-engine-definitions 21
+  :datomic-core-definitions -6
+  :shared-engine-definitions 22
   :normalized-execution-contract-definitions 21
+  :proof-frame-definitions 13
   :forbidden-coordination-source-occurrences -22
   :datomic-schema-state-source-occurrences -38
   :datascript-exact-snapshot-registry-source-occurrences -11}

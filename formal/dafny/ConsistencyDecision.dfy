@@ -100,8 +100,8 @@ module ConsistencyDecision {
     backendSelectionCalls: nat,
     validationDecisions: nat,
     sourceScopeReads: nat,
-    containsAnchorCalls: nat,
-    graphHeadReads: nat,
+    revisionValidationCalls: nat,
+    nativeRevisionReads: nat,
     orderHintReads: nat,
     exactLocatorReads: nat
   )
@@ -118,9 +118,9 @@ module ConsistencyDecision {
     case AuthoritativePath =>
       SelectionWork(1, 1, 0, 1, 1, 2 + if issueResponseToken then 1 else 0, 0, 1, 1, 1)
     case AtLeastPath =>
-      SelectionWork(1, 1, 1, 1, 1, 3 + if issueResponseToken then 1 else 0, 1, 1, 1, 1)
+      SelectionWork(1, 1, 1, 1, 1, 3 + if issueResponseToken then 1 else 0, 1, 2, 2, 2)
     case ExactPath =>
-      SelectionWork(1, 1, 1, 1, 1, 3 + if issueResponseToken then 1 else 0, 0, 2, 2, 2)
+      SelectionWork(1, 1, 1, 1, 1, 3 + if issueResponseToken then 1 else 0, 1, 2, 2, 2)
   }
 
   lemma SuccessfulSelectionLogicalWorkIsConstantBounded(
@@ -133,8 +133,8 @@ module ConsistencyDecision {
     ensures SuccessfulSelectionWork(path, issueResponseToken).backendSelectionCalls <= 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).validationDecisions <= 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).sourceScopeReads <= 4
-    ensures SuccessfulSelectionWork(path, issueResponseToken).containsAnchorCalls <= 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).graphHeadReads <= 2
+    ensures SuccessfulSelectionWork(path, issueResponseToken).revisionValidationCalls <= 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).nativeRevisionReads <= 2
     ensures SuccessfulSelectionWork(path, issueResponseToken).orderHintReads <= 2
     ensures SuccessfulSelectionWork(path, issueResponseToken).exactLocatorReads <= 2
   {
@@ -176,7 +176,7 @@ module ConsistencyDecision {
     ensures SuccessfulSelectionWork(
               SelectedCurrentPath,
               issueResponseToken
-            ).graphHeadReads == 1
+            ).nativeRevisionReads == 1
     ensures SuccessfulSelectionWork(
               SelectedCurrentPath,
               issueResponseToken
@@ -186,10 +186,6 @@ module ConsistencyDecision {
               issueResponseToken
             ).exactLocatorReads == 1
   {
-  }
-
-  predicate RequiresManagedAuthority(mode: SnapshotConsistencyMode) {
-    mode.AtLeastAsFresh? || mode.AtExactSnapshot?
   }
 
   function PlannedAction(mode: SnapshotConsistencyMode): SelectionAction {
@@ -212,63 +208,39 @@ module ConsistencyDecision {
 
   function SelectionPlanDecision(
     mode: SnapshotConsistencyMode,
-    capabilitySupported: bool,
-    managedAuthority: bool
+    capabilitySupported: bool
   ): PlanOutcome {
     if !capabilitySupported then
       PlanRejected(UnsupportedModeError(mode))
-    else if RequiresManagedAuthority(mode) && !managedAuthority then
-      PlanRejected(UnsupportedHeadBarrier)
     else
       Planned(PlannedAction(mode))
   }
 
   method DecideSelectionPlan(
     mode: SnapshotConsistencyMode,
-    capabilitySupported: bool,
-    managedAuthority: bool
+    capabilitySupported: bool
   ) returns (outcome: PlanOutcome)
-    ensures outcome.Planned? <==>
-            capabilitySupported &&
-            (!RequiresManagedAuthority(mode) || managedAuthority)
+    ensures outcome.Planned? <==> capabilitySupported
     ensures outcome.Planned? ==>
               outcome.action == PlannedAction(mode)
     ensures outcome.PlanRejected? && !capabilitySupported ==>
               outcome.error == UnsupportedModeError(mode)
-    ensures outcome.PlanRejected? &&
-            capabilitySupported &&
-            RequiresManagedAuthority(mode) &&
-            !managedAuthority ==>
-              outcome.error == UnsupportedHeadBarrier
   {
     return SelectionPlanDecision(
         mode,
-        capabilitySupported,
-        managedAuthority
+        capabilitySupported
       );
   }
 
-  lemma CausalSelectionPlanRequiresManagedAuthority(
-    mode: SnapshotConsistencyMode
-  )
-    requires RequiresManagedAuthority(mode)
-    ensures SelectionPlanDecision(mode, true, false) ==
-            PlanRejected(UnsupportedHeadBarrier)
-  {
-  }
-
-  lemma UnsupportedExactPlanIsExactSnapshotUnavailable(
-    managedAuthority: bool
-  )
+  lemma UnsupportedExactPlanIsExactSnapshotUnavailable()
     ensures SelectionPlanDecision(
               AtExactSnapshot,
-              false,
-              managedAuthority
+              false
             ) == PlanRejected(ExactSnapshotUnavailable)
   {
   }
 
-  predicate RequiresAnchorValidation(kind: SelectionKind) {
+  predicate RequiresRevisionValidation(kind: SelectionKind) {
     kind.AtLeastSelection? || kind.ExactSelection?
   }
 
@@ -286,7 +258,7 @@ module ConsistencyDecision {
     selectionPresent: bool,
     selectedAdapter: bool,
     sameSourceScope: bool,
-    anchorSatisfied: bool
+    revisionSatisfied: bool
   ): SelectionOutcome {
     if !selectionPresent then
       SelectionRejected(MissingSelectionError(kind))
@@ -294,7 +266,7 @@ module ConsistencyDecision {
       SelectionRejected(InvalidSelectedAdapter)
     else if !sameSourceScope then
       SelectionRejected(IncomparableScope)
-    else if RequiresAnchorValidation(kind) && !anchorSatisfied then
+    else if RequiresRevisionValidation(kind) && !revisionSatisfied then
       SelectionRejected(HistoryDivergence)
     else
       SelectionAccepted
@@ -305,14 +277,14 @@ module ConsistencyDecision {
     selectionPresent: bool,
     selectedAdapter: bool,
     sameSourceScope: bool,
-    anchorSatisfied: bool
+    revisionSatisfied: bool
   ) returns (outcome: SelectionOutcome)
     requires selectedAdapter ==> selectionPresent
     ensures outcome.SelectionAccepted? <==>
             selectionPresent &&
             selectedAdapter &&
             sameSourceScope &&
-            (!RequiresAnchorValidation(kind) || anchorSatisfied)
+            (!RequiresRevisionValidation(kind) || revisionSatisfied)
     ensures outcome.SelectionRejected? && !selectionPresent ==>
               outcome.error == MissingSelectionError(kind)
     ensures outcome.SelectionRejected? &&
@@ -326,8 +298,8 @@ module ConsistencyDecision {
     ensures outcome.SelectionRejected? &&
             selectedAdapter &&
             sameSourceScope &&
-            RequiresAnchorValidation(kind) &&
-            !anchorSatisfied ==>
+            RequiresRevisionValidation(kind) &&
+            !revisionSatisfied ==>
               outcome.error == HistoryDivergence
   {
     return SelectedSnapshotDecision(
@@ -335,65 +307,65 @@ module ConsistencyDecision {
         selectionPresent,
         selectedAdapter,
         sameSourceScope,
-        anchorSatisfied
+        revisionSatisfied
       );
   }
 
-  lemma AtLeastAcceptanceRequiresAncestor(
+  lemma AtLeastAcceptanceRequiresRevisionFloor(
     selectedAdapter: bool,
     sameSourceScope: bool,
-    anchorSatisfied: bool
+    revisionSatisfied: bool
   )
     ensures SelectedSnapshotDecision(
               AtLeastSelection,
               selectedAdapter,
               selectedAdapter,
               sameSourceScope,
-              anchorSatisfied
+              revisionSatisfied
             ).SelectionAccepted? ==>
               selectedAdapter &&
               sameSourceScope &&
-              anchorSatisfied
+              revisionSatisfied
   {
   }
 
-  lemma ExactAcceptanceRequiresPinnedGraph(
+  lemma ExactAcceptanceRequiresExactRevision(
     selectedAdapter: bool,
     sameSourceScope: bool,
-    graphAnchorMatches: bool
+    exactRevisionMatches: bool
   )
     ensures SelectedSnapshotDecision(
               ExactSelection,
               selectedAdapter,
               selectedAdapter,
               sameSourceScope,
-              graphAnchorMatches
+              exactRevisionMatches
             ).SelectionAccepted? ==>
               selectedAdapter &&
               sameSourceScope &&
-              graphAnchorMatches
+              exactRevisionMatches
   {
   }
 
   lemma PresentMalformedSelectionIsNotSnapshotAbsence(
     kind: SelectionKind,
     sameSourceScope: bool,
-    anchorSatisfied: bool
+    revisionSatisfied: bool
   )
     ensures SelectedSnapshotDecision(
               kind,
               true,
               false,
               sameSourceScope,
-              anchorSatisfied
+              revisionSatisfied
             ) == SelectionRejected(InvalidSelectedAdapter)
   {
   }
 
-  lemma CurrentSelectionDoesNotRequireHistoricalAnchor(
+  lemma CurrentSelectionDoesNotRequireRevisionValidation(
     selectedAdapter: bool,
     sameSourceScope: bool,
-    anchorSatisfied: bool
+    revisionSatisfied: bool
   )
     requires selectedAdapter
     requires sameSourceScope
@@ -402,7 +374,7 @@ module ConsistencyDecision {
               selectedAdapter,
               selectedAdapter,
               sameSourceScope,
-              anchorSatisfied
+              revisionSatisfied
             ).SelectionAccepted?
   {
   }

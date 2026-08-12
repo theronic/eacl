@@ -3,7 +3,6 @@
   (:require [eacl.formal.generated-runtime]
             [eacl.verified-kernel :as verified])
   (:import
-   (CacheKernel CacheCandidate ProofState Telemetry)
    (ConsistencyDecision
     ConsistencyError
     SelectionKind
@@ -776,12 +775,11 @@
     :else :history-divergence))
 
 (defn- consistency-plan-decision
-  [{:keys [mode capability-supported? managed-authority?]}]
+  [{:keys [mode capability-supported?]}]
   (let [outcome
         (ConsistencyDecision.__default/DecideSelectionPlan
          (snapshot-consistency-mode mode)
-         capability-supported?
-         managed-authority?)]
+         capability-supported?)]
     (if (.is_Planned outcome)
       (let [action (.dtor_action outcome)]
         (cond
@@ -802,14 +800,14 @@
 
 (defn- consistency-selection-decision
   [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? anchor-satisfied?]}]
+           same-source-scope? revision-satisfied?]}]
   (let [outcome
         (ConsistencyDecision.__default/ValidateSelectedSnapshot
          (consistency-selection-kind kind)
          selection-present?
          selected-adapter?
          same-source-scope?
-         anchor-satisfied?)]
+         revision-satisfied?)]
     (if (.is_SelectionAccepted outcome)
       :accept
       (consistency-error (.dtor_error outcome)))))
@@ -845,79 +843,14 @@
      (.longValueExact (.dtor_validationDecisions work))
      :source-scope-reads
      (.longValueExact (.dtor_sourceScopeReads work))
-     :contains-anchor-calls
-     (.longValueExact (.dtor_containsAnchorCalls work))
-     :graph-head-reads
-     (.longValueExact (.dtor_graphHeadReads work))
+     :revision-validation-calls
+     (.longValueExact (.dtor_revisionValidationCalls work))
+     :native-revision-reads
+     (.longValueExact (.dtor_nativeRevisionReads work))
      :order-hint-reads
      (.longValueExact (.dtor_orderHintReads work))
      :exact-locator-reads
      (.longValueExact (.dtor_exactLocatorReads work))}))
-
-(defn- proof-state
-  [proof]
-  (if (some? proof)
-    (ProofState/create_CompleteProof (dafny-string proof))
-    (ProofState/create_ProofUnavailable)))
-
-(defn- cache-candidate
-  [{:keys [status authenticated? key source graph proof]}]
-  (case status
-    :missing
-    (CacheCandidate/create_NoCandidate TypeDescriptor/BIG_INTEGER)
-
-    :provider-failure
-    (CacheCandidate/create_ProviderFailed TypeDescriptor/BIG_INTEGER)
-
-    (CacheCandidate/create_Candidate
-     TypeDescriptor/BIG_INTEGER
-     authenticated?
-     (dafny-string key)
-     (dafny-string source)
-     (dafny-nat graph)
-     (proof-state proof)
-     (dafny-nat 0)
-     (Telemetry/create (dafny-nat graph) (dafny-nat 0)))))
-
-(defn- cache-decision
-  [{:keys [deterministic?
-           dependency-scope-nonempty?
-           expected-key
-           expected-source
-           selected-graph
-           ancestors
-           selected-proof
-           entry]}]
-  (let [decision
-        (CacheKernel.__default/ValidateCache
-         TypeDescriptor/BIG_INTEGER
-         deterministic?
-         dependency-scope-nonempty?
-         (dafny-string expected-key)
-         (dafny-string expected-source)
-         (dafny-nat selected-graph)
-         (DafnySet.
-          ^java.util.Collection
-          (mapv dafny-nat ancestors))
-         (proof-state selected-proof)
-         (cache-candidate entry))]
-    (if (.is_CacheHit decision)
-      {:status :hit
-       :provenance
-       (if (.is_ExactHit (.dtor_provenance decision))
-         :exact-hit
-         :causal-proof-lift)}
-      (let [reason (.dtor_reason decision)]
-        {:status :miss
-         :reason
-         (cond
-           (.is_Missing reason) :missing
-           (.is_ProviderFailure reason) :provider-failure
-           (.is_NoProofBypass reason) :no-proof-bypass
-           (.is_Unauthenticated reason) :unauthenticated
-           (.is_ScopeMismatch reason) :scope-mismatch
-           (.is_FutureOrSibling reason) :future-or-sibling
-           :else :proof-mismatch)}))))
 
 (defn- candidate-state
   [candidate]
@@ -1803,7 +1736,6 @@
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
-      :cache-validation (cache-decision input)
       :current-cache-decision (current-cache-decision input)
       :subproblem-cache-decision
       (subproblem-cache-decision input)

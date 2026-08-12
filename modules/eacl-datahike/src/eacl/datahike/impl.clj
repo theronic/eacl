@@ -186,6 +186,61 @@
   [resource-type relation-name subject-type]
   [:eacl/id (model/->relation-id resource-type relation-name subject-type)])
 
+(defn- endpoint-identity-guard
+  [db role eid object]
+  (let [candidate (or (:eacl.relationship/identity-guard object)
+                      (when (and (vector? (:id object))
+                                 (= 2 (count (:id object))))
+                        (:id object))
+                      (when-let [value (:eacl/id (d/entity db eid))]
+                        [:eacl/id value]))]
+    (when-not (and (vector? candidate)
+                   (= 2 (count candidate))
+                   (keyword? (first candidate))
+                   (some? (second candidate)))
+      (throw
+       (ex-info
+        "A relationship endpoint has no commit-time identity guard."
+        {:type :eacl/endpoint-identity-unavailable
+         :role role
+         :endpoint-eid eid
+         :object object})))
+    (let [[attribute value] candidate]
+      [:db.fn/cas eid (ddb/attr-repr db attribute) value value])))
+
+(defn tx-relation-version-stamp
+  [relation-id]
+  [:db/add relation-id :eacl/relation-version :db/current-tx])
+
+(defn- guard-schema-write-fence
+  "Fences client-planned relationship data against concurrent schema writes.
+
+  The dedicated fence is intentionally distinct from the cache generation:
+  Datahike reasserts an old==new CAS datom with a new physical assertion tx.
+  Letting that happen on :eacl/schema-generation would invalidate all managed
+  schema entries after every relationship write."
+  [db tx-data]
+  (if (seq tx-data)
+    (let [schema-eid (ddb/entid db [:eacl/id "schema-string"])
+          write-fence
+          (when schema-eid
+            (some-> (ddb/eavt-datoms
+                     db schema-eid :eacl/schema-write-fence)
+                    first
+                    :v))]
+      (when-not write-fence
+        (throw
+         (ex-info
+          "Relationship writes require a prepared EACL schema write fence."
+          {:type :eacl.cache/generation-unprepared
+           :backend :datahike})))
+      (into
+       [[:db.fn/cas schema-eid
+         (ddb/attr-repr db :eacl/schema-write-fence)
+         write-fence write-fence]]
+       tx-data))
+    []))
+
 (defn- resolve-relationship
   [db {:keys [subject relation resource]}]
   (let [subject-type  (:type subject)
@@ -205,11 +260,15 @@
     {:subject subject
      :subject-type subject-type
      :subject-id subject-id
+     :subject-identity-guard
+     (endpoint-identity-guard db :subject subject-id subject)
      :relation relation
      :relation-id relation-eid
      :resource resource
      :resource-type resource-type
-     :resource-id resource-id}))
+     :resource-id resource-id
+     :resource-identity-guard
+     (endpoint-identity-guard db :resource resource-id resource)}))
 
 (defn find-one-relationship-id
   "Returns the resolved tuple identity for an existing relationship, or nil.
@@ -242,14 +301,17 @@
 
 (defn- add-relationship-txes
   [resolved]
-  [[:db/add
+  [(:subject-identity-guard resolved)
+   (:resource-identity-guard resolved)
+   [:db/add
     (:subject-id resolved)
     relationship-storage/forward-attribute
     (relationship-tuple resolved)]
    [:db/add
     (:resource-id resolved)
     relationship-storage/reverse-attribute
-    (reverse-relationship-tuple resolved)]])
+    (reverse-relationship-tuple resolved)]
+   (tx-relation-version-stamp (:relation-id resolved))])
 
 (defn- retract-relationship-txes
   [resolved]
@@ -260,7 +322,8 @@
    [:db/retract
     (:resource-id resolved)
     relationship-storage/reverse-attribute
-    (reverse-relationship-tuple resolved)]])
+    (reverse-relationship-tuple resolved)]
+   (tx-relation-version-stamp (:relation-id resolved))])
 
 (defn direct-match?
   [db subject-type subject-id relation-id resource-type resource-id]
@@ -304,25 +367,28 @@
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
   (let [resolved (resolve-relationship db relationship)
-        exists?  (relationship-exists? db resolved)]
-    (case operation
-      :touch
-      (when-not exists?
-        (add-relationship-txes resolved))
+        exists?  (relationship-exists? db resolved)
+        tx-data
+        (case operation
+          :touch
+          (when-not exists?
+            (add-relationship-txes resolved))
 
-      :create
-      (if exists?
-        (throw
-         (ex-info
-          ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-          {:type :eacl/relationship-conflict
-           :relationship relationship}))
-        (add-relationship-txes resolved))
+          :create
+          (if exists?
+            (throw
+             (ex-info
+              ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+              {:type :eacl/relationship-conflict
+               :relationship relationship}))
+            (add-relationship-txes resolved))
 
-      :delete
-      ;; Datahike ignores retraction of an absent datom. Retracting both halves
-      ;; unconditionally makes a half-written relationship repairable.
-      (retract-relationship-txes resolved))))
+          :delete
+          ;; Datahike ignores retraction of an absent datom. Retracting both
+          ;; halves unconditionally makes a half-written pair repairable.
+          (retract-relationship-txes resolved))]
+    (when tx-data
+      (guard-schema-write-fence db tx-data))))
 
 (defn read-relationships
   ([db filters]
@@ -494,6 +560,33 @@
     relationship-storage/reverse-attribute
     [resource-type relation-id subject-type subject-id]]])
 
+(defn- relationship-op-relation-id
+  [op]
+  (when (and (vector? op)
+             (contains? #{:db/add :db/retract} (first op))
+             (contains? #{relationship-storage/forward-attribute
+                          relationship-storage/reverse-attribute}
+                        (nth op 2 nil))
+             (vector? (nth op 3 nil)))
+    (nth (nth op 3) 1 nil)))
+
+(defn stamp-relation-versions
+  "Adds one idempotent native generation stamp per affected relation."
+  [tx-data]
+  (let [ops (vec tx-data)
+        relation-ids (into #{} (keep relationship-op-relation-id) ops)
+        stamped (into #{}
+                      (keep (fn [op]
+                              (when (and (vector? op)
+                                         (= :db/add (first op))
+                                         (= :eacl/relation-version
+                                            (nth op 2 nil)))
+                                (nth op 1))))
+                      ops)]
+    (into ops
+          (map tx-relation-version-stamp)
+          (sort (remove stamped relation-ids)))))
+
 (defn tx-delete-object
   "Returns transaction data removing both halves of every relationship touching
    `object-id`. The object entity itself is left intact.
@@ -545,7 +638,9 @@
              [subject-type relation-id resource-type object-eid])))
          triples))
        distinct
-       vec))
+       vec
+       stamp-relation-versions
+       (guard-schema-write-fence db)))
     []))
 
 (defn affected-relation-ids

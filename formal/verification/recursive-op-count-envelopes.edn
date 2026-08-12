@@ -18,10 +18,7 @@
             :fixture {:shape :star :accounts 2000}}
  :work-envelopes
  {:raw-lookup-first-50
-  {:maximum-schema-proof-reads 3   ; memoized invocations (cheap): route
-                                   ; validation + actual + certificate
-                                   ; identities all deref one delay
-   :maximum-schema-proof-computations 1 ; 3.1 ratchet: one scan per request
+  {:maximum-proof-frame-reads 3
    :maximum-plan-compiles 1        ; 3.3 ratchet: nil-store lookup deleted the duplicate
    :maximum-denotation-key-builds 0    ; 3.3 ratchet: no key work without a store
    :maximum-denotation-dependency-calcs 0 ; 3.3 ratchet
@@ -37,20 +34,18 @@
                                        ; cache)
    :maximum-backend-scans 64}      ; demand semantics: first 50 plus sentinel
   :raw-can
-  {:maximum-schema-proof-reads 0
+  {:maximum-proof-frame-reads 0
    :maximum-plan-compiles 1
    :maximum-denotation-key-builds 0
    :maximum-denotation-dependency-calcs 0
    :maximum-backend-scans 8}       ; bounded reverse point check
   :client-lookup-first-50
-  {:maximum-schema-proof-reads 5   ; memoized invocations (cheap)
-   :maximum-schema-proof-computations 1 ; 3.1 ratchet: one scan per request
+  {:maximum-proof-frame-reads 5
    :maximum-plan-compiles 1
    :maximum-backend-scans 64       ; first 50 plus sentinel
    :maximum-later-page-scans 64}   ; retained continuation: next 50 + sentinel
   :client-can
-  {:maximum-schema-proof-reads 2   ; cold client (fresh schema-cache registry);
-                                   ; a warmed client reads 1
+  {:maximum-proof-frame-reads 2
    :maximum-kernel-drives 8}       ; target-anchored reverse Boolean demand
   :count-full
   {:maximum-derived-grants-factor 2 ; derived-grants <= factor * accounts

@@ -248,7 +248,7 @@ module SchemaPlanCost {
   // These are generated-certifier comparison budgets, not elapsed time,
   // allocation counts, verifier obligations, or retained heap. The split
   // mirrors production: canonical source-plan compilation runs once per
-  // schema-proof/root plan, while each subject-type seed bucket is checked by
+  // schema-generation/root plan, while each subject-type seed bucket is checked by
   // the smaller partition certifier.
   function FullPlanCertificationCalls(): nat {
     1

@@ -651,30 +651,28 @@
          (= (old-scalar-projection legacy)
             (old-scalar-projection generated)))))
 
-(defn- graph-identity-includes-client-local-exact-locator-killed?
+(defn- revision-identity-includes-client-local-exact-locator-killed?
   []
   (let [common
         {:snapshot-id {:database-id :datascript :basis-t 7}
          :source-scope {:source-id "source" :branch nil}}
         left
         (assoc common
-               :graph-head
-               {:graph-anchor "graph"
-                :order-hint 7
+               :native-revision
+               {:revision 7
                 :exact-locator "client-a"})
         right
         (assoc common
-               :graph-head
-               {:graph-anchor "graph"
-                :order-hint 7
+               :native-revision
+               {:revision 7
                 :exact-locator "client-b"})
-        graph-identity
+        incomplete-revision-identity
         (fn [value]
           (update
-           value :graph-head
-           select-keys [:graph-anchor :order-hint]))]
-    (and (= (graph-identity left)
-            (graph-identity right))
+           value :native-revision
+           select-keys [:revision]))]
+    (and (= (incomplete-revision-identity left)
+            (incomplete-revision-identity right))
          (not= left right))))
 
 (defn- formal-cljs-smoke-terminates-agent-executors-killed?
@@ -908,23 +906,6 @@
     (and (= (set derived) (set mutant))
          (not= derived mutant))))
 
-(defn- consistency-plan-drops-managed-authority-killed?
-  []
-  (let [mode :at-least-as-fresh
-        capability-supported? true
-        managed-authority? false
-        correct
-        (if (and (#{:at-least-as-fresh :at-exact-snapshot} mode)
-                 (not managed-authority?))
-          :unsupported-head-barrier
-          :authenticate-and-select-at-least)
-        mutant
-        (if capability-supported?
-          :authenticate-and-select-at-least
-          :unsupported-head-barrier)]
-    (and (= :unsupported-head-barrier correct)
-         (= :authenticate-and-select-at-least mutant))))
-
 (defn- consistency-malformed-exact-treated-absent-killed?
   []
   (let [kind :exact
@@ -945,32 +926,32 @@
     (and (= :invalid-selected-adapter correct)
          (= :exact-snapshot-unavailable mutant))))
 
-(defn- consistency-at-least-anchor-ignored-killed?
+(defn- consistency-at-least-revision-floor-ignored-killed?
   []
   (let [kind :at-least
         selected-adapter? true
         same-source-scope? true
-        anchor-satisfied? false
+        revision-satisfied? false
         correct
         (and selected-adapter?
              same-source-scope?
              (or (not (#{:at-least :exact} kind))
-                 anchor-satisfied?))
+                 revision-satisfied?))
         mutant
         (and selected-adapter? same-source-scope?)]
     (and (false? correct) (true? mutant))))
 
-(defn- consistency-exact-anchor-ignored-killed?
+(defn- consistency-exact-revision-ignored-killed?
   []
   (let [kind :exact
         selected-adapter? true
         same-source-scope? true
-        graph-anchor-matches? false
+        exact-revision-matches? false
         correct
         (and selected-adapter?
              same-source-scope?
              (or (not (#{:at-least :exact} kind))
-                 graph-anchor-matches?))
+                 exact-revision-matches?))
         mutant
         (and selected-adapter? same-source-scope?)]
     (and (false? correct) (true? mutant))))
@@ -1179,22 +1160,6 @@
           (repo/file "formal" "smoke" "cljs" "eacl" "formal"
                      "production_kernel_js.cljs")))))
 
-(defn- content-cursor-restores-relationship-proof-scan-killed?
-  []
-  (let [correct-strategy
-        (fn [proof-mode]
-          (if (= :mutation proof-mode) :dependency :exact-snapshot))
-        mutant-strategy (constantly :dependency)
-        relationship-proof-commands
-        (fn [strategy] (if (= :dependency strategy) 1 0))]
-    (and (= :exact-snapshot (correct-strategy :content))
-         (zero?
-          (relationship-proof-commands
-           (correct-strategy :content)))
-         (= 1
-            (relationship-proof-commands
-             (mutant-strategy :content))))))
-
 (defn- pure-permission-alias-keeps-duplicate-frontier-killed?
   []
   (let [bodies {:view [:self-permission :admin]
@@ -1334,8 +1299,8 @@
    shadow-typed-error-omits-page-size-killed?
    :shadow-typed-error-drops-portable-values
    shadow-typed-error-drops-portable-values-killed?
-   :graph-identity-includes-client-local-exact-locator
-   graph-identity-includes-client-local-exact-locator-killed?
+   :revision-identity-includes-client-local-exact-locator
+   revision-identity-includes-client-local-exact-locator-killed?
    :formal-cljs-smoke-terminates-agent-executors
    formal-cljs-smoke-terminates-agent-executors-killed?
    :generated-java-boundary-restores-reflection
@@ -1368,14 +1333,12 @@
    routing-relation-path-invents-dependency-edge-killed?
    :routing-path-edge-order-unbound
    routing-path-edge-order-unbound-killed?
-   :consistency-plan-drops-managed-authority
-   consistency-plan-drops-managed-authority-killed?
    :consistency-malformed-exact-treated-absent
    consistency-malformed-exact-treated-absent-killed?
-   :consistency-at-least-anchor-ignored
-   consistency-at-least-anchor-ignored-killed?
-   :consistency-exact-anchor-ignored
-   consistency-exact-anchor-ignored-killed?
+   :consistency-at-least-revision-floor-ignored
+   consistency-at-least-revision-floor-ignored-killed?
+   :consistency-exact-revision-ignored
+   consistency-exact-revision-ignored-killed?
    :consistency-unsupported-exact-becomes-generic
    consistency-unsupported-exact-becomes-generic-killed?
    :indexed-scan-validator-restores-pairwise-runtime
@@ -1404,8 +1367,6 @@
    cljs-lookahead-continuation-dropped-killed?
    :cljs-generated-browser-payload-restored
    cljs-generated-browser-payload-restored-killed?
-   :content-cursor-restores-relationship-proof-scan
-   content-cursor-restores-relationship-proof-scan-killed?
    :pure-permission-alias-keeps-duplicate-frontier
    pure-permission-alias-keeps-duplicate-frontier-killed?
    :fuel-cut-wave-rolls-back-original-state

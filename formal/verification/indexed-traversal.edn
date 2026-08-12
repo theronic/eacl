@@ -47,7 +47,7 @@
   {:status :target-authoritative-mode-routed
    :permission-roots [:recursive]
    :state :opaque-authority-runtime-owned
-   :schema-indexes :compiled-once-per-schema-proof-and-root}
+   :schema-indexes :compiled-once-per-schema-generation-and-root}
   :rendering
   {:status :target-authoritative-mode-routed
    :permission-roots [:recursive]
@@ -102,7 +102,7 @@
     :indexed-seed-certification]
    :source
    :raw-permission-and-relation-definitions-independent-of-path-compiler
-   :lifecycle :schema-proof-and-root-cached}}
+   :lifecycle :schema-generation-and-root-cached}}
  :verified-transition-surface
  [:data-valued-forward-continuations
   :data-valued-reverse-continuations
@@ -197,13 +197,13 @@
   :generated-all-count-delivered-sequence :not-retained
   :generated-all-count-final-denotation-publication :not-required
   :source-plan-certification
-  :once-per-schema-proof-root-plan-and-cached
+  :once-per-schema-generation-root-plan-and-cached
   :seed-certification
   :once-per-present-or-eligible-subject-type-per-compiled-plan
   :certification-comparison-bound
   :quadratic-when-subject-type-count-does-not-exceed-rule-count
   :generated-rule-index-construction
-  :once-per-schema-proof-root-plan-not-per-query
+  :once-per-schema-generation-root-plan-not-per-query
   :portable-state-conversion-per-transition
   :zero-opaque-state-is-retained-by-generated-runtime
   :jvm-or-javascript-heap :unknown
@@ -261,7 +261,7 @@
      :maximum-resource-count 694159}}
    :aggregate
    {:indexed-obligations 7979
-    :whole-formal-tree-obligations 8616
+    :whole-formal-tree-obligations 8723
     :deterministic-proof-effort-resource-limit 50000000
     :whole-tree-maximum-resource-count 24106086
     :machine-readable-report "target/formal/dafny-verification.json"

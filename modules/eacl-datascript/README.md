@@ -2,9 +2,9 @@
 
 DataScript adapter for EACL.
 
-This module implements the EACL v8 public contract in Clojure and
+This module implements the EACL public contract in Clojure and
 ClojureScript. Permission compilation, recursive fixed-point traversal,
-direction-scoped frontiers, Relay windowing, counts, cache validation, and
+direction-scoped frontiers, Relay windowing, counts, cache proof validation, and
 common errors live in `eacl`; this adapter contains DataScript access and
 transaction mechanics.
 
@@ -16,25 +16,38 @@ Responsibilities:
 - explicit offline dangling-half detection in `eacl.datascript.integrity`
 - current immutable-snapshot selection and object/reference conversion
 - proof-equivalent authenticated Relay cursors on the selected current DB
-- database-visible mutation identities plus schema/relation content proofs
-- portable authenticated completed-answer caching
+- database-visible, globally ordered native schema/relation generations
+- client-private exact-first and automatic proof-backed caching
 - DataScript contract tests and adapter-specific edge cases
 
+Missing, malformed, oversized, or exceptional ordered-generation proof data
+falls back to exact immutable-snapshot evaluation. After unsupported raw authorization mutation, quiesce
+callers, repair the data, and call
+`eacl.datascript.core/expire-cache!` on every affected client in every process.
+Expiry never repairs ghost vectors. Custom identity codecs are exact-only and
+client-local unless configured with a portable `:adapter-fingerprint`,
+`:adapter-deterministic? true`, and a certified injective round trip.
+
 DataScript supports serialized connection-head `:fully-consistent`, local
-`:minimize-latency`, and managed causal at-least selection. It intentionally
+`:minimize-latency`, and connection-lifecycle causal at-least selection. It intentionally
 does not advertise `:at-exact-snapshot` or retain historical DB values;
-`:exact-snapshot-registry-size` is removed and rejected. Unsupported exact
-requests fail before cache access or authorization traversal. DataScript does
-not claim an external replication mechanism.
-DataScript defaults to `{:coherence-authority :unknown}`, so cache reuse is
-limited to the exact current immutable DB value and remains sound when callers
-write authorization-relevant datoms directly. Applications may explicitly opt
-in to `{:coherence-authority :managed}` only when every EACL schema and
-relationship mutation uses the EACL APIs. That writer contract permits
-relation-stamp reuse across unrelated forward transactions.
-The v7 `:limit`/`:cursor` API is replaced by v8 `:first`/`:after` and
-`:last`/`:before`; see the
-[upgrade guide](../../docs/v8-backend-modules-and-upgrade.md).
+Unsupported exact requests fail before cache access or authorization
+traversal. DataScript does not claim an external replication mechanism.
+Exact lookup runs first and automatic proof-backed reuse may survive unrelated
+transactions. All authorization-relevant mutations must use EACL APIs or
+documented transaction data/functions; raw mutation can leave stale cache
+state and requires repair plus expiry of every affected client.
+Native-revision tokens are independent of completed-answer caching and are scoped to
+the originating client/connection lifecycle.
+List operations use `:first`/`:after` and `:last`/`:before`; see the
+[backend guide](../../docs/v8-backend-modules-and-upgrade.md).
+
+`expand-permission-tree` uses the shared portable shallow-expansion kernel and
+returns a token for the same selected immutable DataScript DB as the tree.
+DataScript CLJ and CLJS have identical topology/error contracts. Native scan
+order is not semantic, and exact historical replay remains unsupported; use a
+returned token as a causal floor within its connection lifecycle. Configure
+structural ceilings with client-level `:permission-tree-limits`.
 
 ## Relationship storage
 
@@ -58,9 +71,38 @@ entity. `delete-object!` removes both halves but retains the endpoint entity;
 `eacl.datascript.integrity/dangling-relationship-report` detects peer halves
 left by direct `:db/retractEntity`.
 
-The unreleased relationship-entity representation is not migrated or
-dual-read. Recreate explorer/demo databases, or reload every relationship
-through the EACL API, after upgrading to this v8 candidate.
+### Optional atomic entity retraction
+
+An embedded DataScript connection may explicitly install the safe transaction
+function; it is never part of `datascript-schema`:
+
+```clojure
+(require '[datascript.core :as ds]
+         '[eacl.datascript.safe-retraction :as safe-retraction])
+
+(safe-retraction/install! conn)
+(ds/transact!
+ conn
+ (safe-retraction/retract-entity-tx-data [:eacl/id "account-1"]))
+```
+
+The installed `:eacl.fn/retractEntity` computes the target's native component
+closure, retracts peer halves discovered from the two endpoint attributes,
+stamps each distinct affected relation with `:db/current-tx`, and applies
+ordinary `:db.fn/retractEntity` in one transaction.
+`direct-retract-entity-tx-data` provides the equivalent in-process
+`:db.fn/call` form after `prepare!`.
+
+Arbitrary IFn values are not assumed to survive DataScript serialization or a
+cross-runtime restore. Re-run `install!` after restore unless the chosen
+serializer explicitly preserves them. Rollback is to stop emitting invocations
+and return to `delete-object!`; the installed function is inert while unused.
+Multiple and repeated safe invocations compose in one transaction. Do not
+combine relationship additions involving a target with its retraction in the
+same application transaction. Use batched `delete-object!` for high-degree
+targets. A missing valid lookup ref is a no-op; a known numeric retracted eid
+repairs old peer-only ghosts by enumerating relation definitions and making
+exact index probes. Use the integrity report when the old eid is unknown.
 
 ```clojure
 {:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
@@ -73,9 +115,3 @@ requirements. Build this module in isolation with `clojure -T:build jar`; Git an
 development must first follow the explicitly opt-in
 [core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
 Maven consumers install no formal tools.
-
-Useful workspace test commands:
-
-- `clj-nrepl-eval -p <port> "(do (require 'eacl.datascript.contract-test :reload-all) (clojure.test/run-tests 'eacl.datascript.contract-test))"`
-- `clj-nrepl-eval -p <port> "(do (require '[cljs.main :as cljs] :reload) (cljs/-main \"-re\" \"node\" \"-m\" \"eacl.datascript.cljs-test-runner\"))"`
-- `clj-nrepl-eval -p <port> "(do (require 'eacl.bench.datascript-relationship-storage :reload) (eacl.bench.datascript-relationship-storage/run-benchmark!))"`

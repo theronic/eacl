@@ -204,6 +204,8 @@
            :misses 0
            :bypasses 0
            :stamp-failures 0
+           :proof-unavailable 0
+           :proof-unavailable-reasons {}
            :puts 0
            :expirations 0})
     max-entries
@@ -280,6 +282,39 @@
                        :cache store})))
     (swap! (:metrics store) update :bypasses inc))
   nil)
+
+(defn record-proof-unavailable!
+  "Records a typed, optimization-only proof diagnostic.
+
+  Proof availability never changes authorization availability: callers still
+  evaluate and publish only against the selected exact snapshot."
+  [store {:keys [reason]}]
+  (when store
+    (when-not (current-cache? store)
+      (throw (ex-info "Expected an EACL current-generation cache."
+                      {:type :eacl/invalid-config
+                       :cache store})))
+    (swap! (:metrics store)
+           (fn [metrics]
+             (-> metrics
+                 (update :proof-unavailable inc)
+                 (update-in [:proof-unavailable-reasons reason]
+                            (fnil inc 0))))))
+  nil)
+
+(defn capture-current-lifecycle
+  "Captures the cache lifecycle object at a public request boundary.
+
+  Passing this object back to `resolve-current!` prevents a request that was
+  already in flight during `expire-current!` from attaching its work to the
+  replacement lifecycle, even when expiry happens before cache lookup."
+  [store]
+  (when store
+    (when-not (current-cache? store)
+      (throw (ex-info "Expected an EACL current-generation cache."
+                      {:type :eacl/invalid-config
+                       :cache store})))
+    @(:lifecycle store)))
 
 (defn expire-current!
   "Atomically makes every exact and managed entry unreachable.
@@ -359,22 +394,10 @@
          (subproblem/proof-stamp? dependency-stamp))))
 
 (defn- managed-descriptor
-  [store subproblem-store descriptor-key-fn managed-key-fn]
+  [store managed-key-fn]
   (when managed-key-fn
     (try
-      (let [descriptor-key
-            (when descriptor-key-fn (descriptor-key-fn))
-            descriptor
-            (if (and subproblem-store descriptor-key)
-              (:value
-               (subproblem/resolve-independent!
-                subproblem-store
-                :denotation
-                [:managed-descriptor 1 descriptor-key]
-                {:valid? valid-managed-descriptor?
-                 :weight-fn (constantly 160)}
-                managed-key-fn))
-              (managed-key-fn))]
+      (let [descriptor (managed-key-fn)]
         (when (valid-managed-descriptor? descriptor)
           descriptor))
       (catch #?(:clj Exception :cljs :default) _
@@ -410,7 +433,8 @@
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
    {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
-           managed-descriptor-key-fn managed-key-fn
+           cache-lifecycle
+           managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
            decision-kernel remember-answer? answer-weight-fn]
     :or {same-snapshot? =
@@ -450,7 +474,7 @@
         (throw (ex-info "Invalid current-cache snapshot context."
                         {:type :eacl/invalid-config
                          :snapshot-order snapshot-order})))
-      (let [lifecycle @(:lifecycle store)
+      (let [lifecycle (or cache-lifecycle @(:lifecycle store))
             {:keys [generation active?]}
             (install-exact-generation!
             (:exact lifecycle)
@@ -494,8 +518,7 @@
                :subproblem-store answer-store})
             (let [{:keys [schema-stamp dependency-stamp]}
                   (managed-descriptor
-                   store answer-store
-                   managed-descriptor-key-fn managed-key-fn)
+                   store managed-key-fn)
                   managed-generation
                   (when (some? schema-stamp)
                     (install-managed-generation!

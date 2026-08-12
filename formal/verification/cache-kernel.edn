@@ -1,7 +1,7 @@
 {:schema-version 1
  :semantics-version 1
- :status :proof-only-generated-boundary-passed
- :classification :proof-only-no-live-production-consumer
+ :status :proof-only-model-passed
+ :classification :proof-only-no-runtime-operation
  :proof
  {:source "formal/dafny/CacheKernel.dfy"
   :verified-obligations 17
@@ -35,14 +35,6 @@
    :direct-self-and-arrow-rule-derivation-frame
    :least-fixed-point-managed-cache-frame
    :selected-snapshot-public-result-rendering]}
- :generated-targets
- {:java
-  {:decision-matrix :passed
-   :dependency-scope-fixtures :passed}
-  :javascript
-  {:tests 6
-   :assertions 562
-   :status :passed}}
  :production-regression
  {:namespaces
   [eacl.cache-test
@@ -55,20 +47,6 @@
   :tests 85
   :assertions 5705
   :status :passed}
- :generated-boundary-routing
- {:clj-java
-  {:namespace eacl.formal.production-kernel-test
-   :status :passed}
-  :cljs-javascript
-  {:namespace eacl.formal.production-kernel-test
-   :status :portable-production-and-generated-oracle-passed}
-  :authoritative-rejection-regression
-  {:namespace eacl.cache-test
-   :status :passed}
-  :claim
-  :generated-cache-validation-decision-rejects-invalid-inputs
-  :production-consumer nil
-  :production-assurance-contribution :none}
  :formal-spec-findings
  [{:id :EACL-FORMAL-SPEC-001
    :classification :specification-bug

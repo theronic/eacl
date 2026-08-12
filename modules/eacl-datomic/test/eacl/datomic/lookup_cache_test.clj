@@ -62,8 +62,7 @@
 
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
                          :resource/type :account
@@ -98,8 +97,7 @@
 
 (deftest relationship-write-invalidates-live-pages-but-no-op-does-not-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account
@@ -149,8 +147,7 @@
   ;; stamp, so such a caller publishes the change without knowing the cache
   ;; exists, and no explicit eviction is needed.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
@@ -169,8 +166,7 @@
 
 (deftest live-page-dependencies-include-arrow-relations-and-target-permissions-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           alice (spice-object :user "alice")
           bob (spice-object :user "bob")
           account (spice-object :account "account")
@@ -218,8 +214,7 @@
 
 (deftest cached-pages-store-eids-and-reapply-current-id-coercion-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           original impl/lookup-resources
           calls (atom 0)]
       (seed-direct! conn client)
@@ -252,8 +247,7 @@
 
 (deftest recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
           relationship (->Relationship alice :owner account)
@@ -300,8 +294,7 @@
 
 (deftest live-counts-share-dependency-aware-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
                          :resource/type :account
@@ -350,8 +343,7 @@
 
 (deftest completed-recursive-page-hit-skips-engine-classification-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
           child (spice-object :folder "child")
@@ -389,6 +381,8 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "shared-store-opaque-continuation"
           first-client (core/make-client conn {:cache {:remember-answers false}
+                                               :source-lifecycle
+                                               "datomic-lookup-cache-v4-test"
                                                :security-key token-key})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
@@ -409,6 +403,8 @@
       ;; page side cache was process-local and unauthenticated; v3 refuses to
       ;; read it until continuation state uses the proof envelope contract.
       (let [second-client (core/make-client conn {:cache {:remember-answers false}
+                                                  :source-lifecycle
+                                                  "datomic-lookup-cache-v4-test"
                                                   :security-key token-key})
             first-page (eacl/lookup-resources first-client query)
             cursor (get-in first-page [:page-info :end-cursor])
@@ -486,8 +482,7 @@
 
 (deftest long-count-does-not-hold-relationship-writer-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:coherence-authority :managed
-                                         :cache (live-cache-context)})
+    (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}

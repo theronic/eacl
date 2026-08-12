@@ -2,21 +2,18 @@
   "Validated capability and operation contract for v8 backend snapshots.
 
   This is the sole production backend boundary for recursive traversal, Relay
-  pagination, deletion, consistency selection, and exact cache proofs."
+  pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 4)
+(def adapter-version 6)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
 (def ^:dynamic *backend-op-stats*
   "Optional atom counting backend adapter invocations by operation keyword.
 
-  Includes proof operations (:schema-proof, :relation-proof) and index
-  scans, plus :schema-proof-computations — the number of times the
-  per-adapter memoized proof actually executed (invocations of a
-  memoized proof are cheap; computations are the scans). Observation-
-  only: never influences dispatch or guard behavior."
+  Includes the `:proof-frame` operation and index scans. Observation-only:
+  counters never influence dispatch or guard behavior."
   nil)
 
 (def ^:dynamic *invoke-observer*
@@ -37,8 +34,8 @@
 (def required-snapshot-operations
   #{:snapshot-id
     :source-scope
-    :graph-head
-    :contains-anchor?
+    :source-lifecycle
+    :native-revision
     :order-hint
     :select-current
     :select-authoritative
@@ -53,9 +50,7 @@
     :resource->subjects
     :direct-match?
     :relation-populated?
-    :all-permission-nodes
-    :schema-proof
-    :relation-proof})
+    :all-permission-nodes})
 
 (def adapter-obligations
   "Runtime-facing statement of the assumptions made by
@@ -69,10 +64,10 @@
    #{:stable-for-immutable-snapshot :source-and-revision-identity}
    :source-scope
    #{:stable-source-identity :branch-identity}
-   :graph-head
-   #{:selected-head-anchor :monotone-order-hint :exact-locator-identity}
-   :contains-anchor?
-   #{:iff-causal-ancestor-or-current}
+   :source-lifecycle
+   #{:bounded-canonical-identity :rotated-on-source-replacement}
+   :native-revision
+   #{:selected-native-revision :monotone-order-hint :exact-locator-identity}
    :order-hint
    #{:selected-snapshot-order :exact-integer}
    :select-current
@@ -80,7 +75,7 @@
    :select-authoritative
    #{:returns-immutable-snapshot :same-source :authoritative-or-fails-closed}
    :select-at-least
-   #{:returns-immutable-snapshot :same-source :contains-requested-anchor}
+   #{:returns-immutable-snapshot :same-source :native-revision-at-least-requested}
    :exact-locator
    #{:stable-for-immutable-snapshot}
    :select-exact
@@ -106,12 +101,11 @@
    #{:iff-forward-prefix-nonempty :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
-   :schema-proof
-   #{:complete-dependency-scope :changes-on-relevant-schema-change
-     :stable-on-irrelevant-change :snapshot-bound}
-   :relation-proof
-   #{:complete-dependency-scope :changes-on-relevant-relationship-change
-     :stable-on-irrelevant-change :snapshot-bound}})
+   :proof-frame
+   #{:snapshot-bound :initialized-schema-generation
+     :complete-canonical-relation-generations
+     :globally-ordered-committed-generations
+     :atomic-with-supported-mutations}})
 
 (def known-consistency-modes
   #{:minimize-latency
@@ -225,38 +219,24 @@
                         {:backend id
                          :missing-operations (vec missing)
                          :required-operations required-snapshot-operations})))
+  (let [normalized (normalize-capabilities id capabilities)]
+    (when (and (contains? (:cache-proofs normalized) :ordered-generations)
+               (not (fn? (:proof-frame operations))))
+      (invalid-adapter!
+       "Backend advertises ordered generations without a proof-frame operation."
+       {:backend id :capability :ordered-generations}))
   {::adapter true
    ::version adapter-version
    ::id id
-   ::capabilities (normalize-capabilities id capabilities)
-   ::operations
-   ;; One immutable snapshot per adapter instance (the documented adapter
-   ;; contract, demanded by certification: repeated :schema-proof reads on
-   ;; one instance must be equal), so the zero-arity proof is computed at
-   ;; most once per instance. This collapses the audited duplicate content
-   ;; proofs — route validation, actual-identity, and certificate-identity
-   ;; all deref one delay per request instead of rescanning the schema.
-   ;; The scoped one-arity variant stays uncached.
-   (if-let [schema-proof-op (get operations :schema-proof)]
-     (let [memoized-proof
-           (delay
-             (when *backend-op-stats*
-               (swap! *backend-op-stats*
-                      update :schema-proof-computations (fnil inc 0)))
-             (schema-proof-op))]
-       (assoc operations
-              :schema-proof
-              (fn schema-proof
-                ([] @memoized-proof)
-                ([scope] (schema-proof-op scope)))))
-     operations)
+   ::capabilities normalized
+   ::operations operations
    ::fingerprint
    (or fingerprint
        {:backend id :adapter-version adapter-version})
    ::deterministic? (boolean deterministic?)
    ::identity-contract identity-contract
    ::runtime-guards? (boolean runtime-guards?)
-   ::state state})
+   ::state state}))
 
 (defn adapter?
   [candidate]
@@ -468,7 +448,7 @@
            backend-id operation-key :nonnegative value))
         value)
 
-      (:snapshot-id :source-scope :graph-head)
+      (:snapshot-id :source-scope :native-revision)
       (do
         (when-not (map? value)
           (contract-violation!
@@ -492,7 +472,7 @@
            backend-id operation-key :finite-node-set value))
         value)
 
-      (:contains-anchor? :direct-match? :relation-populated?)
+      (:direct-match? :relation-populated?)
       (do
         (when-not (boolean? value)
           (contract-violation!
@@ -512,8 +492,7 @@
       ;; proofs) require paired/global certification rather than a local shape
       ;; predicate. They still pass through this dispatch so an added callback
       ;; cannot silently bypass the runtime-guard review.
-      (:internal-id->object :exact-locator
-       :schema-proof :relation-proof)
+      (:internal-id->object :exact-locator :source-lifecycle :proof-frame)
       value
 
       (contract-violation!
@@ -530,6 +509,112 @@
       (if (runtime-guards? adapter)
         (guard-output! adapter operation-key args value)
         value))
+    (catch #?(:clj Throwable :cljs :default) error
+      (observe-invocation! :failed adapter operation-key)
+      (throw error))))
+
+(defn reduce-definitions
+  "Incrementally consumes one schema-definition sequence.
+
+  This boundary exists so callers can meter and deadline-check lazy adapter
+  results without first realizing the complete sequence. Existing definition
+  operation arities and the ordinary `invoke` behavior remain unchanged."
+  [adapter operation-key args init
+   {:keys [before-realize! after-realize! step]
+    :or {before-realize! (constantly nil)
+         after-realize! (constantly nil)}}]
+  (when-not (contains? #{:relation-defs :permission-defs} operation-key)
+    (invalid-adapter! "Incremental definition reduction requires a schema operation."
+                      {:operation operation-key}))
+  (when-not (fn? step)
+    (invalid-adapter! "Incremental definition reduction requires a step function."
+                      {:operation operation-key}))
+  (when *backend-op-stats*
+    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+  (observe-invocation! :before adapter operation-key)
+  (try
+    (let [value (apply (operation adapter operation-key) args)]
+      (observe-invocation! :after adapter operation-key)
+      (when-not (sequential? value)
+        (contract-violation!
+         (::id adapter) operation-key :finite-definition-sequence :redacted))
+      (loop [remaining value
+             accumulator init]
+        (before-realize!)
+        (let [items (seq remaining)]
+          (after-realize!)
+          (if-not items
+            accumulator
+            (let [item (first items)]
+              (when (and (runtime-guards? adapter) (not (map? item)))
+                (contract-violation!
+                 (::id adapter) operation-key
+                 :finite-definition-sequence :redacted))
+              (recur (rest items) (step accumulator item)))))))
+    (catch #?(:clj Throwable :cljs :default) error
+      (observe-invocation! :failed adapter operation-key)
+      (throw error))))
+
+(defn reduce-scan
+  "Incrementally consumes one ordered backend scan without materializing it.
+
+  `args` is the adapter operation argument vector. `before-realize!` and
+  `after-realize!` bracket each potentially blocking sequence realization;
+  `step` receives the accumulator and one validated internal id. Existing
+  adapter operation arities remain unchanged."
+  [adapter operation-key args init
+   {:keys [before-realize! after-realize! step]
+    :or {before-realize! (constantly nil)
+         after-realize! (constantly nil)}}]
+  (when-not (contains? #{:subject->resources :resource->subjects}
+                       operation-key)
+    (invalid-adapter! "Incremental reduction requires an ordered scan operation."
+                      {:operation operation-key}))
+  (when-not (fn? step)
+    (invalid-adapter! "Incremental reduction requires a step function."
+                      {:operation operation-key}))
+  (when *backend-op-stats*
+    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+  (observe-invocation! :before adapter operation-key)
+  (try
+    (let [value (apply (operation adapter operation-key) args)
+          options (or (last args) {})
+          direction (or (:direction options) :asc)
+          bound (:bound-eid options)
+          inclusive? (true? (:inclusive-bound? options))]
+      (observe-invocation! :after adapter operation-key)
+      (when-not (sequential? value)
+        (contract-violation!
+         (::id adapter) operation-key :finite-sequential-result :redacted))
+      (when (and (runtime-guards? adapter)
+                 (not (contains? #{:asc :desc} direction)))
+        (contract-violation!
+         (::id adapter) operation-key :known-direction :redacted))
+      (loop [remaining value
+             previous nil
+             accumulator init]
+        (before-realize!)
+        (let [items (seq remaining)]
+          (after-realize!)
+          (if-not items
+            accumulator
+            (let [item (first items)]
+              (when (runtime-guards? adapter)
+                (when-not (exact-natural? item)
+                  (contract-violation!
+                   (::id adapter) operation-key :exact-natural :redacted))
+                (when (and (some? previous)
+                           (not ((if (= :desc direction) > <)
+                                 previous item)))
+                  (contract-violation!
+                   (::id adapter) operation-key :strict-order :redacted))
+                (when (and (some? bound)
+                           (not (within-bound?
+                                 direction bound inclusive? item)))
+                  (contract-violation!
+                   (::id adapter) operation-key
+                   :inclusive-exclusive-bound :redacted)))
+              (recur (rest items) item (step accumulator item)))))))
     (catch #?(:clj Throwable :cljs :default) error
       (observe-invocation! :failed adapter operation-key)
       (throw error))))

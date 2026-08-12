@@ -84,36 +84,41 @@ and relationship.
   permission-node and relation dependencies;
   `formal/dafny/CacheKernel.dfy` proves completeness for the normalized formal
   schema.
-- Each adapter's `schema-proof` and `relation-proof` operation computes either
-  scoped content digests, mutation proofs, or no proof. No proof forces cache
-  bypass.
-- `eacl.cache` authenticates the stored scope/proofs and requires adapter,
-  source, causal, scope, and proof agreement before returning a value.
+- Each certified adapter's `proof-frame` operation reads the schema assertion
+  generation and one native committed generation for every relation in the
+  complete canonical dependency closure. Missing or invalid evidence forces
+  exact-only evaluation.
+- `eacl.cache` keeps completed entries client-private and requires lifecycle,
+  semantic request, schema generation, and scalar dependency-frontier
+  agreement before returning a managed value.
 - `eacl.backend.v8` names completeness and change-coverage as adapter
   obligations; certification is required for a composed assurance claim.
 
 **Evidence.**
 
-- Adapter certification suites exercise relevant/irrelevant graph and schema
-  changes, exact selection, ancestry, branch/reset/restore behavior, and proof
+- Adapter certification suites exercise relevant/irrelevant relationship and
+  schema changes, exact selection, revision floors, source replacement, and proof
   scope for Datomic, DataScript CLJ/CLJS, and Datahike.
 - Cache differential, recursive-cache, consistency-cache, and
   cache-review-regression suites compare enabled and disabled behavior.
-- Proof-only generated `CacheKernel` fixtures cover exact, causal, future,
-  sibling, incomplete-scope, no-proof, unauthenticated, abstract read-failure,
-  and mismatch decisions. No live production call site consumes that legacy
-  `:cache-validation` operation; it contributes no production assurance.
+- `CacheKernel` proves exact, causal, future, sibling, incomplete-scope,
+  no-proof, unauthenticated, abstract read-failure, and mismatch properties.
+  It exposes no runtime decision operation and contributes no production
+  assurance.
 
-**Residual trust.** Digest collision resistance and the truthfulness and
-completeness of adapter proof providers remain explicit assumptions. Structural
-proof adversarial campaigns are still a release gate.
+**Residual trust.** Deterministic complete dependency extraction, adapter proof
+truthfulness, globally ordered transaction generations, atomic mutation
+stamping, and the database engines remain explicit assumptions. Structural
+proof adversarial campaigns are executable evidence, not proofs of those
+systems.
 
 ## A4. Hashes and authentication tags resist collisions and forgery
 
-**Production boundary.** `hmac-sha-256`, `canonical-records-digest`, and adapter
-content-proof functions use platform SHA-256/HMAC implementations. The formal
-model compares abstract proof/authentication values and never expands these
-algorithms.
+**Production boundary.** `hmac-sha-256` and canonical authenticated token
+digests use platform SHA-256/HMAC implementations. Ordered-generation cache
+proofs use exact integer comparisons and do not depend on hash collision
+resistance. The formal model treats authentication values abstractly and never
+expands the cryptographic algorithms.
 
 **Evidence.** Deterministic digest vectors, domain vectors, tampering tests, and
 collision-as-test-double scenarios test call-site behavior. They do not prove
@@ -148,8 +153,8 @@ boundary. `EACL-FORMAL-005` retains the former cross-backend discrepancy.
 ## A7. Snapshot selection consumes authenticated token facts
 
 **Formal assumption.** `ConsistencyDecision.dfy` starts after token processing.
-Its `anchorSatisfied` and `sameSourceScope` Booleans are observations, not a
-model of HMAC verification, expiry, scope decoding, ancestry, or exact-snapshot
+Its `revisionSatisfied` and `sameSourceScope` Booleans are observations, not a
+model of HMAC verification, expiry, scope decoding, or exact-snapshot
 reconstruction.
 
 **Production boundary.**
@@ -159,29 +164,30 @@ reconstruction.
   their public typed errors.
 - `eacl.consistency/selected-adapter!` distinguishes an absent selection from
   a present malformed value, validates source/branch scope, and only then
-  evaluates the relevant ancestry or exact-graph postcondition.
-- At-least freshness calls the selected adapter's `contains-anchor?` with the
-  authenticated graph anchor. Exact selection compares the selected adapter's
-  validated `graph-head` with that authenticated anchor.
+  evaluates the native-revision floor or exact revision-and-locator
+  postcondition.
+- At-least freshness compares the selected adapter's validated native revision
+  with the authenticated floor. Exact selection compares both validated native
+  revision and exact locator with their authenticated values.
 
 **Evidence.**
 
 - The generated Java and JavaScript boundaries exhaust all 16 plan states and
   all 48 well-formed post-selection observation states.
 - Shared CLJ/CLJS consistency tests cover expired and wrong-scope tokens,
-  missing ancestry, divergent exact graphs, exact-snapshot absence, present
-  malformed selections, capability ordering, and writer-authority rejection.
-- Adapter certification checks ancestry, branch/reset/restore, authoritative
+  insufficient revisions, divergent exact locators, exact-snapshot absence,
+  present malformed selections, and capability ordering.
+- Adapter certification checks revision floors, source replacement, authoritative
   barriers, and exact selection for Datomic, Datahike, and DataScript.
 
 **Residual trust.** The token decoder and cryptographic primitives described
 by A1–A6, the Clojure fact-extraction code, and the truthfulness of backend
-scope, ancestry, and exact-selection operations remain in the TCB.
+scope, native-revision, and exact-selection operations remain in the TCB.
 
 ## Assurance wording
 
 The verification manifest must describe all seven items as residual
 assumptions.
 Passing their evidence suites permits a conditional kernel claim; it must never
-be described as a formal proof of cryptography, canonical EDN, backend content
-proofs, clocks, key management, or backend snapshot-selection facts.
+be described as a formal proof of cryptography, canonical EDN, database
+engines, clocks, key management, or backend snapshot-selection facts.

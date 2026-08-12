@@ -53,8 +53,8 @@
 
  :formal-verification
  {:command "bin/formal verify"
-  :modules 27
-  :proof-efforts 8616
+  :modules 29
+  :proof-efforts 8723
   :errors 0
   :retained-exact-page-theorems
   [PageWindow.MatchingAuthorizationPageScopeReusesExactPage
@@ -207,10 +207,10 @@
    :merge-advances 12000
    :recursive-work 0
    :elapsed-ms 68.182709}
-  :content-proof-page-10000
+  :cache-bypassed-page-10000
   {:page-size 20
    :cache? false
-   :relation-proof-commands 0
+   :proof-frame-commands 0
    :first-page-backend-scans 45
    :continued-page-backend-scans 24
    :warmed-median-ms 1.073417}}

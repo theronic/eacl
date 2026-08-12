@@ -1,5 +1,5 @@
 (ns eacl.consistency
-  "Shared v3 consistency selection over validated backend adapters."
+  "Shared v4 backend-native revision selection over validated adapters."
   (:require [eacl.backend.v8 :as backend]
             [eacl.causal-token :as causal-token]
             [eacl.spicedb.consistency :as public-consistency]
@@ -39,7 +39,8 @@
 
 (defn source-scope
   [adapter]
-  (let [scope (backend/invoke adapter :source-scope)]
+  (let [scope (backend/invoke adapter :source-scope)
+        lifecycle (backend/invoke adapter :source-lifecycle)]
     (when-not (and (map? scope)
                    (contains? scope :source-id)
                    (contains? scope :branch))
@@ -50,30 +51,29 @@
          :eacl/error :eacl/invalid-backend-adapter
          :backend (backend/backend-id adapter)
          :source-scope scope})))
+    (causal-token/validate-source-lifecycle! lifecycle)
     (assoc (select-keys scope [:source-id :branch])
+           :source-lifecycle lifecycle
            :backend (backend/backend-id adapter))))
 
-(defn graph-head
+(defn native-revision
   [adapter]
-  (let [head (backend/invoke adapter :graph-head)]
-    (when-not (and (map? head)
-                   (string? (:graph-anchor head))
-                   (not-empty (:graph-anchor head))
-                   (or (nil? (:order-hint head))
-                       (and (integer? (:order-hint head))
-                            (not (neg? (:order-hint head)))))
-                   (= (:order-hint head)
+  (let [revision (backend/invoke adapter :native-revision)]
+    (when-not (and (map? revision)
+                   (integer? (:revision revision))
+                   (not (neg? (:revision revision)))
+                   (= (:revision revision)
                       (backend/invoke adapter :order-hint))
-                   (= (:exact-locator head)
+                   (= (:exact-locator revision)
                       (backend/invoke adapter :exact-locator)))
       (throw
        (ex-info
-        "Backend returned an invalid graph head."
+        "Backend returned an invalid native revision."
         {:type :eacl/invalid-backend-adapter
          :eacl/error :eacl/invalid-backend-adapter
          :backend (backend/backend-id adapter)
-         :graph-head head})))
-    head))
+         :native-revision revision})))
+    revision))
 
 (defn- expected-scope
   [adapter]
@@ -121,7 +121,7 @@
       error)))
 
 (defn- reject-plan!
-  [source mode options decision capability-supported?]
+  [source mode decision capability-supported?]
   (let [cause
         (when-not capability-supported?
           (capability-error source mode))]
@@ -147,9 +147,7 @@
         (and capability-supported?
              (#{:at-least-as-fresh :at-exact-snapshot} mode))
         (fail! :unsupported-head-barrier
-               "Causal selection requires complete writer authority."
-               {:coherence-authority
-                (or (:coherence-authority options) :unknown)})
+               "The backend cannot establish the requested native revision barrier.")
 
         (= :at-least-as-fresh mode)
         (fail! :unsupported-head-barrier
@@ -166,17 +164,14 @@
 (defn selection-plan
   "Returns the validated selection action for one normalized descriptor.
 
-  The capability observation and writer-authority observation remain adapter
-  boundary facts. The finite decision over those facts is made by the
-  generated kernel."
+  The capability observation remains an adapter boundary fact. The finite
+  decision over that fact is made by the generated kernel."
   [source {:keys [mode]} options]
   (let [capability-supported?
         (backend/supports? source :consistency mode)
         input
         {:mode mode
-         :capability-supported? capability-supported?
-         :managed-authority?
-         (= :managed (:coherence-authority options))}
+         :capability-supported? capability-supported?}
         decision
         (decide
          options
@@ -190,10 +185,10 @@
          decision)
       decision
       (reject-plan!
-       source mode options decision capability-supported?))))
+       source mode decision capability-supported?))))
 
 (defn- selected-adapter!
-  [source selected kind anchor-check options]
+  [source selected kind revision-check options]
   (let [selection-present? (some? selected)
         selected-adapter?
         (and selection-present? (backend/adapter? selected))
@@ -209,16 +204,16 @@
         (and selected-adapter?
              (or identical-selection?
                  (= source-scope-value selected-scope-value)))
-        anchor-observation
-        (if (and same-source-scope? anchor-check)
-          (anchor-check selected)
-          {:satisfied? (nil? anchor-check)})
+        revision-observation
+        (if (and same-source-scope? revision-check)
+          (revision-check selected)
+          {:satisfied? (nil? revision-check)})
         input
         {:kind kind
          :selection-present? selection-present?
          :selected-adapter? selected-adapter?
          :same-source-scope? same-source-scope?
-         :anchor-satisfied? (boolean (:satisfied? anchor-observation))}
+         :revision-satisfied? (boolean (:satisfied? revision-observation))}
         decision
         (decide
          options
@@ -248,8 +243,8 @@
 
       :history-divergence
       (fail! :history-divergence
-             (:message anchor-observation)
-             (:data anchor-observation)))))
+             (:message revision-observation)
+             (:data revision-observation)))))
 
 (defn captured-current-selection
   "Validates the zero-coordination path over an already captured immutable DB.
@@ -316,12 +311,12 @@
             source :select-at-least payload (:timeout-ms options))
            :at-least
            (fn [selected]
-             {:satisfied?
-              (backend/invoke
-               selected :contains-anchor? (:graph-anchor payload))
-              :message
-              "The selected history does not contain the requested mutation anchor."
-              :data {:graph-anchor (:graph-anchor payload)}})
+             (let [actual (:revision (native-revision selected))]
+               {:satisfied? (>= actual (:revision payload))
+                :message
+                "The selected snapshot did not reach the requested native revision."
+                :data {:requested-revision (:revision payload)
+                       :actual-revision actual}}))
            options)]
       {:adapter selected
        :request-token payload})
@@ -348,15 +343,17 @@
            selected
            :exact
            (fn [selected]
-             (let [actual-anchor
-                   (:graph-anchor (graph-head selected))]
+             (let [actual (native-revision selected)]
                {:satisfied?
-                (= (:graph-anchor payload) actual-anchor)
+                (and (= (:revision payload) (:revision actual))
+                     (= (:exact-locator payload)
+                        (:exact-locator actual)))
                 :message
-                "The exact locator resolved to a divergent graph."
+                "The exact locator resolved to a different native revision."
                 :data
-                {:expected-anchor (:graph-anchor payload)
-                 :actual-anchor actual-anchor}}))
+                {:expected-revision
+                 (select-keys payload [:revision :exact-locator])
+                 :actual-revision actual}}))
            options)]
       {:adapter selected
        :request-token payload})))
@@ -366,27 +363,37 @@
 
   Returns the adapter, normalized request descriptor, authenticated request
   token data when present, and an optional response token minted from the
-  selected graph head."
+  selected backend-native revision."
   [source consistency-value
-   {:keys [format-options coherence-authority issue-token?]
+   {:keys [format-options issue-token?]
     :as options}]
   (let [descriptor (public-consistency/descriptor consistency-value)
         selection (select-adapter source descriptor options)
         selected (:adapter selection)
         request-token (:request-token selection)
-        head (graph-head selected)
+        revision (native-revision selected)
         response-token
-        (when (and issue-token?
-                   (= :managed coherence-authority))
+        (when issue-token?
           (causal-token/issue
            format-options
            (merge (source-scope selected)
-                  head)))]
+                  revision)))]
     {:adapter selected
      :descriptor descriptor
      :request-token request-token
      :response-token response-token
-     :graph-head head}))
+     :native-revision revision}))
+
+(defn selected-adapter-token
+  "Issues a causal token from an already selected immutable adapter.
+
+  This helper never selects from, synchronizes, or re-reads a live connection;
+  the response token therefore names the same snapshot used by the caller."
+  [adapter {:keys [format-options]}]
+  (causal-token/issue
+   format-options
+   (merge (source-scope adapter)
+          (native-revision adapter))))
 
 (defn cursor-conflict!
   [data]

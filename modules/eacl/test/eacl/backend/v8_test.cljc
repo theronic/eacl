@@ -30,10 +30,17 @@
     (throw (ex-info "not used by this recording kernel" {}))))
 
 (defn- operation-map []
-  (into {}
-        (map (fn [operation]
-               [operation (fn [& args] [operation (vec args)])]))
-        backend/required-snapshot-operations))
+  (assoc
+   (into {}
+         (map (fn [operation]
+                [operation (fn [& args] [operation (vec args)])]))
+         backend/required-snapshot-operations)
+   :proof-frame
+   (fn [relation-ids]
+     {:schema-stamp 1
+      :relation-stamps (mapv (fn [relation-id]
+                               [relation-id 1])
+                             relation-ids)})))
 
 (defn- test-adapter []
   (backend/make-adapter
@@ -42,7 +49,7 @@
                    :snapshots #{:current}
                    :cursor #{:forward :reverse}
                    :transactions #{}
-                   :cache-proofs #{:schema :relations :snapshot-bound}
+                   :cache-proofs #{:ordered-generations :snapshot-bound}
                    :runtime #{#?(:clj :clj :cljs :cljs)}}
     :operations (operation-map)}))
 
@@ -53,13 +60,17 @@
                    :snapshots #{:current}
                    :cursor #{:forward :reverse}
                    :transactions #{}
-                   :cache-proofs #{:schema :relations :snapshot-bound}
+                   :cache-proofs #{:ordered-generations :snapshot-bound}
                    :runtime #{#?(:clj :clj :cljs :cljs)}}
     :operations
     (assoc (operation-map)
-           :schema-proof (fn
-                           ([] generation)
-                           ([_] generation))
+           :proof-frame
+           (fn [relation-ids]
+             {:schema-stamp generation
+              :relation-stamps
+              (mapv (fn [relation-id]
+                      [relation-id generation])
+                    relation-ids)})
            :source-scope (constantly {:source-id :one}))}))
 
 (defn- error-data [f]
@@ -139,8 +150,8 @@
     (is (= {:mode :fully-consistent}
            (backend/require-consistency!
             adapter consistency/fully-consistent)))
-    (is (= [:schema-proof []]
-           (backend/invoke adapter :schema-proof)))
+    (is (= {:schema-stamp 1 :relation-stamps []}
+           (backend/invoke adapter :proof-frame [])))
     (testing "unsupported guarantees fail before execution"
       (is (= {:type :eacl/unsupported-capability
               :capability :consistency
@@ -188,7 +199,7 @@
               :operations (operation-map)}))))))
 
 (deftest adapter-obligation-registry-test
-  (is (= backend/required-snapshot-operations
+  (is (= (conj backend/required-snapshot-operations :proof-frame)
          (set
           (keys
            (backend/certification-obligations)))))
@@ -267,15 +278,13 @@
                   [] :exact-integer]
                  [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
                  [:source-scope (fn [& _] nil) [] :map-shape]
-                 [:graph-head (fn [& _] []) [] :map-shape]
+                 [:native-revision (fn [& _] []) [] :map-shape]
                  [:relation-defs (fn [& _] [:not-a-map])
                   [:document :reader] :finite-definition-sequence]
                  [:permission-defs (fn [& _] [nil])
                   [:document :view] :finite-definition-sequence]
                  [:all-permission-nodes (fn [& _] [])
                   [] :finite-node-set]
-                 [:contains-anchor? (fn [& _] :yes)
-                  ["anchor"] :boolean-result]
                  [:direct-match? (fn [& _] nil)
                   [:user 1 2 :document 3] :boolean-result]
                  [:select-current (fn [& _] {})
@@ -372,9 +381,11 @@
          (operation-map)
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
           :source-scope (fn [] {:source-id :test :branch nil})
-          :schema-proof (fn
-                          ([] :schema-proof)
-                          ([_] :schema-proof))
+          :proof-frame
+          (fn [relation-ids]
+            {:schema-stamp 1
+             :relation-stamps
+             (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
           :object-id->internal identity
           :internal-id->object identity
           :permission-defs
@@ -411,10 +422,10 @@
            :snapshots #{:current}
            :cursor #{:forward :reverse}
            :transactions #{}
-           :cache-proofs #{:schema :relations :snapshot-bound}
+           :cache-proofs #{:ordered-generations :snapshot-bound}
            :runtime #{#?(:clj :clj :cljs :cljs)}}
           :operations operations})
-        schema-cache (engine/make-schema-cache adapter :schema-proof)]
+        schema-cache (engine/make-schema-cache adapter 1)]
     (binding [engine/*schema-cache* schema-cache]
       (is (true? (engine/traversal-permission? adapter :node :read)))
       (let [analysis-delay @(:traversal-analysis schema-cache)
@@ -529,7 +540,7 @@
            :snapshots #{:current}
            :cursor #{:forward :reverse}
            :transactions #{}
-           :cache-proofs #{:schema :relations :snapshot-bound}
+           :cache-proofs #{:ordered-generations :snapshot-bound}
            :runtime #{#?(:clj :clj :cljs :cljs)}}
           :operations
           (merge
@@ -538,10 +549,11 @@
             (constantly {:database-id :test :basis-t 1})
             :source-scope
             (constantly {:source-id :test :branch nil})
-            :schema-proof
-            (fn
-              ([] :schema-proof)
-              ([_] :schema-proof))
+            :proof-frame
+            (fn [relation-ids]
+              {:schema-stamp 1
+               :relation-stamps
+               (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
             :permission-defs
             (fn [resource-type permission-name]
               (get permissions
@@ -552,7 +564,7 @@
               (get relations [resource-type relation-name] []))
             :all-permission-nodes
             (fn [] (set (keys permissions)))})})
-        schema-cache (engine/make-schema-cache adapter :schema-proof)
+        schema-cache (engine/make-schema-cache adapter 1)
         calls (atom [])
         kernel
         (->RecordingKernel
@@ -644,7 +656,7 @@
      :snapshots #{:current}
      :cursor #{:forward :reverse}
      :transactions #{}
-     :cache-proofs #{:schema :relations :snapshot-bound}
+     :cache-proofs #{:ordered-generations :snapshot-bound}
      :runtime #{#?(:clj :clj :cljs :cljs)}}
     :operations
     (merge
@@ -795,7 +807,7 @@
              :snapshots #{:current}
              :cursor #{:forward :reverse}
              :transactions #{}
-             :cache-proofs #{:schema :relations :snapshot-bound}
+             :cache-proofs #{:ordered-generations :snapshot-bound}
              :runtime #{#?(:clj :clj :cljs :cljs)}}
             :runtime-guards? true
             :operations

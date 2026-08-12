@@ -384,7 +384,9 @@
       (is (false? (get-in page-2
                           [:page-info :has-next-page?])))
       (unrelated-write!)
-      (let [selected (eacl/lookup-resources cached all-query)
+      (let [traversal-before-selected (indexed-call-count calls)
+            selected (eacl/lookup-resources cached all-query)
+            traversal-after-selected (indexed-call-count calls)
             fresh (eacl/lookup-resources uncached all-query)]
         (is (= :passed
                (:status
@@ -396,8 +398,10 @@
                     ["document-1" "document-2"]]
                    [:public-cache-enabled (ids selected)]
                    [:public-cache-disabled (ids fresh)]]}))))
-        (is (false? (:cached? selected))
-            "demand artifacts stay exact-basis; cross-basis proof lifting is reserved for explicit complete denotations"))
+        (is (true? (:cached? selected))
+            "a completed demand answer lifts across an unrelated basis under the scalar proof")
+        (is (= traversal-before-selected traversal-after-selected)
+            "the managed demand hit performs no indexed traversal"))
       (assert-public-authorization!
        label
        cached
@@ -439,8 +443,7 @@
     (let [conn (datascript/create-conn)
           calls (atom {})
           common
-          {:coherence-authority :managed
-           :security-key
+          {:security-key
            "01234567890123456789012345678901"}
           selection (counting-decision-kernel calls)
           cached
@@ -470,8 +473,7 @@
     (let [conn (datahike/create-conn)
           calls (atom {})
           common
-          {:coherence-authority :managed
-           :security-key
+          {:security-key
            "01234567890123456789012345678901"}
           selection (counting-decision-kernel calls)
           cached
@@ -501,8 +503,7 @@
     (with-mem-conn [conn datomic-schema/v7-schema]
       (let [calls (atom {})
             common
-            {:coherence-authority :managed
-             :page-token-key
+            {:page-token-key
              "01234567890123456789012345678901"
              :zed-token-key
              "12345678901234567890123456789012"}

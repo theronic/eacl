@@ -3,7 +3,8 @@
             [clojure.string :as str]
             [eacl.authorization-oracle :as oracle]
             [eacl.cache :as cache]
-            [eacl.core :as eacl]))
+            [eacl.core :as eacl]
+            [eacl.spicedb.consistency :as consistency]))
 
 (def ->user (partial eacl/spice-object :user))
 (def ->platform (partial eacl/spice-object :platform))
@@ -79,6 +80,142 @@
    (eacl/->Relationship (->platform "platform-1") :platform (->account "account-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
+
+(def permission-tree-golden-schema
+  "definition user {}
+   definition folder { relation viewer: user }
+   definition document {
+     relation folder: folder
+     permission view = folder->viewer
+   }")
+
+(def permission-tree-golden-objects
+  [(eacl/spice-object :user "fred")
+   (eacl/spice-object :user "tom")
+   (eacl/spice-object :user "sarah")
+   (eacl/spice-object :folder "testfolder1")
+   (eacl/spice-object :folder "testfolder2")
+   (eacl/spice-object :document "testdoc")])
+
+(def permission-tree-golden-relationships
+  [(eacl/->Relationship
+    (eacl/spice-object :folder "testfolder1") :folder
+    (eacl/spice-object :document "testdoc"))
+   (eacl/->Relationship
+    (eacl/spice-object :folder "testfolder2") :folder
+    (eacl/spice-object :document "testdoc"))
+   (eacl/->Relationship
+    (eacl/spice-object :user "tom") :viewer
+    (eacl/spice-object :folder "testfolder1"))
+   (eacl/->Relationship
+    (eacl/spice-object :user "fred") :viewer
+    (eacl/spice-object :folder "testfolder1"))
+   (eacl/->Relationship
+    (eacl/spice-object :user "sarah") :viewer
+    (eacl/spice-object :folder "testfolder2"))])
+
+(defn- normalize-permission-tree
+  [tree]
+  (if-let [leaf (:leaf tree)]
+    (assoc tree :leaf
+           (update leaf :subjects #(vec (sort-by pr-str %))))
+    (assoc-in tree [:intermediate :children]
+              (->> (get-in tree [:intermediate :children])
+                   (map normalize-permission-tree)
+                   (sort-by pr-str)
+                   vec))))
+
+(defn assert-pinned-permission-tree-golden!
+  [client]
+  (let [expected
+        {:expanded-object (eacl/spice-object :document "testdoc")
+         :expanded-relation :view
+         :intermediate
+         {:operation :union
+          :children
+          [{:expanded-object (eacl/spice-object :document "testdoc")
+            :expanded-relation :view
+            :intermediate
+            {:operation :union
+             :children
+             [{:expanded-object
+               (eacl/spice-object :folder "testfolder1")
+               :expanded-relation :viewer
+               :leaf
+               {:subjects [(eacl/spice-object :user "fred")
+                           (eacl/spice-object :user "tom")]}}
+              {:expanded-object
+               (eacl/spice-object :folder "testfolder2")
+               :expanded-relation :viewer
+               :leaf
+               {:subjects [(eacl/spice-object :user "sarah")]}}]}}]}}
+        actual
+        (:tree-root
+         (eacl/expand-permission-tree
+          client
+          {:resource (eacl/spice-object :document "testdoc")
+           :permission :view}))]
+    (is (= (normalize-permission-tree expected)
+           (normalize-permission-tree actual)))))
+
+(def safe-retraction-schema
+  "definition user {
+     relation peer: user
+   }
+   definition account {
+     relation owner: user
+   }
+   definition server {
+     relation account: account
+   }
+   definition folder {
+     relation parent: folder
+   }")
+
+(def safe-retraction-objects
+  [(eacl/spice-object :user "user-1")
+   (eacl/spice-object :user "user-2")
+   (eacl/spice-object :user "unrelated-user")
+   (eacl/spice-object :account "target-account")
+   (eacl/spice-object :account "unrelated-account")
+   (eacl/spice-object :server "server-1")
+   (eacl/spice-object :folder "self-folder")])
+
+(def safe-retraction-relationships
+  [(eacl/->Relationship (eacl/spice-object :user "user-1")
+                        :owner
+                        (eacl/spice-object :account "target-account"))
+   (eacl/->Relationship (eacl/spice-object :account "target-account")
+                        :account
+                        (eacl/spice-object :server "server-1"))
+   (eacl/->Relationship (eacl/spice-object :user "user-1")
+                        :peer
+                        (eacl/spice-object :user "user-2"))
+   (eacl/->Relationship (eacl/spice-object :folder "self-folder")
+                        :parent
+                        (eacl/spice-object :folder "self-folder"))
+   (eacl/->Relationship (eacl/spice-object :user "unrelated-user")
+                        :owner
+                        (eacl/spice-object :account "unrelated-account"))])
+
+(def safe-retraction-target
+  (eacl/spice-object :account "target-account"))
+
+(def safe-retraction-expected-remaining
+  (set (drop 2 safe-retraction-relationships)))
+
+(defn assert-safe-retraction-result!
+  [{:keys [target-exists? remaining-relationships unresolved-no-op?
+           existing-ghost-preserved?]}]
+  (is (false? target-exists?) "the target entity is retracted")
+  (is (= safe-retraction-expected-remaining
+         (set remaining-relationships))
+      "all and only relationships touching the target are removed")
+  (is (true? unresolved-no-op?)
+      "unresolved eid/lookup-ref invocation is a no-op")
+  (is (true? existing-ghost-preserved?)
+      "bounded safe retraction does not scan for a pre-existing peer-only ghost"))
+
 
 (defn- read-relationships-data
   [client query]
@@ -459,6 +596,102 @@
                                             :first             10})))
     (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))
 
+(defn assert-v8-permission-tree-contract!
+  "Cross-backend shallow expansion contract over `smoke-schema`."
+  [client]
+  (testing "direct relation roots remain terminal leaves"
+    (let [response
+          (eacl/expand-permission-tree
+           client
+           {:resource (->account "account-1")
+            :permission :owner})]
+      (is (string? (:expanded-at response)))
+      (is (= {:expanded-object (->account "account-1")
+              :expanded-relation :owner
+              :leaf {:subjects [(->user "user-1")]}}
+             (:tree-root response)))
+      (is (= (:tree-root response)
+             (:tree-root
+              (eacl/expand-permission-tree
+               client
+               {:resource (->account "account-1")
+                :permission :owner
+                :consistency
+                (consistency/at-least-as-fresh
+                 (:expanded-at response))}))))
+      (is (= (:tree-root response)
+             (:tree-root
+              (eacl/expand-permission-tree
+               client
+               {:resource (->account "account-1")
+                :permission :owner
+                :consistency consistency/fully-consistent}))))))
+
+  (testing "same-resource permissions and arrows preserve every union boundary"
+    (is (= {:expanded-object (->server "server-1")
+            :expanded-relation :reboot
+            :intermediate
+            {:operation :union
+             :children
+             [{:expanded-object (->server "server-1")
+               :expanded-relation :reboot
+               :intermediate
+               {:operation :union
+                :children
+                [{:expanded-object (->account "account-1")
+                  :expanded-relation :admin
+                  :intermediate
+                  {:operation :union
+                   :children
+                   [{:expanded-object (->account "account-1")
+                     :expanded-relation :owner
+                     :leaf {:subjects [(->user "user-1")]}}
+                    {:expanded-object (->account "account-1")
+                     :expanded-relation :admin
+                     :intermediate
+                     {:operation :union
+                      :children
+                      [{:expanded-object (->platform "platform-1")
+                        :expanded-relation :super_admin
+                        :leaf
+                        {:subjects [(->user "super-user")]}}]}}]}}]}}]}}
+           (:tree-root
+            (eacl/expand-permission-tree
+             client
+             {:resource (->server "server-1")
+              :permission :reboot})))))
+
+  (testing "absent ids retain the exact root and empty arrow topology"
+    (is (= {:expanded-object (->server "absent")
+            :expanded-relation :reboot
+            :intermediate
+            {:operation :union
+             :children
+             [{:expanded-object (->server "absent")
+               :expanded-relation :reboot
+               :intermediate {:operation :union :children []}}]}}
+           (:tree-root
+            (eacl/expand-permission-tree
+             client
+             {:resource (->server "absent")
+              :permission :reboot})))))
+
+  (testing "request validation is identical before backend reads"
+    (is (= :eacl.permission-tree/invalid-request
+           (error-category
+            #(eacl/expand-permission-tree
+              client
+              {:resource (->server "server-1")
+               :permission :reboot
+               :cache? false}))))
+    (is (= :eacl.execution/invalid-contract
+           (error-category
+            #(eacl/expand-permission-tree
+              client
+              {:resource (->server "server-1")
+               :permission :reboot
+               :timeout-ms 0}))))))
+
 (def recursive-schema
   "definition user {}
 
@@ -590,7 +823,7 @@
                 :permission :duplicate
                 :resource/type :folder})))))
 
-    (testing "demand answers are exact-generation and changed cursors fail closed"
+    (testing "demand answers reuse proved generations and changed cursors fail closed"
       (let [all-query (assoc query :first 20)
             miss (eacl/lookup-resources client all-query)
             hit (eacl/lookup-resources client all-query)]
@@ -601,8 +834,8 @@
          client denied :auditor (folder 0))
         (let [after-unrelated-write
               (eacl/lookup-resources client all-query)]
-          (is (false? (:cached? after-unrelated-write))
-              "demand mode does not perform proof reads to lift an old answer")
+          (is (true? (:cached? after-unrelated-write))
+              "an unrelated stamped write preserves the dependency frontier")
           (is (= (mapv folder (range recursive-connected-folder-count))
                  (:data after-unrelated-write))))
 

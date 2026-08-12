@@ -1,0 +1,5 @@
+document:testdoc#folder@folder:testfolder1
+document:testdoc#folder@folder:testfolder2
+folder:testfolder1#viewer@user:tom
+folder:testfolder1#viewer@user:fred
+folder:testfolder2#viewer@user:sarah

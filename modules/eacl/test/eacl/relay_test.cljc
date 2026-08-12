@@ -14,17 +14,18 @@
          (map (fn [operation]
                 [operation (fn [& _] nil)]))
          backend/required-snapshot-operations)
-   {:snapshot-id (constantly snapshot-id)
-    :source-scope (constantly {:source :relay-test})
-    :graph-head
+   {:snapshot-id (constantly {:revision snapshot-id})
+    :source-scope
+    (constantly {:source-id "relay-source" :branch nil})
+    :source-lifecycle (constantly "relay-lifecycle")
+    :native-revision
     (constantly
-     {:graph-anchor snapshot-id
-      :order-hint snapshot-id
+     {:revision snapshot-id
       :exact-locator snapshot-id})
+    :order-hint (constantly snapshot-id)
+    :exact-locator (constantly snapshot-id)
     :object-id->internal identity
-    :internal-id->object identity
-    :schema-proof (fn [& _] proof)
-    :relation-proof (fn [_] proof)}))
+    :internal-id->object identity}))
 
 (defn- adapter
   [snapshot-id proof deterministic?]
@@ -97,10 +98,10 @@
     :has-previous-page? false}})
 
 (deftest page-externalization-builds-one-snapshot-context-test
-  ;; Every context build reads :graph-head exactly once, so the op count is
+  ;; Every context build reads :native-revision exactly once, so the op count is
   ;; the context-build count — portable across CLJ and CLJS, unlike
   ;; re-rooting a multi-arity var.
-  (let [graph-head-calls (atom 0)
+  (let [native-revision-calls (atom 0)
         snapshot
         (backend/make-adapter
          {:id :relay-test
@@ -110,18 +111,17 @@
           :operations
           (merge
            (operation-map 1 nil)
-           {:graph-head
+           {:native-revision
             (fn []
-              (swap! graph-head-calls inc)
-              {:graph-anchor 1
-               :order-hint 1
+              (swap! native-revision-calls inc)
+              {:revision 1
                :exact-locator 1})})})
         page
         (relay/externalize-page
          snapshot {} :lookup-resources lookup-query lookup-page)]
     (is (string? (get-in page [:page-info :start-cursor])))
     (is (string? (get-in page [:page-info :end-cursor])))
-    (is (= 1 @graph-head-calls)
+    (is (= 1 @native-revision-calls)
         "both boundary tokens must reuse one immutable snapshot proof")))
 
 (deftest prepared-continuation-authenticates-token-once-test
@@ -286,8 +286,7 @@
          current
          {:cursor-consistency-mode :at-exact-snapshot
           :cursor-request-token
-          {:graph-anchor 1
-           :order-hint 1
+          {:revision 1
            :exact-locator 1}}
          :lookup-resources
          (assoc exact-query
@@ -297,7 +296,7 @@
     (is (not (contains? prepared :recovery)))))
 
 (deftest one-page-builds-one-snapshot-context-test
-  (let [graph-head-calls (atom 0)
+  (let [native-revision-calls (atom 0)
         snapshot-id-calls (atom 0)
         test-adapter
         (backend/make-adapter
@@ -308,11 +307,10 @@
           :operations
           (merge
            (operation-map 1 nil)
-           {:graph-head
+           {:native-revision
             (fn []
-              (swap! graph-head-calls inc)
-              {:graph-anchor 1
-               :order-hint 1
+              (swap! native-revision-calls inc)
+              {:revision 1
                :exact-locator 1})
             :snapshot-id
             (fn []
@@ -340,7 +338,7 @@
          test-adapter {} :read-relationships
          {:subject/type :user :first 1}
          page)]
-    (is (= 1 @graph-head-calls))
+    (is (= 1 @native-revision-calls))
     (is (= 1 @snapshot-id-calls))
     (is (string? (get-in external [:page-info :start-cursor])))
     (is (string? (get-in external [:page-info :end-cursor])))))

@@ -8,7 +8,8 @@
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
             [eacl.execution-test]
-            [eacl.mutation-test]
+            [eacl.proof-frame-test]
+            [eacl.permission-tree-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.secure-format-test]
@@ -23,7 +24,7 @@
             [eacl.datascript.contract-test]
             [eacl.datascript.enumeration-routing-test]
             [eacl.datascript.impl-test]
-            [eacl.datascript.mutation-test]
+            [eacl.datascript.safe-retraction-test]
             [eacl.datascript.storage-test]))
 
 (nodejs/enable-util-print!)
@@ -45,7 +46,8 @@
                'eacl.consistency-test
                'eacl.engine.relationships-test
                'eacl.execution-test
-               'eacl.mutation-test
+               'eacl.proof-frame-test
+               'eacl.permission-tree-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.secure-format-test
@@ -60,7 +62,7 @@
                'eacl.datascript.contract-test
                'eacl.datascript.enumeration-routing-test
                'eacl.datascript.impl-test
-               'eacl.datascript.mutation-test
+               'eacl.datascript.safe-retraction-test
                'eacl.datascript.storage-test))
 
 (set! *main-cli-fn* -main)

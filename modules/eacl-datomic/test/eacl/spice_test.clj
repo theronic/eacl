@@ -82,8 +82,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client
                   conn
-                  {:coherence-authority :managed
-                   :proof-mode :content})
+                  {})
           u1     (spice-object :user "u1")
           a1     (spice-object :account "a1")]
       (eacl/write-schema! client "definition user {}
@@ -112,12 +111,20 @@
           (catch clojure.lang.ExceptionInfo e
             (is (= :eacl/unsupported-consistency (:type (ex-data e)))))))
 
-      (testing "expand-permission-tree throws a typed not-implemented error"
-        (try
-          (eacl/expand-permission-tree client {:resource a1 :permission :admin})
-          (is false "should have thrown")
-          (catch clojure.lang.ExceptionInfo e
-            (is (= :eacl/not-implemented (:type (ex-data e))))))))))
+      (testing "expand-permission-tree returns the documented explicit tree"
+        (let [response
+              (eacl/expand-permission-tree
+               client {:resource a1 :permission :admin})]
+          (is (string? (:expanded-at response)))
+          (is (= {:expanded-object a1
+                  :expanded-relation :admin
+                  :intermediate
+                  {:operation :union
+                   :children
+                   [{:expanded-object a1
+                     :expanded-relation :owner
+                     :leaf {:subjects []}}]}}
+                 (:tree-root response))))))))
 
 (deftest strict-object-id-resolution-tests
   (with-mem-conn [conn schema/v7-schema]
@@ -232,8 +239,7 @@
     (testing "Make a Spice client and hold onto channel for disposal later."
       (let [client (spiceomic/make-client
                     conn
-                    {:coherence-authority :managed
-                     :proof-mode :content})]
+                    {})]
         (is client)
         ;(is (satisfies? IAuthorization client))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
@@ -614,55 +620,13 @@
 	                                                      :subject/type      :account
 	                                                      :subject/id        "test-account"})))))))
 
-; expand-permission-tree not impl. yet.
-;; FIXME: These tests fail because expand-permission-tree is not implemented yet
-#_(testing "We can expand permissions hierarchy for (->server 123)."
-    (is (= [[[[{:object   (->account "operativa")
-                :relation :owner
-                :subjects [{:object   (->user "ben")
-                            :relation nil}]}
-               [{:object   (->platform "sample-platform")
-                 :relation :super_admin
-                 :subjects [{:object   (->user "andre")
-                             :relation nil}]}]]]
-
-             ; no shared_admin subjects:
-             []                                             ; don't know what this empty vector is about.
-             {:object   (update (->server 123) :id str)
-              :relation :shared_admin
-              :subjects []}]
-
-            ; no shared_member subjects:
-            {:object   (update (->server 123) :id str)
-             :relation :shared_member
-             :subjects []}] (eacl/expand-permission-tree *client {:resource   (->server 123)
-                                                                  :permission :reboot}))))
-
-#_(testing "Expand permissions hierarchy for joe's-server shows team member"
-    ; Note: numeric IDs are not coerced back from strings yet.
-    (is (= [[[[{:object   (->account "acme")
-                :subjects [{:object joe's-user :relation nil}],
-                :relation :owner}
-               [{:object   (->platform "sample-platform"),
-                 :subjects [{:object (->user "andre"), :relation nil}],
-                 :relation :super_admin}]]]
-             []
-             {:object   (->server "not-my-server"),
-              :subjects [],
-              :relation :shared_admin}]
-            {:object   (->server "not-my-server"),
-             :subjects [],
-             :relation :shared_member}] (eacl/expand-permission-tree *client {:resource   joe's-server
-                                                                              :permission :reboot}))))
-
 ;; todo: test that shows behaviour of read-relationships when subject or resource is missing.
 
 (deftest consistency-selection-tests
   (with-mem-conn [conn schema/v7-schema]
     (let [client (spiceomic/make-client
                   conn
-                  {:coherence-authority :managed
-                   :proof-mode :content})]
+                  {})]
       (eacl/write-schema! client "definition user {}
          definition account { relation owner: user  permission admin = owner }")
       @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"} {:eacl/id "acct-2"} {:eacl/id "acct-3"}])
