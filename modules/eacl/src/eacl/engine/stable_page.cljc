@@ -70,7 +70,9 @@
                     (assoc :ordinal ordinal :boundary boundary)
                     (cond-> (:token-ttl-seconds options)
                       (assoc :expires-at
-                             (+ (long (/ (System/currentTimeMillis) 1000))
+                             (+ (quot #?(:clj (System/currentTimeMillis)
+                                         :cljs (.now js/Date))
+                                      1000)
                                 (long (:token-ttl-seconds options))))))
         encoded (secure-format/encode-canonical payload)
         payload-bytes (secure-format/utf8-bytes encoded)
@@ -107,7 +109,10 @@
         payload (secure-format/decode-canonical
                  (secure-format/bytes->utf8 payload-bytes))]
     (when-let [expires-at (:expires-at payload)]
-      (when (> (long (/ (System/currentTimeMillis) 1000)) (long expires-at))
+      (when (> (quot #?(:clj (System/currentTimeMillis)
+                        :cljs (.now js/Date))
+                     1000)
+               (long expires-at))
         (page-error! :eacl.page/expired-cursor "Cursor expired."
                      {:expires-at expires-at})))
     (doseq [field [:v :order-abi :fingerprint :lifecycle :direction
@@ -148,48 +153,74 @@
    (atom {:entries {} :order [] :max-entries max-entries
           :max-entry-admissions max-entry-admissions})))
 
+(defn context-store?
+  "A client-scoped continuation context (`eacl.continuation/private-context`):
+  fn-map storage whose own bounds and eviction replace the atom store's."
+  [store]
+  (and (map? store) (fn? (:get store)) (fn? (:put! store))))
+
+(defn- checkpoint-weight
+  "Conservative retained-heap estimate for a client-store entry; the store's
+  weight budget treats these as approximate bytes, not exact JVM layout."
+  [checkpoint]
+  (+ 2048
+     (* 96 (count (:admitted (:state checkpoint))))
+     (* 256 (count (:stack (:state checkpoint))))
+     (* 96 (count (:pending checkpoint)))))
+
 (defn checkpoint-put!
   "Publishes synchronously; for one key only a strictly greater scalar
   transition ordinal replaces the retained checkpoint (nonregressing)."
   [store key checkpoint]
-  (when store
-    (swap! store
-           (fn [{:keys [entries order max-entries max-entry-admissions]
-                 :as state}]
-             (let [existing (get entries key)]
-               (cond
-                 (> (count (:admitted (:state checkpoint)))
-                    max-entry-admissions)
-                 state ;; overweight: dropped, request unaffected
+  (cond
+    (context-store? store)
+    ;; The read-compare-put pair is not atomic across requests; losing that
+    ;; race retains an older checkpoint, which only costs a later replay.
+    (let [existing ((:get store) key)]
+      (when-not (and existing
+                     (>= (:transitions (:state existing))
+                         (:transitions (:state checkpoint))))
+        ((:put! store) key checkpoint (checkpoint-weight checkpoint)))
+      nil)
 
-                 (and existing
-                      (>= (:transitions (:state existing))
-                          (:transitions (:state checkpoint))))
-                 state ;; nonregressing: never replace with older progress
+    store
+    (do
+      (swap! store
+             (fn [{:keys [entries order max-entries max-entry-admissions]
+                   :as state}]
+               (let [existing (get entries key)]
+                 (cond
+                   (> (count (:admitted (:state checkpoint)))
+                      max-entry-admissions)
+                   state ;; overweight: dropped, request unaffected
 
-                 :else
-                 (let [order (conj (vec (remove #{key} order)) key)
-                       entries (assoc entries key checkpoint)
-                       evict (when (> (count order) max-entries)
-                               (first order))]
-                   (cond-> (assoc state
-                                  :entries entries
-                                  :order order)
-                     evict (-> (update :entries dissoc evict)
-                               (update :order subvec 1))))))))
-    nil))
+                   (and existing
+                        (>= (:transitions (:state existing))
+                            (:transitions (:state checkpoint))))
+                   state ;; nonregressing: never replace with older progress
+
+                   :else
+                   (let [order (conj (vec (remove #{key} order)) key)
+                         entries (assoc entries key checkpoint)
+                         evict (when (> (count order) max-entries)
+                                 (first order))]
+                     (cond-> (assoc state
+                                    :entries entries
+                                    :order order)
+                       evict (-> (update :entries dissoc evict)
+                                 (update :order subvec 1))))))))
+      nil)))
 
 (defn- checkpoint-hit
   "A checkpoint serves a continuation only when its delivered boundary
   ordinal and constant-size boundary identity both match the token."
   [store key ordinal boundary]
-  (when store
-    (let [{:keys [entries]} @store
-          entry (get entries key)]
-      (when (and entry
-                 (= ordinal (:ordinal entry))
-                 (= boundary (:boundary entry)))
-        entry))))
+  (when-let [entry (cond
+                     (context-store? store) ((:get store) key)
+                     store (get (:entries @store) key))]
+    (when (and (= ordinal (:ordinal entry))
+               (= boundary (:boundary entry)))
+      entry)))
 
 ;; ---------------------------------------------------------------------------
 ;; Page execution
@@ -210,7 +241,7 @@
                                          :subject-type :cut-point!
                                          :physical-chunk-size :sidecar-cap
                                          :max-admissions :max-commands
-                                         :max-transitions])
+                                         :max-transitions :max-values :max-stack])
                            {:target target})]
     (case direction
       :forward (reducer/run-forward
@@ -225,7 +256,7 @@
                                        :subject-type :cut-point!
                                        :physical-chunk-size :sidecar-cap
                                        :max-admissions :max-commands
-                                       :max-transitions])
+                                       :max-transitions :max-values :max-stack])
                          {:target target})
                   checkpoint-state))
 
@@ -249,7 +280,10 @@
   basis) before continuing."
   [options store key anchor-eid ordinal boundary-eid]
   (if-let [hit (checkpoint-hit store key ordinal boundary-eid)]
-    {:state (:state hit) :pending (:pending hit)}
+    (do
+      (when-let [stats reducer/*observer-stats*]
+        (swap! stats update :continuation-hits (fnil inc 0)))
+      {:state (:state hit) :pending (:pending hit)})
     (let [replayed (guard-exhaustion
                     #(run-fresh options anchor-eid ordinal))
           results (:results replayed)]

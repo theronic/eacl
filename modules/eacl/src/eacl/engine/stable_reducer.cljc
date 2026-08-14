@@ -32,6 +32,8 @@
 (def default-max-admissions 1000000)
 (def default-max-commands 1000000)
 (def default-max-transitions 4000000)
+(def default-max-values 4000000)
+(def default-max-stack 1000000)
 
 ;; ---------------------------------------------------------------------------
 ;; Admission identity: specialized immutable per-kind keys (task 5.2)
@@ -127,6 +129,17 @@
       (limit-failure! :max-admissions state
                       {:max-admissions (:max-admissions state)
                        :staged (count fresh)}))
+    ;; :max-stack bounds INSTANTANEOUS queue depth (the public
+    ;; :max-queued-work contract), not cumulative work: a long chain
+    ;; traversal keeps a shallow stack no matter how many transitions it
+    ;; takes overall.
+    (when (> (+ (count (:stack state))
+                (if residual 1 0)
+                (count fresh))
+             (:max-stack state))
+      (limit-failure! :max-stack state
+                      {:max-stack (:max-stack state)
+                       :staged (count fresh)}))
     (let [stack (cond-> (:stack state)
                   residual (conj residual))
           stack (into stack (map first) (rseq fresh))
@@ -189,6 +202,14 @@
                      (fetch-fn (assoc descriptor
                                       :bound-eid bound-eid
                                       :limit (:physical-chunk-size state))))]
+    ;; :max-values bounds consumed projection values (the public
+    ;; :max-advanced-datoms contract); the whole chunk is rejected before
+    ;; any of it commits.
+    (when (> (+ (:fetched-values state) (count values))
+             (:max-values state))
+      (limit-failure! :max-values state
+                      {:max-values (:max-values state)
+                       :staged (count values)}))
     [(-> state
          (update :commands inc)
          (update :fetched-values + (count values)))
@@ -416,14 +437,18 @@
   owned linearly by the run loop (task 5.2); `finish` freezes them before
   the state escapes. Limits are checked before their transition commits."
   [{:keys [adapter fetch-fn physical-chunk-size sidecar-cap
-           max-admissions max-commands max-transitions]
+           max-admissions max-commands max-transitions
+           max-values max-stack]
     :or {physical-chunk-size default-physical-chunk-size
          sidecar-cap default-sidecar-cap
          max-admissions default-max-admissions
          max-commands default-max-commands
-         max-transitions default-max-transitions}}]
+         max-transitions default-max-transitions
+         max-values default-max-values
+         max-stack default-max-stack}}]
   {:pre [(pos? physical-chunk-size) (int? sidecar-cap) (<= 0 sidecar-cap)
-         (pos? max-admissions) (pos? max-commands) (pos? max-transitions)]}
+         (pos? max-admissions) (pos? max-commands) (pos? max-transitions)
+         (pos? max-values) (pos? max-stack)]}
   {:stack []
    :admitted (transient #{})
    :admissions 0
@@ -438,6 +463,8 @@
    :max-admissions max-admissions
    :max-commands max-commands
    :max-transitions max-transitions
+   :max-values max-values
+   :max-stack max-stack
    :maximum-sidecar-buffers 0
    :maximum-sidecar-values 0
    :maximum-stack 0
@@ -505,6 +532,30 @@
   [finished-state]
   (select-keys finished-state semantic-state-keys))
 
+(def ^:dynamic *observer-stats*
+  "When bound to an atom, each completed run bulk-reports its work deltas
+  under the public counter names (:derived-grants for logical admissions,
+  :advanced-datoms for physical commands, :queued-work for transitions).
+  The default nil costs nothing on the hot path — one check per run."
+  nil)
+
+(defn- report-run!
+  [before final-state]
+  (when-let [stats *observer-stats*]
+    (swap! stats
+           (fn [counters]
+             (-> (or counters {})
+                 (update :derived-grants (fnil + 0)
+                         (- (:admissions final-state)
+                            (:admissions before 0)))
+                 (update :advanced-datoms (fnil + 0)
+                         (- (:commands final-state)
+                            (:commands before 0)))
+                 (update :queued-work (fnil + 0)
+                         (- (:transitions final-state)
+                            (:transitions before 0)))))))
+  final-state)
+
 (defn resume
   "Continues a history-free state to `target` absolute discovered results
   under fresh runtime options. Emissions from before the checkpoint are
@@ -519,8 +570,9 @@
                   (merge (select-keys checkpoint-state semantic-state-keys))
                   (assoc :admitted (transient (:admitted checkpoint-state))
                          :results (transient [])
-                         :base-discovered (:discovered checkpoint-state)))]
-    (finish (run-loop context state target cut-point!))))
+                         :base-discovered (:discovered checkpoint-state)))
+        before (select-keys state [:admissions :commands :transitions])]
+    (report-run! before (finish (run-loop context state target cut-point!)))))
 
 (defn run-forward
   "Enumerates root resources the subject reaches, in stable first-discovery
@@ -543,7 +595,8 @@
                                          :bound-eid nil}))
                     (get-in plan [:indexes :forward-seeds subject-type]))
         state (schedule (initial-state options) nil seeds)]
-    (finish (run-loop context state target (:cut-point! options)))))
+    (report-run! nil (finish (run-loop context state target
+                                       (:cut-point! options))))))
 
 (defn run-reverse
   "Enumerates subjects of `subject-type` that reach the root permission on
@@ -559,4 +612,5 @@
         goal {:kind :reverse-goal :rule {:node (:root plan)}
               :resource-eid resource-eid}
         state (schedule (initial-state options) nil [goal])]
-    (finish (run-loop context state target (:cut-point! options)))))
+    (report-run! nil (finish (run-loop context state target
+                                       (:cut-point! options))))))

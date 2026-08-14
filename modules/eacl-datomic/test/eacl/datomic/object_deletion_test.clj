@@ -337,8 +337,18 @@
       @(d/transact conn [[:db.fn/retractEntity a]])
 
       (is (= 1 (forward-count (d/db conn) u)) "the orphan is still there…")
-      (is (true? (eacl/can? acl (spice-object :user u) :admin (spice-object :account a)))
-          "…and raw eid identity can still address the surviving tuple")
+      ;; The halves now disagree: the anchored reverse point check reads the
+      ;; retracted reverse half and fails closed, while forward enumeration
+      ;; still reads the surviving forward half. The ghost stays detectable
+      ;; until the auditor repairs it.
+      (is (false? (eacl/can? acl (spice-object :user u) :admin (spice-object :account a)))
+          "…the reverse half is gone, so the anchored check fails closed")
+      (is (some #{a} (mapv :id (:data (eacl/lookup-resources
+                                       acl {:subject (spice-object :user u)
+                                            :permission :admin
+                                            :resource/type :account
+                                            :first 10}))))
+          "…and raw eid identity still addresses the surviving forward half")
       (is (= 1 (:dangling-count
                 (integrity/dangling-relationship-report (d/db conn)))))
 

@@ -811,6 +811,16 @@
       {:eid (:result-eid cursor)
        :ordinal (:ordinal cursor)})
 
+    :stable-edge
+    (when (and (= engine/stable-cursor-version (:version cursor))
+               (= engine/stable-order-abi (:order-abi cursor))
+               (contains? #{:forward :reverse} (:traversal cursor))
+               (integer? (:ordinal cursor))
+               (pos? (:ordinal cursor))
+               (positive-eid? (:result-eid cursor)))
+      {:eid (:result-eid cursor)
+       :ordinal (:ordinal cursor)})
+
     nil))
 
 (defn- internal-page?

@@ -367,6 +367,30 @@
            (nth (:hops certificate) i)])
         (range (count nodes)))))
 
+(defn- cyclic-nodes?
+  "True when the permission-dependency graph contains a cycle, i.e. the
+  schema is recursive and traversal depth is data-dependent. Kahn's
+  peel: a graph is acyclic exactly when every node topologically sorts."
+  [node-count edges]
+  (let [outgoing (group-by :from edges)
+        initial-degrees (reduce (fn [degrees {:keys [to]}]
+                                  (update degrees to (fnil inc 0)))
+                                {} edges)]
+    (loop [degrees initial-degrees
+           stack (vec (remove #(pos? (get initial-degrees % 0))
+                              (range node-count)))
+           sorted 0]
+      (if-let [node (peek stack)]
+        (let [[degrees stack]
+              (reduce (fn [[degrees stack] {:keys [to]}]
+                        (let [degree (dec (get degrees to))]
+                          [(assoc degrees to degree)
+                           (if (zero? degree) (conj stack to) stack)]))
+                      [degrees (pop stack)]
+                      (outgoing node))]
+          (recur degrees stack (inc sorted)))
+        (< sorted node-count)))))
+
 (defn seal-plan
   "Compiles and seals the direction-specific plan for one root permission
   node against one adapter's schema definitions. Pure with respect to
@@ -395,6 +419,10 @@
               :certificate certificate
               :order-contract order-contract
               :indexes (indexes ranked)}]
-    (assoc plan :fingerprint
+    (assoc plan
+           :fingerprint
            (secure-format/canonical-records-digest
-            fingerprint-domain (vec (plan-records plan))))))
+            fingerprint-domain (vec (plan-records plan)))
+           ;; Derived from already-fingerprinted structure; excluded from
+           ;; the digest so the composite fingerprint stays unchanged.
+           :recursive? (cyclic-nodes? (count nodes) edges))))

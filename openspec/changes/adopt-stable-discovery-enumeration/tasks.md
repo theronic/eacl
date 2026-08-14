@@ -99,6 +99,44 @@
   Then: clear `~/.m2/repository/dev/eacl`, build the server uberjar, run
   `infra/scripts/deploy-artifact.sh` — no S3 reseed (engine-only change).
 
+### Cache-reuse and limit-semantics repair (2026-08-14, operator-reported)
+
+- Repeated pagination replayed every page: the engine rejected the
+  client's continuation context (no checkpoints ever), the plan cache
+  keyed on JVM object identity (missed every fresh Datomic snapshot),
+  and the Datomic client's page validator did not recognize
+  `:stable-edge` cursors (the whole answer-cache layer silently never
+  remembered stable pages). All three fixed (`41be8dd`); the plan cache
+  now keys on the adapter source-identity contract, which distinct
+  stores must honor with distinct lifecycles (fixtures fixed).
+- Execution enforcement was inert on the routed engine: `:timeout-ms`
+  and cancellation tokens now reach the reducer through
+  `stable-cut-point`; the bare-`:last` complete-evaluation guard is
+  restored, scoped to recursive plans (sealed plans carry `:recursive?`).
+- Public limits were mapped onto the wrong reducer budgets (`52ff683`):
+  `:max-queued-work` now bounds instantaneous stack depth (new
+  `:max-stack`), `:max-advanced-datoms` bounds consumed values (new
+  `:max-values`); internal transition/command ceilings scale with the
+  authorized work. A 24k-result count under default limits and a
+  million-result count under raised limits both complete.
+- The reducer reports per-run `:derived-grants`/`:advanced-datoms`/
+  `:queued-work` deltas plus `:continuation-hits` into the public stats
+  hook; the aggregate-job test suites (which the isolated-module pattern
+  does not cover) are re-enveloped to stable accounting, and the retired
+  op-count suite's cancellation/deadline contracts are ported to
+  `physical-route-test`. Verify locally with
+  `clojure -X:dev:test :excludes '[:benchmark :formal-artifact]'`
+  (622+ tests, ~26k assertions, green).
+- Datomic peer aligned to the 1.0.7705 transactor. `eacl-datomic-solidjs`
+  now runs against `datomic:dev://localhost:4334/eacl-solidjs` (the
+  million-server test database; `install-demo!` is marker-guarded, no
+  reseed; `EACL_SOLIDJS_SECURITY_KEY` required): million-server exhaustive
+  count 23 s cold / 2.4 ms cached, first pages 14 ms, cursor pages flat
+  6–8 ms, repeats 2–3 ms cached. Remaining UI nit: the demo client reuses
+  stale count responses when switching subjects (demo repo, not engine).
+- `^:benchmark` suites still assert old-engine counters; rebase or retire
+  them with 9.2 (they are CI-excluded).
+
 ## 10. Follow-on remote performance qualification
 
 - [ ] 10.1 Qualify Datahike direct S3 and tiered LMDB/S3 (restart warmth, disk lifecycle, exact-basis behavior at scale) with reproducible fixtures; publish performance envelopes including evicted-checkpoint replay p95/p99.

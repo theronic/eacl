@@ -7,6 +7,7 @@
   basis)."
   (:require [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.backend.v8 :as backend]
             [eacl.baseline.capture :as capture]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.engine.sealed-plan :as sealed-plan]
@@ -29,7 +30,11 @@
                   (fn [snapshot internal-id]
                     (:eacl/id (ds/entity snapshot internal-id)))
                   :conn conn
-                  :source-lifecycle (str "stable-page-test-" (name fixture-key))})]
+                  ;; Unique per call: seeded stores are distinct sources, and
+                  ;; a shared lifecycle would alias plan-cache identities.
+                  :source-lifecycle (str (gensym (str "stable-page-test-"
+                                                      (name fixture-key)
+                                                      "-")))})]
     {:fixture fixture :conn conn :db db :adapter adapter
      :plan (sealed-plan/seal-plan adapter [(:resource-type fixture)
                                            (:permission fixture)])}))
@@ -198,7 +203,10 @@
                     (fn [snapshot internal-id]
                       (:eacl/id (ds/entity snapshot internal-id)))
                     :conn (:conn env)
-                    :source-lifecycle "stable-page-test-folder-chain"})]
+                    ;; The same source at a new basis: reuse the seeded
+                    ;; store's lifecycle so only the basis differs.
+                    :source-lifecycle (backend/invoke (:adapter env)
+                                                      :source-lifecycle)})]
         (is (= :eacl.page/stale-cursor
                (error-of (assoc options :adapter moved :after cursor))))
         (is (= :eacl.page/cursor-consistency-conflict

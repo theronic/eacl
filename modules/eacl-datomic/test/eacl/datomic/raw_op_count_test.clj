@@ -80,7 +80,7 @@
      :drive (get @kx :indexed-traversal-drive 0)
      :resume (get @kx :indexed-traversal-resume 0)
      :stream-fills (get @rts :stream-fills 0)
-     :advanced (get @rts :advanced-stream-datoms 0)
+     :advanced (get @rts :advanced-datoms 0)
      :derived-grants (get @rts :derived-grants 0)}))
 
 (defn- assert-crossing-law!
@@ -112,7 +112,9 @@
              {:subject {:type :user :id user-1-eid}
               :permission :view :resource/type :account :first 50}))]
     (testing "recursion active (suite self-check)"
-      (is (pos? (:stream-fills m)) (pr-str m))
+      ;; :stream-fills belonged to the retired streaming engine; the stable
+      ;; engine's physical work shows up as :advanced-datoms (commands).
+      (is (pos? (:advanced m)) (pr-str m))
       (is (pos? (:derived-grants m)) (pr-str m)))
     (testing "ordered-generation frames per raw list request"
       (is (<= (:proof-frame m) (:maximum-proof-frame-reads e)) (pr-str m)))
@@ -156,8 +158,10 @@
               :permission :view :resource/type :account}))
         accounts (:accounts config)]
     (testing "derived grants linear in fixture size (:derived-grants)"
+      ;; The count exhausts root + N accounts; admissions stay linear with
+      ;; the same factor over the result count, not the account count.
       (is (<= (:derived-grants m)
-              (* (:maximum-derived-grants-factor e) accounts))
+              (* (:maximum-derived-grants-factor e) (inc accounts)))
           (pr-str m)))
     (testing "scan count linear in fixture size (:stream-fills)"
       (is (<= (:stream-fills m)

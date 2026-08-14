@@ -260,13 +260,14 @@
 
 (defn seed-client!
   "Builds a DataScript-backed public client for one fixture with answer
-  caching disabled and a fixed source lifecycle."
+  caching disabled. Each store mints its own source lifecycle — distinct
+  stores sharing one lifecycle would violate the adapter source-identity
+  contract (and poison identity-keyed caches across fixtures)."
   [{:keys [schema objects relationships]}]
   (let [conn (datascript/create-conn)
         client (datascript/make-client
                 conn
-                {:cache {:remember-answers false}
-                 :source-lifecycle "stable-discovery-baseline"})]
+                {:cache {:remember-answers false}})]
     (eacl/write-schema! client schema)
     (ds/transact! conn
                   (vec (map-indexed

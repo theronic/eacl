@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.v8 :as engine]
             [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.spicedb.consistency :as consistency]
@@ -380,6 +381,11 @@
         (merge
          (operation-map)
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
+          ;; A real store mints one lifecycle per source; a constant here
+          ;; would alias every test adapter into one plan-cache identity.
+          :source-lifecycle
+          (let [lifecycle (str (gensym "compiled-once-store-"))]
+            (fn [] lifecycle))
           :source-scope (fn [] {:source-id :test :branch nil})
           :proof-frame
           (fn [relation-ids]
@@ -442,20 +448,27 @@
         (is (identical? analysis-delay
                         @(:traversal-analysis schema-cache))
             "another permission root reuses the generation-wide analysis"))
-      (let [stats (atom {})
+      (let [seals (atom 0)
+            seal sealed-plan/seal-plan
+            counting-seal (fn [snapshot root]
+                            (swap! seals inc)
+                            (seal snapshot root))
             query (fn [subject-eid]
                     {:subject {:type :user :id subject-eid}
                      :permission :read
                      :resource/type :node
                      :first 1})]
-        (binding [engine/*recursive-traversal-stats* stats]
+        (with-redefs [sealed-plan/seal-plan counting-seal]
           (is (= [] (:data (engine/lookup-resources
                             adapter (query 1001)))))
           (is (= [] (:data (engine/lookup-resources
-                            adapter (query 1002))))))
-        (is (= 1 (:compiled-recursive-plans @stats))
-            "different principals share one immutable recursive plan")
-        (is (= 1 (count @(:recursive-plans schema-cache))))
+                            adapter (query 1002)))))
+          (is (= 1 @seals)
+              "different principals share one immutable sealed plan")
+          (is (= [] (:data (engine/lookup-resources
+                            adapter (query 1001)))))
+          (is (= 1 @seals)
+              "repeated queries reuse the generation's sealed plan"))
         (let [{:keys [root-component-id components]}
               (engine/recursive-component-plan
                adapter :node :cycle-view)
@@ -470,12 +483,27 @@
           (is (= [(:id cycle-component)]
                  (:dependencies view-component)))
           (is (= (:id view-component) root-component-id)))
-        (engine/evict-permission-paths-cache! schema-cache)
-        (binding [engine/*recursive-traversal-stats* stats]
-          (is (= [] (:data (engine/lookup-resources
-                            adapter (query 1003))))))
-        (is (= 2 (:compiled-recursive-plans @stats))
-            "schema-cache eviction forces plan recompilation")))))
+        (with-redefs [sealed-plan/seal-plan counting-seal]
+          (let [other (backend/make-adapter
+                       {:id :test
+                        :capabilities
+                        {:consistency #{:fully-consistent}
+                         :snapshots #{:current}
+                         :cursor #{:forward :reverse}
+                         :transactions #{}
+                         :cache-proofs #{:ordered-generations
+                                         :snapshot-bound}
+                         :runtime #{#?(:clj :clj :cljs :cljs)}}
+                        :operations
+                        (assoc operations
+                               :source-lifecycle
+                               (let [lifecycle
+                                     (str (gensym "compiled-once-other-"))]
+                                 (fn [] lifecycle)))})]
+            (is (= [] (:data (engine/lookup-resources
+                              other (query 1003)))))
+            (is (= 2 @seals)
+                "a distinct source never shares another store's plan")))))))
 
 (deftest recursive-plan-crosses-the-strict-certification-boundary-test
   (let [relations

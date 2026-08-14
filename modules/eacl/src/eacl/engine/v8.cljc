@@ -1,8 +1,10 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
             [eacl.core :refer [spice-object]]
+            [eacl.engine.physical :as physical]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-page :as stable-page]
+            [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.stable-route :as stable-route]
             [eacl.execution :as execution]
             [eacl.lazy-merge-sort :as lazy-sort]
@@ -3928,12 +3930,13 @@
 
 (defn- stable-plan
   "Seals (or reuses) the direction-specific plan for one root at the exact
-  basis. Keyed by the concrete snapshot identity (never a caller-supplied
-  lifecycle string alone — distinct stores may share lifecycles and
-  revisions) plus basis and root; bounded FIFO."
+  basis. Keyed by the adapter's declared source identity (scope AND
+  lifecycle — either alone may be caller-fixed across distinct stores) plus
+  basis and root, so re-wrapping the same source at the same basis reuses
+  the plan across requests; bounded FIFO."
   [db root-node]
-  (let [key [#?(:clj (System/identityHashCode db)
-                :cljs (hash db))
+  (let [key [(backend/backend-id db)
+             (backend/invoke db :source-scope)
              (backend/invoke db :source-lifecycle)
              (backend/invoke db :native-revision)
              root-node]]
@@ -3989,27 +3992,50 @@
 
 (defn- stable-limits
   "Maps the public recursive-traversal limits onto the stable reducer's
-  budgets: derived grants bound logical admissions, advanced datoms bound
-  physical commands."
+  budgets with matching semantics: derived grants bound unique logical
+  admissions, advanced datoms bound consumed projection values, and
+  queued work bounds INSTANTANEOUS stack depth (never cumulative
+  transitions — a long chain traversal legitimately takes many
+  transitions while its queue stays shallow). Cumulative transition and
+  command counts remain internal reducer safety ceilings."
   []
   (let [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}
         *recursive-traversal-limits*]
     (cond-> {}
       max-derived-grants (assoc :max-admissions max-derived-grants)
-      max-advanced-datoms (assoc :max-commands max-advanced-datoms)
-      max-queued-work (assoc :max-transitions max-queued-work))))
+      max-advanced-datoms (assoc :max-values max-advanced-datoms)
+      max-queued-work (assoc :max-stack max-queued-work)
+      ;; The internal runaway ceilings scale with the authorized public
+      ;; work so raising the public limits actually authorizes it: each
+      ;; admission and each consumed value costs a bounded number of
+      ;; transitions, and every scan occurrence (bounded by admissions)
+      ;; costs at least one command even when it reads nothing.
+      (or max-derived-grants max-advanced-datoms)
+      (assoc :max-transitions
+             (max stable-reducer/default-max-transitions
+                  (* 4 (+ (or max-derived-grants 0)
+                          (or max-advanced-datoms 0))))
+             :max-commands
+             (max stable-reducer/default-max-commands
+                  (+ (or max-derived-grants 0)
+                     (or max-advanced-datoms 0)))))))
 
 (def ^:private stable-limit-kinds
   {:max-admissions :derived-grants
+   :max-values :advanced-datoms
+   :max-stack :queued-work
+   ;; Internal safety ceilings surface under the closest public kind.
    :max-commands :advanced-datoms
    :max-transitions :queued-work})
 
 (defn- with-public-limit-errors
   "The stable reducer's typed limit failure surfaces under the public
-  recursive-traversal error key."
+  recursive-traversal error key; when the caller observes work stats, the
+  reducer reports its per-run deltas under the public counter names."
   [thunk]
   (try
-    (thunk)
+    (binding [stable-reducer/*observer-stats* *recursive-traversal-stats*]
+      (thunk))
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) error
       (if (contains? #{:eacl.reducer/limit-exceeded
                        :eacl.page/resource-exhausted}
@@ -4023,15 +4049,32 @@
                                    :derived-grants))))
         (throw error)))))
 
+(defn- stable-cut-point
+  "Execution enforcement (deadline and cancellation) for the routed stable
+  engine: one bounded check per reducer transition, installed only when the
+  caller runs under an execution contract so raw local evaluation keeps a
+  bare hot path."
+  []
+  (when-let [contract execution/*contract*]
+    (physical/execution-cut-point contract)))
+
 (defn- stable-checkpoints
-  "Accepts only a stable-page checkpoint store; other continuation caches
-  (the retired recursive store) degrade to deterministic replay."
+  "Accepts a stable-page checkpoint store (raw atom) or the client's scoped
+  continuation context (fn-map with its own bounds and eviction); anything
+  else degrades to deterministic replay."
   [cache]
-  (when (and cache
-             #?(:clj (instance? clojure.lang.IAtom cache)
-                :cljs (instance? Atom cache))
-             (map? @cache)
-             (contains? @cache :entries))
+  (cond
+    (and (map? cache)
+         (true? (:opaque-values? cache))
+         (fn? (:get cache))
+         (fn? (:put! cache)))
+    cache
+
+    (and cache
+         #?(:clj (instance? clojure.lang.IAtom cache)
+            :cljs (instance? Atom cache))
+         (map? @cache)
+         (contains? @cache :entries))
     cache))
 
 (defn- stable-items
@@ -4063,6 +4106,14 @@
                       :has-previous? (boolean bound)})
       (let [root-node (permission-query-node root-type (:permission query))
             plan (stable-plan db root-node)
+            ;; A bare :last window on a recursive schema exhausts a
+            ;; data-dependent traversal; that cost stays opt-in via
+            ;; :evaluation :complete-denotation (public v8 contract).
+            _ (when (and (:recursive? plan)
+                         (= :demand *evaluation-mode*)
+                         (= :desc direction)
+                         (nil? bound))
+                (complete-evaluation-required! query))
             _ (validate-stable-bound! plan traversal bound)
             anchor-eid (object-eid db (:id anchor))
             edge (when bound {:ordinal (:ordinal bound)
@@ -4076,6 +4127,7 @@
                          :direction traversal
                          :anchor-eid anchor-eid
                          :subject-type subject-type
+                         :cut-point! (stable-cut-point)
                          :page-size size
                          :after (when (= :asc direction) edge)
                          :before (when (and (= :desc direction) edge) edge)
@@ -4112,7 +4164,8 @@
                     :plan plan
                     :subject-type subject-type
                     :subject-eid subject-eid
-                    :resource-eid resource-eid}))))
+                    :resource-eid resource-eid
+                    :cut-point! (stable-cut-point)}))))
       false)))
 
 ;; --- Certified acyclic enumeration -----------------------------------------
@@ -4848,7 +4901,8 @@
                       :plan plan
                       :subject-type (:type subject)
                       :subject-id (:id subject)
-                      :count-limit limit})))
+                      :count-limit limit
+                      :cut-point! (stable-cut-point)})))
           [:count :truncated?])))
      limit)))
 
@@ -4874,6 +4928,7 @@
                       :plan plan
                       :subject-type (:subject/type query)
                       :resource-id (:id resource)
-                      :count-limit limit})))
+                      :count-limit limit
+                      :cut-point! (stable-cut-point)})))
           [:count :truncated?])))
      limit)))

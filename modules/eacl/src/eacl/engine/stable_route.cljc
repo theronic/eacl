@@ -26,7 +26,9 @@
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
     (let [seen (volatile! 0)
+          caller-cut-point! (:cut-point! options)
           watch (fn [state]
+                  (when caller-cut-point! (caller-cut-point! state))
                   (let [results (:results state)
                         n (count results)]
                     (when (> n @seen)
@@ -41,7 +43,7 @@
                                              :physical-chunk-size
                                              :sidecar-cap :max-admissions
                                              :max-commands
-                                             :max-transitions])
+                                             :max-transitions :max-values :max-stack])
                                {:resource-eid resource-eid
                                 :target exhaustion-target
                                 :cut-point! watch}))]
@@ -73,10 +75,10 @@
       (let [finished (reducer/run-forward
                       (merge (select-keys options
                                           [:adapter :fetch-fn :plan
-                                           :subject-type
+                                           :subject-type :cut-point!
                                            :physical-chunk-size :sidecar-cap
                                            :max-admissions :max-commands
-                                           :max-transitions])
+                                           :max-transitions :max-values :max-stack])
                              {:subject-eid subject-eid
                               :target target}))
             discovered (:discovered finished)
@@ -96,10 +98,10 @@
       (let [finished (reducer/run-reverse
                       (merge (select-keys options
                                           [:adapter :fetch-fn :plan
-                                           :subject-type
+                                           :subject-type :cut-point!
                                            :physical-chunk-size :sidecar-cap
                                            :max-admissions :max-commands
-                                           :max-transitions])
+                                           :max-transitions :max-values :max-stack])
                              {:resource-eid resource-eid
                               :target target}))
             discovered (:discovered finished)
