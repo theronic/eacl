@@ -247,7 +247,7 @@
   ;; between the new engine's full recompute and the legacy engine's
   ;; cache-assisted repeats; allocation is bounded against the legacy
   ;; public-engine full-compute envelope.
-  (let [frozen (read-string (slurp "exploration/baselines/perf-clj-datascript.edn"))
+  (let [frozen (read-string (slurp (str capture/snapshot-dir "/perf-clj-datascript.edn")))
         legacy-warm-ms (get-in frozen [:acyclic-2k-servers
                                        :super-user-first-page-20 :median-ms])
         env (seeded :explorer-acyclic)

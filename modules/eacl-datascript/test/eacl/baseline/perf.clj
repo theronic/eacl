@@ -10,6 +10,7 @@
 
   Regenerate with: (eacl.baseline.perf/capture-perf!)"
   (:require [clojure.java.io :as io]
+            [eacl.baseline.capture]
             [clojure.pprint :as pprint]
             [datascript.core :as ds]
             [eacl.bench.explorer-fixture :as fixture]
@@ -18,7 +19,8 @@
             [eacl.engine.v8 :as engine])
   (:import (java.lang.management ManagementFactory)))
 
-(def snapshot-file "exploration/baselines/perf-clj-datascript.edn")
+(def snapshot-file
+  (str eacl.baseline.capture/snapshot-dir "/perf-clj-datascript.edn"))
 
 (def perf-shape
   "Five accounts x 400 servers = 2,000 servers, overlapping team/VPC arrows."

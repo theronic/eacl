@@ -23,7 +23,12 @@
             [eacl.datascript.core :as datascript]
             [eacl.execution :as execution]))
 
-(def snapshot-dir "exploration/baselines")
+(def snapshot-dir
+  "Resolves the tracked snapshot directory from either the repo root or an
+  isolated module working directory."
+  (let [candidates ["exploration/baselines" "../../exploration/baselines"]]
+    (or (some #(when (.exists (io/file %)) %) candidates)
+        (first candidates))))
 
 (def capture-page-size
   "Odd page size so page boundaries fall inside sibling groups."
