@@ -4040,13 +4040,16 @@
       (if (contains? #{:eacl.reducer/limit-exceeded
                        :eacl.page/resource-exhausted}
                      (:eacl/error (ex-data error)))
-        (let [data (ex-data error)]
+        ;; The public shape is exactly {:eacl/error :limit-kind :limit}
+        ;; with :limit as the caller's configured numeric ceiling; internal
+        ;; counters and reducer budget keys never leak.
+        (let [data (ex-data error)
+              budget-key (:limit data)]
           (page-error!
            "Recursive traversal exceeded its configured limits."
-           (assoc (dissoc data :eacl/error)
-                  :eacl/error :eacl.recursive-traversal/limit-exceeded
-                  :limit-kind (get stable-limit-kinds (:limit data)
-                                   :derived-grants))))
+           {:eacl/error :eacl.recursive-traversal/limit-exceeded
+            :limit-kind (get stable-limit-kinds budget-key :derived-grants)
+            :limit (get data budget-key)}))
         (throw error)))))
 
 (defn- stable-cut-point
@@ -4087,6 +4090,22 @@
    (range)
    eids))
 
+(defn- with-stale-boundary-errors
+  "A well-formed authenticated boundary that replay cannot validate means
+  the selected basis no longer reproduces the cursor's edge — the public
+  contract calls that a stale cursor, never an invalid one, and the shape
+  carries no internal ordinal or identity diagnostics."
+  [bound thunk]
+  (if-not bound
+    (thunk)
+    (try
+      (thunk)
+      (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) error
+        (if (= :eacl.page/invalid-cursor (:eacl/error (ex-data error)))
+          (page-error! "The cursor's exact boundary is no longer reproducible."
+                       {:eacl/error :eacl.pagination/stale-cursor})
+          (throw error))))))
+
 (defn- stable-lookup-page
   [db traversal query cache]
   (let [{:keys [direction size bound]} (normalize-page-request query)
@@ -4118,9 +4137,12 @@
             anchor-eid (object-eid db (:id anchor))
             edge (when bound {:ordinal (:ordinal bound)
                               :eid (:result-eid bound)})
-            result (with-public-limit-errors
-                     #(stable-page/edge-page
-                       (merge
+            result (with-stale-boundary-errors
+                     bound
+                     (fn []
+                       (with-public-limit-errors
+                        #(stable-page/edge-page
+                          (merge
                         (stable-limits)
                         {:adapter db
                          :plan plan
@@ -4136,7 +4158,7 @@
                          :checkpoint-key [(:fingerprint plan)
                                           (backend/invoke db :native-revision)
                                           traversal subject-type anchor-eid
-                                          size]})))]
+                                          size]})))))]
         (page-response
          {:items (stable-items plan traversal result-type
                                (:start-ordinal result) (:eids result))

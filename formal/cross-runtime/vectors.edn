@@ -161,9 +161,12 @@
            :recursive-work 1}
    :expected :rejected}]
 
+ ;; Stable first-discovery order (adopt-stable-discovery-enumeration): the
+ ;; canonical reducer discovers 20 before 30 on this fixture; the retired
+ ;; engine's entity-ID merge produced [10 30] then [20].
  :production-recursive-pages
- {:first-page [10 30]
-  :continuation-page [20]}
+ {:first-page [10 20]
+  :continuation-page [30]}
 
  :round-trips
  [{:tag "eacl.round-trip/v1" :values [0 7 42] :limit 3
