@@ -2,7 +2,7 @@
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
         dev.eacl/eacl {:local/root "../eacl"}
         com.rpl/specter {:mvn/version "1.1.4"}
-        com.datomic/peer {:mvn/version "1.0.7622"}}
+        com.datomic/peer {:mvn/version "1.0.7705"}}
  :aliases {:build {:extra-paths ["."]
                    :ns-default build
                    :extra-deps {eacl/build-tools {:local/root "../../src-build"}}}

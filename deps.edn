@@ -11,7 +11,7 @@
         com.rpl/specter {:mvn/version "1.1.4"}
 
            ;; Datomic
-        com.datomic/peer {:mvn/version "1.0.7622"}
+        com.datomic/peer {:mvn/version "1.0.7705"}
         datascript/datascript {:mvn/version "1.7.8"}
         ;; 0.8.1759 is the first release carrying replikativ/datahike#921
         ;; (composite tuples derived + validated under :attribute-refs?)
