@@ -70,28 +70,30 @@
    :v7-median-ms 155.008042
    :maximum-v8-median-ms 310.016084}}
  :work-envelopes
+ ;; Stable-discovery engine counters: cumulative per-run deltas reported
+ ;; through eacl.engine.v8/*recursive-traversal-stats* (:derived-grants,
+ ;; :advanced-datoms, :queued-work). Deterministic on these fixtures; the
+ ;; maximums are the 2026-08-14 stable-engine observations plus roughly
+ ;; twenty percent headroom. The retired acyclic merge counters
+ ;; (:merge-advances, :backend-scans) left with the engine that produced
+ ;; them.
  {:page
-  {:maximum-emitted-results 20
-   :maximum-merge-advances 21
-   :maximum-backend-scans 512
-   :recursive-counters 0}
+  {:maximum-derived-grants 64
+   :maximum-advanced-datoms 8
+   :maximum-queued-work 96}
   :count-10000
-  {:maximum-counted-results 10000
-   :maximum-merge-advances 10001
-   :maximum-backend-scans 10000
-   :recursive-counters 0}
+  {:maximum-derived-grants 24000
+   :maximum-advanced-datoms 1024
+   :maximum-queued-work 72000}
   :count-50000
-  {:maximum-counted-results 50000
-   :maximum-merge-advances 50003
-   :maximum-backend-scans 50000
-   :recursive-counters 0}
+  {:maximum-derived-grants 180000
+   :maximum-advanced-datoms 64000
+   :maximum-queued-work 420000}
   :count-100000
-  {:maximum-counted-results 100000
-   :maximum-merge-advances 100006
-   :maximum-backend-scans 512
-   :recursive-counters 0}
+  {:maximum-derived-grants 240000
+   :maximum-advanced-datoms 12000
+   :maximum-queued-work 720000}
   :cold-user-count-40000
-  {:maximum-counted-results 12000
-   :maximum-merge-advances 12001
-   :maximum-backend-scans 128
-   :recursive-counters 0}}}
+  {:maximum-derived-grants 44000
+   :maximum-advanced-datoms 16000
+   :maximum-queued-work 101000}}}

@@ -186,6 +186,20 @@ endpoint; the endpoint caches ~15 s, so scrape with settle delays):
 
 ### Known issues (2026-08-14, end of session)
 
+- **Exhaustive uncached counts are slower than v7's acyclic merge; the
+  matched-v7 latency gate is currently inapplicable everywhere**: the
+  2026-08-14 medians (Apple M4 Max, JDK 26.0.2) against the recorded v7
+  baselines (Apple M3 Pro, JDK 24.0.1, 2026-08-08) are cross-host, but
+  the direction is unambiguous: forward pages are ~6-10x faster
+  (0.46ms vs 2.92ms) while uncached exact counts are ~6-10x slower on
+  strictly faster hardware (50k: ~464ms vs 73ms; owner 2k: 16.7ms vs
+  1.63ms). The explorer latency gate reports :not-applicable on both CI
+  and the current operator machine because the recorded host class no
+  longer exists, so CI green does NOT certify matched-v7 latency. Counts remain gated by deterministic
+  stable-counter work envelopes. Re-qualifying the host will fail the
+  count scenarios at the 2.0 ratio until the deferred width>1 concurrent
+  execution change lands (the named remedy); re-record v7 baselines and
+  the v8 medians together when it does.
 - **Datahike writer dies permanently on one transient S3 fault**: a
   single keep-alive connection reset (`Unexpected end of file`) shuts
   the writer down instead of retrying; only an application restart
