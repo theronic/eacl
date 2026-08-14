@@ -1,0 +1,19 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Warning: Please run the Java VM which executes TLC with a throughput optimized garbage collector by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 81 and seed 1812312709959652537 with 1 worker on 14 cores with 9215MB heap and 64MB offheap memory [pid: 99939] (Mac OS X 26.4.1 aarch64, Eclipse Adoptium 26.0.2 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/ProgressCheckpoint.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-runs/99769/tmp-verify-progress-checkpoint/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module ProgressCheckpoint
+Starting... (2026-08-14 07:32:14)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-08-14 07:32:14.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.5E-15
+682 states generated, 219 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 10.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 7 and the 95th percentile is 3).
+Finished in 00s at (2026-08-14 07:32:14)

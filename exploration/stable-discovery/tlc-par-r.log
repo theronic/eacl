@@ -1,0 +1,25 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Warning: Please run the Java VM which executes TLC with a throughput optimized garbage collector by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 99 and seed -6591273029135488318 with 1 worker on 14 cores with 9215MB heap and 64MB offheap memory [pid: 14517] (Mac OS X 26.4.1 aarch64, Eclipse Adoptium 26.0.2 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/ReducerReadAhead.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/reducer/Integers.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/reducer/Naturals.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/reducer/FiniteSets.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/reducer/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module ReducerReadAhead
+Starting... (2026-08-14 01:55:58)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-08-14 01:55:58.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 1.5E-13
+3965 states generated, 887 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 22.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 5 and the 95th percentile is 3).
+Finished in 00s at (2026-08-14 01:55:58)

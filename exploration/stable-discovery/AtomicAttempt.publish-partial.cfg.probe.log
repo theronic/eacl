@@ -1,0 +1,60 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Warning: Please run the Java VM which executes TLC with a throughput optimized garbage collector by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 64 and seed -7930792444492121518 with 1 worker on 14 cores with 9215MB heap and 64MB offheap memory [pid: 17228] (Mac OS X 26.4.1 aarch64, Eclipse Adoptium 26.0.2 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/AtomicAttempt.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/AtomicAttempt.publish-partial.cfg/Naturals.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/AtomicAttempt.publish-partial.cfg/FiniteSets.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-tmp/AtomicAttempt.publish-partial.cfg/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module AtomicAttempt
+Starting... (2026-08-14 02:04:38)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-08-14 02:04:38.
+Error: Invariant Safety is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ validated = {}
+/\ canceled = FALSE
+/\ invalidIntegration = FALSE
+/\ used = {}
+/\ invalidPublication = FALSE
+/\ physical = {}
+/\ projectionPublished = FALSE
+/\ partial = {}
+/\ charged = {}
+/\ integrationsAtCancel = 0
+/\ integrations = 0
+
+State 2: <Start line 80, col 3 to line 89, col 51 of module AtomicAttempt>
+/\ validated = {}
+/\ canceled = FALSE
+/\ invalidIntegration = FALSE
+/\ used = {0}
+/\ invalidPublication = FALSE
+/\ physical = {0}
+/\ projectionPublished = FALSE
+/\ partial = {}
+/\ charged = {0}
+/\ integrationsAtCancel = 0
+/\ integrations = 0
+
+State 3: <ReceivePartial line 92, col 3 to line 101, col 53 of module AtomicAttempt>
+/\ validated = {}
+/\ canceled = FALSE
+/\ invalidIntegration = FALSE
+/\ used = {0}
+/\ invalidPublication = TRUE
+/\ physical = {0}
+/\ projectionPublished = TRUE
+/\ partial = {0}
+/\ charged = {0}
+/\ integrationsAtCancel = 0
+/\ integrations = 0
+
+8 states generated, 8 distinct states found, 5 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 4 (minimum is 4, the maximum 4 and the 95th percentile is 4).
+Finished in 00s at (2026-08-14 02:04:38)
