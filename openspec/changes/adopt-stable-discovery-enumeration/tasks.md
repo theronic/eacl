@@ -184,6 +184,54 @@ endpoint; the endpoint caches ~15 s, so scrape with settle delays):
   the writer-shutdown-on-first-IOException fragility is the write-path
   sibling of the read-side failure-cause collapse in task 10.3).
 
+### Known issues (2026-08-14, end of session)
+
+- **Datahike writer dies permanently on one transient S3 fault**: a
+  single keep-alive connection reset (`Unexpected end of file`) shuts
+  the writer down instead of retrying; only an application restart
+  recovers (the durable store resumes cleanly). Workaround for
+  sustained writes: `-Dhttp.keepAlive=false`. This is the write-path
+  sibling of the 10.3 failure-classification repair and should be fixed
+  at the storage layer, not in EACL.
+- **Retired formal corpus still verified on CI**: `AcyclicEngine.dfy`,
+  the ten `Indexed*.dfy` leaves, `OrderedMerge.dfy`, and `CursorCost.dfy`
+  prove the retired engines; their generated indexed runtime,
+  `IndexedTraversalKernel` protocol + implementations
+  (`production_kernel` indexed half, `portable_indexed.cljc`), the
+  indexed bridge-test sections, and `manifest.edn` theorem pins all go
+  together as one scoped commit. `bin/formal` auto-enumerates
+  `formal/dafny/*.dfy`, so file deletion shrinks the verify set.
+- **Remaining `^:benchmark` suites** still reference retired machinery
+  (loadable, CI-excluded; a `record-generated-stats!` `ns-resolve` in
+  `bench/pagination_test` is nil-safe but dead). Rebase or retire with
+  the formal cut.
+- **Checkpoints pin the exact basis**: proof-equivalent basis churn
+  (unrelated writes) misses the checkpoint and pays governed replay —
+  correct but costlier than necessary.
+- Production S3 has no request-metrics filter enabled, so deployed GET
+  counts cannot be read from CloudWatch; the local MinIO rig (metrics
+  cached ~15 s — scrape with settle delays) is the counting instrument.
+
+### Suggested future optimizations
+
+1. **Checkpoint keying by dependency-proof lineage** instead of raw
+   native-revision: a continuation under an unchanged full-read-scope
+   proof could resume the retained checkpoint across basis churn
+   instead of replaying (the spec already licenses this; the churn test
+   documents today's replay cost).
+2. **Datahike writer resilience**: retry transient storage IOExceptions
+   with backoff before writer shutdown; classify causes like the read
+   path does.
+3. **Width > 1**: the parked concurrency change (`ReducerReadAhead`,
+   `DescriptorCoalescing`, `ServiceLifecycle` models and the
+   `physical_scheduler` bridge restart there); the reducer's fetch seam
+   is the attach point and stayed single-purpose for exactly this.
+4. **Commit-graph exact-basis selection** on Datahike (spec'd
+   preference) before enabling tiered/LMDB serving topologies at scale.
+5. CLJS parity halves (2.4/3.3/4.5/5.5/8.5) via the formal-cljs-smoke
+   pipeline, and 8.6 containerized MinIO/JDBC/DynamoDB-local fault
+   injection.
+
 ## 10. Follow-on remote performance qualification
 
 - [ ] 10.1 Qualify Datahike direct S3 and tiered LMDB/S3 (restart warmth, disk lifecycle, exact-basis behavior at scale) with reproducible fixtures; publish performance envelopes including evicted-checkpoint replay p95/p99.

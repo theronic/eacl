@@ -71,43 +71,66 @@ The pure-step/`NeedRead` boundary is the preserved seam for a future concurrency
 
 ## Exact next steps
 
-State at 2026-08-14: **44 of 61 tasks complete; the stable engine is the
-public engine.** Sections 2-8 are done (evidence archive, frozen baselines,
-promoted assurance, sealed planner, generic reducer, pagination/continuation,
-physical layer, routes); 9.1 routed all five public entry points (~6,000
-assertions green across every module plus the 506-obligation gate, with the
-frozen baselines now serving as the cross-engine differential); 9.4 published
-`docs/stable-discovery-engine.md`. The dirty experimental tree was discarded
-(SPI groundwork kept), and the rejected candidate's code, models, and
-routing/denotation-cache test suites were deleted with their closing
-evidence retargeted at the stable gates (all 67 minimized counterexamples
-replay green).
+State at 2026-08-14 (end of session): **the stable engine is the public
+engine, operator-hardened, and the dead paths are gone.** Beyond the
+routing flip, this session repaired the operator-reported cache layers
+(client continuation-context checkpoints, source-identity plan cache, the
+Datomic client's `:stable-edge` answer-cache validator), restored
+execution enforcement (timeouts/cancellation were inert on the routed
+engine), corrected the public limit mapping (`:max-queued-work` bounds
+instantaneous queue depth via new `:max-stack`; `:max-advanced-datoms`
+bounds consumed values via new `:max-values`; internal ceilings scale
+with authorized work), restored the recursive bare-`:last` guard (sealed
+plans carry `:recursive?`), pinned public error shapes (limits =
+`{:eacl/error :limit-kind :limit}`; stale cursors = minimal
+`{:eacl/error}`), and executed task 9.2 (`v8.cljc` 4,956 -> 1,354 lines;
+`:relation-populated?` out of the adapter contract; verified-authority
+suite re-pinned to the four live generated decisions). Local MinIO
+qualification at 100k servers: cold first page **5 GETs / 126 ms** (was
+3,935 GETs / 148.4 s), exhaustive count 3,062 GETs / 8.6 s cold and
+0 GETs / 16 ms cached, evicted-checkpoint replay **13 GETs / 178 ms**.
+Verified locally: CI-equivalent battery ~26k assertions, formal smoke
+~15.6k, verified-authority heavy + nonbenchmark (36k assertions,
+four-operation coverage on all three backends), CLJS bundle.
 
 Next, in order:
 
-1. **Watch CI on `v8.0.0-SNAPSHOT` (`0effa0c`)**: Tests + Formal
-   verification gate the Clojars release job. On green, Clojars publishes
-   `8.0.0-SNAPSHOT`; on failure, `gh run view <id> --log-failed` — the two
-   known-fixed classes were isolated-module classpath layout and stale
-   counterexample evidence.
-2. **Deploy `eacl-datahike-demo`** (after the publish): operator supplies
-   `infra/deployment.env`; clear `~/.m2/repository/dev/eacl`; build the
-   server uberjar; `infra/scripts/deploy-artifact.sh`; smoke via
-   `/api/health` and a super-user page. Do **not** reseed S3.
-3. **Operator-test `eacl-datomic-solidjs`** — already running locally on
-   the stable engine (server 8088, client 5273, `:local-eacl` alias).
-4. **9.2 dead-code excision**: the unreachable acyclic-merge and
-   generated-kernel machinery inside `engine/v8.cljc` (~3,000 lines),
-   `lazy_merge_sort.cljc`, `portable_indexed.cljc`'s engines, and the
-   kernel decisions they alone used; then 9.3's remaining kernel
-   de-authority (`normalize-page-request`'s `:relationship-page` decision)
-   with exhaustive-domain bridges for surviving tables.
-5. **CLJS parity halves** (2.4/3.3/4.5/5.5/8.5) via the formal-cljs-smoke
-   pipeline; **8.6 containerized fault injection** (MinIO/JDBC/
-   DynamoDB-local).
-6. **Section 10 remote qualification** on the deployed demo: evicted-
-   checkpoint replay p95/p99, cold/warm first pages, per-topology
-   envelopes; Konserve DynamoDB repair before that topology enables.
+1. **Watch CI on `v8.0.0-SNAPSHOT` (`c6a10d0`)** — Tests + Formal gate
+   the CI-side Clojars publish. Every previously diagnosed failure class
+   is fixed and verified locally; on a new failure,
+   `gh run view <id> --log-failed`, fix, re-merge, re-push.
+2. **Deploy `eacl-datahike-demo` to demo.eacl.dev** on publish:
+   `infra/deployment.env` exists (host `demo.eacl.dev`, key
+   `~/.ssh/id_rsa`, SSH verified); clear `~/.m2/repository/dev/eacl`;
+   `npm run build` (uberjar embeds resolved artifact SHAs);
+   `infra/scripts/deploy-artifact.sh demo.eacl.dev ~/.ssh/id_rsa`;
+   smoke `/api/health` + a super-user page. Do **not** reseed S3. The
+   demo repo carries the prewarm removal + raised traversal limits —
+   deploy from that tree and push its commits.
+3. **The remaining formal cut** (one scoped commit): retired Dafny
+   leaves (`AcyclicEngine`, `Indexed*` x10, `OrderedMerge`,
+   `CursorCost`), their generated indexed runtime,
+   `IndexedTraversalKernel` + implementations, indexed bridge-test
+   sections, `manifest.edn` re-pins, and the leftover `^:benchmark`
+   rebase. See "Known issues" in `tasks.md` for the full inventory.
+4. **9.3 tail** (`normalize-page-request`'s `:relationship-page`
+   decision de-authority with exhaustive-domain bridges), then CLJS
+   parity halves (2.4/3.3/4.5/5.5/8.5) and 8.6 containerized fault
+   injection.
+5. **Section 10 remote qualification** on the deployed demo (S3 GET
+   verification at 1M: enable S3 request metrics on the bucket or read
+   Datahike's `:reads` counter — production CloudWatch has no request
+   metrics today; local MinIO numbers above are the baseline).
+
+Operational notes that save time: run the CI-equivalent battery with
+`clojure -X:dev:test :excludes '[:benchmark :formal-artifact]'` (the
+isolated-module pattern misses most of the aggregate surface); regenerate
+`formal/verification/public-source-closure.json` after ANY public-source
+edit; the cross-runtime page order lives in
+`formal/cross-runtime/vectors.edn` AND is content-pinned by
+EACL-FORMAL-059 — update both together; distinct stores must carry
+distinct source lifecycles (fixtures included) or identity-keyed caches
+alias.
 
 ## Do not silently reintroduce
 
