@@ -101,6 +101,60 @@
         "the identical count request must be served from cache")
     (is (= (:count count-1) (:count count-2)))))
 
+(defn- limited-client
+  [fixture-key limits]
+  (let [{:keys [schema objects relationships] :as fixture}
+        ((get capture/fixtures fixture-key))
+        conn (datascript/create-conn)
+        client (datascript/make-client
+                conn {:recursive-traversal-limits limits})]
+    (eacl/write-schema! client schema)
+    (ds/transact! conn
+                  (vec (map-indexed
+                        (fn [index {:keys [id]}]
+                          {:db/id (- (inc index)) :eacl/id id})
+                        objects)))
+    (doseq [batch (partition-all 500 relationships)]
+      (eacl/create-relationships! client (vec batch)))
+    {:fixture fixture :client client}))
+
+(deftest queued-work-bounds-depth-not-cumulative-transitions-test
+  ;; Operator-reported: a ~24k-result exhaustive count failed the public
+  ;; :max-queued-work limit because it was mapped onto CUMULATIVE reducer
+  ;; transitions. The public contract bounds instantaneous queue depth: a
+  ;; deep chain takes many transitions while its stack stays shallow, so
+  ;; a tight :max-queued-work must not fail it.
+  (let [{:keys [fixture client]}
+        (limited-client :folder-chain {:max-queued-work 25
+                                       :max-derived-grants 100000
+                                       :max-advanced-datoms 100000})
+        query {:subject (get-in fixture [:principals :alice])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)}
+        looked (count (:data (eacl/lookup-resources
+                              client (assoc query :first 1000))))
+        counted (:count (eacl/count-resources client query))]
+    (is (pos? counted))
+    (is (= looked counted)
+        "the exhaustive count agrees with the lookup denotation")))
+
+(deftest advanced-datoms-limit-binds-consumed-values-test
+  (let [{:keys [fixture client]}
+        (limited-client :explorer-acyclic {:max-advanced-datoms 3
+                                           :max-derived-grants 100000
+                                           :max-queued-work 100000})
+        query {:subject (get-in fixture [:principals :super-user])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)
+               :first 20}
+        data (try (eacl/lookup-resources client query)
+                  nil
+                  (catch clojure.lang.ExceptionInfo error
+                    (ex-data error)))]
+    (is (= :eacl.recursive-traversal/limit-exceeded (:eacl/error data)))
+    (is (= :advanced-datoms (:limit-kind data))
+        "consumed projection values surface under the public limit kind")))
+
 (defn- adapter-opts
   [conn extra]
   (merge {:object-id->entid

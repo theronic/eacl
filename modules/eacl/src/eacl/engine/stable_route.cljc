@@ -43,7 +43,7 @@
                                              :physical-chunk-size
                                              :sidecar-cap :max-admissions
                                              :max-commands
-                                             :max-transitions])
+                                             :max-transitions :max-values :max-stack])
                                {:resource-eid resource-eid
                                 :target exhaustion-target
                                 :cut-point! watch}))]
@@ -78,7 +78,7 @@
                                            :subject-type :cut-point!
                                            :physical-chunk-size :sidecar-cap
                                            :max-admissions :max-commands
-                                           :max-transitions])
+                                           :max-transitions :max-values :max-stack])
                              {:subject-eid subject-eid
                               :target target}))
             discovered (:discovered finished)
@@ -101,7 +101,7 @@
                                            :subject-type :cut-point!
                                            :physical-chunk-size :sidecar-cap
                                            :max-admissions :max-commands
-                                           :max-transitions])
+                                           :max-transitions :max-values :max-stack])
                              {:resource-eid resource-eid
                               :target target}))
             discovered (:discovered finished)

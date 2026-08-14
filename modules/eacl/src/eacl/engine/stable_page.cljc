@@ -241,7 +241,7 @@
                                          :subject-type :cut-point!
                                          :physical-chunk-size :sidecar-cap
                                          :max-admissions :max-commands
-                                         :max-transitions])
+                                         :max-transitions :max-values :max-stack])
                            {:target target})]
     (case direction
       :forward (reducer/run-forward
@@ -256,7 +256,7 @@
                                        :subject-type :cut-point!
                                        :physical-chunk-size :sidecar-cap
                                        :max-admissions :max-commands
-                                       :max-transitions])
+                                       :max-transitions :max-values :max-stack])
                          {:target target})
                   checkpoint-state))
 

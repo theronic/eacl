@@ -3992,18 +3992,39 @@
 
 (defn- stable-limits
   "Maps the public recursive-traversal limits onto the stable reducer's
-  budgets: derived grants bound logical admissions, advanced datoms bound
-  physical commands."
+  budgets with matching semantics: derived grants bound unique logical
+  admissions, advanced datoms bound consumed projection values, and
+  queued work bounds INSTANTANEOUS stack depth (never cumulative
+  transitions — a long chain traversal legitimately takes many
+  transitions while its queue stays shallow). Cumulative transition and
+  command counts remain internal reducer safety ceilings."
   []
   (let [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}
         *recursive-traversal-limits*]
     (cond-> {}
       max-derived-grants (assoc :max-admissions max-derived-grants)
-      max-advanced-datoms (assoc :max-commands max-advanced-datoms)
-      max-queued-work (assoc :max-transitions max-queued-work))))
+      max-advanced-datoms (assoc :max-values max-advanced-datoms)
+      max-queued-work (assoc :max-stack max-queued-work)
+      ;; The internal runaway ceilings scale with the authorized public
+      ;; work so raising the public limits actually authorizes it: each
+      ;; admission and each consumed value costs a bounded number of
+      ;; transitions, and every scan occurrence (bounded by admissions)
+      ;; costs at least one command even when it reads nothing.
+      (or max-derived-grants max-advanced-datoms)
+      (assoc :max-transitions
+             (max stable-reducer/default-max-transitions
+                  (* 4 (+ (or max-derived-grants 0)
+                          (or max-advanced-datoms 0))))
+             :max-commands
+             (max stable-reducer/default-max-commands
+                  (+ (or max-derived-grants 0)
+                     (or max-advanced-datoms 0)))))))
 
 (def ^:private stable-limit-kinds
   {:max-admissions :derived-grants
+   :max-values :advanced-datoms
+   :max-stack :queued-work
+   ;; Internal safety ceilings surface under the closest public kind.
    :max-commands :advanced-datoms
    :max-transitions :queued-work})
 
